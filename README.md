@@ -144,5 +144,6 @@ The workflow builds a Windows `.exe` installer and a macOS `.dmg`, then attaches
 
 ## About
 
-Made for capture artists who want to properly tag their `.nam` files before sharing them.
-By [Core Tone Captures](https://github.com/coretonecaptures).
+There's no existing tool that lets capture artists manage `.nam` metadata locally, in bulk, before sharing their work. NAM Editor was built to fill that gap — a fast, offline desktop app that gives you full control over how your captures are tagged and presented to the people who use them.
+
+Conceived and designed by [Core Tone Captures](https://github.com/coretonecaptures) based on real-world capture workflow needs. Built entirely by [Claude Code](https://claude.ai/code) (Anthropic's AI coding assistant) — the code was written by AI, not by hand. Core Tone Captures provided the vision, requirements, and feedback; Claude Code did the implementation.
