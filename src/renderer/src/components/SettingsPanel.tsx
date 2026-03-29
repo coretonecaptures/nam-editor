@@ -156,24 +156,27 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
                 onChange={(v) => update('autoDetectToneType', v)}
               />
 
-              <SettingsField
-                label="Amp Suffix"
-                hint="Filename ending that identifies a capture as Amp type"
-              >
+              <SettingsField label="Amp Suffix" hint="Filename ending that identifies a capture as Amp type">
                 <div className="flex items-center gap-3">
                   <input
                     type="text"
                     value={draft.ampSuffix}
                     onChange={(e) => update('ampSuffix', e.target.value)}
-                    placeholder="DI"
+                    placeholder="e.g. DI"
                     className="w-40 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors font-mono"
                   />
                   <p className="text-xs text-gray-500">
-                    Filename ending in <span className="font-mono text-gray-300">{draft.ampSuffix || 'DI'}</span> → Amp.
-                    Otherwise → Cab. Case-insensitive, spaces ignored.
+                    Leave blank to disable. Case-insensitive, spaces ignored.
                   </p>
                 </div>
               </SettingsField>
+
+              <CheckboxField
+                label="Default to Cab if no amp suffix match"
+                description="When a file has no gear type and the filename doesn't match the amp suffix, set it to Cab. Leave off to keep gear type blank."
+                checked={draft.defaultToCab}
+                onChange={(v) => update('defaultToCab', v)}
+              />
             </div>
           </div>
 

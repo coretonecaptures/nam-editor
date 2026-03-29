@@ -18,7 +18,8 @@ export interface AppSettings {
 
   // Behavior
   populateNameFromFilename: boolean
-  ampSuffix: string          // filename suffix that auto-sets gear type to "amp" (default: "DI")
+  ampSuffix: string          // filename suffix that auto-sets gear type to "amp" (e.g. "DI")
+  defaultToCab: boolean      // if true, anything that doesn't match ampSuffix gets set to "cab"
   autoDetectToneType: boolean
 
   // Startup
@@ -40,7 +41,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultOutputLevel: '',
 
   populateNameFromFilename: true,
-  ampSuffix: 'DI',
+  ampSuffix: '',
+  defaultToCab: false,
   autoDetectToneType: true,
 
   enableDefaultFolder: false,

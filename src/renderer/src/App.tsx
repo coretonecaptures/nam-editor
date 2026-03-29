@@ -64,11 +64,13 @@ function applyDefaults(meta: NamFile['metadata'], baseName: string, settings: Ap
       m.gear_model = settings.defaultModel
   }
 
-  // Auto gear type from filename (always on, uses configurable suffix)
+  // Auto gear type from filename suffix
   if (!m.gear_type) {
-    const suffix = (settings.ampSuffix || 'DI').replace(/\s+/g, '').toUpperCase()
     const nameUpper = baseName.replace(/\s+/g, '').toUpperCase()
-    m.gear_type = nameUpper.endsWith(suffix) ? 'amp' : 'cab'
+    const ampSuffix = settings.ampSuffix.replace(/\s+/g, '').toUpperCase()
+    if (ampSuffix && nameUpper.endsWith(ampSuffix)) m.gear_type = 'amp'
+    else if (settings.defaultToCab) m.gear_type = 'cab'
+    // else: leave blank
   }
 
   // Auto tone type from filename keywords (rightmost keyword wins)
