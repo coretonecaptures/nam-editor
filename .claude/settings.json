@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s \"https://api.github.com/repos/coretonecaptures/nam-editor/actions/runs/23716522052/jobs\")",
+      "Bash(curl -sL \"https://api.github.com/repos/coretonecaptures/nam-editor/actions/jobs/69084422774/logs\")",
+      "Bash(curl -sL \"https://api.github.com/repos/coretonecaptures/nam-editor/actions/jobs/69084422791/logs\")",
+      "Bash(curl -s \"https://api.github.com/repos/coretonecaptures/nam-editor/check-runs/69084422774/annotations\")",
+      "Bash(curl -s \"https://api.github.com/repos/coretonecaptures/nam-editor/check-runs/69084422791/annotations\")",
+      "Bash(curl -s \"https://api.github.com/repos/coretonecaptures/nam-editor/contents/.github/workflows/release.yml\")",
+      "Bash(python3 -c \"import sys,json,base64; d=json.load\\(sys.stdin\\); print\\(base64.b64decode\\(d[''''content'''']\\).decode\\(\\)\\)\")",
+      "Bash(node -e \"const chunks=[]; process.stdin.on\\(''''data'''',c=>chunks.push\\(c\\)\\); process.stdin.on\\(''''end'''',\\(\\)=>{ const d=JSON.parse\\(Buffer.concat\\(chunks\\)\\); console.log\\(Buffer.from\\(d.content,''''base64''''\\).toString\\(\\)\\); }\\)\")",
+      "Bash(curl -s \"https://api.github.com/repos/coretonecaptures/nam-editor/contents/package.json?ref=v0.2.0\")",
+      "Bash(gh run:*)",
+      "Bash(curl -s \"https://api.github.com/repos/coretonecaptures/nam-editor/git/refs/heads/v0.2.0\")",
+      "Bash(curl -s \"https://api.github.com/repos/coretonecaptures/nam-editor/git/refs/tags/v0.2.0\")",
+      "Bash(curl -s \"https://api.github.com/repos/coretonecaptures/nam-editor/contents/?ref=2a7b05e8f95c8721077327541537633dba39ddc2\")",
+      "Bash(node -e \"const chunks=[]; process.stdin.on\\(''''data'''',c=>chunks.push\\(c\\)\\); process.stdin.on\\(''''end'''',\\(\\)=>{ const d=JSON.parse\\(Buffer.concat\\(chunks\\)\\); d.forEach\\(f=>console.log\\(f.name, f.type\\)\\); }\\)\")",
+      "Bash(curl -s \"https://api.github.com/repos/coretonecaptures/nam-editor/contents/electron.vite.config.ts?ref=2a7b05e8f95c8721077327541537633dba39ddc2\")",
+      "Bash(curl -s \"https://api.github.com/repos/coretonecaptures/nam-editor/contents/tsconfig.json?ref=2a7b05e8f95c8721077327541537633dba39ddc2\")",
+      "Bash(curl -s \"https://api.github.com/repos/coretonecaptures/nam-editor/contents/src?ref=2a7b05e8f95c8721077327541537633dba39ddc2\")",
+      "Bash(curl -s \"https://api.github.com/repos/coretonecaptures/nam-editor/git/trees/2a7b05e8f95c8721077327541537633dba39ddc2?recursive=1\")",
+      "Bash(node -e \"const chunks=[]; process.stdin.on\\(''''data'''',c=>chunks.push\\(c\\)\\); process.stdin.on\\(''''end'''',\\(\\)=>{ const d=JSON.parse\\(Buffer.concat\\(chunks\\)\\); d.tree.forEach\\(f=>console.log\\(f.path\\)\\); }\\)\")",
+      "Bash(for f:*)",
+      "Bash(do echo:*)",
+      "Bash(node -e \"const chunks=[]; process.stdin.on\\(''''data'''',c=>chunks.push\\(c\\)\\); process.stdin.on\\(''''end'''',\\(\\)=>{ const d=JSON.parse\\(Buffer.concat\\(chunks\\)\\); console.log\\(Buffer.from\\(d.content,''''base64''''\\).toString\\(\\)\\); }\\)\" echo \"\" done)"
+    ]
+  }
+}

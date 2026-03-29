@@ -350,8 +350,10 @@ export default function App() {
       setStatus({ message: 'No unsaved changes', type: 'info' })
       return
     }
-    const confirmed = window.confirm(`Save changes to ${dirty.length} file${dirty.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.`)
-    if (!confirmed) return
+    if (!settings.skipSaveAllConfirmation) {
+      const confirmed = window.confirm(`Save changes to ${dirty.length} file${dirty.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.`)
+      if (!confirmed) return
+    }
     setStatus({ message: `Saving ${dirty.length} file(s)...`, type: 'info' })
     const savedPaths = new Set<string>()
     let failed = 0
@@ -502,8 +504,10 @@ export default function App() {
                     ? files.filter((f) => f.isDirty)
                     : files.filter((f) => f.isDirty && f.filePath.replace(/\\/g, '/').startsWith(path + '/'))
                   if (targets.length === 0) return
-                  const confirmed = window.confirm(`Save changes to ${targets.length} file${targets.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.`)
-                  if (!confirmed) return
+                  if (!settings.skipSaveAllConfirmation) {
+                    const confirmed = window.confirm(`Save changes to ${targets.length} file${targets.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.`)
+                    if (!confirmed) return
+                  }
                   const savedPaths = new Set<string>()
                   let failed = 0
                   for (const f of targets) {
@@ -611,6 +615,7 @@ export default function App() {
                   : files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(batchFolder.path! + '/')).length}
               onApply={handleBatchApply}
               onClose={() => setBatchFolder(null)}
+              skipConfirmation={settings.skipBatchEditConfirmation}
             />
           ) : selectedFiles.length === 1 ? (
             <MetadataEditor

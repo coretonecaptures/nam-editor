@@ -107,6 +107,7 @@ export function MetadataEditor({ file, onChange, onSave, onRevealInFinder }: Met
                 onChange={(v) => update('name', v)}
                 placeholder="e.g. BE100 Deluxe - Crunch Ch."
                 changed={isManuallyChanged('name')}
+                autoFilled={isAutoFilled('name')}
               />
             </Field>
             <Field label="Modeled By" hint="Creator / capture artist" autoFilled={isAutoFilled('modeled_by')}>
@@ -115,6 +116,7 @@ export function MetadataEditor({ file, onChange, onSave, onRevealInFinder }: Met
                 onChange={(v) => update('modeled_by', v)}
                 placeholder="e.g. Core Tone Captures"
                 changed={isManuallyChanged('modeled_by')}
+                autoFilled={isAutoFilled('modeled_by')}
               />
             </Field>
           </Section>
@@ -128,6 +130,7 @@ export function MetadataEditor({ file, onChange, onSave, onRevealInFinder }: Met
                   options={['', ...GEAR_TYPES]}
                   onChange={(v) => update('gear_type', v)}
                   changed={isManuallyChanged('gear_type')}
+                  autoFilled={isAutoFilled('gear_type')}
                 />
               </Field>
               <Field label="Tone Type" autoFilled={isAutoFilled('tone_type')}>
@@ -136,6 +139,7 @@ export function MetadataEditor({ file, onChange, onSave, onRevealInFinder }: Met
                   options={['', ...TONE_TYPES]}
                   onChange={(v) => update('tone_type', v)}
                   changed={isManuallyChanged('tone_type')}
+                  autoFilled={isAutoFilled('tone_type')}
                 />
               </Field>
             </div>
@@ -146,6 +150,7 @@ export function MetadataEditor({ file, onChange, onSave, onRevealInFinder }: Met
                   onChange={(v) => update('gear_make', v)}
                   placeholder="e.g. Friedman"
                   changed={isManuallyChanged('gear_make')}
+                  autoFilled={isAutoFilled('gear_make')}
                 />
               </Field>
               <Field label="Model" autoFilled={isAutoFilled('gear_model')}>
@@ -154,6 +159,7 @@ export function MetadataEditor({ file, onChange, onSave, onRevealInFinder }: Met
                   onChange={(v) => update('gear_model', v)}
                   placeholder="e.g. BE100 Deluxe"
                   changed={isManuallyChanged('gear_model')}
+                  autoFilled={isAutoFilled('gear_model')}
                 />
               </Field>
             </div>
@@ -169,6 +175,7 @@ export function MetadataEditor({ file, onChange, onSave, onRevealInFinder }: Met
                   placeholder="e.g. 12.5"
                   step={0.5}
                   changed={isManuallyChanged('input_level_dbu')}
+                  autoFilled={isAutoFilled('input_level_dbu')}
                 />
               </Field>
               <Field label="Reamp Return Level (dBu)" hint="Signal level at capture output" autoFilled={isAutoFilled('output_level_dbu')}>
@@ -178,6 +185,7 @@ export function MetadataEditor({ file, onChange, onSave, onRevealInFinder }: Met
                   placeholder="e.g. 12.5"
                   step={0.5}
                   changed={isManuallyChanged('output_level_dbu')}
+                  autoFilled={isAutoFilled('output_level_dbu')}
                 />
               </Field>
             </div>
@@ -264,19 +272,28 @@ function Field({
   )
 }
 
-const changedInputClass = 'border-amber-500/60 bg-amber-900/10 focus:border-amber-400'
-const normalInputClass  = 'border-gray-700 bg-gray-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50'
+const changedInputClass  = 'border-amber-500/60 bg-amber-900/10 focus:border-amber-400'
+const normalInputClass   = 'border-gray-700 bg-gray-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50'
+const autoFilledInputClass = 'border-indigo-500/50 bg-indigo-900/10 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-500/50'
+
+function inputClass(changed?: boolean, autoFilled?: boolean) {
+  if (changed) return changedInputClass
+  if (autoFilled) return autoFilledInputClass
+  return normalInputClass
+}
 
 function TextInput({
   value,
   onChange,
   placeholder,
-  changed
+  changed,
+  autoFilled
 }: {
   value: string
   onChange: (v: string) => void
   placeholder?: string
   changed?: boolean
+  autoFilled?: boolean
 }) {
   return (
     <input
@@ -284,7 +301,7 @@ function TextInput({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
-      className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none transition-colors ${changed ? changedInputClass : normalInputClass}`}
+      className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none transition-colors ${inputClass(changed, autoFilled)}`}
     />
   )
 }
@@ -294,13 +311,15 @@ function NumberInput({
   onChange,
   placeholder,
   step,
-  changed
+  changed,
+  autoFilled
 }: {
   value: string | number
   onChange: (v: number | null) => void
   placeholder?: string
   step?: number
   changed?: boolean
+  autoFilled?: boolean
 }) {
   return (
     <input
@@ -312,7 +331,7 @@ function NumberInput({
       }}
       placeholder={placeholder}
       step={step}
-      className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none transition-colors ${changed ? changedInputClass : normalInputClass}`}
+      className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none transition-colors ${inputClass(changed, autoFilled)}`}
     />
   )
 }
@@ -321,18 +340,20 @@ function Select({
   value,
   options,
   onChange,
-  changed
+  changed,
+  autoFilled
 }: {
   value: string
   options: readonly string[]
   onChange: (v: string) => void
   changed?: boolean
+  autoFilled?: boolean
 }) {
   return (
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-100 focus:outline-none transition-colors appearance-none cursor-pointer ${changed ? changedInputClass : normalInputClass}`}
+      className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-100 focus:outline-none transition-colors appearance-none cursor-pointer ${inputClass(changed, autoFilled)}`}
     >
       {options.map((o) => (
         <option key={o} value={o} className="bg-gray-800">

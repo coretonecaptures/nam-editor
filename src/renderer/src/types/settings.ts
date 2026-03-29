@@ -22,6 +22,10 @@ export interface AppSettings {
   defaultToCab: boolean      // if true, anything that doesn't match ampSuffix gets set to "cab"
   autoDetectToneType: boolean
 
+  // Confirmations (false = show dialog, true = skip)
+  skipSaveAllConfirmation: boolean
+  skipBatchEditConfirmation: boolean
+
   // Startup
   enableDefaultFolder: boolean
   defaultFolder: string
@@ -44,6 +48,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ampSuffix: '',
   defaultToCab: false,
   autoDetectToneType: true,
+
+  skipSaveAllConfirmation: false,
+  skipBatchEditConfirmation: false,
 
   enableDefaultFolder: false,
   defaultFolder: '',

@@ -6,9 +6,10 @@ interface BatchEditorProps {
   fileCount: number
   onApply: (metadata: Partial<NamMetadata>) => void
   onClose: () => void
+  skipConfirmation?: boolean
 }
 
-export function BatchEditor({ folderName, fileCount, onApply, onClose }: BatchEditorProps) {
+export function BatchEditor({ folderName, fileCount, onApply, onClose, skipConfirmation }: BatchEditorProps) {
   const [fields, setFields] = useState<Partial<NamMetadata>>({})
   const [enabled, setEnabled] = useState<Set<keyof NamMetadata>>(new Set())
 
@@ -27,11 +28,13 @@ export function BatchEditor({ folderName, fileCount, onApply, onClose }: BatchEd
 
   const handleApply = () => {
     if (enabled.size === 0) return
-    const fieldNames = [...enabled].map((k) => batchFields.find((f) => f.key === k)?.label ?? k).join(', ')
-    const confirmed = window.confirm(
-      `Apply ${enabled.size} field${enabled.size !== 1 ? 's' : ''} (${fieldNames}) to ${fileCount} file${fileCount !== 1 ? 's' : ''} in "${folderName}"?\n\nThis will write changes directly to the .nam files on disk.`
-    )
-    if (!confirmed) return
+    if (!skipConfirmation) {
+      const fieldNames = [...enabled].map((k) => batchFields.find((f) => f.key === k)?.label ?? k).join(', ')
+      const confirmed = window.confirm(
+        `Apply ${enabled.size} field${enabled.size !== 1 ? 's' : ''} (${fieldNames}) to ${fileCount} file${fileCount !== 1 ? 's' : ''} in "${folderName}"?\n\nThis will write changes directly to the .nam files on disk.`
+      )
+      if (!confirmed) return
+    }
     const toApply: Partial<NamMetadata> = {}
     for (const key of enabled) {
       ;(toApply as Record<string, unknown>)[key] = (fields as Record<string, unknown>)[key] ?? null

@@ -177,6 +177,24 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
                 checked={draft.defaultToCab}
                 onChange={(v) => update('defaultToCab', v)}
               />
+
+              <div className="pt-2 border-t border-gray-800">
+                <p className="text-xs text-gray-500 mb-3">Confirmation dialogs</p>
+                <div className="space-y-3">
+                  <CheckboxField
+                    label="Skip Save All confirmation"
+                    description="Don't ask before saving all unsaved files in a folder or globally."
+                    checked={draft.skipSaveAllConfirmation}
+                    onChange={(v) => update('skipSaveAllConfirmation', v)}
+                  />
+                  <CheckboxField
+                    label="Skip Batch Edit confirmation"
+                    description="Don't ask before applying batch edits."
+                    checked={draft.skipBatchEditConfirmation}
+                    onChange={(v) => update('skipBatchEditConfirmation', v)}
+                  />
+                </div>
+              </div>
             </div>
           </div>
 
