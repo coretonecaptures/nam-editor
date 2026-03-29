@@ -8,9 +8,17 @@ interface MetadataEditorProps {
 
 export function MetadataEditor({ file, onChange, onSave }: MetadataEditorProps) {
   const m = file.metadata
+  const orig = file.originalMetadata
 
   const update = (key: keyof NamMetadata, value: unknown) => {
     onChange({ ...m, [key]: value === '' ? null : value })
+  }
+
+  // Returns true if this field differs from what was in the file on disk
+  const isChanged = (key: keyof NamMetadata): boolean => {
+    const cur = m[key] ?? null
+    const was = orig[key] ?? null
+    return cur !== was
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -78,18 +86,20 @@ export function MetadataEditor({ file, onChange, onSave }: MetadataEditorProps) 
 
           {/* Identity section */}
           <Section title="Identity" icon="🎸">
-            <Field label="Capture Name" hint="Display name shown in plugins">
+            <Field label="Capture Name" hint="Display name shown in plugins" changed={isChanged('name')}>
               <TextInput
                 value={m.name ?? ''}
                 onChange={(v) => update('name', v)}
                 placeholder="e.g. BE100 Deluxe - Crunch Ch."
+                changed={isChanged('name')}
               />
             </Field>
-            <Field label="Modeled By" hint="Creator / capture artist">
+            <Field label="Modeled By" hint="Creator / capture artist" changed={isChanged('modeled_by')}>
               <TextInput
                 value={m.modeled_by ?? ''}
                 onChange={(v) => update('modeled_by', v)}
                 placeholder="e.g. Core Tone Captures"
+                changed={isChanged('modeled_by')}
               />
             </Field>
           </Section>
@@ -97,34 +107,38 @@ export function MetadataEditor({ file, onChange, onSave }: MetadataEditorProps) 
           {/* Gear section */}
           <Section title="Gear" icon="🔊">
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Gear Type">
+              <Field label="Gear Type" changed={isChanged('gear_type')}>
                 <Select
                   value={m.gear_type ?? ''}
                   options={['', ...GEAR_TYPES]}
                   onChange={(v) => update('gear_type', v)}
+                  changed={isChanged('gear_type')}
                 />
               </Field>
-              <Field label="Tone Type">
+              <Field label="Tone Type" changed={isChanged('tone_type')}>
                 <Select
                   value={m.tone_type ?? ''}
                   options={['', ...TONE_TYPES]}
                   onChange={(v) => update('tone_type', v)}
+                  changed={isChanged('tone_type')}
                 />
               </Field>
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Manufacturer">
+              <Field label="Manufacturer" changed={isChanged('gear_make')}>
                 <TextInput
                   value={m.gear_make ?? ''}
                   onChange={(v) => update('gear_make', v)}
                   placeholder="e.g. Friedman"
+                  changed={isChanged('gear_make')}
                 />
               </Field>
-              <Field label="Model">
+              <Field label="Model" changed={isChanged('gear_model')}>
                 <TextInput
                   value={m.gear_model ?? ''}
                   onChange={(v) => update('gear_model', v)}
                   placeholder="e.g. BE100 Deluxe"
+                  changed={isChanged('gear_model')}
                 />
               </Field>
             </div>
@@ -133,20 +147,22 @@ export function MetadataEditor({ file, onChange, onSave }: MetadataEditorProps) 
           {/* Levels section */}
           <Section title="Levels" icon="📊">
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Input Level (dBu)" hint="Signal level at capture input">
+              <Field label="Input Level (dBu)" hint="Signal level at capture input" changed={isChanged('input_level_dbu')}>
                 <NumberInput
                   value={m.input_level_dbu ?? ''}
                   onChange={(v) => update('input_level_dbu', v)}
                   placeholder="e.g. 12.5"
                   step={0.5}
+                  changed={isChanged('input_level_dbu')}
                 />
               </Field>
-              <Field label="Output Level (dBu)" hint="Signal level at capture output">
+              <Field label="Output Level (dBu)" hint="Signal level at capture output" changed={isChanged('output_level_dbu')}>
                 <NumberInput
                   value={m.output_level_dbu ?? ''}
                   onChange={(v) => update('output_level_dbu', v)}
                   placeholder="e.g. 12.5"
                   step={0.5}
+                  changed={isChanged('output_level_dbu')}
                 />
               </Field>
             </div>
@@ -208,31 +224,44 @@ function Section({ title, icon, children }: { title: string; icon: string; child
 function Field({
   label,
   hint,
+  changed,
   children
 }: {
   label: string
   hint?: string
+  changed?: boolean
   children: React.ReactNode
 }) {
   return (
     <div>
-      <label className="block text-xs font-medium text-gray-400 mb-1.5">
+      <label className="flex items-center gap-1.5 text-xs font-medium text-gray-400 mb-1.5">
         {label}
-        {hint && <span className="ml-2 text-gray-600 font-normal">{hint}</span>}
+        {hint && <span className="text-gray-600 font-normal">{hint}</span>}
+        {changed && (
+          <span className="ml-auto text-xs text-amber-400 font-normal flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
+            auto-filled
+          </span>
+        )}
       </label>
       {children}
     </div>
   )
 }
 
+const changedInputClass = 'border-amber-500/60 bg-amber-900/10 focus:border-amber-400'
+const normalInputClass  = 'border-gray-700 bg-gray-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50'
+
 function TextInput({
   value,
   onChange,
-  placeholder
+  placeholder,
+  changed
 }: {
   value: string
   onChange: (v: string) => void
   placeholder?: string
+  changed?: boolean
 }) {
   return (
     <input
@@ -240,7 +269,7 @@ function TextInput({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
-      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors"
+      className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none transition-colors ${changed ? changedInputClass : normalInputClass}`}
     />
   )
 }
@@ -249,12 +278,14 @@ function NumberInput({
   value,
   onChange,
   placeholder,
-  step
+  step,
+  changed
 }: {
   value: string | number
   onChange: (v: number | null) => void
   placeholder?: string
   step?: number
+  changed?: boolean
 }) {
   return (
     <input
@@ -266,7 +297,7 @@ function NumberInput({
       }}
       placeholder={placeholder}
       step={step}
-      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors"
+      className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none transition-colors ${changed ? changedInputClass : normalInputClass}`}
     />
   )
 }
@@ -274,17 +305,19 @@ function NumberInput({
 function Select({
   value,
   options,
-  onChange
+  onChange,
+  changed
 }: {
   value: string
   options: readonly string[]
   onChange: (v: string) => void
+  changed?: boolean
 }) {
   return (
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-100 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors appearance-none cursor-pointer"
+      className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-100 focus:outline-none transition-colors appearance-none cursor-pointer ${changed ? changedInputClass : normalInputClass}`}
     >
       {options.map((o) => (
         <option key={o} value={o} className="bg-gray-800">

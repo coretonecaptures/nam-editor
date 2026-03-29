@@ -27,6 +27,7 @@ export interface NamFile {
   fileName: string
   version: string
   metadata: NamMetadata
+  originalMetadata: NamMetadata  // raw values from file before any defaults applied
   architecture: string
   config: unknown
   isDirty: boolean

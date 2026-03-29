@@ -87,15 +87,18 @@ export default function App() {
         const fileName = r.filePath.replace(/\\/g, '/').split('/').pop() ?? r.filePath
         if (!files.some((f) => f.filePath === r.filePath)) {
           const baseName = fileName.replace(/\.nam$/i, '')
-          const meta = applyDefaults(r.metadata ?? {}, baseName, settings)
+          const rawMeta = r.metadata ?? {}
+          const meta = applyDefaults({ ...rawMeta }, baseName, settings)
+          const wasChanged = JSON.stringify(meta) !== JSON.stringify(rawMeta)
           loaded.push({
             filePath: r.filePath,
             fileName: baseName,
             version: r.version ?? '?',
             metadata: meta,
+            originalMetadata: rawMeta,
             architecture: r.architecture ?? '?',
             config: r.config,
-            isDirty: false
+            isDirty: wasChanged
           })
         }
       } else {

@@ -33,6 +33,7 @@ export function FileList({
 
   const filtered = files.filter((f) => {
     const m = f.metadata
+    const o = f.originalMetadata  // original values from file, before defaults
     if (search) {
       const q = search.toLowerCase()
       const haystack = [f.fileName, m.name, m.gear_make, m.gear_model, m.modeled_by]
@@ -40,10 +41,10 @@ export function FileList({
       if (!haystack.includes(q)) return false
     }
     switch (filter) {
-      case 'unnamed':   return !m.name || m.name === f.fileName
-      case 'no-gear':   return !m.gear_type
-      case 'no-maker':  return !m.gear_make && !m.gear_model
-      case 'no-tone':   return !m.tone_type
+      case 'unnamed':   return !o.name
+      case 'no-gear':   return !o.gear_type
+      case 'no-maker':  return !o.gear_make && !o.gear_model
+      case 'no-tone':   return !o.tone_type
       default:          return true
     }
   })
