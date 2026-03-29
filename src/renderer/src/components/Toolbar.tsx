@@ -13,6 +13,7 @@ interface ToolbarProps {
   showSettings: boolean
   onToggleSettings: () => void
   onNameFromFilename: () => void
+  onCloseAll: () => void
 }
 
 export function Toolbar({
@@ -27,7 +28,8 @@ export function Toolbar({
   isMac,
   showSettings,
   onToggleSettings,
-  onNameFromFilename
+  onNameFromFilename,
+  onCloseAll
 }: ToolbarProps) {
   return (
     <div
@@ -65,6 +67,20 @@ export function Toolbar({
         </svg>
         Open Folder
       </button>
+
+      {fileCount > 0 && (
+        <button
+          onClick={onCloseAll}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-gray-800 hover:bg-red-900/60 text-gray-300 hover:text-red-300 transition-colors"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          title="Close all files"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+          Close All
+        </button>
+      )}
 
       <div className="w-px h-5 bg-gray-700" />
 

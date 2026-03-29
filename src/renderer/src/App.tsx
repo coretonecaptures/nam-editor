@@ -117,17 +117,42 @@ export default function App() {
     }
   }, [files, selectedIds, settings])
 
+  // Returns false if user cancels, true if safe to proceed
+  const confirmDiscardChanges = (): boolean => {
+    const dirty = files.filter((f) => f.isDirty)
+    if (dirty.length === 0) return true
+    return window.confirm(
+      `You have unsaved changes in ${dirty.length} file${dirty.length !== 1 ? 's' : ''}.\n\nDiscard changes and continue?`
+    )
+  }
+
+  const handleCloseAll = () => {
+    if (!confirmDiscardChanges()) return
+    setFiles([])
+    setSelectedIds(new Set())
+    setBatchMode(false)
+    setShowSettings(false)
+    setStatus({ message: 'Open .nam files or a folder to get started', type: 'info' })
+  }
+
   const handleOpenFiles = async () => {
+    if (!confirmDiscardChanges()) return
     const paths = await window.api.openFiles()
-    if (paths.length > 0) await loadFiles(paths)
+    if (paths.length === 0) return
+    setFiles([])
+    setSelectedIds(new Set())
+    await loadFiles(paths)
   }
 
   const handleOpenFolder = async () => {
+    if (!confirmDiscardChanges()) return
     const folder = await window.api.openFolder()
     if (!folder) return
     setStatus({ message: 'Scanning folder...', type: 'info' })
     const result = await window.api.scanFolder(folder)
     if (result.success && result.files && result.files.length > 0) {
+      setFiles([])
+      setSelectedIds(new Set())
       await loadFiles(result.files)
     } else if (result.success) {
       setStatus({ message: 'No .nam files found in that folder', type: 'info' })
@@ -162,7 +187,11 @@ export default function App() {
     if (!file) return
     const result = await window.api.writeMetadata(filePath, file.metadata)
     if (result.success) {
-      setFiles((prev) => prev.map((f) => (f.filePath === filePath ? { ...f, isDirty: false } : f)))
+      setFiles((prev) => prev.map((f) =>
+        f.filePath === filePath
+          ? { ...f, isDirty: false, originalMetadata: { ...f.metadata } }
+          : f
+      ))
       setStatus({ message: `Saved: ${file.fileName}`, type: 'success' })
     } else {
       setStatus({ message: `Save failed: ${result.error}`, type: 'error' })
@@ -178,18 +207,22 @@ export default function App() {
     const confirmed = window.confirm(`Save changes to ${dirty.length} file${dirty.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.`)
     if (!confirmed) return
     setStatus({ message: `Saving ${dirty.length} file(s)...`, type: 'info' })
-    let saved = 0
+    const savedPaths = new Set<string>()
     let failed = 0
     for (const f of dirty) {
       const result = await window.api.writeMetadata(f.filePath, f.metadata)
-      if (result.success) saved++
+      if (result.success) savedPaths.add(f.filePath)
       else failed++
     }
-    setFiles((prev) => prev.map((f) => ({ ...f, isDirty: false })))
+    setFiles((prev) => prev.map((f) =>
+      savedPaths.has(f.filePath)
+        ? { ...f, isDirty: false, originalMetadata: { ...f.metadata } }
+        : f
+    ))
     if (failed > 0) {
-      setStatus({ message: `Saved ${saved}, failed ${failed}`, type: 'error' })
+      setStatus({ message: `Saved ${savedPaths.size}, failed ${failed}`, type: 'error' })
     } else {
-      setStatus({ message: `Saved ${saved} file(s)`, type: 'success' })
+      setStatus({ message: `Saved ${savedPaths.size} file(s)`, type: 'success' })
     }
   }
 
@@ -252,6 +285,7 @@ export default function App() {
         onToggleSettings={() => { setShowSettings((s) => !s); setBatchMode(false) }}
         unnamedCount={unnamedCount}
         onNameFromFilename={handleNameFromFilename}
+        onCloseAll={handleCloseAll}
       />
 
       <div className="flex flex-1 overflow-hidden">
