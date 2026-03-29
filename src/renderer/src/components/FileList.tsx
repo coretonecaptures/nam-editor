@@ -12,6 +12,7 @@ interface FileListProps {
   onDeselectAll: () => void
   onRemove?: (id: string) => void  // omit to hide remove button (e.g. librarian mode)
   onBatchEditSelected?: (paths: string[]) => void
+  onSaveSelected?: (paths: string[]) => void
 }
 
 export function FileList({
@@ -22,7 +23,8 @@ export function FileList({
   onSelectAll,
   onDeselectAll,
   onRemove = undefined,
-  onBatchEditSelected
+  onBatchEditSelected,
+  onSaveSelected
 }: FileListProps) {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<FilterMode>('all')
@@ -137,7 +139,7 @@ export function FileList({
       <div
         className="flex-1 overflow-y-auto"
         onContextMenu={(e) => {
-          if (!onBatchEditSelected || selectedIds.size === 0) return
+          if (selectedIds.size === 0) return
           e.preventDefault()
           setCtxMenu({ x: e.clientX, y: e.clientY })
         }}
@@ -175,18 +177,34 @@ export function FileList({
           style={{ top: ctxMenu.y, left: ctxMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >
-          <button
-            className="w-full text-left px-3 py-2 text-sm text-gray-200 hover:bg-gray-800 transition-colors flex items-center gap-2"
-            onClick={() => {
-              onBatchEditSelected!([...selectedIds])
-              setCtxMenu(null)
-            }}
-          >
-            <svg className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
-            </svg>
-            Batch edit {selectedIds.size} selected
-          </button>
+          {onSaveSelected && (
+            <button
+              className="w-full text-left px-3 py-2 text-sm text-gray-200 hover:bg-gray-800 transition-colors flex items-center gap-2"
+              onClick={() => {
+                onSaveSelected([...selectedIds])
+                setCtxMenu(null)
+              }}
+            >
+              <svg className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+              </svg>
+              Save {selectedIds.size} selected
+            </button>
+          )}
+          {onBatchEditSelected && (
+            <button
+              className="w-full text-left px-3 py-2 text-sm text-gray-200 hover:bg-gray-800 transition-colors flex items-center gap-2"
+              onClick={() => {
+                onBatchEditSelected([...selectedIds])
+                setCtxMenu(null)
+              }}
+            >
+              <svg className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
+              </svg>
+              Batch edit {selectedIds.size} selected
+            </button>
+          )}
         </div>
       )}
     </div>

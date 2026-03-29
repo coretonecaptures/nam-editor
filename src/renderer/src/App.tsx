@@ -596,6 +596,36 @@ export default function App() {
                   filePaths: paths
                 })
               }}
+              onSaveSelected={async (paths) => {
+                const pathSet = new Set(paths)
+                const targets = files.filter((f) => pathSet.has(f.filePath) && f.isDirty)
+                if (targets.length === 0) {
+                  setStatus({ message: 'No unsaved changes in selection', type: 'info' })
+                  return
+                }
+                if (!settings.skipSaveAllConfirmation) {
+                  const confirmed = window.confirm(`Save changes to ${targets.length} file${targets.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.`)
+                  if (!confirmed) return
+                }
+                setStatus({ message: `Saving ${targets.length} file(s)...`, type: 'info' })
+                const savedPaths = new Set<string>()
+                let failed = 0
+                for (const f of targets) {
+                  const result = await window.api.writeMetadata(f.filePath, f.metadata)
+                  if (result.success) savedPaths.add(f.filePath)
+                  else failed++
+                }
+                setFiles((prev) => prev.map((f) =>
+                  savedPaths.has(f.filePath)
+                    ? { ...f, isDirty: false, originalMetadata: { ...f.metadata } }
+                    : f
+                ))
+                if (failed > 0) {
+                  setStatus({ message: `Saved ${savedPaths.size}, failed ${failed}`, type: 'error' })
+                } else {
+                  setStatus({ message: `Saved ${savedPaths.size} file(s)`, type: 'success' })
+                }
+              }}
             />
           </div>
           <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} />
