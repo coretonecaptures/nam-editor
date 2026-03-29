@@ -147,7 +147,7 @@ export function MetadataEditor({ file, onChange, onSave }: MetadataEditorProps) 
           {/* Levels section */}
           <Section title="Levels" icon="📊">
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Input Level (dBu)" hint="Signal level at capture input" changed={isChanged('input_level_dbu')}>
+              <Field label="Reamp Send Level (dBu)" hint="Signal level at capture input" changed={isChanged('input_level_dbu')}>
                 <NumberInput
                   value={m.input_level_dbu ?? ''}
                   onChange={(v) => update('input_level_dbu', v)}
@@ -156,7 +156,7 @@ export function MetadataEditor({ file, onChange, onSave }: MetadataEditorProps) 
                   changed={isChanged('input_level_dbu')}
                 />
               </Field>
-              <Field label="Output Level (dBu)" hint="Signal level at capture output" changed={isChanged('output_level_dbu')}>
+              <Field label="Reamp Return Level (dBu)" hint="Signal level at capture output" changed={isChanged('output_level_dbu')}>
                 <NumberInput
                   value={m.output_level_dbu ?? ''}
                   onChange={(v) => update('output_level_dbu', v)}

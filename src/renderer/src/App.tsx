@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { NamFile, TONE_TYPES } from './types/nam'
+import { NamFile, TONE_TYPES, GEAR_TYPES } from './types/nam'
 import { AppSettings, loadSettings, saveSettings } from './types/settings'
 import { LibrarianState } from './types/librarian'
 import { FileList } from './components/FileList'
@@ -70,7 +70,7 @@ function applyDefaults(meta: NamFile['metadata'], baseName: string, settings: Ap
     const nameUpper = baseName.replace(/\s+/g, '').toUpperCase()
     const ampSuffix = settings.ampSuffix.replace(/\s+/g, '').toUpperCase()
     if (ampSuffix && nameUpper.endsWith(ampSuffix)) m.gear_type = 'amp'
-    else if (settings.defaultToCab) m.gear_type = 'cab'
+    else if (settings.defaultToCab) m.gear_type = 'amp_cab'
     // else: leave blank
   }
 
@@ -181,6 +181,9 @@ export default function App() {
         const workingMeta: NamFile['metadata'] = { ...rawMeta }
         if (workingMeta.tone_type && !(TONE_TYPES as readonly string[]).includes(workingMeta.tone_type)) {
           workingMeta.tone_type = null
+        }
+        if (workingMeta.gear_type && !(GEAR_TYPES as readonly string[]).includes(workingMeta.gear_type)) {
+          workingMeta.gear_type = null
         }
         const meta = applyDefaults(workingMeta, baseName, settings)
         const wasChanged = JSON.stringify(meta) !== JSON.stringify(rawMeta)

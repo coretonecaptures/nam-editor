@@ -34,7 +34,7 @@ export interface NamFile {
   loadError?: string
 }
 
-export const GEAR_TYPES = ['amp', 'pedal', 'cab', 'preamp', 'di', 'other'] as const
+export const GEAR_TYPES = ['amp', 'pedal', 'pedal_amp', 'amp_cab', 'amp_pedal_cab', 'preamp', 'studio'] as const
 export const TONE_TYPES = [
   'clean',
   'crunch',
