@@ -9,7 +9,7 @@ jobs:
   build-windows:
     runs-on: windows-latest
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   
+      GH_TOKEN: ${{ secrets.GH_PAT }}   # PAT available for electron-builder if needed
     steps:
       - uses: actions/checkout@v4
 
@@ -21,23 +21,23 @@ jobs:
         run: npm ci
 
       - name: Build Windows installer
-        run: npm run package:win
+        run: npm run package:win -- --publish=never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
-      - name: Upload to release
+      - name: Upload Windows release
         uses: softprops/action-gh-release@v2
         with:
           files: release/**/*.exe
           draft: false
           fail_on_unmatched_files: false
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
   build-mac:
     runs-on: macos-latest
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   
+      GH_TOKEN: ${{ secrets.GH_PAT }}   # PAT available for electron-builder if needed
     steps:
       - uses: actions/checkout@v4
 
@@ -49,15 +49,15 @@ jobs:
         run: npm ci
 
       - name: Build Mac DMG
-        run: npm run package:mac
+        run: npm run package:mac -- --publish=never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
-      - name: Upload to release
+      - name: Upload Mac release
         uses: softprops/action-gh-release@v2
         with:
           files: release/**/*.dmg
           draft: false
           fail_on_unmatched_files: false
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
