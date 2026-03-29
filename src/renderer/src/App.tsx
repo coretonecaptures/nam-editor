@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { NamFile } from './types/nam'
 import { AppSettings, loadSettings, saveSettings } from './types/settings'
 import { LibrarianState } from './types/librarian'
@@ -91,6 +91,29 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
   const [librarian, setLibrarian] = useState<LibrarianState>(EMPTY_LIBRARIAN)
+  const [treeWidth, setTreeWidth] = useState(220)
+  const [listWidth, setListWidth] = useState(280)
+  const draggingRef = useRef<null | { panel: 'tree' | 'list'; startX: number; startWidth: number }>(null)
+
+  const onDragStart = (panel: 'tree' | 'list', e: React.MouseEvent) => {
+    e.preventDefault()
+    const startWidth = panel === 'tree' ? treeWidth : listWidth
+    draggingRef.current = { panel, startX: e.clientX, startWidth }
+    const onMove = (ev: MouseEvent) => {
+      if (!draggingRef.current) return
+      const delta = ev.clientX - draggingRef.current.startX
+      const next = Math.max(140, Math.min(480, draggingRef.current.startWidth + delta))
+      if (draggingRef.current.panel === 'tree') setTreeWidth(next)
+      else setListWidth(next)
+    }
+    const onUp = () => {
+      draggingRef.current = null
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
 
   const handleSaveSettings = (updated: AppSettings) => {
     setSettings(updated)
@@ -354,86 +377,92 @@ export default function App() {
       <div className="flex flex-1 overflow-hidden">
         {/* Folder tree — only shown when a folder is open */}
         {hasTree && (
-          <div className="w-48 flex-shrink-0 border-r border-gray-800 flex flex-col overflow-hidden">
-            <FolderTree
-              tree={librarian.folderTree!}
-              selectedFolder={librarian.selectedFolder}
-              dirtyPaths={dirtyPaths}
-              onSelect={(path) => {
-                setLibrarian((prev) => ({ ...prev, selectedFolder: path }))
-                setSelectedIds(new Set())
-              }}
-              onSaveFolder={async (path) => {
-                const targets = path === null
-                  ? files.filter((f) => f.isDirty)
-                  : files.filter((f) => f.isDirty && f.filePath.replace(/\\/g, '/').startsWith(path + '/'))
-                if (targets.length === 0) return
-                const savedPaths = new Set<string>()
-                let failed = 0
-                for (const f of targets) {
-                  const result = await window.api.writeMetadata(f.filePath, f.metadata)
-                  if (result.success) savedPaths.add(f.filePath)
-                  else failed++
-                }
-                setFiles((prev) => prev.map((f) =>
-                  savedPaths.has(f.filePath)
-                    ? { ...f, isDirty: false, originalMetadata: { ...f.metadata } }
-                    : f
-                ))
-                if (failed > 0) {
-                  setStatus({ message: `Saved ${savedPaths.size}, failed ${failed}`, type: 'error' })
-                } else {
-                  setStatus({ message: `Saved ${savedPaths.size} file(s)`, type: 'success' })
-                }
-              }}
-              onRevertFolder={(path) => {
-                const targets = path === null
-                  ? files.filter((f) => f.isDirty)
-                  : files.filter((f) => f.isDirty && f.filePath.replace(/\\/g, '/').startsWith(path + '/'))
-                if (targets.length === 0) return
-                if (!window.confirm(`Revert ${targets.length} unsaved file${targets.length !== 1 ? 's' : ''} in this folder?\n\nAll unsaved changes will be lost.`)) return
-                setFiles((prev) => prev.map((f) =>
-                  targets.some((t) => t.filePath === f.filePath)
-                    ? { ...f, metadata: { ...f.originalMetadata }, isDirty: false }
-                    : f
-                ))
-                setStatus({ message: `Reverted ${targets.length} file(s)`, type: 'info' })
-              }}
-            />
-          </div>
+          <>
+            <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: treeWidth }}>
+              <FolderTree
+                tree={librarian.folderTree!}
+                selectedFolder={librarian.selectedFolder}
+                dirtyPaths={dirtyPaths}
+                onSelect={(path) => {
+                  setLibrarian((prev) => ({ ...prev, selectedFolder: path }))
+                  setSelectedIds(new Set())
+                }}
+                onSaveFolder={async (path) => {
+                  const targets = path === null
+                    ? files.filter((f) => f.isDirty)
+                    : files.filter((f) => f.isDirty && f.filePath.replace(/\\/g, '/').startsWith(path + '/'))
+                  if (targets.length === 0) return
+                  const savedPaths = new Set<string>()
+                  let failed = 0
+                  for (const f of targets) {
+                    const result = await window.api.writeMetadata(f.filePath, f.metadata)
+                    if (result.success) savedPaths.add(f.filePath)
+                    else failed++
+                  }
+                  setFiles((prev) => prev.map((f) =>
+                    savedPaths.has(f.filePath)
+                      ? { ...f, isDirty: false, originalMetadata: { ...f.metadata } }
+                      : f
+                  ))
+                  if (failed > 0) {
+                    setStatus({ message: `Saved ${savedPaths.size}, failed ${failed}`, type: 'error' })
+                  } else {
+                    setStatus({ message: `Saved ${savedPaths.size} file(s)`, type: 'success' })
+                  }
+                }}
+                onRevertFolder={(path) => {
+                  const targets = path === null
+                    ? files.filter((f) => f.isDirty)
+                    : files.filter((f) => f.isDirty && f.filePath.replace(/\\/g, '/').startsWith(path + '/'))
+                  if (targets.length === 0) return
+                  if (!window.confirm(`Revert ${targets.length} unsaved file${targets.length !== 1 ? 's' : ''} in this folder?\n\nAll unsaved changes will be lost.`)) return
+                  setFiles((prev) => prev.map((f) =>
+                    targets.some((t) => t.filePath === f.filePath)
+                      ? { ...f, metadata: { ...f.originalMetadata }, isDirty: false }
+                      : f
+                  ))
+                  setStatus({ message: `Reverted ${targets.length} file(s)`, type: 'info' })
+                }}
+              />
+            </div>
+            <DragHandle onMouseDown={(e) => onDragStart('tree', e)} />
+          </>
         )}
 
         {/* File list */}
-        <div className={`${hasTree ? 'w-64' : 'w-72'} flex-shrink-0 border-r border-gray-800 flex flex-col overflow-hidden`}>
-          <FileList
-            files={visibleFiles}
-            selectedIds={selectedIds}
-            onSelect={(id, multi) => {
-              if (multi) {
+        <>
+          <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: listWidth }}>
+            <FileList
+              files={visibleFiles}
+              selectedIds={selectedIds}
+              onSelect={(id, multi) => {
+                if (multi) {
+                  setSelectedIds((prev) => {
+                    const next = new Set(prev)
+                    if (next.has(id)) next.delete(id)
+                    else next.add(id)
+                    return next
+                  })
+                } else {
+                  setSelectedIds(new Set([id]))
+                  setShowSettings(false)
+                  setBatchMode(false)
+                }
+              }}
+              onSelectRange={(ids) => {
                 setSelectedIds((prev) => {
                   const next = new Set(prev)
-                  if (next.has(id)) next.delete(id)
-                  else next.add(id)
+                  for (const id of ids) next.add(id)
                   return next
                 })
-              } else {
-                setSelectedIds(new Set([id]))
-                setShowSettings(false)
-                setBatchMode(false)
-              }
-            }}
-            onSelectRange={(ids) => {
-              setSelectedIds((prev) => {
-                const next = new Set(prev)
-                for (const id of ids) next.add(id)
-                return next
-              })
-            }}
-            onSelectAll={() => setSelectedIds(new Set(visibleFiles.map((f) => f.filePath)))}
-            onDeselectAll={() => setSelectedIds(new Set())}
-            onRemove={hasTree ? undefined : handleRemoveFile}
-          />
-        </div>
+              }}
+              onSelectAll={() => setSelectedIds(new Set(visibleFiles.map((f) => f.filePath)))}
+              onDeselectAll={() => setSelectedIds(new Set())}
+              onRemove={hasTree ? undefined : handleRemoveFile}
+            />
+          </div>
+          <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} />
+        </>
 
         {/* Main content */}
         <div className="flex-1 overflow-hidden flex flex-col">
@@ -496,6 +525,15 @@ function DefaultsPill({ settings }: { settings: AppSettings }) {
         ))}
       </div>
     </div>
+  )
+}
+
+function DragHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
+  return (
+    <div
+      className="flex-shrink-0 w-1 bg-gray-800 hover:bg-indigo-500 cursor-col-resize transition-colors active:bg-indigo-400"
+      onMouseDown={onMouseDown}
+    />
   )
 }
 
