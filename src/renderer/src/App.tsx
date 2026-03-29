@@ -175,14 +175,14 @@ export default function App() {
       if (r.success && r.filePath && r.metadata !== undefined) {
         const fileName = r.filePath.replace(/\\/g, '/').split('/').pop() ?? r.filePath
         const baseName = fileName.replace(/\.nam$/i, '')
-        const rawMeta: NamFile['metadata'] = { ...(r.metadata ?? {}) }
-        // If tone_type isn't a recognized value, blank it in working metadata
-        // so the amber highlight and missing badge flag it for fixing.
-        // originalMetadata keeps the raw value so isDirty triggers.
-        if (rawMeta.tone_type && !(TONE_TYPES as readonly string[]).includes(rawMeta.tone_type)) {
-          rawMeta.tone_type = null
+        const rawMeta = r.metadata ?? {}
+        // Sanitize unrecognized values into working copy only — originalMetadata
+        // keeps the raw value so isDirty fires and the file surfaces for fixing
+        const workingMeta: NamFile['metadata'] = { ...rawMeta }
+        if (workingMeta.tone_type && !(TONE_TYPES as readonly string[]).includes(workingMeta.tone_type)) {
+          workingMeta.tone_type = null
         }
-        const meta = applyDefaults({ ...rawMeta }, baseName, settings)
+        const meta = applyDefaults(workingMeta, baseName, settings)
         const wasChanged = JSON.stringify(meta) !== JSON.stringify(rawMeta)
         loaded.push({
           filePath: r.filePath,
