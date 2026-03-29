@@ -23,10 +23,18 @@ This is especially useful for capture artists who want to properly tag their `.n
 
 ## Features
 
+### Library View (Folder Mode)
+- Open a folder and get a three-panel layout: **Folder Tree | File List | Metadata Editor**
+- Folder tree shows all subfolders with file counts; click any node to filter the file list to that folder
+- Each folder shows a **blue total count** and an **amber dirty count** (unsaved edits)
+- All three panels are **resizable** — drag the dividers to adjust
+- **Refresh** button rescans the folder for new or removed files (warns about unsaved changes)
+- Remembers the last opened folder and reopens it automatically on next launch
+
 ### File Management
 - Open individual `.nam` files or an entire folder (scans recursively)
 - Drag & drop files directly onto the window
-- Load dozens of files at once — sidebar shows all of them
+- Shift+click and Ctrl+click for range and multi-selection in the file list
 - Opening a new file or folder replaces the current session (with unsaved-changes warning)
 - Close All button clears the session
 
@@ -41,23 +49,45 @@ This is especially useful for capture artists who want to properly tag their `.n
 - Read-only stats: architecture, NAM version, loudness, gain, validation ESR, epoch count (if present)
 
 ### Smart Defaults (Settings)
-Each user configures their own defaults — settings are stored locally on your machine and start blank for every new installation. Configure defaults that auto-populate empty fields when you open files:
-- **Default Modeled By** — applied if the file has no `modeled_by` value
-- **Default Input Level** — applied if the file has no `input_level_dbu`
-- **Current Amp Info** — default Manufacturer and Model applied to files missing those fields
-- **Auto Gear Type** — if the filename ends in `DI`, Gear Type is set to `Amp`; otherwise `Cab`
+Settings are stored locally and start blank on every new installation. Each section can be **enabled or disabled independently** — turn off a section to browse other people's captures without applying your defaults.
 
-Settings are saved locally and persist between sessions.
+**Current Amp Info** *(toggleable)*
+- Default Manufacturer and Model — applied to files missing those fields on open
+
+**Capture Defaults** *(toggleable)*
+- Default Modeled By — applied if the file has no `modeled_by`
+- Default Input Level (dBu) — applied if the file has no `input_level_dbu`
+- Default Output Level (dBu) — applied if the file has no `output_level_dbu`
+
+**Behavior**
+- **Populate name from filename** — auto-sets Capture Name to the filename if empty
+- **Auto-detect tone type** — scans the filename for tone keywords and sets Tone Type if empty; the rightmost keyword wins (e.g. `BE Clean Crunch DI` → Crunch). Keywords: `clean`, `crunch`, `lead`/`highgain`/`hi-gain`, `fuzz`, `overdrive`/`od`/`edge`/`drive`, `distortion`/`dist`
+- **Amp Suffix** — configurable filename ending that auto-sets Gear Type to Amp (default: `DI`); e.g. set to `DIRECT` if your files end that way
+
+**Startup**
+- **Remember last opened folder** — every time you open a folder it becomes the default for next launch
+- **Default Folder** — manually pin a specific folder path to always open on launch
+
+### Active Defaults Pill
+A slim bar above the status bar shows which defaults are currently active (e.g. `Amp: Friedman BE100 · Capture: Core Tone Captures · Name from filename`). Disappears entirely when nothing is enabled — glanceable reminder before you open files.
 
 ### Change Tracking
 - Fields auto-populated by settings are highlighted in **amber** so you know what changed
 - Files with any auto-populated fields are immediately marked as **pending save**
-- Highlights clear after saving — amber only appears while a value differs from what's on disk
+- Amber dot in the file list and folder tree shows unsaved edits
+- Highlights clear after saving
 
 ### Batch Edit
-- Select multiple files (Ctrl+click) and apply the same values to all of them at once
-- Check only the fields you want to change — unchecked fields are left alone
-- Works on the current selection or all loaded files
+- Right-click any folder in the library tree → **Batch edit…**
+- Applies to all files in that folder and all subfolders recursively
+- Check only the fields you want to change — unchecked fields are untouched
+- Confirm dialog shows exactly which fields and how many files will be affected before applying
+
+### Per-Folder Actions (Right-click)
+Right-click any folder node in the library tree for:
+- **Save all in folder** — saves all unsaved files under that path
+- **Revert all in folder** — discards unsaved changes (with confirmation)
+- **Batch edit…** — opens the batch editor scoped to that folder
 
 ### Name from Filename
 - If loaded files have no Capture Name set, a **"Name from File (N)"** button appears in the toolbar
@@ -66,7 +96,7 @@ Settings are saved locally and persist between sessions.
 ### Filtering & Search
 - Search by name, manufacturer, model, or modeled-by
 - Filter chips: **All / Unnamed / No Type / No Maker / No Tone** — filters against the *original* file values, not auto-filled ones
-- Each file item shows a yellow **"N empty"** badge counting unfilled fields
+- Each file item shows a **"N missing"** badge with a tooltip listing which tracked fields (Name, Gear Type, Manufacturer, Model, Modeled By, Tone Type) are still empty
 
 ### Save
 - Save individual files or **Save All** with a confirmation dialog
@@ -99,6 +129,8 @@ cd nam-editor
 npm install
 npm run dev
 ```
+
+> On Windows, run dev with: `powershell -ExecutionPolicy Bypass -command "npm run dev"`
 
 ### Build installers locally
 
