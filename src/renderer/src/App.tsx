@@ -16,6 +16,7 @@ declare global {
     api: {
       openFiles: () => Promise<string[]>
       openFolder: () => Promise<string | null>
+      revealFile: (filePath: string) => Promise<void>
       readFile: (filePath: string) => Promise<{
         success: boolean
         error?: string
@@ -187,12 +188,17 @@ export default function App() {
         }
         const meta = applyDefaults(workingMeta, baseName, settings)
         const wasChanged = JSON.stringify(meta) !== JSON.stringify(rawMeta)
+        // Track which fields were set by applyDefaults (weren't in workingMeta before)
+        const autoFilledFields = (Object.keys(meta) as (keyof NamFile['metadata'])[]).filter(
+          (k) => meta[k] != null && workingMeta[k] == null
+        )
         loaded.push({
           filePath: r.filePath,
           fileName: baseName,
           version: r.version ?? '?',
           metadata: meta,
           originalMetadata: rawMeta,
+          autoFilledFields,
           architecture: r.architecture ?? '?',
           config: r.config,
           isDirty: wasChanged
@@ -311,7 +317,14 @@ export default function App() {
 
   const handleMetadataChange = (filePath: string, updated: NamFile['metadata']) => {
     setFiles((prev) =>
-      prev.map((f) => (f.filePath === filePath ? { ...f, metadata: updated, isDirty: true } : f))
+      prev.map((f) => {
+        if (f.filePath !== filePath) return f
+        // Remove field from autoFilledFields when user manually edits it
+        const autoFilledFields = f.autoFilledFields.filter(
+          (k) => updated[k] === f.metadata[k]
+        )
+        return { ...f, metadata: updated, isDirty: true, autoFilledFields }
+      })
     )
   }
 
@@ -489,6 +502,8 @@ export default function App() {
                     ? files.filter((f) => f.isDirty)
                     : files.filter((f) => f.isDirty && f.filePath.replace(/\\/g, '/').startsWith(path + '/'))
                   if (targets.length === 0) return
+                  const confirmed = window.confirm(`Save changes to ${targets.length} file${targets.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.`)
+                  if (!confirmed) return
                   const savedPaths = new Set<string>()
                   let failed = 0
                   for (const f of targets) {
@@ -603,6 +618,7 @@ export default function App() {
               file={selectedFiles[0]}
               onChange={(m) => handleMetadataChange(selectedFiles[0].filePath, m)}
               onSave={() => handleSave(selectedFiles[0].filePath)}
+              onRevealInFinder={() => window.api.revealFile(selectedFiles[0].filePath)}
             />
           ) : selectedFiles.length === 0 && files.length === 0 ? (
             <EmptyState onOpenFiles={handleOpenFiles} onOpenFolder={handleOpenFolder} />

@@ -100,9 +100,9 @@ app.whenReady().then(() => {
       const data = JSON.parse(content)
       const orig = data.metadata ?? {}
       const incoming = metadata as Record<string, unknown>
-      // Only write editable fields that already exist in the original file
+      // Write all editable fields; add key if setting a real value, update/clear if key exists
       for (const key of EDITABLE_FIELDS) {
-        if (Object.prototype.hasOwnProperty.call(orig, key)) {
+        if (Object.prototype.hasOwnProperty.call(orig, key) || incoming[key] != null) {
           orig[key] = incoming[key] ?? null
         }
       }
@@ -168,6 +168,11 @@ app.whenReady().then(() => {
     } catch (err) {
       return { success: false, error: String(err) }
     }
+  })
+
+  // IPC: Reveal a file in Finder / Explorer
+  ipcMain.handle('shell:revealFile', (_event, filePath: string) => {
+    shell.showItemInFolder(filePath)
   })
 
   createWindow()

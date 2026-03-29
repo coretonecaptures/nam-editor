@@ -4,9 +4,10 @@ interface MetadataEditorProps {
   file: NamFile
   onChange: (metadata: NamMetadata) => void
   onSave: () => void
+  onRevealInFinder: () => void
 }
 
-export function MetadataEditor({ file, onChange, onSave }: MetadataEditorProps) {
+export function MetadataEditor({ file, onChange, onSave, onRevealInFinder }: MetadataEditorProps) {
   const m = file.metadata
   const orig = file.originalMetadata
 
@@ -14,11 +15,15 @@ export function MetadataEditor({ file, onChange, onSave }: MetadataEditorProps) 
     onChange({ ...m, [key]: value === '' ? null : value })
   }
 
-  // Returns true if this field differs from what was in the file on disk
-  const isChanged = (key: keyof NamMetadata): boolean => {
+  // Returns true if this field was auto-filled by settings rules at load time
+  const isAutoFilled = (key: keyof NamMetadata): boolean =>
+    file.autoFilledFields.includes(key)
+
+  // Returns true if this field was manually changed (differs from disk, but not auto-filled)
+  const isManuallyChanged = (key: keyof NamMetadata): boolean => {
     const cur = m[key] ?? null
     const was = orig[key] ?? null
-    return cur !== was
+    return cur !== was && !isAutoFilled(key)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -68,6 +73,16 @@ export function MetadataEditor({ file, onChange, onSave }: MetadataEditorProps) 
             <span className="text-xs text-amber-400 font-medium">Unsaved</span>
           )}
           <button
+            onClick={onRevealInFinder}
+            title="Reveal in Finder / Explorer"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-800 hover:bg-gray-700 text-gray-300"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+            </svg>
+            Reveal
+          </button>
+          <button
             onClick={onSave}
             disabled={!file.isDirty}
             className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-indigo-600 hover:bg-indigo-500 text-white"
@@ -86,20 +101,20 @@ export function MetadataEditor({ file, onChange, onSave }: MetadataEditorProps) 
 
           {/* Identity section */}
           <Section title="Identity" icon="🎸">
-            <Field label="Capture Name" hint="Display name shown in plugins" changed={isChanged('name')}>
+            <Field label="Capture Name" hint="Display name shown in plugins" autoFilled={isAutoFilled('name')}>
               <TextInput
                 value={m.name ?? ''}
                 onChange={(v) => update('name', v)}
                 placeholder="e.g. BE100 Deluxe - Crunch Ch."
-                changed={isChanged('name')}
+                changed={isManuallyChanged('name')}
               />
             </Field>
-            <Field label="Modeled By" hint="Creator / capture artist" changed={isChanged('modeled_by')}>
+            <Field label="Modeled By" hint="Creator / capture artist" autoFilled={isAutoFilled('modeled_by')}>
               <TextInput
                 value={m.modeled_by ?? ''}
                 onChange={(v) => update('modeled_by', v)}
                 placeholder="e.g. Core Tone Captures"
-                changed={isChanged('modeled_by')}
+                changed={isManuallyChanged('modeled_by')}
               />
             </Field>
           </Section>
@@ -107,38 +122,38 @@ export function MetadataEditor({ file, onChange, onSave }: MetadataEditorProps) 
           {/* Gear section */}
           <Section title="Gear" icon="🔊">
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Gear Type" changed={isChanged('gear_type')}>
+              <Field label="Gear Type" autoFilled={isAutoFilled('gear_type')}>
                 <Select
                   value={m.gear_type ?? ''}
                   options={['', ...GEAR_TYPES]}
                   onChange={(v) => update('gear_type', v)}
-                  changed={isChanged('gear_type')}
+                  changed={isManuallyChanged('gear_type')}
                 />
               </Field>
-              <Field label="Tone Type" changed={isChanged('tone_type')}>
+              <Field label="Tone Type" autoFilled={isAutoFilled('tone_type')}>
                 <Select
                   value={m.tone_type ?? ''}
                   options={['', ...TONE_TYPES]}
                   onChange={(v) => update('tone_type', v)}
-                  changed={isChanged('tone_type')}
+                  changed={isManuallyChanged('tone_type')}
                 />
               </Field>
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Manufacturer" changed={isChanged('gear_make')}>
+              <Field label="Manufacturer" autoFilled={isAutoFilled('gear_make')}>
                 <TextInput
                   value={m.gear_make ?? ''}
                   onChange={(v) => update('gear_make', v)}
                   placeholder="e.g. Friedman"
-                  changed={isChanged('gear_make')}
+                  changed={isManuallyChanged('gear_make')}
                 />
               </Field>
-              <Field label="Model" changed={isChanged('gear_model')}>
+              <Field label="Model" autoFilled={isAutoFilled('gear_model')}>
                 <TextInput
                   value={m.gear_model ?? ''}
                   onChange={(v) => update('gear_model', v)}
                   placeholder="e.g. BE100 Deluxe"
-                  changed={isChanged('gear_model')}
+                  changed={isManuallyChanged('gear_model')}
                 />
               </Field>
             </div>
@@ -147,22 +162,22 @@ export function MetadataEditor({ file, onChange, onSave }: MetadataEditorProps) 
           {/* Levels section */}
           <Section title="Levels" icon="📊">
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Reamp Send Level (dBu)" hint="Signal level at capture input" changed={isChanged('input_level_dbu')}>
+              <Field label="Reamp Send Level (dBu)" hint="Signal level at capture input" autoFilled={isAutoFilled('input_level_dbu')}>
                 <NumberInput
                   value={m.input_level_dbu ?? ''}
                   onChange={(v) => update('input_level_dbu', v)}
                   placeholder="e.g. 12.5"
                   step={0.5}
-                  changed={isChanged('input_level_dbu')}
+                  changed={isManuallyChanged('input_level_dbu')}
                 />
               </Field>
-              <Field label="Reamp Return Level (dBu)" hint="Signal level at capture output" changed={isChanged('output_level_dbu')}>
+              <Field label="Reamp Return Level (dBu)" hint="Signal level at capture output" autoFilled={isAutoFilled('output_level_dbu')}>
                 <NumberInput
                   value={m.output_level_dbu ?? ''}
                   onChange={(v) => update('output_level_dbu', v)}
                   placeholder="e.g. 12.5"
                   step={0.5}
-                  changed={isChanged('output_level_dbu')}
+                  changed={isManuallyChanged('output_level_dbu')}
                 />
               </Field>
             </div>
@@ -224,12 +239,12 @@ function Section({ title, icon, children }: { title: string; icon: string; child
 function Field({
   label,
   hint,
-  changed,
+  autoFilled,
   children
 }: {
   label: string
   hint?: string
-  changed?: boolean
+  autoFilled?: boolean
   children: React.ReactNode
 }) {
   return (
@@ -237,7 +252,7 @@ function Field({
       <label className="flex items-center gap-1.5 text-xs font-medium text-gray-400 mb-1.5">
         {label}
         {hint && <span className="text-gray-600 font-normal">{hint}</span>}
-        {changed && (
+        {autoFilled && (
           <span className="ml-auto text-xs text-amber-400 font-normal flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
             auto-filled
