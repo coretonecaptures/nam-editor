@@ -135,20 +135,26 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
               <div className="flex-1 h-px bg-gray-800" />
             </div>
             <div className="space-y-4">
-              <label className="flex items-start gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={draft.populateNameFromFilename}
-                  onChange={(e) => update('populateNameFromFilename', e.target.checked)}
-                  className="mt-0.5 w-4 h-4 rounded border-gray-600 bg-gray-800 text-indigo-500 focus:ring-indigo-500/50 focus:ring-offset-0 cursor-pointer"
-                />
-                <div>
-                  <span className="text-sm text-gray-300 font-medium">Populate name from filename</span>
-                  <p className="text-xs text-gray-600 mt-0.5">
-                    When a file has no name, automatically set it to the filename (without .nam extension).
-                  </p>
-                </div>
-              </label>
+              <CheckboxField
+                label="Populate name from filename"
+                description="When a file has no name, automatically set it to the filename (without .nam extension)."
+                checked={draft.populateNameFromFilename}
+                onChange={(v) => update('populateNameFromFilename', v)}
+              />
+
+              <CheckboxField
+                label="Auto-detect tone type from filename"
+                description={
+                  <>
+                    Scans the filename for tone keywords and sets Tone Type if empty.
+                    When multiple keywords match, the <em>rightmost</em> one wins — so
+                    &ldquo;Clean Crunch DI&rdquo; → <strong>Crunch</strong>.
+                    Keywords: clean, crunch, lead/highgain/hi-gain, fuzz, overdrive/od, distortion/dist.
+                  </>
+                }
+                checked={draft.autoDetectToneType}
+                onChange={(v) => update('autoDetectToneType', v)}
+              />
 
               <SettingsField
                 label="Amp Suffix"
@@ -168,6 +174,35 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
                   </p>
                 </div>
               </SettingsField>
+            </div>
+          </div>
+
+          {/* Startup */}
+          <div>
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-sm">🚀</span>
+              <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">Startup</h3>
+              <div className="flex-1 h-px bg-gray-800" />
+            </div>
+            <div className="space-y-4">
+              <CheckboxField
+                label="Open default folder on launch"
+                description="Automatically load a folder when the app starts."
+                checked={draft.enableDefaultFolder}
+                onChange={(v) => update('enableDefaultFolder', v)}
+              />
+              {draft.enableDefaultFolder && (
+                <SettingsField label="Default Folder" hint="Full path to your library folder">
+                  <input
+                    type="text"
+                    value={draft.defaultFolder}
+                    onChange={(e) => update('defaultFolder', e.target.value)}
+                    placeholder="e.g. C:\Users\You\NAM Library"
+                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors font-mono"
+                  />
+                  <p className="text-xs text-gray-600 mt-1.5">Takes effect on next launch.</p>
+                </SettingsField>
+              )}
             </div>
           </div>
 
@@ -215,6 +250,33 @@ function Section({
         {children}
       </div>
     </div>
+  )
+}
+
+function CheckboxField({
+  label,
+  description,
+  checked,
+  onChange
+}: {
+  label: string
+  description: React.ReactNode
+  checked: boolean
+  onChange: (v: boolean) => void
+}) {
+  return (
+    <label className="flex items-start gap-3 cursor-pointer">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 w-4 h-4 rounded border-gray-600 bg-gray-800 text-indigo-500 focus:ring-indigo-500/50 focus:ring-offset-0 cursor-pointer"
+      />
+      <div>
+        <span className="text-sm text-gray-300 font-medium">{label}</span>
+        <p className="text-xs text-gray-600 mt-0.5">{description}</p>
+      </div>
+    </label>
   )
 }
 

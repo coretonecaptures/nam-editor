@@ -1,5 +1,5 @@
-import { useState, useCallback, useRef } from 'react'
-import { NamFile } from './types/nam'
+import { useState, useCallback, useEffect, useRef } from 'react'
+import { NamFile, TONE_TYPES } from './types/nam'
 import { AppSettings, loadSettings, saveSettings } from './types/settings'
 import { LibrarianState } from './types/librarian'
 import { FileList } from './components/FileList'
@@ -71,7 +71,39 @@ function applyDefaults(meta: NamFile['metadata'], baseName: string, settings: Ap
     m.gear_type = nameUpper.endsWith(suffix) ? 'amp' : 'cab'
   }
 
+  // Auto tone type from filename keywords (rightmost keyword wins)
+  if (!m.tone_type && settings.autoDetectToneType) {
+    const detected = detectToneType(baseName)
+    if (detected) m.tone_type = detected
+  }
+
   return m
+}
+
+// Keywords that map to each tone type — order within each array doesn't matter,
+// detection picks the keyword that appears latest in the filename (rightmost wins)
+const TONE_KEYWORDS: Record<typeof TONE_TYPES[number], string[]> = {
+  'clean':      ['clean'],
+  'crunch':     ['crunch'],
+  'high-gain':  ['highgain', 'hi-gain', 'higain', 'lead'],
+  'fuzz':       ['fuzz'],
+  'overdrive':  ['overdrive', 'od'],
+  'distortion': ['distortion', 'dist'],
+  'other':      [],
+}
+
+function detectToneType(baseName: string): typeof TONE_TYPES[number] | null {
+  const lower = baseName.replace(/\s+/g, '').toLowerCase()
+  let best: { tone: typeof TONE_TYPES[number]; index: number } | null = null
+  for (const [tone, keywords] of Object.entries(TONE_KEYWORDS) as [typeof TONE_TYPES[number], string[]][]) {
+    for (const kw of keywords) {
+      const idx = lower.lastIndexOf(kw)
+      if (idx !== -1 && (best === null || idx > best.index)) {
+        best = { tone, index: idx }
+      }
+    }
+  }
+  return best ? best.tone : null
 }
 
 const EMPTY_LIBRARIAN: LibrarianState = {
@@ -119,6 +151,14 @@ export default function App() {
     setSettings(updated)
     saveSettings(updated)
   }
+
+  // Auto-load default folder on startup
+  useEffect(() => {
+    if (settings.enableDefaultFolder && settings.defaultFolder) {
+      loadFolderByPath(settings.defaultFolder)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // intentionally empty — only runs once on mount
 
   // mode='replace': clear existing, load fresh (open folder/files)
   // mode='append': dedup against current files (drag & drop)

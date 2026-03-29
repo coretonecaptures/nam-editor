@@ -18,7 +18,12 @@ export interface AppSettings {
 
   // Behavior
   populateNameFromFilename: boolean
-  ampSuffix: string  // filename suffix that auto-sets gear type to "amp" (default: "DI")
+  ampSuffix: string          // filename suffix that auto-sets gear type to "amp" (default: "DI")
+  autoDetectToneType: boolean
+
+  // Startup
+  enableDefaultFolder: boolean
+  defaultFolder: string
 
   folderOverrides: Record<string, FolderOverride>
 }
@@ -35,6 +40,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
   populateNameFromFilename: true,
   ampSuffix: 'DI',
+  autoDetectToneType: true,
+
+  enableDefaultFolder: false,
+  defaultFolder: '',
 
   folderOverrides: {}
 }
