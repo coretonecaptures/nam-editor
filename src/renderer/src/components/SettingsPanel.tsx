@@ -10,7 +10,7 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
   const [draft, setDraft] = useState<AppSettings>({ ...settings })
   const [saved, setSaved] = useState(false)
 
-  const update = (key: keyof AppSettings, value: string) => {
+  const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
     setDraft((prev) => ({ ...prev, [key]: value }))
     setSaved(false)
   }
@@ -55,82 +55,164 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
       <div className="flex-1 overflow-y-auto px-6 py-5">
         <div className="max-w-2xl space-y-8">
 
-          {/* Capture Defaults */}
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <span className="text-sm">🎚️</span>
-              <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">Capture Defaults</h3>
-              <div className="flex-1 h-px bg-gray-800" />
-            </div>
-            <p className="text-xs text-gray-600 mb-4">
-              Applied to files where the field is empty or null on open.
-            </p>
-            <div className="space-y-4">
-              <SettingsField label="Default Modeled By" hint="Applied if file has no modeled_by value">
-                <input
-                  type="text"
-                  value={draft.defaultModeledBy}
-                  onChange={(e) => update('defaultModeledBy', e.target.value)}
-                  placeholder="e.g. Core Tone Captures"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors"
-                />
-              </SettingsField>
-              <SettingsField label="Default Input Level (dBu)" hint="Applied if file has no input_level_dbu value">
-                <input
-                  type="number"
-                  value={draft.defaultInputLevel}
-                  onChange={(e) => update('defaultInputLevel', e.target.value)}
-                  placeholder="e.g. 12.5"
-                  step={0.5}
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors"
-                />
-              </SettingsField>
-            </div>
-          </div>
-
           {/* Current Amp Info */}
+          <Section
+            icon="🔊"
+            title="Current Amp Info"
+            enabled={draft.enableAmpInfo}
+            onToggle={(v) => update('enableAmpInfo', v)}
+            description="Applied to files where Manufacturer and/or Model are empty on open."
+          >
+            <SettingsField label="Manufacturer" hint="Applied if file has no gear_make value">
+              <input
+                type="text"
+                value={draft.defaultManufacturer}
+                onChange={(e) => update('defaultManufacturer', e.target.value)}
+                disabled={!draft.enableAmpInfo}
+                placeholder="e.g. Friedman"
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+            </SettingsField>
+            <SettingsField label="Model" hint="Applied if file has no gear_model value">
+              <input
+                type="text"
+                value={draft.defaultModel}
+                onChange={(e) => update('defaultModel', e.target.value)}
+                disabled={!draft.enableAmpInfo}
+                placeholder="e.g. BE100 Deluxe"
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+            </SettingsField>
+          </Section>
+
+          {/* Capture Defaults */}
+          <Section
+            icon="🎚️"
+            title="Capture Defaults"
+            enabled={draft.enableCaptureDefaults}
+            onToggle={(v) => update('enableCaptureDefaults', v)}
+            description="Applied to files where the field is empty or null on open."
+          >
+            <SettingsField label="Default Modeled By" hint="Applied if file has no modeled_by value">
+              <input
+                type="text"
+                value={draft.defaultModeledBy}
+                onChange={(e) => update('defaultModeledBy', e.target.value)}
+                disabled={!draft.enableCaptureDefaults}
+                placeholder="e.g. Core Tone Captures"
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+            </SettingsField>
+            <SettingsField label="Default Input Level (dBu)" hint="Applied if file has no input_level_dbu value">
+              <input
+                type="number"
+                value={draft.defaultInputLevel}
+                onChange={(e) => update('defaultInputLevel', e.target.value)}
+                disabled={!draft.enableCaptureDefaults}
+                placeholder="e.g. 12.5"
+                step={0.5}
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+            </SettingsField>
+            <SettingsField label="Default Output Level (dBu)" hint="Applied if file has no output_level_dbu value">
+              <input
+                type="number"
+                value={draft.defaultOutputLevel}
+                onChange={(e) => update('defaultOutputLevel', e.target.value)}
+                disabled={!draft.enableCaptureDefaults}
+                placeholder="e.g. -20"
+                step={0.5}
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+            </SettingsField>
+          </Section>
+
+          {/* Behavior */}
           <div>
-            <div className="flex items-center gap-2 mb-3">
-              <span className="text-sm">🔊</span>
-              <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">Current Amp Info</h3>
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-sm">⚙️</span>
+              <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">Behavior</h3>
               <div className="flex-1 h-px bg-gray-800" />
             </div>
-            <p className="text-xs text-gray-600 mb-4">
-              Applied to files where Manufacturer and/or Model are empty on open.
-            </p>
             <div className="space-y-4">
-              <SettingsField label="Manufacturer" hint="Applied if file has no gear_make value">
+              <label className="flex items-start gap-3 cursor-pointer">
                 <input
-                  type="text"
-                  value={draft.defaultManufacturer}
-                  onChange={(e) => update('defaultManufacturer', e.target.value)}
-                  placeholder="e.g. Friedman"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors"
+                  type="checkbox"
+                  checked={draft.populateNameFromFilename}
+                  onChange={(e) => update('populateNameFromFilename', e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded border-gray-600 bg-gray-800 text-indigo-500 focus:ring-indigo-500/50 focus:ring-offset-0 cursor-pointer"
                 />
-              </SettingsField>
-              <SettingsField label="Model" hint="Applied if file has no gear_model value">
-                <input
-                  type="text"
-                  value={draft.defaultModel}
-                  onChange={(e) => update('defaultModel', e.target.value)}
-                  placeholder="e.g. BE100 Deluxe"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors"
-                />
+                <div>
+                  <span className="text-sm text-gray-300 font-medium">Populate name from filename</span>
+                  <p className="text-xs text-gray-600 mt-0.5">
+                    When a file has no name, automatically set it to the filename (without .nam extension).
+                  </p>
+                </div>
+              </label>
+
+              <SettingsField
+                label="Amp Suffix"
+                hint="Filename ending that identifies a capture as Amp type"
+              >
+                <div className="flex items-center gap-3">
+                  <input
+                    type="text"
+                    value={draft.ampSuffix}
+                    onChange={(e) => update('ampSuffix', e.target.value)}
+                    placeholder="DI"
+                    className="w-40 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors font-mono"
+                  />
+                  <p className="text-xs text-gray-600">
+                    Filename ending in <span className="font-mono text-gray-400">{draft.ampSuffix || 'DI'}</span> → Amp.
+                    Otherwise → Cab. Case-insensitive, spaces ignored.
+                  </p>
+                </div>
               </SettingsField>
             </div>
-          </div>
-
-          {/* Gear type auto-detect note */}
-          <div className="px-4 py-3 bg-gray-800/50 rounded-lg border border-gray-800 text-xs text-gray-500 space-y-1">
-            <p className="font-medium text-gray-400">Automatic Gear Type Detection</p>
-            <p>When a file has no gear type set:</p>
-            <ul className="list-disc list-inside space-y-0.5 ml-1">
-              <li>Filename ends in <span className="text-gray-300 font-mono">DI</span> → sets Gear Type to <span className="text-gray-300">Amp</span></li>
-              <li>Otherwise → sets Gear Type to <span className="text-gray-300">Cab</span></li>
-            </ul>
           </div>
 
         </div>
+      </div>
+    </div>
+  )
+}
+
+function Section({
+  icon,
+  title,
+  enabled,
+  onToggle,
+  description,
+  children
+}: {
+  icon: string
+  title: string
+  enabled: boolean
+  onToggle: (v: boolean) => void
+  description: string
+  children: React.ReactNode
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-sm">{icon}</span>
+        <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">{title}</h3>
+        <div className="flex-1 h-px bg-gray-800" />
+        <label className="flex items-center gap-2 cursor-pointer ml-2">
+          <span className="text-xs text-gray-500">{enabled ? 'Enabled' : 'Disabled'}</span>
+          <div
+            className={`relative w-8 h-4 rounded-full transition-colors ${enabled ? 'bg-indigo-600' : 'bg-gray-700'}`}
+            onClick={() => onToggle(!enabled)}
+          >
+            <div className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-4' : 'translate-x-0'}`} />
+          </div>
+        </label>
+      </div>
+      <p className={`text-xs mb-4 transition-colors ${enabled ? 'text-gray-600' : 'text-gray-700'}`}>
+        {description}
+      </p>
+      <div className={`space-y-4 transition-opacity ${enabled ? 'opacity-100' : 'opacity-40'}`}>
+        {children}
       </div>
     </div>
   )

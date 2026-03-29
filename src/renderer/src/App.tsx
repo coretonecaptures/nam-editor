@@ -35,29 +35,39 @@ declare global {
 function applyDefaults(meta: NamFile['metadata'], baseName: string, settings: AppSettings): NamFile['metadata'] {
   const m = { ...meta }
 
-  // Capture name defaults to filename
-  if (!m.name) m.name = baseName
+  // Name from filename
+  if (!m.name && settings.populateNameFromFilename)
+    m.name = baseName
 
-  // Modeled By default
-  if (!m.modeled_by && settings.defaultModeledBy)
-    m.modeled_by = settings.defaultModeledBy
+  // Capture Defaults section
+  if (settings.enableCaptureDefaults) {
+    if (!m.modeled_by && settings.defaultModeledBy)
+      m.modeled_by = settings.defaultModeledBy
 
-  // Input level default
-  if (m.input_level_dbu == null && settings.defaultInputLevel !== '') {
-    const n = parseFloat(settings.defaultInputLevel)
-    if (!isNaN(n)) m.input_level_dbu = n
+    if (m.input_level_dbu == null && settings.defaultInputLevel !== '') {
+      const n = parseFloat(settings.defaultInputLevel)
+      if (!isNaN(n)) m.input_level_dbu = n
+    }
+
+    if (m.output_level_dbu == null && settings.defaultOutputLevel !== '') {
+      const n = parseFloat(settings.defaultOutputLevel)
+      if (!isNaN(n)) m.output_level_dbu = n
+    }
   }
 
-  // Manufacturer / Model defaults
-  if (!m.gear_make && settings.defaultManufacturer)
-    m.gear_make = settings.defaultManufacturer
-  if (!m.gear_model && settings.defaultModel)
-    m.gear_model = settings.defaultModel
+  // Current Amp Info section
+  if (settings.enableAmpInfo) {
+    if (!m.gear_make && settings.defaultManufacturer)
+      m.gear_make = settings.defaultManufacturer
+    if (!m.gear_model && settings.defaultModel)
+      m.gear_model = settings.defaultModel
+  }
 
-  // Auto gear type from filename
+  // Auto gear type from filename (always on, uses configurable suffix)
   if (!m.gear_type) {
+    const suffix = (settings.ampSuffix || 'DI').replace(/\s+/g, '').toUpperCase()
     const nameUpper = baseName.replace(/\s+/g, '').toUpperCase()
-    m.gear_type = nameUpper.endsWith('DI') ? 'amp' : 'cab'
+    m.gear_type = nameUpper.endsWith(suffix) ? 'amp' : 'cab'
   }
 
   return m

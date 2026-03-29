@@ -5,18 +5,37 @@ export interface FolderOverride {
 }
 
 export interface AppSettings {
-  defaultModeledBy: string
-  defaultInputLevel: string
+  // Current Amp Info
+  enableAmpInfo: boolean
   defaultManufacturer: string
   defaultModel: string
-  folderOverrides: Record<string, FolderOverride>  // keyed by normalized folder path
+
+  // Capture Defaults
+  enableCaptureDefaults: boolean
+  defaultModeledBy: string
+  defaultInputLevel: string
+  defaultOutputLevel: string
+
+  // Behavior
+  populateNameFromFilename: boolean
+  ampSuffix: string  // filename suffix that auto-sets gear type to "amp" (default: "DI")
+
+  folderOverrides: Record<string, FolderOverride>
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  defaultModeledBy: '',
-  defaultInputLevel: '',
+  enableAmpInfo: true,
   defaultManufacturer: '',
   defaultModel: '',
+
+  enableCaptureDefaults: true,
+  defaultModeledBy: '',
+  defaultInputLevel: '',
+  defaultOutputLevel: '',
+
+  populateNameFromFilename: true,
+  ampSuffix: 'DI',
+
   folderOverrides: {}
 }
 
