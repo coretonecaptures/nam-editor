@@ -368,11 +368,10 @@ export default function App() {
     })
   }
 
-  const handleBatchApply = async (metadata: Partial<NamFile['metadata']>) => {
+  const handleBatchApply = async (batchFields: Partial<NamFile['metadata']>) => {
     const folderPath = batchFolder?.path ?? null
     const batchPaths = batchFolder?.filePaths
 
-    // Compute updated files from current state (no stale closure — not in useCallback)
     let targets: NamFile[]
     if (batchPaths) {
       const pathSet = new Set(batchPaths)
@@ -383,38 +382,42 @@ export default function App() {
         : files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(folderPath + '/'))
     }
 
-    const updatedTargets = targets.map((f) => {
-      const merged = { ...f.metadata }
-      for (const [k, v] of Object.entries(metadata)) {
+    // For each target:
+    //   toWrite  = originalMetadata + batch fields only (what gets saved to disk)
+    //   newMeta  = current working metadata with batch fields applied (keeps auto-fills)
+    //   newOriginal = toWrite (reflects new on-disk state)
+    //   isDirty  = newMeta still differs from newOriginal (auto-fills remain pending)
+    const prepared = targets.map((f) => {
+      const toWrite = { ...f.originalMetadata }
+      const newMeta = { ...f.metadata }
+      for (const [k, v] of Object.entries(batchFields)) {
         if (v !== '' && v !== null && v !== undefined) {
-          ;(merged as Record<string, unknown>)[k] = v
+          ;(toWrite as Record<string, unknown>)[k] = v
+          ;(newMeta as Record<string, unknown>)[k] = v
         }
       }
-      return { ...f, metadata: merged }
+      const newIsDirty = JSON.stringify(newMeta) !== JSON.stringify(toWrite)
+      return { filePath: f.filePath, toWrite, newMeta, newOriginal: toWrite, newIsDirty }
     })
 
     setBatchFolder(null)
+    setStatus({ message: `Saving ${prepared.length} file(s)...`, type: 'info' })
 
-    // Apply to UI state immediately
-    const updatedMap = new Map(updatedTargets.map((f) => [f.filePath, f]))
-    setFiles((prev) => prev.map((f) =>
-      updatedMap.has(f.filePath) ? { ...updatedMap.get(f.filePath)!, isDirty: true } : f
-    ))
-
-    // Save to disk straight away — batch edit always saves
-    setStatus({ message: `Saving ${updatedTargets.length} file(s)...`, type: 'info' })
     const savedPaths = new Set<string>()
     let failed = 0
-    for (const f of updatedTargets) {
-      const result = await window.api.writeMetadata(f.filePath, f.metadata)
-      if (result.success) savedPaths.add(f.filePath)
+    for (const p of prepared) {
+      const result = await window.api.writeMetadata(p.filePath, p.toWrite)
+      if (result.success) savedPaths.add(p.filePath)
       else failed++
     }
-    setFiles((prev) => prev.map((f) =>
-      savedPaths.has(f.filePath)
-        ? { ...f, isDirty: false, originalMetadata: { ...f.metadata } }
-        : f
-    ))
+
+    const resultMap = new Map(prepared.map((p) => [p.filePath, p]))
+    setFiles((prev) => prev.map((f) => {
+      if (!savedPaths.has(f.filePath)) return f
+      const p = resultMap.get(f.filePath)!
+      return { ...f, metadata: p.newMeta, originalMetadata: p.newOriginal, isDirty: p.newIsDirty }
+    }))
+
     if (failed > 0) {
       setStatus({ message: `Batch saved ${savedPaths.size}, failed ${failed}`, type: 'error' })
     } else {
