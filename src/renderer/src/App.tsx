@@ -214,8 +214,19 @@ export default function App() {
     setStatus({ message: `Applied batch changes to ${targetIds.size} file(s)`, type: 'success' })
   }
 
+  const handleNameFromFilename = () => {
+    setFiles((prev) =>
+      prev.map((f) =>
+        !f.metadata.name
+          ? { ...f, metadata: { ...f.metadata, name: f.fileName }, isDirty: true }
+          : f
+      )
+    )
+  }
+
   const selectedFiles = files.filter((f) => selectedIds.has(f.filePath))
   const dirtyCount = files.filter((f) => f.isDirty).length
+  const unnamedCount = files.filter((f) => !f.metadata.name).length
 
   return (
     <div
@@ -234,6 +245,8 @@ export default function App() {
         isMac={window.api.platform === 'darwin'}
         showSettings={showSettings}
         onToggleSettings={() => { setShowSettings((s) => !s); setBatchMode(false) }}
+        unnamedCount={unnamedCount}
+        onNameFromFilename={handleNameFromFilename}
       />
 
       <div className="flex flex-1 overflow-hidden">

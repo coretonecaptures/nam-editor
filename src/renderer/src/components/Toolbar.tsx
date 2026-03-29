@@ -8,9 +8,11 @@ interface ToolbarProps {
   batchMode: boolean
   onToggleBatch: () => void
   fileCount: number
+  unnamedCount: number
   isMac: boolean
   showSettings: boolean
   onToggleSettings: () => void
+  onNameFromFilename: () => void
 }
 
 export function Toolbar({
@@ -21,14 +23,16 @@ export function Toolbar({
   batchMode,
   onToggleBatch,
   fileCount,
+  unnamedCount,
   isMac,
   showSettings,
-  onToggleSettings
+  onToggleSettings,
+  onNameFromFilename
 }: ToolbarProps) {
   return (
     <div
       className="h-12 flex items-center gap-2 px-4 bg-gray-900 border-b border-gray-800 flex-shrink-0"
-      style={{ paddingLeft: isMac ? '80px' : '16px', WebkitAppRegion: 'drag' } as React.CSSProperties}
+      style={{ paddingLeft: isMac ? '80px' : '16px', paddingRight: isMac ? '16px' : '150px', WebkitAppRegion: 'drag' } as React.CSSProperties}
     >
       {/* App title */}
       <div className="flex items-center gap-2 mr-4">
@@ -97,6 +101,23 @@ export function Toolbar({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
             </svg>
             {batchMode ? 'Exit Batch' : 'Batch Edit'}
+          </button>
+        </>
+      )}
+
+      {unnamedCount > 0 && (
+        <>
+          <div className="w-px h-5 bg-gray-700" />
+          <button
+            onClick={onNameFromFilename}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white"
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+            title={`Set capture name from filename for ${unnamedCount} unnamed file${unnamedCount !== 1 ? 's' : ''}`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+            </svg>
+            Name from File ({unnamedCount})
           </button>
         </>
       )}
