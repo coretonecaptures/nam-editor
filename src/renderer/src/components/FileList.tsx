@@ -164,7 +164,16 @@ function FileItem({
 }) {
   const meta = file.metadata
   const subtitle = [meta.gear_make, meta.gear_model].filter(Boolean).join(' ') || meta.tone_type || file.architecture || ''
-  const missing = (!meta.gear_type ? 1 : 0) + (!meta.gear_make ? 1 : 0) + (!meta.modeled_by ? 1 : 0)
+  const TRACKED: { key: keyof typeof meta; label: string }[] = [
+    { key: 'name', label: 'Name' },
+    { key: 'gear_type', label: 'Gear Type' },
+    { key: 'gear_make', label: 'Manufacturer' },
+    { key: 'gear_model', label: 'Model' },
+    { key: 'modeled_by', label: 'Modeled By' },
+    { key: 'tone_type', label: 'Tone Type' },
+  ]
+  const missingFields = TRACKED.filter((f) => !meta[f.key])
+  const missing = missingFields.length
 
   return (
     <div
@@ -195,8 +204,11 @@ function FileItem({
             <span className="text-xs px-1.5 py-0.5 rounded bg-indigo-900/40 text-indigo-400">{meta.tone_type}</span>
           )}
           {missing > 0 && (
-            <span className="text-xs px-1.5 py-0.5 rounded bg-yellow-900/30 text-yellow-600" title={`${missing} empty field${missing !== 1 ? 's' : ''}`}>
-              {missing} empty
+            <span
+              className="text-xs px-1.5 py-0.5 rounded bg-yellow-900/30 text-yellow-600"
+              title={`Missing: ${missingFields.map((f) => f.label).join(', ')}`}
+            >
+              {missing} missing
             </span>
           )}
         </div>

@@ -119,7 +119,7 @@ export default function App() {
     message: 'Open .nam files or a folder to get started',
     type: 'info'
   })
-  const [batchMode, setBatchMode] = useState(false)
+  const [batchFolder, setBatchFolder] = useState<{ path: string | null; name: string } | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
   const [librarian, setLibrarian] = useState<LibrarianState>(EMPTY_LIBRARIAN)
@@ -255,7 +255,7 @@ export default function App() {
     if (!confirmDiscardChanges()) return
     setFiles([])
     setSelectedIds(new Set())
-    setBatchMode(false)
+    setBatchFolder(null)
     setShowSettings(false)
     setLibrarian(EMPTY_LIBRARIAN)
     setStatus({ message: 'Open .nam files or a folder to get started', type: 'info' })
@@ -356,10 +356,14 @@ export default function App() {
     })
   }
 
-  const handleBatchApply = async (metadata: Partial<NamFile['metadata']>) => {
-    const targetIds = selectedIds.size > 0 ? selectedIds : new Set(visibleFiles.map((f) => f.filePath))
-    setFiles((prev) =>
-      prev.map((f) => {
+  const handleBatchApply = (metadata: Partial<NamFile['metadata']>) => {
+    const folderPath = batchFolder?.path ?? null
+    setFiles((prev) => {
+      const targets = folderPath === null
+        ? prev
+        : prev.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(folderPath + '/'))
+      const targetIds = new Set(targets.map((f) => f.filePath))
+      return prev.map((f) => {
         if (!targetIds.has(f.filePath)) return f
         const merged = { ...f.metadata }
         for (const [k, v] of Object.entries(metadata)) {
@@ -369,8 +373,9 @@ export default function App() {
         }
         return { ...f, metadata: merged, isDirty: true }
       })
-    )
-    setStatus({ message: `Applied batch changes to ${targetIds.size} file(s)`, type: 'success' })
+    })
+    setBatchFolder(null)
+    setStatus({ message: `Applied batch changes`, type: 'success' })
   }
 
   const handleNameFromFilename = () => {
@@ -408,12 +413,10 @@ export default function App() {
         onOpenFolder={handleOpenFolder}
         onSaveAll={handleSaveAll}
         dirtyCount={dirtyCount}
-        batchMode={batchMode}
-        onToggleBatch={() => { setBatchMode((b) => !b); setShowSettings(false) }}
         fileCount={files.length}
         isMac={window.api.platform === 'darwin'}
         showSettings={showSettings}
-        onToggleSettings={() => { setShowSettings((s) => !s); setBatchMode(false) }}
+        onToggleSettings={() => { setShowSettings((s) => !s); setBatchFolder(null) }}
         unnamedCount={unnamedCount}
         onNameFromFilename={handleNameFromFilename}
         onCloseAll={handleCloseAll}
@@ -470,6 +473,10 @@ export default function App() {
                   ))
                   setStatus({ message: `Reverted ${targets.length} file(s)`, type: 'info' })
                 }}
+                onBatchEdit={(path, name) => {
+                  setShowSettings(false)
+                  setBatchFolder({ path, name })
+                }}
               />
             </div>
             <DragHandle onMouseDown={(e) => onDragStart('tree', e)} />
@@ -493,7 +500,7 @@ export default function App() {
                 } else {
                   setSelectedIds(new Set([id]))
                   setShowSettings(false)
-                  setBatchMode(false)
+                  setBatchFolder(null)
                 }
               }}
               onSelectRange={(ids) => {
@@ -515,10 +522,14 @@ export default function App() {
         <div className="flex-1 overflow-hidden flex flex-col">
           {showSettings ? (
             <SettingsPanel settings={settings} onSave={handleSaveSettings} />
-          ) : batchMode ? (
+          ) : batchFolder !== null ? (
             <BatchEditor
-              selectedCount={selectedIds.size > 0 ? selectedIds.size : visibleFiles.length}
+              folderName={batchFolder.name}
+              fileCount={batchFolder.path === null
+                ? files.length
+                : files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(batchFolder.path! + '/')).length}
               onApply={handleBatchApply}
+              onClose={() => setBatchFolder(null)}
             />
           ) : selectedFiles.length === 1 ? (
             <MetadataEditor
@@ -530,7 +541,7 @@ export default function App() {
           ) : selectedFiles.length === 0 && files.length === 0 ? (
             <EmptyState onOpenFiles={handleOpenFiles} onOpenFolder={handleOpenFolder} />
           ) : (
-            <MultiSelectHint count={selectedFiles.length} onBatch={() => setBatchMode(true)} />
+            <MultiSelectHint count={selectedFiles.length} />
           )}
         </div>
       </div>
@@ -623,7 +634,7 @@ function EmptyState({
   )
 }
 
-function MultiSelectHint({ count, onBatch }: { count: number; onBatch: () => void }) {
+function MultiSelectHint({ count }: { count: number }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center p-8">
       <div className="w-16 h-16 rounded-2xl bg-indigo-900/40 flex items-center justify-center">
@@ -631,14 +642,8 @@ function MultiSelectHint({ count, onBatch }: { count: number; onBatch: () => voi
       </div>
       <div>
         <h3 className="text-lg font-semibold text-gray-200 mb-1">{count} files selected</h3>
-        <p className="text-gray-500 text-sm">Use batch edit to modify multiple files at once,<br />or select a single file to edit its metadata.</p>
+        <p className="text-gray-500 text-sm">Select a single file to edit its metadata,<br />or right-click a folder to batch edit.</p>
       </div>
-      <button
-        onClick={onBatch}
-        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-medium transition-colors"
-      >
-        Open Batch Editor
-      </button>
     </div>
   )
 }

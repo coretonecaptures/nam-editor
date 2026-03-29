@@ -2,11 +2,13 @@ import { useState } from 'react'
 import { NamMetadata, GEAR_TYPES, TONE_TYPES } from '../types/nam'
 
 interface BatchEditorProps {
-  selectedCount: number
+  folderName: string       // display name, e.g. "CoreToneCaptures" or "All files"
+  fileCount: number
   onApply: (metadata: Partial<NamMetadata>) => void
+  onClose: () => void
 }
 
-export function BatchEditor({ selectedCount, onApply }: BatchEditorProps) {
+export function BatchEditor({ folderName, fileCount, onApply, onClose }: BatchEditorProps) {
   const [fields, setFields] = useState<Partial<NamMetadata>>({})
   const [enabled, setEnabled] = useState<Set<keyof NamMetadata>>(new Set())
 
@@ -24,6 +26,12 @@ export function BatchEditor({ selectedCount, onApply }: BatchEditorProps) {
   }
 
   const handleApply = () => {
+    if (enabled.size === 0) return
+    const fieldNames = [...enabled].map((k) => batchFields.find((f) => f.key === k)?.label ?? k).join(', ')
+    const confirmed = window.confirm(
+      `Apply ${enabled.size} field${enabled.size !== 1 ? 's' : ''} (${fieldNames}) to ${fileCount} file${fileCount !== 1 ? 's' : ''} in "${folderName}"?\n\nThis marks them as unsaved — you'll still need to Save to write to disk.`
+    )
+    if (!confirmed) return
     const toApply: Partial<NamMetadata> = {}
     for (const key of enabled) {
       ;(toApply as Record<string, unknown>)[key] = (fields as Record<string, unknown>)[key] ?? null
@@ -35,28 +43,38 @@ export function BatchEditor({ selectedCount, onApply }: BatchEditorProps) {
     <div className="flex flex-col h-full overflow-hidden">
       <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 flex-shrink-0">
         <div>
-          <h2 className="text-base font-semibold text-gray-100">Batch Edit</h2>
-          <p className="text-sm text-gray-500 mt-0.5">
-            Apply changes to {selectedCount} file{selectedCount !== 1 ? 's' : ''}.{' '}
-            <span className="text-amber-400">Check fields to include them.</span>
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-semibold text-gray-100">Batch Edit</h2>
+            <span className="text-xs px-2 py-0.5 rounded-full bg-gray-800 text-gray-400">{folderName}</span>
+          </div>
+          <p className="text-sm text-gray-400 mt-0.5">
+            {fileCount} file{fileCount !== 1 ? 's' : ''} · <span className="text-amber-400">check fields to include</span>
           </p>
         </div>
-        <button
-          onClick={handleApply}
-          disabled={enabled.size === 0}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-amber-600 hover:bg-amber-500 text-white"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
-          </svg>
-          Apply to {selectedCount} file{selectedCount !== 1 ? 's' : ''}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onClose}
+            className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-800 hover:bg-gray-700 text-gray-300"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleApply}
+            disabled={enabled.size === 0}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-amber-600 hover:bg-amber-500 text-white"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
+            </svg>
+            Apply to {fileCount} file{fileCount !== 1 ? 's' : ''}
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-5">
         <div className="max-w-2xl space-y-3">
-          <p className="text-xs text-gray-600 mb-4">
-            Only checked fields will be written. Empty values will set the field to null in the file.
+          <p className="text-xs text-gray-500 mb-4">
+            Only checked fields will be written. Empty values will set the field to null.
           </p>
 
           {batchFields.map(({ key, label, type, options, placeholder }) => (

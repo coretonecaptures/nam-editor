@@ -5,8 +5,6 @@ interface ToolbarProps {
   onOpenFolder: () => void
   onSaveAll: () => void
   dirtyCount: number
-  batchMode: boolean
-  onToggleBatch: () => void
   fileCount: number
   unnamedCount: number
   isMac: boolean
@@ -23,8 +21,6 @@ export function Toolbar({
   onOpenFolder,
   onSaveAll,
   dirtyCount,
-  batchMode,
-  onToggleBatch,
   fileCount,
   unnamedCount,
   isMac,
@@ -119,25 +115,6 @@ export function Toolbar({
         )}
       </button>
 
-      {fileCount > 0 && (
-        <>
-          <div className="w-px h-5 bg-gray-700" />
-          <button
-            onClick={onToggleBatch}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-              batchMode
-                ? 'bg-amber-700 hover:bg-amber-600 text-white'
-                : 'bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white'
-            }`}
-            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
-            </svg>
-            {batchMode ? 'Exit Batch' : 'Batch Edit'}
-          </button>
-        </>
-      )}
 
       {unnamedCount > 0 && (
         <>

@@ -8,9 +8,10 @@ interface FolderTreeProps {
   dirtyPaths: Set<string>
   onSaveFolder: (path: string | null) => void
   onRevertFolder: (path: string | null) => void
+  onBatchEdit: (path: string | null, name: string) => void
 }
 
-export function FolderTree({ tree, selectedFolder, onSelect, dirtyPaths, onSaveFolder, onRevertFolder }: FolderTreeProps) {
+export function FolderTree({ tree, selectedFolder, onSelect, dirtyPaths, onSaveFolder, onRevertFolder, onBatchEdit }: FolderTreeProps) {
   const rootDirty = dirtyPaths.size
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -32,6 +33,7 @@ export function FolderTree({ tree, selectedFolder, onSelect, dirtyPaths, onSaveF
           onClick={() => onSelect(null)}
           onSave={() => onSaveFolder(null)}
           onRevert={() => onRevertFolder(null)}
+          onBatchEdit={() => onBatchEdit(null, tree.name)}
         />
 
         {/* Recursive children */}
@@ -45,6 +47,7 @@ export function FolderTree({ tree, selectedFolder, onSelect, dirtyPaths, onSaveF
             dirtyPaths={dirtyPaths}
             onSaveFolder={onSaveFolder}
             onRevertFolder={onRevertFolder}
+            onBatchEdit={onBatchEdit}
           />
         ))}
       </div>
@@ -59,7 +62,8 @@ function TreeNode({
   depth,
   dirtyPaths,
   onSaveFolder,
-  onRevertFolder
+  onRevertFolder,
+  onBatchEdit
 }: {
   node: FolderNode
   selectedFolder: string | null
@@ -68,6 +72,7 @@ function TreeNode({
   dirtyPaths: Set<string>
   onSaveFolder: (path: string | null) => void
   onRevertFolder: (path: string | null) => void
+  onBatchEdit: (path: string | null, name: string) => void
 }) {
   const [expanded, setExpanded] = useState(depth <= 1)
   const isSelected = selectedFolder === node.path
@@ -97,6 +102,7 @@ function TreeNode({
         }}
         onSave={() => onSaveFolder(node.path)}
         onRevert={() => onRevertFolder(node.path)}
+        onBatchEdit={() => onBatchEdit(node.path, node.name)}
       />
 
       {expanded && hasChildren && (
@@ -111,6 +117,7 @@ function TreeNode({
               dirtyPaths={dirtyPaths}
               onSaveFolder={onSaveFolder}
               onRevertFolder={onRevertFolder}
+              onBatchEdit={onBatchEdit}
             />
           ))}
         </div>
@@ -136,7 +143,8 @@ function FolderRow({
   onToggleExpand,
   onClick,
   onSave,
-  onRevert
+  onRevert,
+  onBatchEdit
 }: {
   label: string
   isRoot: boolean
@@ -150,6 +158,7 @@ function FolderRow({
   onClick: () => void
   onSave: () => void
   onRevert: () => void
+  onBatchEdit: () => void
 }) {
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -269,6 +278,13 @@ function FolderRow({
             onClick={() => { setMenu(null); onRevert() }}
           >
             Revert all in folder
+          </button>
+          <div className="my-1 border-t border-gray-700" />
+          <button
+            className="w-full text-left px-3 py-1.5 text-gray-200 hover:bg-indigo-600/40 transition-colors"
+            onClick={() => { setMenu(null); onBatchEdit() }}
+          >
+            Batch edit…
           </button>
         </div>
       )}
