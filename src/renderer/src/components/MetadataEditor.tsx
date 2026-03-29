@@ -46,7 +46,13 @@ export function MetadataEditor({ file, onChange, onSave, onRevealInFinder }: Met
             {m.name || file.fileName}
           </h2>
           <div className="flex items-center gap-3 mt-1">
-            <span className="text-xs text-gray-500">{file.filePath}</span>
+            <button
+              onClick={onRevealInFinder}
+              className="text-xs text-gray-500 hover:text-indigo-400 transition-colors truncate max-w-lg text-left"
+              title="Reveal in Finder / Explorer"
+            >
+              {file.filePath}
+            </button>
           </div>
           <div className="flex items-center gap-2 mt-1">
             <span className="text-xs text-gray-600">v{file.version}</span>
@@ -72,16 +78,6 @@ export function MetadataEditor({ file, onChange, onSave, onRevealInFinder }: Met
           {file.isDirty && (
             <span className="text-xs text-amber-400 font-medium">Unsaved</span>
           )}
-          <button
-            onClick={onRevealInFinder}
-            title="Reveal in Finder / Explorer"
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-800 hover:bg-gray-700 text-gray-300"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-            </svg>
-            Reveal
-          </button>
           <button
             onClick={onSave}
             disabled={!file.isDirty}
@@ -168,7 +164,7 @@ export function MetadataEditor({ file, onChange, onSave, onRevealInFinder }: Met
           {/* Levels section */}
           <Section title="Levels" icon="📊">
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Reamp Send Level (dBu)" hint="Signal level at capture input" autoFilled={isAutoFilled('input_level_dbu')}>
+              <Field label="Reamp Send Level (dBu)" autoFilled={isAutoFilled('input_level_dbu')}>
                 <NumberInput
                   value={m.input_level_dbu ?? ''}
                   onChange={(v) => update('input_level_dbu', v)}
@@ -178,7 +174,7 @@ export function MetadataEditor({ file, onChange, onSave, onRevealInFinder }: Met
                   autoFilled={isAutoFilled('input_level_dbu')}
                 />
               </Field>
-              <Field label="Reamp Return Level (dBu)" hint="Signal level at capture output" autoFilled={isAutoFilled('output_level_dbu')}>
+              <Field label="Reamp Return Level (dBu)" autoFilled={isAutoFilled('output_level_dbu')}>
                 <NumberInput
                   value={m.output_level_dbu ?? ''}
                   onChange={(v) => update('output_level_dbu', v)}

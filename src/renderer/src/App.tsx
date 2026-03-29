@@ -335,7 +335,7 @@ export default function App() {
     if (result.success) {
       setFiles((prev) => prev.map((f) =>
         f.filePath === filePath
-          ? { ...f, isDirty: false, originalMetadata: { ...f.metadata } }
+          ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [] }
           : f
       ))
       setStatus({ message: `Saved: ${file.fileName}`, type: 'success' })
@@ -364,7 +364,7 @@ export default function App() {
     }
     setFiles((prev) => prev.map((f) =>
       savedPaths.has(f.filePath)
-        ? { ...f, isDirty: false, originalMetadata: { ...f.metadata } }
+        ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [] }
         : f
     ))
     if (failed > 0) {
@@ -430,7 +430,8 @@ export default function App() {
     setFiles((prev) => prev.map((f) => {
       if (!savedPaths.has(f.filePath)) return f
       const p = resultMap.get(f.filePath)!
-      return { ...f, metadata: p.newMeta, originalMetadata: p.newOriginal, isDirty: p.newIsDirty }
+      // If no longer dirty after batch save, clear autoFilledFields too
+      return { ...f, metadata: p.newMeta, originalMetadata: p.newOriginal, isDirty: p.newIsDirty, autoFilledFields: p.newIsDirty ? f.autoFilledFields : [] }
     }))
 
     if (failed > 0) {
@@ -539,6 +540,7 @@ export default function App() {
                   ))
                   setStatus({ message: `Reverted ${targets.length} file(s)`, type: 'info' })
                 }}
+                onRevealFolder={(path) => window.api.revealFile(path)}
                 onBatchEdit={(path, name) => {
                   setShowSettings(false)
                   const sel = [...selectedIds]

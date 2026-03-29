@@ -9,9 +9,10 @@ interface FolderTreeProps {
   onSaveFolder: (path: string | null) => void
   onRevertFolder: (path: string | null) => void
   onBatchEdit: (path: string | null, name: string) => void
+  onRevealFolder: (path: string) => void
 }
 
-export function FolderTree({ tree, selectedFolder, onSelect, dirtyPaths, onSaveFolder, onRevertFolder, onBatchEdit }: FolderTreeProps) {
+export function FolderTree({ tree, selectedFolder, onSelect, dirtyPaths, onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder }: FolderTreeProps) {
   const rootDirty = dirtyPaths.size
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -34,6 +35,7 @@ export function FolderTree({ tree, selectedFolder, onSelect, dirtyPaths, onSaveF
           onSave={() => onSaveFolder(null)}
           onRevert={() => onRevertFolder(null)}
           onBatchEdit={() => onBatchEdit(null, tree.name)}
+          onReveal={() => onRevealFolder(tree.path)}
         />
 
         {/* Recursive children */}
@@ -48,6 +50,7 @@ export function FolderTree({ tree, selectedFolder, onSelect, dirtyPaths, onSaveF
             onSaveFolder={onSaveFolder}
             onRevertFolder={onRevertFolder}
             onBatchEdit={onBatchEdit}
+            onRevealFolder={onRevealFolder}
           />
         ))}
       </div>
@@ -63,7 +66,8 @@ function TreeNode({
   dirtyPaths,
   onSaveFolder,
   onRevertFolder,
-  onBatchEdit
+  onBatchEdit,
+  onRevealFolder
 }: {
   node: FolderNode
   selectedFolder: string | null
@@ -73,6 +77,7 @@ function TreeNode({
   onSaveFolder: (path: string | null) => void
   onRevertFolder: (path: string | null) => void
   onBatchEdit: (path: string | null, name: string) => void
+  onRevealFolder: (path: string) => void
 }) {
   const [expanded, setExpanded] = useState(depth <= 1)
   const isSelected = selectedFolder === node.path
@@ -103,6 +108,7 @@ function TreeNode({
         onSave={() => onSaveFolder(node.path)}
         onRevert={() => onRevertFolder(node.path)}
         onBatchEdit={() => onBatchEdit(node.path, node.name)}
+        onReveal={() => onRevealFolder(node.path)}
       />
 
       {expanded && hasChildren && (
@@ -118,6 +124,7 @@ function TreeNode({
               onSaveFolder={onSaveFolder}
               onRevertFolder={onRevertFolder}
               onBatchEdit={onBatchEdit}
+              onRevealFolder={onRevealFolder}
             />
           ))}
         </div>
@@ -144,7 +151,8 @@ function FolderRow({
   onClick,
   onSave,
   onRevert,
-  onBatchEdit
+  onBatchEdit,
+  onReveal
 }: {
   label: string
   isRoot: boolean
@@ -159,6 +167,7 @@ function FolderRow({
   onSave: () => void
   onRevert: () => void
   onBatchEdit: () => void
+  onReveal: () => void
 }) {
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -285,6 +294,12 @@ function FolderRow({
             onClick={() => { setMenu(null); onBatchEdit() }}
           >
             Batch edit…
+          </button>
+          <button
+            className="w-full text-left px-3 py-1.5 text-gray-200 hover:bg-indigo-600/40 transition-colors"
+            onClick={() => { setMenu(null); onReveal() }}
+          >
+            Reveal in Explorer
           </button>
         </div>
       )}
