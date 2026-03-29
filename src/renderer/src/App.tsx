@@ -368,33 +368,58 @@ export default function App() {
     })
   }
 
-  const handleBatchApply = (metadata: Partial<NamFile['metadata']>) => {
+  const handleBatchApply = async (metadata: Partial<NamFile['metadata']>) => {
     const folderPath = batchFolder?.path ?? null
     const batchPaths = batchFolder?.filePaths
-    setFiles((prev) => {
-      let targets: NamFile[]
-      if (batchPaths) {
-        const pathSet = new Set(batchPaths)
-        targets = prev.filter((f) => pathSet.has(f.filePath))
-      } else {
-        targets = folderPath === null
-          ? prev
-          : prev.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(folderPath + '/'))
-      }
-      const targetIds = new Set(targets.map((f) => f.filePath))
-      return prev.map((f) => {
-        if (!targetIds.has(f.filePath)) return f
-        const merged = { ...f.metadata }
-        for (const [k, v] of Object.entries(metadata)) {
-          if (v !== '' && v !== null && v !== undefined) {
-            ;(merged as Record<string, unknown>)[k] = v
-          }
+
+    // Compute updated files from current state (no stale closure — not in useCallback)
+    let targets: NamFile[]
+    if (batchPaths) {
+      const pathSet = new Set(batchPaths)
+      targets = files.filter((f) => pathSet.has(f.filePath))
+    } else {
+      targets = folderPath === null
+        ? files
+        : files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(folderPath + '/'))
+    }
+
+    const updatedTargets = targets.map((f) => {
+      const merged = { ...f.metadata }
+      for (const [k, v] of Object.entries(metadata)) {
+        if (v !== '' && v !== null && v !== undefined) {
+          ;(merged as Record<string, unknown>)[k] = v
         }
-        return { ...f, metadata: merged, isDirty: true }
-      })
+      }
+      return { ...f, metadata: merged }
     })
+
     setBatchFolder(null)
-    setStatus({ message: `Applied batch changes`, type: 'success' })
+
+    // Apply to UI state immediately
+    const updatedMap = new Map(updatedTargets.map((f) => [f.filePath, f]))
+    setFiles((prev) => prev.map((f) =>
+      updatedMap.has(f.filePath) ? { ...updatedMap.get(f.filePath)!, isDirty: true } : f
+    ))
+
+    // Save to disk straight away — batch edit always saves
+    setStatus({ message: `Saving ${updatedTargets.length} file(s)...`, type: 'info' })
+    const savedPaths = new Set<string>()
+    let failed = 0
+    for (const f of updatedTargets) {
+      const result = await window.api.writeMetadata(f.filePath, f.metadata)
+      if (result.success) savedPaths.add(f.filePath)
+      else failed++
+    }
+    setFiles((prev) => prev.map((f) =>
+      savedPaths.has(f.filePath)
+        ? { ...f, isDirty: false, originalMetadata: { ...f.metadata } }
+        : f
+    ))
+    if (failed > 0) {
+      setStatus({ message: `Batch saved ${savedPaths.size}, failed ${failed}`, type: 'error' })
+    } else {
+      setStatus({ message: `Batch saved ${savedPaths.size} file(s)`, type: 'success' })
+    }
   }
 
   const handleNameFromFilename = () => {

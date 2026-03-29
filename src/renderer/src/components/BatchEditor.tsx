@@ -29,7 +29,7 @@ export function BatchEditor({ folderName, fileCount, onApply, onClose }: BatchEd
     if (enabled.size === 0) return
     const fieldNames = [...enabled].map((k) => batchFields.find((f) => f.key === k)?.label ?? k).join(', ')
     const confirmed = window.confirm(
-      `Apply ${enabled.size} field${enabled.size !== 1 ? 's' : ''} (${fieldNames}) to ${fileCount} file${fileCount !== 1 ? 's' : ''} in "${folderName}"?\n\nThis marks them as unsaved — you'll still need to Save to write to disk.`
+      `Apply ${enabled.size} field${enabled.size !== 1 ? 's' : ''} (${fieldNames}) to ${fileCount} file${fileCount !== 1 ? 's' : ''} in "${folderName}"?\n\nThis will write changes directly to the .nam files on disk.`
     )
     if (!confirmed) return
     const toApply: Partial<NamMetadata> = {}
