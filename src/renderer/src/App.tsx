@@ -363,6 +363,42 @@ export default function App() {
                 setLibrarian((prev) => ({ ...prev, selectedFolder: path }))
                 setSelectedIds(new Set())
               }}
+              onSaveFolder={async (path) => {
+                const targets = path === null
+                  ? files.filter((f) => f.isDirty)
+                  : files.filter((f) => f.isDirty && f.filePath.replace(/\\/g, '/').startsWith(path + '/'))
+                if (targets.length === 0) return
+                const savedPaths = new Set<string>()
+                let failed = 0
+                for (const f of targets) {
+                  const result = await window.api.writeMetadata(f.filePath, f.metadata)
+                  if (result.success) savedPaths.add(f.filePath)
+                  else failed++
+                }
+                setFiles((prev) => prev.map((f) =>
+                  savedPaths.has(f.filePath)
+                    ? { ...f, isDirty: false, originalMetadata: { ...f.metadata } }
+                    : f
+                ))
+                if (failed > 0) {
+                  setStatus({ message: `Saved ${savedPaths.size}, failed ${failed}`, type: 'error' })
+                } else {
+                  setStatus({ message: `Saved ${savedPaths.size} file(s)`, type: 'success' })
+                }
+              }}
+              onRevertFolder={(path) => {
+                const targets = path === null
+                  ? files.filter((f) => f.isDirty)
+                  : files.filter((f) => f.isDirty && f.filePath.replace(/\\/g, '/').startsWith(path + '/'))
+                if (targets.length === 0) return
+                if (!window.confirm(`Revert ${targets.length} unsaved file${targets.length !== 1 ? 's' : ''} in this folder?\n\nAll unsaved changes will be lost.`)) return
+                setFiles((prev) => prev.map((f) =>
+                  targets.some((t) => t.filePath === f.filePath)
+                    ? { ...f, metadata: { ...f.originalMetadata }, isDirty: false }
+                    : f
+                ))
+                setStatus({ message: `Reverted ${targets.length} file(s)`, type: 'info' })
+              }}
             />
           </div>
         )}
@@ -395,7 +431,7 @@ export default function App() {
             }}
             onSelectAll={() => setSelectedIds(new Set(visibleFiles.map((f) => f.filePath)))}
             onDeselectAll={() => setSelectedIds(new Set())}
-            onRemove={handleRemoveFile}
+            onRemove={hasTree ? undefined : handleRemoveFile}
           />
         </div>
 
