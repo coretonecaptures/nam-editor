@@ -123,8 +123,8 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
   const [librarian, setLibrarian] = useState<LibrarianState>(EMPTY_LIBRARIAN)
-  const [treeWidth, setTreeWidth] = useState(220)
-  const [listWidth, setListWidth] = useState(280)
+  const [treeWidth, setTreeWidth] = useState(260)
+  const [listWidth, setListWidth] = useState(320)
   const draggingRef = useRef<null | { panel: 'tree' | 'list'; startX: number; startWidth: number }>(null)
 
   const onDragStart = (panel: 'tree' | 'list', e: React.MouseEvent) => {

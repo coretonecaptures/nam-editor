@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { NamFile } from '../types/nam'
 
-type FilterMode = 'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone'
+type FilterMode = 'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited'
 
 interface FileListProps {
   files: NamFile[]
@@ -48,12 +48,15 @@ export function FileList({
       case 'no-gear':   return !o.gear_type
       case 'no-maker':  return !o.gear_make && !o.gear_model
       case 'no-tone':   return !o.tone_type
+      case 'edited':    return f.isDirty
       default:          return true
     }
   })
 
+  const editedCount = files.filter((f) => f.isDirty).length
   const filterOptions: { value: FilterMode; label: string }[] = [
     { value: 'all',      label: 'All' },
+    { value: 'edited',   label: editedCount > 0 ? `Edited (${editedCount})` : 'Edited' },
     { value: 'unnamed',  label: 'Unnamed' },
     { value: 'no-gear',  label: 'No Type' },
     { value: 'no-maker', label: 'No Maker' },
