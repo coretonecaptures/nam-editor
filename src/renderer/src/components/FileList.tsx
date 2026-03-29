@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import { NamFile } from '../types/nam'
 
 type FilterMode = 'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited'
@@ -11,6 +11,7 @@ interface FileListProps {
   onSelectAll: () => void
   onDeselectAll: () => void
   onRemove?: (id: string) => void  // omit to hide remove button (e.g. librarian mode)
+  onBatchEditSelected?: (paths: string[]) => void
 }
 
 export function FileList({
@@ -20,11 +21,20 @@ export function FileList({
   onSelectRange,
   onSelectAll,
   onDeselectAll,
-  onRemove = undefined
+  onRemove = undefined,
+  onBatchEditSelected
 }: FileListProps) {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<FilterMode>('all')
   const anchorIndexRef = useRef<number>(-1)
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
+
+  useEffect(() => {
+    if (!ctxMenu) return
+    const close = () => setCtxMenu(null)
+    window.addEventListener('click', close)
+    return () => window.removeEventListener('click', close)
+  }, [ctxMenu])
 
   if (files.length === 0) {
     return (
@@ -124,7 +134,14 @@ export function FileList({
       </div>
 
       {/* File list */}
-      <div className="flex-1 overflow-y-auto">
+      <div
+        className="flex-1 overflow-y-auto"
+        onContextMenu={(e) => {
+          if (!onBatchEditSelected || selectedIds.size === 0) return
+          e.preventDefault()
+          setCtxMenu({ x: e.clientX, y: e.clientY })
+        }}
+      >
         {filtered.length === 0 ? (
           <div className="flex items-center justify-center h-20">
             <p className="text-gray-600 text-xs">No matches</p>
@@ -150,6 +167,28 @@ export function FileList({
           ))
         )}
       </div>
+
+      {/* Context menu */}
+      {ctxMenu && (
+        <div
+          className="fixed z-50 bg-gray-900 border border-gray-700 rounded-lg shadow-xl py-1 min-w-[180px]"
+          style={{ top: ctxMenu.y, left: ctxMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            className="w-full text-left px-3 py-2 text-sm text-gray-200 hover:bg-gray-800 transition-colors flex items-center gap-2"
+            onClick={() => {
+              onBatchEditSelected!([...selectedIds])
+              setCtxMenu(null)
+            }}
+          >
+            <svg className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
+            </svg>
+            Batch edit {selectedIds.size} selected
+          </button>
+        </div>
+      )}
     </div>
   )
 }

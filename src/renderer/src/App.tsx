@@ -122,7 +122,7 @@ export default function App() {
     message: 'Open .nam files or a folder to get started',
     type: 'info'
   })
-  const [batchFolder, setBatchFolder] = useState<{ path: string | null; name: string } | null>(null)
+  const [batchFolder, setBatchFolder] = useState<{ path: string | null; name: string; filePaths?: string[] } | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
   const [librarian, setLibrarian] = useState<LibrarianState>(EMPTY_LIBRARIAN)
@@ -370,10 +370,17 @@ export default function App() {
 
   const handleBatchApply = (metadata: Partial<NamFile['metadata']>) => {
     const folderPath = batchFolder?.path ?? null
+    const batchPaths = batchFolder?.filePaths
     setFiles((prev) => {
-      const targets = folderPath === null
-        ? prev
-        : prev.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(folderPath + '/'))
+      let targets: NamFile[]
+      if (batchPaths) {
+        const pathSet = new Set(batchPaths)
+        targets = prev.filter((f) => pathSet.has(f.filePath))
+      } else {
+        targets = folderPath === null
+          ? prev
+          : prev.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(folderPath + '/'))
+      }
       const targetIds = new Set(targets.map((f) => f.filePath))
       return prev.map((f) => {
         if (!targetIds.has(f.filePath)) return f
@@ -487,7 +494,16 @@ export default function App() {
                 }}
                 onBatchEdit={(path, name) => {
                   setShowSettings(false)
-                  setBatchFolder({ path, name })
+                  const sel = [...selectedIds]
+                  if (sel.length > 0) {
+                    setBatchFolder({
+                      path: null,
+                      name: `${sel.length} selected file${sel.length !== 1 ? 's' : ''}`,
+                      filePaths: sel
+                    })
+                  } else {
+                    setBatchFolder({ path, name })
+                  }
                 }}
               />
             </div>
@@ -525,6 +541,14 @@ export default function App() {
               onSelectAll={() => setSelectedIds(new Set(visibleFiles.map((f) => f.filePath)))}
               onDeselectAll={() => setSelectedIds(new Set())}
               onRemove={hasTree ? undefined : handleRemoveFile}
+              onBatchEditSelected={(paths) => {
+                setShowSettings(false)
+                setBatchFolder({
+                  path: null,
+                  name: `${paths.length} selected file${paths.length !== 1 ? 's' : ''}`,
+                  filePaths: paths
+                })
+              }}
             />
           </div>
           <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} />
@@ -537,9 +561,11 @@ export default function App() {
           ) : batchFolder !== null ? (
             <BatchEditor
               folderName={batchFolder.name}
-              fileCount={batchFolder.path === null
-                ? files.length
-                : files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(batchFolder.path! + '/')).length}
+              fileCount={batchFolder.filePaths
+                ? batchFolder.filePaths.length
+                : batchFolder.path === null
+                  ? files.length
+                  : files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(batchFolder.path! + '/')).length}
               onApply={handleBatchApply}
               onClose={() => setBatchFolder(null)}
             />
@@ -654,7 +680,7 @@ function MultiSelectHint({ count }: { count: number }) {
       </div>
       <div>
         <h3 className="text-lg font-semibold text-gray-200 mb-1">{count} files selected</h3>
-        <p className="text-gray-500 text-sm">Select a single file to edit its metadata,<br />or right-click a folder to batch edit.</p>
+        <p className="text-gray-500 text-sm">Select a single file to edit its metadata,<br />or right-click the selection to batch edit.</p>
       </div>
     </div>
   )
