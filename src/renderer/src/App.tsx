@@ -1,12 +1,14 @@
 import { useState, useCallback } from 'react'
 import { NamFile } from './types/nam'
 import { AppSettings, loadSettings, saveSettings } from './types/settings'
+import { FolderNode, LibrarianState } from './types/librarian'
 import { FileList } from './components/FileList'
 import { MetadataEditor } from './components/MetadataEditor'
 import { Toolbar } from './components/Toolbar'
 import { BatchEditor } from './components/BatchEditor'
 import { StatusBar } from './components/StatusBar'
 import { SettingsPanel } from './components/SettingsPanel'
+import { FolderTree } from './components/FolderTree'
 
 declare global {
   interface Window {
@@ -24,6 +26,7 @@ declare global {
       }>
       writeMetadata: (filePath: string, metadata: unknown) => Promise<{ success: boolean; error?: string }>
       scanFolder: (folderPath: string) => Promise<{ success: boolean; error?: string; files?: string[] }>
+      scanTree: (folderPath: string) => Promise<{ success: boolean; error?: string; tree?: FolderNode }>
       platform: string
     }
   }
@@ -60,6 +63,12 @@ function applyDefaults(meta: NamFile['metadata'], baseName: string, settings: Ap
   return m
 }
 
+const EMPTY_LIBRARIAN: LibrarianState = {
+  rootFolder: null,
+  folderTree: null,
+  selectedFolder: null
+}
+
 export default function App() {
   const [files, setFiles] = useState<NamFile[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -70,6 +79,7 @@ export default function App() {
   const [batchMode, setBatchMode] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
+  const [librarian, setLibrarian] = useState<LibrarianState>(EMPTY_LIBRARIAN)
 
   const handleSaveSettings = (updated: AppSettings) => {
     setSettings(updated)
@@ -132,6 +142,7 @@ export default function App() {
     setSelectedIds(new Set())
     setBatchMode(false)
     setShowSettings(false)
+    setLibrarian(EMPTY_LIBRARIAN)
     setStatus({ message: 'Open .nam files or a folder to get started', type: 'info' })
   }
 
@@ -141,6 +152,7 @@ export default function App() {
     if (paths.length === 0) return
     setFiles([])
     setSelectedIds(new Set())
+    setLibrarian(EMPTY_LIBRARIAN)
     await loadFiles(paths)
   }
 
@@ -149,16 +161,30 @@ export default function App() {
     const folder = await window.api.openFolder()
     if (!folder) return
     setStatus({ message: 'Scanning folder...', type: 'info' })
-    const result = await window.api.scanFolder(folder)
-    if (result.success && result.files && result.files.length > 0) {
-      setFiles([])
-      setSelectedIds(new Set())
-      await loadFiles(result.files)
-    } else if (result.success) {
-      setStatus({ message: 'No .nam files found in that folder', type: 'info' })
-    } else {
-      setStatus({ message: `Error: ${result.error}`, type: 'error' })
+
+    // Run flat scan and tree scan in parallel
+    const [flatResult, treeResult] = await Promise.all([
+      window.api.scanFolder(folder),
+      window.api.scanTree(folder)
+    ])
+
+    if (!flatResult.success) {
+      setStatus({ message: `Error: ${flatResult.error}`, type: 'error' })
+      return
     }
+    if (!flatResult.files || flatResult.files.length === 0) {
+      setStatus({ message: 'No .nam files found in that folder', type: 'info' })
+      return
+    }
+
+    setFiles([])
+    setSelectedIds(new Set())
+    setLibrarian({
+      rootFolder: folder.replace(/\\/g, '/'),
+      folderTree: treeResult.success && treeResult.tree ? treeResult.tree : null,
+      selectedFolder: null
+    })
+    await loadFiles(flatResult.files)
   }
 
   const handleDrop = useCallback(
@@ -236,7 +262,7 @@ export default function App() {
   }
 
   const handleBatchApply = async (metadata: Partial<NamFile['metadata']>) => {
-    const targetIds = selectedIds.size > 0 ? selectedIds : new Set(files.map((f) => f.filePath))
+    const targetIds = selectedIds.size > 0 ? selectedIds : new Set(visibleFiles.map((f) => f.filePath))
     setFiles((prev) =>
       prev.map((f) => {
         if (!targetIds.has(f.filePath)) return f
@@ -262,9 +288,16 @@ export default function App() {
     )
   }
 
-  const selectedFiles = files.filter((f) => selectedIds.has(f.filePath))
+  // Filter files by selected folder in librarian mode
+  const visibleFiles = librarian.selectedFolder
+    ? files.filter((f) => f.filePath.startsWith(librarian.selectedFolder! + '/') || f.filePath.startsWith(librarian.selectedFolder!.replace(/\//g, '\\') + '\\'))
+    : files
+
+  const selectedFiles = visibleFiles.filter((f) => selectedIds.has(f.filePath))
   const dirtyCount = files.filter((f) => f.isDirty).length
   const unnamedCount = files.filter((f) => !f.metadata.name).length
+
+  const hasTree = librarian.folderTree !== null
 
   return (
     <div
@@ -289,10 +322,24 @@ export default function App() {
       />
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Left sidebar - file list */}
-        <div className="w-72 flex-shrink-0 border-r border-gray-800 flex flex-col overflow-hidden">
+        {/* Folder tree — only shown when a folder is open */}
+        {hasTree && (
+          <div className="w-48 flex-shrink-0 border-r border-gray-800 flex flex-col overflow-hidden">
+            <FolderTree
+              tree={librarian.folderTree!}
+              selectedFolder={librarian.selectedFolder}
+              onSelect={(path) => {
+                setLibrarian((prev) => ({ ...prev, selectedFolder: path }))
+                setSelectedIds(new Set())
+              }}
+            />
+          </div>
+        )}
+
+        {/* File list */}
+        <div className={`${hasTree ? 'w-64' : 'w-72'} flex-shrink-0 border-r border-gray-800 flex flex-col overflow-hidden`}>
           <FileList
-            files={files}
+            files={visibleFiles}
             selectedIds={selectedIds}
             onSelect={(id, multi) => {
               if (multi) {
@@ -308,7 +355,14 @@ export default function App() {
                 setBatchMode(false)
               }
             }}
-            onSelectAll={() => setSelectedIds(new Set(files.map((f) => f.filePath)))}
+            onSelectRange={(ids) => {
+              setSelectedIds((prev) => {
+                const next = new Set(prev)
+                for (const id of ids) next.add(id)
+                return next
+              })
+            }}
+            onSelectAll={() => setSelectedIds(new Set(visibleFiles.map((f) => f.filePath)))}
             onDeselectAll={() => setSelectedIds(new Set())}
             onRemove={handleRemoveFile}
           />
@@ -320,7 +374,7 @@ export default function App() {
             <SettingsPanel settings={settings} onSave={handleSaveSettings} />
           ) : batchMode ? (
             <BatchEditor
-              selectedCount={selectedIds.size > 0 ? selectedIds.size : files.length}
+              selectedCount={selectedIds.size > 0 ? selectedIds.size : visibleFiles.length}
               onApply={handleBatchApply}
             />
           ) : selectedFiles.length === 1 ? (

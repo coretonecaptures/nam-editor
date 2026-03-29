@@ -8,7 +8,7 @@ function createWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
-    minWidth: 900,
+    minWidth: 1100,
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
@@ -114,7 +114,7 @@ app.whenReady().then(() => {
     }
   })
 
-  // IPC: Scan a folder recursively for .nam files
+  // IPC: Scan a folder recursively for .nam files (flat list)
   ipcMain.handle('folder:scanNam', async (_event, folderPath: string) => {
     try {
       const files: string[] = []
@@ -125,12 +125,46 @@ app.whenReady().then(() => {
           if (entry.isDirectory()) {
             scan(full)
           } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.nam')) {
-            files.push(full)
+            files.push(full.replace(/\\/g, '/'))
           }
         }
       }
       scan(folderPath)
       return { success: true, files }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  })
+
+  // IPC: Scan a folder and return a tree structure for the Librarian
+  ipcMain.handle('folder:scanTree', async (_event, folderPath: string) => {
+    const norm = (p: string) => p.replace(/\\/g, '/')
+    interface FolderNode {
+      name: string
+      path: string
+      children: FolderNode[]
+      fileCount: number
+      totalCount: number
+    }
+    try {
+      const buildTreeFixed = (dir: string): FolderNode => {
+        const entries = fs.readdirSync(dir, { withFileTypes: true })
+        const children: FolderNode[] = []
+        let fileCount = 0
+        for (const entry of entries) {
+          const full = join(dir, entry.name)
+          if (entry.isDirectory()) {
+            children.push(buildTreeFixed(full))
+          } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.nam')) {
+            fileCount++
+          }
+        }
+        const totalCount = fileCount + children.reduce((s, c) => s + c.totalCount, 0)
+        const name = norm(dir).split('/').pop() ?? dir
+        return { name, path: norm(dir), children, fileCount, totalCount }
+      }
+      const tree = buildTreeFixed(folderPath)
+      return { success: true, tree }
     } catch (err) {
       return { success: false, error: String(err) }
     }

@@ -1,15 +1,23 @@
+export interface FolderOverride {
+  manufacturer?: string
+  model?: string
+  modeledBy?: string
+}
+
 export interface AppSettings {
   defaultModeledBy: string
   defaultInputLevel: string
   defaultManufacturer: string
   defaultModel: string
+  folderOverrides: Record<string, FolderOverride>  // keyed by normalized folder path
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   defaultModeledBy: '',
   defaultInputLevel: '',
   defaultManufacturer: '',
-  defaultModel: ''
+  defaultModel: '',
+  folderOverrides: {}
 }
 
 const STORAGE_KEY = 'nam-editor-settings'

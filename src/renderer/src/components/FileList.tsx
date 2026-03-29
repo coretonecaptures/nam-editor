@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { NamFile } from '../types/nam'
 
 type FilterMode = 'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone'
@@ -7,6 +7,7 @@ interface FileListProps {
   files: NamFile[]
   selectedIds: Set<string>
   onSelect: (id: string, multi: boolean) => void
+  onSelectRange: (ids: string[]) => void
   onSelectAll: () => void
   onDeselectAll: () => void
   onRemove: (id: string) => void
@@ -16,12 +17,14 @@ export function FileList({
   files,
   selectedIds,
   onSelect,
+  onSelectRange,
   onSelectAll,
   onDeselectAll,
   onRemove
 }: FileListProps) {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<FilterMode>('all')
+  const anchorIndexRef = useRef<number>(-1)
 
   if (files.length === 0) {
     return (
@@ -124,12 +127,21 @@ export function FileList({
             <p className="text-gray-600 text-xs">No matches</p>
           </div>
         ) : (
-          filtered.map((file) => (
+          filtered.map((file, index) => (
             <FileItem
               key={file.filePath}
               file={file}
               isSelected={selectedIds.has(file.filePath)}
-              onSelect={(multi) => onSelect(file.filePath, multi)}
+              onSelect={(e) => {
+                if (e.shiftKey && anchorIndexRef.current >= 0) {
+                  const lo = Math.min(anchorIndexRef.current, index)
+                  const hi = Math.max(anchorIndexRef.current, index)
+                  onSelectRange(filtered.slice(lo, hi + 1).map((f) => f.filePath))
+                } else {
+                  anchorIndexRef.current = index
+                  onSelect(file.filePath, e.ctrlKey || e.metaKey)
+                }
+              }}
               onRemove={() => onRemove(file.filePath)}
             />
           ))
@@ -147,7 +159,7 @@ function FileItem({
 }: {
   file: NamFile
   isSelected: boolean
-  onSelect: (multi: boolean) => void
+  onSelect: (e: React.MouseEvent) => void
   onRemove: () => void
 }) {
   const meta = file.metadata
@@ -159,7 +171,8 @@ function FileItem({
       className={`group flex items-start gap-2 px-3 py-2.5 cursor-pointer border-b border-gray-800/50 hover:bg-gray-800/50 transition-colors ${
         isSelected ? 'bg-indigo-900/30 hover:bg-indigo-900/40' : ''
       }`}
-      onClick={(e) => onSelect(e.ctrlKey || e.metaKey || e.shiftKey)}
+      onClick={(e) => onSelect(e)}
+      onMouseDown={(e) => { if (e.shiftKey) e.preventDefault() }}
     >
       <div className="flex-shrink-0 w-1.5 h-1.5 rounded-full mt-2 transition-colors">
         {file.isDirty
