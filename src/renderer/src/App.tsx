@@ -88,8 +88,7 @@ function applyDefaults(meta: NamFile['metadata'], baseName: string, settings: Ap
 const TONE_KEYWORDS: Record<typeof TONE_TYPES[number], string[]> = {
   'clean':      ['clean'],
   'crunch':     ['crunch'],
-  'high-gain':  ['highgain', 'hi-gain', 'higain', 'lead'],
-  'hi_gain':    [],
+  'hi_gain':    ['highgain', 'hi-gain', 'higain', 'high-gain', 'lead'],
   'fuzz':       ['fuzz'],
   'overdrive':  ['overdrive', 'od', 'edge', 'drive'],
   'distortion': ['distortion', 'dist'],
@@ -176,7 +175,13 @@ export default function App() {
       if (r.success && r.filePath && r.metadata !== undefined) {
         const fileName = r.filePath.replace(/\\/g, '/').split('/').pop() ?? r.filePath
         const baseName = fileName.replace(/\.nam$/i, '')
-        const rawMeta = r.metadata ?? {}
+        const rawMeta: NamFile['metadata'] = { ...(r.metadata ?? {}) }
+        // If tone_type isn't a recognized value, blank it in working metadata
+        // so the amber highlight and missing badge flag it for fixing.
+        // originalMetadata keeps the raw value so isDirty triggers.
+        if (rawMeta.tone_type && !(TONE_TYPES as readonly string[]).includes(rawMeta.tone_type)) {
+          rawMeta.tone_type = null
+        }
         const meta = applyDefaults({ ...rawMeta }, baseName, settings)
         const wasChanged = JSON.stringify(meta) !== JSON.stringify(rawMeta)
         loaded.push({

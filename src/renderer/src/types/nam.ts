@@ -38,7 +38,6 @@ export const GEAR_TYPES = ['amp', 'pedal', 'cab', 'preamp', 'di', 'other'] as co
 export const TONE_TYPES = [
   'clean',
   'crunch',
-  'high-gain',
   'hi_gain',
   'fuzz',
   'overdrive',
