@@ -5,9 +5,11 @@ interface FolderTreeProps {
   tree: FolderNode
   selectedFolder: string | null  // null = root selected
   onSelect: (path: string | null) => void
+  dirtyPaths: Set<string>
 }
 
-export function FolderTree({ tree, selectedFolder, onSelect }: FolderTreeProps) {
+export function FolderTree({ tree, selectedFolder, onSelect, dirtyPaths }: FolderTreeProps) {
+  const rootDirty = dirtyPaths.size
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <div className="px-3 py-2 border-b border-gray-800 flex-shrink-0">
@@ -27,6 +29,7 @@ export function FolderTree({ tree, selectedFolder, onSelect }: FolderTreeProps) 
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
           </svg>
           <span className="text-xs font-medium truncate flex-1">{tree.name}</span>
+          <span className={`text-xs flex-shrink-0 ${rootDirty > 0 ? 'text-amber-500' : 'invisible'}`}>{rootDirty}</span>
           <span className="text-xs text-gray-500 flex-shrink-0">{tree.totalCount}</span>
         </div>
 
@@ -38,6 +41,7 @@ export function FolderTree({ tree, selectedFolder, onSelect }: FolderTreeProps) 
             selectedFolder={selectedFolder}
             onSelect={onSelect}
             depth={1}
+            dirtyPaths={dirtyPaths}
           />
         ))}
       </div>
@@ -49,16 +53,24 @@ function TreeNode({
   node,
   selectedFolder,
   onSelect,
-  depth
+  depth,
+  dirtyPaths
 }: {
   node: FolderNode
   selectedFolder: string | null
   onSelect: (path: string | null) => void
   depth: number
+  dirtyPaths: Set<string>
 }) {
   const [expanded, setExpanded] = useState(depth <= 1)
   const isSelected = selectedFolder === node.path
   const hasChildren = node.children.length > 0
+
+  const prefix = node.path + '/'
+  let dirtyCount = 0
+  for (const p of dirtyPaths) {
+    if (p.startsWith(prefix) || p === node.path) dirtyCount++
+  }
 
   return (
     <div>
@@ -106,7 +118,12 @@ function TreeNode({
 
         <span className="text-xs truncate flex-1">{node.name}</span>
 
-        {/* File count badge */}
+        {/* Dirty count (amber) — invisible when 0 to keep alignment */}
+        <span className={`text-xs flex-shrink-0 ${dirtyCount > 0 ? 'text-amber-500' : 'invisible'}`}>
+          {dirtyCount}
+        </span>
+
+        {/* Total count (blue) */}
         {node.totalCount > 0 && (
           <span className={`text-xs flex-shrink-0 ${isSelected ? 'text-indigo-400' : 'text-gray-600'}`}>
             {node.totalCount}
@@ -124,6 +141,7 @@ function TreeNode({
               selectedFolder={selectedFolder}
               onSelect={onSelect}
               depth={depth + 1}
+              dirtyPaths={dirtyPaths}
             />
           ))}
         </div>

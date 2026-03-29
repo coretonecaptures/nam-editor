@@ -325,6 +325,7 @@ export default function App() {
   const dirtyCount = files.filter((f) => f.isDirty).length
   const unnamedCount = files.filter((f) => !f.metadata.name).length
   const hasTree = librarian.folderTree !== null
+  const dirtyPaths = new Set(files.filter((f) => f.isDirty).map((f) => f.filePath.replace(/\\/g, '/')))
 
   return (
     <div
@@ -357,6 +358,7 @@ export default function App() {
             <FolderTree
               tree={librarian.folderTree!}
               selectedFolder={librarian.selectedFolder}
+              dirtyPaths={dirtyPaths}
               onSelect={(path) => {
                 setLibrarian((prev) => ({ ...prev, selectedFolder: path }))
                 setSelectedIds(new Set())
