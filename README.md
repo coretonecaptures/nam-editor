@@ -4,11 +4,15 @@ A desktop app for editing metadata in [Neural Amp Modeler](https://www.neuralamp
 
 Built with Electron, React, and Tailwind CSS. Runs on **Windows** and **macOS**.
 
+> **This app does not run captures or process audio.** It is purely a metadata editor for `.nam` files. To actually use your captures, you need the [Neural Amp Modeler plugin](https://www.neuralampmodeler.com/) (free, available for all major DAWs).
+
 ---
 
 ## What It Does
 
-Neural Amp Modeler captures store metadata (capture name, gear info, tone type, etc.) as JSON inside the `.nam` file alongside the model weights. Most tools don't expose this metadata for editing. NAM Editor lets you open many files at once, update their metadata, and save back — safely.
+Neural Amp Modeler captures store metadata (capture name, gear info, tone type, etc.) as JSON inside the `.nam` file alongside the model weights. Most tools don't expose this metadata for editing — NAM Editor lets you open many files at once, update their metadata, and save back safely.
+
+This is especially useful for capture artists who want to properly tag their `.nam` files before sharing or uploading them to tone libraries.
 
 **Key guarantees:**
 - Only the metadata fields you explicitly edit are written back
@@ -37,7 +41,7 @@ Neural Amp Modeler captures store metadata (capture name, gear info, tone type, 
 - Read-only stats: architecture, NAM version, loudness, gain, validation ESR, epoch count (if present)
 
 ### Smart Defaults (Settings)
-Configure defaults that auto-populate empty fields when you open files:
+Each user configures their own defaults — settings are stored locally on your machine and start blank for every new installation. Configure defaults that auto-populate empty fields when you open files:
 - **Default Modeled By** — applied if the file has no `modeled_by` value
 - **Default Input Level** — applied if the file has no `input_level_dbu`
 - **Current Amp Info** — default Manufacturer and Model applied to files missing those fields
@@ -128,6 +132,13 @@ The workflow builds a Windows `.exe` installer and a macOS `.dmg`, then attaches
 - [React](https://react.dev/) — UI
 - [Tailwind CSS](https://tailwindcss.com/) — styling
 - [electron-builder](https://www.electron.build/) — packaging
+
+---
+
+## Requirements
+
+- **To use this app:** Windows 10+ or macOS 10.13+
+- **To use your captures:** [Neural Amp Modeler plugin](https://www.neuralampmodeler.com/) (free) — available for VST3, AU, AAX, and standalone
 
 ---
 
