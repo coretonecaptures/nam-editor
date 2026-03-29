@@ -20,6 +20,8 @@ jobs:
 
       - name: Build Windows installer
         run: npm run package:win
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2
@@ -44,6 +46,8 @@ jobs:
 
       - name: Build Mac DMG
         run: npm run package:mac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2
