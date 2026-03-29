@@ -175,6 +175,8 @@ export default function App() {
       setStatus({ message: 'No unsaved changes', type: 'info' })
       return
     }
+    const confirmed = window.confirm(`Save changes to ${dirty.length} file${dirty.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.`)
+    if (!confirmed) return
     setStatus({ message: `Saving ${dirty.length} file(s)...`, type: 'info' })
     let saved = 0
     let failed = 0
