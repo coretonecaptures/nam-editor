@@ -268,6 +268,8 @@ export default function App() {
                 })
               } else {
                 setSelectedIds(new Set([id]))
+                setShowSettings(false)
+                setBatchMode(false)
               }
             }}
             onSelectAll={() => setSelectedIds(new Set(files.map((f) => f.filePath)))}
