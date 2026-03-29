@@ -8,8 +8,6 @@ on:
 jobs:
   build-windows:
     runs-on: windows-latest
-    env:
-      GH_TOKEN: ${{ secrets.GH_PAT }}   # PAT available for electron-builder if needed
     steps:
       - uses: actions/checkout@v4
 
@@ -21,7 +19,7 @@ jobs:
         run: npm ci
 
       - name: Build Windows installer
-        run: npm run package:win -- --publish=never
+        run: npm run package:win
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
@@ -32,12 +30,10 @@ jobs:
           draft: false
           fail_on_unmatched_files: false
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-mac:
     runs-on: macos-latest
-    env:
-      GH_TOKEN: ${{ secrets.GH_PAT }}   # PAT available for electron-builder if needed
     steps:
       - uses: actions/checkout@v4
 
@@ -49,7 +45,7 @@ jobs:
         run: npm ci
 
       - name: Build Mac DMG
-        run: npm run package:mac -- --publish=never
+        run: npm run package:mac
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
@@ -60,4 +56,4 @@ jobs:
           draft: false
           fail_on_unmatched_files: false
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
