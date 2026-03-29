@@ -1,14 +1,14 @@
 {
   "name": "nam-editor",
-  "version": "0.2.0",
+  "version": "0.2.3",
   "description": "NAM (Neural Amp Modeler) metadata editor",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "package:win": "npm run build && electron-builder --win",
-    "package:mac": "npm run build && electron-builder --mac"
+    "package:win": "npm run build && electron-builder --win --publish never",
+    "package:mac": "npm run build && electron-builder --mac --publish never"
   },
   "dependencies": {
     "react": "^18.3.1",
