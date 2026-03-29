@@ -33,22 +33,6 @@ declare global {
   }
 }
 
-// Normalize raw file values to canonical app values before applying defaults
-const TONE_TYPE_ALIASES: Record<string, string> = {
-  'hi_gain':    'high-gain',
-  'hi-gain':    'high-gain',
-  'highgain':   'high-gain',
-  'high_gain':  'high-gain',
-}
-
-function normalizeMetadata(meta: NamFile['metadata']): NamFile['metadata'] {
-  const m = { ...meta }
-  if (m.tone_type) {
-    const normalized = TONE_TYPE_ALIASES[m.tone_type.toLowerCase().replace(/\s+/g, '')]
-    if (normalized) m.tone_type = normalized
-  }
-  return m
-}
 
 function applyDefaults(meta: NamFile['metadata'], baseName: string, settings: AppSettings): NamFile['metadata'] {
   const m = { ...meta }
@@ -105,6 +89,7 @@ const TONE_KEYWORDS: Record<typeof TONE_TYPES[number], string[]> = {
   'clean':      ['clean'],
   'crunch':     ['crunch'],
   'high-gain':  ['highgain', 'hi-gain', 'higain', 'lead'],
+  'hi_gain':    [],
   'fuzz':       ['fuzz'],
   'overdrive':  ['overdrive', 'od', 'edge', 'drive'],
   'distortion': ['distortion', 'dist'],
@@ -191,7 +176,7 @@ export default function App() {
       if (r.success && r.filePath && r.metadata !== undefined) {
         const fileName = r.filePath.replace(/\\/g, '/').split('/').pop() ?? r.filePath
         const baseName = fileName.replace(/\.nam$/i, '')
-        const rawMeta = normalizeMetadata(r.metadata ?? {})
+        const rawMeta = r.metadata ?? {}
         const meta = applyDefaults({ ...rawMeta }, baseName, settings)
         const wasChanged = JSON.stringify(meta) !== JSON.stringify(rawMeta)
         loaded.push({

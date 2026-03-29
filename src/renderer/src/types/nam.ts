@@ -39,6 +39,7 @@ export const TONE_TYPES = [
   'clean',
   'crunch',
   'high-gain',
+  'hi_gain',
   'fuzz',
   'overdrive',
   'distortion',
