@@ -14,6 +14,8 @@ interface ToolbarProps {
   onToggleSettings: () => void
   onNameFromFilename: () => void
   onCloseAll: () => void
+  rootFolder: string | null
+  onRefresh: () => void
 }
 
 export function Toolbar({
@@ -29,7 +31,9 @@ export function Toolbar({
   showSettings,
   onToggleSettings,
   onNameFromFilename,
-  onCloseAll
+  onCloseAll,
+  rootFolder,
+  onRefresh
 }: ToolbarProps) {
   return (
     <div
@@ -79,6 +83,20 @@ export function Toolbar({
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
           </svg>
           Close All
+        </button>
+      )}
+
+      {rootFolder && (
+        <button
+          onClick={onRefresh}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          title="Rescan folder for new or removed files"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          Refresh
         </button>
       )}
 

@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
 import { NamFile } from './types/nam'
 import { AppSettings, loadSettings, saveSettings } from './types/settings'
-import { FolderNode, LibrarianState } from './types/librarian'
+import { LibrarianState } from './types/librarian'
 import { FileList } from './components/FileList'
 import { MetadataEditor } from './components/MetadataEditor'
 import { Toolbar } from './components/Toolbar'
@@ -9,6 +9,7 @@ import { BatchEditor } from './components/BatchEditor'
 import { StatusBar } from './components/StatusBar'
 import { SettingsPanel } from './components/SettingsPanel'
 import { FolderTree } from './components/FolderTree'
+import { FolderNode } from './types/librarian'
 
 declare global {
   interface Window {
@@ -96,7 +97,9 @@ export default function App() {
     saveSettings(updated)
   }
 
-  const loadFiles = useCallback(async (paths: string[]) => {
+  // mode='replace': clear existing, load fresh (open folder/files)
+  // mode='append': dedup against current files (drag & drop)
+  const loadFiles = useCallback(async (paths: string[], mode: 'replace' | 'append' = 'append') => {
     setStatus({ message: `Loading ${paths.length} file(s)...`, type: 'info' })
     const results = await Promise.all(paths.map((p) => window.api.readFile(p)))
 
@@ -105,37 +108,69 @@ export default function App() {
     for (const r of results) {
       if (r.success && r.filePath && r.metadata !== undefined) {
         const fileName = r.filePath.replace(/\\/g, '/').split('/').pop() ?? r.filePath
-        if (!files.some((f) => f.filePath === r.filePath)) {
-          const baseName = fileName.replace(/\.nam$/i, '')
-          const rawMeta = r.metadata ?? {}
-          const meta = applyDefaults({ ...rawMeta }, baseName, settings)
-          const wasChanged = JSON.stringify(meta) !== JSON.stringify(rawMeta)
-          loaded.push({
-            filePath: r.filePath,
-            fileName: baseName,
-            version: r.version ?? '?',
-            metadata: meta,
-            originalMetadata: rawMeta,
-            architecture: r.architecture ?? '?',
-            config: r.config,
-            isDirty: wasChanged
-          })
-        }
+        const baseName = fileName.replace(/\.nam$/i, '')
+        const rawMeta = r.metadata ?? {}
+        const meta = applyDefaults({ ...rawMeta }, baseName, settings)
+        const wasChanged = JSON.stringify(meta) !== JSON.stringify(rawMeta)
+        loaded.push({
+          filePath: r.filePath,
+          fileName: baseName,
+          version: r.version ?? '?',
+          metadata: meta,
+          originalMetadata: rawMeta,
+          architecture: r.architecture ?? '?',
+          config: r.config,
+          isDirty: wasChanged
+        })
       } else {
         errors++
       }
     }
 
-    setFiles((prev) => [...prev, ...loaded])
+    // Dedup inside functional update so prev is always current (fixes stale closure bug)
+    setFiles((prev) => {
+      if (mode === 'replace') return loaded
+      const existing = new Set(prev.map((f) => f.filePath))
+      return [...prev, ...loaded.filter((f) => !existing.has(f.filePath))]
+    })
+
+    // Auto-select first file when replacing, or when nothing is selected on append
+    setSelectedIds((prev) => {
+      if (loaded.length === 0) return prev
+      if (mode === 'replace') return new Set([loaded[0].filePath])
+      if (prev.size === 0) return new Set([loaded[0].filePath])
+      return prev
+    })
+
     if (errors > 0) {
       setStatus({ message: `Loaded ${loaded.length} file(s), ${errors} failed`, type: 'error' })
     } else {
       setStatus({ message: `Loaded ${loaded.length} file(s)`, type: 'success' })
     }
-    if (loaded.length > 0 && selectedIds.size === 0) {
-      setSelectedIds(new Set([loaded[0].filePath]))
+  }, [settings]) // no longer depends on files or selectedIds
+
+  // Shared logic for opening a folder by path (used by Open Folder and Refresh)
+  const loadFolderByPath = useCallback(async (folder: string) => {
+    setStatus({ message: 'Scanning folder...', type: 'info' })
+    const [flatResult, treeResult] = await Promise.all([
+      window.api.scanFolder(folder),
+      window.api.scanTree(folder)
+    ])
+    if (!flatResult.success) {
+      setStatus({ message: `Error: ${flatResult.error}`, type: 'error' })
+      return
     }
-  }, [files, selectedIds, settings])
+    if (!flatResult.files || flatResult.files.length === 0) {
+      setStatus({ message: 'No .nam files found in that folder', type: 'info' })
+      return
+    }
+    setLibrarian({
+      rootFolder: folder.replace(/\\/g, '/'),
+      folderTree: treeResult.success && treeResult.tree ? treeResult.tree : null,
+      selectedFolder: null
+    })
+    await loadFiles(flatResult.files, 'replace')
+  }, [loadFiles])
 
   // Returns false if user cancels, true if safe to proceed
   const confirmDiscardChanges = (): boolean => {
@@ -160,41 +195,21 @@ export default function App() {
     if (!confirmDiscardChanges()) return
     const paths = await window.api.openFiles()
     if (paths.length === 0) return
-    setFiles([])
-    setSelectedIds(new Set())
     setLibrarian(EMPTY_LIBRARIAN)
-    await loadFiles(paths)
+    await loadFiles(paths, 'replace')
   }
 
   const handleOpenFolder = async () => {
     if (!confirmDiscardChanges()) return
     const folder = await window.api.openFolder()
     if (!folder) return
-    setStatus({ message: 'Scanning folder...', type: 'info' })
+    await loadFolderByPath(folder)
+  }
 
-    // Run flat scan and tree scan in parallel
-    const [flatResult, treeResult] = await Promise.all([
-      window.api.scanFolder(folder),
-      window.api.scanTree(folder)
-    ])
-
-    if (!flatResult.success) {
-      setStatus({ message: `Error: ${flatResult.error}`, type: 'error' })
-      return
-    }
-    if (!flatResult.files || flatResult.files.length === 0) {
-      setStatus({ message: 'No .nam files found in that folder', type: 'info' })
-      return
-    }
-
-    setFiles([])
-    setSelectedIds(new Set())
-    setLibrarian({
-      rootFolder: folder.replace(/\\/g, '/'),
-      folderTree: treeResult.success && treeResult.tree ? treeResult.tree : null,
-      selectedFolder: null
-    })
-    await loadFiles(flatResult.files)
+  const handleRefresh = async () => {
+    if (!librarian.rootFolder) return
+    if (!confirmDiscardChanges()) return
+    await loadFolderByPath(librarian.rootFolder)
   }
 
   const handleDrop = useCallback(
@@ -207,7 +222,7 @@ export default function App() {
           if (p) paths.push(p)
         }
       }
-      if (paths.length > 0) await loadFiles(paths)
+      if (paths.length > 0) await loadFiles(paths, 'append')
     },
     [loadFiles]
   )
@@ -300,13 +315,15 @@ export default function App() {
 
   // Filter files by selected folder in librarian mode
   const visibleFiles = librarian.selectedFolder
-    ? files.filter((f) => f.filePath.startsWith(librarian.selectedFolder! + '/') || f.filePath.startsWith(librarian.selectedFolder!.replace(/\//g, '\\') + '\\'))
+    ? files.filter((f) => {
+        const norm = f.filePath.replace(/\\/g, '/')
+        return norm.startsWith(librarian.selectedFolder! + '/')
+      })
     : files
 
   const selectedFiles = visibleFiles.filter((f) => selectedIds.has(f.filePath))
   const dirtyCount = files.filter((f) => f.isDirty).length
   const unnamedCount = files.filter((f) => !f.metadata.name).length
-
   const hasTree = librarian.folderTree !== null
 
   return (
@@ -329,6 +346,8 @@ export default function App() {
         unnamedCount={unnamedCount}
         onNameFromFilename={handleNameFromFilename}
         onCloseAll={handleCloseAll}
+        rootFolder={librarian.rootFolder}
+        onRefresh={handleRefresh}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -402,7 +421,42 @@ export default function App() {
         </div>
       </div>
 
+      <DefaultsPill settings={settings} />
       <StatusBar message={status.message} type={status.type} />
+    </div>
+  )
+}
+
+function DefaultsPill({ settings }: { settings: AppSettings }) {
+  const parts: string[] = []
+
+  if (settings.enableAmpInfo && (settings.defaultManufacturer || settings.defaultModel)) {
+    const label = [settings.defaultManufacturer, settings.defaultModel].filter(Boolean).join(' ')
+    parts.push(`Amp: ${label}`)
+  }
+
+  if (settings.enableCaptureDefaults) {
+    const sub: string[] = []
+    if (settings.defaultModeledBy) sub.push(settings.defaultModeledBy)
+    if (settings.defaultInputLevel) sub.push(`in ${settings.defaultInputLevel} dBu`)
+    if (settings.defaultOutputLevel) sub.push(`out ${settings.defaultOutputLevel} dBu`)
+    if (sub.length > 0) parts.push(`Capture: ${sub.join(', ')}`)
+  }
+
+  if (settings.populateNameFromFilename) parts.push('Name from filename')
+
+  if (parts.length === 0) return null
+
+  return (
+    <div className="flex items-center gap-2 px-4 py-1 bg-gray-900 border-t border-gray-800/60 flex-shrink-0">
+      <span className="text-xs text-gray-600 flex-shrink-0">On open:</span>
+      <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+        {parts.map((p, i) => (
+          <span key={i} className="text-xs text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded whitespace-nowrap">
+            {p}
+          </span>
+        ))}
+      </div>
     </div>
   )
 }
