@@ -87,7 +87,7 @@ const TONE_KEYWORDS: Record<typeof TONE_TYPES[number], string[]> = {
   'crunch':     ['crunch'],
   'high-gain':  ['highgain', 'hi-gain', 'higain', 'lead'],
   'fuzz':       ['fuzz'],
-  'overdrive':  ['overdrive', 'od'],
+  'overdrive':  ['overdrive', 'od', 'edge', 'drive'],
   'distortion': ['distortion', 'dist'],
   'other':      [],
 }
@@ -215,6 +215,13 @@ export default function App() {
   // Shared logic for opening a folder by path (used by Open Folder and Refresh)
   const loadFolderByPath = useCallback(async (folder: string) => {
     setStatus({ message: 'Scanning folder...', type: 'info' })
+    // Save as default folder if rememberLastFolder is on
+    setSettings((prev) => {
+      if (!prev.rememberLastFolder) return prev
+      const updated = { ...prev, defaultFolder: folder.replace(/\\/g, '/'), enableDefaultFolder: true }
+      saveSettings(updated)
+      return updated
+    })
     const [flatResult, treeResult] = await Promise.all([
       window.api.scanFolder(folder),
       window.api.scanTree(folder)

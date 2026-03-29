@@ -26,7 +26,7 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
       <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 flex-shrink-0">
         <div>
           <h2 className="text-base font-semibold text-gray-100">Settings</h2>
-          <p className="text-sm text-gray-500 mt-0.5">
+          <p className="text-sm text-gray-400 mt-0.5">
             Defaults are applied when opening files that have empty fields.
           </p>
         </div>
@@ -149,7 +149,7 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
                     Scans the filename for tone keywords and sets Tone Type if empty.
                     When multiple keywords match, the <em>rightmost</em> one wins — so
                     &ldquo;Clean Crunch DI&rdquo; → <strong>Crunch</strong>.
-                    Keywords: clean, crunch, lead/highgain/hi-gain, fuzz, overdrive/od, distortion/dist.
+                    Keywords: clean · crunch · lead/highgain/hi-gain · fuzz · overdrive/od/edge/drive · distortion/dist.
                   </>
                 }
                 checked={draft.autoDetectToneType}
@@ -168,8 +168,8 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
                     placeholder="DI"
                     className="w-40 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors font-mono"
                   />
-                  <p className="text-xs text-gray-600">
-                    Filename ending in <span className="font-mono text-gray-400">{draft.ampSuffix || 'DI'}</span> → Amp.
+                  <p className="text-xs text-gray-500">
+                    Filename ending in <span className="font-mono text-gray-300">{draft.ampSuffix || 'DI'}</span> → Amp.
                     Otherwise → Cab. Case-insensitive, spaces ignored.
                   </p>
                 </div>
@@ -186,8 +186,14 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
             </div>
             <div className="space-y-4">
               <CheckboxField
+                label="Remember last opened folder"
+                description="Each time you open a folder it becomes the default. On next launch it reopens automatically."
+                checked={draft.rememberLastFolder}
+                onChange={(v) => update('rememberLastFolder', v)}
+              />
+              <CheckboxField
                 label="Open default folder on launch"
-                description="Automatically load a folder when the app starts."
+                description="Automatically load the folder below when the app starts. Enabled automatically when Remember last opened folder is on."
                 checked={draft.enableDefaultFolder}
                 onChange={(v) => update('enableDefaultFolder', v)}
               />
@@ -200,7 +206,7 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
                     placeholder="e.g. C:\Users\You\NAM Library"
                     className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors font-mono"
                   />
-                  <p className="text-xs text-gray-600 mt-1.5">Takes effect on next launch.</p>
+                  <p className="text-xs text-gray-500 mt-1.5">Updated automatically when Remember last opened folder is on. Edit manually to pin a specific path.</p>
                 </SettingsField>
               )}
             </div>
@@ -243,7 +249,7 @@ function Section({
           </div>
         </label>
       </div>
-      <p className={`text-xs mb-4 transition-colors ${enabled ? 'text-gray-600' : 'text-gray-700'}`}>
+      <p className={`text-xs mb-4 transition-colors ${enabled ? 'text-gray-500' : 'text-gray-600'}`}>
         {description}
       </p>
       <div className={`space-y-4 transition-opacity ${enabled ? 'opacity-100' : 'opacity-40'}`}>
@@ -274,7 +280,7 @@ function CheckboxField({
       />
       <div>
         <span className="text-sm text-gray-300 font-medium">{label}</span>
-        <p className="text-xs text-gray-600 mt-0.5">{description}</p>
+        <p className="text-xs text-gray-500 mt-0.5">{description}</p>
       </div>
     </label>
   )
@@ -293,7 +299,7 @@ function SettingsField({
     <div>
       <label className="block text-xs font-medium text-gray-400 mb-1.5">
         {label}
-        {hint && <span className="ml-2 text-gray-600 font-normal">{hint}</span>}
+        {hint && <span className="ml-2 text-gray-500 font-normal">{hint}</span>}
       </label>
       {children}
     </div>

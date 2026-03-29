@@ -24,6 +24,7 @@ export interface AppSettings {
   // Startup
   enableDefaultFolder: boolean
   defaultFolder: string
+  rememberLastFolder: boolean
 
   folderOverrides: Record<string, FolderOverride>
 }
@@ -44,6 +45,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
   enableDefaultFolder: false,
   defaultFolder: '',
+  rememberLastFolder: true,
 
   folderOverrides: {}
 }
