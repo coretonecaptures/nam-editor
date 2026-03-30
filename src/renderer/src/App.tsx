@@ -189,6 +189,11 @@ export default function App() {
   const handleSaveSettings = (updated: AppSettings) => {
     setSettings(updated)
     saveSettings(updated)
+    // If default view changed, switch the current view immediately
+    if (updated.defaultView !== settings.defaultView) {
+      setListViewMode(updated.defaultView)
+      setListWidth(updated.defaultView === 'grid' ? loadLayout().listWidthGrid : loadLayout().listWidthList)
+    }
   }
 
   // Auto-load default folder on startup
