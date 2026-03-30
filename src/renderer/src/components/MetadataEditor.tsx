@@ -4,11 +4,24 @@ import ampLight from '../assets/gear/amp.light.png'
 import ampCabDark from '../assets/gear/amp_cab.dark.png'
 import ampCabLight from '../assets/gear/amp_cab.light.png'
 import pedalDark from '../assets/gear/pedal.dark.png'
+import pedalLight from '../assets/gear/pedal.light.png'
+import pedalAmpDark from '../assets/gear/pedal_amp.dark.png'
+import pedalAmpLight from '../assets/gear/pedal_amp.light.png'
+import ampPedalCabDark from '../assets/gear/amp_pedal_cab.dark.png'
+import ampPedalCabLight from '../assets/gear/amp_pedal_cab.light.png'
+import preampDark from '../assets/gear/preamp.dark.png'
+import preampLight from '../assets/gear/preamp.light.png'
+import studioDark from '../assets/gear/studio.dark.png'
+import studioLight from '../assets/gear/studio.light.png'
 
 const gearImages: Record<string, { dark: string; light?: string }> = {
-  amp:      { dark: ampDark,    light: ampLight },
-  amp_cab:  { dark: ampCabDark, light: ampCabLight },
-  pedal:    { dark: pedalDark },
+  amp:           { dark: ampDark,          light: ampLight },
+  amp_cab:       { dark: ampCabDark,       light: ampCabLight },
+  pedal:         { dark: pedalDark,        light: pedalLight },
+  pedal_amp:     { dark: pedalAmpDark,     light: pedalAmpLight },
+  amp_pedal_cab: { dark: ampPedalCabDark,  light: ampPedalCabLight },
+  preamp:        { dark: preampDark,       light: preampLight },
+  studio:        { dark: studioDark,       light: studioLight },
 }
 
 interface MetadataEditorProps {
