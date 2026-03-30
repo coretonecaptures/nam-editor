@@ -571,8 +571,8 @@ export default function App() {
           </>
         )}
 
-        {/* File list */}
-        <>
+        {/* File list — only shown when files are loaded */}
+        {files.length > 0 && <>
           <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: listWidth }}>
             <FileList
               files={visibleFiles}
@@ -642,7 +642,7 @@ export default function App() {
             />
           </div>
           <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} />
-        </>
+        </>}
 
         {/* Main content */}
         <div className="flex-1 overflow-hidden flex flex-col">
