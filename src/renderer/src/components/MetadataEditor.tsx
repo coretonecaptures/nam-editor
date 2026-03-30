@@ -53,38 +53,43 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
     <div className="flex flex-col h-full overflow-hidden" onKeyDown={handleKeyDown}>
       {/* File header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
-        <div>
-          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 truncate max-w-lg">
-            {m.name || file.fileName}
-          </h2>
-          <div className="flex items-center gap-3 mt-1">
-            <button
-              onClick={onRevealInFinder}
-              className="text-xs text-gray-500 dark:text-gray-500 hover:text-indigo-400 transition-colors truncate max-w-lg text-left"
-              title="Reveal in Finder / Explorer"
-            >
-              {file.filePath}
-            </button>
+        <div className="flex items-center gap-4 min-w-0">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 truncate max-w-lg">
+              {m.name || file.fileName}
+            </h2>
+            <div className="flex items-center gap-3 mt-1">
+              <button
+                onClick={onRevealInFinder}
+                className="text-xs text-gray-500 dark:text-gray-500 hover:text-indigo-400 transition-colors truncate max-w-lg text-left"
+                title="Reveal in Finder / Explorer"
+              >
+                {file.filePath}
+              </button>
+            </div>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-xs text-gray-400 dark:text-gray-600">v{file.version}</span>
+              <span className="text-xs text-gray-400 dark:text-gray-600">·</span>
+              <span className="text-xs text-gray-400 dark:text-gray-600">{file.architecture}</span>
+              {m.loudness != null && (
+                <>
+                  <span className="text-xs text-gray-400 dark:text-gray-600">·</span>
+                  <span className="text-xs text-gray-400 dark:text-gray-600">loudness: {m.loudness.toFixed(2)} dBFS</span>
+                </>
+              )}
+              {!!m.training && (m.training as Record<string, unknown>).validation_esr != null && (
+                <>
+                  <span className="text-xs text-gray-400 dark:text-gray-600">·</span>
+                  <span className="text-xs text-gray-400 dark:text-gray-600">
+                    ESR: {((m.training as Record<string, unknown>).validation_esr as number).toFixed(6)}
+                  </span>
+                </>
+              )}
+            </div>
           </div>
-          <div className="flex items-center gap-2 mt-1">
-            <span className="text-xs text-gray-400 dark:text-gray-600">v{file.version}</span>
-            <span className="text-xs text-gray-400 dark:text-gray-600">·</span>
-            <span className="text-xs text-gray-400 dark:text-gray-600">{file.architecture}</span>
-            {m.loudness != null && (
-              <>
-                <span className="text-xs text-gray-400 dark:text-gray-600">·</span>
-                <span className="text-xs text-gray-400 dark:text-gray-600">loudness: {m.loudness.toFixed(2)} dBFS</span>
-              </>
-            )}
-            {!!m.training && (m.training as Record<string, unknown>).validation_esr != null && (
-              <>
-                <span className="text-xs text-gray-400 dark:text-gray-600">·</span>
-                <span className="text-xs text-gray-400 dark:text-gray-600">
-                  ESR: {((m.training as Record<string, unknown>).validation_esr as number).toFixed(6)}
-                </span>
-              </>
-            )}
-          </div>
+          {m.gear_type && gearImages[m.gear_type] && (
+            <GearImage gearType={m.gear_type} size="header" />
+          )}
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           {file.isDirty && (
@@ -142,9 +147,6 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
 
           {/* Gear section */}
           <Section title="Gear" icon="🔊">
-            {m.gear_type && gearImages[m.gear_type] && (
-              <GearImage gearType={m.gear_type} />
-            )}
             <div className="grid grid-cols-2 gap-4">
               <Field label="Gear Type" autoFilled={isAutoFilled('gear_type')}>
                 <Select
@@ -253,15 +255,14 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
 
 // ---- UI primitives ----
 
-function GearImage({ gearType }: { gearType: string }) {
+function GearImage({ gearType, size = 'body' }: { gearType: string; size?: 'header' | 'body' }) {
   const imgs = gearImages[gearType]
   if (!imgs) return null
   const isDark = document.documentElement.classList.contains('dark')
   const src = isDark ? imgs.dark : (imgs.light ?? imgs.dark)
+  const sizeClass = size === 'header' ? 'h-16 w-auto' : 'h-24 w-auto'
   return (
-    <div className="flex justify-center mb-2">
-      <img src={src} alt={gearType} className="h-24 w-auto object-contain opacity-80" />
-    </div>
+    <img src={src} alt={gearType} className={`${sizeClass} object-contain opacity-70 flex-shrink-0`} />
   )
 }
 
