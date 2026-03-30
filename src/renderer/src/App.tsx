@@ -645,7 +645,7 @@ export default function App() {
         </>}
 
         {/* Main content */}
-        <div className="flex-1 overflow-hidden flex flex-col">
+        <div className="flex-1 overflow-hidden flex flex-col" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           {showSettings ? (
             <SettingsPanel settings={settings} onSave={handleSaveSettings} />
           ) : batchFolder !== null ? (
@@ -666,6 +666,14 @@ export default function App() {
               file={selectedFiles[0]}
               onChange={(m) => handleMetadataChange(selectedFiles[0].filePath, m)}
               onSave={() => handleSave(selectedFiles[0].filePath)}
+              onRevert={() => {
+                const f = selectedFiles[0]
+                setFiles((prev) => prev.map((x) =>
+                  x.filePath === f.filePath
+                    ? { ...x, metadata: { ...x.originalMetadata }, isDirty: false, autoFilledFields: [] }
+                    : x
+                ))
+              }}
               onRevealInFinder={() => window.api.revealFile(selectedFiles[0].filePath)}
             />
           ) : selectedFiles.length === 0 && files.length === 0 ? (

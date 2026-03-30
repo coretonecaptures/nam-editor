@@ -35,6 +35,12 @@ function createWindow(): void {
     mainWindow.show()
   })
 
+  // Fix: on Windows with hidden titlebar, window focus doesn't always forward to web contents
+  // Symptom: text inputs unresponsive until Alt+Tab
+  mainWindow.on('focus', () => {
+    mainWindow.webContents.focus()
+  })
+
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }

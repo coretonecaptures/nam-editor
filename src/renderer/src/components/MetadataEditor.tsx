@@ -4,10 +4,11 @@ interface MetadataEditorProps {
   file: NamFile
   onChange: (metadata: NamMetadata) => void
   onSave: () => void
+  onRevert: () => void
   onRevealInFinder: () => void
 }
 
-export function MetadataEditor({ file, onChange, onSave, onRevealInFinder }: MetadataEditorProps) {
+export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFinder }: MetadataEditorProps) {
   const m = file.metadata
   const orig = file.originalMetadata
 
@@ -64,7 +65,7 @@ export function MetadataEditor({ file, onChange, onSave, onRevealInFinder }: Met
                 <span className="text-xs text-gray-600">loudness: {m.loudness.toFixed(2)} dBFS</span>
               </>
             )}
-            {m.training && (m.training as Record<string, unknown>).validation_esr != null && (
+            {!!m.training && (m.training as Record<string, unknown>).validation_esr != null && (
               <>
                 <span className="text-xs text-gray-600">·</span>
                 <span className="text-xs text-gray-600">
@@ -78,6 +79,17 @@ export function MetadataEditor({ file, onChange, onSave, onRevealInFinder }: Met
           {file.isDirty && (
             <span className="text-xs text-amber-400 font-medium">Unsaved</span>
           )}
+          <button
+            onClick={onRevert}
+            disabled={!file.isDirty}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-gray-700 hover:bg-gray-600 text-gray-300"
+            title="Discard changes and revert to saved values"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+            </svg>
+            Revert
+          </button>
           <button
             onClick={onSave}
             disabled={!file.isDirty}
