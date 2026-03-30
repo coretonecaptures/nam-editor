@@ -211,14 +211,17 @@ app.whenReady().then(() => {
     shell.showItemInFolder(filePath)
   })
 
-  // IPC: Restore keyboard focus on Windows after native dialogs or component unmounts.
-  // webContents.focus() alone is a no-op when Chromium thinks it already has focus.
-  // A blur→focus cycle resets Chromium's internal focus state via proper OS messages —
-  // exactly what Alt+Tab does. Both calls are synchronous so OS batches them (no flicker).
+  // IPC: Restore keyboard focus after native dialogs or component unmounts.
+  // On Windows: blur→focus cycle resets Chromium's stale internal focus state.
+  // On macOS: blur() causes a visible window flash — webContents.focus() alone is enough.
   ipcMain.handle('window:refocus', () => {
     if (!mainWindow || mainWindow.isDestroyed()) return
-    mainWindow.blur()
-    mainWindow.focus()
+    if (process.platform === 'win32') {
+      mainWindow.blur()
+      mainWindow.focus()
+    } else {
+      mainWindow.webContents.focus()
+    }
   })
 
   createWindow()
