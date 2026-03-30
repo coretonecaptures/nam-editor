@@ -601,7 +601,7 @@ export default function App() {
               viewMode={listViewMode}
               onViewModeChange={(mode) => {
                 setListViewMode(mode)
-                if (mode === 'grid' && listWidth < 860) setListWidth(860)
+                if (mode === 'grid' && listWidth < 1060) setListWidth(1060)
                 if (mode === 'list' && listWidth > 480) setListWidth(320)
               }}
               onSelect={(id, multi) => {

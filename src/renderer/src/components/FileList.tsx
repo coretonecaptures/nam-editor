@@ -319,13 +319,13 @@ export function FileList({
 // ---- Grid view ----
 
 const DEFAULT_COL_WIDTHS: Record<string, number> = {
-  name:       220,
+  name:       280,
   date:       100,
-  modeled_by: 160,
-  gear_make:  140,
-  gear_model: 140,
-  gear_type:  100,
-  tone_type:  100,
+  modeled_by: 200,
+  gear_make:  150,
+  gear_model: 150,
+  gear_type:  110,
+  tone_type:  110,
 }
 
 function GridView({
