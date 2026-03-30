@@ -4,8 +4,11 @@ import fs from 'fs'
 
 const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
 
+// Module-level reference so IPC handlers can always reach the window
+let mainWindow: BrowserWindow | null = null
+
 function createWindow(): void {
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 1100,
@@ -32,13 +35,11 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
+    mainWindow!.show()
   })
 
-  // Fix: on Windows with hidden titlebar, window focus doesn't always forward to web contents
-  // Symptom: text inputs unresponsive until Alt+Tab
   mainWindow.on('focus', () => {
-    mainWindow.webContents.focus()
+    mainWindow!.webContents.focus()
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -183,9 +184,11 @@ app.whenReady().then(() => {
 
   // IPC: Refocus webContents — called on every mousedown from renderer to prevent
   // focus loss on Windows with hidden titlebar (focused element removed, native dialogs, etc.)
-  ipcMain.handle('window:focus', () => {
-    const win = BrowserWindow.getFocusedWindow()
-    if (win) win.webContents.focus()
+  // Uses sendSync so refocus completes before the click event is processed in renderer.
+  ipcMain.on('window:focus', (event) => {
+    mainWindow?.focus()
+    mainWindow?.webContents.focus()
+    event.returnValue = null
   })
 
   createWindow()
