@@ -132,6 +132,15 @@ export default function App() {
   const [treeWidth, setTreeWidth] = useState(260)
   const [listWidth, setListWidth] = useState(320)
   const draggingRef = useRef<null | { panel: 'tree' | 'list'; startX: number; startWidth: number }>(null)
+  const mainContentRef = useRef<HTMLDivElement>(null)
+
+  // Electron on Windows loses webContents focus when the focused DOM element is removed
+  // (e.g. BatchEditor unmounts, confirm dialog closes). Fix: focus the main content div
+  // directly in the renderer whenever the active panel changes — DOM focus reliably
+  // wakes webContents without any IPC round-trip.
+  useEffect(() => {
+    mainContentRef.current?.focus()
+  }, [showSettings, batchFolder])
 
   const onDragStart = (panel: 'tree' | 'list', e: React.MouseEvent) => {
     e.preventDefault()
@@ -646,7 +655,7 @@ export default function App() {
         </>}
 
         {/* Main content */}
-        <div className="flex-1 overflow-hidden flex flex-col" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        <div ref={mainContentRef} tabIndex={-1} className="flex-1 overflow-hidden flex flex-col focus:outline-none" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           {showSettings ? (
             <SettingsPanel settings={settings} onSave={handleSaveSettings} />
           ) : batchFolder !== null ? (
