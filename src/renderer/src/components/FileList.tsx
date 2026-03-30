@@ -318,6 +318,16 @@ export function FileList({
 
 // ---- Grid view ----
 
+const DEFAULT_COL_WIDTHS: Record<string, number> = {
+  name:       220,
+  date:       100,
+  modeled_by: 160,
+  gear_make:  140,
+  gear_model: 140,
+  gear_type:  100,
+  tone_type:  100,
+}
+
 function GridView({
   files, selectedIds, sortKey, sortDir, onSortClick,
   anchorIndexRef, onSelect, onSelectRange, onContextMenu
@@ -332,33 +342,57 @@ function GridView({
   onSelectRange: (ids: string[]) => void
   onContextMenu: (e: React.MouseEvent) => void
 }) {
+  const [colWidths, setColWidths] = useState<Record<string, number>>(DEFAULT_COL_WIDTHS)
+  const resizingRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null)
+
+  const onResizeStart = (e: React.MouseEvent, key: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    resizingRef.current = { key, startX: e.clientX, startWidth: colWidths[key] }
+    const onMove = (ev: MouseEvent) => {
+      if (!resizingRef.current) return
+      const next = Math.max(60, resizingRef.current.startWidth + ev.clientX - resizingRef.current.startX)
+      setColWidths((prev) => ({ ...prev, [resizingRef.current!.key]: next }))
+    }
+    const onUp = () => {
+      resizingRef.current = null
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
   return (
     <div className="flex-1 overflow-auto" onContextMenu={onContextMenu}>
-      <table className="w-full border-collapse text-xs" style={{ minWidth: GRID_COLUMNS.reduce((s, c) => s + c.minWidth, 24) }}>
+      <table className="border-collapse text-xs" style={{ tableLayout: 'fixed', width: GRID_COLUMNS.reduce((s, c) => s + colWidths[c.key], 24) }}>
         <thead className="sticky top-0 z-10">
           <tr className="bg-gray-100 dark:bg-gray-900 border-b-2 border-gray-300 dark:border-gray-700">
-            {/* dirty dot column */}
-            <th className="w-5 px-2 py-2 border-r border-gray-200 dark:border-gray-700" />
+            <th className="border-r border-gray-200 dark:border-gray-700" style={{ width: 24 }} />
             {GRID_COLUMNS.map((col) => (
               <th
                 key={col.key}
-                className="px-3 py-2 text-left font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer hover:text-gray-800 dark:hover:text-gray-200 select-none whitespace-nowrap border-r border-gray-200 dark:border-gray-700 last:border-r-0"
-                style={{ minWidth: col.minWidth }}
-                onClick={() => onSortClick(col.key)}
+                className="relative text-left font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-r border-gray-200 dark:border-gray-700 last:border-r-0 select-none"
+                style={{ width: colWidths[col.key] }}
               >
-                <span className="flex items-center gap-1">
-                  {col.label}
-                  {sortKey === col.key ? (
+                {/* Sort click area */}
+                <div
+                  className="flex items-center gap-1 px-3 py-2 cursor-pointer hover:text-gray-800 dark:hover:text-gray-200 whitespace-nowrap overflow-hidden pr-4"
+                  onClick={() => onSortClick(col.key)}
+                >
+                  <span className="truncate">{col.label}</span>
+                  {sortKey === col.key && (
                     <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5}
                         d={sortDir === 'asc' ? 'M5 15l7-7 7 7' : 'M19 9l-7 7-7-7'} />
                     </svg>
-                  ) : (
-                    <svg className="w-3 h-3 flex-shrink-0 opacity-0 group-hover:opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l4-4 4 4m0 6l-4 4-4-4" />
-                    </svg>
                   )}
-                </span>
+                </div>
+                {/* Resize handle */}
+                <div
+                  className="absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-indigo-400/40 z-20"
+                  onMouseDown={(e) => onResizeStart(e, col.key)}
+                />
               </th>
             ))}
           </tr>
@@ -391,13 +425,13 @@ function GridView({
                   }}
                   onMouseDown={(e) => { if (e.shiftKey) e.preventDefault() }}
                 >
-                  <td className="w-5 px-2 border-r border-gray-200 dark:border-gray-700/60">
-                    {file.isDirty && <div className="w-1.5 h-1.5 rounded-full bg-amber-400 mx-auto" title="Unsaved changes" />}
+                  <td className="border-r border-gray-200 dark:border-gray-700/60 text-center" style={{ width: 24 }}>
+                    {file.isDirty && <div className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" title="Unsaved changes" />}
                   </td>
                   {GRID_COLUMNS.map((col) => {
                     const val = getCellValue(file, col.key)
                     return (
-                      <td key={col.key} className="px-3 py-2 whitespace-nowrap max-w-[220px] border-r border-gray-200 dark:border-gray-700/60 last:border-r-0">
+                      <td key={col.key} className="px-3 py-2 border-r border-gray-200 dark:border-gray-700/60 last:border-r-0 overflow-hidden" style={{ width: colWidths[col.key], maxWidth: colWidths[col.key] }}>
                         {col.key === 'tone_type' && val ? (
                           <span className="px-1.5 py-0.5 rounded text-xs bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400">{val}</span>
                         ) : col.key === 'gear_type' && val ? (

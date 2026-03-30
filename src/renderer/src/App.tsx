@@ -599,7 +599,11 @@ export default function App() {
               files={visibleFiles}
               selectedIds={selectedIds}
               viewMode={listViewMode}
-              onViewModeChange={(mode) => setListViewMode(mode)}
+              onViewModeChange={(mode) => {
+                setListViewMode(mode)
+                if (mode === 'grid' && listWidth < 860) setListWidth(860)
+                if (mode === 'list' && listWidth > 480) setListWidth(320)
+              }}
               onSelect={(id, multi) => {
                 if (multi) {
                   setSelectedIds((prev) => {
