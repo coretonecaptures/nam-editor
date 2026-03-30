@@ -182,13 +182,14 @@ app.whenReady().then(() => {
     shell.showItemInFolder(filePath)
   })
 
-  // IPC: Refocus webContents — called on every mousedown from renderer to prevent
-  // focus loss on Windows with hidden titlebar (focused element removed, native dialogs, etc.)
-  // Uses sendSync so refocus completes before the click event is processed in renderer.
-  ipcMain.on('window:focus', (event) => {
-    mainWindow?.focus()
-    mainWindow?.webContents.focus()
-    event.returnValue = null
+  // IPC: Restore keyboard focus on Windows after native dialogs or component unmounts.
+  // webContents.focus() alone is a no-op when Chromium thinks it already has focus.
+  // A blur→focus cycle resets Chromium's internal focus state via proper OS messages —
+  // exactly what Alt+Tab does. Both calls are synchronous so OS batches them (no flicker).
+  ipcMain.handle('window:refocus', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    mainWindow.blur()
+    mainWindow.focus()
   })
 
   createWindow()

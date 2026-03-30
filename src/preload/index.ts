@@ -9,7 +9,7 @@ const api = {
   scanFolder: (folderPath: string) => ipcRenderer.invoke('folder:scanNam', folderPath),
   scanTree: (folderPath: string) => ipcRenderer.invoke('folder:scanTree', folderPath),
   revealFile: (filePath: string) => ipcRenderer.invoke('shell:revealFile', filePath),
-  refocusWindow: () => ipcRenderer.sendSync('window:focus'),
+  refocusWindow: () => ipcRenderer.invoke('window:refocus'),
   platform: process.platform
 }
 

@@ -134,12 +134,13 @@ export default function App() {
   const draggingRef = useRef<null | { panel: 'tree' | 'list'; startX: number; startWidth: number }>(null)
   const mainContentRef = useRef<HTMLDivElement>(null)
 
-  // Electron on Windows loses webContents focus when the focused DOM element is removed
-  // (e.g. BatchEditor unmounts, confirm dialog closes). Fix: focus the main content div
-  // directly in the renderer whenever the active panel changes — DOM focus reliably
-  // wakes webContents without any IPC round-trip.
+  // Electron on Windows loses keyboard focus when the focused DOM element is removed
+  // (e.g. BatchEditor unmounts) or after native confirm dialogs close. Chromium's
+  // internal focus state gets stale. Fix: DOM focus as first attempt, then a blur→focus
+  // cycle in main process which resets OS-level keyboard routing (same as Alt+Tab).
   useEffect(() => {
     mainContentRef.current?.focus()
+    window.api.refocusWindow()
   }, [showSettings, batchFolder])
 
   const onDragStart = (panel: 'tree' | 'list', e: React.MouseEvent) => {
