@@ -53,7 +53,13 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - name: Ad-hoc sign the app
-        run: codesign --deep --force --sign - "release/mac/NAM Editor.app"
+        run: |
+          APP=$(find release -name "NAM Editor.app" -maxdepth 3 | head -1)
+          if [ -n "$APP" ]; then
+            codesign --deep --force --sign - "$APP"
+          else
+            echo "No .app found to sign, skipping"
+          fi
 
       - name: Upload Mac release
         uses: softprops/action-gh-release@v2
