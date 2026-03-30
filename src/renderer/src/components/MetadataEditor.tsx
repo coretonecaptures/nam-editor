@@ -1,4 +1,15 @@
 import { NamFile, NamMetadata, GEAR_TYPES, TONE_TYPES } from '../types/nam'
+import ampDark from '../assets/gear/amp.dark.png'
+import ampLight from '../assets/gear/amp.light.png'
+import ampCabDark from '../assets/gear/amp_cab.dark.png'
+import ampCabLight from '../assets/gear/amp_cab.light.png'
+import pedalDark from '../assets/gear/pedal.dark.png'
+
+const gearImages: Record<string, { dark: string; light?: string }> = {
+  amp:      { dark: ampDark,    light: ampLight },
+  amp_cab:  { dark: ampCabDark, light: ampCabLight },
+  pedal:    { dark: pedalDark },
+}
 
 interface MetadataEditorProps {
   file: NamFile
@@ -131,6 +142,9 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
 
           {/* Gear section */}
           <Section title="Gear" icon="🔊">
+            {m.gear_type && gearImages[m.gear_type] && (
+              <GearImage gearType={m.gear_type} />
+            )}
             <div className="grid grid-cols-2 gap-4">
               <Field label="Gear Type" autoFilled={isAutoFilled('gear_type')}>
                 <Select
@@ -238,6 +252,18 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
 }
 
 // ---- UI primitives ----
+
+function GearImage({ gearType }: { gearType: string }) {
+  const imgs = gearImages[gearType]
+  if (!imgs) return null
+  const isDark = document.documentElement.classList.contains('dark')
+  const src = isDark ? imgs.dark : (imgs.light ?? imgs.dark)
+  return (
+    <div className="flex justify-center mb-2">
+      <img src={src} alt={gearType} className="h-24 w-auto object-contain opacity-80" />
+    </div>
+  )
+}
 
 function Section({ title, icon, children }: { title: string; icon: string; children: React.ReactNode }) {
   return (

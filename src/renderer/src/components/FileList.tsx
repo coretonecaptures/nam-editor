@@ -261,11 +261,11 @@ function FileItem({
             <span className="text-xs px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400">{meta.gear_type}</span>
           )}
           {meta.tone_type && (
-            <span className="text-xs px-1.5 py-0.5 rounded bg-indigo-900/40 text-indigo-400">{meta.tone_type}</span>
+            <span className="text-xs px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400">{meta.tone_type}</span>
           )}
           {missing > 0 && (
             <span
-              className="text-xs px-1.5 py-0.5 rounded bg-yellow-900/30 text-yellow-600"
+              className="text-xs px-1.5 py-0.5 rounded bg-amber-100 dark:bg-yellow-900/30 text-amber-700 dark:text-yellow-600"
               title={`Missing: ${missingFields.map((f) => f.label).join(', ')}`}
             >
               {missing} missing

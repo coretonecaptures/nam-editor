@@ -358,18 +358,18 @@ function FolderRow({
   }
 
   const countColor = isFiltered
-    ? (isSelected ? 'text-amber-300' : 'text-amber-500')
-    : (isSelected ? 'text-indigo-400' : isRoot ? 'text-gray-500 dark:text-gray-500' : 'text-gray-400 dark:text-gray-600')
+    ? (isSelected ? 'text-amber-600 dark:text-amber-300' : 'text-amber-600 dark:text-amber-500')
+    : (isSelected ? 'text-indigo-600 dark:text-indigo-400' : isRoot ? 'text-gray-500 dark:text-gray-500' : 'text-gray-400 dark:text-gray-600')
 
   return (
     <div className="relative group">
       <div
         className={`flex items-center gap-1.5 pr-2 py-1.5 cursor-pointer rounded-sm mx-1 transition-colors ${
           isSelected
-            ? 'bg-indigo-600/30 text-indigo-300'
+            ? 'bg-indigo-100 dark:bg-indigo-600/30 text-indigo-700 dark:text-indigo-300'
             : isRoot
               ? 'text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800'
-              : 'text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-200'
+              : 'text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800 hover:text-gray-800 dark:hover:text-gray-200'
         }`}
         style={{ paddingLeft: isRoot ? '12px' : `${depth * 12 + 8}px` }}
         onClick={onClick}
