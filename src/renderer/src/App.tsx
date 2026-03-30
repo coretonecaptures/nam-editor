@@ -127,6 +127,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
   const [librarian, setLibrarian] = useState<LibrarianState>(EMPTY_LIBRARIAN)
+  const [libraryFilter, setLibraryFilter] = useState<Set<string> | null>(null)
   const [treeWidth, setTreeWidth] = useState(260)
   const [listWidth, setListWidth] = useState(320)
   const draggingRef = useRef<null | { panel: 'tree' | 'list'; startX: number; startWidth: number }>(null)
@@ -459,13 +460,13 @@ export default function App() {
     )
   }
 
-  // Filter files by selected folder in librarian mode
-  const visibleFiles = librarian.selectedFolder
-    ? files.filter((f) => {
-        const norm = f.filePath.replace(/\\/g, '/')
-        return norm.startsWith(librarian.selectedFolder! + '/')
-      })
-    : files
+  // Filter files by selected folder and/or library search filter
+  const visibleFiles = files.filter((f) => {
+    const norm = f.filePath.replace(/\\/g, '/')
+    if (librarian.selectedFolder && !norm.startsWith(librarian.selectedFolder + '/')) return false
+    if (libraryFilter && !libraryFilter.has(norm)) return false
+    return true
+  })
 
   const selectedFiles = visibleFiles.filter((f) => selectedIds.has(f.filePath))
   const dirtyCount = files.filter((f) => f.isDirty).length
@@ -502,8 +503,10 @@ export default function App() {
             <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: treeWidth }}>
               <FolderTree
                 tree={librarian.folderTree!}
+                files={files}
                 selectedFolder={librarian.selectedFolder}
                 dirtyPaths={dirtyPaths}
+                onFilterChange={(matching) => setLibraryFilter(matching)}
                 onSelect={(path) => {
                   setLibrarian((prev) => ({ ...prev, selectedFolder: path }))
                   setSelectedIds(new Set())
