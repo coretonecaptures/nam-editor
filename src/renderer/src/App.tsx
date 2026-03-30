@@ -160,7 +160,7 @@ export default function App() {
     const onMove = (ev: MouseEvent) => {
       if (!draggingRef.current) return
       const delta = ev.clientX - draggingRef.current.startX
-      const next = Math.max(140, Math.min(480, draggingRef.current.startWidth + delta))
+      const next = Math.max(140, draggingRef.current.startWidth + delta)
       if (draggingRef.current.panel === 'tree') setTreeWidth(next)
       else setListWidth(next)
     }
@@ -594,7 +594,7 @@ export default function App() {
 
         {/* File list — only shown when files are loaded */}
         {files.length > 0 && <>
-          <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: listViewMode === 'grid' ? Math.max(listWidth, 780) : listWidth }}>
+          <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: listWidth }}>
             <FileList
               files={visibleFiles}
               selectedIds={selectedIds}

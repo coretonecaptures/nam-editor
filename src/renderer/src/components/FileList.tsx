@@ -336,13 +336,13 @@ function GridView({
     <div className="flex-1 overflow-auto" onContextMenu={onContextMenu}>
       <table className="w-full border-collapse text-xs" style={{ minWidth: GRID_COLUMNS.reduce((s, c) => s + c.minWidth, 24) }}>
         <thead className="sticky top-0 z-10">
-          <tr className="bg-gray-100 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
+          <tr className="bg-gray-100 dark:bg-gray-900 border-b-2 border-gray-300 dark:border-gray-700">
             {/* dirty dot column */}
-            <th className="w-5 px-2 py-2" />
+            <th className="w-5 px-2 py-2 border-r border-gray-200 dark:border-gray-700" />
             {GRID_COLUMNS.map((col) => (
               <th
                 key={col.key}
-                className="px-3 py-2 text-left font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer hover:text-gray-800 dark:hover:text-gray-200 select-none whitespace-nowrap"
+                className="px-3 py-2 text-left font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer hover:text-gray-800 dark:hover:text-gray-200 select-none whitespace-nowrap border-r border-gray-200 dark:border-gray-700 last:border-r-0"
                 style={{ minWidth: col.minWidth }}
                 onClick={() => onSortClick(col.key)}
               >
@@ -374,7 +374,7 @@ function GridView({
               return (
                 <tr
                   key={file.filePath}
-                  className={`border-b border-gray-100 dark:border-gray-800/60 cursor-pointer transition-colors ${
+                  className={`border-b border-gray-200 dark:border-gray-700/60 cursor-pointer transition-colors ${
                     isSelected
                       ? 'bg-indigo-50 dark:bg-indigo-900/30 hover:bg-indigo-100 dark:hover:bg-indigo-900/40'
                       : 'bg-white dark:bg-transparent hover:bg-gray-50 dark:hover:bg-gray-800/40'
@@ -391,13 +391,13 @@ function GridView({
                   }}
                   onMouseDown={(e) => { if (e.shiftKey) e.preventDefault() }}
                 >
-                  <td className="w-5 px-2">
+                  <td className="w-5 px-2 border-r border-gray-200 dark:border-gray-700/60">
                     {file.isDirty && <div className="w-1.5 h-1.5 rounded-full bg-amber-400 mx-auto" title="Unsaved changes" />}
                   </td>
                   {GRID_COLUMNS.map((col) => {
                     const val = getCellValue(file, col.key)
                     return (
-                      <td key={col.key} className="px-3 py-2 whitespace-nowrap max-w-[220px]">
+                      <td key={col.key} className="px-3 py-2 whitespace-nowrap max-w-[220px] border-r border-gray-200 dark:border-gray-700/60 last:border-r-0">
                         {col.key === 'tone_type' && val ? (
                           <span className="px-1.5 py-0.5 rounded text-xs bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400">{val}</span>
                         ) : col.key === 'gear_type' && val ? (
