@@ -190,7 +190,7 @@ export default function App() {
         const wasChanged = JSON.stringify(meta) !== JSON.stringify(rawMeta)
         // Track which fields were set by applyDefaults (weren't in workingMeta before)
         const autoFilledFields = (Object.keys(meta) as (keyof NamFile['metadata'])[]).filter(
-          (k) => meta[k] != null && workingMeta[k] == null
+          (k) => meta[k] != null && (workingMeta[k] == null || workingMeta[k] === '')
         )
         loaded.push({
           filePath: r.filePath,
@@ -426,12 +426,20 @@ export default function App() {
       else failed++
     }
 
+    // Fields that were actually written by this batch edit
+    const savedBatchKeys = new Set(
+      (Object.keys(batchFields) as (keyof NamFile['metadata'])[])
+        .filter((k) => batchFields[k] !== '' && batchFields[k] !== null && batchFields[k] !== undefined)
+    )
     const resultMap = new Map(prepared.map((p) => [p.filePath, p]))
     setFiles((prev) => prev.map((f) => {
       if (!savedPaths.has(f.filePath)) return f
       const p = resultMap.get(f.filePath)!
-      // If no longer dirty after batch save, clear autoFilledFields too
-      return { ...f, metadata: p.newMeta, originalMetadata: p.newOriginal, isDirty: p.newIsDirty, autoFilledFields: p.newIsDirty ? f.autoFilledFields : [] }
+      // Remove batch-saved fields from autoFilledFields; clear entirely if no longer dirty
+      const autoFilledFields = p.newIsDirty
+        ? f.autoFilledFields.filter((k) => !savedBatchKeys.has(k))
+        : []
+      return { ...f, metadata: p.newMeta, originalMetadata: p.newOriginal, isDirty: p.newIsDirty, autoFilledFields }
     }))
 
     if (failed > 0) {
