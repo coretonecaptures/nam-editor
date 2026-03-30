@@ -1,18 +1,23 @@
-import { useState, useCallback } from 'react'
-import { NamFile } from './types/nam'
+import { useState, useCallback, useEffect, useRef } from 'react'
+import { NamFile, TONE_TYPES, GEAR_TYPES } from './types/nam'
 import { AppSettings, loadSettings, saveSettings } from './types/settings'
+import { loadLayout, saveLayout } from './types/layout'
+import { LibrarianState } from './types/librarian'
 import { FileList } from './components/FileList'
 import { MetadataEditor } from './components/MetadataEditor'
 import { Toolbar } from './components/Toolbar'
 import { BatchEditor } from './components/BatchEditor'
 import { StatusBar } from './components/StatusBar'
 import { SettingsPanel } from './components/SettingsPanel'
+import { FolderTree } from './components/FolderTree'
+import { FolderNode } from './types/librarian'
 
 declare global {
   interface Window {
     api: {
       openFiles: () => Promise<string[]>
       openFolder: () => Promise<string | null>
+      revealFile: (filePath: string) => Promise<void>
       readFile: (filePath: string) => Promise<{
         success: boolean
         error?: string
@@ -24,40 +29,93 @@ declare global {
       }>
       writeMetadata: (filePath: string, metadata: unknown) => Promise<{ success: boolean; error?: string }>
       scanFolder: (folderPath: string) => Promise<{ success: boolean; error?: string; files?: string[] }>
+      scanTree: (folderPath: string) => Promise<{ success: boolean; error?: string; tree?: FolderNode }>
+      refocusWindow: () => Promise<void>
       platform: string
     }
   }
 }
 
+
 function applyDefaults(meta: NamFile['metadata'], baseName: string, settings: AppSettings): NamFile['metadata'] {
   const m = { ...meta }
 
-  // Capture name defaults to filename
-  if (!m.name) m.name = baseName
+  // Name from filename
+  if (!m.name && settings.populateNameFromFilename)
+    m.name = baseName
 
-  // Modeled By default
-  if (!m.modeled_by && settings.defaultModeledBy)
-    m.modeled_by = settings.defaultModeledBy
+  // Capture Defaults section
+  if (settings.enableCaptureDefaults) {
+    if (!m.modeled_by && settings.defaultModeledBy)
+      m.modeled_by = settings.defaultModeledBy
 
-  // Input level default
-  if (m.input_level_dbu == null && settings.defaultInputLevel !== '') {
-    const n = parseFloat(settings.defaultInputLevel)
-    if (!isNaN(n)) m.input_level_dbu = n
+    if (m.input_level_dbu == null && settings.defaultInputLevel !== '') {
+      const n = parseFloat(settings.defaultInputLevel)
+      if (!isNaN(n)) m.input_level_dbu = n
+    }
+
+    if (m.output_level_dbu == null && settings.defaultOutputLevel !== '') {
+      const n = parseFloat(settings.defaultOutputLevel)
+      if (!isNaN(n)) m.output_level_dbu = n
+    }
   }
 
-  // Manufacturer / Model defaults
-  if (!m.gear_make && settings.defaultManufacturer)
-    m.gear_make = settings.defaultManufacturer
-  if (!m.gear_model && settings.defaultModel)
-    m.gear_model = settings.defaultModel
+  // Current Amp Info section
+  if (settings.enableAmpInfo) {
+    if (!m.gear_make && settings.defaultManufacturer)
+      m.gear_make = settings.defaultManufacturer
+    if (!m.gear_model && settings.defaultModel)
+      m.gear_model = settings.defaultModel
+  }
 
-  // Auto gear type from filename
+  // Auto gear type from filename suffix
   if (!m.gear_type) {
     const nameUpper = baseName.replace(/\s+/g, '').toUpperCase()
-    m.gear_type = nameUpper.endsWith('DI') ? 'amp' : 'cab'
+    const ampSuffix = settings.ampSuffix.replace(/\s+/g, '').toUpperCase()
+    if (ampSuffix && nameUpper.endsWith(ampSuffix)) m.gear_type = 'amp'
+    else if (settings.defaultToCab) m.gear_type = 'amp_cab'
+    // else: leave blank
+  }
+
+  // Auto tone type from filename keywords (rightmost keyword wins)
+  if (!m.tone_type && settings.autoDetectToneType) {
+    const detected = detectToneType(baseName)
+    if (detected) m.tone_type = detected
   }
 
   return m
+}
+
+// Keywords that map to each tone type — order within each array doesn't matter,
+// detection picks the keyword that appears latest in the filename (rightmost wins)
+const TONE_KEYWORDS: Record<typeof TONE_TYPES[number], string[]> = {
+  'clean':      ['clean'],
+  'crunch':     ['crunch'],
+  'hi_gain':    ['highgain', 'hi-gain', 'higain', 'high-gain', 'lead'],
+  'fuzz':       ['fuzz'],
+  'overdrive':  ['overdrive', 'od', 'edge', 'drive'],
+  'distortion': ['distortion', 'dist'],
+  'other':      [],
+}
+
+function detectToneType(baseName: string): typeof TONE_TYPES[number] | null {
+  const lower = baseName.replace(/\s+/g, '').toLowerCase()
+  let best: { tone: typeof TONE_TYPES[number]; index: number } | null = null
+  for (const [tone, keywords] of Object.entries(TONE_KEYWORDS) as [typeof TONE_TYPES[number], string[]][]) {
+    for (const kw of keywords) {
+      const idx = lower.lastIndexOf(kw)
+      if (idx !== -1 && (best === null || idx > best.index)) {
+        best = { tone, index: idx }
+      }
+    }
+  }
+  return best ? best.tone : null
+}
+
+const EMPTY_LIBRARIAN: LibrarianState = {
+  rootFolder: null,
+  folderTree: null,
+  selectedFolder: null
 }
 
 export default function App() {
@@ -67,16 +125,88 @@ export default function App() {
     message: 'Open .nam files or a folder to get started',
     type: 'info'
   })
-  const [batchMode, setBatchMode] = useState(false)
+  const [batchFolder, setBatchFolder] = useState<{ path: string | null; name: string; filePaths?: string[] } | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
+  const [librarian, setLibrarian] = useState<LibrarianState>(EMPTY_LIBRARIAN)
+  const [libraryFilter, setLibraryFilter] = useState<Set<string> | null>(null)
+  const initialLayout = loadLayout()
+  const initialSettings = loadSettings()
+  const [treeWidth, setTreeWidth] = useState(initialLayout.treeWidth)
+  const [listViewMode, setListViewMode] = useState<'list' | 'grid'>(initialSettings.defaultView ?? 'list')
+  const [listWidth, setListWidth] = useState(
+    (initialSettings.defaultView ?? 'list') === 'grid' ? initialLayout.listWidthGrid : initialLayout.listWidthList
+  )
+  const draggingRef = useRef<null | { panel: 'tree' | 'list'; startX: number; startWidth: number }>(null)
+  const mainContentRef = useRef<HTMLDivElement>(null)
+
+  // Apply dark/light class to <html> whenever theme setting changes
+  useEffect(() => {
+    if (settings.theme === 'dark') {
+      document.documentElement.classList.add('dark')
+    } else {
+      document.documentElement.classList.remove('dark')
+    }
+  }, [settings.theme])
+
+  // Electron on Windows loses keyboard focus when the focused DOM element is removed
+  // (e.g. BatchEditor unmounts) or after native confirm dialogs close. Chromium's
+  // internal focus state gets stale. Fix: DOM focus as first attempt, then a blur→focus
+  // cycle in main process which resets OS-level keyboard routing (same as Alt+Tab).
+  useEffect(() => {
+    mainContentRef.current?.focus()
+    window.api.refocusWindow()
+  }, [showSettings, batchFolder])
+
+  const onDragStart = (panel: 'tree' | 'list', e: React.MouseEvent) => {
+    e.preventDefault()
+    const startWidth = panel === 'tree' ? treeWidth : listWidth
+    draggingRef.current = { panel, startX: e.clientX, startWidth }
+    let latestTree = treeWidth
+    let latestList = listWidth
+    const onMove = (ev: MouseEvent) => {
+      if (!draggingRef.current) return
+      const delta = ev.clientX - draggingRef.current.startX
+      const next = Math.max(140, draggingRef.current.startWidth + delta)
+      if (draggingRef.current.panel === 'tree') { setTreeWidth(next); latestTree = next }
+      else { setListWidth(next); latestList = next }
+    }
+    const onUp = () => {
+      draggingRef.current = null
+      // Persist layout — save per-mode list width
+      saveLayout({
+        treeWidth: latestTree,
+        listWidthList: listViewMode === 'list' ? latestList : loadLayout().listWidthList,
+        listWidthGrid: listViewMode === 'grid' ? latestList : loadLayout().listWidthGrid,
+      })
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
 
   const handleSaveSettings = (updated: AppSettings) => {
     setSettings(updated)
     saveSettings(updated)
+    // If default view changed, switch the current view immediately
+    if (updated.defaultView !== settings.defaultView) {
+      setListViewMode(updated.defaultView)
+      setListWidth(updated.defaultView === 'grid' ? loadLayout().listWidthGrid : loadLayout().listWidthList)
+    }
   }
 
-  const loadFiles = useCallback(async (paths: string[]) => {
+  // Auto-load default folder on startup
+  useEffect(() => {
+    if (settings.enableDefaultFolder && settings.defaultFolder) {
+      loadFolderByPath(settings.defaultFolder)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // intentionally empty — only runs once on mount
+
+  // mode='replace': clear existing, load fresh (open folder/files)
+  // mode='append': dedup against current files (drag & drop)
+  const loadFiles = useCallback(async (paths: string[], mode: 'replace' | 'append' = 'append') => {
     setStatus({ message: `Loading ${paths.length} file(s)...`, type: 'info' })
     const results = await Promise.all(paths.map((p) => window.api.readFile(p)))
 
@@ -85,37 +215,90 @@ export default function App() {
     for (const r of results) {
       if (r.success && r.filePath && r.metadata !== undefined) {
         const fileName = r.filePath.replace(/\\/g, '/').split('/').pop() ?? r.filePath
-        if (!files.some((f) => f.filePath === r.filePath)) {
-          const baseName = fileName.replace(/\.nam$/i, '')
-          const rawMeta = r.metadata ?? {}
-          const meta = applyDefaults({ ...rawMeta }, baseName, settings)
-          const wasChanged = JSON.stringify(meta) !== JSON.stringify(rawMeta)
-          loaded.push({
-            filePath: r.filePath,
-            fileName: baseName,
-            version: r.version ?? '?',
-            metadata: meta,
-            originalMetadata: rawMeta,
-            architecture: r.architecture ?? '?',
-            config: r.config,
-            isDirty: wasChanged
-          })
+        const baseName = fileName.replace(/\.nam$/i, '')
+        const rawMeta = r.metadata ?? {}
+        // Sanitize unrecognized values into working copy only — originalMetadata
+        // keeps the raw value so isDirty fires and the file surfaces for fixing
+        const workingMeta: NamFile['metadata'] = { ...rawMeta }
+        if (workingMeta.tone_type && !(TONE_TYPES as readonly string[]).includes(workingMeta.tone_type)) {
+          workingMeta.tone_type = null
         }
+        if (workingMeta.gear_type && !(GEAR_TYPES as readonly string[]).includes(workingMeta.gear_type)) {
+          workingMeta.gear_type = null
+        }
+        const meta = applyDefaults(workingMeta, baseName, settings)
+        const wasChanged = JSON.stringify(meta) !== JSON.stringify(rawMeta)
+        // Track which fields were set by applyDefaults (weren't in workingMeta before)
+        const autoFilledFields = (Object.keys(meta) as (keyof NamFile['metadata'])[]).filter(
+          (k) => meta[k] != null && (workingMeta[k] == null || workingMeta[k] === '')
+        )
+        loaded.push({
+          filePath: r.filePath,
+          fileName: baseName,
+          version: r.version ?? '?',
+          metadata: meta,
+          originalMetadata: rawMeta,
+          autoFilledFields,
+          architecture: r.architecture ?? '?',
+          config: r.config,
+          isDirty: wasChanged
+        })
       } else {
         errors++
       }
     }
 
-    setFiles((prev) => [...prev, ...loaded])
+    // Dedup inside functional update so prev is always current (fixes stale closure bug)
+    setFiles((prev) => {
+      if (mode === 'replace') return loaded
+      const existing = new Set(prev.map((f) => f.filePath))
+      return [...prev, ...loaded.filter((f) => !existing.has(f.filePath))]
+    })
+
+    // Auto-select first file when replacing, or when nothing is selected on append
+    setSelectedIds((prev) => {
+      if (loaded.length === 0) return prev
+      if (mode === 'replace') return new Set([loaded[0].filePath])
+      if (prev.size === 0) return new Set([loaded[0].filePath])
+      return prev
+    })
+
     if (errors > 0) {
       setStatus({ message: `Loaded ${loaded.length} file(s), ${errors} failed`, type: 'error' })
     } else {
       setStatus({ message: `Loaded ${loaded.length} file(s)`, type: 'success' })
     }
-    if (loaded.length > 0 && selectedIds.size === 0) {
-      setSelectedIds(new Set([loaded[0].filePath]))
+  }, [settings]) // no longer depends on files or selectedIds
+
+  // Shared logic for opening a folder by path (used by Open Folder and Refresh)
+  const loadFolderByPath = useCallback(async (folder: string) => {
+    setStatus({ message: 'Scanning folder...', type: 'info' })
+    // Save as default folder if rememberLastFolder is on
+    setSettings((prev) => {
+      if (!prev.rememberLastFolder) return prev
+      const updated = { ...prev, defaultFolder: folder.replace(/\\/g, '/'), enableDefaultFolder: true }
+      saveSettings(updated)
+      return updated
+    })
+    const [flatResult, treeResult] = await Promise.all([
+      window.api.scanFolder(folder),
+      window.api.scanTree(folder)
+    ])
+    if (!flatResult.success) {
+      setStatus({ message: `Error: ${flatResult.error}`, type: 'error' })
+      return
     }
-  }, [files, selectedIds, settings])
+    if (!flatResult.files || flatResult.files.length === 0) {
+      setStatus({ message: 'No .nam files found in that folder', type: 'info' })
+      return
+    }
+    setLibrarian({
+      rootFolder: folder.replace(/\\/g, '/'),
+      folderTree: treeResult.success && treeResult.tree ? treeResult.tree : null,
+      selectedFolder: null
+    })
+    await loadFiles(flatResult.files, 'replace')
+  }, [loadFiles])
 
   // Returns false if user cancels, true if safe to proceed
   const confirmDiscardChanges = (): boolean => {
@@ -130,8 +313,9 @@ export default function App() {
     if (!confirmDiscardChanges()) return
     setFiles([])
     setSelectedIds(new Set())
-    setBatchMode(false)
+    setBatchFolder(null)
     setShowSettings(false)
+    setLibrarian(EMPTY_LIBRARIAN)
     setStatus({ message: 'Open .nam files or a folder to get started', type: 'info' })
   }
 
@@ -139,26 +323,21 @@ export default function App() {
     if (!confirmDiscardChanges()) return
     const paths = await window.api.openFiles()
     if (paths.length === 0) return
-    setFiles([])
-    setSelectedIds(new Set())
-    await loadFiles(paths)
+    setLibrarian(EMPTY_LIBRARIAN)
+    await loadFiles(paths, 'replace')
   }
 
   const handleOpenFolder = async () => {
     if (!confirmDiscardChanges()) return
     const folder = await window.api.openFolder()
     if (!folder) return
-    setStatus({ message: 'Scanning folder...', type: 'info' })
-    const result = await window.api.scanFolder(folder)
-    if (result.success && result.files && result.files.length > 0) {
-      setFiles([])
-      setSelectedIds(new Set())
-      await loadFiles(result.files)
-    } else if (result.success) {
-      setStatus({ message: 'No .nam files found in that folder', type: 'info' })
-    } else {
-      setStatus({ message: `Error: ${result.error}`, type: 'error' })
-    }
+    await loadFolderByPath(folder)
+  }
+
+  const handleRefresh = async () => {
+    if (!librarian.rootFolder) return
+    if (!confirmDiscardChanges()) return
+    await loadFolderByPath(librarian.rootFolder)
   }
 
   const handleDrop = useCallback(
@@ -171,14 +350,21 @@ export default function App() {
           if (p) paths.push(p)
         }
       }
-      if (paths.length > 0) await loadFiles(paths)
+      if (paths.length > 0) await loadFiles(paths, 'append')
     },
     [loadFiles]
   )
 
   const handleMetadataChange = (filePath: string, updated: NamFile['metadata']) => {
     setFiles((prev) =>
-      prev.map((f) => (f.filePath === filePath ? { ...f, metadata: updated, isDirty: true } : f))
+      prev.map((f) => {
+        if (f.filePath !== filePath) return f
+        // Remove field from autoFilledFields when user manually edits it
+        const autoFilledFields = f.autoFilledFields.filter(
+          (k) => updated[k] === f.metadata[k]
+        )
+        return { ...f, metadata: updated, isDirty: true, autoFilledFields }
+      })
     )
   }
 
@@ -189,7 +375,7 @@ export default function App() {
     if (result.success) {
       setFiles((prev) => prev.map((f) =>
         f.filePath === filePath
-          ? { ...f, isDirty: false, originalMetadata: { ...f.metadata } }
+          ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [] }
           : f
       ))
       setStatus({ message: `Saved: ${file.fileName}`, type: 'success' })
@@ -204,8 +390,10 @@ export default function App() {
       setStatus({ message: 'No unsaved changes', type: 'info' })
       return
     }
-    const confirmed = window.confirm(`Save changes to ${dirty.length} file${dirty.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.`)
-    if (!confirmed) return
+    if (!settings.skipSaveAllConfirmation) {
+      const confirmed = window.confirm(`Save changes to ${dirty.length} file${dirty.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.`)
+      if (!confirmed) return
+    }
     setStatus({ message: `Saving ${dirty.length} file(s)...`, type: 'info' })
     const savedPaths = new Set<string>()
     let failed = 0
@@ -216,7 +404,7 @@ export default function App() {
     }
     setFiles((prev) => prev.map((f) =>
       savedPaths.has(f.filePath)
-        ? { ...f, isDirty: false, originalMetadata: { ...f.metadata } }
+        ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [] }
         : f
     ))
     if (failed > 0) {
@@ -235,21 +423,70 @@ export default function App() {
     })
   }
 
-  const handleBatchApply = async (metadata: Partial<NamFile['metadata']>) => {
-    const targetIds = selectedIds.size > 0 ? selectedIds : new Set(files.map((f) => f.filePath))
-    setFiles((prev) =>
-      prev.map((f) => {
-        if (!targetIds.has(f.filePath)) return f
-        const merged = { ...f.metadata }
-        for (const [k, v] of Object.entries(metadata)) {
-          if (v !== '' && v !== null && v !== undefined) {
-            ;(merged as Record<string, unknown>)[k] = v
-          }
+  const handleBatchApply = async (batchFields: Partial<NamFile['metadata']>) => {
+    const folderPath = batchFolder?.path ?? null
+    const batchPaths = batchFolder?.filePaths
+
+    let targets: NamFile[]
+    if (batchPaths) {
+      const pathSet = new Set(batchPaths)
+      targets = files.filter((f) => pathSet.has(f.filePath))
+    } else {
+      targets = folderPath === null
+        ? files
+        : files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(folderPath + '/'))
+    }
+
+    // For each target:
+    //   toWrite  = originalMetadata + batch fields only (what gets saved to disk)
+    //   newMeta  = current working metadata with batch fields applied (keeps auto-fills)
+    //   newOriginal = toWrite (reflects new on-disk state)
+    //   isDirty  = newMeta still differs from newOriginal (auto-fills remain pending)
+    const prepared = targets.map((f) => {
+      const toWrite = { ...f.originalMetadata }
+      const newMeta = { ...f.metadata }
+      for (const [k, v] of Object.entries(batchFields)) {
+        if (v !== '' && v !== null && v !== undefined) {
+          ;(toWrite as Record<string, unknown>)[k] = v
+          ;(newMeta as Record<string, unknown>)[k] = v
         }
-        return { ...f, metadata: merged, isDirty: true }
-      })
+      }
+      const newIsDirty = JSON.stringify(newMeta) !== JSON.stringify(toWrite)
+      return { filePath: f.filePath, toWrite, newMeta, newOriginal: toWrite, newIsDirty }
+    })
+
+    setBatchFolder(null)
+    setStatus({ message: `Saving ${prepared.length} file(s)...`, type: 'info' })
+
+    const savedPaths = new Set<string>()
+    let failed = 0
+    for (const p of prepared) {
+      const result = await window.api.writeMetadata(p.filePath, p.toWrite)
+      if (result.success) savedPaths.add(p.filePath)
+      else failed++
+    }
+
+    // Fields that were actually written by this batch edit
+    const savedBatchKeys = new Set(
+      (Object.keys(batchFields) as (keyof NamFile['metadata'])[])
+        .filter((k) => batchFields[k] !== '' && batchFields[k] !== null && batchFields[k] !== undefined)
     )
-    setStatus({ message: `Applied batch changes to ${targetIds.size} file(s)`, type: 'success' })
+    const resultMap = new Map(prepared.map((p) => [p.filePath, p]))
+    setFiles((prev) => prev.map((f) => {
+      if (!savedPaths.has(f.filePath)) return f
+      const p = resultMap.get(f.filePath)!
+      // Remove batch-saved fields from autoFilledFields; clear entirely if no longer dirty
+      const autoFilledFields = p.newIsDirty
+        ? f.autoFilledFields.filter((k) => !savedBatchKeys.has(k))
+        : []
+      return { ...f, metadata: p.newMeta, originalMetadata: p.newOriginal, isDirty: p.newIsDirty, autoFilledFields }
+    }))
+
+    if (failed > 0) {
+      setStatus({ message: `Batch saved ${savedPaths.size}, failed ${failed}`, type: 'error' })
+    } else {
+      setStatus({ message: `Batch saved ${savedPaths.size} file(s)`, type: 'success' })
+    }
   }
 
   const handleNameFromFilename = () => {
@@ -262,13 +499,23 @@ export default function App() {
     )
   }
 
-  const selectedFiles = files.filter((f) => selectedIds.has(f.filePath))
+  // Filter files by selected folder and/or library search filter
+  const visibleFiles = files.filter((f) => {
+    const norm = f.filePath.replace(/\\/g, '/')
+    if (librarian.selectedFolder && !norm.startsWith(librarian.selectedFolder + '/')) return false
+    if (libraryFilter && !libraryFilter.has(norm)) return false
+    return true
+  })
+
+  const selectedFiles = visibleFiles.filter((f) => selectedIds.has(f.filePath))
   const dirtyCount = files.filter((f) => f.isDirty).length
   const unnamedCount = files.filter((f) => !f.metadata.name).length
+  const hasTree = librarian.folderTree !== null
+  const dirtyPaths = new Set(files.filter((f) => f.isDirty).map((f) => f.filePath.replace(/\\/g, '/')))
 
   return (
     <div
-      className="flex flex-col h-screen bg-gray-950 text-gray-100 overflow-hidden"
+      className="flex flex-col h-screen bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 overflow-hidden"
       onDrop={handleDrop}
       onDragOver={(e) => e.preventDefault()}
     >
@@ -277,51 +524,186 @@ export default function App() {
         onOpenFolder={handleOpenFolder}
         onSaveAll={handleSaveAll}
         dirtyCount={dirtyCount}
-        batchMode={batchMode}
-        onToggleBatch={() => { setBatchMode((b) => !b); setShowSettings(false) }}
         fileCount={files.length}
         isMac={window.api.platform === 'darwin'}
         showSettings={showSettings}
-        onToggleSettings={() => { setShowSettings((s) => !s); setBatchMode(false) }}
+        onToggleSettings={() => { setShowSettings((s) => !s); setBatchFolder(null) }}
         unnamedCount={unnamedCount}
         onNameFromFilename={handleNameFromFilename}
         onCloseAll={handleCloseAll}
+        rootFolder={librarian.rootFolder}
+        onRefresh={handleRefresh}
       />
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Left sidebar - file list */}
-        <div className="w-72 flex-shrink-0 border-r border-gray-800 flex flex-col overflow-hidden">
-          <FileList
-            files={files}
-            selectedIds={selectedIds}
-            onSelect={(id, multi) => {
-              if (multi) {
+        {/* Folder tree — only shown when a folder is open */}
+        {hasTree && (
+          <>
+            <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: treeWidth }}>
+              <FolderTree
+                tree={librarian.folderTree!}
+                files={files}
+                selectedFolder={librarian.selectedFolder}
+                dirtyPaths={dirtyPaths}
+                onFilterChange={(matching) => setLibraryFilter(matching)}
+                onSelect={(path) => {
+                  setLibrarian((prev) => ({ ...prev, selectedFolder: path }))
+                  setSelectedIds(new Set())
+                }}
+                onSaveFolder={async (path) => {
+                  const targets = path === null
+                    ? files.filter((f) => f.isDirty)
+                    : files.filter((f) => f.isDirty && f.filePath.replace(/\\/g, '/').startsWith(path + '/'))
+                  if (targets.length === 0) return
+                  if (!settings.skipSaveAllConfirmation) {
+                    const confirmed = window.confirm(`Save changes to ${targets.length} file${targets.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.`)
+                    if (!confirmed) return
+                  }
+                  const savedPaths = new Set<string>()
+                  let failed = 0
+                  for (const f of targets) {
+                    const result = await window.api.writeMetadata(f.filePath, f.metadata)
+                    if (result.success) savedPaths.add(f.filePath)
+                    else failed++
+                  }
+                  setFiles((prev) => prev.map((f) =>
+                    savedPaths.has(f.filePath)
+                      ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [] }
+                      : f
+                  ))
+                  if (failed > 0) {
+                    setStatus({ message: `Saved ${savedPaths.size}, failed ${failed}`, type: 'error' })
+                  } else {
+                    setStatus({ message: `Saved ${savedPaths.size} file(s)`, type: 'success' })
+                  }
+                }}
+                onRevertFolder={(path) => {
+                  const targets = path === null
+                    ? files.filter((f) => f.isDirty)
+                    : files.filter((f) => f.isDirty && f.filePath.replace(/\\/g, '/').startsWith(path + '/'))
+                  if (targets.length === 0) return
+                  if (!window.confirm(`Revert ${targets.length} unsaved file${targets.length !== 1 ? 's' : ''} in this folder?\n\nAll unsaved changes will be lost.`)) return
+                  setFiles((prev) => prev.map((f) =>
+                    targets.some((t) => t.filePath === f.filePath)
+                      ? { ...f, metadata: { ...f.originalMetadata }, isDirty: false }
+                      : f
+                  ))
+                  setStatus({ message: `Reverted ${targets.length} file(s)`, type: 'info' })
+                }}
+                onRevealFolder={(path) => window.api.revealFile(path)}
+                onBatchEdit={(path, name) => {
+                  setShowSettings(false)
+                  const sel = [...selectedIds]
+                  if (sel.length > 0) {
+                    setBatchFolder({
+                      path: null,
+                      name: `${sel.length} selected file${sel.length !== 1 ? 's' : ''}`,
+                      filePaths: sel
+                    })
+                  } else {
+                    setBatchFolder({ path, name })
+                  }
+                }}
+              />
+            </div>
+            <DragHandle onMouseDown={(e) => onDragStart('tree', e)} />
+          </>
+        )}
+
+        {/* File list — only shown when files are loaded */}
+        {files.length > 0 && <>
+          <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: listWidth }}>
+            <FileList
+              files={visibleFiles}
+              selectedIds={selectedIds}
+              viewMode={listViewMode}
+              onViewModeChange={(mode) => {
+                setListViewMode(mode)
+                const layout = loadLayout()
+                setListWidth(mode === 'grid' ? layout.listWidthGrid : layout.listWidthList)
+              }}
+              onSelect={(id, multi) => {
+                if (multi) {
+                  setSelectedIds((prev) => {
+                    const next = new Set(prev)
+                    if (next.has(id)) next.delete(id)
+                    else next.add(id)
+                    return next
+                  })
+                } else {
+                  setSelectedIds(new Set([id]))
+                  setShowSettings(false)
+                  setBatchFolder(null)
+                }
+              }}
+              onSelectRange={(ids) => {
                 setSelectedIds((prev) => {
                   const next = new Set(prev)
-                  if (next.has(id)) next.delete(id)
-                  else next.add(id)
+                  for (const id of ids) next.add(id)
                   return next
                 })
-              } else {
-                setSelectedIds(new Set([id]))
+              }}
+              onSelectAll={() => setSelectedIds(new Set(visibleFiles.map((f) => f.filePath)))}
+              onDeselectAll={() => setSelectedIds(new Set())}
+              onRemove={hasTree ? undefined : handleRemoveFile}
+              onBatchEditSelected={(paths) => {
                 setShowSettings(false)
-                setBatchMode(false)
-              }
-            }}
-            onSelectAll={() => setSelectedIds(new Set(files.map((f) => f.filePath)))}
-            onDeselectAll={() => setSelectedIds(new Set())}
-            onRemove={handleRemoveFile}
-          />
-        </div>
+                setBatchFolder({
+                  path: null,
+                  name: `${paths.length} selected file${paths.length !== 1 ? 's' : ''}`,
+                  filePaths: paths
+                })
+              }}
+              onSaveSelected={async (paths) => {
+                const pathSet = new Set(paths)
+                const targets = files.filter((f) => pathSet.has(f.filePath) && f.isDirty)
+                if (targets.length === 0) {
+                  setStatus({ message: 'No unsaved changes in selection', type: 'info' })
+                  return
+                }
+                if (!settings.skipSaveAllConfirmation) {
+                  const confirmed = window.confirm(`Save changes to ${targets.length} file${targets.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.`)
+                  if (!confirmed) return
+                }
+                setStatus({ message: `Saving ${targets.length} file(s)...`, type: 'info' })
+                const savedPaths = new Set<string>()
+                let failed = 0
+                for (const f of targets) {
+                  const result = await window.api.writeMetadata(f.filePath, f.metadata)
+                  if (result.success) savedPaths.add(f.filePath)
+                  else failed++
+                }
+                setFiles((prev) => prev.map((f) =>
+                  savedPaths.has(f.filePath)
+                    ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [] }
+                    : f
+                ))
+                if (failed > 0) {
+                  setStatus({ message: `Saved ${savedPaths.size}, failed ${failed}`, type: 'error' })
+                } else {
+                  setStatus({ message: `Saved ${savedPaths.size} file(s)`, type: 'success' })
+                }
+              }}
+            />
+          </div>
+          <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} />
+        </>}
 
         {/* Main content */}
-        <div className="flex-1 overflow-hidden flex flex-col">
+        <div ref={mainContentRef} tabIndex={-1} className="flex-1 overflow-hidden flex flex-col focus:outline-none" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           {showSettings ? (
             <SettingsPanel settings={settings} onSave={handleSaveSettings} />
-          ) : batchMode ? (
+          ) : batchFolder !== null ? (
             <BatchEditor
-              selectedCount={selectedIds.size > 0 ? selectedIds.size : files.length}
+              folderName={batchFolder.name}
+              fileCount={batchFolder.filePaths
+                ? batchFolder.filePaths.length
+                : batchFolder.path === null
+                  ? files.length
+                  : files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(batchFolder.path! + '/')).length}
               onApply={handleBatchApply}
+              onClose={() => setBatchFolder(null)}
+              skipConfirmation={settings.skipBatchEditConfirmation}
             />
           ) : selectedFiles.length === 1 ? (
             <MetadataEditor
@@ -329,17 +711,70 @@ export default function App() {
               file={selectedFiles[0]}
               onChange={(m) => handleMetadataChange(selectedFiles[0].filePath, m)}
               onSave={() => handleSave(selectedFiles[0].filePath)}
+              onRevert={() => {
+                const f = selectedFiles[0]
+                setFiles((prev) => prev.map((x) =>
+                  x.filePath === f.filePath
+                    ? { ...x, metadata: { ...x.originalMetadata }, isDirty: false, autoFilledFields: [] }
+                    : x
+                ))
+              }}
+              onRevealInFinder={() => window.api.revealFile(selectedFiles[0].filePath)}
             />
           ) : selectedFiles.length === 0 && files.length === 0 ? (
             <EmptyState onOpenFiles={handleOpenFiles} onOpenFolder={handleOpenFolder} />
           ) : (
-            <MultiSelectHint count={selectedFiles.length} onBatch={() => setBatchMode(true)} />
+            <MultiSelectHint count={selectedFiles.length} />
           )}
         </div>
       </div>
 
+      <DefaultsPill settings={settings} />
       <StatusBar message={status.message} type={status.type} />
     </div>
+  )
+}
+
+function DefaultsPill({ settings }: { settings: AppSettings }) {
+  const parts: string[] = []
+
+  if (settings.enableAmpInfo && (settings.defaultManufacturer || settings.defaultModel)) {
+    const label = [settings.defaultManufacturer, settings.defaultModel].filter(Boolean).join(' ')
+    parts.push(`Amp: ${label}`)
+  }
+
+  if (settings.enableCaptureDefaults) {
+    const sub: string[] = []
+    if (settings.defaultModeledBy) sub.push(settings.defaultModeledBy)
+    if (settings.defaultInputLevel) sub.push(`in ${settings.defaultInputLevel} dBu`)
+    if (settings.defaultOutputLevel) sub.push(`out ${settings.defaultOutputLevel} dBu`)
+    if (sub.length > 0) parts.push(`Capture: ${sub.join(', ')}`)
+  }
+
+  if (settings.populateNameFromFilename) parts.push('Name from filename')
+
+  if (parts.length === 0) return null
+
+  return (
+    <div className="flex items-center gap-2 px-4 py-1 bg-gray-100 dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800/60 flex-shrink-0">
+      <span className="text-xs text-gray-400 dark:text-gray-600 flex-shrink-0">On open:</span>
+      <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+        {parts.map((p, i) => (
+          <span key={i} className="text-xs text-gray-500 dark:text-gray-500 bg-gray-200 dark:bg-gray-800 px-1.5 py-0.5 rounded whitespace-nowrap">
+            {p}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function DragHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
+  return (
+    <div
+      className="flex-shrink-0 w-1 bg-gray-200 dark:bg-gray-800 hover:bg-indigo-500 cursor-col-resize transition-colors active:bg-indigo-400"
+      onMouseDown={onMouseDown}
+    />
   )
 }
 
@@ -358,8 +793,8 @@ function EmptyState({
         </svg>
       </div>
       <div>
-        <h2 className="text-xl font-semibold text-gray-200 mb-1">NAM Metadata Editor</h2>
-        <p className="text-gray-500 text-sm max-w-xs">
+        <h2 className="text-xl font-semibold text-gray-800 dark:text-gray-200 mb-1">NAM Metadata Editor</h2>
+        <p className="text-gray-500 dark:text-gray-500 text-sm max-w-xs">
           Open .nam files to edit their metadata. Drag & drop files anywhere to load them.
         </p>
       </div>
@@ -372,32 +807,26 @@ function EmptyState({
         </button>
         <button
           onClick={onOpenFolder}
-          className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition-colors"
+          className="px-4 py-2 bg-gray-300 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg text-sm font-medium transition-colors"
         >
           Open Folder
         </button>
       </div>
-      <p className="text-gray-600 text-xs">Or drag & drop .nam files anywhere in the window</p>
+      <p className="text-gray-400 dark:text-gray-600 text-xs">Or drag & drop .nam files anywhere in the window</p>
     </div>
   )
 }
 
-function MultiSelectHint({ count, onBatch }: { count: number; onBatch: () => void }) {
+function MultiSelectHint({ count }: { count: number }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center p-8">
       <div className="w-16 h-16 rounded-2xl bg-indigo-900/40 flex items-center justify-center">
         <span className="text-2xl font-bold text-indigo-400">{count}</span>
       </div>
       <div>
-        <h3 className="text-lg font-semibold text-gray-200 mb-1">{count} files selected</h3>
-        <p className="text-gray-500 text-sm">Use batch edit to modify multiple files at once,<br />or select a single file to edit its metadata.</p>
+        <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-1">{count} files selected</h3>
+        <p className="text-gray-500 dark:text-gray-500 text-sm">Select a single file to edit its metadata,<br />or right-click the selection to batch edit.</p>
       </div>
-      <button
-        onClick={onBatch}
-        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-medium transition-colors"
-      >
-        Open Batch Editor
-      </button>
     </div>
   )
 }

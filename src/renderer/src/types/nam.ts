@@ -28,17 +28,18 @@ export interface NamFile {
   version: string
   metadata: NamMetadata
   originalMetadata: NamMetadata  // raw values from file before any defaults applied
+  autoFilledFields: (keyof NamMetadata)[]  // fields set by settings rules at load time
   architecture: string
   config: unknown
   isDirty: boolean
   loadError?: string
 }
 
-export const GEAR_TYPES = ['amp', 'pedal', 'cab', 'preamp', 'di', 'other'] as const
+export const GEAR_TYPES = ['amp', 'pedal', 'pedal_amp', 'amp_cab', 'amp_pedal_cab', 'preamp', 'studio'] as const
 export const TONE_TYPES = [
   'clean',
   'crunch',
-  'high-gain',
+  'hi_gain',
   'fuzz',
   'overdrive',
   'distortion',

@@ -4,11 +4,33 @@ import fs from 'fs'
 
 const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
 
+// Module-level reference so IPC handlers can always reach the window
+let mainWindow: BrowserWindow | null = null
+
+// Persist window size and maximized state between launches
+const WIN_STATE_PATH = join(app.getPath('userData'), 'window-state.json')
+
+function loadWinState(): { width: number; height: number; maximized: boolean } {
+  try {
+    return JSON.parse(fs.readFileSync(WIN_STATE_PATH, 'utf-8'))
+  } catch {
+    return { width: 1280, height: 800, maximized: false }
+  }
+}
+
+function saveWinState(): void {
+  if (!mainWindow) return
+  const maximized = mainWindow.isMaximized()
+  const { width, height } = maximized ? { width: 1280, height: 800 } : mainWindow.getBounds()
+  fs.writeFileSync(WIN_STATE_PATH, JSON.stringify({ width, height, maximized }), 'utf-8')
+}
+
 function createWindow(): void {
-  const mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
-    minWidth: 900,
+  const winState = loadWinState()
+  mainWindow = new BrowserWindow({
+    width: winState.width,
+    height: winState.height,
+    minWidth: 1100,
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
@@ -32,8 +54,22 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
+    if (winState.maximized) mainWindow!.maximize()
+    mainWindow!.show()
   })
+
+  mainWindow.on('focus', () => {
+    mainWindow!.webContents.focus()
+  })
+
+  // Save window size/maximize state on close and on resize (debounced)
+  let saveTimer: ReturnType<typeof setTimeout> | null = null
+  const debouncedSave = () => {
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(saveWinState, 500)
+  }
+  mainWindow.on('resize', debouncedSave)
+  mainWindow.on('close', saveWinState)
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
@@ -100,9 +136,9 @@ app.whenReady().then(() => {
       const data = JSON.parse(content)
       const orig = data.metadata ?? {}
       const incoming = metadata as Record<string, unknown>
-      // Only write editable fields that already exist in the original file
+      // Write all editable fields; add key if setting a real value, update/clear if key exists
       for (const key of EDITABLE_FIELDS) {
-        if (Object.prototype.hasOwnProperty.call(orig, key)) {
+        if (Object.prototype.hasOwnProperty.call(orig, key) || incoming[key] != null) {
           orig[key] = incoming[key] ?? null
         }
       }
@@ -114,7 +150,7 @@ app.whenReady().then(() => {
     }
   })
 
-  // IPC: Scan a folder recursively for .nam files
+  // IPC: Scan a folder recursively for .nam files (flat list)
   ipcMain.handle('folder:scanNam', async (_event, folderPath: string) => {
     try {
       const files: string[] = []
@@ -125,7 +161,7 @@ app.whenReady().then(() => {
           if (entry.isDirectory()) {
             scan(full)
           } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.nam')) {
-            files.push(full)
+            files.push(full.replace(/\\/g, '/'))
           }
         }
       }
@@ -134,6 +170,55 @@ app.whenReady().then(() => {
     } catch (err) {
       return { success: false, error: String(err) }
     }
+  })
+
+  // IPC: Scan a folder and return a tree structure for the Librarian
+  ipcMain.handle('folder:scanTree', async (_event, folderPath: string) => {
+    const norm = (p: string) => p.replace(/\\/g, '/')
+    interface FolderNode {
+      name: string
+      path: string
+      children: FolderNode[]
+      fileCount: number
+      totalCount: number
+    }
+    try {
+      const buildTreeFixed = (dir: string): FolderNode => {
+        const entries = fs.readdirSync(dir, { withFileTypes: true })
+        const children: FolderNode[] = []
+        let fileCount = 0
+        for (const entry of entries) {
+          const full = join(dir, entry.name)
+          if (entry.isDirectory()) {
+            children.push(buildTreeFixed(full))
+          } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.nam')) {
+            fileCount++
+          }
+        }
+        const totalCount = fileCount + children.reduce((s, c) => s + c.totalCount, 0)
+        const name = norm(dir).split('/').pop() ?? dir
+        return { name, path: norm(dir), children, fileCount, totalCount }
+      }
+      const tree = buildTreeFixed(folderPath)
+      return { success: true, tree }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  })
+
+  // IPC: Reveal a file in Finder / Explorer
+  ipcMain.handle('shell:revealFile', (_event, filePath: string) => {
+    shell.showItemInFolder(filePath)
+  })
+
+  // IPC: Restore keyboard focus on Windows after native dialogs or component unmounts.
+  // webContents.focus() alone is a no-op when Chromium thinks it already has focus.
+  // A blur→focus cycle resets Chromium's internal focus state via proper OS messages —
+  // exactly what Alt+Tab does. Both calls are synchronous so OS batches them (no flicker).
+  ipcMain.handle('window:refocus', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    mainWindow.blur()
+    mainWindow.focus()
   })
 
   createWindow()

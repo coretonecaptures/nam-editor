@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./node_modules/.bin/electron --version)",
+      "Bash(./node_modules/.bin/electron.cmd out/main/index.js)",
+      "Bash(/c/Users/Admin/nam-editor/node_modules/electron/dist/electron.exe --version)",
+      "Bash(ls -la /c/Users/Admin/nam-editor/node_modules/electron/dist/*.exe)",
+      "Bash(powershell -command \"\\(Get-Item ''C:\\\\Users\\\\Admin\\\\nam-editor\\\\node_modules\\\\electron\\\\dist\\\\electron.exe''\\).VersionInfo | Select-Object FileVersion, ProductName, ProductVersion\")"
+    ]
+  }
+}

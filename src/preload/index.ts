@@ -7,6 +7,9 @@ const api = {
   writeMetadata: (filePath: string, metadata: unknown) =>
     ipcRenderer.invoke('file:writeMetadata', filePath, metadata),
   scanFolder: (folderPath: string) => ipcRenderer.invoke('folder:scanNam', folderPath),
+  scanTree: (folderPath: string) => ipcRenderer.invoke('folder:scanTree', folderPath),
+  revealFile: (filePath: string) => ipcRenderer.invoke('shell:revealFile', filePath),
+  refocusWindow: () => ipcRenderer.invoke('window:refocus'),
   platform: process.platform
 }
 

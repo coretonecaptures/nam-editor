@@ -11,10 +11,10 @@ export function StatusBar({ message, type }: StatusBarProps) {
   }
 
   return (
-    <div className="h-6 flex items-center gap-2 px-4 bg-gray-900 border-t border-gray-800 flex-shrink-0">
+    <div className="h-6 flex items-center gap-2 px-4 bg-gray-100 dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 flex-shrink-0">
       <div
         className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-          type === 'success' ? 'bg-green-500' : type === 'error' ? 'bg-red-400' : 'bg-gray-600'
+          type === 'success' ? 'bg-green-500' : type === 'error' ? 'bg-red-400' : 'bg-gray-400 dark:bg-gray-600'
         }`}
       />
       <span className={`text-xs ${colors[type]}`}>{message}</span>

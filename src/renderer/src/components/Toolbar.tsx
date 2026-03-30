@@ -5,8 +5,6 @@ interface ToolbarProps {
   onOpenFolder: () => void
   onSaveAll: () => void
   dirtyCount: number
-  batchMode: boolean
-  onToggleBatch: () => void
   fileCount: number
   unnamedCount: number
   isMac: boolean
@@ -14,6 +12,8 @@ interface ToolbarProps {
   onToggleSettings: () => void
   onNameFromFilename: () => void
   onCloseAll: () => void
+  rootFolder: string | null
+  onRefresh: () => void
 }
 
 export function Toolbar({
@@ -21,19 +21,19 @@ export function Toolbar({
   onOpenFolder,
   onSaveAll,
   dirtyCount,
-  batchMode,
-  onToggleBatch,
   fileCount,
   unnamedCount,
   isMac,
   showSettings,
   onToggleSettings,
   onNameFromFilename,
-  onCloseAll
+  onCloseAll,
+  rootFolder,
+  onRefresh
 }: ToolbarProps) {
   return (
     <div
-      className="h-12 flex items-center gap-2 px-4 bg-gray-900 border-b border-gray-800 flex-shrink-0"
+      className="h-12 flex items-center gap-2 px-4 bg-gray-100 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex-shrink-0"
       style={{ paddingLeft: isMac ? '80px' : '16px', paddingRight: isMac ? '16px' : '150px', WebkitAppRegion: 'drag' } as React.CSSProperties}
     >
       {/* App title */}
@@ -41,14 +41,14 @@ export function Toolbar({
         <svg className="w-4 h-4 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z" />
         </svg>
-        <span className="text-sm font-semibold text-gray-300">NAM Editor</span>
+        <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">NAM Editor</span>
       </div>
 
-      <div className="w-px h-5 bg-gray-700" />
+      <div className="w-px h-5 bg-gray-300 dark:bg-gray-700" />
 
       <button
         onClick={onOpenFiles}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors"
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -59,7 +59,7 @@ export function Toolbar({
 
       <button
         onClick={onOpenFolder}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors"
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -71,7 +71,7 @@ export function Toolbar({
       {fileCount > 0 && (
         <button
           onClick={onCloseAll}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-gray-800 hover:bg-red-900/60 text-gray-300 hover:text-red-300 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-gray-200 dark:bg-gray-800 hover:bg-red-900/60 text-gray-700 dark:text-gray-300 hover:text-red-300 transition-colors"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
           title="Close all files"
         >
@@ -82,7 +82,21 @@ export function Toolbar({
         </button>
       )}
 
-      <div className="w-px h-5 bg-gray-700" />
+      {rootFolder && (
+        <button
+          onClick={onRefresh}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          title="Rescan folder for new or removed files"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          Refresh
+        </button>
+      )}
+
+      <div className="w-px h-5 bg-gray-300 dark:bg-gray-700" />
 
       <button
         onClick={onSaveAll}
@@ -101,32 +115,13 @@ export function Toolbar({
         )}
       </button>
 
-      {fileCount > 0 && (
-        <>
-          <div className="w-px h-5 bg-gray-700" />
-          <button
-            onClick={onToggleBatch}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-              batchMode
-                ? 'bg-amber-700 hover:bg-amber-600 text-white'
-                : 'bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white'
-            }`}
-            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
-            </svg>
-            {batchMode ? 'Exit Batch' : 'Batch Edit'}
-          </button>
-        </>
-      )}
 
       {unnamedCount > 0 && (
         <>
-          <div className="w-px h-5 bg-gray-700" />
+          <div className="w-px h-5 bg-gray-300 dark:bg-gray-700" />
           <button
             onClick={onNameFromFilename}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
             style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
             title={`Set capture name from filename for ${unnamedCount} unnamed file${unnamedCount !== 1 ? 's' : ''}`}
           >
@@ -140,13 +135,13 @@ export function Toolbar({
 
       <div className="flex-1" />
 
-      <div className="w-px h-5 bg-gray-700" />
+      <div className="w-px h-5 bg-gray-300 dark:bg-gray-700" />
       <button
         onClick={onToggleSettings}
         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
           showSettings
-            ? 'bg-gray-600 hover:bg-gray-500 text-white'
-            : 'bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white'
+            ? 'bg-gray-400 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 text-gray-900 dark:text-white'
+            : 'bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
         }`}
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >

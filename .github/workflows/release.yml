@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -20,8 +23,10 @@ jobs:
 
       - name: Build Windows installer
         run: npm run package:win
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
 
-      - name: Upload to release
+      - name: Upload Windows release
         uses: softprops/action-gh-release@v2
         with:
           files: release/**/*.exe
@@ -44,8 +49,13 @@ jobs:
 
       - name: Build Mac DMG
         run: npm run package:mac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
 
-      - name: Upload to release
+      - name: Ad-hoc sign the app
+        run: codesign --deep --force --sign - "release/mac/NAM Editor.app"
+
+      - name: Upload Mac release
         uses: softprops/action-gh-release@v2
         with:
           files: release/**/*.dmg

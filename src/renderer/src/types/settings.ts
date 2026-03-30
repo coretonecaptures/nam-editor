@@ -1,15 +1,69 @@
+export interface FolderOverride {
+  manufacturer?: string
+  model?: string
+  modeledBy?: string
+}
+
 export interface AppSettings {
-  defaultModeledBy: string
-  defaultInputLevel: string
+  // Current Amp Info
+  enableAmpInfo: boolean
   defaultManufacturer: string
   defaultModel: string
+
+  // Capture Defaults
+  enableCaptureDefaults: boolean
+  defaultModeledBy: string
+  defaultInputLevel: string
+  defaultOutputLevel: string
+
+  // Behavior
+  populateNameFromFilename: boolean
+  ampSuffix: string          // filename suffix that auto-sets gear type to "amp" (e.g. "DI")
+  defaultToCab: boolean      // if true, anything that doesn't match ampSuffix gets set to "cab"
+  autoDetectToneType: boolean
+
+  // Confirmations (false = show dialog, true = skip)
+  skipSaveAllConfirmation: boolean
+  skipBatchEditConfirmation: boolean
+
+  // Startup
+  enableDefaultFolder: boolean
+  defaultFolder: string
+  rememberLastFolder: boolean
+
+  folderOverrides: Record<string, FolderOverride>
+
+  // Appearance
+  theme: 'dark' | 'light'
+  defaultView: 'list' | 'grid'
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  enableAmpInfo: true,
+  defaultManufacturer: '',
+  defaultModel: '',
+
+  enableCaptureDefaults: true,
   defaultModeledBy: '',
   defaultInputLevel: '',
-  defaultManufacturer: '',
-  defaultModel: ''
+  defaultOutputLevel: '',
+
+  populateNameFromFilename: true,
+  ampSuffix: '',
+  defaultToCab: false,
+  autoDetectToneType: true,
+
+  skipSaveAllConfirmation: false,
+  skipBatchEditConfirmation: false,
+
+  enableDefaultFolder: false,
+  defaultFolder: '',
+  rememberLastFolder: true,
+
+  folderOverrides: {},
+
+  theme: 'dark',
+  defaultView: 'list'
 }
 
 const STORAGE_KEY = 'nam-editor-settings'
