@@ -44,20 +44,20 @@ export function BatchEditor({ folderName, fileCount, onApply, onClose, skipConfi
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 flex-shrink-0">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-base font-semibold text-gray-100">Batch Edit</h2>
-            <span className="text-xs px-2 py-0.5 rounded-full bg-gray-800 text-gray-400">{folderName}</span>
+            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Batch Edit</h2>
+            <span className="text-xs px-2 py-0.5 rounded-full bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400">{folderName}</span>
           </div>
-          <p className="text-sm text-gray-400 mt-0.5">
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
             {fileCount} file{fileCount !== 1 ? 's' : ''} · <span className="text-amber-400">check fields to include</span>
           </p>
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={onClose}
-            className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-800 hover:bg-gray-700 text-gray-300"
+            className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
           >
             Cancel
           </button>
@@ -76,7 +76,7 @@ export function BatchEditor({ folderName, fileCount, onApply, onClose, skipConfi
 
       <div className="flex-1 overflow-y-auto px-6 py-5">
         <div className="max-w-2xl space-y-3">
-          <p className="text-xs text-gray-500 mb-4">
+          <p className="text-xs text-gray-500 dark:text-gray-500 mb-4">
             Only checked fields will be written. Empty values will set the field to null.
           </p>
 
@@ -86,19 +86,19 @@ export function BatchEditor({ folderName, fileCount, onApply, onClose, skipConfi
                 type="checkbox"
                 checked={enabled.has(key)}
                 onChange={() => toggle(key)}
-                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-indigo-500 focus:ring-indigo-500/50 cursor-pointer flex-shrink-0"
+                className="w-4 h-4 rounded border-gray-400 dark:border-gray-600 bg-gray-200 dark:bg-gray-800 text-indigo-500 focus:ring-indigo-500/50 cursor-pointer flex-shrink-0"
               />
-              <label className="w-32 text-sm text-gray-400 flex-shrink-0">{label}</label>
+              <label className="w-32 text-sm text-gray-500 dark:text-gray-400 flex-shrink-0">{label}</label>
               <div className="flex-1">
                 {type === 'select' && options ? (
                   <select
                     disabled={!enabled.has(key)}
                     value={(fields[key] as string) ?? ''}
                     onChange={(e) => update(key, e.target.value)}
-                    className="w-full px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-100 focus:outline-none focus:border-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    className="w-full px-3 py-1.5 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
                     {['', ...options].map((o) => (
-                      <option key={o} value={o} className="bg-gray-800">
+                      <option key={o} value={o} className="bg-gray-200 dark:bg-gray-800">
                         {o === '' ? '— not set —' : o}
                       </option>
                     ))}
@@ -111,7 +111,7 @@ export function BatchEditor({ folderName, fileCount, onApply, onClose, skipConfi
                     onChange={(e) => update(key, e.target.value === '' ? null : parseFloat(e.target.value))}
                     placeholder={placeholder}
                     step={0.5}
-                    className="w-full px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    className="w-full px-3 py-1.5 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   />
                 ) : (
                   <input
@@ -120,7 +120,7 @@ export function BatchEditor({ folderName, fileCount, onApply, onClose, skipConfi
                     value={(fields[key] as string) ?? ''}
                     onChange={(e) => update(key, e.target.value)}
                     placeholder={placeholder}
-                    className="w-full px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    className="w-full px-3 py-1.5 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   />
                 )}
               </div>

@@ -41,34 +41,34 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
   return (
     <div className="flex flex-col h-full overflow-hidden" onKeyDown={handleKeyDown}>
       {/* File header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 flex-shrink-0">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
         <div>
-          <h2 className="text-base font-semibold text-gray-100 truncate max-w-lg">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 truncate max-w-lg">
             {m.name || file.fileName}
           </h2>
           <div className="flex items-center gap-3 mt-1">
             <button
               onClick={onRevealInFinder}
-              className="text-xs text-gray-500 hover:text-indigo-400 transition-colors truncate max-w-lg text-left"
+              className="text-xs text-gray-500 dark:text-gray-500 hover:text-indigo-400 transition-colors truncate max-w-lg text-left"
               title="Reveal in Finder / Explorer"
             >
               {file.filePath}
             </button>
           </div>
           <div className="flex items-center gap-2 mt-1">
-            <span className="text-xs text-gray-600">v{file.version}</span>
-            <span className="text-xs text-gray-600">·</span>
-            <span className="text-xs text-gray-600">{file.architecture}</span>
+            <span className="text-xs text-gray-400 dark:text-gray-600">v{file.version}</span>
+            <span className="text-xs text-gray-400 dark:text-gray-600">·</span>
+            <span className="text-xs text-gray-400 dark:text-gray-600">{file.architecture}</span>
             {m.loudness != null && (
               <>
-                <span className="text-xs text-gray-600">·</span>
-                <span className="text-xs text-gray-600">loudness: {m.loudness.toFixed(2)} dBFS</span>
+                <span className="text-xs text-gray-400 dark:text-gray-600">·</span>
+                <span className="text-xs text-gray-400 dark:text-gray-600">loudness: {m.loudness.toFixed(2)} dBFS</span>
               </>
             )}
             {!!m.training && (m.training as Record<string, unknown>).validation_esr != null && (
               <>
-                <span className="text-xs text-gray-600">·</span>
-                <span className="text-xs text-gray-600">
+                <span className="text-xs text-gray-400 dark:text-gray-600">·</span>
+                <span className="text-xs text-gray-400 dark:text-gray-600">
                   ESR: {((m.training as Record<string, unknown>).validation_esr as number).toFixed(6)}
                 </span>
               </>
@@ -82,7 +82,7 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
           <button
             onClick={onRevert}
             disabled={!file.isDirty}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-gray-700 hover:bg-gray-600 text-gray-300"
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-gray-300 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
             title="Discard changes and revert to saved values"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -244,8 +244,8 @@ function Section({ title, icon, children }: { title: string; icon: string; child
     <div>
       <div className="flex items-center gap-2 mb-3">
         <span className="text-sm">{icon}</span>
-        <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">{title}</h3>
-        <div className="flex-1 h-px bg-gray-800" />
+        <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">{title}</h3>
+        <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
       </div>
       <div className="space-y-4">{children}</div>
     </div>
@@ -265,9 +265,9 @@ function Field({
 }) {
   return (
     <div>
-      <label className="flex items-center gap-1.5 text-xs font-medium text-gray-400 mb-1.5">
+      <label className="flex items-center gap-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">
         {label}
-        {hint && <span className="text-gray-600 font-normal">{hint}</span>}
+        {hint && <span className="text-gray-400 dark:text-gray-600 font-normal">{hint}</span>}
         {autoFilled && (
           <span className="ml-auto text-xs text-amber-400 font-normal flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
@@ -280,9 +280,9 @@ function Field({
   )
 }
 
-const changedInputClass  = 'border-amber-500/60 bg-amber-900/10 focus:border-amber-400'
-const normalInputClass   = 'border-gray-700 bg-gray-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50'
-const autoFilledInputClass = 'border-indigo-500/50 bg-indigo-900/10 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-500/50'
+const changedInputClass  = 'border-amber-500/60 bg-amber-50 dark:bg-amber-900/10 focus:border-amber-400'
+const normalInputClass   = 'border-gray-300 dark:border-gray-700 bg-gray-200 dark:bg-gray-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50'
+const autoFilledInputClass = 'border-indigo-500/50 bg-indigo-50 dark:bg-indigo-900/10 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-500/50'
 
 function inputClass(changed?: boolean, autoFilled?: boolean) {
   if (changed) return changedInputClass
@@ -309,7 +309,7 @@ function TextInput({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
-      className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none transition-colors ${inputClass(changed, autoFilled)}`}
+      className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none transition-colors ${inputClass(changed, autoFilled)}`}
     />
   )
 }
@@ -339,7 +339,7 @@ function NumberInput({
       }}
       placeholder={placeholder}
       step={step}
-      className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-100 placeholder-gray-600 focus:outline-none transition-colors ${inputClass(changed, autoFilled)}`}
+      className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none transition-colors ${inputClass(changed, autoFilled)}`}
     />
   )
 }
@@ -361,10 +361,10 @@ function Select({
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-100 focus:outline-none transition-colors appearance-none cursor-pointer ${inputClass(changed, autoFilled)}`}
+      className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none transition-colors appearance-none cursor-pointer ${inputClass(changed, autoFilled)}`}
     >
       {options.map((o) => (
-        <option key={o} value={o} className="bg-gray-800">
+        <option key={o} value={o} className="bg-gray-200 dark:bg-gray-800">
           {o === '' ? '— not set —' : o}
         </option>
       ))}
@@ -382,9 +382,9 @@ function StatCard({
   good?: boolean
 }) {
   return (
-    <div className="px-3 py-2.5 bg-gray-800/50 rounded-lg border border-gray-800">
-      <div className="text-xs text-gray-500 mb-0.5">{label}</div>
-      <div className={`text-sm font-mono font-medium ${good === true ? 'text-green-400' : good === false ? 'text-amber-400' : 'text-gray-300'}`}>
+    <div className="px-3 py-2.5 bg-gray-100/80 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-800">
+      <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5">{label}</div>
+      <div className={`text-sm font-mono font-medium ${good === true ? 'text-green-400' : good === false ? 'text-amber-400' : 'text-gray-700 dark:text-gray-300'}`}>
         {value}
       </div>
     </div>

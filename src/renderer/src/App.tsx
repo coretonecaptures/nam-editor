@@ -134,6 +134,15 @@ export default function App() {
   const draggingRef = useRef<null | { panel: 'tree' | 'list'; startX: number; startWidth: number }>(null)
   const mainContentRef = useRef<HTMLDivElement>(null)
 
+  // Apply dark/light class to <html> whenever theme setting changes
+  useEffect(() => {
+    if (settings.theme === 'dark') {
+      document.documentElement.classList.add('dark')
+    } else {
+      document.documentElement.classList.remove('dark')
+    }
+  }, [settings.theme])
+
   // Electron on Windows loses keyboard focus when the focused DOM element is removed
   // (e.g. BatchEditor unmounts) or after native confirm dialogs close. Chromium's
   // internal focus state gets stale. Fix: DOM focus as first attempt, then a blur→focus
@@ -487,7 +496,7 @@ export default function App() {
 
   return (
     <div
-      className="flex flex-col h-screen bg-gray-950 text-gray-100 overflow-hidden"
+      className="flex flex-col h-screen bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 overflow-hidden"
       onDrop={handleDrop}
       onDragOver={(e) => e.preventDefault()}
     >
@@ -722,11 +731,11 @@ function DefaultsPill({ settings }: { settings: AppSettings }) {
   if (parts.length === 0) return null
 
   return (
-    <div className="flex items-center gap-2 px-4 py-1 bg-gray-900 border-t border-gray-800/60 flex-shrink-0">
-      <span className="text-xs text-gray-600 flex-shrink-0">On open:</span>
+    <div className="flex items-center gap-2 px-4 py-1 bg-gray-100 dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800/60 flex-shrink-0">
+      <span className="text-xs text-gray-400 dark:text-gray-600 flex-shrink-0">On open:</span>
       <div className="flex items-center gap-1.5 flex-wrap min-w-0">
         {parts.map((p, i) => (
-          <span key={i} className="text-xs text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded whitespace-nowrap">
+          <span key={i} className="text-xs text-gray-500 dark:text-gray-500 bg-gray-200 dark:bg-gray-800 px-1.5 py-0.5 rounded whitespace-nowrap">
             {p}
           </span>
         ))}
@@ -738,7 +747,7 @@ function DefaultsPill({ settings }: { settings: AppSettings }) {
 function DragHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
   return (
     <div
-      className="flex-shrink-0 w-1 bg-gray-800 hover:bg-indigo-500 cursor-col-resize transition-colors active:bg-indigo-400"
+      className="flex-shrink-0 w-1 bg-gray-200 dark:bg-gray-800 hover:bg-indigo-500 cursor-col-resize transition-colors active:bg-indigo-400"
       onMouseDown={onMouseDown}
     />
   )
@@ -759,8 +768,8 @@ function EmptyState({
         </svg>
       </div>
       <div>
-        <h2 className="text-xl font-semibold text-gray-200 mb-1">NAM Metadata Editor</h2>
-        <p className="text-gray-500 text-sm max-w-xs">
+        <h2 className="text-xl font-semibold text-gray-800 dark:text-gray-200 mb-1">NAM Metadata Editor</h2>
+        <p className="text-gray-500 dark:text-gray-500 text-sm max-w-xs">
           Open .nam files to edit their metadata. Drag & drop files anywhere to load them.
         </p>
       </div>
@@ -773,12 +782,12 @@ function EmptyState({
         </button>
         <button
           onClick={onOpenFolder}
-          className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition-colors"
+          className="px-4 py-2 bg-gray-300 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg text-sm font-medium transition-colors"
         >
           Open Folder
         </button>
       </div>
-      <p className="text-gray-600 text-xs">Or drag & drop .nam files anywhere in the window</p>
+      <p className="text-gray-400 dark:text-gray-600 text-xs">Or drag & drop .nam files anywhere in the window</p>
     </div>
   )
 }
@@ -790,8 +799,8 @@ function MultiSelectHint({ count }: { count: number }) {
         <span className="text-2xl font-bold text-indigo-400">{count}</span>
       </div>
       <div>
-        <h3 className="text-lg font-semibold text-gray-200 mb-1">{count} files selected</h3>
-        <p className="text-gray-500 text-sm">Select a single file to edit its metadata,<br />or right-click the selection to batch edit.</p>
+        <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-1">{count} files selected</h3>
+        <p className="text-gray-500 dark:text-gray-500 text-sm">Select a single file to edit its metadata,<br />or right-click the selection to batch edit.</p>
       </div>
     </div>
   )

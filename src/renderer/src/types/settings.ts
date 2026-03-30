@@ -32,6 +32,9 @@ export interface AppSettings {
   rememberLastFolder: boolean
 
   folderOverrides: Record<string, FolderOverride>
+
+  // Appearance
+  theme: 'dark' | 'light'
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -56,7 +59,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultFolder: '',
   rememberLastFolder: true,
 
-  folderOverrides: {}
+  folderOverrides: {},
+
+  theme: 'dark'
 }
 
 const STORAGE_KEY = 'nam-editor-settings'
