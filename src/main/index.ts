@@ -7,10 +7,29 @@ const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
 // Module-level reference so IPC handlers can always reach the window
 let mainWindow: BrowserWindow | null = null
 
+// Persist window size and maximized state between launches
+const WIN_STATE_PATH = join(app.getPath('userData'), 'window-state.json')
+
+function loadWinState(): { width: number; height: number; maximized: boolean } {
+  try {
+    return JSON.parse(fs.readFileSync(WIN_STATE_PATH, 'utf-8'))
+  } catch {
+    return { width: 1280, height: 800, maximized: false }
+  }
+}
+
+function saveWinState(): void {
+  if (!mainWindow) return
+  const maximized = mainWindow.isMaximized()
+  const { width, height } = maximized ? { width: 1280, height: 800 } : mainWindow.getBounds()
+  fs.writeFileSync(WIN_STATE_PATH, JSON.stringify({ width, height, maximized }), 'utf-8')
+}
+
 function createWindow(): void {
+  const winState = loadWinState()
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    width: winState.width,
+    height: winState.height,
     minWidth: 1100,
     minHeight: 600,
     show: false,
@@ -35,12 +54,22 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => {
+    if (winState.maximized) mainWindow!.maximize()
     mainWindow!.show()
   })
 
   mainWindow.on('focus', () => {
     mainWindow!.webContents.focus()
   })
+
+  // Save window size/maximize state on close and on resize (debounced)
+  let saveTimer: ReturnType<typeof setTimeout> | null = null
+  const debouncedSave = () => {
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(saveWinState, 500)
+  }
+  mainWindow.on('resize', debouncedSave)
+  mainWindow.on('close', saveWinState)
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)

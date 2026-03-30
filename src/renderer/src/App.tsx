@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { NamFile, TONE_TYPES, GEAR_TYPES } from './types/nam'
 import { AppSettings, loadSettings, saveSettings } from './types/settings'
+import { loadLayout, saveLayout } from './types/layout'
 import { LibrarianState } from './types/librarian'
 import { FileList } from './components/FileList'
 import { MetadataEditor } from './components/MetadataEditor'
@@ -129,9 +130,13 @@ export default function App() {
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
   const [librarian, setLibrarian] = useState<LibrarianState>(EMPTY_LIBRARIAN)
   const [libraryFilter, setLibraryFilter] = useState<Set<string> | null>(null)
-  const [treeWidth, setTreeWidth] = useState(260)
-  const [listWidth, setListWidth] = useState(320)
-  const [listViewMode, setListViewMode] = useState<'list' | 'grid'>(() => loadSettings().defaultView ?? 'list')
+  const initialLayout = loadLayout()
+  const initialSettings = loadSettings()
+  const [treeWidth, setTreeWidth] = useState(initialLayout.treeWidth)
+  const [listViewMode, setListViewMode] = useState<'list' | 'grid'>(initialSettings.defaultView ?? 'list')
+  const [listWidth, setListWidth] = useState(
+    (initialSettings.defaultView ?? 'list') === 'grid' ? initialLayout.listWidthGrid : initialLayout.listWidthList
+  )
   const draggingRef = useRef<null | { panel: 'tree' | 'list'; startX: number; startWidth: number }>(null)
   const mainContentRef = useRef<HTMLDivElement>(null)
 
@@ -157,15 +162,23 @@ export default function App() {
     e.preventDefault()
     const startWidth = panel === 'tree' ? treeWidth : listWidth
     draggingRef.current = { panel, startX: e.clientX, startWidth }
+    let latestTree = treeWidth
+    let latestList = listWidth
     const onMove = (ev: MouseEvent) => {
       if (!draggingRef.current) return
       const delta = ev.clientX - draggingRef.current.startX
       const next = Math.max(140, draggingRef.current.startWidth + delta)
-      if (draggingRef.current.panel === 'tree') setTreeWidth(next)
-      else setListWidth(next)
+      if (draggingRef.current.panel === 'tree') { setTreeWidth(next); latestTree = next }
+      else { setListWidth(next); latestList = next }
     }
     const onUp = () => {
       draggingRef.current = null
+      // Persist layout — save per-mode list width
+      saveLayout({
+        treeWidth: latestTree,
+        listWidthList: listViewMode === 'list' ? latestList : loadLayout().listWidthList,
+        listWidthGrid: listViewMode === 'grid' ? latestList : loadLayout().listWidthGrid,
+      })
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
     }
@@ -601,8 +614,8 @@ export default function App() {
               viewMode={listViewMode}
               onViewModeChange={(mode) => {
                 setListViewMode(mode)
-                if (mode === 'grid' && listWidth < 1060) setListWidth(1060)
-                if (mode === 'list' && listWidth > 480) setListWidth(320)
+                const layout = loadLayout()
+                setListWidth(mode === 'grid' ? layout.listWidthGrid : layout.listWidthList)
               }}
               onSelect={(id, multi) => {
                 if (multi) {
