@@ -518,7 +518,7 @@ export default function App() {
                   }
                   setFiles((prev) => prev.map((f) =>
                     savedPaths.has(f.filePath)
-                      ? { ...f, isDirty: false, originalMetadata: { ...f.metadata } }
+                      ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [] }
                       : f
                   ))
                   if (failed > 0) {
@@ -619,7 +619,7 @@ export default function App() {
                 }
                 setFiles((prev) => prev.map((f) =>
                   savedPaths.has(f.filePath)
-                    ? { ...f, isDirty: false, originalMetadata: { ...f.metadata } }
+                    ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [] }
                     : f
                 ))
                 if (failed > 0) {
