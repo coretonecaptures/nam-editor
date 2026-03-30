@@ -52,6 +52,9 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
+      - name: Ad-hoc sign the app
+        run: codesign --deep --force --sign - "release/mac/NAM Editor.app"
+
       - name: Upload Mac release
         uses: softprops/action-gh-release@v2
         with:

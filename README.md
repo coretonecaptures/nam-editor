@@ -131,7 +131,7 @@ Download the latest installer from the [Releases](https://github.com/coretonecap
 | Windows  | `NAM-Editor-Setup-x.x.x.exe` |
 | macOS    | `NAM-Editor-x.x.x.dmg` |
 
-> **macOS note:** The app is not code-signed. On first launch macOS may block it. Go to **System Settings → Privacy & Security** and click **Open Anyway**. You only need to do this once.
+> **macOS note:** The app is ad-hoc signed but not notarized (notarization requires a paid Apple Developer account). On first launch, macOS will show an "unverified developer" warning. Go to **System Settings → Privacy & Security** and click **Open Anyway**. You only need to do this once.
 
 > **Windows note:** Windows Defender SmartScreen may show a warning on first run. Click **More info → Run anyway**.
 
