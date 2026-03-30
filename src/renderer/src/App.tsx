@@ -131,7 +131,7 @@ export default function App() {
   const [libraryFilter, setLibraryFilter] = useState<Set<string> | null>(null)
   const [treeWidth, setTreeWidth] = useState(260)
   const [listWidth, setListWidth] = useState(320)
-  const [listViewMode, setListViewMode] = useState<'list' | 'grid'>('list')
+  const [listViewMode, setListViewMode] = useState<'list' | 'grid'>(() => loadSettings().defaultView ?? 'list')
   const draggingRef = useRef<null | { panel: 'tree' | 'list'; startX: number; startWidth: number }>(null)
   const mainContentRef = useRef<HTMLDivElement>(null)
 
