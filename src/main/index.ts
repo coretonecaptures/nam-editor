@@ -181,9 +181,11 @@ app.whenReady().then(() => {
     shell.showItemInFolder(filePath)
   })
 
-  // IPC: Refocus webContents after native dialogs (confirm/alert) steal focus on Windows
+  // IPC: Refocus webContents — called on every mousedown from renderer to prevent
+  // focus loss on Windows with hidden titlebar (focused element removed, native dialogs, etc.)
   ipcMain.handle('window:focus', () => {
-    BrowserWindow.getFocusedWindow()?.webContents.focus()
+    const win = BrowserWindow.getFocusedWindow()
+    if (win) win.webContents.focus()
   })
 
   createWindow()
