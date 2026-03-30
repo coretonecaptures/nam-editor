@@ -131,6 +131,7 @@ export default function App() {
   const [libraryFilter, setLibraryFilter] = useState<Set<string> | null>(null)
   const [treeWidth, setTreeWidth] = useState(260)
   const [listWidth, setListWidth] = useState(320)
+  const [listViewMode, setListViewMode] = useState<'list' | 'grid'>('list')
   const draggingRef = useRef<null | { panel: 'tree' | 'list'; startX: number; startWidth: number }>(null)
   const mainContentRef = useRef<HTMLDivElement>(null)
 
@@ -593,10 +594,12 @@ export default function App() {
 
         {/* File list — only shown when files are loaded */}
         {files.length > 0 && <>
-          <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: listWidth }}>
+          <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: listViewMode === 'grid' ? Math.max(listWidth, 780) : listWidth }}>
             <FileList
               files={visibleFiles}
               selectedIds={selectedIds}
+              viewMode={listViewMode}
+              onViewModeChange={(mode) => setListViewMode(mode)}
               onSelect={(id, multi) => {
                 if (multi) {
                   setSelectedIds((prev) => {

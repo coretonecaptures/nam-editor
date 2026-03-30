@@ -2,6 +2,8 @@ import { useRef, useState, useEffect } from 'react'
 import { NamFile } from '../types/nam'
 
 type FilterMode = 'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited'
+type ViewMode = 'list' | 'grid'
+type SortDir = 'asc' | 'desc'
 
 interface FileListProps {
   files: NamFile[]
@@ -10,9 +12,45 @@ interface FileListProps {
   onSelectRange: (ids: string[]) => void
   onSelectAll: () => void
   onDeselectAll: () => void
-  onRemove?: (id: string) => void  // omit to hide remove button (e.g. librarian mode)
+  onRemove?: (id: string) => void
   onBatchEditSelected?: (paths: string[]) => void
   onSaveSelected?: (paths: string[]) => void
+  viewMode: ViewMode
+  onViewModeChange: (mode: ViewMode) => void
+}
+
+const GRID_COLUMNS: { key: string; label: string; minWidth: number }[] = [
+  { key: 'name',       label: 'Capture Name',  minWidth: 180 },
+  { key: 'date',       label: 'Date',           minWidth: 96  },
+  { key: 'modeled_by', label: 'Modeled By',     minWidth: 130 },
+  { key: 'gear_make',  label: 'Manufacturer',   minWidth: 120 },
+  { key: 'gear_model', label: 'Model',          minWidth: 120 },
+  { key: 'gear_type',  label: 'Gear Type',      minWidth: 90  },
+  { key: 'tone_type',  label: 'Tone Type',      minWidth: 90  },
+]
+
+function getCellValue(file: NamFile, key: string): string {
+  const m = file.metadata
+  switch (key) {
+    case 'name':       return m.name || file.fileName
+    case 'modeled_by': return m.modeled_by ?? ''
+    case 'gear_make':  return m.gear_make ?? ''
+    case 'gear_model': return m.gear_model ?? ''
+    case 'gear_type':  return m.gear_type ?? ''
+    case 'tone_type':  return m.tone_type ?? ''
+    case 'date':
+      if (!m.date) return ''
+      return `${m.date.year}-${String(m.date.month).padStart(2, '0')}-${String(m.date.day).padStart(2, '0')}`
+    default: return ''
+  }
+}
+
+function getSortValue(file: NamFile, key: string): string | number {
+  if (key === 'date') {
+    const d = file.metadata.date
+    return d ? d.year * 10000 + d.month * 100 + d.day : 0
+  }
+  return getCellValue(file, key).toLowerCase()
 }
 
 export function FileList({
@@ -24,10 +62,14 @@ export function FileList({
   onDeselectAll,
   onRemove = undefined,
   onBatchEditSelected,
-  onSaveSelected
+  onSaveSelected,
+  viewMode,
+  onViewModeChange
 }: FileListProps) {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<FilterMode>('all')
+  const [sortKey, setSortKey] = useState<string | null>(null)
+  const [sortDir, setSortDir] = useState<SortDir>('asc')
   const anchorIndexRef = useRef<number>(-1)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
 
@@ -48,7 +90,7 @@ export function FileList({
 
   const filtered = files.filter((f) => {
     const m = f.metadata
-    const o = f.originalMetadata  // original values from file, before defaults
+    const o = f.originalMetadata
     if (search) {
       const q = search.toLowerCase()
       const haystack = [f.fileName, m.name, m.gear_make, m.gear_model, m.modeled_by]
@@ -65,6 +107,29 @@ export function FileList({
     }
   })
 
+  const sorted = sortKey
+    ? [...filtered].sort((a, b) => {
+        const av = getSortValue(a, sortKey)
+        const bv = getSortValue(b, sortKey)
+        let cmp = 0
+        if (typeof av === 'number' && typeof bv === 'number') {
+          cmp = av - bv
+        } else {
+          cmp = String(av).localeCompare(String(bv))
+        }
+        return sortDir === 'asc' ? cmp : -cmp
+      })
+    : filtered
+
+  const handleSortClick = (key: string) => {
+    if (sortKey === key) {
+      setSortDir((d) => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortKey(key)
+      setSortDir('asc')
+    }
+  }
+
   const editedCount = files.filter((f) => f.isDirty).length
   const filterOptions: { value: FilterMode; label: string }[] = [
     { value: 'all',      label: 'All' },
@@ -77,9 +142,9 @@ export function FileList({
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Search */}
-      <div className="px-3 pt-2 pb-1 flex-shrink-0">
-        <div className="relative">
+      {/* Search + view toggle */}
+      <div className="px-3 pt-2 pb-1 flex-shrink-0 flex items-center gap-1.5">
+        <div className="relative flex-1 min-w-0">
           <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
@@ -100,6 +165,28 @@ export function FileList({
               </svg>
             </button>
           )}
+        </div>
+
+        {/* View toggle */}
+        <div className="flex items-center gap-0.5 flex-shrink-0">
+          <button
+            onClick={() => onViewModeChange('list')}
+            title="List view"
+            className={`p-1.5 rounded transition-colors ${viewMode === 'list' ? 'bg-indigo-600 text-white' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200'}`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+          <button
+            onClick={() => onViewModeChange('grid')}
+            title="Grid view"
+            className={`p-1.5 rounded transition-colors ${viewMode === 'grid' ? 'bg-indigo-600 text-white' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200'}`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18M10 3v18M14 3v18" />
+            </svg>
+          </button>
         </div>
       </div>
 
@@ -123,9 +210,9 @@ export function FileList({
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-1.5 border-t border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
         <span className="text-xs text-gray-500 dark:text-gray-500 font-medium">
-          {filtered.length === files.length
+          {sorted.length === files.length
             ? `${files.length} file${files.length !== 1 ? 's' : ''}`
-            : `${filtered.length} / ${files.length}`}
+            : `${sorted.length} / ${files.length}`}
           {selectedIds.size > 0 && ` · ${selectedIds.size} selected`}
         </span>
         <div className="flex gap-1">
@@ -135,40 +222,58 @@ export function FileList({
         </div>
       </div>
 
-      {/* File list */}
-      <div
-        className="flex-1 overflow-y-auto"
-        onContextMenu={(e) => {
-          if (selectedIds.size === 0) return
-          e.preventDefault()
-          setCtxMenu({ x: e.clientX, y: e.clientY })
-        }}
-      >
-        {filtered.length === 0 ? (
-          <div className="flex items-center justify-center h-20">
-            <p className="text-gray-400 dark:text-gray-600 text-xs">No matches</p>
-          </div>
-        ) : (
-          filtered.map((file, index) => (
-            <FileItem
-              key={file.filePath}
-              file={file}
-              isSelected={selectedIds.has(file.filePath)}
-              onSelect={(e) => {
-                if (e.shiftKey && anchorIndexRef.current >= 0) {
-                  const lo = Math.min(anchorIndexRef.current, index)
-                  const hi = Math.max(anchorIndexRef.current, index)
-                  onSelectRange(filtered.slice(lo, hi + 1).map((f) => f.filePath))
-                } else {
-                  anchorIndexRef.current = index
-                  onSelect(file.filePath, e.ctrlKey || e.metaKey)
-                }
-              }}
-              onRemove={onRemove ? () => onRemove(file.filePath) : undefined}
-            />
-          ))
-        )}
-      </div>
+      {/* List or Grid */}
+      {viewMode === 'grid' ? (
+        <GridView
+          files={sorted}
+          selectedIds={selectedIds}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSortClick={handleSortClick}
+          anchorIndexRef={anchorIndexRef}
+          onSelect={onSelect}
+          onSelectRange={onSelectRange}
+          onContextMenu={(e) => {
+            if (selectedIds.size === 0) return
+            e.preventDefault()
+            setCtxMenu({ x: e.clientX, y: e.clientY })
+          }}
+        />
+      ) : (
+        <div
+          className="flex-1 overflow-y-auto"
+          onContextMenu={(e) => {
+            if (selectedIds.size === 0) return
+            e.preventDefault()
+            setCtxMenu({ x: e.clientX, y: e.clientY })
+          }}
+        >
+          {sorted.length === 0 ? (
+            <div className="flex items-center justify-center h-20">
+              <p className="text-gray-400 dark:text-gray-600 text-xs">No matches</p>
+            </div>
+          ) : (
+            sorted.map((file, index) => (
+              <FileItem
+                key={file.filePath}
+                file={file}
+                isSelected={selectedIds.has(file.filePath)}
+                onSelect={(e) => {
+                  if (e.shiftKey && anchorIndexRef.current >= 0) {
+                    const lo = Math.min(anchorIndexRef.current, index)
+                    const hi = Math.max(anchorIndexRef.current, index)
+                    onSelectRange(sorted.slice(lo, hi + 1).map((f) => f.filePath))
+                  } else {
+                    anchorIndexRef.current = index
+                    onSelect(file.filePath, e.ctrlKey || e.metaKey)
+                  }
+                }}
+                onRemove={onRemove ? () => onRemove(file.filePath) : undefined}
+              />
+            ))
+          )}
+        </div>
+      )}
 
       {/* Context menu */}
       {ctxMenu && (
@@ -211,6 +316,112 @@ export function FileList({
   )
 }
 
+// ---- Grid view ----
+
+function GridView({
+  files, selectedIds, sortKey, sortDir, onSortClick,
+  anchorIndexRef, onSelect, onSelectRange, onContextMenu
+}: {
+  files: NamFile[]
+  selectedIds: Set<string>
+  sortKey: string | null
+  sortDir: SortDir
+  onSortClick: (key: string) => void
+  anchorIndexRef: React.MutableRefObject<number>
+  onSelect: (id: string, multi: boolean) => void
+  onSelectRange: (ids: string[]) => void
+  onContextMenu: (e: React.MouseEvent) => void
+}) {
+  return (
+    <div className="flex-1 overflow-auto" onContextMenu={onContextMenu}>
+      <table className="w-full border-collapse text-xs" style={{ minWidth: GRID_COLUMNS.reduce((s, c) => s + c.minWidth, 24) }}>
+        <thead className="sticky top-0 z-10">
+          <tr className="bg-gray-100 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
+            {/* dirty dot column */}
+            <th className="w-5 px-2 py-2" />
+            {GRID_COLUMNS.map((col) => (
+              <th
+                key={col.key}
+                className="px-3 py-2 text-left font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer hover:text-gray-800 dark:hover:text-gray-200 select-none whitespace-nowrap"
+                style={{ minWidth: col.minWidth }}
+                onClick={() => onSortClick(col.key)}
+              >
+                <span className="flex items-center gap-1">
+                  {col.label}
+                  {sortKey === col.key ? (
+                    <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5}
+                        d={sortDir === 'asc' ? 'M5 15l7-7 7 7' : 'M19 9l-7 7-7-7'} />
+                    </svg>
+                  ) : (
+                    <svg className="w-3 h-3 flex-shrink-0 opacity-0 group-hover:opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l4-4 4 4m0 6l-4 4-4-4" />
+                    </svg>
+                  )}
+                </span>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {files.length === 0 ? (
+            <tr>
+              <td colSpan={GRID_COLUMNS.length + 1} className="text-center py-8 text-gray-400 dark:text-gray-600">No matches</td>
+            </tr>
+          ) : (
+            files.map((file, index) => {
+              const isSelected = selectedIds.has(file.filePath)
+              return (
+                <tr
+                  key={file.filePath}
+                  className={`border-b border-gray-100 dark:border-gray-800/60 cursor-pointer transition-colors ${
+                    isSelected
+                      ? 'bg-indigo-50 dark:bg-indigo-900/30 hover:bg-indigo-100 dark:hover:bg-indigo-900/40'
+                      : 'bg-white dark:bg-transparent hover:bg-gray-50 dark:hover:bg-gray-800/40'
+                  }`}
+                  onClick={(e) => {
+                    if (e.shiftKey && anchorIndexRef.current >= 0) {
+                      const lo = Math.min(anchorIndexRef.current, index)
+                      const hi = Math.max(anchorIndexRef.current, index)
+                      onSelectRange(files.slice(lo, hi + 1).map((f) => f.filePath))
+                    } else {
+                      anchorIndexRef.current = index
+                      onSelect(file.filePath, e.ctrlKey || e.metaKey)
+                    }
+                  }}
+                  onMouseDown={(e) => { if (e.shiftKey) e.preventDefault() }}
+                >
+                  <td className="w-5 px-2">
+                    {file.isDirty && <div className="w-1.5 h-1.5 rounded-full bg-amber-400 mx-auto" title="Unsaved changes" />}
+                  </td>
+                  {GRID_COLUMNS.map((col) => {
+                    const val = getCellValue(file, col.key)
+                    return (
+                      <td key={col.key} className="px-3 py-2 whitespace-nowrap max-w-[220px]">
+                        {col.key === 'tone_type' && val ? (
+                          <span className="px-1.5 py-0.5 rounded text-xs bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400">{val}</span>
+                        ) : col.key === 'gear_type' && val ? (
+                          <span className="px-1.5 py-0.5 rounded text-xs bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400">{val}</span>
+                        ) : (
+                          <span className={`truncate block ${val ? 'text-gray-800 dark:text-gray-200' : 'text-gray-400 dark:text-gray-600'}`}>
+                            {val || '—'}
+                          </span>
+                        )}
+                      </td>
+                    )
+                  })}
+                </tr>
+              )
+            })
+          )}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// ---- List item ----
+
 function FileItem({
   file,
   isSelected,
@@ -238,7 +449,7 @@ function FileItem({
   return (
     <div
       className={`group flex items-start gap-2 px-3 py-2.5 cursor-pointer border-b border-gray-200/80 dark:border-gray-800/50 hover:bg-gray-100/80 dark:hover:bg-gray-800/50 transition-colors ${
-        isSelected ? 'bg-indigo-900/30 hover:bg-indigo-900/40' : ''
+        isSelected ? 'bg-indigo-100 dark:bg-indigo-900/30 hover:bg-indigo-100 dark:hover:bg-indigo-900/40' : ''
       }`}
       onClick={(e) => onSelect(e)}
       onMouseDown={(e) => { if (e.shiftKey) e.preventDefault() }}
