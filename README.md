@@ -27,9 +27,10 @@ This is especially useful for capture artists who want to properly tag their `.n
 - Open a folder and get a three-panel layout: **Folder Tree | File List | Metadata Editor**
 - Folder tree shows all subfolders with file counts; click any folder to filter the file list to that folder
 - Each folder shows a **blue total count** and an **amber dirty count** (unsaved edits)
-- All three panels are **resizable** — drag the dividers to adjust
+- All three panels are **resizable** — drag the dividers to any width
 - **Refresh** button rescans the folder for new or removed files (warns about unsaved changes)
 - Remembers the last opened folder and reopens it automatically on next launch
+- Panel widths and window size are remembered between sessions
 
 ### Library Search & Filter
 - Click the **🔍** icon in the Library header to open the collapsible search panel
@@ -40,6 +41,16 @@ This is especially useful for capture artists who want to properly tag their `.n
 - Folders with zero matches **disappear** from the tree; folder counts show match count in amber
 - An amber **FILTERED** banner with match count appears when any filter is active
 - Closing the panel clears all filters
+
+### List View & Grid View
+- Toggle between **List** and **Grid** views using the icons to the right of the search bar
+- **List view** — compact single-row per file with name, subtitle, gear/tone chips, and missing-field badge
+- **Grid view** — spreadsheet-style table with columns: Capture Name · Date · Modeled By · Manufacturer · Model · Gear Type · Tone Type
+  - Click any column header to **sort** ascending/descending
+  - **Drag column edges** to resize individual columns
+  - Panel auto-widens when switching to grid view
+- Set your **default view** in Settings → Appearance — switches immediately, persists across launches
+- Per-mode width memory: list and grid each remember their last-used panel width separately
 
 ### File List Filters
 - **All / Edited / Unnamed / No Type / No Maker / No Tone** filter chips in the file list header
@@ -62,14 +73,20 @@ This is especially useful for capture artists who want to properly tag their `.n
 - **Manufacturer** and **Model** — gear make/model
 - **Reamp Send Level (dBu)** and **Reamp Return Level (dBu)**
 - Ctrl+S / Cmd+S to save the current file
+- **Revert** button discards unsaved changes and restores the file's saved values
 - Read-only stats: architecture, NAM version, integrated loudness, gain, validation ESR, epoch count (if present)
 - **File path** in the header is clickable — opens the file's folder in Finder/Explorer
+- **Gear type icon** displayed in the file header for visual identification (amp, pedal, cab, etc.)
 
 ### Change Tracking & Highlighting
 - Fields auto-populated by settings rules show an **indigo border** and **"auto-filled"** label
 - Fields you manually edit show an **amber border** (no label)
 - Auto-fill highlights clear automatically after saving
 - Amber dot in the file list and folder tree counts unsaved edits
+
+### Appearance
+- **Dark theme** (default) and **Light theme** — toggle in Settings → Appearance, applies instantly
+- **Default view** (List or Grid) — set your preferred starting view in Settings → Appearance
 
 ### Smart Defaults (Settings)
 Settings are stored locally and start blank. Each section can be **enabled or disabled independently** — turn off a section to browse other people's captures without applying your defaults.
@@ -98,6 +115,7 @@ A slim bar above the status bar shows which defaults are currently active (e.g. 
 
 ### Saving
 - **Save** button (or Ctrl+S / Cmd+S) saves the current file
+- **Revert** button discards unsaved changes for the current file
 - **Save All** in the toolbar saves all unsaved files (with optional confirmation dialog)
 - **Right-click selection → Save N selected** — saves only the files you've selected
 - **Right-click folder → Save all in folder** — saves all unsaved files under that folder path
@@ -129,7 +147,7 @@ Download the latest installer from the [Releases](https://github.com/coretonecap
 | Platform | File |
 |----------|------|
 | Windows  | `NAM-Editor-Setup-x.x.x.exe` |
-| macOS    | `NAM-Editor-x.x.x.dmg` |
+| macOS    | `NAM-Editor-x.x.x-arm64.dmg` |
 
 > **macOS note:** The app is ad-hoc signed but not notarized (notarization requires a paid Apple Developer account). On first launch, macOS will show an "unverified developer" warning. Go to **System Settings → Privacy & Security** and click **Open Anyway**. You only need to do this once.
 
@@ -167,8 +185,8 @@ Output goes to the `release/` folder.
 Tag a version and push — GitHub Actions builds both platforms automatically:
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.3.2
+git push origin v0.3.2
 ```
 
 The workflow builds a Windows `.exe` installer and a macOS `.dmg`, then attaches them to a GitHub Release.
