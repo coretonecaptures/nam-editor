@@ -29,6 +29,7 @@ declare global {
       writeMetadata: (filePath: string, metadata: unknown) => Promise<{ success: boolean; error?: string }>
       scanFolder: (folderPath: string) => Promise<{ success: boolean; error?: string; files?: string[] }>
       scanTree: (folderPath: string) => Promise<{ success: boolean; error?: string; tree?: FolderNode }>
+      refocusWindow: () => Promise<void>
       platform: string
     }
   }

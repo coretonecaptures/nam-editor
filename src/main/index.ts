@@ -181,6 +181,11 @@ app.whenReady().then(() => {
     shell.showItemInFolder(filePath)
   })
 
+  // IPC: Refocus webContents after native dialogs (confirm/alert) steal focus on Windows
+  ipcMain.handle('window:focus', () => {
+    BrowserWindow.getFocusedWindow()?.webContents.focus()
+  })
+
   createWindow()
 
   app.on('activate', () => {
