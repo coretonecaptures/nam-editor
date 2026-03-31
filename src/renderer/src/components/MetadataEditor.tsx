@@ -114,7 +114,19 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
         <div className="max-w-2xl space-y-6">
 
           {/* Identity section */}
-          <Section title="Identity" icon="🎸">
+          <Section title="Identity" icon={
+            <svg className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              {/* Amp head: top panel with knobs, front face with speaker grille */}
+              <rect x="2" y="4" width="20" height="6" rx="1" strokeWidth={1.5} />
+              <circle cx="7" cy="7" r="1" strokeWidth={1.5} />
+              <circle cx="12" cy="7" r="1" strokeWidth={1.5} />
+              <circle cx="17" cy="7" r="1" strokeWidth={1.5} />
+              <rect x="2" y="10" width="20" height="10" rx="1" strokeWidth={1.5} />
+              <rect x="5" y="13" width="14" height="4" rx="0.5" strokeWidth={1.5} />
+              <line x1="9" y1="13" x2="9" y2="17" strokeWidth={1} />
+              <line x1="13" y1="13" x2="13" y2="17" strokeWidth={1} />
+            </svg>
+          }>
             <Field label="Capture Name" hint="Display name shown in plugins" autoFilled={isAutoFilled('name')}>
               <div className="flex items-center gap-2">
                 <TextInput
@@ -266,7 +278,7 @@ function GearImage({ gearType, size = 'body' }: { gearType: string; size?: 'head
   )
 }
 
-function Section({ title, icon, children }: { title: string; icon: string; children: React.ReactNode }) {
+function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
     <div>
       <div className="flex items-center gap-2 mb-3">
