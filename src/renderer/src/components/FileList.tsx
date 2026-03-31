@@ -458,7 +458,7 @@ function GridView({
                         ) : col.key === 'gear_type' && val ? (
                           <span className={`px-1.5 py-0.5 rounded text-xs ${gearChipClass(val, solidPills)}`}>{val}</span>
                         ) : col.key === 'name' ? (
-                          <span className={`truncate block ${val ? 'text-gray-900 dark:text-gray-200' : 'text-gray-400 dark:text-gray-600'}`}>
+                          <span className={`truncate block text-sm font-semibold ${val ? 'text-gray-900 dark:text-gray-100' : 'text-gray-400 dark:text-gray-600'}`}>
                             {val || '—'}
                           </span>
                         ) : (
