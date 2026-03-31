@@ -227,8 +227,8 @@ export function FileList({
               : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
           }`}
         >
-          <option value="">Gear type…</option>
-          {GEAR_TYPES.map((g) => <option key={g} value={g}>{g}</option>)}
+          <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Gear type…</option>
+          {GEAR_TYPES.map((g) => <option key={g} value={g} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{g}</option>)}
         </select>
         <select
           value={toneFilter}
@@ -239,8 +239,8 @@ export function FileList({
               : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
           }`}
         >
-          <option value="">Tone type…</option>
-          {TONE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+          <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Tone type…</option>
+          {TONE_TYPES.map((t) => <option key={t} value={t} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{t}</option>)}
         </select>
       </div>
 

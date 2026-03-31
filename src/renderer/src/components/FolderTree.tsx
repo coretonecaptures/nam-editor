@@ -83,12 +83,14 @@ export function FolderTree({
     setActiveGears(new Set())
   }
 
-  const rootDirty = dirtyPaths.size
-
   // Build matchingPaths for count display in tree rows
   const matchingPaths: Set<string> | null = isFiltered
     ? new Set(files.filter((f) => matchesFilter(f, query.trim(), activeTones, activeGears)).map((f) => f.filePath.replace(/\\/g, '/')))
     : null
+
+  const rootDirty = matchingPaths
+    ? [...dirtyPaths].filter((p) => matchingPaths.has(p)).length
+    : dirtyPaths.size
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -258,22 +260,23 @@ function TreeNode({
   const hasChildren = node.children.length > 0
 
   const prefix = node.path + '/'
-  let dirtyCount = 0
-  for (const p of dirtyPaths) {
-    if (p.startsWith(prefix) || p === node.path) dirtyCount++
-  }
 
-  // When filtering: count matches in this subtree
+  // When filtering: count matches in this subtree; hide folder if none
   let matchCount = 0
   if (matchingPaths) {
     for (const p of matchingPaths) {
       if (p.startsWith(prefix) || p === node.path) matchCount++
     }
-    // Hide this folder entirely if no matches
     if (matchCount === 0) return null
   }
 
   const displayCount = matchingPaths ? matchCount : node.totalCount
+
+  // Dirty count: when filtered, only count dirty files that are visible (in matchingPaths)
+  let dirtyCount = 0
+  for (const p of dirtyPaths) {
+    if ((p.startsWith(prefix) || p === node.path) && (!matchingPaths || matchingPaths.has(p))) dirtyCount++
+  }
 
   return (
     <div>
