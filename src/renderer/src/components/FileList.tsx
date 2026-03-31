@@ -19,6 +19,7 @@ interface FileListProps {
   viewMode: ViewMode
   onViewModeChange: (mode: ViewMode) => void
   solidPills?: boolean
+  draggable?: boolean
 }
 
 const GRID_COLUMNS: { key: string; label: string; minWidth: number }[] = [
@@ -67,7 +68,8 @@ export function FileList({
   onSaveSelected,
   viewMode,
   onViewModeChange,
-  solidPills = false
+  solidPills = false,
+  draggable = false
 }: FileListProps) {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<FilterMode>('all')
@@ -273,6 +275,11 @@ export function FileList({
                     onSelect(file.filePath, e.ctrlKey || e.metaKey)
                   }
                 }}
+                onDragStart={draggable ? (e) => {
+                  const paths = selectedIds.has(file.filePath) ? [...selectedIds] : [file.filePath]
+                  e.dataTransfer.effectAllowed = 'move'
+                  e.dataTransfer.setData('application/x-nam-files', JSON.stringify(paths))
+                } : undefined}
                 onRemove={onRemove ? () => onRemove(file.filePath) : undefined}
               />
             ))
@@ -471,12 +478,14 @@ function FileItem({
   isSelected,
   solidPills,
   onSelect,
+  onDragStart,
   onRemove
 }: {
   file: NamFile
   isSelected: boolean
   solidPills: boolean
   onSelect: (e: React.MouseEvent) => void
+  onDragStart?: (e: React.DragEvent<HTMLDivElement>) => void
   onRemove?: () => void
 }) {
   const meta = file.metadata
@@ -497,6 +506,8 @@ function FileItem({
       className={`group flex items-start gap-2 px-3 py-2.5 cursor-pointer border-b border-gray-200/80 dark:border-gray-800/50 hover:bg-gray-100/80 dark:hover:bg-gray-800/50 transition-colors ${
         isSelected ? 'bg-indigo-100 dark:bg-indigo-900/30 hover:bg-indigo-100 dark:hover:bg-indigo-900/40' : ''
       }`}
+      draggable={!!onDragStart}
+      onDragStart={onDragStart}
       onClick={(e) => onSelect(e)}
       onMouseDown={(e) => { if (e.shiftKey) e.preventDefault() }}
     >

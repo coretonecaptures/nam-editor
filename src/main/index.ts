@@ -206,6 +206,21 @@ app.whenReady().then(() => {
     }
   })
 
+  // IPC: Move a file to a different folder (physical rename on disk)
+  ipcMain.handle('file:move', async (_event, sourcePath: string, destDir: string) => {
+    try {
+      const fileName = sourcePath.replace(/\\/g, '/').split('/').pop()!
+      const destPath = join(destDir, fileName)
+      if (fs.existsSync(destPath)) {
+        return { success: false, error: 'exists', destPath: destPath.replace(/\\/g, '/') }
+      }
+      fs.renameSync(sourcePath, destPath)
+      return { success: true, destPath: destPath.replace(/\\/g, '/') }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  })
+
   // IPC: Reveal a file in Finder / Explorer
   ipcMain.handle('shell:revealFile', (_event, filePath: string) => {
     shell.showItemInFolder(filePath)

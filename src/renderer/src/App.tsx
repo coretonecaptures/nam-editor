@@ -29,6 +29,7 @@ declare global {
         config?: unknown
       }>
       writeMetadata: (filePath: string, metadata: unknown) => Promise<{ success: boolean; error?: string }>
+      moveFile: (sourcePath: string, destDir: string) => Promise<{ success: boolean; error?: string; destPath?: string }>
       scanFolder: (folderPath: string) => Promise<{ success: boolean; error?: string; files?: string[] }>
       scanTree: (folderPath: string) => Promise<{ success: boolean; error?: string; tree?: FolderNode }>
       refocusWindow: () => Promise<void>
@@ -540,6 +541,65 @@ export default function App() {
     }
   }
 
+  const handleFileDrop = async (filePaths: string[], destFolderPath: string) => {
+    // Warn if any dragged files have unsaved changes
+    const dirty = files.filter((f) => filePaths.includes(f.filePath) && f.isDirty)
+    if (dirty.length > 0) {
+      const confirmed = window.confirm(
+        `${dirty.length} file${dirty.length > 1 ? 's have' : ' has'} unsaved changes that will be lost. Move anyway?`
+      )
+      if (!confirmed) return
+    }
+
+    // Attempt to move all files
+    const results = await Promise.all(filePaths.map((fp) => window.api.moveFile(fp, destFolderPath)))
+
+    const moved: { oldPath: string; newPath: string }[] = []
+    let existsCount = 0
+    let failCount = 0
+    results.forEach((r, i) => {
+      if (r.success && r.destPath) moved.push({ oldPath: filePaths[i], newPath: r.destPath })
+      else if (r.error === 'exists') existsCount++
+      else failCount++
+    })
+
+    if (existsCount > 0) {
+      window.confirm(
+        `${existsCount} file${existsCount > 1 ? 's' : ''} already exist in the destination and were skipped.`
+      )
+      window.api.refocusWindow()
+    }
+
+    if (moved.length === 0) return
+
+    // Update files state — repath moved files, clear dirty flag
+    const movedMap = new Map(moved.map((m) => [m.oldPath, m.newPath]))
+    setFiles((prev) =>
+      prev.map((f) => {
+        const newPath = movedMap.get(f.filePath)
+        if (!newPath) return f
+        return { ...f, filePath: newPath, isDirty: false, autoFilledFields: [] }
+      })
+    )
+
+    // Rescan folder tree to update counts
+    if (librarian.rootFolder) {
+      const treeResult = await window.api.scanTree(librarian.rootFolder)
+      if (treeResult.success && treeResult.tree) {
+        setLibrarian((prev) => ({ ...prev, folderTree: treeResult.tree! }))
+      }
+    }
+
+    // Switch selected folder to destination
+    setLibrarian((prev) => ({ ...prev, selectedFolder: destFolderPath }))
+    setSelectedIds(new Set())
+
+    const msg = failCount > 0
+      ? `Moved ${moved.length}, failed ${failCount}${existsCount > 0 ? `, skipped ${existsCount}` : ''}`
+      : `Moved ${moved.length} file${moved.length > 1 ? 's' : ''} to ${destFolderPath.split('/').pop()}`
+    setStatus({ message: msg, type: failCount > 0 ? 'error' : 'success' })
+  }
+
   const handleNameFromFilename = () => {
     setFiles((prev) =>
       prev.map((f) =>
@@ -642,6 +702,7 @@ export default function App() {
                   setStatus({ message: `Reverted ${targets.length} file(s)`, type: 'info' })
                 }}
                 onRevealFolder={(path) => window.api.revealFile(path)}
+                onDropFiles={handleFileDrop}
                 onBatchEdit={(path, name) => {
                   setShowSettings(false)
                   const sel = [...selectedIds]
@@ -668,6 +729,7 @@ export default function App() {
               files={visibleFiles}
               selectedIds={selectedIds}
               solidPills={settings.solidPillColors}
+              draggable={!!librarian.rootFolder}
               viewMode={listViewMode}
               onViewModeChange={(mode) => {
                 setListViewMode(mode)

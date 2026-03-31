@@ -13,6 +13,7 @@ interface FolderTreeProps {
   onBatchEdit: (path: string | null, name: string) => void
   onRevealFolder: (path: string) => void
   onFilterChange: (matchingPaths: Set<string> | null) => void
+  onDropFiles?: (filePaths: string[], destFolderPath: string) => void
 }
 
 function matchesFilter(
@@ -41,7 +42,7 @@ function matchesFilter(
 
 export function FolderTree({
   tree, files, selectedFolder, onSelect, dirtyPaths,
-  onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, onFilterChange
+  onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, onFilterChange, onDropFiles
 }: FolderTreeProps) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -197,6 +198,7 @@ export function FolderTree({
       <div className="flex-1 overflow-y-auto py-1">
         <FolderRow
           label={tree.name}
+          folderPath={tree.path}
           isRoot
           isSelected={selectedFolder === null}
           totalCount={matchingPaths ? matchingPaths.size : tree.totalCount}
@@ -211,6 +213,7 @@ export function FolderTree({
           onBatchEdit={() => onBatchEdit(null, tree.name)}
           onReveal={() => onRevealFolder(tree.path)}
           isFiltered={isFiltered}
+          onDropFiles={onDropFiles}
         />
 
         {tree.children.map((child) => (
@@ -226,6 +229,7 @@ export function FolderTree({
             onBatchEdit={onBatchEdit}
             onRevealFolder={onRevealFolder}
             matchingPaths={matchingPaths}
+            onDropFiles={onDropFiles}
           />
         ))}
       </div>
@@ -235,7 +239,7 @@ export function FolderTree({
 
 function TreeNode({
   node, selectedFolder, onSelect, depth, dirtyPaths,
-  onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, matchingPaths
+  onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, matchingPaths, onDropFiles
 }: {
   node: FolderNode
   selectedFolder: string | null
@@ -247,6 +251,7 @@ function TreeNode({
   onBatchEdit: (path: string | null, name: string) => void
   onRevealFolder: (path: string) => void
   matchingPaths: Set<string> | null
+  onDropFiles?: (filePaths: string[], destFolderPath: string) => void
 }) {
   const [expanded, setExpanded] = useState(depth <= 1)
   const isSelected = selectedFolder === node.path
@@ -274,6 +279,7 @@ function TreeNode({
     <div>
       <FolderRow
         label={node.name}
+        folderPath={node.path}
         isRoot={false}
         isSelected={isSelected}
         totalCount={displayCount}
@@ -291,6 +297,7 @@ function TreeNode({
         onBatchEdit={() => onBatchEdit(node.path, node.name)}
         onReveal={() => onRevealFolder(node.path)}
         isFiltered={matchingPaths !== null}
+        onDropFiles={onDropFiles}
       />
 
       {expanded && hasChildren && (
@@ -308,6 +315,7 @@ function TreeNode({
               onBatchEdit={onBatchEdit}
               onRevealFolder={onRevealFolder}
               matchingPaths={matchingPaths}
+              onDropFiles={onDropFiles}
             />
           ))}
         </div>
@@ -319,11 +327,12 @@ function TreeNode({
 interface ContextMenuState { x: number; y: number }
 
 function FolderRow({
-  label, isRoot, isSelected, totalCount, dirtyCount, depth,
+  label, folderPath, isRoot, isSelected, totalCount, dirtyCount, depth,
   hasChildren, expanded, onToggleExpand, onClick, onSave, onRevert,
-  onBatchEdit, onReveal, isFiltered
+  onBatchEdit, onReveal, isFiltered, onDropFiles
 }: {
   label: string
+  folderPath: string
   isRoot: boolean
   isSelected: boolean
   totalCount: number
@@ -338,9 +347,11 @@ function FolderRow({
   onBatchEdit: () => void
   onReveal: () => void
   isFiltered: boolean
+  onDropFiles?: (filePaths: string[], destFolderPath: string) => void
 }) {
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const [isDragOver, setIsDragOver] = useState(false)
 
   useEffect(() => {
     if (!menu) return
@@ -365,15 +376,32 @@ function FolderRow({
     <div className="relative group">
       <div
         className={`flex items-center gap-1.5 pr-2 py-1.5 cursor-pointer rounded-sm mx-1 transition-colors ${
-          isSelected
-            ? 'bg-indigo-100 dark:bg-indigo-600/30 text-indigo-700 dark:text-indigo-300'
-            : isRoot
-              ? 'text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800'
-              : 'text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800 hover:text-gray-800 dark:hover:text-gray-200'
+          isDragOver
+            ? 'bg-indigo-200 dark:bg-indigo-500/40 text-indigo-800 dark:text-indigo-200 ring-1 ring-indigo-400'
+            : isSelected
+              ? 'bg-indigo-100 dark:bg-indigo-600/30 text-indigo-700 dark:text-indigo-300'
+              : isRoot
+                ? 'text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800'
+                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800 hover:text-gray-800 dark:hover:text-gray-200'
         }`}
         style={{ paddingLeft: isRoot ? '12px' : `${depth * 12 + 8}px` }}
         onClick={onClick}
         onContextMenu={openMenu}
+        onDragOver={onDropFiles ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' } : undefined}
+        onDragEnter={onDropFiles ? (e) => { e.preventDefault(); setIsDragOver(true) } : undefined}
+        onDragLeave={onDropFiles ? (e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragOver(false)
+        } : undefined}
+        onDrop={onDropFiles ? (e) => {
+          e.preventDefault()
+          setIsDragOver(false)
+          const raw = e.dataTransfer.getData('application/x-nam-files')
+          if (!raw) return
+          try {
+            const paths: string[] = JSON.parse(raw)
+            if (paths.length > 0) onDropFiles(paths, folderPath)
+          } catch { /* ignore malformed data */ }
+        } : undefined}
       >
         {!isRoot && (
           <span

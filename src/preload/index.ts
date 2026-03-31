@@ -8,6 +8,8 @@ const api = {
     ipcRenderer.invoke('file:writeMetadata', filePath, metadata),
   scanFolder: (folderPath: string) => ipcRenderer.invoke('folder:scanNam', folderPath),
   scanTree: (folderPath: string) => ipcRenderer.invoke('folder:scanTree', folderPath),
+  moveFile: (sourcePath: string, destDir: string) =>
+    ipcRenderer.invoke('file:move', sourcePath, destDir) as Promise<{ success: boolean; error?: string; destPath?: string }>,
   revealFile: (filePath: string) => ipcRenderer.invoke('shell:revealFile', filePath),
   refocusWindow: () => ipcRenderer.invoke('window:refocus'),
   platform: process.platform
