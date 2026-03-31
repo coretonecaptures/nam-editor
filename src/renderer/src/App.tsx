@@ -7,6 +7,7 @@ import { FileList } from './components/FileList'
 import { MetadataEditor } from './components/MetadataEditor'
 import { Toolbar } from './components/Toolbar'
 import { BatchEditor, BatchApplyOptions } from './components/BatchEditor'
+import { MultiSelectEditor } from './components/MultiSelectEditor'
 import { StatusBar } from './components/StatusBar'
 import { SettingsPanel } from './components/SettingsPanel'
 import { FolderTree } from './components/FolderTree'
@@ -451,10 +452,9 @@ export default function App() {
         ;(newMeta as Record<string, unknown>)['name'] = nameFromFile
       }
       for (const [k, v] of Object.entries(batchFields)) {
-        if (v !== '' && v !== null && v !== undefined) {
-          ;(toWrite as Record<string, unknown>)[k] = v
-          ;(newMeta as Record<string, unknown>)[k] = v
-        }
+        const val = v === '' ? null : v
+        ;(toWrite as Record<string, unknown>)[k] = val
+        ;(newMeta as Record<string, unknown>)[k] = val
       }
       const newIsDirty = JSON.stringify(newMeta) !== JSON.stringify(toWrite)
       return { filePath: f.filePath, toWrite, newMeta, newOriginal: toWrite, newIsDirty }
@@ -472,10 +472,7 @@ export default function App() {
     }
 
     // Fields that were actually written by this batch edit
-    const savedBatchKeys = new Set(
-      (Object.keys(batchFields) as (keyof NamFile['metadata'])[])
-        .filter((k) => batchFields[k] !== '' && batchFields[k] !== null && batchFields[k] !== undefined)
-    )
+    const savedBatchKeys = new Set(Object.keys(batchFields) as (keyof NamFile['metadata'])[])
     const resultMap = new Map(prepared.map((p) => [p.filePath, p]))
     setFiles((prev) => prev.map((f) => {
       if (!savedPaths.has(f.filePath)) return f
@@ -491,6 +488,55 @@ export default function App() {
       setStatus({ message: `Batch saved ${savedPaths.size}, failed ${failed}`, type: 'error' })
     } else {
       setStatus({ message: `Batch saved ${savedPaths.size} file(s)`, type: 'success' })
+    }
+  }
+
+  const handleMultiSelectApply = async (
+    filePaths: string[],
+    fields: Partial<NamFile['metadata']>,
+    options?: { revertToFilename?: boolean }
+  ) => {
+    const pathSet = new Set(filePaths)
+    const targets = files.filter((f) => pathSet.has(f.filePath))
+
+    const prepared = targets.map((f) => {
+      const toWrite = { ...f.originalMetadata }
+      const newMeta = { ...f.metadata }
+      if (options?.revertToFilename) {
+        const nameFromFile = f.fileName.replace(/\.nam$/i, '')
+        ;(toWrite as Record<string, unknown>)['name'] = nameFromFile
+        ;(newMeta as Record<string, unknown>)['name'] = nameFromFile
+      }
+      for (const [k, v] of Object.entries(fields)) {
+        const val = v === '' ? null : v
+        ;(toWrite as Record<string, unknown>)[k] = val
+        ;(newMeta as Record<string, unknown>)[k] = val
+      }
+      const newIsDirty = JSON.stringify(newMeta) !== JSON.stringify(toWrite)
+      return { filePath: f.filePath, toWrite, newMeta, newOriginal: toWrite, newIsDirty }
+    })
+
+    setStatus({ message: `Saving ${prepared.length} file(s)...`, type: 'info' })
+
+    const savedPaths = new Set<string>()
+    let failed = 0
+    for (const p of prepared) {
+      const result = await window.api.writeMetadata(p.filePath, p.toWrite)
+      if (result.success) savedPaths.add(p.filePath)
+      else failed++
+    }
+
+    const resultMap = new Map(prepared.map((p) => [p.filePath, p]))
+    setFiles((prev) => prev.map((f) => {
+      if (!savedPaths.has(f.filePath)) return f
+      const p = resultMap.get(f.filePath)!
+      return { ...f, metadata: p.newMeta, originalMetadata: p.newOriginal, isDirty: p.newIsDirty, autoFilledFields: p.newIsDirty ? f.autoFilledFields : [] }
+    }))
+
+    if (failed > 0) {
+      setStatus({ message: `Saved ${savedPaths.size}, failed ${failed}`, type: 'error' })
+    } else {
+      setStatus({ message: `Saved ${savedPaths.size} file(s)`, type: 'success' })
     }
   }
 
@@ -725,6 +771,12 @@ export default function App() {
                 ))
               }}
               onRevealInFinder={() => window.api.revealFile(selectedFiles[0].filePath)}
+            />
+          ) : selectedFiles.length > 1 ? (
+            <MultiSelectEditor
+              files={selectedFiles}
+              onApply={handleMultiSelectApply}
+              skipConfirmation={settings.skipBatchEditConfirmation}
             />
           ) : selectedFiles.length === 0 && files.length === 0 ? (
             <EmptyState onOpenFiles={handleOpenFiles} onOpenFolder={handleOpenFolder} />

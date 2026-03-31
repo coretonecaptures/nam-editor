@@ -66,7 +66,7 @@ This is especially useful for capture artists who want to properly tag their `.n
 - Close All button clears the session
 
 ### Metadata Editing
-- **Capture Name** — display name shown in plugins
+- **Capture Name** — display name shown in plugins; click **↺ filename** button to reset it to the filename
 - **Modeled By** — capture artist / creator
 - **Gear Type** — amp, pedal, pedal_amp, amp_cab, amp_pedal_cab, preamp, studio
 - **Tone Type** — clean, crunch, hi_gain, fuzz, overdrive, distortion, other
@@ -121,10 +121,20 @@ A slim bar above the status bar shows which defaults are currently active (e.g. 
 - **Right-click folder → Save all in folder** — saves all unsaved files under that folder path
 - Batch edit writes directly to disk — no separate Save step needed
 
+### Multi-Select Editor
+- Select 2 or more files to open the **multi-select editor** in the detail panel
+- Fields where all selected files share the same value are pre-filled and marked **shared**
+- Fields that differ across files are empty with a *— varies —* placeholder
+- Edit any field — changed fields highlight in amber
+- **Revert Capture Name to filename** checkbox sets each file's name to its own filename (without `.nam`)
+- **Apply to N files** writes only the changed fields directly to disk — unchanged fields are never touched
+- Clearing a field (leaving it empty) explicitly saves null, removing the old value
+
 ### Batch Edit
 - **Right-click a selection** in the file list → **Batch edit N selected**
 - **Right-click a folder** → **Batch edit…** (applies to the whole folder; if files are selected, applies to selection instead)
 - Check only the fields you want to change — unchecked fields are untouched
+- **Revert Capture Name to filename** checkbox available in batch edit — sets each file's name to its own filename
 - Only the checked fields are written to disk; auto-fills and other pending changes are preserved separately
 - Confirmation dialog shows exactly which fields and how many files will be affected (skippable in Settings)
 
