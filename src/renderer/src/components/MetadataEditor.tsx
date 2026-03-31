@@ -116,15 +116,12 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
           {/* Identity section */}
           <Section title="Identity" icon={
             <svg className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              {/* Amp head: top panel with knobs, front face with speaker grille */}
-              <rect x="2" y="4" width="20" height="6" rx="1" strokeWidth={1.5} />
-              <circle cx="7" cy="7" r="1" strokeWidth={1.5} />
-              <circle cx="12" cy="7" r="1" strokeWidth={1.5} />
-              <circle cx="17" cy="7" r="1" strokeWidth={1.5} />
-              <rect x="2" y="10" width="20" height="10" rx="1" strokeWidth={1.5} />
-              <rect x="5" y="13" width="14" height="4" rx="0.5" strokeWidth={1.5} />
-              <line x1="9" y1="13" x2="9" y2="17" strokeWidth={1} />
-              <line x1="13" y1="13" x2="13" y2="17" strokeWidth={1} />
+              {/* Dog tag / ID label */}
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 2h6a1 1 0 011 1v1a1 1 0 01-1 1H9a1 1 0 01-1-1V3a1 1 0 011-1z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 5v2" />
+              <rect x="4" y="7" width="16" height="14" rx="2" strokeWidth={1.5} />
+              <line x1="8" y1="12" x2="16" y2="12" strokeWidth={1.5} strokeLinecap="round" />
+              <line x1="8" y1="15" x2="13" y2="15" strokeWidth={1.5} strokeLinecap="round" />
             </svg>
           }>
             <Field label="Capture Name" hint="Display name shown in plugins" autoFilled={isAutoFilled('name')}>
@@ -158,7 +155,19 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
           </Section>
 
           {/* Gear section */}
-          <Section title="Gear" icon="🔊">
+          <Section title="Gear" icon={
+            <svg className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              {/* Amp head */}
+              <rect x="2" y="4" width="20" height="6" rx="1" strokeWidth={1.5} />
+              <circle cx="7" cy="7" r="1" strokeWidth={1.5} />
+              <circle cx="12" cy="7" r="1" strokeWidth={1.5} />
+              <circle cx="17" cy="7" r="1" strokeWidth={1.5} />
+              <rect x="2" y="10" width="20" height="10" rx="1" strokeWidth={1.5} />
+              <rect x="5" y="13" width="14" height="4" rx="0.5" strokeWidth={1.5} />
+              <line x1="9" y1="13" x2="9" y2="17" strokeWidth={1} />
+              <line x1="13" y1="13" x2="13" y2="17" strokeWidth={1} />
+            </svg>
+          }>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Gear Type" autoFilled={isAutoFilled('gear_type')}>
                 <Select
