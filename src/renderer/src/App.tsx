@@ -141,6 +141,7 @@ export default function App() {
   )
   const draggingRef = useRef<null | { panel: 'tree' | 'list'; startX: number; startWidth: number }>(null)
   const mainContentRef = useRef<HTMLDivElement>(null)
+  const [treeCollapsed, setTreeCollapsed] = useState(false)
 
   // Apply dark/light class to <html> whenever theme setting changes
   useEffect(() => {
@@ -478,10 +479,8 @@ export default function App() {
     setFiles((prev) => prev.map((f) => {
       if (!savedPaths.has(f.filePath)) return f
       const p = resultMap.get(f.filePath)!
-      // Remove batch-saved fields from autoFilledFields; clear entirely if no longer dirty
-      const autoFilledFields = p.newIsDirty
-        ? f.autoFilledFields.filter((k) => !savedBatchKeys.has(k))
-        : []
+      // Remove batch-saved fields from autoFilledFields always
+      const autoFilledFields = f.autoFilledFields.filter((k) => !savedBatchKeys.has(k))
       return { ...f, metadata: p.newMeta, originalMetadata: p.newOriginal, isDirty: p.newIsDirty, autoFilledFields }
     }))
 
@@ -650,7 +649,7 @@ export default function App() {
         {/* Folder tree — only shown when a folder is open */}
         {hasTree && (
           <>
-            <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: treeWidth }}>
+            <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: treeCollapsed ? 0 : treeWidth, overflow: 'hidden' }}>
               <FolderTree
                 tree={librarian.folderTree!}
                 files={files}
@@ -718,7 +717,7 @@ export default function App() {
                 }}
               />
             </div>
-            <DragHandle onMouseDown={(e) => onDragStart('tree', e)} />
+            <DragHandle onMouseDown={(e) => onDragStart('tree', e)} onCollapse={() => setTreeCollapsed((v) => !v)} collapsed={treeCollapsed} />
           </>
         )}
 
@@ -889,12 +888,25 @@ function DefaultsPill({ settings }: { settings: AppSettings }) {
   )
 }
 
-function DragHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
+function DragHandle({ onMouseDown, onCollapse, collapsed }: { onMouseDown: (e: React.MouseEvent) => void; onCollapse?: () => void; collapsed?: boolean }) {
   return (
     <div
-      className="flex-shrink-0 w-1 bg-gray-200 dark:bg-gray-800 hover:bg-indigo-500 cursor-col-resize transition-colors active:bg-indigo-400"
+      className="w-3 flex-shrink-0 cursor-col-resize hover:bg-indigo-500/40 active:bg-indigo-500/60 transition-colors group relative flex items-center justify-center"
       onMouseDown={onMouseDown}
-    />
+    >
+      {onCollapse && (
+        <button
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={onCollapse}
+          title={collapsed ? 'Expand library' : 'Collapse library'}
+          className="opacity-0 group-hover:opacity-100 absolute w-4 h-8 flex items-center justify-center rounded bg-indigo-500/60 hover:bg-indigo-500 text-white transition-all z-10"
+        >
+          <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d={collapsed ? 'M9 5l7 7-7 7' : 'M15 19l-7-7 7-7'} />
+          </svg>
+        </button>
+      )}
+    </div>
   )
 }
 

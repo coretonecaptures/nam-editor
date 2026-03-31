@@ -76,6 +76,8 @@ export function MultiSelectEditor({ files, onApply, skipConfirmation }: MultiSel
       ;(fields as Record<string, unknown>)[key] = val === '' ? null : val
     }
     onApply(files.map((f) => f.filePath), fields, { revertToFilename })
+    setChanged(new Set())
+    setRevertToFilename(false)
   }
 
   const inputBase = 'w-full px-3 py-1.5 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 transition-colors'

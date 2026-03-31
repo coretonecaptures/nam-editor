@@ -75,7 +75,7 @@ export function FileList({
   const [filter, setFilter] = useState<FilterMode>('all')
   const [gearFilter, setGearFilter] = useState('')
   const [toneFilter, setToneFilter] = useState('')
-  const [sortKey, setSortKey] = useState<string | null>(null)
+  const [sortKey, setSortKey] = useState<string | null>('name')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
   const anchorIndexRef = useRef<number>(-1)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
@@ -150,7 +150,7 @@ export function FileList({
   ]
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden" onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'a') { e.preventDefault(); onSelectAll() } }} tabIndex={-1}>
       {/* Search + view toggle */}
       <div className="px-3 pt-2 pb-1 flex-shrink-0 flex items-center gap-1.5">
         <div className="relative flex-1 min-w-0">

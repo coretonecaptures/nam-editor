@@ -185,12 +185,12 @@ export function FolderTree({
 
       {/* Filtered banner */}
       {isFiltered && (
-        <div className="flex items-center gap-2 px-3 py-1 bg-amber-900/20 border-b border-amber-800/40 flex-shrink-0">
-          <svg className="w-3 h-3 text-amber-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <div className="flex items-center gap-2 px-3 py-1 bg-sky-900/20 border-b border-sky-800/40 flex-shrink-0">
+          <svg className="w-3 h-3 text-sky-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
           </svg>
-          <span className="text-xs text-amber-400 font-semibold tracking-wider uppercase">Filtered</span>
-          <span className="text-xs text-amber-600">— {matchingPaths?.size ?? 0} match{matchingPaths?.size !== 1 ? 'es' : ''}</span>
+          <span className="text-xs text-sky-400 font-semibold tracking-wider uppercase">Filtered</span>
+          <span className="text-xs text-sky-600">— {matchingPaths?.size ?? 0} match{matchingPaths?.size !== 1 ? 'es' : ''}</span>
         </div>
       )}
 
@@ -288,10 +288,7 @@ function TreeNode({
         hasChildren={hasChildren}
         expanded={expanded}
         onToggleExpand={() => setExpanded((e) => !e)}
-        onClick={() => {
-          onSelect(node.path)
-          if (hasChildren) setExpanded((e) => !e)
-        }}
+        onClick={() => onSelect(node.path)}
         onSave={() => onSaveFolder(node.path)}
         onRevert={() => onRevertFolder(node.path)}
         onBatchEdit={() => onBatchEdit(node.path, node.name)}
@@ -369,7 +366,7 @@ function FolderRow({
   }
 
   const countColor = isFiltered
-    ? (isSelected ? 'text-amber-600 dark:text-amber-300' : 'text-amber-600 dark:text-amber-500')
+    ? (isSelected ? 'text-sky-600 dark:text-sky-300' : 'text-sky-600 dark:text-sky-400')
     : (isSelected ? 'text-indigo-600 dark:text-indigo-400' : isRoot ? 'text-gray-500 dark:text-gray-500' : 'text-gray-400 dark:text-gray-600')
 
   return (
