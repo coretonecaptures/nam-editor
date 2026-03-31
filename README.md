@@ -170,44 +170,6 @@ Download the latest installer from the [Releases](https://github.com/coretonecap
 
 ---
 
-## Development
-
-**Requirements:** Node.js 20+
-
-```bash
-git clone https://github.com/coretonecaptures/nam-editor.git
-cd nam-editor
-npm install
-npm run dev
-```
-
-> On Windows, run dev with: `powershell -ExecutionPolicy Bypass -command "npm run dev"`
-
-### Build installers locally
-
-```bash
-# Windows
-npm run package:win
-
-# macOS
-npm run package:mac
-```
-
-Output goes to the `release/` folder.
-
-### Publish a release
-
-Tag a version and push — GitHub Actions builds both platforms automatically:
-
-```bash
-git tag v0.3.2
-git push origin v0.3.2
-```
-
-The workflow builds a Windows `.exe` installer and a macOS `.dmg`, then attaches them to a GitHub Release.
-
----
-
 ## Tech Stack
 
 - [Electron](https://www.electronjs.org/) — desktop shell
