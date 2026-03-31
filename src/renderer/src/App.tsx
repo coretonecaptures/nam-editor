@@ -667,6 +667,7 @@ export default function App() {
             <FileList
               files={visibleFiles}
               selectedIds={selectedIds}
+              solidPills={settings.solidPillColors}
               viewMode={listViewMode}
               onViewModeChange={(mode) => {
                 setListViewMode(mode)

@@ -31,8 +31,9 @@ export function getGearImageSrc(gearType: string): string | null {
   return isDark ? imgs.dark : (imgs.light ?? imgs.dark)
 }
 
-/** Per-gear-type Tailwind classes for chips/pills (light + dark) */
-export const GEAR_CHIP_CLASSES: Record<string, string> = {
+// ---- Gear type chip classes ----
+
+const GEAR_SUBTLE: Record<string, string> = {
   amp:           'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400',
   amp_cab:       'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400',
   pedal:         'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400',
@@ -42,6 +43,44 @@ export const GEAR_CHIP_CLASSES: Record<string, string> = {
   studio:        'bg-teal-100 dark:bg-teal-900/30 text-teal-700 dark:text-teal-400',
 }
 
-export function gearChipClass(gearType: string): string {
-  return GEAR_CHIP_CLASSES[gearType] ?? 'bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400'
+const GEAR_SOLID: Record<string, string> = {
+  amp:           'bg-orange-500 text-white',
+  amp_cab:       'bg-blue-500 text-white',
+  pedal:         'bg-green-500 text-white',
+  pedal_amp:     'bg-yellow-500 text-white',
+  amp_pedal_cab: 'bg-purple-500 text-white',
+  preamp:        'bg-rose-500 text-white',
+  studio:        'bg-teal-500 text-white',
+}
+
+export function gearChipClass(gearType: string, solid = false): string {
+  if (solid) return GEAR_SOLID[gearType] ?? 'bg-gray-500 text-white'
+  return GEAR_SUBTLE[gearType] ?? 'bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400'
+}
+
+// ---- Tone type chip classes ----
+
+const TONE_SUBTLE: Record<string, string> = {
+  clean:      'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400',
+  crunch:     'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400',
+  hi_gain:    'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400',
+  fuzz:       'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400',
+  overdrive:  'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400',
+  distortion: 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400',
+  other:      'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400',
+}
+
+const TONE_SOLID: Record<string, string> = {
+  clean:      'bg-sky-500 text-white',
+  crunch:     'bg-amber-500 text-white',
+  hi_gain:    'bg-red-600 text-white',
+  fuzz:       'bg-purple-600 text-white',
+  overdrive:  'bg-green-600 text-white',
+  distortion: 'bg-rose-500 text-white',
+  other:      'bg-gray-500 text-white',
+}
+
+export function toneChipClass(toneType: string, solid = false): string {
+  if (solid) return TONE_SOLID[toneType] ?? 'bg-gray-500 text-white'
+  return TONE_SUBTLE[toneType] ?? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400'
 }

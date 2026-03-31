@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect } from 'react'
 import { NamFile } from '../types/nam'
-import { gearChipClass, getGearImageSrc } from '../assets/gear'
+import { gearChipClass, toneChipClass, getGearImageSrc } from '../assets/gear'
 
 type FilterMode = 'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited'
 type ViewMode = 'list' | 'grid'
@@ -18,6 +18,7 @@ interface FileListProps {
   onSaveSelected?: (paths: string[]) => void
   viewMode: ViewMode
   onViewModeChange: (mode: ViewMode) => void
+  solidPills?: boolean
 }
 
 const GRID_COLUMNS: { key: string; label: string; minWidth: number }[] = [
@@ -65,7 +66,8 @@ export function FileList({
   onBatchEditSelected,
   onSaveSelected,
   viewMode,
-  onViewModeChange
+  onViewModeChange,
+  solidPills = false
 }: FileListProps) {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<FilterMode>('all')
@@ -234,6 +236,7 @@ export function FileList({
           anchorIndexRef={anchorIndexRef}
           onSelect={onSelect}
           onSelectRange={onSelectRange}
+          solidPills={solidPills}
           onContextMenu={(e) => {
             if (selectedIds.size === 0) return
             e.preventDefault()
@@ -259,6 +262,7 @@ export function FileList({
                 key={file.filePath}
                 file={file}
                 isSelected={selectedIds.has(file.filePath)}
+                solidPills={solidPills}
                 onSelect={(e) => {
                   if (e.shiftKey && anchorIndexRef.current >= 0) {
                     const lo = Math.min(anchorIndexRef.current, index)
@@ -331,7 +335,7 @@ const DEFAULT_COL_WIDTHS: Record<string, number> = {
 
 function GridView({
   files, selectedIds, sortKey, sortDir, onSortClick,
-  anchorIndexRef, onSelect, onSelectRange, onContextMenu
+  anchorIndexRef, onSelect, onSelectRange, solidPills, onContextMenu
 }: {
   files: NamFile[]
   selectedIds: Set<string>
@@ -341,6 +345,7 @@ function GridView({
   anchorIndexRef: React.MutableRefObject<number>
   onSelect: (id: string, multi: boolean) => void
   onSelectRange: (ids: string[]) => void
+  solidPills: boolean
   onContextMenu: (e: React.MouseEvent) => void
 }) {
   const [colWidths, setColWidths] = useState<Record<string, number>>(DEFAULT_COL_WIDTHS)
@@ -434,9 +439,9 @@ function GridView({
                     return (
                       <td key={col.key} className="px-3 py-2 border-r border-gray-200 dark:border-gray-700/60 last:border-r-0 overflow-hidden" style={{ width: colWidths[col.key], maxWidth: colWidths[col.key] }}>
                         {col.key === 'tone_type' && val ? (
-                          <span className="px-1.5 py-0.5 rounded text-xs bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400">{val}</span>
+                          <span className={`px-1.5 py-0.5 rounded text-xs ${toneChipClass(val, solidPills)}`}>{val}</span>
                         ) : col.key === 'gear_type' && val ? (
-                          <span className={`px-1.5 py-0.5 rounded text-xs ${gearChipClass(val)}`}>{val}</span>
+                          <span className={`px-1.5 py-0.5 rounded text-xs ${gearChipClass(val, solidPills)}`}>{val}</span>
                         ) : col.key === 'name' ? (
                           <span className={`truncate block ${val ? 'text-gray-900 dark:text-gray-200' : 'text-gray-400 dark:text-gray-600'}`}>
                             {val || '—'}
@@ -464,11 +469,13 @@ function GridView({
 function FileItem({
   file,
   isSelected,
+  solidPills,
   onSelect,
   onRemove
 }: {
   file: NamFile
   isSelected: boolean
+  solidPills: boolean
   onSelect: (e: React.MouseEvent) => void
   onRemove?: () => void
 }) {
@@ -500,7 +507,7 @@ function FileItem({
       </div>
 
       <div className="flex-1 min-w-0">
-        <div className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate" title={file.fileName}>
+        <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate" title={file.fileName}>
           {meta.name || file.fileName}
         </div>
         {subtitle && (
@@ -508,10 +515,10 @@ function FileItem({
         )}
         <div className="flex items-center gap-1.5 mt-1">
           {meta.gear_type && (
-            <span className={`text-xs px-1.5 py-0.5 rounded ${gearChipClass(meta.gear_type)}`}>{meta.gear_type}</span>
+            <span className={`text-xs px-1.5 py-0.5 rounded ${gearChipClass(meta.gear_type, solidPills)}`}>{meta.gear_type}</span>
           )}
           {meta.tone_type && (
-            <span className="text-xs px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400">{meta.tone_type}</span>
+            <span className={`text-xs px-1.5 py-0.5 rounded ${toneChipClass(meta.tone_type, solidPills)}`}>{meta.tone_type}</span>
           )}
           {missing > 0 && (
             <span

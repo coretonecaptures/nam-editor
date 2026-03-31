@@ -36,6 +36,7 @@ export interface AppSettings {
   // Appearance
   theme: 'dark' | 'light'
   defaultView: 'list' | 'grid'
+  solidPillColors: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -63,7 +64,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   folderOverrides: {},
 
   theme: 'dark',
-  defaultView: 'list'
+  defaultView: 'list',
+  solidPillColors: false
 }
 
 const STORAGE_KEY = 'nam-editor-settings'

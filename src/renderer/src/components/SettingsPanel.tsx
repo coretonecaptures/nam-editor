@@ -114,6 +114,24 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
                   ))}
                 </div>
               </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500 dark:text-gray-400 font-medium w-20">Label Style</span>
+                <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-gray-700">
+                  {([false, true] as const).map((solid) => (
+                    <button
+                      key={String(solid)}
+                      onClick={() => update('solidPillColors', solid)}
+                      className={`px-4 py-1.5 text-xs font-medium transition-colors ${
+                        draft.solidPillColors === solid
+                          ? 'bg-indigo-600 text-white'
+                          : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200'
+                      }`}
+                    >
+                      {solid ? 'Solid Colors' : 'Subtle'}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
 
