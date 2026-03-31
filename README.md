@@ -60,7 +60,12 @@ This is especially useful for capture artists who want to properly tag their `.n
 
 ### File Management
 - Open individual `.nam` files or an entire folder (scans recursively)
-- Drag & drop files directly onto the window
+- Drag & drop files directly onto the window to open them
+- **Drag files between folders** — drag any file (or a multi-selection) from the list or grid view and drop it onto a folder in the tree to move it on disk; the folder highlights as you drag over it
+  - Dragging a file that is part of a multi-selection moves all selected files
+  - Dragging a non-selected file moves just that one file
+  - Warns if any files have unsaved changes; skips files that already exist at the destination
+  - Folder tree counts update and the view switches to the destination folder automatically
 - Shift+click and Ctrl+click for range and multi-selection in the file list
 - Opening a new file or folder replaces the current session (with unsaved-changes warning)
 - Close All button clears the session
