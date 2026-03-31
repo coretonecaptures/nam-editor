@@ -6,7 +6,7 @@ import { LibrarianState } from './types/librarian'
 import { FileList } from './components/FileList'
 import { MetadataEditor } from './components/MetadataEditor'
 import { Toolbar } from './components/Toolbar'
-import { BatchEditor } from './components/BatchEditor'
+import { BatchEditor, BatchApplyOptions } from './components/BatchEditor'
 import { StatusBar } from './components/StatusBar'
 import { SettingsPanel } from './components/SettingsPanel'
 import { FolderTree } from './components/FolderTree'
@@ -91,7 +91,7 @@ function applyDefaults(meta: NamFile['metadata'], baseName: string, settings: Ap
 const TONE_KEYWORDS: Record<typeof TONE_TYPES[number], string[]> = {
   'clean':      ['clean'],
   'crunch':     ['crunch'],
-  'hi_gain':    ['highgain', 'hi-gain', 'higain', 'high-gain', 'lead'],
+  'hi_gain':    ['highgain', 'hi-gain', 'higain', 'high-gain'],
   'fuzz':       ['fuzz'],
   'overdrive':  ['overdrive', 'od', 'edge', 'drive'],
   'distortion': ['distortion', 'dist'],
@@ -423,7 +423,7 @@ export default function App() {
     })
   }
 
-  const handleBatchApply = async (batchFields: Partial<NamFile['metadata']>) => {
+  const handleBatchApply = async (batchFields: Partial<NamFile['metadata']>, options?: BatchApplyOptions) => {
     const folderPath = batchFolder?.path ?? null
     const batchPaths = batchFolder?.filePaths
 
@@ -445,6 +445,11 @@ export default function App() {
     const prepared = targets.map((f) => {
       const toWrite = { ...f.originalMetadata }
       const newMeta = { ...f.metadata }
+      if (options?.revertToFilename) {
+        const nameFromFile = f.fileName.replace(/\.nam$/i, '')
+        ;(toWrite as Record<string, unknown>)['name'] = nameFromFile
+        ;(newMeta as Record<string, unknown>)['name'] = nameFromFile
+      }
       for (const [k, v] of Object.entries(batchFields)) {
         if (v !== '' && v !== null && v !== undefined) {
           ;(toWrite as Record<string, unknown>)[k] = v
@@ -701,7 +706,7 @@ export default function App() {
                 : batchFolder.path === null
                   ? files.length
                   : files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(batchFolder.path! + '/')).length}
-              onApply={handleBatchApply}
+              onApply={(fields, opts) => handleBatchApply(fields, opts)}
               onClose={() => setBatchFolder(null)}
               skipConfirmation={settings.skipBatchEditConfirmation}
             />

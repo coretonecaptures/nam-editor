@@ -1,10 +1,14 @@
 import { useState } from 'react'
 import { NamMetadata, GEAR_TYPES, TONE_TYPES } from '../types/nam'
 
+export interface BatchApplyOptions {
+  revertToFilename?: boolean
+}
+
 interface BatchEditorProps {
   folderName: string       // display name, e.g. "CoreToneCaptures" or "All files"
   fileCount: number
-  onApply: (metadata: Partial<NamMetadata>) => void
+  onApply: (metadata: Partial<NamMetadata>, options?: BatchApplyOptions) => void
   onClose: () => void
   skipConfirmation?: boolean
 }
@@ -12,6 +16,7 @@ interface BatchEditorProps {
 export function BatchEditor({ folderName, fileCount, onApply, onClose, skipConfirmation }: BatchEditorProps) {
   const [fields, setFields] = useState<Partial<NamMetadata>>({})
   const [enabled, setEnabled] = useState<Set<keyof NamMetadata>>(new Set())
+  const [revertToFilename, setRevertToFilename] = useState(false)
 
   const toggle = (key: keyof NamMetadata) => {
     setEnabled((prev) => {
@@ -27,11 +32,16 @@ export function BatchEditor({ folderName, fileCount, onApply, onClose, skipConfi
   }
 
   const handleApply = () => {
-    if (enabled.size === 0) return
+    if (enabled.size === 0 && !revertToFilename) return
     if (!skipConfirmation) {
-      const fieldNames = [...enabled].map((k) => batchFields.find((f) => f.key === k)?.label ?? k).join(', ')
+      const parts: string[] = []
+      if (revertToFilename) parts.push('Revert Name to filename')
+      if (enabled.size > 0) {
+        const fieldNames = [...enabled].map((k) => batchFields.find((f) => f.key === k)?.label ?? k).join(', ')
+        parts.push(`${enabled.size} field${enabled.size !== 1 ? 's' : ''} (${fieldNames})`)
+      }
       const confirmed = window.confirm(
-        `Apply ${enabled.size} field${enabled.size !== 1 ? 's' : ''} (${fieldNames}) to ${fileCount} file${fileCount !== 1 ? 's' : ''} in "${folderName}"?\n\nThis will write changes directly to the .nam files on disk.`
+        `Apply to ${fileCount} file${fileCount !== 1 ? 's' : ''} in "${folderName}":\n  · ${parts.join('\n  · ')}\n\nThis will write changes directly to the .nam files on disk.`
       )
       if (!confirmed) return
     }
@@ -39,7 +49,7 @@ export function BatchEditor({ folderName, fileCount, onApply, onClose, skipConfi
     for (const key of enabled) {
       ;(toApply as Record<string, unknown>)[key] = (fields as Record<string, unknown>)[key] ?? null
     }
-    onApply(toApply)
+    onApply(toApply, { revertToFilename })
   }
 
   return (
@@ -63,7 +73,7 @@ export function BatchEditor({ folderName, fileCount, onApply, onClose, skipConfi
           </button>
           <button
             onClick={handleApply}
-            disabled={enabled.size === 0}
+            disabled={enabled.size === 0 && !revertToFilename}
             className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-amber-600 hover:bg-amber-500 text-white"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -79,6 +89,18 @@ export function BatchEditor({ folderName, fileCount, onApply, onClose, skipConfi
           <p className="text-xs text-gray-500 dark:text-gray-500 mb-4">
             Only checked fields will be written. Empty values will set the field to null.
           </p>
+
+          {/* Special: revert name to filename */}
+          <div className="flex items-center gap-3 pb-2 mb-1 border-b border-gray-200 dark:border-gray-800">
+            <input
+              type="checkbox"
+              checked={revertToFilename}
+              onChange={() => setRevertToFilename((v) => !v)}
+              className="w-4 h-4 rounded border-gray-400 dark:border-gray-600 bg-gray-200 dark:bg-gray-800 text-indigo-500 focus:ring-indigo-500/50 cursor-pointer flex-shrink-0"
+            />
+            <label className="w-32 text-sm text-gray-500 dark:text-gray-400 flex-shrink-0">Capture Name</label>
+            <span className="flex-1 text-sm text-gray-500 dark:text-gray-500 italic">Revert each file's name to its filename</span>
+          </div>
 
           {batchFields.map(({ key, label, type, options, placeholder }) => (
             <div key={key} className="flex items-center gap-3">
@@ -139,7 +161,6 @@ const batchFields: Array<{
   options?: readonly string[]
   placeholder?: string
 }> = [
-  { key: 'name', label: 'Name', type: 'text', placeholder: 'Capture name' },
   { key: 'modeled_by', label: 'Modeled By', type: 'text', placeholder: 'Creator name' },
   { key: 'gear_type', label: 'Gear Type', type: 'select', options: GEAR_TYPES },
   { key: 'gear_make', label: 'Manufacturer', type: 'text', placeholder: 'e.g. Friedman' },

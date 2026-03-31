@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect } from 'react'
 import { NamFile } from '../types/nam'
+import { gearChipClass, getGearImageSrc } from '../assets/gear'
 
 type FilterMode = 'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited'
 type ViewMode = 'list' | 'grid'
@@ -435,9 +436,13 @@ function GridView({
                         {col.key === 'tone_type' && val ? (
                           <span className="px-1.5 py-0.5 rounded text-xs bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400">{val}</span>
                         ) : col.key === 'gear_type' && val ? (
-                          <span className="px-1.5 py-0.5 rounded text-xs bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400">{val}</span>
+                          <span className={`px-1.5 py-0.5 rounded text-xs ${gearChipClass(val)}`}>{val}</span>
+                        ) : col.key === 'name' ? (
+                          <span className={`truncate block ${val ? 'text-gray-900 dark:text-gray-200' : 'text-gray-400 dark:text-gray-600'}`}>
+                            {val || '—'}
+                          </span>
                         ) : (
-                          <span className={`truncate block ${val ? 'text-gray-800 dark:text-gray-200' : 'text-gray-400 dark:text-gray-600'}`}>
+                          <span className={`truncate block ${val ? 'text-gray-700 dark:text-gray-300' : 'text-gray-400 dark:text-gray-600'}`}>
                             {val || '—'}
                           </span>
                         )}
@@ -503,7 +508,7 @@ function FileItem({
         )}
         <div className="flex items-center gap-1.5 mt-1">
           {meta.gear_type && (
-            <span className="text-xs px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400">{meta.gear_type}</span>
+            <span className={`text-xs px-1.5 py-0.5 rounded ${gearChipClass(meta.gear_type)}`}>{meta.gear_type}</span>
           )}
           {meta.tone_type && (
             <span className="text-xs px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400">{meta.tone_type}</span>
@@ -518,6 +523,11 @@ function FileItem({
           )}
         </div>
       </div>
+
+      {meta.gear_type && (() => {
+        const src = getGearImageSrc(meta.gear_type)
+        return src ? <img src={src} alt={meta.gear_type} className="flex-shrink-0 h-6 w-auto object-contain opacity-60" /> : null
+      })()}
 
       {onRemove && (
         <button

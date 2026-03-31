@@ -1,28 +1,5 @@
 import { NamFile, NamMetadata, GEAR_TYPES, TONE_TYPES } from '../types/nam'
-import ampDark from '../assets/gear/amp.dark.png'
-import ampLight from '../assets/gear/amp.light.png'
-import ampCabDark from '../assets/gear/amp_cab.dark.png'
-import ampCabLight from '../assets/gear/amp_cab.light.png'
-import pedalDark from '../assets/gear/pedal.dark.png'
-import pedalLight from '../assets/gear/pedal.light.png'
-import pedalAmpDark from '../assets/gear/pedal_amp.dark.png'
-import pedalAmpLight from '../assets/gear/pedal_amp.light.png'
-import ampPedalCabDark from '../assets/gear/amp_pedal_cab.dark.png'
-import ampPedalCabLight from '../assets/gear/amp_pedal_cab.light.png'
-import preampDark from '../assets/gear/preamp.dark.png'
-import preampLight from '../assets/gear/preamp.light.png'
-import studioDark from '../assets/gear/studio.dark.png'
-import studioLight from '../assets/gear/studio.light.png'
-
-const gearImages: Record<string, { dark: string; light?: string }> = {
-  amp:           { dark: ampDark,          light: ampLight },
-  amp_cab:       { dark: ampCabDark,       light: ampCabLight },
-  pedal:         { dark: pedalDark,        light: pedalLight },
-  pedal_amp:     { dark: pedalAmpDark,     light: pedalAmpLight },
-  amp_pedal_cab: { dark: ampPedalCabDark,  light: ampPedalCabLight },
-  preamp:        { dark: preampDark,       light: preampLight },
-  studio:        { dark: studioDark,       light: studioLight },
-}
+import { gearImages } from '../assets/gear'
 
 interface MetadataEditorProps {
   file: NamFile
@@ -139,13 +116,23 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
           {/* Identity section */}
           <Section title="Identity" icon="🎸">
             <Field label="Capture Name" hint="Display name shown in plugins" autoFilled={isAutoFilled('name')}>
-              <TextInput
-                value={m.name ?? ''}
-                onChange={(v) => update('name', v)}
-                placeholder="e.g. BE100 Deluxe - Crunch Ch."
-                changed={isManuallyChanged('name')}
-                autoFilled={isAutoFilled('name')}
-              />
+              <div className="flex items-center gap-2">
+                <TextInput
+                  value={m.name ?? ''}
+                  onChange={(v) => update('name', v)}
+                  placeholder="e.g. BE100 Deluxe - Crunch Ch."
+                  changed={isManuallyChanged('name')}
+                  autoFilled={isAutoFilled('name')}
+                />
+                <button
+                  type="button"
+                  onClick={() => update('name', file.fileName.replace(/\.nam$/i, ''))}
+                  title="Revert to filename"
+                  className="flex-shrink-0 px-2 py-2 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap"
+                >
+                  ↺ filename
+                </button>
+              </div>
             </Field>
             <Field label="Modeled By" hint="Creator / capture artist" autoFilled={isAutoFilled('modeled_by')}>
               <TextInput
