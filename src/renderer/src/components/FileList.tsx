@@ -239,6 +239,7 @@ export function FileList({
           onSelect={onSelect}
           onSelectRange={onSelectRange}
           solidPills={solidPills}
+          draggable={draggable}
           onContextMenu={(e) => {
             if (selectedIds.size === 0) return
             e.preventDefault()
@@ -342,7 +343,7 @@ const DEFAULT_COL_WIDTHS: Record<string, number> = {
 
 function GridView({
   files, selectedIds, sortKey, sortDir, onSortClick,
-  anchorIndexRef, onSelect, onSelectRange, solidPills, onContextMenu
+  anchorIndexRef, onSelect, onSelectRange, solidPills, draggable, onContextMenu
 }: {
   files: NamFile[]
   selectedIds: Set<string>
@@ -353,6 +354,7 @@ function GridView({
   onSelect: (id: string, multi: boolean) => void
   onSelectRange: (ids: string[]) => void
   solidPills: boolean
+  draggable: boolean
   onContextMenu: (e: React.MouseEvent) => void
 }) {
   const [colWidths, setColWidths] = useState<Record<string, number>>(DEFAULT_COL_WIDTHS)
@@ -426,6 +428,12 @@ function GridView({
                       ? 'bg-indigo-50 dark:bg-indigo-900/30 hover:bg-indigo-100 dark:hover:bg-indigo-900/40'
                       : 'bg-white dark:bg-transparent hover:bg-gray-50 dark:hover:bg-gray-800/40'
                   }`}
+                  draggable={draggable}
+                  onDragStart={draggable ? (e) => {
+                    const paths = selectedIds.has(file.filePath) ? [...selectedIds] : [file.filePath]
+                    e.dataTransfer.effectAllowed = 'move'
+                    e.dataTransfer.setData('application/x-nam-files', JSON.stringify(paths))
+                  } : undefined}
                   onClick={(e) => {
                     if (e.shiftKey && anchorIndexRef.current >= 0) {
                       const lo = Math.min(anchorIndexRef.current, index)
