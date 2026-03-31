@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from 'react'
-import { NamFile } from '../types/nam'
+import { NamFile, GEAR_TYPES, TONE_TYPES } from '../types/nam'
 import { gearChipClass, toneChipClass, getGearImageSrc } from '../assets/gear'
 
 type FilterMode = 'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited'
@@ -73,6 +73,8 @@ export function FileList({
 }: FileListProps) {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<FilterMode>('all')
+  const [gearFilter, setGearFilter] = useState('')
+  const [toneFilter, setToneFilter] = useState('')
   const [sortKey, setSortKey] = useState<string | null>(null)
   const [sortDir, setSortDir] = useState<SortDir>('asc')
   const anchorIndexRef = useRef<number>(-1)
@@ -102,6 +104,8 @@ export function FileList({
         .filter(Boolean).join(' ').toLowerCase()
       if (!haystack.includes(q)) return false
     }
+    if (gearFilter && m.gear_type !== gearFilter) return false
+    if (toneFilter && m.tone_type !== toneFilter) return false
     switch (filter) {
       case 'unnamed':   return !o.name
       case 'no-gear':   return !o.gear_type
@@ -196,7 +200,7 @@ export function FileList({
       </div>
 
       {/* Filter chips */}
-      <div className="px-3 pb-2 flex gap-1 flex-wrap flex-shrink-0">
+      <div className="px-3 pb-1 flex gap-1 flex-wrap flex-shrink-0">
         {filterOptions.map(({ value, label }) => (
           <button
             key={value}
@@ -210,6 +214,34 @@ export function FileList({
             {label}
           </button>
         ))}
+      </div>
+
+      {/* Gear + Tone dropdowns */}
+      <div className="px-3 pb-2 flex gap-1.5 flex-shrink-0">
+        <select
+          value={gearFilter}
+          onChange={(e) => setGearFilter(e.target.value)}
+          className={`flex-1 min-w-0 text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
+            gearFilter
+              ? 'bg-orange-100 dark:bg-orange-900/30 border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-400'
+              : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
+          }`}
+        >
+          <option value="">Gear type…</option>
+          {GEAR_TYPES.map((g) => <option key={g} value={g}>{g}</option>)}
+        </select>
+        <select
+          value={toneFilter}
+          onChange={(e) => setToneFilter(e.target.value)}
+          className={`flex-1 min-w-0 text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
+            toneFilter
+              ? 'bg-indigo-100 dark:bg-indigo-900/40 border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-400'
+              : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
+          }`}
+        >
+          <option value="">Tone type…</option>
+          {TONE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
       </div>
 
       {/* Header */}
