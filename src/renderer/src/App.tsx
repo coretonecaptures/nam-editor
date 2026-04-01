@@ -833,7 +833,6 @@ export default function App() {
                 ))
               }}
               onRevealInFinder={() => window.api.revealFile(selectedFiles[0].filePath)}
-              dirtyCount={dirtyCount}
             />
           ) : selectedFiles.length > 1 ? (
             <MultiSelectEditor
