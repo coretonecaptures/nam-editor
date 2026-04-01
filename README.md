@@ -38,9 +38,11 @@ This is especially useful for capture artists who want to properly tag their `.n
 - **Tone type chips** (indigo) — click to filter by clean, crunch, hi_gain, fuzz, overdrive, distortion
 - **Gear type chips** (amber) — click to filter by amp, pedal, amp_cab, preamp, studio, etc.
 - Filters stack (text AND tone AND gear simultaneously)
-- Folders with zero matches **disappear** from the tree; folder counts show match count in amber
-- An amber **FILTERED** banner with match count appears when any filter is active
+- Folders with zero matches **disappear** from the tree; folder counts show match count in sky blue
+- A sky blue **FILTERED** banner with match count appears when any filter is active
+- When filtered, the amber dirty count only reflects unsaved files that are visible in the results
 - Closing the panel clears all filters
+- **Collapse the Library panel** by hovering the divider and clicking the chevron button — useful in grid view
 
 ### List View & Grid View
 - Toggle between **List** and **Grid** views using the icons to the right of the search bar
@@ -55,8 +57,11 @@ This is especially useful for capture artists who want to properly tag their `.n
 ### File List Filters
 - **All / Edited / Unnamed / No Type / No Maker / No Tone** filter chips in the file list header
 - **Edited** chip shows count of manually-changed files and filters to just those
+- **Gear Type** and **Tone Type** dropdowns filter to a specific type — highlight in their respective colors when active
 - Each file item shows a **"N missing"** badge (tooltip lists which tracked fields are empty)
 - Search bar in the file list to search by name, filename, make, model, or modeled-by
+- Files are sorted by Capture Name by default; click any column header in grid view to re-sort
+- **Ctrl+A / Cmd+A** selects all visible files
 
 ### File Management
 - Open individual `.nam` files or an entire folder (scans recursively)
@@ -92,6 +97,7 @@ This is especially useful for capture artists who want to properly tag their `.n
 ### Appearance
 - **Dark theme** (default) and **Light theme** — toggle in Settings → Appearance, applies instantly
 - **Default view** (List or Grid) — set your preferred starting view in Settings → Appearance
+- **Label Style** — choose between Subtle (muted tinted backgrounds) or Solid Colors (bold solid backgrounds with white text) for gear and tone type pills
 
 ### Smart Defaults (Settings)
 Settings are stored locally and start blank. Each section can be **enabled or disabled independently** — turn off a section to browse other people's captures without applying your defaults.
@@ -106,7 +112,7 @@ Settings are stored locally and start blank. Each section can be **enabled or di
 
 **Behavior**
 - **Populate name from filename** — auto-sets Capture Name to the filename if empty
-- **Auto-detect tone type** — scans the filename for tone keywords and sets Tone Type if empty; the rightmost keyword wins (e.g. `BE Clean Crunch DI` → Crunch). Keywords: `clean`, `crunch`, `lead`/`highgain`/`hi-gain`, `fuzz`, `overdrive`/`od`/`edge`/`drive`, `distortion`/`dist`
+- **Auto-detect tone type** — scans the filename for tone keywords and sets Tone Type if empty; the rightmost keyword wins (e.g. `BE Clean Crunch DI` → Crunch). Keywords: `clean`, `crunch`, `highgain`/`hi-gain`/`higain`, `fuzz`, `overdrive`/`od`/`edge`/`drive`, `distortion`/`dist`
 - **Amp Suffix** — configurable filename ending that auto-sets Gear Type to Amp (e.g. `DI` or `DIRECT`). Leave blank to disable
 - **Default to Cab if no amp suffix match** — when enabled, files that don't match the amp suffix get set to `amp_cab`
 - **Confirmation dialogs** — independently skip Save All and Batch Edit confirmation dialogs once you're comfortable
