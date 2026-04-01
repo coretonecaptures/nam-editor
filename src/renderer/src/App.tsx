@@ -73,8 +73,8 @@ function applyDefaults(meta: NamFile['metadata'], baseName: string, settings: Ap
   // Auto gear type from filename suffix
   if (!m.gear_type) {
     const nameUpper = baseName.replace(/\s+/g, '').toUpperCase()
-    const ampSuffix = settings.ampSuffix.replace(/\s+/g, '').toUpperCase()
-    if (ampSuffix && nameUpper.endsWith(ampSuffix)) m.gear_type = 'amp'
+    const ampSuffixes = settings.ampSuffix.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
+    if (ampSuffixes.some((s) => nameUpper.endsWith(s))) m.gear_type = 'amp'
     else if (settings.defaultToCab) m.gear_type = 'amp_cab'
     // else: leave blank
   }
