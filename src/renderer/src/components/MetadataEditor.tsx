@@ -44,7 +44,7 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
   return (
     <div className="flex flex-col h-full overflow-hidden" onKeyDown={handleKeyDown}>
       {/* File header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
+      <div className="flex items-start justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 flex-shrink-0 flex-wrap gap-3">
         <div className="flex items-center gap-4 min-w-0">
           <div className="min-w-0">
             <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 truncate max-w-lg">

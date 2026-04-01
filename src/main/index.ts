@@ -84,6 +84,80 @@ function createWindow(): void {
   }
 }
 
+// Surgically patch only the changed metadata fields in the raw file text.
+// All original formatting, whitespace, field order, and non-metadata content
+// (weights, config, etc.) are preserved byte-for-byte.
+function patchMetadataFields(content: string, patches: Record<string, unknown>): string {
+  // Find the "metadata": { block
+  const metaKeyMatch = /"metadata"\s*:\s*\{/.exec(content)
+  if (!metaKeyMatch) throw new Error('No "metadata" block found in file')
+
+  const openBrace = metaKeyMatch.index + metaKeyMatch[0].length - 1
+  const closeBrace = findMatchingBrace(content, openBrace)
+  if (closeBrace === -1) throw new Error('Malformed metadata block')
+
+  const prefix = content.slice(0, openBrace + 1) // up to and including {
+  let inner = content.slice(openBrace + 1, closeBrace)
+  const tail = content.slice(closeBrace)           // } onwards
+
+  for (const [key, value] of Object.entries(patches)) {
+    const newVal = serializeJsonValue(value)
+    // Match "key"\s*:\s*<JSON-value> — handles null, strings, and numbers
+    const re = new RegExp(
+      `("${escapeRe(key)}")(\\s*:\\s*)(null|"(?:[^"\\\\]|\\\\.)*"|-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)`
+    )
+    if (re.test(inner)) {
+      // Replace only the value; keep the key token and spacing intact
+      inner = inner.replace(re, (_m, k, sep) => k + sep + newVal)
+    } else if (value !== null && value !== undefined) {
+      // Field doesn't exist yet — insert it, matching the file's indentation style
+      const indentMatch = /\n([ \t]+)"/.exec(inner)
+      const indent = indentMatch ? indentMatch[1] : '    '
+      const trimmed = inner.trimEnd()
+      const needsComma = trimmed.length > 0 && !trimmed.endsWith(',')
+      // Preserve whatever trailing whitespace/newline was before the closing brace
+      const trailing = inner.slice(trimmed.length)
+      inner = trimmed + (needsComma ? ',' : '') + `\n${indent}"${key}": ${newVal}` + trailing
+    }
+  }
+
+  return prefix + inner + tail
+}
+
+// Find the matching closing brace/bracket, correctly skipping strings
+function findMatchingBrace(content: string, openPos: number): number {
+  let depth = 0
+  let i = openPos
+  while (i < content.length) {
+    const ch = content[i]
+    if (ch === '"') {
+      i++
+      while (i < content.length) {
+        if (content[i] === '\\') { i += 2; continue }
+        if (content[i] === '"') break
+        i++
+      }
+    } else if (ch === '{' || ch === '[') {
+      depth++
+    } else if (ch === '}' || ch === ']') {
+      depth--
+      if (depth === 0) return i
+    }
+    i++
+  }
+  return -1
+}
+
+function serializeJsonValue(value: unknown): string {
+  if (value === null || value === undefined) return 'null'
+  if (typeof value === 'number') return String(value)
+  return JSON.stringify(String(value))
+}
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 app.whenReady().then(() => {
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.nameditor.app')
@@ -125,7 +199,9 @@ app.whenReady().then(() => {
   })
 
   // IPC: Write updated metadata back to file (preserves weights and all non-editable fields)
-  // Only updates the fields the editor explicitly manages — never injects new keys
+  // Only updates the fields the editor explicitly manages — never injects new keys.
+  // Uses surgical text replacement so only the changed value bytes are modified;
+  // all formatting, spacing, and field order in the original file are preserved exactly.
   const EDITABLE_FIELDS = [
     'name', 'modeled_by', 'gear_type', 'gear_make', 'gear_model',
     'tone_type', 'input_level_dbu', 'output_level_dbu'
@@ -136,14 +212,18 @@ app.whenReady().then(() => {
       const data = JSON.parse(content)
       const orig = data.metadata ?? {}
       const incoming = metadata as Record<string, unknown>
-      // Write all editable fields; add key if setting a real value, update/clear if key exists
+
+      // Build patch map: only fields that exist on disk or are being set to a real value
+      const patches: Record<string, unknown> = {}
       for (const key of EDITABLE_FIELDS) {
         if (Object.prototype.hasOwnProperty.call(orig, key) || incoming[key] != null) {
-          orig[key] = incoming[key] ?? null
+          patches[key] = incoming[key] ?? null
         }
       }
-      data.metadata = orig
-      fs.writeFileSync(filePath, JSON.stringify(data), 'utf-8')
+
+      // Apply surgical patches — only the value bytes for each field are changed
+      const patched = patchMetadataFields(content, patches)
+      fs.writeFileSync(filePath, patched, 'utf-8')
       return { success: true }
     } catch (err) {
       return { success: false, error: String(err) }

@@ -73,7 +73,7 @@ function applyDefaults(meta: NamFile['metadata'], baseName: string, settings: Ap
   // Auto gear type from filename suffix
   if (!m.gear_type) {
     const nameUpper = baseName.replace(/\s+/g, '').toUpperCase()
-    const ampSuffixes = settings.ampSuffix.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
+    const ampSuffixes = settings.ampSuffix.split(',').map((s) => s.trim().replace(/\s+/g, '').toUpperCase()).filter(Boolean)
     if (ampSuffixes.some((s) => nameUpper.endsWith(s))) m.gear_type = 'amp'
     else if (settings.defaultToCab) m.gear_type = 'amp_cab'
     // else: leave blank
@@ -267,7 +267,7 @@ export default function App() {
     })
 
     if (errors > 0) {
-      setStatus({ message: `Loaded ${loaded.length} file(s), ${errors} failed`, type: 'error' })
+      setStatus({ message: `Loaded ${loaded.length} file(s) — ${errors} could not be parsed (skipped)`, type: 'error' })
     } else {
       setStatus({ message: `Loaded ${loaded.length} file(s)`, type: 'success' })
     }
