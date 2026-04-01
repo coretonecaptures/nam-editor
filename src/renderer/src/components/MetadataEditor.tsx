@@ -7,9 +7,11 @@ interface MetadataEditorProps {
   onSave: () => void
   onRevert: () => void
   onRevealInFinder: () => void
+  onReapplyDefaults?: () => void
+  hasActiveDefaults?: boolean
 }
 
-export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFinder }: MetadataEditorProps) {
+export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFinder, onReapplyDefaults, hasActiveDefaults }: MetadataEditorProps) {
   const m = file.metadata
   const orig = file.originalMetadata
 
@@ -84,6 +86,15 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
         <div className="flex items-center gap-2 flex-shrink-0">
           {file.isDirty && (
             <span className="text-xs text-amber-400 font-medium">Unsaved</span>
+          )}
+          {hasActiveDefaults && onReapplyDefaults && (
+            <button
+              onClick={onReapplyDefaults}
+              className="flex items-center gap-1 px-2 py-2 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap"
+              title="Re-apply auto-fill rules from Settings to empty fields"
+            >
+              ↺ Defaults
+            </button>
           )}
           <button
             onClick={onRevert}

@@ -135,36 +135,6 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
             </div>
           </div>
 
-          {/* Current Amp Info */}
-          <Section
-            icon="🔊"
-            title="Current Amp Info"
-            enabled={draft.enableAmpInfo}
-            onToggle={(v) => update('enableAmpInfo', v)}
-            description="Applied to files where Manufacturer and/or Model are empty on open."
-          >
-            <SettingsField label="Manufacturer" hint="Applied if file has no gear_make value">
-              <input
-                type="text"
-                value={draft.defaultManufacturer}
-                onChange={(e) => update('defaultManufacturer', e.target.value)}
-                disabled={!draft.enableAmpInfo}
-                placeholder="e.g. Friedman"
-                className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              />
-            </SettingsField>
-            <SettingsField label="Model" hint="Applied if file has no gear_model value">
-              <input
-                type="text"
-                value={draft.defaultModel}
-                onChange={(e) => update('defaultModel', e.target.value)}
-                disabled={!draft.enableAmpInfo}
-                placeholder="e.g. BE100 Deluxe"
-                className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              />
-            </SettingsField>
-          </Section>
-
           {/* Capture Defaults */}
           <Section
             icon="🎚️"
@@ -312,6 +282,36 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
               )}
             </div>
           </div>
+
+          {/* Current Amp Info */}
+          <Section
+            icon="🔊"
+            title="Current Amp Info"
+            enabled={draft.enableAmpInfo}
+            onToggle={(v) => update('enableAmpInfo', v)}
+            description="Sets a default Manufacturer and Model on any file that has those fields empty when opened. Best used when working on a batch of captures for a single amp — e.g. tagging an entire session before sharing. Disable this when browsing a large shared library, or you may unintentionally stamp your amp info onto captures from other artists."
+          >
+            <SettingsField label="Manufacturer" hint="Applied if file has no gear_make value">
+              <input
+                type="text"
+                value={draft.defaultManufacturer}
+                onChange={(e) => update('defaultManufacturer', e.target.value)}
+                disabled={!draft.enableAmpInfo}
+                placeholder="e.g. Friedman"
+                className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+            </SettingsField>
+            <SettingsField label="Model" hint="Applied if file has no gear_model value">
+              <input
+                type="text"
+                value={draft.defaultModel}
+                onChange={(e) => update('defaultModel', e.target.value)}
+                disabled={!draft.enableAmpInfo}
+                placeholder="e.g. BE100 Deluxe"
+                className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+            </SettingsField>
+          </Section>
 
         </div>
       </div>

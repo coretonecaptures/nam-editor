@@ -84,6 +84,7 @@ This is especially useful for capture artists who want to properly tag their `.n
 - **Reamp Send Level (dBu)** and **Reamp Return Level (dBu)**
 - Ctrl+S / Cmd+S to save the current file
 - **Revert** button discards unsaved changes and restores the file's saved values
+- **↺ Defaults** button re-applies your active Settings rules to the current file's empty fields — useful after reverting to re-fill auto-populated values without overwriting anything you've set manually
 - Read-only stats: architecture, NAM version, integrated loudness, gain, validation ESR, epoch count (if present)
 - **File path** in the header is clickable — opens the file's folder in Finder/Explorer
 - **Gear type icon** displayed in the file header for visual identification (amp, pedal, cab, etc.)
@@ -97,13 +98,10 @@ This is especially useful for capture artists who want to properly tag their `.n
 ### Appearance
 - **Dark theme** (default) and **Light theme** — toggle in Settings → Appearance, applies instantly
 - **Default view** (List or Grid) — set your preferred starting view in Settings → Appearance
-- **Label Style** — choose between Subtle (muted tinted backgrounds) or Solid Colors (bold solid backgrounds with white text) for gear and tone type pills
+- **Label Style** — choose between Subtle (muted tinted backgrounds) or **Solid Colors** (bold solid backgrounds with white text, default) for gear and tone type pills
 
 ### Smart Defaults (Settings)
 Settings are stored locally and start blank. Each section can be **enabled or disabled independently** — turn off a section to browse other people's captures without applying your defaults.
-
-**Current Amp Info** *(toggleable)*
-- Default Manufacturer and Model — applied to files missing those fields on open
 
 **Capture Defaults** *(toggleable)*
 - Default Modeled By — applied if the file has no `modeled_by`
@@ -120,6 +118,10 @@ Settings are stored locally and start blank. Each section can be **enabled or di
 **Startup**
 - **Remember last opened folder** — every time you open a folder it becomes the default for next launch
 - **Open default folder on launch** — automatically loads a pinned folder when the app starts
+
+**Current Amp Info** *(toggleable — at the bottom of Settings)*
+- Default Manufacturer and Model — applied to files missing those fields on open
+- Best used when tagging a batch of captures from a single amp session; **disable when browsing a large shared library** to avoid stamping your amp info onto other people's captures
 
 ### Active Defaults Pill
 A slim bar above the status bar shows which defaults are currently active (e.g. `Amp: Friedman BE100 · Capture: Core Tone Captures · Name from filename`). Disappears entirely when nothing is enabled.

@@ -65,7 +65,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
   theme: 'dark',
   defaultView: 'list',
-  solidPillColors: false
+  solidPillColors: true
 }
 
 const STORAGE_KEY = 'nam-editor-settings'

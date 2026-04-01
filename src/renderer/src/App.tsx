@@ -833,6 +833,29 @@ export default function App() {
                 ))
               }}
               onRevealInFinder={() => window.api.revealFile(selectedFiles[0].filePath)}
+              hasActiveDefaults={
+                settings.enableAmpInfo ||
+                settings.enableCaptureDefaults ||
+                settings.populateNameFromFilename ||
+                settings.autoDetectToneType ||
+                !!settings.ampSuffix
+              }
+              onReapplyDefaults={() => {
+                const f = selectedFiles[0]
+                const baseName = f.fileName.replace(/\.nam$/i, '')
+                const currentMeta = f.metadata
+                const newMeta = applyDefaults(currentMeta, baseName, settings)
+                const newAutoFilled = (Object.keys(newMeta) as (keyof NamFile['metadata'])[]).filter(
+                  (k) => newMeta[k] != null && (currentMeta[k] == null || currentMeta[k] === '') && !f.autoFilledFields.includes(k)
+                )
+                const allAutoFilled = [...f.autoFilledFields, ...newAutoFilled]
+                const wasChanged = JSON.stringify(newMeta) !== JSON.stringify(f.originalMetadata)
+                setFiles((prev) => prev.map((x) =>
+                  x.filePath === f.filePath
+                    ? { ...x, metadata: newMeta, isDirty: wasChanged, autoFilledFields: allAutoFilled }
+                    : x
+                ))
+              }}
             />
           ) : selectedFiles.length > 1 ? (
             <MultiSelectEditor
