@@ -954,9 +954,21 @@ function EmptyState({
 }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center gap-6 text-center p-8">
-      <div className="w-20 h-20 rounded-2xl bg-indigo-900/40 flex items-center justify-center">
-        <svg className="w-10 h-10 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z" />
+      <div className="w-24 h-24 rounded-2xl bg-indigo-900/40 flex items-center justify-center">
+        <svg className="w-14 h-14 text-indigo-400" viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+          {/* rack bar top */}
+          <rect x="6" y="8" width="52" height="4" rx="2" strokeWidth="2.5" fill="currentColor" fillOpacity="0.15" />
+          {/* rack bar bottom */}
+          <rect x="6" y="52" width="52" height="4" rx="2" strokeWidth="2.5" fill="currentColor" fillOpacity="0.15" />
+          {/* tube 1 - tall, ~2/3 full */}
+          <rect x="13" y="12" width="8" height="32" rx="4" strokeWidth="2" />
+          <rect x="13" y="28" width="8" height="16" rx="4" strokeWidth="0" fill="currentColor" fillOpacity="0.35" />
+          {/* tube 2 - tall, ~1/3 full */}
+          <rect x="28" y="12" width="8" height="32" rx="4" strokeWidth="2" />
+          <rect x="28" y="36" width="8" height="8" rx="4" strokeWidth="0" fill="currentColor" fillOpacity="0.5" />
+          {/* tube 3 - tall, ~1/2 full */}
+          <rect x="43" y="12" width="8" height="32" rx="4" strokeWidth="2" />
+          <rect x="43" y="32" width="8" height="12" rx="4" strokeWidth="0" fill="currentColor" fillOpacity="0.25" />
         </svg>
       </div>
       <div>
