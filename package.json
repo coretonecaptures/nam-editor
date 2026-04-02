@@ -32,8 +32,8 @@
     "vite": "^5.3.4"
   },
   "build": {
-    "appId": "com.nameditor.app",
-    "productName": "NAM Editor",
+    "appId": "com.coretonecaptures.namlab",
+    "productName": "NAM Lab",
     "directories": {
       "output": "release"
     },

@@ -41,7 +41,7 @@ export function Toolbar({
         <svg className="w-4 h-4 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12h2m0 0V9m0 3v3m4-7v8m0-8v8m4-11v14m0-14v14m4-9v4m0-4v4m4-7v10" />
         </svg>
-        <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">NAM Editor</span>
+        <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">NAM Lab</span>
       </div>
 
       <div className="w-px h-5 bg-gray-300 dark:bg-gray-700" />

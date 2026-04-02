@@ -160,7 +160,7 @@ function escapeRe(s: string): string {
 
 app.whenReady().then(() => {
   if (process.platform === 'win32') {
-    app.setAppUserModelId('com.nameditor.app')
+    app.setAppUserModelId('com.coretonecaptures.namlab')
   }
 
   // IPC: Open file dialog

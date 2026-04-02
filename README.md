@@ -1,6 +1,8 @@
-# NAM Editor
+# NAM Lab
 
-A desktop app for editing metadata in [Neural Amp Modeler](https://www.neuralampmodeler.com/) `.nam` files — without touching the model weights or breaking the file format.
+### Metadata management and library tooling for Neural Amp Modeler
+
+*Organize, clean, and scale your NAM library.*
 
 Built with Electron, React, and Tailwind CSS. Runs on **Windows** and **macOS**.
 
@@ -10,7 +12,7 @@ Built with Electron, React, and Tailwind CSS. Runs on **Windows** and **macOS**.
 
 ## What It Does
 
-Neural Amp Modeler captures store metadata (capture name, gear info, tone type, etc.) as JSON inside the `.nam` file alongside the model weights. Most tools don't expose this metadata for editing — NAM Editor lets you open many files at once, update their metadata, and save back safely.
+Neural Amp Modeler captures store metadata (capture name, gear info, tone type, etc.) as JSON inside the `.nam` file alongside the model weights. Most tools don't expose this metadata for editing — NAM Lab lets you open many files at once, update their metadata, and save back safely.
 
 This is especially useful for capture artists who want to properly tag their `.nam` files before sharing or uploading them to tone libraries.
 
@@ -197,6 +199,6 @@ Download the latest installer from the [Releases](https://github.com/coretonecap
 
 ## About
 
-There's no existing tool that lets capture artists manage `.nam` metadata locally, in bulk, before sharing their work. NAM Editor was built to fill that gap — a fast, offline desktop app that gives you full control over how your captures are tagged and presented to the people who use them.
+There's no existing tool that lets capture artists manage `.nam` metadata locally, in bulk, before sharing their work. NAM Lab was built to fill that gap — a fast, offline desktop app that gives you full control over how your captures are tagged and presented to the people who use them.
 
 Conceived by [Core Tone Captures](https://github.com/coretonecaptures). Code written by [Claude Code](https://claude.ai/code).

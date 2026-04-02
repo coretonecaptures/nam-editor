@@ -57,7 +57,7 @@ jobs:
 
       - name: Ad-hoc sign the app
         run: |
-          APP=$(find release -name "NAM Editor.app" -maxdepth 3 | head -1)
+          APP=$(find release -name "NAM Lab.app" -maxdepth 3 | head -1)
           echo "Signing: $APP"
           codesign --deep --force --sign - "$APP"
           codesign --verify --deep --strict "$APP" && echo "Signature OK"

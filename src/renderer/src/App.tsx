@@ -960,9 +960,10 @@ function EmptyState({
         </svg>
       </div>
       <div>
-        <h2 className="text-xl font-semibold text-gray-800 dark:text-gray-200 mb-1">NAM Metadata Editor</h2>
+        <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-1">NAM Lab</h2>
+        <p className="text-sm font-medium text-indigo-400 mb-3">Organize, clean, and scale your NAM library.</p>
         <p className="text-gray-500 dark:text-gray-500 text-sm max-w-xs">
-          Open .nam files to edit their metadata. Drag & drop files anywhere to load them.
+          Open a folder to manage your library, or open individual .nam files to edit their metadata. Drag & drop files anywhere to load them.
         </p>
       </div>
       <div className="flex gap-3">
