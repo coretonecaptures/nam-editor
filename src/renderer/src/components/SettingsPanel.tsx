@@ -233,7 +233,7 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
                 <div className="space-y-3">
                   <CheckboxField
                     label="Skip Save All confirmation"
-                    description="Don't ask before saving all unsaved files in a folder or globally."
+                    description="Don't ask before saving all unsaved files via right-click folder actions. The toolbar Save All always confirms — it affects all loaded folders and cannot be skipped."
                     checked={draft.skipSaveAllConfirmation}
                     onChange={(v) => update('skipSaveAllConfirmation', v)}
                   />

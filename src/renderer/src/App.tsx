@@ -399,8 +399,14 @@ export default function App() {
       setStatus({ message: 'No unsaved changes', type: 'info' })
       return
     }
-    if (!settings.skipSaveAllConfirmation) {
-      const confirmed = window.confirm(`Save changes to ${dirty.length} file${dirty.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.`)
+    {
+      const autoFillCount = dirty.filter((f) => f.autoFilledFields.length > 0).length
+      const autoFillNote = autoFillCount > 0
+        ? `\n\n⚠️ ${autoFillCount} file${autoFillCount !== 1 ? 's have' : ' has'} auto-filled fields (from Settings defaults) that will also be written.`
+        : ''
+      const confirmed = window.confirm(
+        `⚠️ Save ALL changes across every loaded folder?\n\nThis will write ${dirty.length} file${dirty.length !== 1 ? 's' : ''} to disk — including files in all subfolders. This cannot be undone.${autoFillNote}`
+      )
       if (!confirmed) return
     }
     setStatus({ message: `Saving ${dirty.length} file(s)...`, type: 'info' })
