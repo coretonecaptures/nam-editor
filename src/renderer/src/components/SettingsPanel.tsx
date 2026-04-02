@@ -4,9 +4,10 @@ import { AppSettings } from '../types/settings'
 interface SettingsPanelProps {
   settings: AppSettings
   onSave: (settings: AppSettings) => void
+  onClose: () => void
 }
 
-export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
+export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps) {
   const [draft, setDraft] = useState<AppSettings>({ ...settings })
   const [saved, setSaved] = useState(false)
 
@@ -38,6 +39,13 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
             Defaults are applied when opening files that have empty fields.
           </p>
         </div>
+        <div className="flex items-center gap-2">
+        <button
+          onClick={onClose}
+          className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
+        >
+          Close
+        </button>
         <button
           onClick={handleSave}
           className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-indigo-600 hover:bg-indigo-500 text-white"
@@ -58,6 +66,7 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
             </>
           )}
         </button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-5">

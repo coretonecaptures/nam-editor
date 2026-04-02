@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
+import beakerTransparent from './assets/images/beaker.only.transparent.png'
 import { NamFile, TONE_TYPES, GEAR_TYPES } from './types/nam'
 import { AppSettings, loadSettings, saveSettings } from './types/settings'
 import { loadLayout, saveLayout } from './types/layout'
@@ -326,6 +327,12 @@ export default function App() {
     setShowSettings(false)
     setLibrarian(EMPTY_LIBRARIAN)
     setStatus({ message: 'Open .nam files or a folder to get started', type: 'info' })
+    // Don't reopen on next launch — user explicitly closed
+    setSettings((prev) => {
+      const updated = { ...prev, enableDefaultFolder: false }
+      saveSettings(updated)
+      return updated
+    })
   }
 
   const handleOpenFiles = async () => {
@@ -817,7 +824,7 @@ export default function App() {
         {/* Main content */}
         <div ref={mainContentRef} tabIndex={-1} className="flex-1 overflow-hidden flex flex-col focus:outline-none" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           {showSettings ? (
-            <SettingsPanel settings={settings} onSave={handleSaveSettings} />
+            <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} />
           ) : batchFolder !== null ? (
             <BatchEditor
               folderName={batchFolder.name}
@@ -954,22 +961,8 @@ function EmptyState({
 }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center gap-6 text-center p-8">
-      <div className="w-24 h-24 rounded-2xl bg-indigo-900/40 flex items-center justify-center">
-        <svg className="w-14 h-14 text-indigo-400" viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
-          {/* rack bar top */}
-          <rect x="6" y="8" width="52" height="4" rx="2" strokeWidth="2.5" fill="currentColor" fillOpacity="0.15" />
-          {/* rack bar bottom */}
-          <rect x="6" y="52" width="52" height="4" rx="2" strokeWidth="2.5" fill="currentColor" fillOpacity="0.15" />
-          {/* tube 1 - tall, ~2/3 full */}
-          <rect x="13" y="12" width="8" height="32" rx="4" strokeWidth="2" />
-          <rect x="13" y="28" width="8" height="16" rx="4" strokeWidth="0" fill="currentColor" fillOpacity="0.35" />
-          {/* tube 2 - tall, ~1/3 full */}
-          <rect x="28" y="12" width="8" height="32" rx="4" strokeWidth="2" />
-          <rect x="28" y="36" width="8" height="8" rx="4" strokeWidth="0" fill="currentColor" fillOpacity="0.5" />
-          {/* tube 3 - tall, ~1/2 full */}
-          <rect x="43" y="12" width="8" height="32" rx="4" strokeWidth="2" />
-          <rect x="43" y="32" width="8" height="12" rx="4" strokeWidth="0" fill="currentColor" fillOpacity="0.25" />
-        </svg>
+      <div className="w-28 h-28 rounded-2xl bg-[#080F14] flex items-center justify-center">
+        <img src={beakerTransparent} alt="NAM Lab" className="w-20 h-20 object-contain" />
       </div>
       <div>
         <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-1">NAM Lab</h2>
@@ -981,7 +974,7 @@ function EmptyState({
       <div className="flex gap-3">
         <button
           onClick={onOpenFiles}
-          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-medium transition-colors"
+          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium transition-colors"
         >
           Open Files
         </button>
