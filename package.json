@@ -1,6 +1,6 @@
 {
   "name": "nam-lab",
-  "version": "0.3.13",
+  "version": "0.3.14",
   "description": "NAM (Neural Amp Modeler) metadata editor",
   "main": "out/main/index.js",
   "scripts": {
