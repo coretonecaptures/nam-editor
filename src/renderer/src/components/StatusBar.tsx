@@ -1,9 +1,10 @@
 interface StatusBarProps {
   message: string
   type: 'info' | 'success' | 'error'
+  logPath?: string
 }
 
-export function StatusBar({ message, type }: StatusBarProps) {
+export function StatusBar({ message, type, logPath }: StatusBarProps) {
   const colors = {
     info: 'text-gray-500',
     success: 'text-green-500',
@@ -18,6 +19,15 @@ export function StatusBar({ message, type }: StatusBarProps) {
         }`}
       />
       <span className={`text-xs ${colors[type]}`}>{message}</span>
+      {logPath && type === 'error' && (
+        <button
+          onClick={() => window.api.revealFile(logPath)}
+          className="text-xs text-red-400 underline hover:text-red-300 transition-colors ml-1"
+          title={logPath}
+        >
+          view log
+        </button>
+      )}
     </div>
   )
 }

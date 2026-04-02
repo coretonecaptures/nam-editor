@@ -32,6 +32,7 @@ declare global {
       moveFile: (sourcePath: string, destDir: string) => Promise<{ success: boolean; error?: string; destPath?: string }>
       scanFolder: (folderPath: string) => Promise<{ success: boolean; error?: string; files?: string[] }>
       scanTree: (folderPath: string) => Promise<{ success: boolean; error?: string; tree?: FolderNode }>
+      getErrorLogPath: () => Promise<string>
       refocusWindow: () => Promise<void>
       platform: string
     }
@@ -123,7 +124,7 @@ const EMPTY_LIBRARIAN: LibrarianState = {
 export default function App() {
   const [files, setFiles] = useState<NamFile[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [status, setStatus] = useState<{ message: string; type: 'info' | 'success' | 'error' }>({
+  const [status, setStatus] = useState<{ message: string; type: 'info' | 'success' | 'error'; logPath?: string }>({
     message: 'Open .nam files or a folder to get started',
     type: 'info'
   })
@@ -267,7 +268,12 @@ export default function App() {
     })
 
     if (errors > 0) {
-      setStatus({ message: `Loaded ${loaded.length} file(s) — ${errors} could not be parsed (skipped)`, type: 'error' })
+      const logPath = await window.api.getErrorLogPath()
+      setStatus({
+        message: `Loaded ${loaded.length} file(s) — ${errors} could not be parsed (skipped)`,
+        type: 'error',
+        logPath
+      })
     } else {
       setStatus({ message: `Loaded ${loaded.length} file(s)`, type: 'success' })
     }
@@ -872,7 +878,7 @@ export default function App() {
       </div>
 
       <DefaultsPill settings={settings} />
-      <StatusBar message={status.message} type={status.type} />
+      <StatusBar message={status.message} type={status.type} logPath={status.logPath} />
     </div>
   )
 }

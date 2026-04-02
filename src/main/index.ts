@@ -181,6 +181,7 @@ app.whenReady().then(() => {
   })
 
   // IPC: Read a NAM file metadata (without exposing weights to renderer)
+  const errorLogPath = join(app.getPath('userData'), 'parse-errors.log')
   ipcMain.handle('file:read', async (_event, filePath: string) => {
     try {
       const content = fs.readFileSync(filePath, 'utf-8')
@@ -194,9 +195,14 @@ app.whenReady().then(() => {
         config: data.config ?? null
       }
     } catch (err) {
+      const line = `[${new Date().toISOString()}] ${filePath}\n  ${String(err)}\n`
+      fs.appendFileSync(errorLogPath, line, 'utf-8')
       return { success: false, error: String(err) }
     }
   })
+
+  // IPC: Return the path to the parse error log file
+  ipcMain.handle('log:getErrorLogPath', () => errorLogPath)
 
   // IPC: Write updated metadata back to file (preserves weights and all non-editable fields)
   // Only updates the fields the editor explicitly manages — never injects new keys.
