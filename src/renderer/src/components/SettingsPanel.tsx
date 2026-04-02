@@ -324,6 +324,20 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
 
         </div>
       </div>
+
+      {/* About footer */}
+      <div className="flex-shrink-0 px-6 py-4 border-t border-gray-200 dark:border-gray-800 flex items-center justify-between">
+        <div className="text-xs text-gray-400 dark:text-gray-600">
+          Built by{' '}
+          <button
+            onClick={() => window.open('https://coretonecaptures.com/', '_blank')}
+            className="text-indigo-400 hover:text-indigo-300 transition-colors underline"
+          >
+            Core Tone Captures
+          </button>
+        </div>
+        <div className="text-xs text-gray-500 dark:text-gray-600">NAM Lab</div>
+      </div>
     </div>
   )
 }
