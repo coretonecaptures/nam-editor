@@ -159,6 +159,7 @@ function escapeRe(s: string): string {
 }
 
 app.whenReady().then(() => {
+  app.setName('NAM Lab')
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.coretonecaptures.namlab')
   }
