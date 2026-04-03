@@ -8,11 +8,15 @@ const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
 let mainWindow: BrowserWindow | null = null
 
 // Persist window size and maximized state between launches
-const WIN_STATE_PATH = join(app.getPath('userData'), 'window-state.json')
+// Path is computed lazily inside each function — app.getPath() must not be
+// called at module load time (before app ready) or it throws on some macOS configs
+function winStatePath(): string {
+  return join(app.getPath('userData'), 'window-state.json')
+}
 
 function loadWinState(): { width: number; height: number; maximized: boolean } {
   try {
-    return JSON.parse(fs.readFileSync(WIN_STATE_PATH, 'utf-8'))
+    return JSON.parse(fs.readFileSync(winStatePath(), 'utf-8'))
   } catch {
     return { width: 1280, height: 800, maximized: false }
   }
@@ -22,7 +26,7 @@ function saveWinState(): void {
   if (!mainWindow) return
   const maximized = mainWindow.isMaximized()
   const { width, height } = maximized ? { width: 1280, height: 800 } : mainWindow.getBounds()
-  fs.writeFileSync(WIN_STATE_PATH, JSON.stringify({ width, height, maximized }), 'utf-8')
+  fs.writeFileSync(winStatePath(), JSON.stringify({ width, height, maximized }), 'utf-8')
 }
 
 function createWindow(): void {
