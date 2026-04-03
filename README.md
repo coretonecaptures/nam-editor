@@ -171,12 +171,53 @@ Download the latest installer from the [Releases](https://github.com/coretonecap
 
 | Platform | File |
 |----------|------|
-| Windows  | `NAM-Editor-Setup-x.x.x.exe` |
-| macOS    | `NAM-Editor-x.x.x-arm64.dmg` |
+| Windows  | `NAM-Lab-Setup-x.x.x.exe` |
+| macOS    | `NAM-Lab-x.x.x-arm64.dmg` |
 
-> **macOS note:** The app is ad-hoc signed but not notarized (notarization requires a paid Apple Developer account). On first launch, macOS will show an "unverified developer" warning. Go to **System Settings → Privacy & Security** and click **Open Anyway**. You only need to do this once.
+---
 
-> **Windows note:** Windows Defender SmartScreen may show a warning on first run. Click **More info → Run anyway**.
+### ⚠️ First-launch security warnings (expected — this is normal for unsigned beta software)
+
+NAM Lab is currently in beta and is not yet code-signed. Both macOS and Windows will show a one-time security warning on first launch. This is expected and safe to bypass — the steps below walk you through it.
+
+---
+
+#### macOS — "Apple cannot verify this app" or "app is damaged"
+
+macOS Gatekeeper blocks apps that aren't notarized by Apple. Here's how to open it anyway:
+
+**Option A — from the warning dialog:**
+1. When the warning appears, click **Done** (do not move it to trash)
+2. Open **System Settings → Privacy & Security**
+3. Scroll down — you'll see *"NAM Lab was blocked"*
+4. Click **Open Anyway**
+5. Enter your Mac password if prompted
+6. The app will open — you won't see this warning again
+
+**Option B — if macOS says the app is "damaged":**
+
+This happens on newer macOS versions (Ventura/Sonoma) that quarantine downloads more aggressively.
+
+1. Open **Terminal** (search Spotlight for "Terminal")
+2. Run this command (drag the app into Terminal after `xattr -cr ` to fill in the path automatically):
+   ```
+   xattr -cr /Applications/NAM\ Lab.app
+   ```
+3. Launch the app normally — the warning will be gone
+
+> You only need to do this once. After the first approved launch macOS remembers your choice.
+
+---
+
+#### Windows — "Windows protected your PC" (SmartScreen)
+
+Windows Defender SmartScreen warns about apps that don't have a code signing certificate yet.
+
+1. When the SmartScreen dialog appears, click **More info**
+2. Click **Run anyway**
+3. The app will install and launch normally — you won't see this again
+
+> If you're uncomfortable bypassing SmartScreen, you can scan the installer with [VirusTotal](https://www.virustotal.com) before running it.
 
 ---
 
