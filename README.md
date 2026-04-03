@@ -173,6 +173,7 @@ Download the latest installer from the [Releases](https://github.com/coretonecap
 |----------|------|
 | Windows  | `NAM-Lab-Setup-x.x.x.exe` |
 | macOS    | `NAM-Lab-x.x.x-arm64.dmg` |
+| Linux    | `NAM-Lab-x.x.x.AppImage` |
 
 ---
 
@@ -218,6 +219,24 @@ Windows Defender SmartScreen warns about apps that don't have a code signing cer
 3. The app will install and launch normally — you won't see this again
 
 > If you're uncomfortable bypassing SmartScreen, you can scan the installer with [VirusTotal](https://www.virustotal.com) before running it.
+
+---
+
+#### Linux — AppImage
+
+No installation required. AppImage is a portable format that runs on most distros (Ubuntu, Fedora, Arch, Mint, etc.).
+
+1. Download the `.AppImage` file
+2. Make it executable — either right-click → Properties → Allow executing as program, or in Terminal:
+   ```
+   chmod +x NAM-Lab-x.x.x.AppImage
+   ```
+3. Double-click to run, or launch from Terminal:
+   ```
+   ./NAM-Lab-x.x.x.AppImage
+   ```
+
+> No signing is required on Linux — AppImage runs without any security warnings.
 
 ---
 
