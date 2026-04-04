@@ -1,11 +1,47 @@
 import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join } from 'path'
 import fs from 'fs'
+import os from 'os'
 
 const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
 
 // Module-level reference so IPC handlers can always reach the window
 let mainWindow: BrowserWindow | null = null
+
+// ---- Startup logger ----
+// Writes to os.tmpdir() immediately (safe before app ready), then moves to
+// userData once the app is initialized. This lets us capture crashes that
+// happen before any window appears.
+const LOG_FILENAME = 'nam-lab-startup.log'
+let logPath = join(os.tmpdir(), LOG_FILENAME)
+
+function log(msg: string): void {
+  const line = `[${new Date().toISOString()}] ${msg}\n`
+  try { fs.appendFileSync(logPath, line, 'utf-8') } catch { /* best effort */ }
+  if (isDev) process.stdout.write(line)
+}
+
+function switchLogToUserData(): void {
+  try {
+    const newPath = join(app.getPath('userData'), LOG_FILENAME)
+    // Copy existing log over then continue writing to the new location
+    if (fs.existsSync(logPath)) fs.copyFileSync(logPath, newPath)
+    logPath = newPath
+  } catch { /* keep writing to tmpdir if this fails */ }
+}
+
+// Catch uncaught exceptions before anything else
+process.on('uncaughtException', (err) => {
+  log(`UNCAUGHT EXCEPTION: ${err.message}\n${err.stack ?? ''}`)
+})
+process.on('unhandledRejection', (reason) => {
+  log(`UNHANDLED REJECTION: ${String(reason)}`)
+})
+
+log(`NAM Lab starting — platform: ${process.platform}, arch: ${process.arch}, node: ${process.version}`)
+log(`Electron: ${process.versions.electron}, Chrome: ${process.versions.chrome}`)
+log(`Args: ${process.argv.join(' ')}`)
+log(`isDev: ${isDev}`)
 
 // Persist window size and maximized state between launches
 // Path is computed lazily inside each function — app.getPath() must not be
@@ -30,7 +66,9 @@ function saveWinState(): void {
 }
 
 function createWindow(): void {
+  log('loadWinState...')
   const winState = loadWinState()
+  log(`winState: ${JSON.stringify(winState)}`)
   mainWindow = new BrowserWindow({
     width: winState.width,
     height: winState.height,
@@ -57,7 +95,9 @@ function createWindow(): void {
     backgroundColor: '#030712'
   })
 
+  log('BrowserWindow created')
   mainWindow.on('ready-to-show', () => {
+    log('ready-to-show fired — showing window')
     if (winState.maximized) mainWindow!.maximize()
     mainWindow!.show()
   })
@@ -163,6 +203,10 @@ function escapeRe(s: string): string {
 }
 
 app.whenReady().then(() => {
+  log('app.whenReady fired')
+  switchLogToUserData()
+  log(`log file moved to userData: ${logPath}`)
+
   app.setName('NAM Lab')
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.coretonecaptures.namlab')
@@ -330,7 +374,12 @@ app.whenReady().then(() => {
     }
   })
 
+  // IPC: expose log file path so Settings panel can show "Open Log" button
+  ipcMain.handle('log:getStartupLogPath', () => logPath)
+
+  log('creating window...')
   createWindow()
+  log('window created')
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

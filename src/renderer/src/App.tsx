@@ -34,6 +34,7 @@ declare global {
       scanFolder: (folderPath: string) => Promise<{ success: boolean; error?: string; files?: string[] }>
       scanTree: (folderPath: string) => Promise<{ success: boolean; error?: string; tree?: FolderNode }>
       getErrorLogPath: () => Promise<string>
+      getStartupLogPath: () => Promise<string>
       refocusWindow: () => Promise<void>
       platform: string
     }

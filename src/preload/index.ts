@@ -12,6 +12,7 @@ const api = {
     ipcRenderer.invoke('file:move', sourcePath, destDir) as Promise<{ success: boolean; error?: string; destPath?: string }>,
   revealFile: (filePath: string) => ipcRenderer.invoke('shell:revealFile', filePath),
   getErrorLogPath: (): Promise<string> => ipcRenderer.invoke('log:getErrorLogPath'),
+  getStartupLogPath: (): Promise<string> => ipcRenderer.invoke('log:getStartupLogPath'),
   refocusWindow: () => ipcRenderer.invoke('window:refocus'),
   platform: process.platform
 }

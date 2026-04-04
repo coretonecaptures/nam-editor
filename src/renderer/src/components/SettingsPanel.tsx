@@ -336,7 +336,19 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
             Core Tone Captures
           </button>
         </div>
-        <div className="text-xs text-gray-500 dark:text-gray-600">NAM Lab</div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={async () => {
+              const p = await window.api.getStartupLogPath()
+              window.api.revealFile(p)
+            }}
+            className="text-xs text-gray-500 dark:text-gray-600 hover:text-gray-400 dark:hover:text-gray-400 transition-colors underline"
+            title="Open the startup log folder — useful for reporting issues"
+          >
+            Open Log
+          </button>
+          <div className="text-xs text-gray-500 dark:text-gray-600">NAM Lab</div>
+        </div>
       </div>
     </div>
   )
