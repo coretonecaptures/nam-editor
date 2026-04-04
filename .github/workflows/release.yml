@@ -74,20 +74,20 @@ jobs:
       - name: Build renderer and main
         run: npm run build
 
-      - name: Package app (unpacked only, no DMG yet)
-        run: npx electron-builder --mac dir --publish never
+      - name: Package universal app (unpacked only, no DMG yet)
+        run: npx electron-builder --mac dir --universal --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
-      - name: Ad-hoc sign the app
+      - name: Ad-hoc sign the universal app
         run: |
           APP=$(find release -name "NAM Lab.app" -maxdepth 3 | head -1)
           echo "Signing: $APP"
           codesign --deep --force --sign - "$APP"
           codesign --verify --deep --strict "$APP" && echo "Signature OK"
 
-      - name: Create DMG from signed app
-        run: npx electron-builder --mac dmg --publish never --prepackaged "release/mac-arm64"
+      - name: Create DMG from signed universal app
+        run: npx electron-builder --mac dmg --universal --publish never --prepackaged "release/mac-universal"
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 

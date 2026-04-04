@@ -172,7 +172,7 @@ Download the latest installer from the [Releases](https://github.com/coretonecap
 | Platform | File |
 |----------|------|
 | Windows  | `NAM-Lab-Setup-x.x.x.exe` |
-| macOS    | `NAM-Lab-x.x.x-arm64.dmg` |
+| macOS    | `NAM-Lab-x.x.x-universal.dmg` (Intel + Apple Silicon) |
 | Linux    | `NAM-Lab-x.x.x.AppImage` |
 
 ---
