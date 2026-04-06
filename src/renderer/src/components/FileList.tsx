@@ -22,15 +22,38 @@ interface FileListProps {
   draggable?: boolean
 }
 
-const GRID_COLUMNS: { key: string; label: string; minWidth: number }[] = [
-  { key: 'name',       label: 'Capture Name',  minWidth: 180 },
-  { key: 'date',       label: 'Date',           minWidth: 96  },
-  { key: 'modeled_by', label: 'Modeled By',     minWidth: 130 },
-  { key: 'gear_make',  label: 'Manufacturer',   minWidth: 120 },
-  { key: 'gear_model', label: 'Model',          minWidth: 120 },
-  { key: 'gear_type',  label: 'Gear Type',      minWidth: 90  },
-  { key: 'tone_type',  label: 'Tone Type',      minWidth: 90  },
+const ALL_GRID_COLUMNS: { key: string; label: string; minWidth: number; defaultVisible: boolean }[] = [
+  { key: 'name',            label: 'Capture Name',       minWidth: 180, defaultVisible: true  },
+  { key: 'date',            label: 'Date',                minWidth: 96,  defaultVisible: true  },
+  { key: 'modeled_by',      label: 'Modeled By',          minWidth: 130, defaultVisible: true  },
+  { key: 'gear_make',       label: 'Manufacturer',        minWidth: 120, defaultVisible: true  },
+  { key: 'gear_model',      label: 'Model',               minWidth: 120, defaultVisible: true  },
+  { key: 'gear_type',       label: 'Gear Type',           minWidth: 90,  defaultVisible: true  },
+  { key: 'tone_type',       label: 'Tone Type',           minWidth: 90,  defaultVisible: true  },
+  { key: 'input_level_dbu', label: 'Reamp Send (dBu)',    minWidth: 110, defaultVisible: false },
+  { key: 'output_level_dbu',label: 'Reamp Return (dBu)',  minWidth: 110, defaultVisible: false },
 ]
+
+const DEFAULT_VISIBLE_COLS = ALL_GRID_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key)
+const GRID_COL_STORAGE_KEY = 'nam-lab-grid-columns'
+
+function loadVisibleCols(): string[] {
+  try {
+    const stored = localStorage.getItem(GRID_COL_STORAGE_KEY)
+    if (!stored) return DEFAULT_VISIBLE_COLS
+    const parsed = JSON.parse(stored) as string[]
+    // Always ensure 'name' is included and only known keys are kept
+    const known = new Set(ALL_GRID_COLUMNS.map((c) => c.key))
+    const filtered = parsed.filter((k) => known.has(k))
+    return filtered.includes('name') ? filtered : ['name', ...filtered]
+  } catch {
+    return DEFAULT_VISIBLE_COLS
+  }
+}
+
+function saveVisibleCols(cols: string[]): void {
+  localStorage.setItem(GRID_COL_STORAGE_KEY, JSON.stringify(cols))
+}
 
 function getCellValue(file: NamFile, key: string): string {
   const m = file.metadata
@@ -44,6 +67,8 @@ function getCellValue(file: NamFile, key: string): string {
     case 'date':
       if (!m.date) return ''
       return `${m.date.year}-${String(m.date.month).padStart(2, '0')}-${String(m.date.day).padStart(2, '0')}`
+    case 'input_level_dbu':  return m.input_level_dbu  != null ? String(m.input_level_dbu)  : ''
+    case 'output_level_dbu': return m.output_level_dbu != null ? String(m.output_level_dbu) : ''
     default: return ''
   }
 }
@@ -364,13 +389,15 @@ export function FileList({
 // ---- Grid view ----
 
 const DEFAULT_COL_WIDTHS: Record<string, number> = {
-  name:       280,
-  date:       100,
-  modeled_by: 200,
-  gear_make:  150,
-  gear_model: 150,
-  gear_type:  110,
-  tone_type:  110,
+  name:             280,
+  date:             100,
+  modeled_by:       200,
+  gear_make:        150,
+  gear_model:       150,
+  gear_type:        110,
+  tone_type:        110,
+  input_level_dbu:  110,
+  output_level_dbu: 110,
 }
 
 function GridView({
@@ -390,7 +417,38 @@ function GridView({
   onContextMenu: (e: React.MouseEvent) => void
 }) {
   const [colWidths, setColWidths] = useState<Record<string, number>>(DEFAULT_COL_WIDTHS)
+  const [visibleCols, setVisibleCols] = useState<string[]>(loadVisibleCols)
+  const [showColChooser, setShowColChooser] = useState(false)
   const resizingRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null)
+  const chooserRef = useRef<HTMLDivElement>(null)
+
+  // Close chooser when clicking outside
+  useEffect(() => {
+    if (!showColChooser) return
+    const handler = (e: MouseEvent) => {
+      if (chooserRef.current && !chooserRef.current.contains(e.target as Node)) {
+        setShowColChooser(false)
+      }
+    }
+    window.addEventListener('mousedown', handler)
+    return () => window.removeEventListener('mousedown', handler)
+  }, [showColChooser])
+
+  const activeColumns = ALL_GRID_COLUMNS.filter((c) => visibleCols.includes(c.key))
+
+  const toggleCol = (key: string) => {
+    if (key === 'name') return // always visible
+    const next = visibleCols.includes(key)
+      ? visibleCols.filter((k) => k !== key)
+      : [...visibleCols, key]
+    setVisibleCols(next)
+    saveVisibleCols(next)
+  }
+
+  const resetCols = () => {
+    setVisibleCols(DEFAULT_VISIBLE_COLS)
+    saveVisibleCols(DEFAULT_VISIBLE_COLS)
+  }
 
   const onResizeStart = (e: React.MouseEvent, key: string) => {
     e.preventDefault()
@@ -411,18 +469,17 @@ function GridView({
   }
 
   return (
-    <div className="flex-1 overflow-auto" onContextMenu={onContextMenu}>
-      <table className="border-collapse text-xs" style={{ tableLayout: 'fixed', width: GRID_COLUMNS.reduce((s, c) => s + colWidths[c.key], 24) }}>
+    <div className="flex-1 overflow-auto relative" onContextMenu={onContextMenu}>
+      <table className="border-collapse text-xs" style={{ tableLayout: 'fixed', width: activeColumns.reduce((s, c) => s + colWidths[c.key], 24 + 32) }}>
         <thead className="sticky top-0 z-10">
           <tr className="bg-gray-100 dark:bg-gray-900 border-b-2 border-gray-300 dark:border-gray-700">
             <th className="border-r border-gray-200 dark:border-gray-700" style={{ width: 24 }} />
-            {GRID_COLUMNS.map((col) => (
+            {activeColumns.map((col) => (
               <th
                 key={col.key}
-                className="relative text-left font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-r border-gray-200 dark:border-gray-700 last:border-r-0 select-none"
+                className="relative text-left font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-r border-gray-200 dark:border-gray-700 select-none"
                 style={{ width: colWidths[col.key] }}
               >
-                {/* Sort click area */}
                 <div
                   className="flex items-center gap-1 px-3 py-2 cursor-pointer hover:text-gray-800 dark:hover:text-gray-200 whitespace-nowrap overflow-hidden pr-4"
                   onClick={() => onSortClick(col.key)}
@@ -435,19 +492,59 @@ function GridView({
                     </svg>
                   )}
                 </div>
-                {/* Resize handle */}
                 <div
                   className="absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-indigo-400/40 z-20"
                   onMouseDown={(e) => onResizeStart(e, col.key)}
                 />
               </th>
             ))}
+            {/* Column chooser button */}
+            <th className="relative bg-gray-100 dark:bg-gray-900 border-l border-gray-200 dark:border-gray-700" style={{ width: 32 }}>
+              <div ref={chooserRef} className="relative flex items-center justify-center h-full">
+                <button
+                  onClick={() => setShowColChooser((v) => !v)}
+                  className={`p-1 rounded transition-colors ${showColChooser ? 'text-indigo-400' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-200'}`}
+                  title="Configure columns"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+                  </svg>
+                </button>
+                {showColChooser && (
+                  <div className="absolute right-0 top-full mt-1 w-52 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50 py-1">
+                    <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-b border-gray-200 dark:border-gray-700">
+                      Columns
+                    </div>
+                    {ALL_GRID_COLUMNS.map((col) => (
+                      <label key={col.key} className={`flex items-center gap-2.5 px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 ${col.key === 'name' ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                        <input
+                          type="checkbox"
+                          checked={visibleCols.includes(col.key)}
+                          onChange={() => toggleCol(col.key)}
+                          disabled={col.key === 'name'}
+                          className="w-3.5 h-3.5 rounded border-gray-400 text-indigo-500 focus:ring-0 cursor-pointer disabled:cursor-not-allowed"
+                        />
+                        <span className="text-gray-700 dark:text-gray-300">{col.label}</span>
+                      </label>
+                    ))}
+                    <div className="border-t border-gray-200 dark:border-gray-700 mt-1 pt-1 px-3 pb-1">
+                      <button
+                        onClick={resetCols}
+                        className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+                      >
+                        Reset to default
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </th>
           </tr>
         </thead>
         <tbody>
           {files.length === 0 ? (
             <tr>
-              <td colSpan={GRID_COLUMNS.length + 1} className="text-center py-8 text-gray-400 dark:text-gray-600">No matches</td>
+              <td colSpan={activeColumns.length + 2} className="text-center py-8 text-gray-400 dark:text-gray-600">No matches</td>
             </tr>
           ) : (
             files.map((file, index) => {
@@ -481,10 +578,10 @@ function GridView({
                   <td className="border-r border-gray-200 dark:border-gray-700/60 text-center" style={{ width: 24 }}>
                     {file.isDirty && <div className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" title="Unsaved changes" />}
                   </td>
-                  {GRID_COLUMNS.map((col) => {
+                  {activeColumns.map((col) => {
                     const val = getCellValue(file, col.key)
                     return (
-                      <td key={col.key} className="px-3 py-2 border-r border-gray-200 dark:border-gray-700/60 last:border-r-0 overflow-hidden" style={{ width: colWidths[col.key], maxWidth: colWidths[col.key] }}>
+                      <td key={col.key} className="px-3 py-2 border-r border-gray-200 dark:border-gray-700/60 overflow-hidden" style={{ width: colWidths[col.key], maxWidth: colWidths[col.key] }}>
                         {col.key === 'tone_type' && val ? (
                           <span className={`px-1.5 py-0.5 rounded text-xs ${toneChipClass(val, solidPills)}`}>{val}</span>
                         ) : col.key === 'gear_type' && val ? (
@@ -501,6 +598,7 @@ function GridView({
                       </td>
                     )
                   })}
+                  <td style={{ width: 32 }} />
                 </tr>
               )
             })

@@ -255,7 +255,7 @@ function TreeNode({
   matchingPaths: Set<string> | null
   onDropFiles?: (filePaths: string[], destFolderPath: string) => void
 }) {
-  const [expanded, setExpanded] = useState(depth <= 1)
+  const [expanded, setExpanded] = useState(true)
   const isSelected = selectedFolder === node.path
   const hasChildren = node.children.length > 0
 
