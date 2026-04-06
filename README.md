@@ -49,9 +49,13 @@ This is especially useful for capture artists who want to properly tag their `.n
 ### List View & Grid View
 - Toggle between **List** and **Grid** views using the icons to the right of the search bar
 - **List view** — compact single-row per file with name, subtitle, gear/tone chips, and missing-field badge
-- **Grid view** — spreadsheet-style table with columns: Capture Name · Date · Modeled By · Manufacturer · Model · Gear Type · Tone Type
+- **Grid view** — spreadsheet-style table with configurable columns
   - Click any column header to **sort** ascending/descending
   - **Drag column edges** to resize individual columns
+  - **Column chooser** — click the columns icon (⊞) at the far right of the header to show/hide columns; choices persist across launches
+  - Available columns: Capture Name (always visible) · Date · Modeled By · Manufacturer · Model · Gear Type · Tone Type · Reamp Send (dBu) · Reamp Return (dBu) · ESR
+  - **ESR column** is colour-coded: green < 0.01 (excellent) · amber 0.01–0.05 (acceptable) · red > 0.05; empty for captures that don't include training stats
+  - **Reset to default** option in the column chooser restores the original column set
   - Panel auto-widens when switching to grid view
 - Set your **default view** in Settings → Appearance — switches immediately, persists across launches
 - Per-mode width memory: list and grid each remember their last-used panel width separately

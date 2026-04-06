@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect } from 'react'
+import * as XLSX from 'xlsx'
 import { NamFile, GEAR_TYPES, TONE_TYPES } from '../types/nam'
 import { gearChipClass, toneChipClass, getGearImageSrc } from '../assets/gear'
 
@@ -23,16 +24,20 @@ interface FileListProps {
 }
 
 const ALL_GRID_COLUMNS: { key: string; label: string; minWidth: number; defaultVisible: boolean }[] = [
-  { key: 'name',            label: 'Capture Name',       minWidth: 180, defaultVisible: true  },
-  { key: 'date',            label: 'Date',                minWidth: 96,  defaultVisible: true  },
-  { key: 'modeled_by',      label: 'Modeled By',          minWidth: 130, defaultVisible: true  },
-  { key: 'gear_make',       label: 'Manufacturer',        minWidth: 120, defaultVisible: true  },
-  { key: 'gear_model',      label: 'Model',               minWidth: 120, defaultVisible: true  },
-  { key: 'gear_type',       label: 'Gear Type',           minWidth: 90,  defaultVisible: true  },
-  { key: 'tone_type',       label: 'Tone Type',           minWidth: 90,  defaultVisible: true  },
+  { key: 'name',             label: 'Capture Name',       minWidth: 180, defaultVisible: true  },
+  { key: 'date',             label: 'Date',               minWidth: 96,  defaultVisible: true  },
+  { key: 'modeled_by',       label: 'Modeled By',         minWidth: 130, defaultVisible: true  },
+  { key: 'gear_make',        label: 'Manufacturer',       minWidth: 120, defaultVisible: true  },
+  { key: 'gear_model',       label: 'Model',              minWidth: 120, defaultVisible: true  },
+  { key: 'gear_type',        label: 'Gear Type',          minWidth: 90,  defaultVisible: true  },
+  { key: 'tone_type',        label: 'Tone Type',          minWidth: 90,  defaultVisible: true  },
   { key: 'input_level_dbu',  label: 'Reamp Send (dBu)',   minWidth: 110, defaultVisible: false },
   { key: 'output_level_dbu', label: 'Reamp Return (dBu)', minWidth: 110, defaultVisible: false },
   { key: 'validation_esr',   label: 'ESR',                minWidth: 90,  defaultVisible: false },
+  { key: 'loudness',         label: 'Loudness (dBFS)',    minWidth: 110, defaultVisible: false },
+  { key: 'gain',             label: 'Gain',               minWidth: 80,  defaultVisible: false },
+  { key: 'architecture',     label: 'Architecture',       minWidth: 110, defaultVisible: false },
+  { key: 'nam_version',      label: 'NAM Version',        minWidth: 90,  defaultVisible: false },
 ]
 
 const DEFAULT_VISIBLE_COLS = ALL_GRID_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key)
@@ -74,6 +79,10 @@ function getCellValue(file: NamFile, key: string): string {
       const esr = (m.training as Record<string, unknown> | undefined)?.validation_esr
       return esr != null ? (esr as number).toFixed(6) : ''
     }
+    case 'loudness':    return m.loudness != null ? m.loudness.toFixed(2) : ''
+    case 'gain':        return m.gain != null ? m.gain.toFixed(2) : ''
+    case 'architecture': return file.architecture ?? ''
+    case 'nam_version': return file.version ?? ''
     default: return ''
   }
 }
@@ -83,7 +92,59 @@ function getSortValue(file: NamFile, key: string): string | number {
     const d = file.metadata.date
     return d ? d.year * 10000 + d.month * 100 + d.day : 0
   }
+  if (key === 'loudness') return file.metadata.loudness ?? -Infinity
+  if (key === 'gain') return file.metadata.gain ?? -Infinity
+  if (key === 'input_level_dbu') return file.metadata.input_level_dbu ?? -Infinity
+  if (key === 'output_level_dbu') return file.metadata.output_level_dbu ?? -Infinity
+  if (key === 'validation_esr') {
+    const esr = (file.metadata.training as Record<string, unknown> | undefined)?.validation_esr
+    return esr != null ? (esr as number) : Infinity
+  }
   return getCellValue(file, key).toLowerCase()
+}
+
+// ---- Export helpers ----
+
+function buildExportRows(files: NamFile[], cols: typeof ALL_GRID_COLUMNS): Record<string, string>[] {
+  return files.map((file) => {
+    const row: Record<string, string> = {}
+    for (const col of cols) row[col.label] = getCellValue(file, col.key)
+    return row
+  })
+}
+
+function doExportCSV(files: NamFile[], cols: typeof ALL_GRID_COLUMNS, filename: string): void {
+  const headers = cols.map((c) => c.label)
+  const rows = buildExportRows(files, cols)
+  const csvLines = [
+    headers.map((h) => `"${h.replace(/"/g, '""')}"`).join(','),
+    ...rows.map((r) =>
+      headers.map((h) => {
+        const v = r[h] ?? ''
+        return v.includes(',') || v.includes('"') || v.includes('\n')
+          ? `"${v.replace(/"/g, '""')}"`
+          : v
+      }).join(',')
+    )
+  ]
+  const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename; a.click()
+  URL.revokeObjectURL(url)
+}
+
+function doExportXLSX(files: NamFile[], cols: typeof ALL_GRID_COLUMNS, filename: string): void {
+  const rows = buildExportRows(files, cols)
+  const ws = XLSX.utils.json_to_sheet(rows, { header: cols.map((c) => c.label) })
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'NAM Library')
+  const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename; a.click()
+  URL.revokeObjectURL(url)
 }
 
 export function FileList({
@@ -107,8 +168,33 @@ export function FileList({
   const [toneFilter, setToneFilter] = useState('')
   const [sortKey, setSortKey] = useState<string | null>('name')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
+  const [visibleCols, setVisibleCols] = useState<string[]>(loadVisibleCols)
+  const [showExport, setShowExport] = useState(false)
   const anchorIndexRef = useRef<number>(-1)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
+  const exportRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!showExport) return
+    const handler = (e: MouseEvent) => {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) setShowExport(false)
+    }
+    window.addEventListener('mousedown', handler)
+    return () => window.removeEventListener('mousedown', handler)
+  }, [showExport])
+
+  const handleVisibleColsChange = (cols: string[]) => {
+    setVisibleCols(cols)
+    saveVisibleCols(cols)
+  }
+
+  const triggerExport = (allCols: boolean, format: 'csv' | 'xlsx') => {
+    setShowExport(false)
+    const cols = allCols ? ALL_GRID_COLUMNS : ALL_GRID_COLUMNS.filter((c) => visibleCols.includes(c.key))
+    const filename = `nam-library.${format}`
+    if (format === 'csv') doExportCSV(sorted, cols, filename)
+    else doExportXLSX(sorted, cols, filename)
+  }
 
   useEffect(() => {
     if (!ctxMenu) return
@@ -206,7 +292,7 @@ export function FileList({
           )}
         </div>
 
-        {/* View toggle */}
+        {/* View toggle + Export */}
         <div className="flex items-center gap-0.5 flex-shrink-0">
           <button
             onClick={() => onViewModeChange('list')}
@@ -226,6 +312,39 @@ export function FileList({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18M10 3v18M14 3v18" />
             </svg>
           </button>
+          {/* Export dropdown */}
+          <div ref={exportRef} className="relative">
+            <button
+              onClick={() => setShowExport((v) => !v)}
+              title="Export"
+              disabled={sorted.length === 0}
+              className={`p-1.5 rounded transition-colors ${showExport ? 'bg-indigo-600 text-white' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200'} disabled:opacity-30 disabled:cursor-not-allowed`}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+            </button>
+            {showExport && (
+              <div className="absolute right-0 top-full mt-1 w-56 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50 py-1">
+                <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-b border-gray-200 dark:border-gray-700">
+                  Export {sorted.length} rows
+                </div>
+                <button onClick={() => triggerExport(false, 'csv')} className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
+                  <span className="text-xs font-mono text-gray-400">CSV</span> Visible columns
+                </button>
+                <button onClick={() => triggerExport(true, 'csv')} className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
+                  <span className="text-xs font-mono text-gray-400">CSV</span> All columns
+                </button>
+                <div className="border-t border-gray-200 dark:border-gray-700 my-1" />
+                <button onClick={() => triggerExport(false, 'xlsx')} className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
+                  <span className="text-xs font-mono text-green-500">XLS</span> Visible columns
+                </button>
+                <button onClick={() => triggerExport(true, 'xlsx')} className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
+                  <span className="text-xs font-mono text-green-500">XLS</span> All columns
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -302,6 +421,8 @@ export function FileList({
           onSelectRange={onSelectRange}
           solidPills={solidPills}
           draggable={draggable}
+          visibleCols={visibleCols}
+          onVisibleColsChange={handleVisibleColsChange}
           onContextMenu={(e) => {
             if (selectedIds.size === 0) return
             e.preventDefault()
@@ -404,11 +525,15 @@ const DEFAULT_COL_WIDTHS: Record<string, number> = {
   input_level_dbu:  110,
   output_level_dbu: 110,
   validation_esr:   100,
+  loudness:         110,
+  gain:             90,
+  architecture:     130,
+  nam_version:      100,
 }
 
 function GridView({
   files, selectedIds, sortKey, sortDir, onSortClick,
-  anchorIndexRef, onSelect, onSelectRange, solidPills, draggable, onContextMenu
+  anchorIndexRef, onSelect, onSelectRange, solidPills, draggable, visibleCols, onVisibleColsChange, onContextMenu
 }: {
   files: NamFile[]
   selectedIds: Set<string>
@@ -420,10 +545,11 @@ function GridView({
   onSelectRange: (ids: string[]) => void
   solidPills: boolean
   draggable: boolean
+  visibleCols: string[]
+  onVisibleColsChange: (cols: string[]) => void
   onContextMenu: (e: React.MouseEvent) => void
 }) {
   const [colWidths, setColWidths] = useState<Record<string, number>>(DEFAULT_COL_WIDTHS)
-  const [visibleCols, setVisibleCols] = useState<string[]>(loadVisibleCols)
   const [showColChooser, setShowColChooser] = useState(false)
   const resizingRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null)
   const chooserRef = useRef<HTMLDivElement>(null)
@@ -447,13 +573,11 @@ function GridView({
     const next = visibleCols.includes(key)
       ? visibleCols.filter((k) => k !== key)
       : [...visibleCols, key]
-    setVisibleCols(next)
-    saveVisibleCols(next)
+    onVisibleColsChange(next)
   }
 
   const resetCols = () => {
-    setVisibleCols(DEFAULT_VISIBLE_COLS)
-    saveVisibleCols(DEFAULT_VISIBLE_COLS)
+    onVisibleColsChange(DEFAULT_VISIBLE_COLS)
   }
 
   const onResizeStart = (e: React.MouseEvent, key: string) => {

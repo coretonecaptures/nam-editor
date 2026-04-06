@@ -145,6 +145,7 @@ export default function App() {
   const draggingRef = useRef<null | { panel: 'tree' | 'list'; startX: number; startWidth: number }>(null)
   const mainContentRef = useRef<HTMLDivElement>(null)
   const [treeCollapsed, setTreeCollapsed] = useState(false)
+  const [listCollapsed, setListCollapsed] = useState(false)
 
   // Apply dark/light class to <html> whenever theme setting changes
   useEffect(() => {
@@ -743,7 +744,7 @@ export default function App() {
 
         {/* File list — only shown when files are loaded */}
         {files.length > 0 && <>
-          <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: listWidth }}>
+          <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: listCollapsed ? 0 : listWidth }}>
             <FileList
               files={visibleFiles}
               selectedIds={selectedIds}
@@ -819,7 +820,7 @@ export default function App() {
               }}
             />
           </div>
-          <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} />
+          <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} onCollapse={() => setListCollapsed((v) => !v)} collapsed={listCollapsed} />
         </>}
 
         {/* Main content */}
