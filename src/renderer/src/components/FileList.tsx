@@ -30,8 +30,9 @@ const ALL_GRID_COLUMNS: { key: string; label: string; minWidth: number; defaultV
   { key: 'gear_model',      label: 'Model',               minWidth: 120, defaultVisible: true  },
   { key: 'gear_type',       label: 'Gear Type',           minWidth: 90,  defaultVisible: true  },
   { key: 'tone_type',       label: 'Tone Type',           minWidth: 90,  defaultVisible: true  },
-  { key: 'input_level_dbu', label: 'Reamp Send (dBu)',    minWidth: 110, defaultVisible: false },
-  { key: 'output_level_dbu',label: 'Reamp Return (dBu)',  minWidth: 110, defaultVisible: false },
+  { key: 'input_level_dbu',  label: 'Reamp Send (dBu)',   minWidth: 110, defaultVisible: false },
+  { key: 'output_level_dbu', label: 'Reamp Return (dBu)', minWidth: 110, defaultVisible: false },
+  { key: 'validation_esr',   label: 'ESR',                minWidth: 90,  defaultVisible: false },
 ]
 
 const DEFAULT_VISIBLE_COLS = ALL_GRID_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key)
@@ -69,6 +70,10 @@ function getCellValue(file: NamFile, key: string): string {
       return `${m.date.year}-${String(m.date.month).padStart(2, '0')}-${String(m.date.day).padStart(2, '0')}`
     case 'input_level_dbu':  return m.input_level_dbu  != null ? String(m.input_level_dbu)  : ''
     case 'output_level_dbu': return m.output_level_dbu != null ? String(m.output_level_dbu) : ''
+    case 'validation_esr': {
+      const esr = (m.training as Record<string, unknown> | undefined)?.validation_esr
+      return esr != null ? (esr as number).toFixed(6) : ''
+    }
     default: return ''
   }
 }
@@ -246,7 +251,7 @@ export function FileList({
         <select
           value={gearFilter}
           onChange={(e) => setGearFilter(e.target.value)}
-          className={`flex-1 min-w-0 text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
+          className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
             gearFilter
               ? 'bg-orange-100 dark:bg-orange-900/30 border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-400'
               : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
@@ -258,7 +263,7 @@ export function FileList({
         <select
           value={toneFilter}
           onChange={(e) => setToneFilter(e.target.value)}
-          className={`flex-1 min-w-0 text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
+          className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
             toneFilter
               ? 'bg-indigo-100 dark:bg-indigo-900/40 border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-400'
               : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
@@ -398,6 +403,7 @@ const DEFAULT_COL_WIDTHS: Record<string, number> = {
   tone_type:        110,
   input_level_dbu:  110,
   output_level_dbu: 110,
+  validation_esr:   100,
 }
 
 function GridView({
@@ -590,6 +596,12 @@ function GridView({
                           <span className={`truncate block text-sm font-semibold ${val ? 'text-gray-900 dark:text-gray-100' : 'text-gray-400 dark:text-gray-600'}`}>
                             {val || '—'}
                           </span>
+                        ) : col.key === 'validation_esr' && val ? (
+                          <span className={`truncate block font-mono ${
+                            parseFloat(val) < 0.01  ? 'text-green-500' :
+                            parseFloat(val) < 0.05  ? 'text-amber-400' :
+                                                      'text-red-400'
+                          }`}>{val}</span>
                         ) : (
                           <span className={`truncate block ${val ? 'text-gray-700 dark:text-gray-300' : 'text-gray-400 dark:text-gray-600'}`}>
                             {val || '—'}
