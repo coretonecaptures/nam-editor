@@ -14,6 +14,7 @@ const api = {
   getErrorLogPath: (): Promise<string> => ipcRenderer.invoke('log:getErrorLogPath'),
   getStartupLogPath: (): Promise<string> => ipcRenderer.invoke('log:getStartupLogPath'),
   refocusWindow: () => ipcRenderer.invoke('window:refocus'),
+  statPath: (p: string): Promise<{ isDirectory: boolean }> => ipcRenderer.invoke('path:stat', p),
   platform: process.platform
 }
 

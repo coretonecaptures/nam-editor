@@ -34,10 +34,15 @@ const ALL_GRID_COLUMNS: { key: string; label: string; minWidth: number; defaultV
   { key: 'input_level_dbu',  label: 'Reamp Send (dBu)',   minWidth: 110, defaultVisible: false },
   { key: 'output_level_dbu', label: 'Reamp Return (dBu)', minWidth: 110, defaultVisible: false },
   { key: 'validation_esr',   label: 'ESR',                minWidth: 90,  defaultVisible: false },
-  { key: 'loudness',         label: 'Loudness (dBFS)',    minWidth: 110, defaultVisible: false },
-  { key: 'gain',             label: 'Gain',               minWidth: 80,  defaultVisible: false },
-  { key: 'architecture',     label: 'Architecture',       minWidth: 110, defaultVisible: false },
-  { key: 'nam_version',      label: 'NAM Version',        minWidth: 90,  defaultVisible: false },
+  { key: 'loudness',          label: 'Loudness (dBFS)',    minWidth: 110, defaultVisible: false },
+  { key: 'gain',              label: 'Gain',               minWidth: 80,  defaultVisible: false },
+  { key: 'architecture',      label: 'Architecture',       minWidth: 110, defaultVisible: false },
+  { key: 'nam_version',       label: 'NAM Version',        minWidth: 90,  defaultVisible: false },
+  { key: 'model_size',        label: 'Model Size',         minWidth: 120, defaultVisible: false },
+  { key: 'checks_passed',     label: 'Checks Passed',      minWidth: 110, defaultVisible: false },
+  { key: 'latency_samples',   label: 'Latency (samples)',  minWidth: 110, defaultVisible: false },
+  { key: 'nb_trained_epochs', label: 'Trained Epochs',     minWidth: 100, defaultVisible: false },
+  { key: 'nb_preset_name',    label: 'NAM-BOT Preset',     minWidth: 120, defaultVisible: false },
 ]
 
 const DEFAULT_VISIBLE_COLS = ALL_GRID_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key)
@@ -83,6 +88,34 @@ function getCellValue(file: NamFile, key: string): string {
     case 'gain':        return m.gain != null ? m.gain.toFixed(2) : ''
     case 'architecture': return file.architecture ?? ''
     case 'nam_version': return file.version ?? ''
+    case 'model_size': {
+      const layers = (file.config as Record<string, unknown> | undefined)?.layers
+      const ch = Array.isArray(layers) && layers.length > 0
+        ? (layers[0] as Record<string, unknown>)?.channels as number | undefined
+        : undefined
+      if (ch == null) return ''
+      return ch <= 8 ? `Nano (${ch}ch)` : ch <= 16 ? `Standard (${ch}ch)` : ch <= 32 ? `Complex (${ch}ch)` : `Custom (${ch}ch)`
+    }
+    case 'checks_passed': {
+      const t = m.training as Record<string, unknown> | undefined
+      const checks = ((t?.data as Record<string, unknown> | undefined)?.checks as Record<string, unknown> | undefined)
+      if (checks?.passed == null) return ''
+      const passed = checks.passed as boolean
+      const ignored = (t?.settings as Record<string, unknown> | undefined)?.ignore_checks === true
+      return passed ? 'Yes' : ignored ? 'No (bypassed)' : 'No'
+    }
+    case 'latency_samples': {
+      const cal = (((m.training as Record<string, unknown> | undefined)?.data as Record<string, unknown> | undefined)?.latency as Record<string, unknown> | undefined)?.calibration as Record<string, unknown> | undefined
+      return cal?.recommended != null ? String(cal.recommended) : ''
+    }
+    case 'nb_trained_epochs': {
+      const nb = (m.training as Record<string, unknown> | undefined)?.nam_bot as Record<string, unknown> | undefined
+      return nb?.trained_epochs != null ? String(nb.trained_epochs) : ''
+    }
+    case 'nb_preset_name': {
+      const nb = (m.training as Record<string, unknown> | undefined)?.nam_bot as Record<string, unknown> | undefined
+      return nb?.preset_name != null ? String(nb.preset_name) : ''
+    }
     default: return ''
   }
 }
@@ -529,6 +562,11 @@ const DEFAULT_COL_WIDTHS: Record<string, number> = {
   gain:             90,
   architecture:     130,
   nam_version:      100,
+  model_size:         130,
+  checks_passed:      120,
+  latency_samples:    120,
+  nb_trained_epochs:  110,
+  nb_preset_name:     140,
 }
 
 function GridView({

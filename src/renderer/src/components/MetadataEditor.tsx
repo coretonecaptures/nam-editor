@@ -247,11 +247,38 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
             </div>
           </Section>
 
+          {/* Training section */}
+          <Section title="Training" icon={
+            <svg className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2v-4M9 21H5a2 2 0 01-2-2v-4m0 0h18" />
+            </svg>
+          }>
+            <Field label="Trained Epochs" hint="Number of training epochs (backfill if known)">
+              <NumberInput
+                value={m.nb_trained_epochs ?? ''}
+                onChange={(v) => update('nb_trained_epochs', v)}
+                placeholder="e.g. 200"
+                step={1}
+                changed={isManuallyChanged('nb_trained_epochs')}
+                autoFilled={false}
+              />
+            </Field>
+          </Section>
+
           {/* Read-only stats */}
           <Section title="Capture Stats" icon="📈">
             <div className="grid grid-cols-2 gap-3">
               <StatCard label="Architecture" value={file.architecture} />
               <StatCard label="NAM Version" value={file.version} />
+              {(() => {
+                const layers = (file.config as Record<string, unknown> | undefined)?.layers
+                const channels = (Array.isArray(layers) && layers.length > 0)
+                  ? (layers[0] as Record<string, unknown>)?.channels as number | undefined
+                  : undefined
+                if (channels == null) return null
+                const label = channels <= 8 ? `Nano (${channels}ch)` : channels <= 16 ? `Standard (${channels}ch)` : channels <= 32 ? `Complex (${channels}ch)` : `Custom (${channels}ch)`
+                return <StatCard label="Model Size" value={label} />
+              })()}
               {m.loudness != null && (
                 <StatCard label="Integrated Loudness" value={`${m.loudness.toFixed(2)} dBFS`} />
               )}
@@ -267,13 +294,29 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
               )}
               {(() => {
                 const t = m.training as Record<string, unknown> | undefined
-                const epochs =
-                  t?.epoch ?? t?.num_epochs ?? t?.epochs ??
-                  (t?.settings as Record<string, unknown> | undefined)?.epochs ??
-                  (t?.settings as Record<string, unknown> | undefined)?.num_epochs
-                return epochs != null ? (
-                  <StatCard label="Epochs" value={String(epochs)} />
-                ) : null
+                const data = t?.data as Record<string, unknown> | undefined
+                const checks = data?.checks as Record<string, unknown> | undefined
+                if (checks?.passed == null) return null
+                const passed = checks.passed as boolean
+                const ignored = (t?.settings as Record<string, unknown> | undefined)?.ignore_checks === true
+                return (
+                  <StatCard
+                    label="Checks Passed"
+                    value={passed ? 'Yes' : ignored ? 'No (bypassed)' : 'No'}
+                    good={passed ? true : false}
+                  />
+                )
+              })()}
+              {(() => {
+                const t = m.training as Record<string, unknown> | undefined
+                const cal = ((t?.data as Record<string, unknown> | undefined)?.latency as Record<string, unknown> | undefined)?.calibration as Record<string, unknown> | undefined
+                if (cal?.recommended == null) return null
+                return <StatCard label="Calibrated Latency" value={`${cal.recommended} samples`} />
+              })()}
+              {(() => {
+                const nb = ((m.training as Record<string, unknown> | undefined)?.nam_bot as Record<string, unknown> | undefined)
+                if (nb?.preset_name != null) return <StatCard label="NAM-BOT Preset" value={String(nb.preset_name)} />
+                return null
               })()}
               {dateStr && <StatCard label="Captured On" value={dateStr} />}
             </div>

@@ -387,8 +387,14 @@ function FolderRow({
         style={{ paddingLeft: isRoot ? '12px' : `${depth * 12 + 8}px` }}
         onClick={onClick}
         onContextMenu={openMenu}
-        onDragOver={onDropFiles ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' } : undefined}
-        onDragEnter={onDropFiles ? (e) => { e.preventDefault(); setIsDragOver(true) } : undefined}
+        onDragOver={onDropFiles ? (e) => {
+          if (!e.dataTransfer.types.includes('application/x-nam-files')) return
+          e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'
+        } : undefined}
+        onDragEnter={onDropFiles ? (e) => {
+          if (!e.dataTransfer.types.includes('application/x-nam-files')) return
+          e.preventDefault(); setIsDragOver(true)
+        } : undefined}
         onDragLeave={onDropFiles ? (e) => {
           if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragOver(false)
         } : undefined}

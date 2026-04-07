@@ -120,6 +120,12 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
+  // Prevent Electron from navigating to dropped file URLs — without this,
+  // dropping a file onto the window replaces the app with the raw file contents.
+  mainWindow.webContents.on('will-navigate', (event) => {
+    event.preventDefault()
+  })
+
   if (isDev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
     mainWindow.webContents.openDevTools({ mode: 'detach' })
@@ -202,6 +208,75 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+// Patch a field inside metadata.training.nam_bot, creating the structure if needed.
+function patchNamBotField(content: string, field: string, value: unknown): string {
+  const newVal = serializeJsonValue(value)
+
+  // Try to find an existing nam_bot block inside training and update the field
+  const namBotRe = /"nam_bot"\s*:\s*\{/
+  const namBotMatch = namBotRe.exec(content)
+  if (namBotMatch) {
+    const openBrace = namBotMatch.index + namBotMatch[0].length - 1
+    const closeBrace = findMatchingBrace(content, openBrace)
+    if (closeBrace !== -1) {
+      let inner = content.slice(openBrace + 1, closeBrace)
+      const fieldRe = new RegExp(
+        `("${escapeRe(field)}")(\\s*:\\s*)(null|"(?:[^"\\\\]|\\\\.)*"|-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)`
+      )
+      if (fieldRe.test(inner)) {
+        inner = inner.replace(fieldRe, (_m, k, sep) => k + sep + newVal)
+        return content.slice(0, openBrace + 1) + inner + content.slice(closeBrace)
+      } else if (value !== null && value !== undefined) {
+        // Insert field into existing nam_bot block
+        const indentMatch = /\n([ \t]+)"/.exec(inner)
+        const indent = indentMatch ? indentMatch[1] : '      '
+        const trimmed = inner.trimEnd()
+        const needsComma = trimmed.length > 0 && !trimmed.endsWith(',')
+        const trailing = inner.slice(trimmed.length)
+        inner = trimmed + (needsComma ? ',' : '') + `\n${indent}"${field}": ${newVal}` + trailing
+        return content.slice(0, openBrace + 1) + inner + content.slice(closeBrace)
+      }
+      return content
+    }
+  }
+
+  // No nam_bot block — find training block and inject nam_bot into it
+  if (value === null || value === undefined) return content
+  const trainingRe = /"training"\s*:\s*\{/
+  const trainingMatch = trainingRe.exec(content)
+  if (trainingMatch) {
+    const openBrace = trainingMatch.index + trainingMatch[0].length - 1
+    const closeBrace = findMatchingBrace(content, openBrace)
+    if (closeBrace !== -1) {
+      let inner = content.slice(openBrace + 1, closeBrace)
+      const indentMatch = /\n([ \t]+)"/.exec(inner)
+      const indent = indentMatch ? indentMatch[1] : '    '
+      const trimmed = inner.trimEnd()
+      const needsComma = trimmed.length > 0 && !trimmed.endsWith(',')
+      const trailing = inner.slice(trimmed.length)
+      const namBotBlock = `\n${indent}"nam_bot": {\n${indent}  "${field}": ${newVal}\n${indent}}`
+      inner = trimmed + (needsComma ? ',' : '') + namBotBlock + trailing
+      return content.slice(0, openBrace + 1) + inner + content.slice(closeBrace)
+    }
+  }
+
+  // No training block at all — inject training.nam_bot into the metadata block
+  const metaKeyMatch = /"metadata"\s*:\s*\{/.exec(content)
+  if (!metaKeyMatch) return content
+  const openBrace = metaKeyMatch.index + metaKeyMatch[0].length - 1
+  const closeBrace = findMatchingBrace(content, openBrace)
+  if (closeBrace === -1) return content
+  let inner = content.slice(openBrace + 1, closeBrace)
+  const indentMatch = /\n([ \t]+)"/.exec(inner)
+  const indent = indentMatch ? indentMatch[1] : '    '
+  const trimmed = inner.trimEnd()
+  const needsComma = trimmed.length > 0 && !trimmed.endsWith(',')
+  const trailing = inner.slice(trimmed.length)
+  const trainingBlock = `\n${indent}"training": {\n${indent}  "nam_bot": {\n${indent}    "${field}": ${newVal}\n${indent}  }\n${indent}}`
+  inner = trimmed + (needsComma ? ',' : '') + trainingBlock + trailing
+  return content.slice(0, openBrace + 1) + inner + content.slice(closeBrace)
+}
+
 app.whenReady().then(() => {
   log('app.whenReady fired')
   switchLogToUserData()
@@ -235,11 +310,15 @@ app.whenReady().then(() => {
     try {
       const content = fs.readFileSync(filePath, 'utf-8')
       const data = JSON.parse(content)
+      const meta = data.metadata ?? {}
+      // Lift nested NAM-BOT fields up to flat metadata for the UI
+      const nbEpochs = meta.training?.nam_bot?.trained_epochs
+      if (nbEpochs != null) meta.nb_trained_epochs = nbEpochs
       return {
         success: true,
         filePath,
         version: data.version ?? '?',
-        metadata: data.metadata ?? {},
+        metadata: meta,
         architecture: data.architecture ?? '?',
         config: data.config ?? null
       }
@@ -277,7 +356,15 @@ app.whenReady().then(() => {
       }
 
       // Apply surgical patches — only the value bytes for each field are changed
-      const patched = patchMetadataFields(content, patches)
+      let patched = patchMetadataFields(content, patches)
+
+      // Handle nb_trained_epochs — stored at metadata.training.nam_bot.trained_epochs
+      const origEpochs = orig.training?.nam_bot?.trained_epochs ?? null
+      const newEpochs = incoming.nb_trained_epochs != null ? Number(incoming.nb_trained_epochs) : null
+      if (newEpochs !== origEpochs) {
+        patched = patchNamBotField(patched, 'trained_epochs', newEpochs)
+      }
+
       fs.writeFileSync(filePath, patched, 'utf-8')
       return { success: true }
     } catch (err) {
@@ -353,6 +440,15 @@ app.whenReady().then(() => {
       return { success: true, destPath: destPath.replace(/\\/g, '/') }
     } catch (err) {
       return { success: false, error: String(err) }
+    }
+  })
+
+  // IPC: Check whether a path is a directory (used for drag-drop folder detection)
+  ipcMain.handle('path:stat', (_event, p: string) => {
+    try {
+      return { isDirectory: fs.statSync(p).isDirectory() }
+    } catch {
+      return { isDirectory: false }
     }
   })
 

@@ -20,6 +20,7 @@ export interface NamMetadata {
   input_level_dbu?: number | null
   output_level_dbu?: number | null
   training?: unknown
+  nb_trained_epochs?: number | null
 }
 
 export interface NamFile {

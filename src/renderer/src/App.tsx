@@ -36,6 +36,7 @@ declare global {
       getErrorLogPath: () => Promise<string>
       getStartupLogPath: () => Promise<string>
       refocusWindow: () => Promise<void>
+      statPath: (p: string) => Promise<{ isDirectory: boolean }>
       platform: string
     }
   }
@@ -358,20 +359,66 @@ export default function App() {
     await loadFolderByPath(librarian.rootFolder)
   }
 
-  const handleDrop = useCallback(
-    async (e: React.DragEvent) => {
+  // Native document-level drag/drop — more reliable than React synthetic events in Electron.
+  // We register once and read current state via refs to avoid stale closures.
+  const filesRef = useRef(files)
+  useEffect(() => { filesRef.current = files }, [files])
+  const loadFilesRef = useRef(loadFiles)
+  useEffect(() => { loadFilesRef.current = loadFiles }, [loadFiles])
+  const loadFolderByPathRef = useRef(loadFolderByPath)
+  useEffect(() => { loadFolderByPathRef.current = loadFolderByPath }, [loadFolderByPath])
+
+  useEffect(() => {
+    const onDragOver = (e: DragEvent) => {
       e.preventDefault()
-      const paths: string[] = []
-      for (const item of Array.from(e.dataTransfer.files)) {
-        if (item.name.endsWith('.nam')) {
-          const p = (item as unknown as { path: string }).path
-          if (p) paths.push(p)
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+    }
+
+    const onDrop = async (e: DragEvent) => {
+      e.preventDefault()
+      if (!e.dataTransfer) return
+
+      const droppedFiles = Array.from(e.dataTransfer.files)
+      if (droppedFiles.length === 0) return
+
+      const namFiles: string[] = []
+      const candidates: string[] = []
+
+      for (const file of droppedFiles) {
+        const p = (file as unknown as { path: string }).path
+        if (!p) continue
+        if (file.name.toLowerCase().endsWith('.nam')) {
+          namFiles.push(p)
+        } else {
+          candidates.push(p)
         }
       }
-      if (paths.length > 0) await loadFiles(paths, 'append')
-    },
-    [loadFiles]
-  )
+
+      // Check candidates via IPC to see if they are directories
+      const folders: string[] = []
+      for (const p of candidates) {
+        const result = await window.api.statPath(p)
+        if (result.isDirectory) folders.push(p)
+      }
+
+      if (folders.length === 0 && namFiles.length === 0) return
+
+      if (folders.length > 0) {
+        const dirty = filesRef.current.filter((f) => f.isDirty)
+        if (dirty.length > 0 && !window.confirm(`You have unsaved changes in ${dirty.length} file${dirty.length !== 1 ? 's' : ''}.\n\nDiscard changes and continue?`)) return
+        await loadFolderByPathRef.current(folders[0])
+      } else {
+        await loadFilesRef.current(namFiles, filesRef.current.length === 0 ? 'replace' : 'append')
+      }
+    }
+
+    document.addEventListener('dragover', onDragOver)
+    document.addEventListener('drop', onDrop)
+    return () => {
+      document.removeEventListener('dragover', onDragOver)
+      document.removeEventListener('drop', onDrop)
+    }
+  }, []) // empty deps — uses refs for current state
 
   const handleMetadataChange = (filePath: string, updated: NamFile['metadata']) => {
     setFiles((prev) =>
@@ -647,8 +694,8 @@ export default function App() {
   return (
     <div
       className="flex flex-col h-screen bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 overflow-hidden"
-      onDrop={handleDrop}
-      onDragOver={(e) => e.preventDefault()}
+      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' }}
+      onDragEnter={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' }}
     >
       <Toolbar
         onOpenFiles={handleOpenFiles}
@@ -970,7 +1017,7 @@ function EmptyState({
         <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-1">NAM Lab</h2>
         <p className="text-sm font-medium text-indigo-400 mb-3">Organize, clean, and scale your NAM library.</p>
         <p className="text-gray-500 dark:text-gray-500 text-sm max-w-xs">
-          Open a folder to manage your library, or open individual .nam files to edit their metadata. Drag & drop files anywhere to load them.
+          Open a folder to manage your library, or open individual .nam files to edit their metadata.
         </p>
       </div>
       <div className="flex gap-3">
@@ -987,7 +1034,6 @@ function EmptyState({
           Open Folder
         </button>
       </div>
-      <p className="text-gray-400 dark:text-gray-600 text-xs">Or drag & drop .nam files anywhere in the window</p>
     </div>
   )
 }
