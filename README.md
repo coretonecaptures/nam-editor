@@ -4,7 +4,7 @@
 
 *Organize, clean, and scale your NAM library.*
 
-Built with Electron, React, and Tailwind CSS. Runs on **Windows** and **macOS**.
+Built with Electron, React, and Tailwind CSS. Runs on **Windows**, **macOS**, and **Linux**.
 
 > **This app does not run captures or process audio.** It is purely a metadata editor for `.nam` files. To actually use your captures, you need the [Neural Amp Modeler plugin](https://www.neuralampmodeler.com/) (free, available for all major DAWs).
 
@@ -30,6 +30,7 @@ This is especially useful for capture artists who want to properly tag their `.n
 - Folder tree shows all subfolders with file counts; click any folder to filter the file list to that folder
 - Each folder shows a **blue total count** and an **amber dirty count** (unsaved edits)
 - All three panels are **resizable** — drag the dividers to any width
+- **Collapse panels** — hover any divider and click the chevron button to collapse the Library tree or File List panel entirely, giving more room to the editor or grid
 - **Refresh** button rescans the folder for new or removed files (warns about unsaved changes)
 - Remembers the last opened folder and reopens it automatically on next launch
 - Panel widths and window size are remembered between sessions
@@ -44,7 +45,6 @@ This is especially useful for capture artists who want to properly tag their `.n
 - A sky blue **FILTERED** banner with match count appears when any filter is active
 - When filtered, the amber dirty count only reflects unsaved files that are visible in the results
 - Closing the panel clears all filters
-- **Collapse the Library panel** by hovering the divider and clicking the chevron button — useful in grid view
 
 ### List View & Grid View
 - Toggle between **List** and **Grid** views using the icons to the right of the search bar
@@ -53,12 +53,18 @@ This is especially useful for capture artists who want to properly tag their `.n
   - Click any column header to **sort** ascending/descending
   - **Drag column edges** to resize individual columns
   - **Column chooser** — click the columns icon (⊞) at the far right of the header to show/hide columns; choices persist across launches
-  - Available columns: Capture Name (always visible) · Date · Modeled By · Manufacturer · Model · Gear Type · Tone Type · Reamp Send (dBu) · Reamp Return (dBu) · ESR
+  - Available columns: Capture Name (always visible) · Date · Modeled By · Manufacturer · Model · Gear Type · Tone Type · Reamp Send (dBu) · Reamp Return (dBu) · ESR · Loudness · Gain · Architecture · NAM Version · Model Channels · Checks Passed · Latency (samples) · Trained Epochs · NAM-BOT Preset · Detected Preset
   - **ESR column** is colour-coded: green < 0.01 (excellent) · amber 0.01–0.05 (acceptable) · red > 0.05; empty for captures that don't include training stats
   - **Reset to default** option in the column chooser restores the original column set
   - Panel auto-widens when switching to grid view
 - Set your **default view** in Settings → Appearance — switches immediately, persists across launches
 - Per-mode width memory: list and grid each remember their last-used panel width separately
+
+### Export
+- **Export button** (download icon, next to list/grid toggles) — available whenever files are loaded
+- Choose **CSV** or **Excel (.xlsx)** format
+- Choose **Visible columns** (respects your column chooser selection) or **All columns** (every available field)
+- Export respects active search and filters — only visible rows are exported
 
 ### File List Filters
 - **All / Edited / Unnamed / No Type / No Maker / No Tone** filter chips in the file list header
@@ -71,15 +77,14 @@ This is especially useful for capture artists who want to properly tag their `.n
 
 ### File Management
 - Open individual `.nam` files or an entire folder (scans recursively)
-- Drag & drop files directly onto the window to open them
+- Shift+click and Ctrl+click for range and multi-selection in the file list
+- Opening a new file or folder replaces the current session (with unsaved-changes warning)
+- Close All button clears the session
 - **Drag files between folders** — drag any file (or a multi-selection) from the list or grid view and drop it onto a folder in the tree to move it on disk; the folder highlights as you drag over it
   - Dragging a file that is part of a multi-selection moves all selected files
   - Dragging a non-selected file moves just that one file
   - Warns if any files have unsaved changes; skips files that already exist at the destination
   - Folder tree counts update and the view switches to the destination folder automatically
-- Shift+click and Ctrl+click for range and multi-selection in the file list
-- Opening a new file or folder replaces the current session (with unsaved-changes warning)
-- Close All button clears the session
 
 ### Metadata Editing
 - **Capture Name** — display name shown in plugins; click **↺ filename** button to reset it to the filename
@@ -88,12 +93,23 @@ This is especially useful for capture artists who want to properly tag their `.n
 - **Tone Type** — clean, crunch, hi_gain, fuzz, overdrive, distortion, other
 - **Manufacturer** and **Model** — gear make/model
 - **Reamp Send Level (dBu)** and **Reamp Return Level (dBu)**
+- **Trained Epochs** — number of training epochs; editable so capture artists can backfill this value for existing captures. Written to `metadata.training.nam_bot.trained_epochs` for compatibility with NAM-BOT
 - Ctrl+S / Cmd+S to save the current file
 - **Revert** button discards unsaved changes and restores the file's saved values
 - **↺ Defaults** button re-applies your active Settings rules to the current file's empty fields — useful after reverting to re-fill auto-populated values without overwriting anything you've set manually
-- Read-only stats: architecture, NAM version, integrated loudness, gain, validation ESR, epoch count (if present)
 - **File path** in the header is clickable — opens the file's folder in Finder/Explorer
 - **Gear type icon** displayed in the file header for visual identification (amp, pedal, cab, etc.)
+
+### Capture Stats (Read-Only)
+Shown in the detail panel for each file:
+- Architecture, NAM Version, Integrated Loudness, Gain Factor
+- **Validation ESR** — colour-coded green/amber (training quality indicator)
+- **Model Size** — number of channels in layer 1 of the WaveNet config
+- **Detected Preset** — reverse-engineered from the config fingerprint; identifies Standard, Complex, Lite, Feather, Nano, REVySTD, REVyHI, REVxSTD without needing the trainer to write it
+- **Checks Passed** — whether the NAM trainer's quality checks passed; flags bypassed captures
+- **Calibrated Latency** — measured latency in samples from the calibration run
+- **NAM-BOT Preset** — preset name written by NAM-BOT trainer (if present)
+- Captured On date
 
 ### Change Tracking & Highlighting
 - Fields auto-populated by settings rules show an **indigo border** and **"auto-filled"** label
@@ -135,7 +151,7 @@ A slim bar above the status bar shows which defaults are currently active (e.g. 
 ### Saving
 - **Save** button (or Ctrl+S / Cmd+S) saves the current file
 - **Revert** button discards unsaved changes for the current file
-- **Save All** in the toolbar saves all unsaved files (with optional confirmation dialog)
+- **Save All** in the toolbar saves all unsaved files (always requires confirmation)
 - **Right-click selection → Save N selected** — saves only the files you've selected
 - **Right-click folder → Save all in folder** — saves all unsaved files under that folder path
 - Batch edit writes directly to disk — no separate Save step needed
@@ -156,6 +172,7 @@ A slim bar above the status bar shows which defaults are currently active (e.g. 
 - **Revert Capture Name to filename** checkbox available in batch edit — sets each file's name to its own filename
 - Only the checked fields are written to disk; auto-fills and other pending changes are preserved separately
 - Confirmation dialog shows exactly which fields and how many files will be affected (skippable in Settings)
+- Editable fields include: Modeled By, Gear Type, Manufacturer, Model, Tone Type, Reamp Send/Return, Trained Epochs
 
 ### Per-Folder Right-Click Actions
 - **Save all in folder** — saves all unsaved files under that path (with optional confirmation)
@@ -166,6 +183,11 @@ A slim bar above the status bar shows which defaults are currently active (e.g. 
 ### Name from Filename
 - If loaded files have no Capture Name set, a **"Name from File (N)"** button appears in the toolbar
 - One click sets the capture name to the filename (minus `.nam`) for all unnamed files
+
+### NAM-BOT Integration
+NAM Lab supports metadata fields written by [NAM-BOT](https://github.com/nam-bot), a community NAM trainer wrapper:
+- **Trained Epochs** (`metadata.training.nam_bot.trained_epochs`) — number of training epochs; editable in NAM Lab so capture artists can backfill existing captures
+- **Preset Name** (`metadata.training.nam_bot.preset_name`) — training preset used; displayed as read-only in Capture Stats
 
 ---
 
@@ -251,6 +273,7 @@ No installation required. AppImage is a portable format that runs on most distro
 - [React](https://react.dev/) — UI
 - [Tailwind CSS](https://tailwindcss.com/) — styling
 - [electron-builder](https://www.electron.build/) — packaging
+- [xlsx](https://github.com/SheetJS/sheetjs) — Excel export
 
 ---
 
