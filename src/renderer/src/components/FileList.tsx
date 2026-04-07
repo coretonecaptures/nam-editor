@@ -2,6 +2,7 @@ import { useRef, useState, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import { NamFile, GEAR_TYPES, TONE_TYPES } from '../types/nam'
 import { gearChipClass, toneChipClass, getGearImageSrc } from '../assets/gear'
+import { detectPreset } from '../utils/detectPreset'
 
 type FilterMode = 'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited'
 type ViewMode = 'list' | 'grid'
@@ -38,11 +39,12 @@ const ALL_GRID_COLUMNS: { key: string; label: string; minWidth: number; defaultV
   { key: 'gain',              label: 'Gain',               minWidth: 80,  defaultVisible: false },
   { key: 'architecture',      label: 'Architecture',       minWidth: 110, defaultVisible: false },
   { key: 'nam_version',       label: 'NAM Version',        minWidth: 90,  defaultVisible: false },
-  { key: 'model_size',        label: 'Model Size',         minWidth: 120, defaultVisible: false },
+  { key: 'model_size',        label: 'Model Channels',     minWidth: 120, defaultVisible: false },
   { key: 'checks_passed',     label: 'Checks Passed',      minWidth: 110, defaultVisible: false },
   { key: 'latency_samples',   label: 'Latency (samples)',  minWidth: 110, defaultVisible: false },
   { key: 'nb_trained_epochs', label: 'Trained Epochs',     minWidth: 100, defaultVisible: false },
   { key: 'nb_preset_name',    label: 'NAM-BOT Preset',     minWidth: 120, defaultVisible: false },
+  { key: 'detected_preset',   label: 'Detected Preset',    minWidth: 120, defaultVisible: false },
 ]
 
 const DEFAULT_VISIBLE_COLS = ALL_GRID_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key)
@@ -94,7 +96,7 @@ function getCellValue(file: NamFile, key: string): string {
         ? (layers[0] as Record<string, unknown>)?.channels as number | undefined
         : undefined
       if (ch == null) return ''
-      return ch <= 8 ? `Nano (${ch}ch)` : ch <= 16 ? `Standard (${ch}ch)` : ch <= 32 ? `Complex (${ch}ch)` : `Custom (${ch}ch)`
+      return `${ch} channels`
     }
     case 'checks_passed': {
       const t = m.training as Record<string, unknown> | undefined
@@ -116,6 +118,8 @@ function getCellValue(file: NamFile, key: string): string {
       const nb = (m.training as Record<string, unknown> | undefined)?.nam_bot as Record<string, unknown> | undefined
       return nb?.preset_name != null ? String(nb.preset_name) : ''
     }
+    case 'detected_preset':
+      return detectPreset(file.config) ?? ''
     default: return ''
   }
 }
@@ -567,6 +571,7 @@ const DEFAULT_COL_WIDTHS: Record<string, number> = {
   latency_samples:    120,
   nb_trained_epochs:  110,
   nb_preset_name:     140,
+  detected_preset:    130,
 }
 
 function GridView({

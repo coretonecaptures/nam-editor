@@ -1,5 +1,6 @@
 import { NamFile, NamMetadata, GEAR_TYPES, TONE_TYPES } from '../types/nam'
 import { gearImages } from '../assets/gear'
+import { detectPreset } from '../utils/detectPreset'
 
 interface MetadataEditorProps {
   file: NamFile
@@ -257,7 +258,7 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
               <NumberInput
                 value={m.nb_trained_epochs ?? ''}
                 onChange={(v) => update('nb_trained_epochs', v)}
-                placeholder="e.g. 200"
+                placeholder="e.g. 1000"
                 step={1}
                 changed={isManuallyChanged('nb_trained_epochs')}
                 autoFilled={false}
@@ -276,9 +277,11 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
                   ? (layers[0] as Record<string, unknown>)?.channels as number | undefined
                   : undefined
                 if (channels == null) return null
-                const label = channels <= 8 ? `Nano (${channels}ch)` : channels <= 16 ? `Standard (${channels}ch)` : channels <= 32 ? `Complex (${channels}ch)` : `Custom (${channels}ch)`
-                return <StatCard label="Model Size" value={label} />
+                return <StatCard label="Model Size" value={`${channels} channels`} />
               })()}
+              {detectPreset(file.config) != null && (
+                <StatCard label="Detected Preset" value={detectPreset(file.config)!} />
+              )}
               {m.loudness != null && (
                 <StatCard label="Integrated Loudness" value={`${m.loudness.toFixed(2)} dBFS`} />
               )}

@@ -28,6 +28,8 @@ export function StatusBar({ message, type, logPath }: StatusBarProps) {
           view log
         </button>
       )}
+      <div className="flex-1" />
+      <span className="text-xs text-gray-400 dark:text-gray-700">{import.meta.env['VITE_APP_VERSION'] ?? ''}</span>
     </div>
   )
 }

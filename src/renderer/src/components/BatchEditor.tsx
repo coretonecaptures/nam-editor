@@ -167,5 +167,6 @@ const batchFields: Array<{
   { key: 'gear_model', label: 'Model', type: 'text', placeholder: 'e.g. BE100 Deluxe' },
   { key: 'tone_type', label: 'Tone Type', type: 'select', options: TONE_TYPES },
   { key: 'input_level_dbu', label: 'Input (dBu)', type: 'number', placeholder: 'e.g. 12.5' },
-  { key: 'output_level_dbu', label: 'Output (dBu)', type: 'number', placeholder: 'e.g. 12.5' }
+  { key: 'output_level_dbu', label: 'Output (dBu)', type: 'number', placeholder: 'e.g. 12.5' },
+  { key: 'nb_trained_epochs', label: 'Trained Epochs', type: 'number', placeholder: 'e.g. 1000' },
 ]

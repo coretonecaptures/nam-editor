@@ -42,7 +42,6 @@ export function Toolbar({
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12h2m0 0V9m0 3v3m4-7v8m0-8v8m4-11v14m0-14v14m4-9v4m0-4v4m4-7v10" />
         </svg>
         <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">NAM Lab</span>
-        <span className="text-xs text-gray-400 dark:text-gray-600">{import.meta.env['VITE_APP_VERSION'] ?? ''}</span>
       </div>
 
       <div className="w-px h-5 bg-gray-300 dark:bg-gray-700" />

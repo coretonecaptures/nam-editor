@@ -21,8 +21,9 @@ const FIELDS: FieldDef[] = [
   { key: 'tone_type',        label: 'Tone Type',          type: 'select', options: TONE_TYPES },
   { key: 'gear_make',        label: 'Manufacturer',       type: 'text',   placeholder: 'e.g. Friedman' },
   { key: 'gear_model',       label: 'Model',              type: 'text',   placeholder: 'e.g. BE100 Deluxe' },
-  { key: 'input_level_dbu',  label: 'Reamp Send (dBu)',   type: 'number', placeholder: 'e.g. 12.5' },
-  { key: 'output_level_dbu', label: 'Reamp Return (dBu)', type: 'number', placeholder: 'e.g. 12.5' },
+  { key: 'input_level_dbu',    label: 'Reamp Send (dBu)',   type: 'number', placeholder: 'e.g. 12.5' },
+  { key: 'output_level_dbu',   label: 'Reamp Return (dBu)', type: 'number', placeholder: 'e.g. 12.5' },
+  { key: 'nb_trained_epochs',  label: 'Trained Epochs',     type: 'number', placeholder: 'e.g. 1000' },
 ]
 
 function getShared(files: NamFile[], key: keyof NamMetadata): { same: boolean; value: string | number | null } {
