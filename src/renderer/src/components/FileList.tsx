@@ -203,9 +203,11 @@ export function FileList({
   const [sortDir, setSortDir] = useState<SortDir>('asc')
   const [visibleCols, setVisibleCols] = useState<string[]>(loadVisibleCols)
   const [showExport, setShowExport] = useState(false)
+  const [showColChooser, setShowColChooser] = useState(false)
   const anchorIndexRef = useRef<number>(-1)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
   const exportRef = useRef<HTMLDivElement>(null)
+  const chooserRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!showExport) return
@@ -215,6 +217,15 @@ export function FileList({
     window.addEventListener('mousedown', handler)
     return () => window.removeEventListener('mousedown', handler)
   }, [showExport])
+
+  useEffect(() => {
+    if (!showColChooser) return
+    const handler = (e: MouseEvent) => {
+      if (chooserRef.current && !chooserRef.current.contains(e.target as Node)) setShowColChooser(false)
+    }
+    window.addEventListener('mousedown', handler)
+    return () => window.removeEventListener('mousedown', handler)
+  }, [showColChooser])
 
   const handleVisibleColsChange = (cols: string[]) => {
     setVisibleCols(cols)
@@ -345,6 +356,52 @@ export function FileList({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18M10 3v18M14 3v18" />
             </svg>
           </button>
+          {/* Column chooser */}
+          <div ref={chooserRef} className="relative">
+            <button
+              onClick={() => setShowColChooser((v) => !v)}
+              title="Configure columns"
+              className={`p-1.5 rounded transition-colors ${showColChooser ? 'bg-indigo-600 text-white' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200'}`}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+              </svg>
+            </button>
+            {showColChooser && (
+              <div className="absolute right-0 top-full mt-1 w-52 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50 py-1">
+                <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-b border-gray-200 dark:border-gray-700">
+                  Columns
+                </div>
+                {ALL_GRID_COLUMNS.map((col) => (
+                  <label key={col.key} className={`flex items-center gap-2.5 px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 ${col.key === 'name' ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={visibleCols.includes(col.key)}
+                      onChange={() => {
+                        if (col.key === 'name') return
+                        const next = visibleCols.includes(col.key)
+                          ? visibleCols.filter((k) => k !== col.key)
+                          : [...visibleCols, col.key]
+                        handleVisibleColsChange(next)
+                      }}
+                      disabled={col.key === 'name'}
+                      className="w-3.5 h-3.5 rounded border-gray-400 text-indigo-500 focus:ring-0 cursor-pointer disabled:cursor-not-allowed"
+                    />
+                    <span className="text-gray-700 dark:text-gray-300">{col.label}</span>
+                  </label>
+                ))}
+                <div className="border-t border-gray-200 dark:border-gray-700 mt-1 pt-1 px-3 pb-1">
+                  <button
+                    onClick={() => handleVisibleColsChange(DEFAULT_VISIBLE_COLS)}
+                    className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+                  >
+                    Reset to default
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Export dropdown */}
           <div ref={exportRef} className="relative">
             <button
@@ -589,35 +646,9 @@ function GridView({
   onContextMenu: (e: React.MouseEvent) => void
 }) {
   const [colWidths, setColWidths] = useState<Record<string, number>>(DEFAULT_COL_WIDTHS)
-  const [showColChooser, setShowColChooser] = useState(false)
   const resizingRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null)
-  const chooserRef = useRef<HTMLDivElement>(null)
-
-  // Close chooser when clicking outside
-  useEffect(() => {
-    if (!showColChooser) return
-    const handler = (e: MouseEvent) => {
-      if (chooserRef.current && !chooserRef.current.contains(e.target as Node)) {
-        setShowColChooser(false)
-      }
-    }
-    window.addEventListener('mousedown', handler)
-    return () => window.removeEventListener('mousedown', handler)
-  }, [showColChooser])
 
   const activeColumns = ALL_GRID_COLUMNS.filter((c) => visibleCols.includes(c.key))
-
-  const toggleCol = (key: string) => {
-    if (key === 'name') return // always visible
-    const next = visibleCols.includes(key)
-      ? visibleCols.filter((k) => k !== key)
-      : [...visibleCols, key]
-    onVisibleColsChange(next)
-  }
-
-  const resetCols = () => {
-    onVisibleColsChange(DEFAULT_VISIBLE_COLS)
-  }
 
   const onResizeStart = (e: React.MouseEvent, key: string) => {
     e.preventDefault()
@@ -639,7 +670,7 @@ function GridView({
 
   return (
     <div className="flex-1 overflow-auto relative" onContextMenu={onContextMenu}>
-      <table className="border-collapse text-xs" style={{ tableLayout: 'fixed', width: activeColumns.reduce((s, c) => s + colWidths[c.key], 24 + 32) }}>
+      <table className="border-collapse text-xs" style={{ tableLayout: 'fixed', width: activeColumns.reduce((s, c) => s + colWidths[c.key], 24) }}>
         <thead className="sticky top-0 z-10">
           <tr className="bg-gray-100 dark:bg-gray-900 border-b-2 border-gray-300 dark:border-gray-700">
             <th className="border-r border-gray-200 dark:border-gray-700" style={{ width: 24 }} />
@@ -667,53 +698,12 @@ function GridView({
                 />
               </th>
             ))}
-            {/* Column chooser button */}
-            <th className="relative bg-gray-100 dark:bg-gray-900 border-l border-gray-200 dark:border-gray-700" style={{ width: 32 }}>
-              <div ref={chooserRef} className="relative flex items-center justify-center h-full">
-                <button
-                  onClick={() => setShowColChooser((v) => !v)}
-                  className={`p-1 rounded transition-colors ${showColChooser ? 'text-indigo-400' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-200'}`}
-                  title="Configure columns"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
-                  </svg>
-                </button>
-                {showColChooser && (
-                  <div className="absolute right-0 top-full mt-1 w-52 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50 py-1">
-                    <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-b border-gray-200 dark:border-gray-700">
-                      Columns
-                    </div>
-                    {ALL_GRID_COLUMNS.map((col) => (
-                      <label key={col.key} className={`flex items-center gap-2.5 px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 ${col.key === 'name' ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                        <input
-                          type="checkbox"
-                          checked={visibleCols.includes(col.key)}
-                          onChange={() => toggleCol(col.key)}
-                          disabled={col.key === 'name'}
-                          className="w-3.5 h-3.5 rounded border-gray-400 text-indigo-500 focus:ring-0 cursor-pointer disabled:cursor-not-allowed"
-                        />
-                        <span className="text-gray-700 dark:text-gray-300">{col.label}</span>
-                      </label>
-                    ))}
-                    <div className="border-t border-gray-200 dark:border-gray-700 mt-1 pt-1 px-3 pb-1">
-                      <button
-                        onClick={resetCols}
-                        className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
-                      >
-                        Reset to default
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </th>
           </tr>
         </thead>
         <tbody>
           {files.length === 0 ? (
             <tr>
-              <td colSpan={activeColumns.length + 2} className="text-center py-8 text-gray-400 dark:text-gray-600">No matches</td>
+              <td colSpan={activeColumns.length + 1} className="text-center py-8 text-gray-400 dark:text-gray-600">No matches</td>
             </tr>
           ) : (
             files.map((file, index) => {
@@ -773,7 +763,6 @@ function GridView({
                       </td>
                     )
                   })}
-                  <td style={{ width: 32 }} />
                 </tr>
               )
             })
