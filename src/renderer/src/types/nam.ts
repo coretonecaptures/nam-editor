@@ -21,6 +21,7 @@ export interface NamMetadata {
   output_level_dbu?: number | null
   training?: unknown
   nb_trained_epochs?: number | null
+  nb_preset_name?: string | null
 }
 
 export interface NamFile {

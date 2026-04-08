@@ -110,14 +110,10 @@ function getCellValue(file: NamFile, key: string): string {
       const cal = (((m.training as Record<string, unknown> | undefined)?.data as Record<string, unknown> | undefined)?.latency as Record<string, unknown> | undefined)?.calibration as Record<string, unknown> | undefined
       return cal?.recommended != null ? String(cal.recommended) : ''
     }
-    case 'nb_trained_epochs': {
-      const nb = (m.training as Record<string, unknown> | undefined)?.nam_bot as Record<string, unknown> | undefined
-      return nb?.trained_epochs != null ? String(nb.trained_epochs) : ''
-    }
-    case 'nb_preset_name': {
-      const nb = (m.training as Record<string, unknown> | undefined)?.nam_bot as Record<string, unknown> | undefined
-      return nb?.preset_name != null ? String(nb.preset_name) : ''
-    }
+    case 'nb_trained_epochs':
+      return m.nb_trained_epochs != null ? String(m.nb_trained_epochs) : ''
+    case 'nb_preset_name':
+      return m.nb_preset_name ?? ''
     case 'detected_preset':
       return detectPreset(file.config) ?? ''
     default: return ''

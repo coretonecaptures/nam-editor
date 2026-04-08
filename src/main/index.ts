@@ -312,8 +312,9 @@ app.whenReady().then(() => {
       const data = JSON.parse(content)
       const meta = data.metadata ?? {}
       // Lift nested NAM-BOT fields up to flat metadata for the UI
-      const nbEpochs = meta.training?.nam_bot?.trained_epochs
-      if (nbEpochs != null) meta.nb_trained_epochs = nbEpochs
+      const nb = meta.training?.nam_bot
+      if (nb?.trained_epochs != null) meta.nb_trained_epochs = nb.trained_epochs
+      if (nb?.preset_name != null) meta.nb_preset_name = nb.preset_name
       return {
         success: true,
         filePath,
