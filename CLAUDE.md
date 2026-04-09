@@ -236,21 +236,21 @@ These have been discussed and approved — remove each item when implemented.
 - **[x] Rename file from metadata template** — Single-file rename button in MetadataEditor header. Template configurable in Settings (default: `{name}`). Confirm dialog shows from/to preview. IPC `file:rename` handler on main process.
 - **[ ] Batch rename from template** — Apply the rename template to all selected files or all files in a folder. Needs preview list (show all from→to pairs) before committing. Should reuse same template setting. Deferred until single-file rename is validated.
 
-- **[ ] Completeness indicator** — Colored dot or score per file showing how many "shareable" fields are filled (`name`, `modeled_by`, `gear_make`, `gear_model`, `gear_type`, `tone_type`, `input_level_dbu`, `output_level_dbu`). Show in FileList rows and grid cells. Pair with a filter to show "incomplete only."
+- **[x] Completeness indicator** — Colored dot per file (amber = 1 missing, red = 2+ missing, no dot = complete). 7 core fields: `name`, `modeled_by`, `gear_make`, `gear_model`, `gear_type`, `tone_type`, `input_level_dbu`. Shown in list and grid. Only shown when file is not dirty (dirty = amber dot takes priority). "Incomplete (N)" filter chip added.
 
-- **[ ] Gear make/model autocomplete** — Free-text inputs for `gear_make` and `gear_model` get datalist suggestions. Two layers: (1) hardcoded seed list of ~30 common brands (Marshall, Fender, Mesa Boogie, Bogner, Friedman, Dumble, Vox, Orange, Peavey, EVH, Carr, Two-Rock, Matchless, Bad Cat, Soldano, Dr. Z, etc.), (2) values already present in loaded files. User can still type anything — suggestions are non-binding.
+- **[x] Gear make/model autocomplete** — Custom `ComboInput` component (`src/renderer/src/components/ComboInput.tsx`) replaces native `<datalist>`. Scrollable dropdown, max 200px, keyboard navigable. Seed list of 32 brands + values from loaded files. Available in MetadataEditor, BatchEditor, and MultiSelectEditor.
 
-- **[ ] Missing field quick filter** — Toolbar filter in FileList: a select dropdown listing the shareable fields. Choosing one filters the list to files where that field is empty/null. Pairs with completeness indicator.
+- **[x] Missing field quick filter** — "Incomplete (N)" chip in FileList toolbar filters to files missing any of the 7 core fields.
 
 ### Medium Priority
 
-- **[ ] Recent folders** — Dropdown on Open Folder showing last 5–10 opened folder paths (persisted to localStorage). Speeds up switching between libraries.
+- **[x] Recent folders** — Dropdown arrow (▾) next to Open Folder shows last 10 paths (persisted to localStorage). Implemented in Toolbar.
 
-- **[ ] Arrow key navigation in file list** — Up/down arrow keys move selection when the file list has focus. Multi-select with Shift+arrow. Feels polished, speeds up review.
+- **[x] Arrow key navigation in file list** — ↑/↓ arrows move selection; Shift+↑/↓ extends selection. Works in both list and grid view.
 
 - **[ ] Intra-app folder drag-to-organize** — Drag files from one folder to another within the FolderTree (this already works for moving files). Extend to support reorganizing the folder structure itself (create subfolder, move folder). Distinct from the unresolved OS drag & drop bug.
 
-- **[ ] Watch folder / auto-refresh** — Optional: monitor the open folder for new `.nam` files appearing on disk (from a trainer finishing) and offer to reload. Could be a toggle in Settings.
+- **[x] Watch folder / auto-refresh** — Toggle in Settings → Startup. Monitors open folder via `fs.watch`, debounced 1500ms. Shows amber banner when new files detected. Banner clears on refresh. Watcher stops during reload to prevent re-fire. Not supported on Linux.
 
 ---
 
