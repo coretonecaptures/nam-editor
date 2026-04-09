@@ -32,6 +32,7 @@ This is especially useful for capture artists who want to properly tag their `.n
 - All three panels are **resizable** — drag the dividers to any width
 - **Collapse panels** — hover any divider and click the chevron button to collapse the Library tree or File List panel entirely, giving more room to the editor or grid
 - **Refresh** button rescans the folder for new or removed files (warns about unsaved changes)
+- **Recent folders** — click the dropdown arrow (▾) next to Open Folder to quickly reopen any of your last 10 folders
 - Remembers the last opened folder and reopens it automatically on next launch
 - Panel widths and window size are remembered between sessions
 
@@ -67,13 +68,14 @@ This is especially useful for capture artists who want to properly tag their `.n
 - Export respects active search and filters — only visible rows are exported
 
 ### File List Filters
-- **All / Edited / Unnamed / No Type / No Maker / No Tone** filter chips in the file list header
+- **All / Edited / Incomplete / Unnamed / No Type / No Maker / No Tone** filter chips in the file list header
 - **Edited** chip shows count of manually-changed files and filters to just those
+- **Incomplete** chip shows count of files missing any of the 7 core shareable fields (name, modeled_by, gear_make, gear_model, gear_type, tone_type, input_level_dbu) and filters to just those
 - **Gear Type** and **Tone Type** dropdowns filter to a specific type — highlight in their respective colors when active
-- Each file item shows a **"N missing"** badge (tooltip lists which tracked fields are empty)
 - Search bar in the file list to search by name, filename, make, model, or modeled-by
 - Files are sorted by Capture Name by default; click any column header in grid view to re-sort
 - **Ctrl+A / Cmd+A** selects all visible files
+- **↑/↓ arrow keys** navigate the selection when the file list has focus; **Shift+↑/↓** extends the selection
 
 ### File Management
 - Open individual `.nam` files or an entire folder (scans recursively)
@@ -91,10 +93,11 @@ This is especially useful for capture artists who want to properly tag their `.n
 - **Modeled By** — capture artist / creator
 - **Gear Type** — amp, pedal, pedal_amp, amp_cab, amp_pedal_cab, preamp, studio
 - **Tone Type** — clean, crunch, hi_gain, fuzz, overdrive, distortion, other
-- **Manufacturer** and **Model** — gear make/model
+- **Manufacturer** and **Model** — gear make/model; both fields offer **autocomplete suggestions** from a built-in list of common brands plus any values already in your loaded library
 - **Reamp Send Level (dBu)** and **Reamp Return Level (dBu)**
 - **Trained Epochs** — number of training epochs; editable so capture artists can backfill this value for existing captures. Written to `metadata.training.nam_bot.trained_epochs` for compatibility with NAM-BOT
 - Ctrl+S / Cmd+S to save the current file
+- **Rename** button — renames the `.nam` file on disk using a configurable template (default: `{name}`, which renames the file to match the Capture Name). Shows a from/to preview before committing. Template is configurable in Settings → Behavior
 - **Revert** button discards unsaved changes and restores the file's saved values
 - **↺ Defaults** button re-applies your active Settings rules to the current file's empty fields — useful after reverting to re-fill auto-populated values without overwriting anything you've set manually
 - **File path** in the header is clickable — opens the file's folder in Finder/Explorer
@@ -110,6 +113,14 @@ Shown in the detail panel for each file:
 - **Calibrated Latency** — measured latency in samples from the calibration run
 - **NAM-BOT Preset** — preset name written by NAM-BOT trainer (if present)
 - Captured On date
+
+### Completeness Indicator
+Each file in the list and grid shows a small colored dot indicating metadata completeness across 7 core shareable fields:
+- **No dot** — all 7 fields filled (name, modeled_by, gear_make, gear_model, gear_type, tone_type, input_level_dbu)
+- **Amber dot** — 1 field missing
+- **Red dot** — 2+ fields missing
+
+The dot appears below the unsaved-changes dot (amber) so both can be visible at once.
 
 ### Change Tracking & Highlighting
 - Fields auto-populated by settings rules show an **indigo border** and **"auto-filled"** label
@@ -135,11 +146,13 @@ Settings are stored locally and start blank. Each section can be **enabled or di
 - **Auto-detect tone type** — scans the filename for tone keywords and sets Tone Type if empty; the rightmost keyword wins (e.g. `BE Clean Crunch DI` → Crunch). Keywords: `clean`, `crunch`, `highgain`/`hi-gain`/`higain`, `fuzz`, `overdrive`/`od`/`edge`/`drive`, `distortion`/`dist`
 - **Amp Suffix** — configurable filename ending that auto-sets Gear Type to Amp (e.g. `DI` or `DIRECT`). Leave blank to disable
 - **Default to Cab if no amp suffix match** — when enabled, files that don't match the amp suffix get set to `amp_cab`
+- **File Rename Template** — template used by the Rename button in the metadata editor. Default: `{name}`. Tokens: `{name}` `{gear_make}` `{gear_model}` `{gear_type}` `{tone_type}` `{modeled_by}`
 - **Confirmation dialogs** — independently skip Save All and Batch Edit confirmation dialogs once you're comfortable
 
 **Startup**
 - **Remember last opened folder** — every time you open a folder it becomes the default for next launch
 - **Open default folder on launch** — automatically loads a pinned folder when the app starts
+- **Watch folder for new files** — when enabled, monitors the open folder for newly added `.nam` files and shows a banner prompting you to refresh. Not supported on Linux
 
 **Current Amp Info** *(toggleable — at the bottom of Settings)*
 - Default Manufacturer and Model — applied to files missing those fields on open
