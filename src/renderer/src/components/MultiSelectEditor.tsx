@@ -1,10 +1,13 @@
 import { useState, useMemo } from 'react'
 import { NamFile, NamMetadata, GEAR_TYPES, TONE_TYPES } from '../types/nam'
+import { ComboInput } from './ComboInput'
 
 interface MultiSelectEditorProps {
   files: NamFile[]
   onApply: (filePaths: string[], fields: Partial<NamMetadata>, options?: { revertToFilename?: boolean }) => void
   skipConfirmation?: boolean
+  gearMakeSuggestions?: string[]
+  gearModelSuggestions?: string[]
 }
 
 type FieldDef = {
@@ -33,7 +36,7 @@ function getShared(files: NamFile[], key: keyof NamMetadata): { same: boolean; v
   return { same, value: same ? (first as string | number | null) : null }
 }
 
-export function MultiSelectEditor({ files, onApply, skipConfirmation }: MultiSelectEditorProps) {
+export function MultiSelectEditor({ files, onApply, skipConfirmation, gearMakeSuggestions = [], gearModelSuggestions = [] }: MultiSelectEditorProps) {
   // Compute shared values once per file set
   const shared = useMemo(
     () => Object.fromEntries(FIELDS.map((f) => [f.key, getShared(files, f.key)])),
@@ -168,10 +171,10 @@ export function MultiSelectEditor({ files, onApply, skipConfirmation }: MultiSel
                       className={`${inputBase} ${isChanged ? inputChanged : ''}`}
                     />
                   ) : (
-                    <input
-                      type="text"
+                    <ComboInput
                       value={(val as string) ?? ''}
-                      onChange={(e) => update(key, e.target.value)}
+                      onChange={(v) => update(key, v)}
+                      suggestions={key === 'gear_make' ? gearMakeSuggestions : key === 'gear_model' ? gearModelSuggestions : []}
                       placeholder={same ? (placeholder ?? '') : '— varies —'}
                       className={`${inputBase} ${isChanged ? inputChanged : ''}`}
                     />

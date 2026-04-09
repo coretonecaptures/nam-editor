@@ -1,6 +1,7 @@
 import { NamFile, NamMetadata, GEAR_TYPES, TONE_TYPES } from '../types/nam'
 import { gearImages } from '../assets/gear'
 import { detectPreset } from '../utils/detectPreset'
+import { ComboInput } from './ComboInput'
 
 interface MetadataEditorProps {
   file: NamFile
@@ -237,34 +238,22 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
             </div>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Manufacturer" autoFilled={isAutoFilled('gear_make')}>
-                <>
-                  <datalist id="gear-make-list">
-                    {gearMakeSuggestions.map((s) => <option key={s} value={s} />)}
-                  </datalist>
-                  <TextInput
-                    value={m.gear_make ?? ''}
-                    onChange={(v) => update('gear_make', v)}
-                    placeholder="e.g. Friedman"
-                    changed={isManuallyChanged('gear_make')}
-                    autoFilled={isAutoFilled('gear_make')}
-                    datalistId="gear-make-list"
-                  />
-                </>
+                <ComboInput
+                  value={m.gear_make ?? ''}
+                  onChange={(v) => update('gear_make', v)}
+                  suggestions={gearMakeSuggestions}
+                  placeholder="e.g. Friedman"
+                  className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none transition-colors ${inputClass(isManuallyChanged('gear_make'), isAutoFilled('gear_make'))}`}
+                />
               </Field>
               <Field label="Model" autoFilled={isAutoFilled('gear_model')}>
-                <>
-                  <datalist id="gear-model-list">
-                    {gearModelSuggestions.map((s) => <option key={s} value={s} />)}
-                  </datalist>
-                  <TextInput
-                    value={m.gear_model ?? ''}
-                    onChange={(v) => update('gear_model', v)}
-                    placeholder="e.g. BE100 Deluxe"
-                    changed={isManuallyChanged('gear_model')}
-                    autoFilled={isAutoFilled('gear_model')}
-                    datalistId="gear-model-list"
-                  />
-                </>
+                <ComboInput
+                  value={m.gear_model ?? ''}
+                  onChange={(v) => update('gear_model', v)}
+                  suggestions={gearModelSuggestions}
+                  placeholder="e.g. BE100 Deluxe"
+                  className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none transition-colors ${inputClass(isManuallyChanged('gear_model'), isAutoFilled('gear_model'))}`}
+                />
               </Field>
             </div>
           </Section>
@@ -447,15 +436,13 @@ function TextInput({
   onChange,
   placeholder,
   changed,
-  autoFilled,
-  datalistId
+  autoFilled
 }: {
   value: string
   onChange: (v: string) => void
   placeholder?: string
   changed?: boolean
   autoFilled?: boolean
-  datalistId?: string
 }) {
   return (
     <input
@@ -463,7 +450,6 @@ function TextInput({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
-      list={datalistId}
       className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none transition-colors ${inputClass(changed, autoFilled)}`}
     />
   )

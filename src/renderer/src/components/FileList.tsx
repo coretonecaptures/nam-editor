@@ -774,13 +774,13 @@ function GridView({
                   onMouseDown={(e) => { if (e.shiftKey) e.preventDefault() }}
                 >
                   <td className="border-r border-gray-200 dark:border-gray-700/60 text-center align-middle" style={{ width: 24 }}>
-                    <div className="flex flex-col items-center justify-center gap-0.5 py-1">
-                      {file.isDirty && <div className="w-1.5 h-1.5 rounded-full bg-amber-400" title="Unsaved changes" />}
-                      {(() => {
-                        const color = getCompletenessColor(file.metadata)
-                        return color ? <div className={`w-1.5 h-1.5 rounded-full ${color}`} title="Incomplete metadata" /> : null
-                      })()}
-                    </div>
+                    {file.isDirty
+                      ? <div className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" title="Unsaved changes" />
+                      : (() => {
+                          const color = getCompletenessColor(file.metadata)
+                          return color ? <div className={`w-1.5 h-1.5 rounded-full ${color} inline-block`} title="Incomplete metadata" /> : null
+                        })()
+                    }
                   </td>
                   {activeColumns.map((col) => {
                     const val = getCellValue(file, col.key)
@@ -858,14 +858,16 @@ function FileItem({
       onClick={(e) => onSelect(e)}
       onMouseDown={(e) => { if (e.shiftKey) e.preventDefault() }}
     >
-      <div className="flex-shrink-0 flex flex-col items-center gap-0.5 mt-1.5">
+      <div className="flex-shrink-0 flex items-center justify-center mt-2" style={{ width: 6 }}>
         {file.isDirty
           ? <div className="w-1.5 h-1.5 rounded-full bg-amber-400" title="Unsaved changes" />
-          : <div className="w-1.5 h-1.5 rounded-full bg-transparent" />}
-        {(() => {
-          const color = getCompletenessColor(file.metadata)
-          return color ? <div className={`w-1.5 h-1.5 rounded-full ${color}`} title="Incomplete metadata" /> : null
-        })()}
+          : (() => {
+              const color = getCompletenessColor(file.metadata)
+              return color
+                ? <div className={`w-1.5 h-1.5 rounded-full ${color}`} title="Incomplete metadata" />
+                : <div className="w-1.5 h-1.5 rounded-full bg-transparent" />
+            })()
+        }
       </div>
 
       <div className="flex-1 min-w-0">

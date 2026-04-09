@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { NamMetadata, GEAR_TYPES, TONE_TYPES } from '../types/nam'
+import { ComboInput } from './ComboInput'
 
 export interface BatchApplyOptions {
   revertToFilename?: boolean
@@ -11,9 +12,11 @@ interface BatchEditorProps {
   onApply: (metadata: Partial<NamMetadata>, options?: BatchApplyOptions) => void
   onClose: () => void
   skipConfirmation?: boolean
+  gearMakeSuggestions?: string[]
+  gearModelSuggestions?: string[]
 }
 
-export function BatchEditor({ folderName, fileCount, onApply, onClose, skipConfirmation }: BatchEditorProps) {
+export function BatchEditor({ folderName, fileCount, onApply, onClose, skipConfirmation, gearMakeSuggestions = [], gearModelSuggestions = [] }: BatchEditorProps) {
   const [fields, setFields] = useState<Partial<NamMetadata>>({})
   const [enabled, setEnabled] = useState<Set<keyof NamMetadata>>(new Set())
   const [revertToFilename, setRevertToFilename] = useState(false)
@@ -136,11 +139,11 @@ export function BatchEditor({ folderName, fileCount, onApply, onClose, skipConfi
                     className="w-full px-3 py-1.5 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   />
                 ) : (
-                  <input
-                    type="text"
+                  <ComboInput
                     disabled={!enabled.has(key)}
                     value={(fields[key] as string) ?? ''}
-                    onChange={(e) => update(key, e.target.value)}
+                    onChange={(v) => update(key, v)}
+                    suggestions={key === 'gear_make' ? gearMakeSuggestions : key === 'gear_model' ? gearModelSuggestions : []}
                     placeholder={placeholder}
                     className="w-full px-3 py-1.5 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   />

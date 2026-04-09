@@ -151,6 +151,7 @@ export default function App() {
   const [treeCollapsed, setTreeCollapsed] = useState(false)
   const [listCollapsed, setListCollapsed] = useState(false)
   const [folderChanged, setFolderChanged] = useState(false)
+  const [watcherKey, setWatcherKey] = useState(0)
   const [recentFolders, setRecentFolders] = useState<string[]>(() => {
     try {
       const stored = localStorage.getItem('nam-lab-recent-folders')
@@ -169,14 +170,15 @@ export default function App() {
     }
   }, [settings.theme])
 
-  // Watch folder for new .nam files when watchFolder setting is on
+  // Watch folder for new .nam files when watchFolder setting is on.
+  // watcherKey increments after each refresh so the effect re-runs even when rootFolder stays the same.
   useEffect(() => {
     if (settings.watchFolder && librarian.rootFolder) {
       window.api.watchFolder(librarian.rootFolder)
     } else {
       window.api.watchFolder(null)
     }
-  }, [librarian.rootFolder, settings.watchFolder])
+  }, [librarian.rootFolder, settings.watchFolder, watcherKey])
 
   // Subscribe to folder:changed IPC event
   useEffect(() => {
@@ -313,6 +315,9 @@ export default function App() {
   // Shared logic for opening a folder by path (used by Open Folder and Refresh)
   const loadFolderByPath = useCallback(async (folder: string) => {
     setStatus({ message: 'Scanning folder...', type: 'info' })
+    setFolderChanged(false)
+    // Stop watcher during reload so the scan itself doesn't re-trigger the banner
+    window.api.watchFolder(null)
     // Save as default folder if rememberLastFolder is on
     setSettings((prev) => {
       if (!prev.rememberLastFolder) return prev
@@ -344,8 +349,9 @@ export default function App() {
       localStorage.setItem('nam-lab-recent-folders', JSON.stringify(next))
       return next
     })
-    setFolderChanged(false)
     await loadFiles(flatResult.files, 'replace')
+    // Bump watcherKey to restart the folder watcher now that the scan is done
+    setWatcherKey((k) => k + 1)
   }, [loadFiles])
 
   // Returns false if user cancels, true if safe to proceed
@@ -952,6 +958,8 @@ export default function App() {
               onApply={(fields, opts) => handleBatchApply(fields, opts)}
               onClose={() => setBatchFolder(null)}
               skipConfirmation={settings.skipBatchEditConfirmation}
+              gearMakeSuggestions={gearMakeSuggestions}
+              gearModelSuggestions={gearModelSuggestions}
             />
           ) : selectedFiles.length === 1 ? (
             <MetadataEditor
@@ -1001,6 +1009,8 @@ export default function App() {
               files={selectedFiles}
               onApply={handleMultiSelectApply}
               skipConfirmation={settings.skipBatchEditConfirmation}
+              gearMakeSuggestions={gearMakeSuggestions}
+              gearModelSuggestions={gearModelSuggestions}
             />
           ) : selectedFiles.length === 0 && files.length === 0 ? (
             <EmptyState onOpenFiles={handleOpenFiles} onOpenFolder={handleOpenFolder} />
