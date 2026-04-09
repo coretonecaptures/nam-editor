@@ -15,6 +15,14 @@ const api = {
   getStartupLogPath: (): Promise<string> => ipcRenderer.invoke('log:getStartupLogPath'),
   refocusWindow: () => ipcRenderer.invoke('window:refocus'),
   statPath: (p: string): Promise<{ isDirectory: boolean }> => ipcRenderer.invoke('path:stat', p),
+  renameFile: (oldPath: string, newBaseName: string): Promise<{ success: boolean; newPath?: string; error?: string }> =>
+    ipcRenderer.invoke('file:rename', oldPath, newBaseName),
+  watchFolder: (path: string | null): Promise<void> => ipcRenderer.invoke('folder:watch', path),
+  onFolderChanged: (cb: () => void): (() => void) => {
+    const handler = () => cb()
+    ipcRenderer.on('folder:changed', handler)
+    return () => ipcRenderer.removeListener('folder:changed', handler)
+  },
   platform: process.platform
 }
 

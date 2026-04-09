@@ -227,6 +227,33 @@ NAM Lab is coordinating with the NAM-BOT developer on field naming standards.
 
 ---
 
+## Planned Features (Backlog)
+
+These have been discussed and approved — remove each item when implemented.
+
+### High Priority
+
+- **[x] Rename file from metadata template** — Single-file rename button in MetadataEditor header. Template configurable in Settings (default: `{name}`). Confirm dialog shows from/to preview. IPC `file:rename` handler on main process.
+- **[ ] Batch rename from template** — Apply the rename template to all selected files or all files in a folder. Needs preview list (show all from→to pairs) before committing. Should reuse same template setting. Deferred until single-file rename is validated.
+
+- **[ ] Completeness indicator** — Colored dot or score per file showing how many "shareable" fields are filled (`name`, `modeled_by`, `gear_make`, `gear_model`, `gear_type`, `tone_type`, `input_level_dbu`, `output_level_dbu`). Show in FileList rows and grid cells. Pair with a filter to show "incomplete only."
+
+- **[ ] Gear make/model autocomplete** — Free-text inputs for `gear_make` and `gear_model` get datalist suggestions. Two layers: (1) hardcoded seed list of ~30 common brands (Marshall, Fender, Mesa Boogie, Bogner, Friedman, Dumble, Vox, Orange, Peavey, EVH, Carr, Two-Rock, Matchless, Bad Cat, Soldano, Dr. Z, etc.), (2) values already present in loaded files. User can still type anything — suggestions are non-binding.
+
+- **[ ] Missing field quick filter** — Toolbar filter in FileList: a select dropdown listing the shareable fields. Choosing one filters the list to files where that field is empty/null. Pairs with completeness indicator.
+
+### Medium Priority
+
+- **[ ] Recent folders** — Dropdown on Open Folder showing last 5–10 opened folder paths (persisted to localStorage). Speeds up switching between libraries.
+
+- **[ ] Arrow key navigation in file list** — Up/down arrow keys move selection when the file list has focus. Multi-select with Shift+arrow. Feels polished, speeds up review.
+
+- **[ ] Intra-app folder drag-to-organize** — Drag files from one folder to another within the FolderTree (this already works for moving files). Extend to support reorganizing the folder structure itself (create subfolder, move folder). Distinct from the unresolved OS drag & drop bug.
+
+- **[ ] Watch folder / auto-refresh** — Optional: monitor the open folder for new `.nam` files appearing on disk (from a trainer finishing) and offer to reload. Could be a toggle in Settings.
+
+---
+
 ## Credits
 
 Conceived by [Core Tone Captures](https://github.com/coretonecaptures). Code written by [Claude Code](https://claude.ai/code).

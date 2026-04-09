@@ -37,6 +37,12 @@ export interface AppSettings {
   theme: 'dark' | 'light'
   defaultView: 'list' | 'grid'
   solidPillColors: boolean
+
+  // File rename template
+  renameTemplate: string
+
+  // Watch folder
+  watchFolder: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -65,7 +71,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
   theme: 'dark',
   defaultView: 'list',
-  solidPillColors: true
+  solidPillColors: true,
+
+  renameTemplate: '{name}',
+  watchFolder: false
 }
 
 const STORAGE_KEY = 'nam-editor-settings'

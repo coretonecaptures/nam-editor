@@ -4,7 +4,18 @@ import { NamFile, GEAR_TYPES, TONE_TYPES } from '../types/nam'
 import { gearChipClass, toneChipClass, getGearImageSrc } from '../assets/gear'
 import { detectPreset } from '../utils/detectPreset'
 
-type FilterMode = 'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited'
+type FilterMode = 'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited' | 'incomplete'
+
+// Completeness: 7 core shareable fields (output level and epochs are optional/technical)
+const COMPLETENESS_FIELDS: (keyof NamFile['metadata'])[] = [
+  'name', 'modeled_by', 'gear_make', 'gear_model', 'gear_type', 'tone_type', 'input_level_dbu'
+]
+function getCompletenessColor(meta: NamFile['metadata']): string | null {
+  const filled = COMPLETENESS_FIELDS.filter((k) => meta[k] != null && meta[k] !== '').length
+  if (filled === COMPLETENESS_FIELDS.length) return null // fully complete — no dot
+  if (filled >= 6) return 'bg-amber-400'  // 1 missing
+  return 'bg-red-500'                     // 2+ missing
+}
 type ViewMode = 'list' | 'grid'
 type SortDir = 'asc' | 'desc'
 
@@ -267,12 +278,13 @@ export function FileList({
     if (gearFilter && m.gear_type !== gearFilter) return false
     if (toneFilter && m.tone_type !== toneFilter) return false
     switch (filter) {
-      case 'unnamed':   return !o.name
-      case 'no-gear':   return !o.gear_type
-      case 'no-maker':  return !o.gear_make && !o.gear_model
-      case 'no-tone':   return !o.tone_type
-      case 'edited':    return f.isDirty
-      default:          return true
+      case 'unnamed':    return !o.name
+      case 'no-gear':    return !o.gear_type
+      case 'no-maker':   return !o.gear_make && !o.gear_model
+      case 'no-tone':    return !o.tone_type
+      case 'edited':     return f.isDirty
+      case 'incomplete': return COMPLETENESS_FIELDS.some((k) => m[k] == null || m[k] === '')
+      default:           return true
     }
   })
 
@@ -300,17 +312,44 @@ export function FileList({
   }
 
   const editedCount = files.filter((f) => f.isDirty).length
+  const incompleteCount = files.filter((f) => COMPLETENESS_FIELDS.some((k) => f.metadata[k] == null || f.metadata[k] === '')).length
   const filterOptions: { value: FilterMode; label: string }[] = [
-    { value: 'all',      label: 'All' },
-    { value: 'edited',   label: editedCount > 0 ? `Edited (${editedCount})` : 'Edited' },
-    { value: 'unnamed',  label: 'Unnamed' },
-    { value: 'no-gear',  label: 'No Type' },
-    { value: 'no-maker', label: 'No Maker' },
-    { value: 'no-tone',  label: 'No Tone' },
+    { value: 'all',        label: 'All' },
+    { value: 'edited',     label: editedCount > 0 ? `Edited (${editedCount})` : 'Edited' },
+    { value: 'incomplete', label: incompleteCount > 0 ? `Incomplete (${incompleteCount})` : 'Incomplete' },
+    { value: 'unnamed',    label: 'Unnamed' },
+    { value: 'no-gear',    label: 'No Type' },
+    { value: 'no-maker',   label: 'No Maker' },
+    { value: 'no-tone',    label: 'No Tone' },
   ]
 
   return (
-    <div className="flex flex-col h-full overflow-hidden" onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'a') { e.preventDefault(); onSelectAll() } }} tabIndex={-1}>
+    <div className="flex flex-col h-full overflow-hidden" onKeyDown={(e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') { e.preventDefault(); onSelectAll(); return }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        if (sorted.length === 0) return
+        const selectedArr = [...selectedIds]
+        if (selectedArr.length === 0) return
+        // Find the anchor: last selected item (bottom for down, top for up)
+        const anchorPath = e.key === 'ArrowDown'
+          ? sorted.findLast((f) => selectedIds.has(f.filePath))?.filePath
+          : sorted.find((f) => selectedIds.has(f.filePath))?.filePath
+        if (!anchorPath) return
+        const currentIdx = sorted.findIndex((f) => f.filePath === anchorPath)
+        if (currentIdx === -1) return
+        const nextIdx = e.key === 'ArrowDown'
+          ? Math.min(currentIdx + 1, sorted.length - 1)
+          : Math.max(currentIdx - 1, 0)
+        if (nextIdx === currentIdx) return
+        if (e.shiftKey) {
+          // Shift+arrow: add adjacent file to selection
+          onSelect(sorted[nextIdx].filePath, true)
+        } else {
+          onSelect(sorted[nextIdx].filePath, false)
+        }
+      }
+    }} tabIndex={-1}>
       {/* Search + view toggle */}
       <div className="px-3 pt-2 pb-1 flex-shrink-0 flex items-center gap-1.5">
         <div className="relative flex-1 min-w-0">
@@ -734,8 +773,14 @@ function GridView({
                   }}
                   onMouseDown={(e) => { if (e.shiftKey) e.preventDefault() }}
                 >
-                  <td className="border-r border-gray-200 dark:border-gray-700/60 text-center" style={{ width: 24 }}>
-                    {file.isDirty && <div className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" title="Unsaved changes" />}
+                  <td className="border-r border-gray-200 dark:border-gray-700/60 text-center align-middle" style={{ width: 24 }}>
+                    <div className="flex flex-col items-center justify-center gap-0.5 py-1">
+                      {file.isDirty && <div className="w-1.5 h-1.5 rounded-full bg-amber-400" title="Unsaved changes" />}
+                      {(() => {
+                        const color = getCompletenessColor(file.metadata)
+                        return color ? <div className={`w-1.5 h-1.5 rounded-full ${color}`} title="Incomplete metadata" /> : null
+                      })()}
+                    </div>
                   </td>
                   {activeColumns.map((col) => {
                     const val = getCellValue(file, col.key)
@@ -813,10 +858,14 @@ function FileItem({
       onClick={(e) => onSelect(e)}
       onMouseDown={(e) => { if (e.shiftKey) e.preventDefault() }}
     >
-      <div className="flex-shrink-0 w-1.5 h-1.5 rounded-full mt-2 transition-colors">
+      <div className="flex-shrink-0 flex flex-col items-center gap-0.5 mt-1.5">
         {file.isDirty
           ? <div className="w-1.5 h-1.5 rounded-full bg-amber-400" title="Unsaved changes" />
           : <div className="w-1.5 h-1.5 rounded-full bg-transparent" />}
+        {(() => {
+          const color = getCompletenessColor(file.metadata)
+          return color ? <div className={`w-1.5 h-1.5 rounded-full ${color}`} title="Incomplete metadata" /> : null
+        })()}
       </div>
 
       <div className="flex-1 min-w-0">

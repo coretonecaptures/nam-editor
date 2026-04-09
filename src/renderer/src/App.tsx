@@ -37,6 +37,9 @@ declare global {
       getStartupLogPath: () => Promise<string>
       refocusWindow: () => Promise<void>
       statPath: (p: string) => Promise<{ isDirectory: boolean }>
+      renameFile: (oldPath: string, newBaseName: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
+      watchFolder: (path: string | null) => Promise<void>
+      onFolderChanged: (cb: () => void) => () => void
       platform: string
     }
   }
@@ -147,6 +150,15 @@ export default function App() {
   const mainContentRef = useRef<HTMLDivElement>(null)
   const [treeCollapsed, setTreeCollapsed] = useState(false)
   const [listCollapsed, setListCollapsed] = useState(false)
+  const [folderChanged, setFolderChanged] = useState(false)
+  const [recentFolders, setRecentFolders] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem('nam-lab-recent-folders')
+      return stored ? JSON.parse(stored) : []
+    } catch {
+      return []
+    }
+  })
 
   // Apply dark/light class to <html> whenever theme setting changes
   useEffect(() => {
@@ -156,6 +168,21 @@ export default function App() {
       document.documentElement.classList.remove('dark')
     }
   }, [settings.theme])
+
+  // Watch folder for new .nam files when watchFolder setting is on
+  useEffect(() => {
+    if (settings.watchFolder && librarian.rootFolder) {
+      window.api.watchFolder(librarian.rootFolder)
+    } else {
+      window.api.watchFolder(null)
+    }
+  }, [librarian.rootFolder, settings.watchFolder])
+
+  // Subscribe to folder:changed IPC event
+  useEffect(() => {
+    const unsub = window.api.onFolderChanged(() => setFolderChanged(true))
+    return unsub
+  }, [])
 
   // Electron on Windows loses keyboard focus when the focused DOM element is removed
   // (e.g. BatchEditor unmounts) or after native confirm dialogs close. Chromium's
@@ -305,11 +332,19 @@ export default function App() {
       setStatus({ message: 'No .nam files found in that folder', type: 'info' })
       return
     }
+    const normalizedFolder = folder.replace(/\\/g, '/')
     setLibrarian({
-      rootFolder: folder.replace(/\\/g, '/'),
+      rootFolder: normalizedFolder,
       folderTree: treeResult.success && treeResult.tree ? treeResult.tree : null,
       selectedFolder: null
     })
+    // Track recent folders
+    setRecentFolders((prev) => {
+      const next = [normalizedFolder, ...prev.filter((f) => f !== normalizedFolder)].slice(0, 10)
+      localStorage.setItem('nam-lab-recent-folders', JSON.stringify(next))
+      return next
+    })
+    setFolderChanged(false)
     await loadFiles(flatResult.files, 'replace')
   }, [loadFiles])
 
@@ -677,6 +712,27 @@ export default function App() {
     )
   }
 
+  const handleRenameFile = async (filePath: string, newBaseName: string) => {
+    const result = await window.api.renameFile(filePath, newBaseName)
+    if (result.success && result.newPath) {
+      setFiles((prev) => prev.map((f) =>
+        f.filePath === filePath
+          ? { ...f, filePath: result.newPath!, fileName: newBaseName }
+          : f
+      ))
+      setSelectedIds((prev) => {
+        if (!prev.has(filePath)) return prev
+        const next = new Set(prev)
+        next.delete(filePath)
+        next.add(result.newPath!)
+        return next
+      })
+      setStatus({ message: `Renamed to: ${newBaseName}.nam`, type: 'success' })
+    } else {
+      setStatus({ message: `Rename failed: ${result.error}`, type: 'error' })
+    }
+  }
+
   // Filter files by selected folder and/or library search filter
   const visibleFiles = files.filter((f) => {
     const norm = f.filePath.replace(/\\/g, '/')
@@ -690,6 +746,15 @@ export default function App() {
   const unnamedCount = files.filter((f) => !f.metadata.name).length
   const hasTree = librarian.folderTree !== null
   const dirtyPaths = new Set(files.filter((f) => f.isDirty).map((f) => f.filePath.replace(/\\/g, '/')))
+
+  const GEAR_MAKE_SEED = ['Marshall', 'Fender', 'Mesa Boogie', 'Bogner', 'Friedman', 'Dumble', 'Vox', 'Orange', 'Peavey', 'EVH', 'Carr', 'Two-Rock', 'Matchless', 'Bad Cat', 'Soldano', 'Dr. Z', 'Diezel', 'Morgan', 'Egnater', 'Suhr', 'Koch', 'Victory', 'Laney', 'Hiwatt', 'Engl', 'Rivera', 'Tone King', 'Divided by 13', 'Cornford', 'Komet', 'PRS', 'Kemper']
+  const gearMakeSuggestions = Array.from(new Set([
+    ...GEAR_MAKE_SEED,
+    ...files.map((f) => f.metadata.gear_make).filter((v): v is string => !!v)
+  ])).sort()
+  const gearModelSuggestions = Array.from(new Set(
+    files.map((f) => f.metadata.gear_model).filter((v): v is string => !!v)
+  )).sort()
 
   return (
     <div
@@ -711,6 +776,8 @@ export default function App() {
         onCloseAll={handleCloseAll}
         rootFolder={librarian.rootFolder}
         onRefresh={handleRefresh}
+        recentFolders={recentFolders}
+        onOpenRecentFolder={(path) => loadFolderByPath(path)}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -901,6 +968,10 @@ export default function App() {
                 ))
               }}
               onRevealInFinder={() => window.api.revealFile(selectedFiles[0].filePath)}
+              renameTemplate={settings.renameTemplate}
+              onRenameFile={handleRenameFile}
+              gearMakeSuggestions={gearMakeSuggestions}
+              gearModelSuggestions={gearModelSuggestions}
               hasActiveDefaults={
                 settings.enableAmpInfo ||
                 settings.enableCaptureDefaults ||
@@ -940,6 +1011,23 @@ export default function App() {
       </div>
 
       <DefaultsPill settings={settings} />
+      {folderChanged && (
+        <div className="flex items-center gap-3 px-4 py-1.5 bg-amber-500/10 border-t border-amber-500/30 flex-shrink-0">
+          <span className="text-xs text-amber-600 dark:text-amber-400 flex-1">New .nam files detected in folder.</span>
+          <button
+            onClick={() => { setFolderChanged(false); handleRefresh() }}
+            className="text-xs px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-700 dark:text-amber-300 transition-colors font-medium"
+          >
+            Refresh
+          </button>
+          <button
+            onClick={() => setFolderChanged(false)}
+            className="text-xs text-amber-600/60 dark:text-amber-500/60 hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       <StatusBar message={status.message} type={status.type} logPath={status.logPath} />
     </div>
   )

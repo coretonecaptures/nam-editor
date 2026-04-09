@@ -237,6 +237,21 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                 onChange={(v) => update('defaultToCab', v)}
               />
 
+              <SettingsField label="File Rename Template" hint="Used by the Rename button in the metadata editor">
+                <div className="space-y-1.5">
+                  <input
+                    type="text"
+                    value={draft.renameTemplate}
+                    onChange={(e) => update('renameTemplate', e.target.value)}
+                    placeholder="{name}  or  {gear_make} {gear_model} - {name}"
+                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors font-mono"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-500">
+                    Tokens: {'{name}'} {'{gear_make}'} {'{gear_model}'} {'{gear_type}'} {'{tone_type}'} {'{modeled_by}'}
+                  </p>
+                </div>
+              </SettingsField>
+
               <div className="pt-2 border-t border-gray-200 dark:border-gray-800">
                 <p className="text-xs text-gray-500 dark:text-gray-500 mb-3">Confirmation dialogs</p>
                 <div className="space-y-3">
@@ -270,6 +285,12 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                 description="Each time you open a folder it becomes the default. On next launch it reopens automatically."
                 checked={draft.rememberLastFolder}
                 onChange={(v) => update('rememberLastFolder', v)}
+              />
+              <CheckboxField
+                label="Watch folder for new files"
+                description="Automatically detect when new .nam files are added to the open folder and show a refresh prompt. Not supported on Linux."
+                checked={draft.watchFolder}
+                onChange={(v) => update('watchFolder', v)}
               />
               <CheckboxField
                 label="Open default folder on launch"

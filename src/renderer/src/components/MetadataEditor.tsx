@@ -10,9 +10,29 @@ interface MetadataEditorProps {
   onRevealInFinder: () => void
   onReapplyDefaults?: () => void
   hasActiveDefaults?: boolean
+  renameTemplate?: string
+  onRenameFile?: (filePath: string, newBaseName: string) => Promise<void>
+  gearMakeSuggestions?: string[]
+  gearModelSuggestions?: string[]
 }
 
-export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFinder, onReapplyDefaults, hasActiveDefaults }: MetadataEditorProps) {
+function buildRenamePreview(template: string, meta: NamMetadata, fileName: string): string {
+  const result = template
+    .replace(/\{name\}/g, meta.name || fileName)
+    .replace(/\{gear_make\}/g, meta.gear_make || '')
+    .replace(/\{gear_model\}/g, meta.gear_model || '')
+    .replace(/\{gear_type\}/g, meta.gear_type || '')
+    .replace(/\{tone_type\}/g, meta.tone_type || '')
+    .replace(/\{modeled_by\}/g, meta.modeled_by || '')
+    // Sanitize characters invalid in filenames
+    .replace(/[/\\:*?"<>|]/g, '_')
+    // Collapse multiple spaces/underscores and trim
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^[\s._]+|[\s._]+$/g, '')
+  return result || fileName
+}
+
+export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFinder, onReapplyDefaults, hasActiveDefaults, renameTemplate, onRenameFile, gearMakeSuggestions = [], gearModelSuggestions = [] }: MetadataEditorProps) {
   const m = file.metadata
   const orig = file.originalMetadata
 
@@ -87,6 +107,21 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
         <div className="flex items-center gap-2 flex-shrink-0">
           {file.isDirty && (
             <span className="text-xs text-amber-400 font-medium">Unsaved</span>
+          )}
+          {onRenameFile && renameTemplate && (
+            <button
+              onClick={() => {
+                const newBaseName = buildRenamePreview(renameTemplate, m, file.fileName)
+                const confirmed = window.confirm(
+                  `Rename file?\n\nFrom: ${file.fileName}.nam\nTo:   ${newBaseName}.nam`
+                )
+                if (confirmed) onRenameFile(file.filePath, newBaseName)
+              }}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-300 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 whitespace-nowrap"
+              title={`Rename to: ${buildRenamePreview(renameTemplate, m, file.fileName)}.nam`}
+            >
+              Rename
+            </button>
           )}
           {hasActiveDefaults && onReapplyDefaults && (
             <button
@@ -202,22 +237,34 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
             </div>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Manufacturer" autoFilled={isAutoFilled('gear_make')}>
-                <TextInput
-                  value={m.gear_make ?? ''}
-                  onChange={(v) => update('gear_make', v)}
-                  placeholder="e.g. Friedman"
-                  changed={isManuallyChanged('gear_make')}
-                  autoFilled={isAutoFilled('gear_make')}
-                />
+                <>
+                  <datalist id="gear-make-list">
+                    {gearMakeSuggestions.map((s) => <option key={s} value={s} />)}
+                  </datalist>
+                  <TextInput
+                    value={m.gear_make ?? ''}
+                    onChange={(v) => update('gear_make', v)}
+                    placeholder="e.g. Friedman"
+                    changed={isManuallyChanged('gear_make')}
+                    autoFilled={isAutoFilled('gear_make')}
+                    datalistId="gear-make-list"
+                  />
+                </>
               </Field>
               <Field label="Model" autoFilled={isAutoFilled('gear_model')}>
-                <TextInput
-                  value={m.gear_model ?? ''}
-                  onChange={(v) => update('gear_model', v)}
-                  placeholder="e.g. BE100 Deluxe"
-                  changed={isManuallyChanged('gear_model')}
-                  autoFilled={isAutoFilled('gear_model')}
-                />
+                <>
+                  <datalist id="gear-model-list">
+                    {gearModelSuggestions.map((s) => <option key={s} value={s} />)}
+                  </datalist>
+                  <TextInput
+                    value={m.gear_model ?? ''}
+                    onChange={(v) => update('gear_model', v)}
+                    placeholder="e.g. BE100 Deluxe"
+                    changed={isManuallyChanged('gear_model')}
+                    autoFilled={isAutoFilled('gear_model')}
+                    datalistId="gear-model-list"
+                  />
+                </>
               </Field>
             </div>
           </Section>
@@ -400,13 +447,15 @@ function TextInput({
   onChange,
   placeholder,
   changed,
-  autoFilled
+  autoFilled,
+  datalistId
 }: {
   value: string
   onChange: (v: string) => void
   placeholder?: string
   changed?: boolean
   autoFilled?: boolean
+  datalistId?: string
 }) {
   return (
     <input
@@ -414,6 +463,7 @@ function TextInput({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
+      list={datalistId}
       className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none transition-colors ${inputClass(changed, autoFilled)}`}
     />
   )

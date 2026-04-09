@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useRef, useState, useEffect } from 'react'
 
 interface ToolbarProps {
   onOpenFiles: () => void
@@ -14,6 +14,8 @@ interface ToolbarProps {
   onCloseAll: () => void
   rootFolder: string | null
   onRefresh: () => void
+  recentFolders: string[]
+  onOpenRecentFolder: (path: string) => void
 }
 
 export function Toolbar({
@@ -29,8 +31,21 @@ export function Toolbar({
   onNameFromFilename,
   onCloseAll,
   rootFolder,
-  onRefresh
+  onRefresh,
+  recentFolders,
+  onOpenRecentFolder
 }: ToolbarProps) {
+  const [showRecent, setShowRecent] = useState(false)
+  const recentRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!showRecent) return
+    const handler = (e: MouseEvent) => {
+      if (recentRef.current && !recentRef.current.contains(e.target as Node)) setShowRecent(false)
+    }
+    window.addEventListener('mousedown', handler)
+    return () => window.removeEventListener('mousedown', handler)
+  }, [showRecent])
   return (
     <div
       className="h-12 flex items-center gap-2 px-4 bg-gray-100 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex-shrink-0"
@@ -59,7 +74,7 @@ export function Toolbar({
 
       <button
         onClick={onOpenFolder}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-l-md text-xs font-medium bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -67,6 +82,39 @@ export function Toolbar({
         </svg>
         Open Folder
       </button>
+      <div ref={recentRef} className="relative" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        <button
+          onClick={() => setShowRecent((v) => !v)}
+          disabled={recentFolders.length === 0}
+          className="flex items-center px-1.5 py-1.5 rounded-r-md text-xs font-medium bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors border-l border-gray-300 dark:border-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Recent folders"
+        >
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {showRecent && (
+          <div className="absolute left-0 top-full mt-1 w-80 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50 py-1">
+            <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-b border-gray-200 dark:border-gray-700">
+              Recent Folders
+            </div>
+            {recentFolders.map((folder) => {
+              const name = folder.replace(/\\/g, '/').split('/').pop() ?? folder
+              return (
+                <button
+                  key={folder}
+                  onClick={() => { setShowRecent(false); onOpenRecentFolder(folder) }}
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                  title={folder}
+                >
+                  <div className="font-medium text-gray-700 dark:text-gray-300 truncate">{name}</div>
+                  <div className="text-xs text-gray-400 dark:text-gray-600 truncate">{folder}</div>
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </div>
 
       {fileCount > 0 && (
         <button

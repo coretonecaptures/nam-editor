@@ -1,5 +1,5 @@
 import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
-import { join } from 'path'
+import { join, dirname } from 'path'
 import fs from 'fs'
 import os from 'os'
 
@@ -7,6 +7,9 @@ const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
 
 // Module-level reference so IPC handlers can always reach the window
 let mainWindow: BrowserWindow | null = null
+
+// Folder watcher for auto-refresh feature
+let folderWatcher: import('fs').FSWatcher | null = null
 
 // ---- Startup logger ----
 // Writes to os.tmpdir() immediately (safe before app ready), then moves to
@@ -473,6 +476,43 @@ app.whenReady().then(() => {
 
   // IPC: expose log file path so Settings panel can show "Open Log" button
   ipcMain.handle('log:getStartupLogPath', () => logPath)
+
+  // IPC: Rename a .nam file on disk
+  ipcMain.handle('file:rename', async (_event, oldPath: string, newBaseName: string) => {
+    try {
+      const newPath = join(dirname(oldPath), newBaseName + '.nam')
+      if (fs.existsSync(newPath)) {
+        return { success: false, error: 'A file with that name already exists' }
+      }
+      fs.renameSync(oldPath, newPath)
+      return { success: true, newPath: newPath.replace(/\\/g, '/') }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  })
+
+  // IPC: Watch a folder for .nam file changes and notify renderer
+  ipcMain.handle('folder:watch', async (_event, folderPath: string | null) => {
+    // Stop any existing watcher
+    if (folderWatcher) {
+      try { folderWatcher.close() } catch { /* ignore */ }
+      folderWatcher = null
+    }
+    if (!folderPath) return
+
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null
+    try {
+      folderWatcher = fs.watch(folderPath, { recursive: true }, (_eventType, filename) => {
+        if (!filename || !filename.toLowerCase().endsWith('.nam')) return
+        if (debounceTimer) clearTimeout(debounceTimer)
+        debounceTimer = setTimeout(() => {
+          mainWindow?.webContents.send('folder:changed')
+        }, 1500)
+      })
+    } catch (err) {
+      log(`folder:watch error: ${String(err)}`)
+    }
+  })
 
   log('creating window...')
   createWindow()
