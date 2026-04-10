@@ -302,6 +302,6 @@ No installation required. AppImage is a portable format that runs on most distro
 
 There's no existing tool that lets capture artists manage `.nam` metadata locally, in bulk, before sharing their work. NAM Lab was built to fill that gap — a fast, offline desktop app that gives you full control over how your captures are tagged and presented to the people who use them.
 
-Conceived by **[Core Tone Captures](https://www.coretonecaptures.com)** — a NAM capture artist community focused on quality tones and open sharing. Questions, feedback, or collaboration: [info@coretonecaptures.com](mailto:info@coretonecaptures.com).
+Conceived by **[Core Tone Captures](https://www.coretonecaptures.com)** — a NAM capture maker focused on quality tones. Questions, feedback, or collaboration: [info@coretonecaptures.com](mailto:info@coretonecaptures.com).
 
 Code written by [Claude Code](https://claude.ai/code).
