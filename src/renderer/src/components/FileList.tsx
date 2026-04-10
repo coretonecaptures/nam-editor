@@ -871,7 +871,7 @@ function FileItem({
       </div>
 
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate" title={file.fileName}>
+        <div className={`text-sm font-semibold truncate ${file.isDirty ? 'text-amber-500 dark:text-amber-400' : 'text-gray-900 dark:text-gray-100'}`} title={file.fileName}>
           {meta.name || file.fileName}
         </div>
         {subtitle && (
@@ -884,7 +884,7 @@ function FileItem({
           {meta.tone_type && (
             <span className={`text-xs px-1.5 py-0.5 rounded ${toneChipClass(meta.tone_type, solidPills)}`}>{meta.tone_type}</span>
           )}
-          {missing > 0 && (
+          {missing > 0 && !file.isDirty && (
             <span
               className="text-xs px-1.5 py-0.5 rounded bg-amber-100 dark:bg-yellow-900/30 text-amber-700 dark:text-yellow-600"
               title={`Missing: ${missingFields.map((f) => f.label).join(', ')}`}
