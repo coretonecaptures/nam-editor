@@ -1099,6 +1099,9 @@ function EmptyState({
         <p className="text-gray-500 dark:text-gray-500 text-sm max-w-xs">
           Open a folder to manage your library, or open individual .nam files to edit their metadata.
         </p>
+        <p className="text-gray-400 dark:text-gray-600 text-xs mt-2">
+          You can also drag and drop .nam files or a folder directly into this window.
+        </p>
       </div>
       <div className="flex gap-3">
         <button

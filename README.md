@@ -79,6 +79,7 @@ This is especially useful for capture artists who want to properly tag their `.n
 
 ### File Management
 - Open individual `.nam` files or an entire folder (scans recursively)
+- **Drag and drop** `.nam` files or a folder from Explorer/Finder directly into the app window to open them
 - Shift+click and Ctrl+click for range and multi-selection in the file list
 - Opening a new file or folder replaces the current session (with unsaved-changes warning)
 - Close All button clears the session
