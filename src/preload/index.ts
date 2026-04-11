@@ -24,6 +24,8 @@ const api = {
     return () => ipcRenderer.removeListener('folder:changed', handler)
   },
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
+  createFolder: (parentPath: string, name: string): Promise<{ success: boolean; newPath?: string; error?: string }> =>
+    ipcRenderer.invoke('folder:create', parentPath, name),
   renameFolder: (folderPath: string, newName: string): Promise<{ success: boolean; newPath?: string; error?: string }> =>
     ipcRenderer.invoke('folder:rename', folderPath, newName),
   moveFolder: (sourcePath: string, destParentPath: string): Promise<{ success: boolean; newPath?: string; error?: string }> =>

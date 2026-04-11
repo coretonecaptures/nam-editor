@@ -14,6 +14,7 @@ interface FolderTreeProps {
   onRevealFolder: (path: string) => void
   onFilterChange: (matchingPaths: Set<string> | null) => void
   onDropFiles?: (filePaths: string[], destFolderPath: string) => void
+  onCreateFolder?: (parentPath: string, name: string) => Promise<{ success: boolean; error?: string }>
   onRenameFolder?: (folderPath: string, newName: string) => Promise<{ success: boolean; error?: string }>
   onMoveFolder?: (sourcePath: string, destParentPath: string) => Promise<{ success: boolean; error?: string }>
 }
@@ -42,7 +43,7 @@ function matchesFilter(
 export function FolderTree({
   tree, files, selectedFolder, onSelect, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, onFilterChange, onDropFiles,
-  onRenameFolder, onMoveFolder
+  onCreateFolder, onRenameFolder, onMoveFolder
 }: FolderTreeProps) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -192,6 +193,7 @@ export function FolderTree({
           isFiltered={isFiltered}
           onDropFiles={onDropFiles}
           onDropFolder={onMoveFolder ? (src) => onMoveFolder(src, tree.path) : undefined}
+          onCreateFolder={onCreateFolder ? (name) => onCreateFolder(tree.path, name) : undefined}
         />
 
         {tree.children.map((child) => (
@@ -208,6 +210,7 @@ export function FolderTree({
             onRevealFolder={onRevealFolder}
             matchingPaths={matchingPaths}
             onDropFiles={onDropFiles}
+            onCreateFolder={onCreateFolder}
             onRenameFolder={onRenameFolder}
             onMoveFolder={onMoveFolder}
           />
@@ -220,7 +223,7 @@ export function FolderTree({
 function TreeNode({
   node, selectedFolder, onSelect, depth, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, matchingPaths, onDropFiles,
-  onRenameFolder, onMoveFolder
+  onCreateFolder, onRenameFolder, onMoveFolder
 }: {
   node: FolderNode
   selectedFolder: string | null
@@ -233,6 +236,7 @@ function TreeNode({
   onRevealFolder: (path: string) => void
   matchingPaths: Set<string> | null
   onDropFiles?: (filePaths: string[], destFolderPath: string) => void
+  onCreateFolder?: (parentPath: string, name: string) => Promise<{ success: boolean; error?: string }>
   onRenameFolder?: (folderPath: string, newName: string) => Promise<{ success: boolean; error?: string }>
   onMoveFolder?: (sourcePath: string, destParentPath: string) => Promise<{ success: boolean; error?: string }>
 }) {
@@ -277,6 +281,7 @@ function TreeNode({
         isFiltered={matchingPaths !== null}
         onDropFiles={onDropFiles}
         onDropFolder={onMoveFolder ? (src) => onMoveFolder(src, node.path) : undefined}
+        onCreateFolder={onCreateFolder ? (name) => onCreateFolder(node.path, name) : undefined}
         onRenameFolder={onRenameFolder ? (newName) => onRenameFolder(node.path, newName) : undefined}
         isDraggableFolder
       />
@@ -332,6 +337,7 @@ function FolderRow({
   isFiltered: boolean
   onDropFiles?: (filePaths: string[], destFolderPath: string) => void
   onDropFolder?: (sourceFolderPath: string) => void
+  onCreateFolder?: (name: string) => Promise<{ success: boolean; error?: string }>
   onRenameFolder?: (newName: string) => Promise<{ success: boolean; error?: string }>
   isDraggableFolder?: boolean
 }) {
@@ -341,6 +347,9 @@ function FolderRow({
   const [isRenaming, setIsRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState(label)
   const renameInputRef = useRef<HTMLInputElement>(null)
+  const [isCreating, setIsCreating] = useState(false)
+  const [createValue, setCreateValue] = useState('')
+  const createInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!menu) return
@@ -370,6 +379,21 @@ function FolderRow({
     if (!trimmed || trimmed === label || !onRenameFolder) return
     const result = await onRenameFolder(trimmed)
     if (!result.success) alert(`Rename failed: ${result.error}`)
+  }
+
+  useEffect(() => {
+    if (isCreating) {
+      setCreateValue('')
+      setTimeout(() => createInputRef.current?.focus(), 30)
+    }
+  }, [isCreating])
+
+  const commitCreate = async () => {
+    const trimmed = createValue.trim()
+    setIsCreating(false)
+    if (!trimmed || !onCreateFolder) return
+    const result = await onCreateFolder(trimmed)
+    if (!result.success) alert(`Create folder failed: ${result.error}`)
   }
 
   const countColor = isFiltered
@@ -525,6 +549,14 @@ function FolderRow({
           >
             Batch edit…
           </button>
+          {onCreateFolder && (
+            <button
+              className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
+              onClick={() => { setMenu(null); setIsCreating(true) }}
+            >
+              New subfolder…
+            </button>
+          )}
           {!isRoot && onRenameFolder && (
             <button
               className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
@@ -539,6 +571,27 @@ function FolderRow({
           >
             Reveal in Explorer
           </button>
+        </div>
+      )}
+
+      {isCreating && (
+        <div className="flex items-center gap-1.5 mx-1 py-1" style={{ paddingLeft: `${(isRoot ? 0 : 1) * 12 + 20}px` }}>
+          <svg className="w-3.5 h-3.5 flex-shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+          </svg>
+          <input
+            ref={createInputRef}
+            className="flex-1 text-xs bg-gray-100 dark:bg-gray-700 border border-indigo-500 rounded px-1 py-0.5 outline-none"
+            value={createValue}
+            placeholder="New folder name"
+            onChange={(e) => setCreateValue(e.target.value)}
+            onBlur={commitCreate}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); commitCreate() }
+              if (e.key === 'Escape') setIsCreating(false)
+              e.stopPropagation()
+            }}
+          />
         </div>
       )}
     </div>

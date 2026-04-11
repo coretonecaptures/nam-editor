@@ -41,6 +41,7 @@ declare global {
       renameFile: (oldPath: string, newBaseName: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       watchFolder: (path: string | null) => Promise<void>
       onFolderChanged: (cb: () => void) => () => void
+      createFolder: (parentPath: string, name: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       renameFolder: (folderPath: string, newName: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       moveFolder: (sourcePath: string, destParentPath: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       onOpenFiles: (cb: (paths: string[]) => void) => () => void
@@ -730,6 +731,17 @@ export default function App() {
     }
   }
 
+  const handleCreateFolder = async (parentPath: string, name: string) => {
+    const result = await window.api.createFolder(parentPath, name)
+    if (result.success) {
+      if (librarian.rootFolder) await loadFolderByPath(librarian.rootFolder)
+      setStatus({ message: `Created folder: ${name}`, type: 'success' })
+    } else {
+      setStatus({ message: `Create failed: ${result.error}`, type: 'error' })
+    }
+    return result
+  }
+
   const handleRenameFolder = async (folderPath: string, newName: string) => {
     const result = await window.api.renameFolder(folderPath, newName)
     if (result.success && result.newPath) {
@@ -888,6 +900,7 @@ export default function App() {
                 }}
                 onRevealFolder={(path) => window.api.revealFile(path)}
                 onDropFiles={handleFileDrop}
+                onCreateFolder={handleCreateFolder}
                 onRenameFolder={handleRenameFolder}
                 onMoveFolder={handleMoveFolder}
                 onBatchEdit={(path, name) => {

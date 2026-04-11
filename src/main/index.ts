@@ -540,6 +540,20 @@ app.whenReady().then(() => {
     }
   })
 
+  // IPC: Create a subfolder
+  ipcMain.handle('folder:create', async (_event, parentPath: string, name: string) => {
+    try {
+      const newPath = join(parentPath, name)
+      if (fs.existsSync(newPath)) {
+        return { success: false, error: 'A folder with that name already exists' }
+      }
+      fs.mkdirSync(newPath)
+      return { success: true, newPath: newPath.replace(/\\/g, '/') }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  })
+
   // IPC: Rename a folder on disk and return the new path
   ipcMain.handle('folder:rename', async (_event, folderPath: string, newName: string) => {
     try {
