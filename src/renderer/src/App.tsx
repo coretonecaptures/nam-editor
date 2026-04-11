@@ -127,6 +127,27 @@ function detectToneType(baseName: string): typeof TONE_TYPES[number] | null {
   return best ? best.tone : null
 }
 
+function parseHiddenFolders(raw: string): Set<string> {
+  return new Set(raw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean))
+}
+
+function filterHiddenFiles(files: string[], hidden: Set<string>): string[] {
+  if (hidden.size === 0) return files
+  return files.filter((p) => {
+    const parts = p.replace(/\\/g, '/').split('/')
+    return !parts.some((seg) => hidden.has(seg.toLowerCase()))
+  })
+}
+
+function pruneHiddenTree(node: FolderNode, hidden: Set<string>): FolderNode | null {
+  if (hidden.has(node.name.toLowerCase())) return null
+  const children = node.children
+    .map((c) => pruneHiddenTree(c, hidden))
+    .filter((c): c is FolderNode => c !== null)
+  const totalCount = node.fileCount + children.reduce((s, c) => s + c.totalCount, 0)
+  return { ...node, children, totalCount }
+}
+
 const EMPTY_LIBRARIAN: LibrarianState = {
   rootFolder: null,
   folderTree: null,
@@ -338,10 +359,18 @@ export default function App() {
       setStatus({ message: 'No .nam files found in that folder', type: 'info' })
       return
     }
+    const hidden = parseHiddenFolders(settings.hiddenFolders ?? '')
+    const visibleFiles = filterHiddenFiles(flatResult.files, hidden)
+    const rawTree = treeResult.success && treeResult.tree ? treeResult.tree : null
+    const visibleTree = rawTree && hidden.size > 0 ? pruneHiddenTree(rawTree, hidden) : rawTree
+    if (visibleFiles.length === 0) {
+      setStatus({ message: 'No .nam files found (all in hidden folders)', type: 'info' })
+      return
+    }
     const normalizedFolder = folder.replace(/\\/g, '/')
     setLibrarian({
       rootFolder: normalizedFolder,
-      folderTree: treeResult.success && treeResult.tree ? treeResult.tree : null,
+      folderTree: visibleTree,
       selectedFolder: null
     })
     // Track recent folders
@@ -350,10 +379,10 @@ export default function App() {
       localStorage.setItem('nam-lab-recent-folders', JSON.stringify(next))
       return next
     })
-    await loadFiles(flatResult.files, 'replace')
+    await loadFiles(visibleFiles, 'replace')
     // Bump watcherKey to restart the folder watcher now that the scan is done
     setWatcherKey((k) => k + 1)
-  }, [loadFiles])
+  }, [loadFiles, settings.hiddenFolders])
 
   // Subscribe to app:openFiles — for files opened while app is already running
   useEffect(() => {

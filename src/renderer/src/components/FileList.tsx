@@ -216,7 +216,7 @@ export function FileList({
   const [showExport, setShowExport] = useState(false)
   const [showColChooser, setShowColChooser] = useState(false)
   const anchorIndexRef = useRef<number>(-1)
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; filePath: string } | null>(null)
   const exportRef = useRef<HTMLDivElement>(null)
   const chooserRef = useRef<HTMLDivElement>(null)
 
@@ -552,21 +552,14 @@ export function FileList({
           draggable={draggable}
           visibleCols={visibleCols}
           onVisibleColsChange={handleVisibleColsChange}
-          onContextMenu={(e) => {
-            if (selectedIds.size === 0) return
+          onContextMenu={(e, filePath) => {
             e.preventDefault()
-            setCtxMenu({ x: e.clientX, y: e.clientY })
+            if (!selectedIds.has(filePath)) onSelect(filePath, false)
+            setCtxMenu({ x: e.clientX, y: e.clientY, filePath })
           }}
         />
       ) : (
-        <div
-          className="flex-1 overflow-y-auto"
-          onContextMenu={(e) => {
-            if (selectedIds.size === 0) return
-            e.preventDefault()
-            setCtxMenu({ x: e.clientX, y: e.clientY })
-          }}
-        >
+        <div className="flex-1 overflow-y-auto">
           {sorted.length === 0 ? (
             <div className="flex items-center justify-center h-20">
               <p className="text-gray-400 dark:text-gray-600 text-xs">No matches</p>
@@ -588,6 +581,11 @@ export function FileList({
                     onSelect(file.filePath, e.ctrlKey || e.metaKey)
                   }
                 }}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  if (!selectedIds.has(file.filePath)) onSelect(file.filePath, false)
+                  setCtxMenu({ x: e.clientX, y: e.clientY, filePath: file.filePath })
+                }}
                 onDragStart={draggable ? (e) => {
                   const paths = selectedIds.has(file.filePath) ? [...selectedIds] : [file.filePath]
                   e.dataTransfer.effectAllowed = 'move'
@@ -607,6 +605,21 @@ export function FileList({
           style={{ top: ctxMenu.y, left: ctxMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >
+          <button
+            className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
+            onClick={() => {
+              window.api.revealFile(ctxMenu.filePath)
+              setCtxMenu(null)
+            }}
+          >
+            <svg className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+            </svg>
+            Show in folder
+          </button>
+          {(onSaveSelected || onBatchEditSelected) && (
+            <div className="border-t border-gray-200 dark:border-gray-700 my-1" />
+          )}
           {onSaveSelected && (
             <button
               className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
@@ -682,7 +695,7 @@ function GridView({
   draggable: boolean
   visibleCols: string[]
   onVisibleColsChange: (cols: string[]) => void
-  onContextMenu: (e: React.MouseEvent) => void
+  onContextMenu: (e: React.MouseEvent, filePath: string) => void
 }) {
   const [colWidths, setColWidths] = useState<Record<string, number>>(DEFAULT_COL_WIDTHS)
   const resizingRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null)
@@ -708,7 +721,7 @@ function GridView({
   }
 
   return (
-    <div className="flex-1 overflow-auto relative" onContextMenu={onContextMenu}>
+    <div className="flex-1 overflow-auto relative">
       <table className="border-collapse text-xs" style={{ tableLayout: 'fixed', width: activeColumns.reduce((s, c) => s + colWidths[c.key], 24) }}>
         <thead className="sticky top-0 z-10">
           <tr className="bg-gray-100 dark:bg-gray-900 border-b-2 border-gray-300 dark:border-gray-700">
@@ -771,6 +784,7 @@ function GridView({
                       onSelect(file.filePath, e.ctrlKey || e.metaKey)
                     }
                   }}
+                  onContextMenu={(e) => onContextMenu(e, file.filePath)}
                   onMouseDown={(e) => { if (e.shiftKey) e.preventDefault() }}
                 >
                   <td className="border-r border-gray-200 dark:border-gray-700/60 text-center align-middle" style={{ width: 24 }}>
@@ -826,7 +840,8 @@ function FileItem({
   solidPills,
   onSelect,
   onDragStart,
-  onRemove
+  onRemove,
+  onContextMenu
 }: {
   file: NamFile
   isSelected: boolean
@@ -834,6 +849,7 @@ function FileItem({
   onSelect: (e: React.MouseEvent) => void
   onDragStart?: (e: React.DragEvent<HTMLDivElement>) => void
   onRemove?: () => void
+  onContextMenu?: (e: React.MouseEvent) => void
 }) {
   const meta = file.metadata
   const subtitle = [meta.gear_make, meta.gear_model].filter(Boolean).join(' ') || meta.tone_type || file.architecture || ''
@@ -856,6 +872,7 @@ function FileItem({
       draggable={!!onDragStart}
       onDragStart={onDragStart}
       onClick={(e) => onSelect(e)}
+      onContextMenu={onContextMenu}
       onMouseDown={(e) => { if (e.shiftKey) e.preventDefault() }}
     >
       <div className="flex-shrink-0 flex items-center justify-center mt-2" style={{ width: 6 }}>

@@ -313,6 +313,31 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
             </div>
           </div>
 
+          {/* Library */}
+          <div>
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-sm">📚</span>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Library</h3>
+              <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
+            </div>
+            <div className="space-y-4">
+              <SettingsField label="Hidden Folders" hint="Folder names to exclude when scanning — subfolders are also excluded">
+                <div className="space-y-1.5">
+                  <input
+                    type="text"
+                    value={draft.hiddenFolders}
+                    onChange={(e) => update('hiddenFolders', e.target.value)}
+                    placeholder="e.g. lightning_logs,version_0,checkpoints"
+                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors font-mono"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-500">
+                    Comma-separated. Case-insensitive. Matched by folder name only, not full path.
+                  </p>
+                </div>
+              </SettingsField>
+            </div>
+          </div>
+
           {/* Current Amp Info */}
           <Section
             icon="🔊"

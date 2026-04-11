@@ -43,6 +43,9 @@ export interface AppSettings {
 
   // Watch folder
   watchFolder: boolean
+
+  // Hidden folders (comma-separated folder names to exclude from scans)
+  hiddenFolders: string
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -74,7 +77,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   solidPillColors: true,
 
   renameTemplate: '{name}',
-  watchFolder: false
+  watchFolder: false,
+  hiddenFolders: 'lightning_logs,version_0,checkpoints'
 }
 
 const STORAGE_KEY = 'nam-editor-settings'
