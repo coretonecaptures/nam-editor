@@ -1,5 +1,5 @@
 import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
-import { join, dirname, basename } from 'path'
+import { join, dirname, basename, normalize as normalizePath } from 'path'
 import fs from 'fs'
 import os from 'os'
 
@@ -543,7 +543,7 @@ app.whenReady().then(() => {
   // IPC: Create a subfolder
   ipcMain.handle('folder:create', async (_event, parentPath: string, name: string) => {
     try {
-      const newPath = join(parentPath.replace(/\//g, '\\'), name)
+      const newPath = join(parentPath, name)
       if (fs.existsSync(newPath)) {
         return { success: false, error: 'A folder with that name already exists' }
       }
@@ -557,7 +557,7 @@ app.whenReady().then(() => {
   // IPC: Rename a folder on disk and return the new path
   ipcMain.handle('folder:rename', async (_event, folderPath: string, newName: string) => {
     try {
-      const normalized = folderPath.replace(/\//g, '\\')
+      const normalized = normalizePath(folderPath)
       const parent = dirname(normalized)
       const newPath = join(parent, newName)
       if (fs.existsSync(newPath)) {
@@ -573,9 +573,10 @@ app.whenReady().then(() => {
   // IPC: Move a folder into another folder
   ipcMain.handle('folder:move', async (_event, sourcePath: string, destParentPath: string) => {
     try {
-      const normSource = sourcePath.replace(/\//g, '\\')
+      const normSource = normalizePath(sourcePath)
       const name = basename(normSource)
-      const newPath = join(destParentPath.replace(/\//g, '\\'), name)
+      const newPath = join(normalizePath(destParentPath), name)
+      log(`folder:move source="${sourcePath}" normSource="${normSource}" dest="${destParentPath}" newPath="${newPath}" srcExists=${fs.existsSync(normSource)}`)
       if (fs.existsSync(newPath)) {
         return { success: false, error: 'A folder with that name already exists at the destination' }
       }
@@ -594,14 +595,12 @@ app.whenReady().then(() => {
   const argvFiles = getArgvFiles()
   if (argvFiles.length > 0) pendingOpenPaths.push(...argvFiles)
 
-  if (mainWindow) {
-    mainWindow.webContents.once('did-finish-load', () => {
-      if (pendingOpenPaths.length > 0) {
-        const toSend = pendingOpenPaths.splice(0)
-        sendOpenPaths(toSend)
-      }
-    })
-  }
+  // Pull model: renderer calls this once mounted to get any startup files.
+  // This avoids the race where did-finish-load fires before React subscribes.
+  ipcMain.handle('app:getPendingFiles', () => {
+    const valid = pendingOpenPaths.splice(0).filter((p) => p.toLowerCase().endsWith('.nam') && fs.existsSync(p))
+    return valid
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

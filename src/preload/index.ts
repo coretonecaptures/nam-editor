@@ -30,6 +30,7 @@ const api = {
     ipcRenderer.invoke('folder:rename', folderPath, newName),
   moveFolder: (sourcePath: string, destParentPath: string): Promise<{ success: boolean; newPath?: string; error?: string }> =>
     ipcRenderer.invoke('folder:move', sourcePath, destParentPath),
+  getPendingFiles: (): Promise<string[]> => ipcRenderer.invoke('app:getPendingFiles'),
   onOpenFiles: (cb: (paths: string[]) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, paths: string[]) => cb(paths)
     ipcRenderer.on('app:openFiles', handler)

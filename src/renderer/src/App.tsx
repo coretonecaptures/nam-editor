@@ -44,6 +44,7 @@ declare global {
       createFolder: (parentPath: string, name: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       renameFolder: (folderPath: string, newName: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       moveFolder: (sourcePath: string, destParentPath: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
+      getPendingFiles: () => Promise<string[]>
       onOpenFiles: (cb: (paths: string[]) => void) => () => void
       platform: string
     }
@@ -360,11 +361,19 @@ export default function App() {
     setWatcherKey((k) => k + 1)
   }, [loadFiles])
 
-  // Subscribe to app:openFiles — file association / open-with from OS
+  // Subscribe to app:openFiles — for files opened while app is already running
   useEffect(() => {
     const unsub = window.api.onOpenFiles((paths) => loadFiles(paths, 'append'))
     return unsub
   }, [loadFiles])
+
+  // Pull any files queued before React mounted (macOS open-file / Windows argv race)
+  useEffect(() => {
+    window.api.getPendingFiles().then((paths) => {
+      if (paths.length > 0) loadFiles(paths, 'append')
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // intentionally empty — runs once on mount after React is ready
 
   // Returns false if user cancels, true if safe to proceed
   const confirmDiscardChanges = (): boolean => {
