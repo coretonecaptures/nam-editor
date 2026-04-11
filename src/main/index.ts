@@ -543,7 +543,7 @@ app.whenReady().then(() => {
   // IPC: Create a subfolder
   ipcMain.handle('folder:create', async (_event, parentPath: string, name: string) => {
     try {
-      const newPath = join(parentPath, name)
+      const newPath = join(parentPath.replace(/\//g, '\\'), name)
       if (fs.existsSync(newPath)) {
         return { success: false, error: 'A folder with that name already exists' }
       }
@@ -557,12 +557,13 @@ app.whenReady().then(() => {
   // IPC: Rename a folder on disk and return the new path
   ipcMain.handle('folder:rename', async (_event, folderPath: string, newName: string) => {
     try {
-      const parent = dirname(folderPath)
+      const normalized = folderPath.replace(/\//g, '\\')
+      const parent = dirname(normalized)
       const newPath = join(parent, newName)
       if (fs.existsSync(newPath)) {
         return { success: false, error: 'A folder with that name already exists' }
       }
-      fs.renameSync(folderPath, newPath)
+      fs.renameSync(normalized, newPath)
       return { success: true, newPath: newPath.replace(/\\/g, '/') }
     } catch (err) {
       return { success: false, error: String(err) }
@@ -572,12 +573,13 @@ app.whenReady().then(() => {
   // IPC: Move a folder into another folder
   ipcMain.handle('folder:move', async (_event, sourcePath: string, destParentPath: string) => {
     try {
-      const name = basename(sourcePath)
-      const newPath = join(destParentPath, name)
+      const normSource = sourcePath.replace(/\//g, '\\')
+      const name = basename(normSource)
+      const newPath = join(destParentPath.replace(/\//g, '\\'), name)
       if (fs.existsSync(newPath)) {
         return { success: false, error: 'A folder with that name already exists at the destination' }
       }
-      fs.renameSync(sourcePath, newPath)
+      fs.renameSync(normSource, newPath)
       return { success: true, newPath: newPath.replace(/\\/g, '/') }
     } catch (err) {
       return { success: false, error: String(err) }

@@ -196,16 +196,6 @@ App IDs:
 
 ## Known Issues / Pending
 
-### Drag & Drop from OS (Unresolved Bug)
-Dragging `.nam` files or folders from Windows Explorer / macOS Finder into the app window does not work — the cursor shows a red forbidden circle. Attempted fixes:
-- Added `will-navigate` prevention in main process (`mainWindow.webContents.on('will-navigate', e => e.preventDefault())`) to stop Electron navigating away on file drop
-- Moved from React synthetic `onDrop` to native `document.addEventListener('drop')` listeners
-- Added `dropEffect = 'copy'` on both `dragover` and `dragenter` on the root div
-- Fixed FolderTree `dragover` to only intercept intra-app drags (checking `e.dataTransfer.types.includes('application/x-nam-files')`)
-- Added `path:stat` IPC for reliable folder detection via `fs.statSync` instead of guessing from file extension
-- Root cause still unclear — Electron's webContents may be consuming the drag event before it reaches the renderer. References to drag & drop removed from the UI until resolved.
-- **Intra-app file moves** (dragging files between folders within the tree) work correctly — that uses `application/x-nam-files` data transfer and is unaffected.
-
 ### Other Pending Items
 
 - **App icon** — user has design concepts (lab beaker theme). Needs `.ico` (Windows) and `.icns` (macOS) files generated from artwork. Currently uses Electron default musical note icon.
@@ -248,9 +238,15 @@ These have been discussed and approved — remove each item when implemented.
 
 - **[x] Arrow key navigation in file list** — ↑/↓ arrows move selection; Shift+↑/↓ extends selection. Works in both list and grid view.
 
-- **[ ] Intra-app folder drag-to-organize** — Drag files from one folder to another within the FolderTree (this already works for moving files). Extend to support reorganizing the folder structure itself (create subfolder, move folder). Distinct from the unresolved OS drag & drop bug.
+- **[x] Intra-app folder drag-to-organize** — Drag folder to another folder in tree to move it on disk. Right-click → Rename folder (inline edit). Right-click → New subfolder (inline input). Uses `application/x-nam-folder` data transfer, prevents drop into self/children.
 
 - **[x] Watch folder / auto-refresh** — Toggle in Settings → Startup. Monitors open folder via `fs.watch`, debounced 1500ms. Shows amber banner when new files detected. Banner clears on refresh. Watcher stops during reload to prevent re-fire. Not supported on Linux.
+
+- **[x] OS drag & drop** — Fixed in v0.4.4. Root cause: Electron 32+ removed `File.path`; switched to `webUtils.getPathForFile()`. Also reverted to React synthetic `onDrop` on root div (native document listeners don't receive OS file drops in Electron 41+). Supports dragging `.nam` files or folders from Explorer/Finder.
+
+- **[x] File associations** — `.nam` files registered via `fileAssociations` in electron-builder config. macOS: `app.on('open-file')`. Windows: argv parsing. Paths queued before window ready are sent via `app:openFiles` IPC once renderer loads.
+
+- **[ ] Batch rename from template** — Apply the rename template to all selected files or all files in a folder. Needs preview list (show all from→to pairs) before committing. Should reuse same template setting.
 
 ---
 

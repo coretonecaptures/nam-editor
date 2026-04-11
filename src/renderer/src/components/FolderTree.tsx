@@ -317,7 +317,7 @@ interface ContextMenuState { x: number; y: number }
 function FolderRow({
   label, folderPath, isRoot, isSelected, totalCount, dirtyCount, depth,
   hasChildren, expanded, onToggleExpand, onClick, onSave, onRevert,
-  onBatchEdit, onReveal, isFiltered, onDropFiles, onDropFolder, onRenameFolder, isDraggableFolder
+  onBatchEdit, onReveal, isFiltered, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, isDraggableFolder
 }: {
   label: string
   folderPath: string
