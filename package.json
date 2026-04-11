@@ -39,6 +39,15 @@
     "directories": {
       "output": "release"
     },
+    "fileAssociations": [
+      {
+        "ext": "nam",
+        "name": "NAM Capture",
+        "description": "Neural Amp Modeler capture file",
+        "mimeType": "application/x-nam",
+        "role": "Editor"
+      }
+    ],
     "win": {
       "target": "nsis"
     },

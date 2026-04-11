@@ -24,6 +24,15 @@ const api = {
     return () => ipcRenderer.removeListener('folder:changed', handler)
   },
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
+  renameFolder: (folderPath: string, newName: string): Promise<{ success: boolean; newPath?: string; error?: string }> =>
+    ipcRenderer.invoke('folder:rename', folderPath, newName),
+  moveFolder: (sourcePath: string, destParentPath: string): Promise<{ success: boolean; newPath?: string; error?: string }> =>
+    ipcRenderer.invoke('folder:move', sourcePath, destParentPath),
+  onOpenFiles: (cb: (paths: string[]) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, paths: string[]) => cb(paths)
+    ipcRenderer.on('app:openFiles', handler)
+    return () => ipcRenderer.removeListener('app:openFiles', handler)
+  },
   platform: process.platform
 }
 

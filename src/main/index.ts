@@ -1,5 +1,5 @@
 import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
-import { join, dirname } from 'path'
+import { join, dirname, basename } from 'path'
 import fs from 'fs'
 import os from 'os'
 
@@ -280,6 +280,32 @@ function patchNamBotField(content: string, field: string, value: unknown): strin
   return content.slice(0, openBrace + 1) + inner + content.slice(closeBrace)
 }
 
+// ---- File association / open-with handling ----
+// Paths queued before the window is ready are sent once it loads.
+const pendingOpenPaths: string[] = []
+
+function sendOpenPaths(paths: string[]) {
+  const valid = paths.filter((p) => p.toLowerCase().endsWith('.nam') && fs.existsSync(p))
+  if (valid.length === 0) return
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('app:openFiles', valid)
+  } else {
+    pendingOpenPaths.push(...valid)
+  }
+}
+
+// macOS: file opened via Finder "Open With" or double-click after association
+app.on('open-file', (event, path) => {
+  event.preventDefault()
+  sendOpenPaths([path])
+})
+
+// Windows/Linux: passed as CLI argument
+function getArgvFiles(): string[] {
+  // In packaged app, argv[1] may be the file path; skip electron/app executables
+  return process.argv.slice(isDev ? 2 : 1).filter((a) => !a.startsWith('--') && a.toLowerCase().endsWith('.nam'))
+}
+
 app.whenReady().then(() => {
   log('app.whenReady fired')
   switchLogToUserData()
@@ -514,9 +540,52 @@ app.whenReady().then(() => {
     }
   })
 
+  // IPC: Rename a folder on disk and return the new path
+  ipcMain.handle('folder:rename', async (_event, folderPath: string, newName: string) => {
+    try {
+      const parent = dirname(folderPath)
+      const newPath = join(parent, newName)
+      if (fs.existsSync(newPath)) {
+        return { success: false, error: 'A folder with that name already exists' }
+      }
+      fs.renameSync(folderPath, newPath)
+      return { success: true, newPath: newPath.replace(/\\/g, '/') }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  })
+
+  // IPC: Move a folder into another folder
+  ipcMain.handle('folder:move', async (_event, sourcePath: string, destParentPath: string) => {
+    try {
+      const name = basename(sourcePath)
+      const newPath = join(destParentPath, name)
+      if (fs.existsSync(newPath)) {
+        return { success: false, error: 'A folder with that name already exists at the destination' }
+      }
+      fs.renameSync(sourcePath, newPath)
+      return { success: true, newPath: newPath.replace(/\\/g, '/') }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  })
+
   log('creating window...')
   createWindow()
   log('window created')
+
+  // Send any files queued before window was ready (macOS open-file events + Windows argv)
+  const argvFiles = getArgvFiles()
+  if (argvFiles.length > 0) pendingOpenPaths.push(...argvFiles)
+
+  if (mainWindow) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      if (pendingOpenPaths.length > 0) {
+        const toSend = pendingOpenPaths.splice(0)
+        sendOpenPaths(toSend)
+      }
+    })
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

@@ -14,6 +14,8 @@ interface FolderTreeProps {
   onRevealFolder: (path: string) => void
   onFilterChange: (matchingPaths: Set<string> | null) => void
   onDropFiles?: (filePaths: string[], destFolderPath: string) => void
+  onRenameFolder?: (folderPath: string, newName: string) => Promise<{ success: boolean; error?: string }>
+  onMoveFolder?: (sourcePath: string, destParentPath: string) => Promise<{ success: boolean; error?: string }>
 }
 
 function matchesFilter(
@@ -22,18 +24,15 @@ function matchesFilter(
   activeTones: Set<string>,
   activeGears: Set<string>
 ): boolean {
-  // Text search across name, filename, make, model, modeled_by
   if (query) {
     const q = query.toLowerCase()
     const hay = [f.metadata.name, f.fileName, f.metadata.gear_make, f.metadata.gear_model, f.metadata.modeled_by]
       .filter(Boolean).join(' ').toLowerCase()
     if (!hay.includes(q)) return false
   }
-  // Tone chip filter (OR within tones)
   if (activeTones.size > 0) {
     if (!f.metadata.tone_type || !activeTones.has(f.metadata.tone_type)) return false
   }
-  // Gear chip filter (OR within gears)
   if (activeGears.size > 0) {
     if (!f.metadata.gear_type || !activeGears.has(f.metadata.gear_type)) return false
   }
@@ -42,7 +41,8 @@ function matchesFilter(
 
 export function FolderTree({
   tree, files, selectedFolder, onSelect, dirtyPaths,
-  onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, onFilterChange, onDropFiles
+  onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, onFilterChange, onDropFiles,
+  onRenameFolder, onMoveFolder
 }: FolderTreeProps) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -52,7 +52,6 @@ export function FolderTree({
 
   const isFiltered = query.trim() !== '' || activeTones.size > 0 || activeGears.size > 0
 
-  // Compute matching paths and notify parent
   useEffect(() => {
     if (!isFiltered) {
       onFilterChange(null)
@@ -83,7 +82,6 @@ export function FolderTree({
     setActiveGears(new Set())
   }
 
-  // Build matchingPaths for count display in tree rows
   const matchingPaths: Set<string> | null = isFiltered
     ? new Set(files.filter((f) => matchesFilter(f, query.trim(), activeTones, activeGears)).map((f) => f.filePath.replace(/\\/g, '/')))
     : null
@@ -117,7 +115,6 @@ export function FolderTree({
       {/* Search / filter panel */}
       {searchOpen && (
         <div className="px-2 pt-2 pb-1.5 border-b border-gray-200 dark:border-gray-800 flex-shrink-0 space-y-1.5">
-          {/* Text input */}
           <div className="relative">
             <svg className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -139,46 +136,24 @@ export function FolderTree({
             )}
           </div>
 
-          {/* Tone chips */}
           <div className="flex flex-wrap gap-1">
             {TONE_TYPES.map((t) => (
-              <button
-                key={t}
-                onClick={() => toggleTone(t)}
-                className={`text-xs px-1.5 py-0.5 rounded-full transition-colors ${
-                  activeTones.has(t)
-                    ? 'bg-indigo-600 text-white'
-                    : 'bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-                }`}
-              >
-                {t}
-              </button>
+              <button key={t} onClick={() => toggleTone(t)}
+                className={`text-xs px-1.5 py-0.5 rounded-full transition-colors ${activeTones.has(t) ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+              >{t}</button>
             ))}
           </div>
 
-          {/* Gear chips */}
           <div className="flex flex-wrap gap-1">
             {GEAR_TYPES.map((g) => (
-              <button
-                key={g}
-                onClick={() => toggleGear(g)}
-                className={`text-xs px-1.5 py-0.5 rounded-full transition-colors ${
-                  activeGears.has(g)
-                    ? 'bg-amber-600 text-white'
-                    : 'bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-                }`}
-              >
-                {g}
-              </button>
+              <button key={g} onClick={() => toggleGear(g)}
+                className={`text-xs px-1.5 py-0.5 rounded-full transition-colors ${activeGears.has(g) ? 'bg-amber-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+              >{g}</button>
             ))}
           </div>
 
-          {/* Clear all */}
           {isFiltered && (
-            <button
-              onClick={clearFilter}
-              className="text-xs text-amber-400 hover:text-amber-300 transition-colors"
-            >
+            <button onClick={clearFilter} className="text-xs text-amber-400 hover:text-amber-300 transition-colors">
               Clear filter
             </button>
           )}
@@ -216,6 +191,7 @@ export function FolderTree({
           onReveal={() => onRevealFolder(tree.path)}
           isFiltered={isFiltered}
           onDropFiles={onDropFiles}
+          onDropFolder={onMoveFolder ? (src) => onMoveFolder(src, tree.path) : undefined}
         />
 
         {tree.children.map((child) => (
@@ -232,6 +208,8 @@ export function FolderTree({
             onRevealFolder={onRevealFolder}
             matchingPaths={matchingPaths}
             onDropFiles={onDropFiles}
+            onRenameFolder={onRenameFolder}
+            onMoveFolder={onMoveFolder}
           />
         ))}
       </div>
@@ -241,7 +219,8 @@ export function FolderTree({
 
 function TreeNode({
   node, selectedFolder, onSelect, depth, dirtyPaths,
-  onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, matchingPaths, onDropFiles
+  onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, matchingPaths, onDropFiles,
+  onRenameFolder, onMoveFolder
 }: {
   node: FolderNode
   selectedFolder: string | null
@@ -254,14 +233,14 @@ function TreeNode({
   onRevealFolder: (path: string) => void
   matchingPaths: Set<string> | null
   onDropFiles?: (filePaths: string[], destFolderPath: string) => void
+  onRenameFolder?: (folderPath: string, newName: string) => Promise<{ success: boolean; error?: string }>
+  onMoveFolder?: (sourcePath: string, destParentPath: string) => Promise<{ success: boolean; error?: string }>
 }) {
   const [expanded, setExpanded] = useState(true)
   const isSelected = selectedFolder === node.path
   const hasChildren = node.children.length > 0
-
   const prefix = node.path + '/'
 
-  // When filtering: count matches in this subtree; hide folder if none
   let matchCount = 0
   if (matchingPaths) {
     for (const p of matchingPaths) {
@@ -272,7 +251,6 @@ function TreeNode({
 
   const displayCount = matchingPaths ? matchCount : node.totalCount
 
-  // Dirty count: when filtered, only count dirty files that are visible (in matchingPaths)
   let dirtyCount = 0
   for (const p of dirtyPaths) {
     if ((p.startsWith(prefix) || p === node.path) && (!matchingPaths || matchingPaths.has(p))) dirtyCount++
@@ -298,6 +276,9 @@ function TreeNode({
         onReveal={() => onRevealFolder(node.path)}
         isFiltered={matchingPaths !== null}
         onDropFiles={onDropFiles}
+        onDropFolder={onMoveFolder ? (src) => onMoveFolder(src, node.path) : undefined}
+        onRenameFolder={onRenameFolder ? (newName) => onRenameFolder(node.path, newName) : undefined}
+        isDraggableFolder
       />
 
       {expanded && hasChildren && (
@@ -316,6 +297,8 @@ function TreeNode({
               onRevealFolder={onRevealFolder}
               matchingPaths={matchingPaths}
               onDropFiles={onDropFiles}
+              onRenameFolder={onRenameFolder}
+              onMoveFolder={onMoveFolder}
             />
           ))}
         </div>
@@ -329,7 +312,7 @@ interface ContextMenuState { x: number; y: number }
 function FolderRow({
   label, folderPath, isRoot, isSelected, totalCount, dirtyCount, depth,
   hasChildren, expanded, onToggleExpand, onClick, onSave, onRevert,
-  onBatchEdit, onReveal, isFiltered, onDropFiles
+  onBatchEdit, onReveal, isFiltered, onDropFiles, onDropFolder, onRenameFolder, isDraggableFolder
 }: {
   label: string
   folderPath: string
@@ -348,10 +331,16 @@ function FolderRow({
   onReveal: () => void
   isFiltered: boolean
   onDropFiles?: (filePaths: string[], destFolderPath: string) => void
+  onDropFolder?: (sourceFolderPath: string) => void
+  onRenameFolder?: (newName: string) => Promise<{ success: boolean; error?: string }>
+  isDraggableFolder?: boolean
 }) {
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const [isDragOver, setIsDragOver] = useState(false)
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [renameValue, setRenameValue] = useState(label)
+  const renameInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!menu) return
@@ -362,15 +351,33 @@ function FolderRow({
     return () => window.removeEventListener('mousedown', close)
   }, [menu])
 
+  useEffect(() => {
+    if (isRenaming) {
+      setRenameValue(label)
+      setTimeout(() => renameInputRef.current?.select(), 30)
+    }
+  }, [isRenaming, label])
+
   const openMenu = (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
     setMenu({ x: e.clientX, y: e.clientY })
   }
 
+  const commitRename = async () => {
+    const trimmed = renameValue.trim()
+    setIsRenaming(false)
+    if (!trimmed || trimmed === label || !onRenameFolder) return
+    const result = await onRenameFolder(trimmed)
+    if (!result.success) alert(`Rename failed: ${result.error}`)
+  }
+
   const countColor = isFiltered
     ? (isSelected ? 'text-sky-600 dark:text-sky-300' : 'text-sky-600 dark:text-sky-400')
     : (isSelected ? 'text-indigo-600 dark:text-indigo-400' : isRoot ? 'text-gray-500 dark:text-gray-500' : 'text-gray-400 dark:text-gray-600')
+
+  const acceptsDrop = (types: readonly string[]) =>
+    types.includes('application/x-nam-files') || types.includes('application/x-nam-folder')
 
   return (
     <div className="relative group">
@@ -387,27 +394,44 @@ function FolderRow({
         style={{ paddingLeft: isRoot ? '12px' : `${depth * 12 + 8}px` }}
         onClick={onClick}
         onContextMenu={openMenu}
-        onDragOver={onDropFiles ? (e) => {
-          if (!e.dataTransfer.types.includes('application/x-nam-files')) return
+        draggable={isDraggableFolder}
+        onDragStart={isDraggableFolder ? (e) => {
+          e.dataTransfer.setData('application/x-nam-folder', folderPath)
+          e.dataTransfer.effectAllowed = 'move'
+          e.stopPropagation()
+        } : undefined}
+        onDragOver={(e) => {
+          if (!acceptsDrop(e.dataTransfer.types)) return
+          if (e.dataTransfer.types.includes('application/x-nam-folder')) {
+            const src = e.dataTransfer.getData('application/x-nam-folder')
+            if (src && (folderPath === src || folderPath.startsWith(src + '/'))) return
+          }
           e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'
-        } : undefined}
-        onDragEnter={onDropFiles ? (e) => {
-          if (!e.dataTransfer.types.includes('application/x-nam-files')) return
+        }}
+        onDragEnter={(e) => {
+          if (!acceptsDrop(e.dataTransfer.types)) return
           e.preventDefault(); setIsDragOver(true)
-        } : undefined}
-        onDragLeave={onDropFiles ? (e) => {
+        }}
+        onDragLeave={(e) => {
           if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragOver(false)
-        } : undefined}
-        onDrop={onDropFiles ? (e) => {
+        }}
+        onDrop={(e) => {
           e.preventDefault()
           setIsDragOver(false)
+          if (e.dataTransfer.types.includes('application/x-nam-folder') && onDropFolder) {
+            const src = e.dataTransfer.getData('application/x-nam-folder')
+            if (src && src !== folderPath && !folderPath.startsWith(src + '/')) {
+              onDropFolder(src)
+            }
+            return
+          }
           const raw = e.dataTransfer.getData('application/x-nam-files')
-          if (!raw) return
+          if (!raw || !onDropFiles) return
           try {
             const paths: string[] = JSON.parse(raw)
             if (paths.length > 0) onDropFiles(paths, folderPath)
-          } catch { /* ignore malformed data */ }
-        } : undefined}
+          } catch { /* ignore */ }
+        }}
       >
         {!isRoot && (
           <span
@@ -433,7 +457,23 @@ function FolderRow({
             d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
         </svg>
 
-        <span className={`text-xs truncate flex-1 ${isRoot ? 'font-medium' : ''}`}>{label}</span>
+        {isRenaming ? (
+          <input
+            ref={renameInputRef}
+            className="flex-1 text-xs bg-gray-100 dark:bg-gray-700 border border-indigo-500 rounded px-1 py-0 outline-none"
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); commitRename() }
+              if (e.key === 'Escape') setIsRenaming(false)
+              e.stopPropagation()
+            }}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <span className={`text-xs truncate flex-1 ${isRoot ? 'font-medium' : ''}`}>{label}</span>
+        )}
 
         <button
           className="flex-shrink-0 opacity-0 group-hover:opacity-100 w-4 h-4 flex items-center justify-center rounded hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-all"
@@ -446,9 +486,7 @@ function FolderRow({
         </button>
 
         {totalCount > 0 && (
-          <span className={`text-xs flex-shrink-0 ${countColor}`}>
-            {totalCount}
-          </span>
+          <span className={`text-xs flex-shrink-0 ${countColor}`}>{totalCount}</span>
         )}
 
         <span className={`text-xs flex-shrink-0 w-4 text-right ${dirtyCount > 0 ? 'text-amber-500' : 'invisible'}`}>
@@ -487,6 +525,14 @@ function FolderRow({
           >
             Batch edit…
           </button>
+          {!isRoot && onRenameFolder && (
+            <button
+              className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
+              onClick={() => { setMenu(null); setIsRenaming(true) }}
+            >
+              Rename folder…
+            </button>
+          )}
           <button
             className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
             onClick={() => { setMenu(null); onReveal() }}

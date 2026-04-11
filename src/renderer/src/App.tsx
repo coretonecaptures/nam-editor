@@ -41,6 +41,9 @@ declare global {
       renameFile: (oldPath: string, newBaseName: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       watchFolder: (path: string | null) => Promise<void>
       onFolderChanged: (cb: () => void) => () => void
+      renameFolder: (folderPath: string, newName: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
+      moveFolder: (sourcePath: string, destParentPath: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
+      onOpenFiles: (cb: (paths: string[]) => void) => () => void
       platform: string
     }
   }
@@ -186,6 +189,12 @@ export default function App() {
     const unsub = window.api.onFolderChanged(() => setFolderChanged(true))
     return unsub
   }, [])
+
+  // Subscribe to app:openFiles — file association / open-with from OS
+  useEffect(() => {
+    const unsub = window.api.onOpenFiles((paths) => loadFiles(paths, 'append'))
+    return unsub
+  }, [loadFiles])
 
   // Electron on Windows loses keyboard focus when the focused DOM element is removed
   // (e.g. BatchEditor unmounts) or after native confirm dialogs close. Chromium's
@@ -720,6 +729,59 @@ export default function App() {
     }
   }
 
+  const handleRenameFolder = async (folderPath: string, newName: string) => {
+    const result = await window.api.renameFolder(folderPath, newName)
+    if (result.success && result.newPath) {
+      const oldPrefix = folderPath.replace(/\\/g, '/') + '/'
+      const newPrefix = result.newPath + '/'
+      // Update all file paths under the renamed folder
+      setFiles((prev) => prev.map((f) => {
+        const norm = f.filePath.replace(/\\/g, '/')
+        if (!norm.startsWith(oldPrefix)) return f
+        const newFilePath = newPrefix + norm.slice(oldPrefix.length)
+        return { ...f, filePath: newFilePath }
+      }))
+      setSelectedIds((prev) => {
+        const next = new Set<string>()
+        for (const id of prev) {
+          const norm = id.replace(/\\/g, '/')
+          next.add(norm.startsWith(oldPrefix) ? newPrefix + norm.slice(oldPrefix.length) : id)
+        }
+        return next
+      })
+      // Rescan tree
+      if (librarian.rootFolder) await loadFolderByPath(librarian.rootFolder)
+      setStatus({ message: `Folder renamed to: ${newName}`, type: 'success' })
+    }
+    return result
+  }
+
+  const handleMoveFolder = async (sourcePath: string, destParentPath: string) => {
+    const result = await window.api.moveFolder(sourcePath, destParentPath)
+    if (result.success && result.newPath) {
+      const oldPrefix = sourcePath.replace(/\\/g, '/') + '/'
+      const newPrefix = result.newPath + '/'
+      setFiles((prev) => prev.map((f) => {
+        const norm = f.filePath.replace(/\\/g, '/')
+        if (!norm.startsWith(oldPrefix)) return f
+        return { ...f, filePath: newPrefix + norm.slice(oldPrefix.length) }
+      }))
+      setSelectedIds((prev) => {
+        const next = new Set<string>()
+        for (const id of prev) {
+          const norm = id.replace(/\\/g, '/')
+          next.add(norm.startsWith(oldPrefix) ? newPrefix + norm.slice(oldPrefix.length) : id)
+        }
+        return next
+      })
+      if (librarian.rootFolder) await loadFolderByPath(librarian.rootFolder)
+      setStatus({ message: `Folder moved`, type: 'success' })
+    } else {
+      setStatus({ message: `Move failed: ${result.error}`, type: 'error' })
+    }
+    return result
+  }
+
   // Filter files by selected folder and/or library search filter
   const visibleFiles = files.filter((f) => {
     const norm = f.filePath.replace(/\\/g, '/')
@@ -825,6 +887,8 @@ export default function App() {
                 }}
                 onRevealFolder={(path) => window.api.revealFile(path)}
                 onDropFiles={handleFileDrop}
+                onRenameFolder={handleRenameFolder}
+                onMoveFolder={handleMoveFolder}
                 onBatchEdit={(path, name) => {
                   setShowSettings(false)
                   const sel = [...selectedIds]
