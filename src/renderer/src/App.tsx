@@ -240,13 +240,7 @@ export default function App() {
     }
   }
 
-  // Auto-load default folder on startup
-  useEffect(() => {
-    if (settings.enableDefaultFolder && settings.defaultFolder) {
-      loadFolderByPath(settings.defaultFolder)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // intentionally empty — only runs once on mount
+  // Auto-load default folder on startup (moved below loadFolderByPath — see combined startup effect)
 
   // mode='replace': clear existing, load fresh (open folder/files)
   // mode='append': dedup against current files (drag & drop)
@@ -367,10 +361,17 @@ export default function App() {
     return unsub
   }, [loadFiles])
 
-  // Pull any files queued before React mounted (macOS open-file / Windows argv race)
+  // Combined startup effect: pending files take priority over default folder
+  // Must be placed after loadFiles and loadFolderByPath are defined
   useEffect(() => {
     window.api.getPendingFiles().then((paths) => {
-      if (paths.length > 0) loadFiles(paths, 'append')
+      if (paths.length > 0) {
+        // File was opened via double-click / file association — load just those files
+        loadFiles(paths, 'replace')
+      } else if (settings.enableDefaultFolder && settings.defaultFolder) {
+        // No pending files — restore last folder as normal
+        loadFolderByPath(settings.defaultFolder)
+      }
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // intentionally empty — runs once on mount after React is ready
