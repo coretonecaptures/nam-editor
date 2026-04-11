@@ -302,6 +302,7 @@ function TreeNode({
               onRevealFolder={onRevealFolder}
               matchingPaths={matchingPaths}
               onDropFiles={onDropFiles}
+              onCreateFolder={onCreateFolder}
               onRenameFolder={onRenameFolder}
               onMoveFolder={onMoveFolder}
             />
