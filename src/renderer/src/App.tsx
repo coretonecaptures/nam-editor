@@ -190,11 +190,6 @@ export default function App() {
     return unsub
   }, [])
 
-  // Subscribe to app:openFiles — file association / open-with from OS
-  useEffect(() => {
-    const unsub = window.api.onOpenFiles((paths) => loadFiles(paths, 'append'))
-    return unsub
-  }, [loadFiles])
 
   // Electron on Windows loses keyboard focus when the focused DOM element is removed
   // (e.g. BatchEditor unmounts) or after native confirm dialogs close. Chromium's
@@ -362,6 +357,12 @@ export default function App() {
     await loadFiles(flatResult.files, 'replace')
     // Bump watcherKey to restart the folder watcher now that the scan is done
     setWatcherKey((k) => k + 1)
+  }, [loadFiles])
+
+  // Subscribe to app:openFiles — file association / open-with from OS
+  useEffect(() => {
+    const unsub = window.api.onOpenFiles((paths) => loadFiles(paths, 'append'))
+    return unsub
   }, [loadFiles])
 
   // Returns false if user cancels, true if safe to proceed
