@@ -37,6 +37,7 @@ declare global {
       getStartupLogPath: () => Promise<string>
       refocusWindow: () => Promise<void>
       statPath: (p: string) => Promise<{ isDirectory: boolean }>
+      getPathForFile: (file: File) => string
       renameFile: (oldPath: string, newBaseName: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       watchFolder: (path: string | null) => Promise<void>
       onFolderChanged: (cb: () => void) => () => void
@@ -400,66 +401,46 @@ export default function App() {
     await loadFolderByPath(librarian.rootFolder)
   }
 
-  // Native document-level drag/drop — more reliable than React synthetic events in Electron.
-  // We register once and read current state via refs to avoid stale closures.
-  const filesRef = useRef(files)
-  useEffect(() => { filesRef.current = files }, [files])
-  const loadFilesRef = useRef(loadFiles)
-  useEffect(() => { loadFilesRef.current = loadFiles }, [loadFiles])
-  const loadFolderByPathRef = useRef(loadFolderByPath)
-  useEffect(() => { loadFolderByPathRef.current = loadFolderByPath }, [loadFolderByPath])
+  // OS drag/drop — use React synthetic onDrop on the root div (works in Electron;
+  // native document-level listeners do NOT receive OS file drops in Electron 41+).
+  // Guard against intra-app drags (application/x-nam-files) which are handled by FolderTree.
+  const handleOsDrop = async (e: React.DragEvent) => {
+    e.preventDefault()
+    if (e.dataTransfer.types.includes('application/x-nam-files')) return // intra-app drag, ignore
 
-  useEffect(() => {
-    const onDragOver = (e: DragEvent) => {
-      e.preventDefault()
-      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
-    }
+    const droppedFiles = Array.from(e.dataTransfer.files)
+    if (droppedFiles.length === 0) return
 
-    const onDrop = async (e: DragEvent) => {
-      e.preventDefault()
-      if (!e.dataTransfer) return
+    const namFiles: string[] = []
+    const candidates: string[] = []
 
-      const droppedFiles = Array.from(e.dataTransfer.files)
-      if (droppedFiles.length === 0) return
-
-      const namFiles: string[] = []
-      const candidates: string[] = []
-
-      for (const file of droppedFiles) {
-        const p = (file as unknown as { path: string }).path
-        if (!p) continue
-        if (file.name.toLowerCase().endsWith('.nam')) {
-          namFiles.push(p)
-        } else {
-          candidates.push(p)
-        }
-      }
-
-      // Check candidates via IPC to see if they are directories
-      const folders: string[] = []
-      for (const p of candidates) {
-        const result = await window.api.statPath(p)
-        if (result.isDirectory) folders.push(p)
-      }
-
-      if (folders.length === 0 && namFiles.length === 0) return
-
-      if (folders.length > 0) {
-        const dirty = filesRef.current.filter((f) => f.isDirty)
-        if (dirty.length > 0 && !window.confirm(`You have unsaved changes in ${dirty.length} file${dirty.length !== 1 ? 's' : ''}.\n\nDiscard changes and continue?`)) return
-        await loadFolderByPathRef.current(folders[0])
+    for (const file of droppedFiles) {
+      const p = window.api.getPathForFile(file)
+      if (!p) continue
+      if (file.name.toLowerCase().endsWith('.nam')) {
+        namFiles.push(p)
       } else {
-        await loadFilesRef.current(namFiles, filesRef.current.length === 0 ? 'replace' : 'append')
+        candidates.push(p)
       }
     }
 
-    document.addEventListener('dragover', onDragOver)
-    document.addEventListener('drop', onDrop)
-    return () => {
-      document.removeEventListener('dragover', onDragOver)
-      document.removeEventListener('drop', onDrop)
+    // Check candidates via IPC to see if they are directories
+    const folders: string[] = []
+    for (const p of candidates) {
+      const result = await window.api.statPath(p)
+      if (result.isDirectory) folders.push(p)
     }
-  }, []) // empty deps — uses refs for current state
+
+    if (folders.length === 0 && namFiles.length === 0) return
+
+    if (folders.length > 0) {
+      const dirty = files.filter((f) => f.isDirty)
+      if (dirty.length > 0 && !window.confirm(`You have unsaved changes in ${dirty.length} file${dirty.length !== 1 ? 's' : ''}.\n\nDiscard changes and continue?`)) return
+      await loadFolderByPath(folders[0])
+    } else {
+      await loadFiles(namFiles, files.length === 0 ? 'replace' : 'append')
+    }
+  }
 
   const handleMetadataChange = (filePath: string, updated: NamFile['metadata']) => {
     setFiles((prev) =>
@@ -765,6 +746,7 @@ export default function App() {
   return (
     <div
       className="flex flex-col h-screen bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 overflow-hidden"
+      onDrop={handleOsDrop}
       onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' }}
       onDragEnter={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' }}
     >

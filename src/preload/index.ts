@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 const api = {
   openFiles: (): Promise<string[]> => ipcRenderer.invoke('dialog:openFiles'),
@@ -23,6 +23,7 @@ const api = {
     ipcRenderer.on('folder:changed', handler)
     return () => ipcRenderer.removeListener('folder:changed', handler)
   },
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   platform: process.platform
 }
 
