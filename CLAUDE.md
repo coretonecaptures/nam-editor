@@ -35,6 +35,8 @@ The renderer never touches the filesystem directly — everything goes through `
 | `file:move` | main | Move a .nam file to a different folder |
 | `path:stat` | main | Check if a path is a directory |
 | `shell:revealFile` | main | Open file location in Explorer/Finder |
+| `file:trash` | main | Move files to OS trash via `shell.trashItem()` |
+| `file:copy` | main | Copy files to destination directory |
 | `window:refocus` | main | Restore keyboard focus after native dialogs |
 | `log:getErrorLogPath` | main | Path to parse error log |
 | `log:getStartupLogPath` | main | Path to startup log |
@@ -80,6 +82,7 @@ Layout uses three resizable panels: **FolderTree | FileList | MetadataEditor/Bat
 | `MultiSelectEditor` | Right panel: editor for 2+ selected files, shows shared/varies state |
 | `BatchEditor` | Right panel: batch field editor for a folder or selection |
 | `SettingsPanel` | Right panel: app settings (replaces editor content when open) |
+| `DuplicatesModal` | Full-screen modal: find dupes by filename or metadata name, choose keep, move to _Duplicates or trash |
 | `StatusBar` | Bottom bar: status messages, version number |
 
 ### Types
@@ -122,6 +125,11 @@ interface NamFile {
 ### Editable (written to disk)
 `name`, `modeled_by`, `gear_type`, `gear_make`, `gear_model`, `tone_type`, `input_level_dbu`, `output_level_dbu`, `nb_trained_epochs`
 
+### NAM Lab Extended Fields (nl_ prefix, written to `metadata.nam_lab.*`)
+`nl_mics`, `nl_cabinet`, `nl_cabinet_config`, `nl_amp_channel`, `nl_boost_pedal`, `nl_amp_settings`, `nl_pedal_settings`, `nl_amp_switches`, `nl_comments`
+
+These are lifted from `metadata.nam_lab.*` to flat `nl_${k}` keys at read time (same pattern as `nb_` NAM-BOT fields). Written back with `patchNamLabField()`. Toggle via `showNamLabFields` in Settings → Library. Available as optional grid/export columns.
+
 ### Read-Only (displayed, never written by NAM Lab)
 `date`, `loudness`, `gain`, `training.validation_esr`, `training.data.checks.passed`, `training.data.latency.calibration.recommended`, `training.nam_bot.preset_name`
 
@@ -146,6 +154,7 @@ Settings are stored in `localStorage` via `loadSettings()`/`saveSettings()`. Key
 - **Capture Defaults** (`enableCaptureDefaults`) — default modeled_by, input/output levels
 - **Current Amp Info** (`enableAmpInfo`) — default manufacturer/model; disable when browsing shared libraries
 - **Behavior** — name from filename, auto-detect tone type, amp suffix detection
+- **Library** — `showNamLabFields` (show Capture Details section in MetadataEditor, default on), `hiddenFolders` (comma-separated folder names to exclude from scans)
 
 `applyDefaults()` in App.tsx runs on every file at load time and on "↺ Defaults" button press. It only fills empty fields — never overwrites existing values.
 
@@ -173,7 +182,7 @@ npm run package:linux    # Linux AppImage
 
 CI runs on tag push via `.github/workflows/release.yml`. Tags matching `*-rc*` are automatically marked as GitHub pre-releases. Final releases use clean semver tags (`v0.4.2`).
 
-Current version: **0.4.2** (see `package.json`). Version is injected into the renderer via `VITE_APP_VERSION` in `electron.vite.config.ts`.
+Current version: **0.4.5** (see `package.json`). Version is injected into the renderer via `VITE_APP_VERSION` in `electron.vite.config.ts`.
 
 App IDs:
 - `appId`: `com.coretonecaptures.namlab`
@@ -224,7 +233,7 @@ These have been discussed and approved — remove each item when implemented.
 ### High Priority
 
 - **[x] Rename file from metadata template** — Single-file rename button in MetadataEditor header. Template configurable in Settings (default: `{name}`). Confirm dialog shows from/to preview. IPC `file:rename` handler on main process.
-- **[ ] Batch rename from template** — Apply the rename template to all selected files or all files in a folder. Needs preview list (show all from→to pairs) before committing. Should reuse same template setting. Deferred until single-file rename is validated.
+- **[x] Batch rename from template** — Multi-file rename via BatchRenameModal. Modes: suffix, prefix, find & replace, template. Live preview with per-directory conflict detection. Accessible from right-click context menu in FileList.
 
 - **[x] Completeness indicator** — Colored dot per file (amber = 1 missing, red = 2+ missing, no dot = complete). 7 core fields: `name`, `modeled_by`, `gear_make`, `gear_model`, `gear_type`, `tone_type`, `input_level_dbu`. Shown in list and grid. Only shown when file is not dirty (dirty = amber dot takes priority). "Incomplete (N)" filter chip added.
 
@@ -246,7 +255,25 @@ These have been discussed and approved — remove each item when implemented.
 
 - **[x] File associations** — `.nam` files registered via `fileAssociations` in electron-builder config. macOS: `app.on('open-file')`. Windows: argv parsing. Paths queued before window ready are sent via `app:openFiles` IPC once renderer loads.
 
-- **[ ] Batch rename from template** — Apply the rename template to all selected files or all files in a folder. Needs preview list (show all from→to pairs) before committing. Should reuse same template setting.
+- **[x] Hidden folders** — Comma-separated folder names excluded at scan time in main process (default: `lightning_logs,version_0,checkpoints`). Settings → Library.
+
+- **[x] Show in Folder** — Right-click file in list/grid → Reveal in Explorer/Finder.
+
+- **[x] Delete to trash** — Right-click → Delete uses `shell.trashItem()` with confirmation; file removed from state.
+
+- **[x] Copy to folder** — Right-click → Copy files to folder (folder picker, non-destructive).
+
+- **[x] Apply defaults to selection** — Right-click → Apply defaults re-runs settings rules on selected files mid-session.
+
+- **[x] Folder-level export** — Right-click folder in tree → Export as CSV or Excel (all columns, folder's files only).
+
+- **[x] Extended NAM Lab metadata** — 9 nl_ fields stored at `metadata.nam_lab.*`, lifted to flat `nl_` keys. Toggle via Settings → Library → Show NAM Lab metadata fields. In grid and export.
+
+- **[x] Duplicate detection** — Toolbar "Duplicates" button opens DuplicatesModal. Modes: by filename, by metadata name. Select which copy to keep. Move non-kept to `_Duplicates` folder or trash.
+
+- **[ ] Jump to file's folder** — Clicking a file should highlight/scroll to its folder in the tree panel.
+
+- **[ ] OS "Open folder in NAM Lab"** — Right-click a folder in Explorer/Finder and open it directly in NAM Lab. Requires registering a protocol handler or custom verb in electron-builder config. Similar to file associations but for folders; macOS needs a folder UTI handler, Windows needs a registry shell extension verb.
 
 ---
 
