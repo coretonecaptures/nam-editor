@@ -403,7 +403,11 @@ app.whenReady().then(() => {
   })
 
   // IPC: Scan a folder recursively for .nam files (flat list)
-  ipcMain.handle('folder:scanNam', async (_event, folderPath: string) => {
+  // hiddenFolders: comma-separated folder names to skip entirely (case-insensitive)
+  ipcMain.handle('folder:scanNam', async (_event, folderPath: string, hiddenFolders?: string) => {
+    const hidden = new Set(
+      (hiddenFolders ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+    )
     try {
       const files: string[] = []
       const scan = (dir: string) => {
@@ -411,6 +415,7 @@ app.whenReady().then(() => {
         for (const entry of entries) {
           const full = join(dir, entry.name)
           if (entry.isDirectory()) {
+            if (hidden.has(entry.name.toLowerCase())) continue
             scan(full)
           } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.nam')) {
             files.push(full.replace(/\\/g, '/'))
@@ -425,8 +430,12 @@ app.whenReady().then(() => {
   })
 
   // IPC: Scan a folder and return a tree structure for the Librarian
-  ipcMain.handle('folder:scanTree', async (_event, folderPath: string) => {
+  // hiddenFolders: comma-separated folder names to skip entirely (case-insensitive)
+  ipcMain.handle('folder:scanTree', async (_event, folderPath: string, hiddenFolders?: string) => {
     const norm = (p: string) => p.replace(/\\/g, '/')
+    const hidden = new Set(
+      (hiddenFolders ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+    )
     interface FolderNode {
       name: string
       path: string
@@ -435,14 +444,14 @@ app.whenReady().then(() => {
       totalCount: number
     }
     try {
-      const buildTreeFixed = (dir: string): FolderNode => {
+      const buildTree = (dir: string): FolderNode => {
         const entries = fs.readdirSync(dir, { withFileTypes: true })
         const children: FolderNode[] = []
         let fileCount = 0
         for (const entry of entries) {
-          const full = join(dir, entry.name)
           if (entry.isDirectory()) {
-            children.push(buildTreeFixed(full))
+            if (hidden.has(entry.name.toLowerCase())) continue
+            children.push(buildTree(join(dir, entry.name)))
           } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.nam')) {
             fileCount++
           }
@@ -451,7 +460,7 @@ app.whenReady().then(() => {
         const name = norm(dir).split('/').pop() ?? dir
         return { name, path: norm(dir), children, fileCount, totalCount }
       }
-      const tree = buildTreeFixed(folderPath)
+      const tree = buildTree(folderPath)
       return { success: true, tree }
     } catch (err) {
       return { success: false, error: String(err) }
