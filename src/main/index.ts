@@ -421,6 +421,16 @@ app.whenReady().then(() => {
     return result.filePaths[0] ?? null
   })
 
+  // IPC: Read any file as base64 (used for xlsx import parsing)
+  ipcMain.handle('file:readBinary', async (_event, filePath: string) => {
+    try {
+      const buf = fs.readFileSync(filePath)
+      return { data: buf.toString('base64') }
+    } catch (err) {
+      return { error: String(err) }
+    }
+  })
+
   // IPC: Read a NAM file metadata (without exposing weights to renderer)
   const errorLogPath = join(app.getPath('userData'), 'parse-errors.log')
   ipcMain.handle('file:read', async (_event, filePath: string) => {

@@ -23,6 +23,7 @@ declare global {
       openFiles: () => Promise<string[]>
       openFolder: () => Promise<string | null>
       openImportFile: () => Promise<string | null>
+      readFileBinary: (filePath: string) => Promise<{ data?: string; error?: string }>
       revealFile: (filePath: string) => Promise<void>
       readFile: (filePath: string) => Promise<{
         success: boolean
@@ -1063,12 +1064,9 @@ export default function App() {
     // Parse the spreadsheet
     let rows: Record<string, unknown>[]
     try {
-      const raw = await window.api.readFile(filePath) as { raw?: string; error?: string }
-      if (raw.error) { setStatus({ message: `Could not read file: ${raw.error}`, type: 'error' }); return }
-      // Read the file as binary via fetch (renderer has file:// access via IPC path)
-      const resp = await fetch(`file://${filePath.replace(/\\/g, '/')}`)
-      const buf = await resp.arrayBuffer()
-      const wb = XLSX.read(buf, { type: 'array' })
+      const binary = await window.api.readFileBinary(filePath)
+      if (binary.error || !binary.data) { setStatus({ message: `Could not read file: ${binary.error}`, type: 'error' }); return }
+      const wb = XLSX.read(binary.data, { type: 'base64' })
       const ws = wb.Sheets[wb.SheetNames[0]]
       rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
     } catch (err) {
