@@ -52,7 +52,7 @@ export function BatchEditor({ folderName, fileCount, onApply, onClose, skipConfi
         parts.push(`${enabled.size} field${enabled.size !== 1 ? 's' : ''} (${fieldNames})`)
       }
       const confirmed = window.confirm(
-        `Apply to ${fileCount} file${fileCount !== 1 ? 's' : ''} in "${folderName}":\n  · ${parts.join('\n  · ')}\n\nThis will write changes directly to the .nam files on disk.`
+        `Apply to ${fileCount} file${fileCount !== 1 ? 's' : ''} in "${folderName}":\n  · ${parts.join('\n  · ')}\n\nThis will write changes directly to the .nam files on disk.\n\n(This warning can be toggled off in Settings → Behavior)`
       )
       if (!confirmed) return
     }

@@ -83,7 +83,7 @@ export function MultiSelectEditor({ files, onApply, skipConfirmation, gearMakeSu
         parts.push(`${changed.size} field${changed.size !== 1 ? 's' : ''}: ${fieldNames}`)
       }
       const confirmed = window.confirm(
-        `Apply to ${files.length} selected file${files.length !== 1 ? 's' : ''}:\n  · ${parts.join('\n  · ')}\n\nThis will write changes directly to the .nam files on disk.`
+        `Apply to ${files.length} selected file${files.length !== 1 ? 's' : ''}:\n  · ${parts.join('\n  · ')}\n\nThis will write changes directly to the .nam files on disk.\n\n(This warning can be toggled off in Settings → Behavior)`
       )
       if (!confirmed) return
     }

@@ -509,10 +509,12 @@ export default function App() {
       const autoFillNote = autoFillCount > 0
         ? `\n\n⚠️ ${autoFillCount} file${autoFillCount !== 1 ? 's have' : ' has'} auto-filled fields (from Settings defaults) that will also be written.`
         : ''
-      const confirmed = window.confirm(
-        `⚠️ Save ALL changes across every loaded folder?\n\nThis will write ${dirty.length} file${dirty.length !== 1 ? 's' : ''} to disk — including files in all subfolders. This cannot be undone.${autoFillNote}`
-      )
-      if (!confirmed) return
+      if (!settings.skipSaveAllConfirmation) {
+        const confirmed = window.confirm(
+          `⚠️ Save ALL changes across every loaded folder?\n\nThis will write ${dirty.length} file${dirty.length !== 1 ? 's' : ''} to disk — including files in all subfolders. This cannot be undone.${autoFillNote}\n\n(This warning can be toggled off in Settings → Behavior)`
+        )
+        if (!confirmed) return
+      }
     }
     setStatus({ message: `Saving ${dirty.length} file(s)...`, type: 'info' })
     const savedPaths = new Set<string>()
@@ -1049,7 +1051,7 @@ export default function App() {
                     : files.filter((f) => f.isDirty && f.filePath.replace(/\\/g, '/').startsWith(path + '/'))
                   if (targets.length === 0) return
                   if (!settings.skipSaveAllConfirmation) {
-                    const confirmed = window.confirm(`Save changes to ${targets.length} file${targets.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.`)
+                    const confirmed = window.confirm(`Save changes to ${targets.length} file${targets.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.\n\n(This warning can be toggled off in Settings → Behavior)`)
                     if (!confirmed) return
                   }
                   const savedPaths = new Set<string>()
@@ -1162,7 +1164,7 @@ export default function App() {
                   return
                 }
                 if (!settings.skipSaveAllConfirmation) {
-                  const confirmed = window.confirm(`Save changes to ${targets.length} file${targets.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.`)
+                  const confirmed = window.confirm(`Save changes to ${targets.length} file${targets.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.\n\n(This warning can be toggled off in Settings → Behavior)`)
                   if (!confirmed) return
                 }
                 setStatus({ message: `Saving ${targets.length} file(s)...`, type: 'info' })

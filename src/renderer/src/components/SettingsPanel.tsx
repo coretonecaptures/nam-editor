@@ -256,14 +256,14 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                 <p className="text-xs text-gray-500 dark:text-gray-500 mb-3">Confirmation dialogs</p>
                 <div className="space-y-3">
                   <CheckboxField
-                    label="Skip Save All confirmation"
-                    description="Don't ask before saving all unsaved files via right-click folder actions. The toolbar Save All always confirms — it affects all loaded folders and cannot be skipped."
+                    label="Skip save confirmation"
+                    description="Don't show the 'This will write to disk' warning before saving files. Applies to Save All, folder saves, and save selection."
                     checked={draft.skipSaveAllConfirmation}
                     onChange={(v) => update('skipSaveAllConfirmation', v)}
                   />
                   <CheckboxField
                     label="Skip Batch Edit confirmation"
-                    description="Don't ask before applying batch edits."
+                    description="Don't show the warning before applying batch edits or multi-select edits."
                     checked={draft.skipBatchEditConfirmation}
                     onChange={(v) => update('skipBatchEditConfirmation', v)}
                   />
