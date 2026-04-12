@@ -37,6 +37,9 @@ The renderer never touches the filesystem directly — everything goes through `
 | `shell:revealFile` | main | Open file location in Explorer/Finder |
 | `file:trash` | main | Move files to OS trash via `shell.trashItem()` |
 | `file:copy` | main | Copy files to destination directory |
+| `file:clearNamLab` | main | Surgically remove `metadata.nam_lab` block from files |
+| `file:readBinary` | main | Read any file as base64 (used for xlsx import) |
+| `dialog:openImportFile` | main | Open file picker for .xlsx/.csv import |
 | `window:refocus` | main | Restore keyboard focus after native dialogs |
 | `log:getErrorLogPath` | main | Path to parse error log |
 | `log:getStartupLogPath` | main | Path to startup log |
@@ -49,7 +52,14 @@ All writes use `patchMetadataFields()` in `src/main/index.ts` — a surgical tex
 
 For nested fields like `metadata.training.nam_bot.trained_epochs`, use `patchNamBotField()` which navigates into the nested block and creates the structure if it doesn't exist.
 
+For `nl_` fields, use `patchNamLabField()` which writes into `metadata.nam_lab.*`, creating the block if needed.
+
+To remove the entire `nam_lab` block, use `removeNamLabBlock()` which surgically strips `"nam_lab": {...}` including comma handling.
+
 Only fields in `EDITABLE_FIELDS` (plus `nb_trained_epochs`) are ever written — the patcher is a whitelist, not a catch-all.
+
+### Watcher Suppression
+`suppressWatcher()` sets `watcherSuppressUntil = Date.now() + 3000`. Any `folder:changed` event fired within 3s of a local write is silently dropped — prevents false-positive "new files detected" banners after saves.
 
 ---
 
@@ -270,7 +280,19 @@ These have been discussed and approved — remove each item when implemented.
 
 - **[x] Extended NAM Lab metadata** — 9 nl_ fields stored at `metadata.nam_lab.*`, lifted to flat `nl_` keys. Toggle via Settings → Library → Show NAM Lab metadata fields. In grid and export.
 
-- **[x] Duplicate detection** — Toolbar "Duplicates" button opens DuplicatesModal. Modes: by filename, by metadata name. Select which copy to keep. Move non-kept to `_Duplicates` folder or trash.
+- **[x] Duplicate detection** — Toolbar "Duplicates" button opens DuplicatesModal. Modes: by filename, by metadata name. Select which copy to keep. Move non-kept to `_Duplicates` folder or trash. Per-group actions. `_Duplicates` folder always hidden from tree.
+
+- **[x] Copy/Paste metadata** — Right-click single file → "Copy metadata" stores editable fields (excluding name) in memory. Right-click one or more files → "Paste metadata (from X)" with confirm dialog overwrites those fields.
+
+- **[x] Remove NAM Lab Custom Metadata** — Right-click → surgically removes `metadata.nam_lab` block from disk; clears nl_ fields from in-memory state without marking dirty. Uses `removeNamLabBlock()` in main process.
+
+- **[x] Save confirmation setting** — All save dialogs (single, Save All, folder) include "(This warning can be toggled off in Settings → Behavior)". Skip Save All confirmation setting suppresses all save dialogs.
+
+- **[x] Watch folder false-positive fix** — `suppressWatcher()` called after every local write; suppresses `folder:changed` events for 3s so saves don't trigger the "new files detected" banner.
+
+- **[x] Name-only search filter** — "Name contains…" pill input to the right of Tone Type dropdown. Filters only on capture name (falls back to filename). Main search box has tooltip listing all fields it searches.
+
+- **[x] Dynamic Capture Details in MetadataEditor** — Relevant/All segmented toggle when gear_type is set. Shows only fields relevant to the gear type; irrelevant fields dimmed at 40% in "All" mode. `NL_RELEVANT` map defines relevant fields per gear_type.
 
 - **[x] Bulk metadata import from spreadsheet** — Right-click folder → "Generate import template…" exports editable fields only as `.xlsx` (pre-filled with current values). Right-click folder → "Import metadata from spreadsheet…" opens file picker, matches rows by Capture Name, shows warning modal with match count + unmatched list, requires checkbox confirmation, writes non-empty cells only. Columns: Capture Name, Modeled By, Manufacturer, Model, Gear Type, Tone Type, Amp Channel, Amp Settings, Amp Switches, Boost Pedal, Pedal Settings, Cabinet, Cab Config, Reamp Send (dBu), Reamp Return (dBu), Trained Epochs, NAM-BOT Preset (read-only), Mic(s), Comments.
 
