@@ -218,7 +218,7 @@ Right-click any file or selection for quick actions:
 - **Reveal in Explorer** — opens the folder in Finder or Explorer
 - **Export folder as CSV / Excel** — exports all files under that folder with all available columns
 - **Generate import template…** — exports an editable `.xlsx` pre-filled with the folder's current metadata (editable fields only). Edit it in Excel, then import it back
-- **Import metadata from spreadsheet…** — picks an `.xlsx` or `.csv`, matches rows to captures by Capture Name, and writes non-empty cells back to disk. Empty cells are skipped — only what you fill in is written. Requires a confirmation checkbox before anything is written. Supports **prefix match mode**: if your spreadsheet has DI captures but you want to apply their settings to amp_cab variants with the same name prefix, enable prefix matching in the import dialog — Cabinet, Cab Config, and Mic(s) are automatically skipped for prefix matches since those vary per variant
+- **Import metadata from spreadsheet…** — picks an `.xlsx` or `.csv`, matches rows to captures by Capture Name, and writes non-empty cells back to disk. Empty cells are skipped — only what you fill in is written. Requires a confirmation checkbox before anything is written. Supports **prefix match mode**: if your spreadsheet has DI captures but you want to apply their settings to amp_cab variants with the same name prefix, enable prefix matching in the import dialog — Gear Type, Cabinet, Cab Config, and Mic(s) are automatically skipped for prefix matches since those vary per variant
 
 ### Name from Filename
 - If loaded files have no Capture Name set, a **"Name from File (N)"** button appears in the toolbar

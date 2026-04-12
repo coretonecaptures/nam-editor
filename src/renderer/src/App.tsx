@@ -1085,7 +1085,7 @@ export default function App() {
     }
 
     // Fields skipped for prefix (variant-specific) matches
-    const PREFIX_SKIP: Set<keyof NamFile['metadata']> = new Set(['nl_cabinet', 'nl_cabinet_config', 'nl_mics'])
+    const PREFIX_SKIP: Set<keyof NamFile['metadata']> = new Set(['gear_type', 'nl_cabinet', 'nl_cabinet_config', 'nl_mics'])
 
     // Helper: build incoming fields from a row, optionally skipping prefix-skip fields
     const buildIncoming = (row: Record<string, unknown>, skipFields: Set<keyof NamFile['metadata']> = new Set()): Partial<NamFile['metadata']> => {
