@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { NamFile, NamMetadata, GEAR_TYPES, TONE_TYPES } from '../types/nam'
 import { gearImages } from '../assets/gear'
 import { detectPreset } from '../utils/detectPreset'
@@ -18,6 +19,25 @@ interface MetadataEditorProps {
   showNamLabFields?: boolean
 }
 
+type NlKey = 'nl_mics' | 'nl_amp_channel' | 'nl_cabinet' | 'nl_cabinet_config' |
+             'nl_amp_settings' | 'nl_boost_pedal' | 'nl_pedal_settings' | 'nl_amp_switches' | 'nl_comments'
+
+// Fields relevant to each gear type. nl_comments always shown regardless.
+const NL_RELEVANT: Record<string, NlKey[]> = {
+  amp:          ['nl_amp_channel', 'nl_amp_settings', 'nl_amp_switches', 'nl_comments'],
+  pedal:        ['nl_boost_pedal', 'nl_pedal_settings', 'nl_comments'],
+  pedal_amp:    ['nl_amp_channel', 'nl_amp_settings', 'nl_amp_switches', 'nl_boost_pedal', 'nl_pedal_settings', 'nl_comments'],
+  amp_cab:      ['nl_mics', 'nl_amp_channel', 'nl_cabinet', 'nl_cabinet_config', 'nl_amp_settings', 'nl_amp_switches', 'nl_comments'],
+  amp_pedal_cab:['nl_mics', 'nl_amp_channel', 'nl_cabinet', 'nl_cabinet_config', 'nl_amp_settings', 'nl_amp_switches', 'nl_boost_pedal', 'nl_pedal_settings', 'nl_comments'],
+  preamp:       ['nl_amp_channel', 'nl_amp_settings', 'nl_amp_switches', 'nl_comments'],
+  studio:       ['nl_comments'],
+}
+
+const NL_ALL: NlKey[] = [
+  'nl_mics', 'nl_amp_channel', 'nl_cabinet', 'nl_cabinet_config',
+  'nl_amp_settings', 'nl_boost_pedal', 'nl_pedal_settings', 'nl_amp_switches', 'nl_comments',
+]
+
 function buildRenamePreview(template: string, meta: NamMetadata, fileName: string): string {
   const result = template
     .replace(/\{name\}/g, meta.name || fileName)
@@ -37,6 +57,7 @@ function buildRenamePreview(template: string, meta: NamMetadata, fileName: strin
 export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFinder, onReapplyDefaults, hasActiveDefaults, renameTemplate, onRenameFile, gearMakeSuggestions = [], gearModelSuggestions = [], showNamLabFields = true }: MetadataEditorProps) {
   const m = file.metadata
   const orig = file.originalMetadata
+  const [nlShowAll, setNlShowAll] = useState(false)
 
   const update = (key: keyof NamMetadata, value: unknown) => {
     onChange({ ...m, [key]: value === '' ? null : value })
@@ -363,52 +384,141 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
           </Section>
 
           {/* Capture Details section (NAM Lab extended fields) */}
-          {showNamLabFields && (
-            <Section title="Capture Details" icon={
-              <svg className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-              </svg>
-            }>
-              <div className="grid grid-cols-2 gap-4">
-                <Field label="Microphone(s)" hint="e.g. SM57 + Royer 121">
-                  <TextInput value={m.nl_mics ?? ''} onChange={(v) => update('nl_mics', v)} placeholder="e.g. SM57" changed={isManuallyChanged('nl_mics')} />
-                </Field>
-                <Field label="Amp Channel" hint="e.g. Crunch, Lead 2">
-                  <TextInput value={m.nl_amp_channel ?? ''} onChange={(v) => update('nl_amp_channel', v)} placeholder="e.g. Lead" changed={isManuallyChanged('nl_amp_channel')} />
-                </Field>
+          {showNamLabFields && (() => {
+            const gearType = m.gear_type ?? ''
+            // When gear_type is unset, show all fields so nothing is hidden
+            const relevantKeys: Set<NlKey> = new Set(
+              gearType && NL_RELEVANT[gearType] ? NL_RELEVANT[gearType] : NL_ALL
+            )
+            const visibleKeys: Set<NlKey> = nlShowAll ? new Set(NL_ALL) : relevantKeys
+            const hasGearType = !!gearType && !!NL_RELEVANT[gearType]
+
+            const show = (k: NlKey) => visibleKeys.has(k)
+            const dimmed = (k: NlKey) => nlShowAll && !relevantKeys.has(k)
+
+            const fieldClass = (key: NlKey) =>
+              dimmed(key) ? 'opacity-40' : ''
+
+            return (
+              <div>
+                {/* Section header with toggle */}
+                <div className="flex items-center gap-2 mb-3">
+                  <svg className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                  </svg>
+                  <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider flex-shrink-0">Capture Details</h3>
+                  <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
+                  {hasGearType && (
+                    <div className="flex flex-shrink-0 rounded-md overflow-hidden border border-gray-300 dark:border-gray-700 text-xs">
+                      <button
+                        onClick={() => setNlShowAll(false)}
+                        className={`px-2.5 py-1 transition-colors ${!nlShowAll ? 'bg-indigo-600 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                      >
+                        Relevant
+                      </button>
+                      <button
+                        onClick={() => setNlShowAll(true)}
+                        className={`px-2.5 py-1 border-l border-gray-300 dark:border-gray-700 transition-colors ${nlShowAll ? 'bg-indigo-600 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                      >
+                        All
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-4">
+                  {(show('nl_mics') || show('nl_amp_channel')) && (
+                    <div className={`grid gap-4 ${show('nl_mics') && show('nl_amp_channel') ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                      {show('nl_mics') && (
+                        <div className={fieldClass('nl_mics')}>
+                          <Field label="Microphone(s)" hint="e.g. SM57 + Royer 121">
+                            <TextInput value={m.nl_mics ?? ''} onChange={(v) => update('nl_mics', v)} placeholder="e.g. SM57" changed={isManuallyChanged('nl_mics')} />
+                          </Field>
+                        </div>
+                      )}
+                      {show('nl_amp_channel') && (
+                        <div className={fieldClass('nl_amp_channel')}>
+                          <Field label="Amp Channel" hint="e.g. Crunch, Lead 2">
+                            <TextInput value={m.nl_amp_channel ?? ''} onChange={(v) => update('nl_amp_channel', v)} placeholder="e.g. Lead" changed={isManuallyChanged('nl_amp_channel')} />
+                          </Field>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {(show('nl_cabinet') || show('nl_cabinet_config')) && (
+                    <div className={`grid gap-4 ${show('nl_cabinet') && show('nl_cabinet_config') ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                      {show('nl_cabinet') && (
+                        <div className={fieldClass('nl_cabinet')}>
+                          <Field label="Cabinet" hint="e.g. Marshall 1960A">
+                            <TextInput value={m.nl_cabinet ?? ''} onChange={(v) => update('nl_cabinet', v)} placeholder="e.g. Marshall 1960A" changed={isManuallyChanged('nl_cabinet')} />
+                          </Field>
+                        </div>
+                      )}
+                      {show('nl_cabinet_config') && (
+                        <div className={fieldClass('nl_cabinet_config')}>
+                          <Field label="Cabinet Config" hint="e.g. 4x12, 2x12">
+                            <TextInput value={m.nl_cabinet_config ?? ''} onChange={(v) => update('nl_cabinet_config', v)} placeholder="e.g. 4x12" changed={isManuallyChanged('nl_cabinet_config')} />
+                          </Field>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {show('nl_amp_settings') && (
+                    <div className={fieldClass('nl_amp_settings')}>
+                      <Field label="Amp Settings" hint="Knob positions, e.g. Gain 7, Bass 5, Mid 4, Treb 6">
+                        <TextInput value={m.nl_amp_settings ?? ''} onChange={(v) => update('nl_amp_settings', v)} placeholder="e.g. Gain 7, Bass 5, Mid 4, Treb 6" changed={isManuallyChanged('nl_amp_settings')} />
+                      </Field>
+                    </div>
+                  )}
+
+                  {show('nl_amp_switches') && (
+                    <div className={fieldClass('nl_amp_switches')}>
+                      <Field label="Amp Switches" hint="e.g. Bright on, Fat off">
+                        <TextInput value={m.nl_amp_switches ?? ''} onChange={(v) => update('nl_amp_switches', v)} placeholder="e.g. Bright on, Fat off" changed={isManuallyChanged('nl_amp_switches')} />
+                      </Field>
+                    </div>
+                  )}
+
+                  {show('nl_boost_pedal') && (
+                    <div className={fieldClass('nl_boost_pedal')}>
+                      <Field label="Boost Pedal" hint="Pedal used as a boost into the amp">
+                        <TextInput value={m.nl_boost_pedal ?? ''} onChange={(v) => update('nl_boost_pedal', v)} placeholder="e.g. Klon Centaur" changed={isManuallyChanged('nl_boost_pedal')} />
+                      </Field>
+                    </div>
+                  )}
+
+                  {show('nl_pedal_settings') && (
+                    <div className={fieldClass('nl_pedal_settings')}>
+                      <Field label="Pedal Settings" hint="Boost pedal + any other pedals in chain">
+                        <TextInput value={m.nl_pedal_settings ?? ''} onChange={(v) => update('nl_pedal_settings', v)} placeholder="e.g. Klon — Gain 10, Vol 9 · TS9 — Drive 5, Tone 12" changed={isManuallyChanged('nl_pedal_settings')} />
+                      </Field>
+                    </div>
+                  )}
+
+                  {show('nl_comments') && (
+                    <Field label="Comments">
+                      <textarea
+                        value={m.nl_comments ?? ''}
+                        onChange={(e) => update('nl_comments', e.target.value)}
+                        placeholder="Any additional notes about this capture…"
+                        rows={3}
+                        maxLength={500}
+                        className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none transition-colors resize-none ${inputClass(isManuallyChanged('nl_comments'))}`}
+                      />
+                    </Field>
+                  )}
+
+                  {!hasGearType && (
+                    <p className="text-xs text-gray-400 dark:text-gray-600 italic">
+                      Set Gear Type above to filter to relevant fields.
+                    </p>
+                  )}
+                </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <Field label="Cabinet" hint="e.g. Marshall 1960A">
-                  <TextInput value={m.nl_cabinet ?? ''} onChange={(v) => update('nl_cabinet', v)} placeholder="e.g. Marshall 1960A" changed={isManuallyChanged('nl_cabinet')} />
-                </Field>
-                <Field label="Cabinet Config" hint="e.g. 4x12, 2x12">
-                  <TextInput value={m.nl_cabinet_config ?? ''} onChange={(v) => update('nl_cabinet_config', v)} placeholder="e.g. 4x12" changed={isManuallyChanged('nl_cabinet_config')} />
-                </Field>
-              </div>
-              <Field label="Amp Settings" hint="Knob positions, e.g. Gain 7, Bass 5, Mid 4, Treb 6">
-                <TextInput value={m.nl_amp_settings ?? ''} onChange={(v) => update('nl_amp_settings', v)} placeholder="e.g. Gain 7, Bass 5, Mid 4, Treb 6" changed={isManuallyChanged('nl_amp_settings')} />
-              </Field>
-              <Field label="Boost Pedal" hint="Pedal used as a boost into the amp (settings go in Pedal Settings)">
-                <TextInput value={m.nl_boost_pedal ?? ''} onChange={(v) => update('nl_boost_pedal', v)} placeholder="e.g. Klon Centaur" changed={isManuallyChanged('nl_boost_pedal')} />
-              </Field>
-              <Field label="Pedal Settings" hint="Any pedals in the chain (non-boost)">
-                <TextInput value={m.nl_pedal_settings ?? ''} onChange={(v) => update('nl_pedal_settings', v)} placeholder="e.g. TS9 — Drive 5, Tone 12, Level 5" changed={isManuallyChanged('nl_pedal_settings')} />
-              </Field>
-              <Field label="Amp Switches" hint="e.g. Bright on, Fat off">
-                <TextInput value={m.nl_amp_switches ?? ''} onChange={(v) => update('nl_amp_switches', v)} placeholder="e.g. Bright on, Fat off" changed={isManuallyChanged('nl_amp_switches')} />
-              </Field>
-              <Field label="Comments">
-                <textarea
-                  value={m.nl_comments ?? ''}
-                  onChange={(e) => update('nl_comments', e.target.value)}
-                  placeholder="Any additional notes about this capture…"
-                  rows={3}
-                  maxLength={500}
-                  className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none transition-colors resize-none ${inputClass(isManuallyChanged('nl_comments'))}`}
-                />
-              </Field>
-            </Section>
-          )}
+            )
+          })()}
 
         </div>
       </div>
