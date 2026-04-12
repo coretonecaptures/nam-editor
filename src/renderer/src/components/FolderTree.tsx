@@ -232,7 +232,7 @@ export function FolderTree({
 function TreeNode({
   node, selectedFolder, onSelect, depth, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, matchingPaths, onDropFiles,
-  onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder
+  onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata
 }: {
   node: FolderNode
   selectedFolder: string | null
