@@ -483,8 +483,8 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
 
                   {show('nl_boost_pedal') && (
                     <div className={fieldClass('nl_boost_pedal')}>
-                      <Field label="Boost Pedal" hint="Pedal used as a boost into the amp">
-                        <TextInput value={m.nl_boost_pedal ?? ''} onChange={(v) => update('nl_boost_pedal', v)} placeholder="e.g. Klon Centaur" changed={isManuallyChanged('nl_boost_pedal')} />
+                      <Field label="Boost Pedal(s)" hint="Pedal(s) used as a boost into the amp">
+                        <TextInput value={m.nl_boost_pedal ?? ''} onChange={(v) => update('nl_boost_pedal', v)} placeholder="e.g. Klon Centaur - Blues Breaker" changed={isManuallyChanged('nl_boost_pedal')} />
                       </Field>
                     </div>
                   )}

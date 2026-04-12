@@ -979,7 +979,7 @@ export default function App() {
       input_level_dbu: 'Input (dBu)', output_level_dbu: 'Output (dBu)', nb_trained_epochs: 'Trained Epochs',
       nl_mics: 'Mics', nl_amp_channel: 'Amp Channel', nl_cabinet: 'Cabinet',
       nl_cabinet_config: 'Cabinet Config', nl_amp_settings: 'Amp Settings',
-      nl_boost_pedal: 'Boost Pedal', nl_pedal_settings: 'Pedal Settings',
+      nl_boost_pedal: 'Boost Pedal(s)', nl_pedal_settings: 'Pedal Settings',
       nl_amp_switches: 'Amp Switches', nl_comments: 'Comments',
     }
     const fieldSummary = Object.entries(metadata)
@@ -1015,7 +1015,7 @@ export default function App() {
     { header: 'Amp Channel',        field: 'nl_amp_channel' },
     { header: 'Amp Settings',       field: 'nl_amp_settings' },
     { header: 'Amp Switches',       field: 'nl_amp_switches' },
-    { header: 'Boost Pedal',        field: 'nl_boost_pedal' },
+    { header: 'Boost Pedal(s)',      field: 'nl_boost_pedal' },
     { header: 'Pedal Settings',     field: 'nl_pedal_settings' },
     { header: 'Cabinet',            field: 'nl_cabinet' },
     { header: 'Cab Config',         field: 'nl_cabinet_config' },

@@ -69,7 +69,7 @@ const ALL_GRID_COLUMNS: { key: string; label: string; minWidth: number; defaultV
   { key: 'nl_cabinet',         label: 'Cabinet',            minWidth: 140, defaultVisible: false },
   { key: 'nl_cabinet_config',  label: 'Cab Config',         minWidth: 90,  defaultVisible: false },
   { key: 'nl_amp_channel',     label: 'Amp Channel',        minWidth: 100, defaultVisible: false },
-  { key: 'nl_boost_pedal',     label: 'Boost Pedal',        minWidth: 140, defaultVisible: false },
+  { key: 'nl_boost_pedal',     label: 'Boost Pedal(s)',     minWidth: 140, defaultVisible: false },
   { key: 'nl_amp_settings',    label: 'Amp Settings',       minWidth: 160, defaultVisible: false },
   { key: 'nl_pedal_settings',  label: 'Pedal Settings',     minWidth: 160, defaultVisible: false },
   { key: 'nl_amp_switches',    label: 'Amp Switches',       minWidth: 130, defaultVisible: false },

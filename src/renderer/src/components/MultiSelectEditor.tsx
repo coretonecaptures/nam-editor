@@ -35,7 +35,7 @@ const NL_FIELDS: FieldDef[] = [
   { key: 'nl_cabinet',       label: 'Cabinet',            type: 'text', placeholder: 'e.g. Marshall 1960A' },
   { key: 'nl_cabinet_config',label: 'Cabinet Config',     type: 'text', placeholder: 'e.g. 4x12' },
   { key: 'nl_amp_settings',  label: 'Amp Settings',       type: 'text', placeholder: 'e.g. Gain 7, Bass 5' },
-  { key: 'nl_boost_pedal',   label: 'Boost Pedal',        type: 'text', placeholder: 'e.g. Klon Centaur' },
+  { key: 'nl_boost_pedal',   label: 'Boost Pedal(s)',     type: 'text', placeholder: 'e.g. Klon Centaur - Blues Breaker' },
   { key: 'nl_pedal_settings',label: 'Pedal Settings',     type: 'text', placeholder: 'e.g. TS9 — Drive 5' },
   { key: 'nl_amp_switches',  label: 'Amp Switches',       type: 'text', placeholder: 'e.g. Bright on, Fat off' },
   { key: 'nl_comments',      label: 'Comments',           type: 'text', placeholder: 'Any notes…' },
