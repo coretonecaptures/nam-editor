@@ -170,7 +170,7 @@ export default function App() {
   const [folderChanged, setFolderChanged] = useState(false)
   const [showDuplicates, setShowDuplicates] = useState(false)
   const [metadataClipboard, setMetadataClipboard] = useState<{ sourceName: string; metadata: Partial<NamFile['metadata']> } | null>(null)
-  const [importModal, setImportModal] = useState<{ folderName: string; matches: ImportMatch[]; unmatchedNames: string[] } | null>(null)
+  const [importModal, setImportModal] = useState<{ folderName: string; exactMatches: ImportMatch[]; prefixMatches: ImportMatch[]; unmatchedNames: string[] } | null>(null)
   const [watcherKey, setWatcherKey] = useState(0)
   const [recentFolders, setRecentFolders] = useState<string[]>(() => {
     try {
@@ -1084,41 +1084,95 @@ export default function App() {
       if (key) nameMap.set(key, f)
     }
 
-    // Match rows to files
-    const matches: ImportMatch[] = []
-    const unmatchedNames: string[] = []
+    // Fields skipped for prefix (variant-specific) matches
+    const PREFIX_SKIP: Set<keyof NamFile['metadata']> = new Set(['nl_cabinet', 'nl_cabinet_config', 'nl_mics'])
+
+    // Helper: build incoming fields from a row, optionally skipping prefix-skip fields
+    const buildIncoming = (row: Record<string, unknown>, skipFields: Set<keyof NamFile['metadata']> = new Set()): Partial<NamFile['metadata']> => {
+      const incoming: Partial<NamFile['metadata']> = {}
+      for (const col of IMPORT_COLUMNS) {
+        if (!col.field) continue
+        if (col.field === 'name') continue
+        if (skipFields.has(col.field)) continue
+        const val = row[col.header]
+        if (val === '' || val == null) continue
+        ;(incoming as Record<string, unknown>)[col.field] = String(val).trim()
+      }
+      return incoming
+    }
+
+    // Pass 1: exact matches
+    const exactMatches: ImportMatch[] = []
+    const exactMatchedPaths = new Set<string>()
     for (const row of rows) {
       const captureName = String(row['Capture Name'] ?? '').trim()
       if (!captureName) continue
       const file = nameMap.get(captureName.toLowerCase())
-      if (!file) { unmatchedNames.push(captureName); continue }
-
-      const incoming: Partial<NamFile['metadata']> = {}
-      const changedFields: string[] = []
-      for (const col of IMPORT_COLUMNS) {
-        if (!col.field) continue // skip read-only NAM-BOT Preset
-        if (col.field === 'name') continue // never overwrite the name (it's the match key)
-        const val = row[col.header]
-        if (val === '' || val == null) continue // skip empty cells
-        const strVal = String(val).trim();
-        (incoming as Record<string, unknown>)[col.field] = strVal
-        if (String(file.metadata[col.field] ?? '') !== strVal) changedFields.push(col.header)
+      if (!file) continue
+      const incoming = buildIncoming(row)
+      if (Object.keys(incoming).length > 0) {
+        exactMatches.push({ file, incoming })
+        exactMatchedPaths.add(file.filePath)
       }
-      if (Object.keys(incoming).length > 0) matches.push({ file, incoming, changedFields })
     }
 
-    if (matches.length === 0 && unmatchedNames.length === 0) {
+    // Pass 2: prefix matches (strip last word, match files whose name starts with prefix)
+    const prefixMatches: ImportMatch[] = []
+    const prefixMatchedPaths = new Set<string>()
+    for (const row of rows) {
+      const captureName = String(row['Capture Name'] ?? '').trim()
+      if (!captureName) continue
+      const words = captureName.trim().split(/\s+/)
+      if (words.length < 2) continue
+      const prefix = words.slice(0, -1).join(' ').toLowerCase()
+      for (const f of scopedFiles) {
+        const fName = (f.metadata.name || f.fileName || '').toLowerCase().trim()
+        if (!fName.startsWith(prefix)) continue
+        if (exactMatchedPaths.has(f.filePath)) continue
+        if (prefixMatchedPaths.has(f.filePath)) continue
+        const incoming = buildIncoming(row, PREFIX_SKIP)
+        if (Object.keys(incoming).length > 0) {
+          prefixMatches.push({ file: f, incoming })
+          prefixMatchedPaths.add(f.filePath)
+        }
+      }
+    }
+
+    // Unmatched: rows with no exact match and no prefix match
+    const unmatchedNames: string[] = []
+    const allMatchedNames = new Set([
+      ...exactMatches.map(m => (m.file.metadata.name || m.file.fileName || '').toLowerCase()),
+      ...rows.filter(row => {
+        const n = String(row['Capture Name'] ?? '').trim().toLowerCase()
+        return exactMatches.some(m => (m.file.metadata.name || m.file.fileName || '').toLowerCase() === n)
+      }).map(row => String(row['Capture Name'] ?? '').trim().toLowerCase())
+    ])
+    for (const row of rows) {
+      const captureName = String(row['Capture Name'] ?? '').trim()
+      if (!captureName) continue
+      const hasExact = !!nameMap.get(captureName.toLowerCase())
+      if (hasExact) continue
+      // Check if this row produced any prefix matches
+      const words = captureName.trim().split(/\s+/)
+      const prefix = words.length >= 2 ? words.slice(0, -1).join(' ').toLowerCase() : ''
+      const hasPrefixMatch = prefix ? scopedFiles.some(f => {
+        const fName = (f.metadata.name || f.fileName || '').toLowerCase().trim()
+        return fName.startsWith(prefix) && !exactMatchedPaths.has(f.filePath)
+      }) : false
+      if (!hasPrefixMatch) unmatchedNames.push(captureName)
+    }
+
+    if (exactMatches.length === 0 && prefixMatches.length === 0) {
       setStatus({ message: 'No matching captures found in spreadsheet', type: 'error' })
       return
     }
 
     const folderName = folderPath ? folderPath.replace(/\\/g, '/').split('/').pop()! : (librarian.rootFolder ? librarian.rootFolder.replace(/\\/g, '/').split('/').pop()! : 'library')
-    setImportModal({ folderName, matches, unmatchedNames })
+    setImportModal({ folderName, exactMatches, prefixMatches, unmatchedNames })
   }
 
-  const handleImportConfirm = async () => {
-    if (!importModal) return
-    const { matches } = importModal
+  const handleImportConfirm = async (matches: ImportMatch[]) => {
+    const unmatched = importModal?.unmatchedNames.length ?? 0
     setImportModal(null)
     let updated = 0; let failed = 0
     for (const { file, incoming } of matches) {
@@ -1133,10 +1187,9 @@ export default function App() {
         ))
       } else { failed++ }
     }
-    const unmatched = importModal.unmatchedNames.length
     let msg = `Imported metadata for ${updated} capture${updated !== 1 ? 's' : ''}`
     if (failed > 0) msg += `, ${failed} failed`
-    if (unmatched > 0) msg += ` · ${unmatched} unmatched: ${importModal.unmatchedNames.slice(0, 3).join(', ')}${unmatched > 3 ? '…' : ''}`
+    if (unmatched > 0) msg += ` · ${unmatched} unmatched`
     setStatus({ message: msg, type: failed > 0 ? 'error' : 'success' })
   }
 
@@ -1539,7 +1592,8 @@ export default function App() {
       {importModal && (
         <ImportMetadataModal
           folderName={importModal.folderName}
-          matches={importModal.matches}
+          exactMatches={importModal.exactMatches}
+          prefixMatches={importModal.prefixMatches}
           unmatchedNames={importModal.unmatchedNames}
           onConfirm={handleImportConfirm}
           onClose={() => setImportModal(null)}
