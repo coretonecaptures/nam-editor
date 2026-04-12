@@ -743,6 +743,45 @@ export default function App() {
     }
   }
 
+  const handleBatchRename = async (renames: { filePath: string; newBaseName: string }[]) => {
+    let succeeded = 0
+    let failed = 0
+    const updates: { oldPath: string; newPath: string; newBaseName: string }[] = []
+
+    for (const { filePath, newBaseName } of renames) {
+      const result = await window.api.renameFile(filePath, newBaseName)
+      if (result.success && result.newPath) {
+        updates.push({ oldPath: filePath, newPath: result.newPath, newBaseName })
+        succeeded++
+      } else {
+        failed++
+      }
+    }
+
+    if (updates.length > 0) {
+      const updateMap = new Map(updates.map((u) => [u.oldPath, u]))
+      setFiles((prev) => prev.map((f) => {
+        const u = updateMap.get(f.filePath)
+        if (!u) return f
+        return { ...f, filePath: u.newPath, fileName: u.newBaseName }
+      }))
+      setSelectedIds((prev) => {
+        const next = new Set<string>()
+        for (const id of prev) {
+          const u = updateMap.get(id)
+          next.add(u ? u.newPath : id)
+        }
+        return next
+      })
+    }
+
+    if (failed > 0) {
+      setStatus({ message: `Renamed ${succeeded}, failed ${failed}`, type: 'error' })
+    } else {
+      setStatus({ message: `Renamed ${succeeded} file${succeeded !== 1 ? 's' : ''}`, type: 'success' })
+    }
+  }
+
   const handleCreateFolder = async (parentPath: string, name: string) => {
     const result = await window.api.createFolder(parentPath, name)
     if (result.success) {
@@ -1010,6 +1049,7 @@ export default function App() {
                   setStatus({ message: `Saved ${savedPaths.size} file(s)`, type: 'success' })
                 }
               }}
+              onBatchRename={handleBatchRename}
             />
           </div>
           <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} onCollapse={() => setListCollapsed((v) => !v)} collapsed={listCollapsed} />

@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx'
 import { NamFile, GEAR_TYPES, TONE_TYPES } from '../types/nam'
 import { gearChipClass, toneChipClass, getGearImageSrc } from '../assets/gear'
 import { detectPreset } from '../utils/detectPreset'
+import { BatchRenameModal } from './BatchRenameModal'
 
 type FilterMode = 'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited' | 'incomplete'
 
@@ -29,6 +30,7 @@ interface FileListProps {
   onRemove?: (id: string) => void
   onBatchEditSelected?: (paths: string[]) => void
   onSaveSelected?: (paths: string[]) => void
+  onBatchRename?: (renames: { filePath: string; newBaseName: string }[]) => void
   viewMode: ViewMode
   onViewModeChange: (mode: ViewMode) => void
   solidPills?: boolean
@@ -201,6 +203,7 @@ export function FileList({
   onRemove = undefined,
   onBatchEditSelected,
   onSaveSelected,
+  onBatchRename,
   viewMode,
   onViewModeChange,
   solidPills = false,
@@ -217,6 +220,7 @@ export function FileList({
   const [showColChooser, setShowColChooser] = useState(false)
   const anchorIndexRef = useRef<number>(-1)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; filePath: string } | null>(null)
+  const [showBatchRename, setShowBatchRename] = useState(false)
   const exportRef = useRef<HTMLDivElement>(null)
   const chooserRef = useRef<HTMLDivElement>(null)
 
@@ -617,6 +621,17 @@ export function FileList({
             </svg>
             Show in folder
           </button>
+          {onBatchRename && selectedIds.size > 1 && (
+            <button
+              className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
+              onClick={() => { setCtxMenu(null); setShowBatchRename(true) }}
+            >
+              <svg className="w-3.5 h-3.5 text-purple-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+              Rename {selectedIds.size} selected…
+            </button>
+          )}
           {(onSaveSelected || onBatchEditSelected) && (
             <div className="border-t border-gray-200 dark:border-gray-700 my-1" />
           )}
@@ -649,6 +664,15 @@ export function FileList({
             </button>
           )}
         </div>
+      )}
+
+      {/* Batch rename modal */}
+      {showBatchRename && onBatchRename && (
+        <BatchRenameModal
+          files={files.filter((f) => selectedIds.has(f.filePath))}
+          onApply={(renames) => { onBatchRename(renames); setShowBatchRename(false) }}
+          onClose={() => setShowBatchRename(false)}
+        />
       )}
     </div>
   )
