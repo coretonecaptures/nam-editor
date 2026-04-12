@@ -46,7 +46,7 @@ function matchesFilter(
 export function FolderTree({
   tree, files, selectedFolder, onSelect, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, onFilterChange, onDropFiles,
-  onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder
+  onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata
 }: FolderTreeProps) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
