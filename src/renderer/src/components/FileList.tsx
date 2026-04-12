@@ -254,6 +254,7 @@ export function FileList({
   const [showColChooser, setShowColChooser] = useState(false)
   const anchorIndexRef = useRef<number>(-1)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; filePath: string } | null>(null)
+  const ctxMenuRef = useRef<HTMLDivElement>(null)
   const [showBatchRename, setShowBatchRename] = useState(false)
   const exportRef = useRef<HTMLDivElement>(null)
   const chooserRef = useRef<HTMLDivElement>(null)
@@ -294,6 +295,21 @@ export function FileList({
     const close = () => setCtxMenu(null)
     window.addEventListener('click', close)
     return () => window.removeEventListener('click', close)
+  }, [ctxMenu])
+
+  useEffect(() => {
+    if (!ctxMenu || !ctxMenuRef.current) return
+    const el = ctxMenuRef.current
+    const rect = el.getBoundingClientRect()
+    const overflowX = rect.right - window.innerWidth + 8
+    const overflowY = rect.bottom - window.innerHeight + 8
+    if (overflowX > 0 || overflowY > 0) {
+      setCtxMenu((prev) => prev ? {
+        ...prev,
+        x: overflowX > 0 ? prev.x - overflowX : prev.x,
+        y: overflowY > 0 ? prev.y - overflowY : prev.y,
+      } : null)
+    }
   }, [ctxMenu])
 
   if (files.length === 0) {
@@ -639,6 +655,7 @@ export function FileList({
       {/* Context menu */}
       {ctxMenu && (
         <div
+          ref={ctxMenuRef}
           className="fixed z-50 bg-gray-100 dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg shadow-xl py-1 min-w-[180px]"
           style={{ top: ctxMenu.y, left: ctxMenu.x }}
           onClick={(e) => e.stopPropagation()}
