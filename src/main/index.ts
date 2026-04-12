@@ -10,6 +10,9 @@ let mainWindow: BrowserWindow | null = null
 
 // Folder watcher for auto-refresh feature
 let folderWatcher: import('fs').FSWatcher | null = null
+// Suppress folder:changed events for 3s after any local write to avoid false-positive banners
+let watcherSuppressUntil = 0
+function suppressWatcher() { watcherSuppressUntil = Date.now() + 3000 }
 
 // ---- Startup logger ----
 // Writes to os.tmpdir() immediately (safe before app ready), then moves to
@@ -491,6 +494,7 @@ app.whenReady().then(() => {
         }
       }
 
+      suppressWatcher()
       fs.writeFileSync(filePath, patched, 'utf-8')
       return { success: true }
     } catch (err) {
@@ -619,7 +623,7 @@ app.whenReady().then(() => {
       try {
         const content = fs.readFileSync(filePath, 'utf8')
         const patched = removeNamLabBlock(content)
-        if (patched !== content) fs.writeFileSync(filePath, patched, 'utf8')
+        if (patched !== content) { suppressWatcher(); fs.writeFileSync(filePath, patched, 'utf8') }
         results.push({ filePath, success: true })
       } catch (err) {
         results.push({ filePath, success: false, error: String(err) })
@@ -687,6 +691,7 @@ app.whenReady().then(() => {
         if (!filename || !filename.toLowerCase().endsWith('.nam')) return
         if (debounceTimer) clearTimeout(debounceTimer)
         debounceTimer = setTimeout(() => {
+          if (Date.now() < watcherSuppressUntil) return
           mainWindow?.webContents.send('folder:changed')
         }, 1500)
       })
