@@ -385,11 +385,11 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
                   <TextInput value={m.nl_cabinet_config ?? ''} onChange={(v) => update('nl_cabinet_config', v)} placeholder="e.g. 4x12" changed={isManuallyChanged('nl_cabinet_config')} />
                 </Field>
               </div>
-              <Field label="Boost Pedal" hint="Pedal used as a boost into the amp">
-                <TextInput value={m.nl_boost_pedal ?? ''} onChange={(v) => update('nl_boost_pedal', v)} placeholder="e.g. Klon Centaur — Gain 10, Vol 2" changed={isManuallyChanged('nl_boost_pedal')} />
-              </Field>
               <Field label="Amp Settings" hint="Knob positions, e.g. Gain 7, Bass 5, Mid 4, Treb 6">
                 <TextInput value={m.nl_amp_settings ?? ''} onChange={(v) => update('nl_amp_settings', v)} placeholder="e.g. Gain 7, Bass 5, Mid 4, Treb 6" changed={isManuallyChanged('nl_amp_settings')} />
+              </Field>
+              <Field label="Boost Pedal" hint="Pedal used as a boost into the amp (settings go in Pedal Settings)">
+                <TextInput value={m.nl_boost_pedal ?? ''} onChange={(v) => update('nl_boost_pedal', v)} placeholder="e.g. Klon Centaur" changed={isManuallyChanged('nl_boost_pedal')} />
               </Field>
               <Field label="Pedal Settings" hint="Any pedals in the chain (non-boost)">
                 <TextInput value={m.nl_pedal_settings ?? ''} onChange={(v) => update('nl_pedal_settings', v)} placeholder="e.g. TS9 — Drive 5, Tone 12, Level 5" changed={isManuallyChanged('nl_pedal_settings')} />

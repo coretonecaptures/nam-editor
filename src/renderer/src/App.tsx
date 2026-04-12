@@ -913,38 +913,53 @@ export default function App() {
     else doExportXLSX(targets, ALL_GRID_COLUMNS, filename)
   }
 
-  const handleMoveDuplicates = async (filePaths: string[]) => {
+  const handleMoveDuplicates = async (moves: { filePath: string; destName: string }[]) => {
     if (!librarian.rootFolder) return
     // Create _Duplicates folder (ignore error if already exists)
     await window.api.createFolder(librarian.rootFolder, '_Duplicates')
     const destDir = librarian.rootFolder + '/_Duplicates'
-    const results = await Promise.all(filePaths.map((fp) => window.api.moveFile(fp, destDir)))
-    const moved = results
-      .map((r, i) => r.success && r.destPath ? { oldPath: filePaths[i], newPath: r.destPath } : null)
-      .filter((x): x is { oldPath: string; newPath: string } => x !== null)
-    if (moved.length > 0) {
-      const movedMap = new Map(moved.map((m) => [m.oldPath, m.newPath]))
+
+    // Move each file; if destName differs from original basename, rename after move via the rename API
+    const movedPairs: { oldPath: string; newPath: string }[] = []
+    let failed = 0
+    for (const { filePath, destName } of moves) {
+      const result = await window.api.moveFile(filePath, destDir)
+      if (!result.success || !result.destPath) { failed++; continue }
+      // If the destName differs from the basename, rename it
+      const movedPath = result.destPath
+      const currentBaseName = movedPath.replace(/\\/g, '/').split('/').pop() ?? ''
+      const targetBaseName = destName.replace(/\.nam$/i, '')
+      if (currentBaseName.replace(/\.nam$/i, '') !== targetBaseName) {
+        const renameResult = await window.api.renameFile(movedPath, targetBaseName)
+        if (renameResult.success && renameResult.newPath) {
+          movedPairs.push({ oldPath: filePath, newPath: renameResult.newPath })
+        } else {
+          movedPairs.push({ oldPath: filePath, newPath: movedPath })
+        }
+      } else {
+        movedPairs.push({ oldPath: filePath, newPath: movedPath })
+      }
+    }
+
+    if (movedPairs.length > 0) {
+      const movedMap = new Map(movedPairs.map((m) => [m.oldPath, m.newPath]))
       setFiles((prev) => prev.map((f) => {
         const newPath = movedMap.get(f.filePath)
         if (!newPath) return f
-        return { ...f, filePath: newPath, isDirty: false, autoFilledFields: [] }
+        const newBaseName = newPath.replace(/\\/g, '/').split('/').pop()?.replace(/\.nam$/i, '') ?? f.fileName
+        return { ...f, filePath: newPath, fileName: newBaseName, isDirty: false, autoFilledFields: [] }
       }))
-      if (librarian.rootFolder) {
-        const treeResult = await window.api.scanTree(librarian.rootFolder, settings.hiddenFolders ?? '')
-        if (treeResult.success && treeResult.tree) {
-          setLibrarian((prev) => ({ ...prev, folderTree: treeResult.tree! }))
-        }
-      }
+      // _Duplicates is hardcoded-hidden in scan, so no need to rescan tree
     }
-    const failed = filePaths.length - moved.length
     if (failed > 0) {
-      setStatus({ message: `Moved ${moved.length} to _Duplicates, failed ${failed}`, type: 'error' })
+      setStatus({ message: `Moved ${movedPairs.length} to _Duplicates, failed ${failed}`, type: 'error' })
     } else {
-      setStatus({ message: `Moved ${moved.length} duplicate${moved.length !== 1 ? 's' : ''} to _Duplicates`, type: 'success' })
+      setStatus({ message: `Moved ${movedPairs.length} duplicate${movedPairs.length !== 1 ? 's' : ''} to _Duplicates`, type: 'success' })
     }
   }
 
   const handleTrashDuplicates = async (filePaths: string[]) => {
+    // Confirmation is handled inside DuplicatesModal per-group; just execute
     const results = await window.api.trashFiles(filePaths)
     const trashed = results.filter((r) => r.success).map((r) => r.filePath)
     if (trashed.length > 0) {

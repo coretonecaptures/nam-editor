@@ -2,6 +2,14 @@ import { useState } from 'react'
 import { NamMetadata, GEAR_TYPES, TONE_TYPES } from '../types/nam'
 import { ComboInput } from './ComboInput'
 
+interface BatchFieldDef {
+  key: keyof NamMetadata
+  label: string
+  type: 'text' | 'number' | 'select'
+  options?: readonly string[]
+  placeholder?: string
+}
+
 export interface BatchApplyOptions {
   revertToFilename?: boolean
 }
@@ -105,65 +113,78 @@ export function BatchEditor({ folderName, fileCount, onApply, onClose, skipConfi
             <span className="flex-1 text-sm text-gray-500 dark:text-gray-500 italic">Revert each file's name to its filename</span>
           </div>
 
-          {batchFields.map(({ key, label, type, options, placeholder }) => (
-            <div key={key} className="flex items-center gap-3">
-              <input
-                type="checkbox"
-                checked={enabled.has(key)}
-                onChange={() => toggle(key)}
-                className="w-4 h-4 rounded border-gray-400 dark:border-gray-600 bg-gray-200 dark:bg-gray-800 text-indigo-500 focus:ring-indigo-500/50 cursor-pointer flex-shrink-0"
-              />
-              <label className="w-32 text-sm text-gray-500 dark:text-gray-400 flex-shrink-0">{label}</label>
-              <div className="flex-1">
-                {type === 'select' && options ? (
-                  <select
-                    disabled={!enabled.has(key)}
-                    value={(fields[key] as string) ?? ''}
-                    onChange={(e) => update(key, e.target.value)}
-                    className="w-full px-3 py-1.5 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                  >
-                    {['', ...options].map((o) => (
-                      <option key={o} value={o} className="bg-gray-200 dark:bg-gray-800">
-                        {o === '' ? '— not set —' : o}
-                      </option>
-                    ))}
-                  </select>
-                ) : type === 'number' ? (
-                  <input
-                    type="number"
-                    disabled={!enabled.has(key)}
-                    value={(fields[key] as number) ?? ''}
-                    onChange={(e) => update(key, e.target.value === '' ? null : parseFloat(e.target.value))}
-                    placeholder={placeholder}
-                    step={0.5}
-                    className="w-full px-3 py-1.5 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                  />
-                ) : (
-                  <ComboInput
-                    disabled={!enabled.has(key)}
-                    value={(fields[key] as string) ?? ''}
-                    onChange={(v) => update(key, v)}
-                    suggestions={key === 'gear_make' ? gearMakeSuggestions : key === 'gear_model' ? gearModelSuggestions : []}
-                    placeholder={placeholder}
-                    className="w-full px-3 py-1.5 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                  />
-                )}
-              </div>
-            </div>
-          ))}
+          {renderBatchFields(batchFields, fields, enabled, toggle, update, gearMakeSuggestions, gearModelSuggestions)}
+
+          {/* Capture Details section */}
+          <div className="flex items-center gap-2 pt-4 pb-1">
+            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Capture Details</span>
+            <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
+          </div>
+          {renderBatchFields(namLabFields, fields, enabled, toggle, update, [], [])}
         </div>
       </div>
     </div>
   )
 }
 
-const batchFields: Array<{
-  key: keyof NamMetadata
-  label: string
-  type: 'text' | 'number' | 'select'
-  options?: readonly string[]
-  placeholder?: string
-}> = [
+function renderBatchFields(
+  fieldList: BatchFieldDef[],
+  fields: Partial<NamMetadata>,
+  enabled: Set<keyof NamMetadata>,
+  toggle: (key: keyof NamMetadata) => void,
+  update: (key: keyof NamMetadata, value: unknown) => void,
+  gearMakeSuggestions: string[],
+  gearModelSuggestions: string[]
+) {
+  return fieldList.map(({ key, label, type, options, placeholder }) => (
+    <div key={key} className="flex items-center gap-3">
+      <input
+        type="checkbox"
+        checked={enabled.has(key)}
+        onChange={() => toggle(key)}
+        className="w-4 h-4 rounded border-gray-400 dark:border-gray-600 bg-gray-200 dark:bg-gray-800 text-indigo-500 focus:ring-indigo-500/50 cursor-pointer flex-shrink-0"
+      />
+      <label className="w-32 text-sm text-gray-500 dark:text-gray-400 flex-shrink-0">{label}</label>
+      <div className="flex-1">
+        {type === 'select' && options ? (
+          <select
+            disabled={!enabled.has(key)}
+            value={(fields[key] as string) ?? ''}
+            onChange={(e) => update(key, e.target.value)}
+            className="w-full px-3 py-1.5 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            {['', ...options].map((o) => (
+              <option key={o} value={o} className="bg-gray-200 dark:bg-gray-800">
+                {o === '' ? '— not set —' : o}
+              </option>
+            ))}
+          </select>
+        ) : type === 'number' ? (
+          <input
+            type="number"
+            disabled={!enabled.has(key)}
+            value={(fields[key] as number) ?? ''}
+            onChange={(e) => update(key, e.target.value === '' ? null : parseFloat(e.target.value))}
+            placeholder={placeholder}
+            step={0.5}
+            className="w-full px-3 py-1.5 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          />
+        ) : (
+          <ComboInput
+            disabled={!enabled.has(key)}
+            value={(fields[key] as string) ?? ''}
+            onChange={(v) => update(key, v)}
+            suggestions={key === 'gear_make' ? gearMakeSuggestions : key === 'gear_model' ? gearModelSuggestions : []}
+            placeholder={placeholder}
+            className="w-full px-3 py-1.5 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          />
+        )}
+      </div>
+    </div>
+  ))
+}
+
+const batchFields: BatchFieldDef[] = [
   { key: 'modeled_by', label: 'Modeled By', type: 'text', placeholder: 'Creator name' },
   { key: 'gear_type', label: 'Gear Type', type: 'select', options: GEAR_TYPES },
   { key: 'gear_make', label: 'Manufacturer', type: 'text', placeholder: 'e.g. Friedman' },
@@ -172,4 +193,16 @@ const batchFields: Array<{
   { key: 'input_level_dbu', label: 'Input (dBu)', type: 'number', placeholder: 'e.g. 12.5' },
   { key: 'output_level_dbu', label: 'Output (dBu)', type: 'number', placeholder: 'e.g. 12.5' },
   { key: 'nb_trained_epochs', label: 'Trained Epochs', type: 'number', placeholder: 'e.g. 1000' },
+]
+
+const namLabFields: BatchFieldDef[] = [
+  { key: 'nl_mics', label: 'Microphone(s)', type: 'text', placeholder: 'e.g. SM57' },
+  { key: 'nl_amp_channel', label: 'Amp Channel', type: 'text', placeholder: 'e.g. Lead' },
+  { key: 'nl_cabinet', label: 'Cabinet', type: 'text', placeholder: 'e.g. Marshall 1960A' },
+  { key: 'nl_cabinet_config', label: 'Cabinet Config', type: 'text', placeholder: 'e.g. 4x12' },
+  { key: 'nl_amp_settings', label: 'Amp Settings', type: 'text', placeholder: 'e.g. Gain 7, Bass 5, Mid 4, Treb 6' },
+  { key: 'nl_boost_pedal', label: 'Boost Pedal', type: 'text', placeholder: 'e.g. Klon Centaur' },
+  { key: 'nl_pedal_settings', label: 'Pedal Settings', type: 'text', placeholder: 'e.g. TS9 — Drive 5, Tone 12, Level 5' },
+  { key: 'nl_amp_switches', label: 'Amp Switches', type: 'text', placeholder: 'e.g. Bright on, Fat off' },
+  { key: 'nl_comments', label: 'Comments', type: 'text', placeholder: 'Any notes…' },
 ]

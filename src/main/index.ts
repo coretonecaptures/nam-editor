@@ -476,7 +476,7 @@ app.whenReady().then(() => {
   // hiddenFolders: comma-separated folder names to skip entirely (case-insensitive)
   ipcMain.handle('folder:scanNam', async (_event, folderPath: string, hiddenFolders?: string) => {
     const hidden = new Set(
-      (hiddenFolders ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+      ['_duplicates', ...(hiddenFolders ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)]
     )
     try {
       const files: string[] = []
@@ -504,7 +504,7 @@ app.whenReady().then(() => {
   ipcMain.handle('folder:scanTree', async (_event, folderPath: string, hiddenFolders?: string) => {
     const norm = (p: string) => p.replace(/\\/g, '/')
     const hidden = new Set(
-      (hiddenFolders ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+      ['_duplicates', ...(hiddenFolders ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)]
     )
     interface FolderNode {
       name: string

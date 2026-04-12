@@ -29,6 +29,20 @@ const FIELDS: FieldDef[] = [
   { key: 'nb_trained_epochs',  label: 'Trained Epochs',     type: 'number', placeholder: 'e.g. 1000' },
 ]
 
+const NL_FIELDS: FieldDef[] = [
+  { key: 'nl_mics',          label: 'Microphone(s)',      type: 'text', placeholder: 'e.g. SM57' },
+  { key: 'nl_amp_channel',   label: 'Amp Channel',        type: 'text', placeholder: 'e.g. Lead' },
+  { key: 'nl_cabinet',       label: 'Cabinet',            type: 'text', placeholder: 'e.g. Marshall 1960A' },
+  { key: 'nl_cabinet_config',label: 'Cabinet Config',     type: 'text', placeholder: 'e.g. 4x12' },
+  { key: 'nl_amp_settings',  label: 'Amp Settings',       type: 'text', placeholder: 'e.g. Gain 7, Bass 5' },
+  { key: 'nl_boost_pedal',   label: 'Boost Pedal',        type: 'text', placeholder: 'e.g. Klon Centaur' },
+  { key: 'nl_pedal_settings',label: 'Pedal Settings',     type: 'text', placeholder: 'e.g. TS9 — Drive 5' },
+  { key: 'nl_amp_switches',  label: 'Amp Switches',       type: 'text', placeholder: 'e.g. Bright on, Fat off' },
+  { key: 'nl_comments',      label: 'Comments',           type: 'text', placeholder: 'Any notes…' },
+]
+
+const ALL_FIELDS = [...FIELDS, ...NL_FIELDS]
+
 function getShared(files: NamFile[], key: keyof NamMetadata): { same: boolean; value: string | number | null } {
   const vals = files.map((f) => f.metadata[key] ?? null)
   const first = vals[0]
@@ -39,14 +53,14 @@ function getShared(files: NamFile[], key: keyof NamMetadata): { same: boolean; v
 export function MultiSelectEditor({ files, onApply, skipConfirmation, gearMakeSuggestions = [], gearModelSuggestions = [] }: MultiSelectEditorProps) {
   // Compute shared values once per file set
   const shared = useMemo(
-    () => Object.fromEntries(FIELDS.map((f) => [f.key, getShared(files, f.key)])),
+    () => Object.fromEntries(ALL_FIELDS.map((f) => [f.key, getShared(files, f.key)])),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [files.map((f) => f.filePath).join(','), files.map((f) => JSON.stringify(f.metadata)).join('|')]
   )
 
   // Edits: start from shared values (pre-fill where all agree)
   const [edits, setEdits] = useState<Record<string, string | number | null>>(() =>
-    Object.fromEntries(FIELDS.map((f) => [f.key, shared[f.key].value ?? '']))
+    Object.fromEntries(ALL_FIELDS.map((f) => [f.key, shared[f.key].value ?? '']))
   )
   const [changed, setChanged] = useState<Set<string>>(new Set())
   const [revertToFilename, setRevertToFilename] = useState(false)
@@ -135,56 +149,76 @@ export function MultiSelectEditor({ files, onApply, skipConfirmation, gearMakeSu
             </label>
           </div>
 
-          {FIELDS.map(({ key, label, type, options, placeholder }) => {
-            const { same } = shared[key]
-            const isChanged = changed.has(key)
-            const val = edits[key]
+          {renderMsFields(FIELDS, shared, edits, changed, update, inputBase, inputChanged, gearMakeSuggestions, gearModelSuggestions)}
 
-            return (
-              <div key={key} className="flex items-center gap-3">
-                <div className="w-36 flex-shrink-0">
-                  <span className="text-sm text-gray-500 dark:text-gray-400">{label}</span>
-                  {same && !isChanged && (
-                    <span className="ml-1.5 text-xs px-1 py-0.5 rounded bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400">shared</span>
-                  )}
-                </div>
-                <div className="flex-1">
-                  {type === 'select' && options ? (
-                    <select
-                      value={(val as string) ?? ''}
-                      onChange={(e) => update(key, e.target.value)}
-                      className={`${inputBase} appearance-none cursor-pointer ${isChanged ? inputChanged : ''}`}
-                    >
-                      {['', ...options].map((o) => (
-                        <option key={o} value={o} className="bg-gray-200 dark:bg-gray-800">
-                          {o === '' ? (same ? '— not set —' : '— varies —') : o}
-                        </option>
-                      ))}
-                    </select>
-                  ) : type === 'number' ? (
-                    <input
-                      type="number"
-                      value={val ?? ''}
-                      onChange={(e) => update(key, e.target.value === '' ? null : parseFloat(e.target.value))}
-                      placeholder={same ? (placeholder ?? '') : '— varies —'}
-                      step={0.5}
-                      className={`${inputBase} ${isChanged ? inputChanged : ''}`}
-                    />
-                  ) : (
-                    <ComboInput
-                      value={(val as string) ?? ''}
-                      onChange={(v) => update(key, v)}
-                      suggestions={key === 'gear_make' ? gearMakeSuggestions : key === 'gear_model' ? gearModelSuggestions : []}
-                      placeholder={same ? (placeholder ?? '') : '— varies —'}
-                      className={`${inputBase} ${isChanged ? inputChanged : ''}`}
-                    />
-                  )}
-                </div>
-              </div>
-            )
-          })}
+          {/* Capture Details section */}
+          <div className="flex items-center gap-2 pt-4 pb-1">
+            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Capture Details</span>
+            <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
+          </div>
+          {renderMsFields(NL_FIELDS, shared, edits, changed, update, inputBase, inputChanged, [], [])}
         </div>
       </div>
     </div>
   )
+}
+
+function renderMsFields(
+  fieldList: FieldDef[],
+  shared: Record<string, { same: boolean; value: string | number | null }>,
+  edits: Record<string, string | number | null>,
+  changed: Set<string>,
+  update: (key: string, value: string | number | null) => void,
+  inputBase: string,
+  inputChanged: string,
+  gearMakeSuggestions: string[],
+  gearModelSuggestions: string[]
+) {
+  return fieldList.map(({ key, label, type, options, placeholder }) => {
+    const { same } = shared[key] ?? { same: false }
+    const isChanged = changed.has(key)
+    const val = edits[key]
+    return (
+      <div key={key} className="flex items-center gap-3">
+        <div className="w-36 flex-shrink-0">
+          <span className="text-sm text-gray-500 dark:text-gray-400">{label}</span>
+          {same && !isChanged && (
+            <span className="ml-1.5 text-xs px-1 py-0.5 rounded bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400">shared</span>
+          )}
+        </div>
+        <div className="flex-1">
+          {type === 'select' && options ? (
+            <select
+              value={(val as string) ?? ''}
+              onChange={(e) => update(key, e.target.value)}
+              className={`${inputBase} appearance-none cursor-pointer ${isChanged ? inputChanged : ''}`}
+            >
+              {['', ...options].map((o) => (
+                <option key={o} value={o} className="bg-gray-200 dark:bg-gray-800">
+                  {o === '' ? (same ? '— not set —' : '— varies —') : o}
+                </option>
+              ))}
+            </select>
+          ) : type === 'number' ? (
+            <input
+              type="number"
+              value={val ?? ''}
+              onChange={(e) => update(key, e.target.value === '' ? null : parseFloat(e.target.value))}
+              placeholder={same ? (placeholder ?? '') : '— varies —'}
+              step={0.5}
+              className={`${inputBase} ${isChanged ? inputChanged : ''}`}
+            />
+          ) : (
+            <ComboInput
+              value={(val as string) ?? ''}
+              onChange={(v) => update(key, v)}
+              suggestions={key === 'gear_make' ? gearMakeSuggestions : key === 'gear_model' ? gearModelSuggestions : []}
+              placeholder={same ? (placeholder ?? '') : '— varies —'}
+              className={`${inputBase} ${isChanged ? inputChanged : ''}`}
+            />
+          )}
+        </div>
+      </div>
+    )
+  })
 }
