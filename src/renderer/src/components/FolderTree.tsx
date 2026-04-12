@@ -369,20 +369,6 @@ function FolderRow({
   }, [menu])
 
   useEffect(() => {
-    if (!menu || !menuRef.current) return
-    const el = menuRef.current
-    const rect = el.getBoundingClientRect()
-    const overflowX = rect.right - window.innerWidth + 8
-    const overflowY = rect.bottom - window.innerHeight + 8
-    if (overflowX > 0 || overflowY > 0) {
-      setMenu((prev) => prev ? {
-        x: overflowX > 0 ? prev.x - overflowX : prev.x,
-        y: overflowY > 0 ? prev.y - overflowY : prev.y,
-      } : null)
-    }
-  }, [menu])
-
-  useEffect(() => {
     if (isRenaming) {
       setRenameValue(label)
       setTimeout(() => renameInputRef.current?.select(), 30)
@@ -392,6 +378,7 @@ function FolderRow({
   const openMenu = (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
+    // TODO: re-add viewport clamping here once blank-screen root cause is confirmed
     setMenu({ x: e.clientX, y: e.clientY })
   }
 

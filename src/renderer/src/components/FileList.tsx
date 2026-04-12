@@ -239,6 +239,7 @@ export function FileList({
   metadataClipboard,
   onCopyMetadata,
   onPasteMetadata,
+  onClearNamLab,
   viewMode,
   onViewModeChange,
   solidPills = false,
@@ -298,20 +299,6 @@ export function FileList({
     return () => window.removeEventListener('click', close)
   }, [ctxMenu])
 
-  useEffect(() => {
-    if (!ctxMenu || !ctxMenuRef.current) return
-    const el = ctxMenuRef.current
-    const rect = el.getBoundingClientRect()
-    const overflowX = rect.right - window.innerWidth + 8
-    const overflowY = rect.bottom - window.innerHeight + 8
-    if (overflowX > 0 || overflowY > 0) {
-      setCtxMenu((prev) => prev ? {
-        ...prev,
-        x: overflowX > 0 ? prev.x - overflowX : prev.x,
-        y: overflowY > 0 ? prev.y - overflowY : prev.y,
-      } : null)
-    }
-  }, [ctxMenu])
 
   if (files.length === 0) {
     return (
@@ -610,6 +597,7 @@ export function FileList({
           onContextMenu={(e, filePath) => {
             e.preventDefault()
             if (!selectedIds.has(filePath)) onSelect(filePath, false)
+            // TODO: re-add viewport clamping here once blank-screen root cause is confirmed
             setCtxMenu({ x: e.clientX, y: e.clientY, filePath })
           }}
         />
@@ -639,6 +627,7 @@ export function FileList({
                 onContextMenu={(e) => {
                   e.preventDefault()
                   if (!selectedIds.has(file.filePath)) onSelect(file.filePath, false)
+                  // TODO: re-add viewport clamping here once blank-screen root cause is confirmed
                   setCtxMenu({ x: e.clientX, y: e.clientY, filePath: file.filePath })
                 }}
                 onDragStart={draggable ? (e) => {
@@ -764,7 +753,7 @@ export function FileList({
               onClick={() => { onClearNamLab([...selectedIds]); setCtxMenu(null) }}
             >
               <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m6 5l-6 6m0 0l-6-6m6 6V10" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
               </svg>
               Remove NAM Lab metadata
             </button>
