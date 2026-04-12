@@ -721,11 +721,13 @@ export default function App() {
       })
     )
 
-    // Rescan folder tree to update counts
+    // Rescan folder tree to update counts (re-apply hidden folder filter)
     if (librarian.rootFolder) {
       const treeResult = await window.api.scanTree(librarian.rootFolder)
       if (treeResult.success && treeResult.tree) {
-        setLibrarian((prev) => ({ ...prev, folderTree: treeResult.tree! }))
+        const hidden = parseHiddenFolders(settings.hiddenFolders ?? '')
+        const visibleTree = hidden.size > 0 ? pruneHiddenTree(treeResult.tree, hidden) : treeResult.tree
+        setLibrarian((prev) => ({ ...prev, folderTree: visibleTree }))
       }
     }
 
