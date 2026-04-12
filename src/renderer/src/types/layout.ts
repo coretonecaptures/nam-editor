@@ -12,7 +12,7 @@ const LAYOUT_KEY = 'nam-editor-layout'
 const DEFAULTS: LayoutState = {
   treeWidth:     310,
   listWidthList: 320,
-  listWidthGrid: 1260,
+  listWidthGrid: 700,
 }
 
 export function loadLayout(): LayoutState {

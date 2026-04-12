@@ -13,6 +13,8 @@ import { StatusBar } from './components/StatusBar'
 import { SettingsPanel } from './components/SettingsPanel'
 import { FolderTree } from './components/FolderTree'
 import { DuplicatesModal } from './components/DuplicatesModal'
+import { ImportMetadataModal, ImportMatch } from './components/ImportMetadataModal'
+import * as XLSX from 'xlsx'
 import { FolderNode } from './types/librarian'
 
 declare global {
@@ -20,6 +22,7 @@ declare global {
     api: {
       openFiles: () => Promise<string[]>
       openFolder: () => Promise<string | null>
+      openImportFile: () => Promise<string | null>
       revealFile: (filePath: string) => Promise<void>
       readFile: (filePath: string) => Promise<{
         success: boolean
@@ -154,9 +157,11 @@ export default function App() {
   const initialSettings = loadSettings()
   const [treeWidth, setTreeWidth] = useState(initialLayout.treeWidth)
   const [listViewMode, setListViewMode] = useState<'list' | 'grid'>(initialSettings.defaultView ?? 'list')
-  const [listWidth, setListWidth] = useState(
-    (initialSettings.defaultView ?? 'list') === 'grid' ? initialLayout.listWidthGrid : initialLayout.listWidthList
-  )
+  const [listWidth, setListWidth] = useState(() => {
+    const raw = (initialSettings.defaultView ?? 'list') === 'grid' ? initialLayout.listWidthGrid : initialLayout.listWidthList
+    const maxList = window.innerWidth - initialLayout.treeWidth - 300
+    return Math.min(raw, Math.max(140, maxList))
+  })
   const draggingRef = useRef<null | { panel: 'tree' | 'list'; startX: number; startWidth: number }>(null)
   const mainContentRef = useRef<HTMLDivElement>(null)
   const [treeCollapsed, setTreeCollapsed] = useState(false)
@@ -164,6 +169,7 @@ export default function App() {
   const [folderChanged, setFolderChanged] = useState(false)
   const [showDuplicates, setShowDuplicates] = useState(false)
   const [metadataClipboard, setMetadataClipboard] = useState<{ sourceName: string; metadata: Partial<NamFile['metadata']> } | null>(null)
+  const [importModal, setImportModal] = useState<{ folderName: string; matches: ImportMatch[]; unmatchedNames: string[] } | null>(null)
   const [watcherKey, setWatcherKey] = useState(0)
   const [recentFolders, setRecentFolders] = useState<string[]>(() => {
     try {
@@ -218,9 +224,14 @@ export default function App() {
     const onMove = (ev: MouseEvent) => {
       if (!draggingRef.current) return
       const delta = ev.clientX - draggingRef.current.startX
-      const next = Math.max(140, draggingRef.current.startWidth + delta)
-      if (draggingRef.current.panel === 'tree') { setTreeWidth(next); latestTree = next }
-      else { setListWidth(next); latestList = next }
+      if (draggingRef.current.panel === 'tree') {
+        const next = Math.max(140, draggingRef.current.startWidth + delta)
+        setTreeWidth(next); latestTree = next
+      } else {
+        const maxList = window.innerWidth - treeWidth - 300
+        const next = Math.min(Math.max(140, draggingRef.current.startWidth + delta), maxList)
+        setListWidth(next); latestList = next
+      }
     }
     const onUp = () => {
       draggingRef.current = null
@@ -881,7 +892,7 @@ export default function App() {
 
   const handleClearNamLab = async (paths: string[]) => {
     const confirmed = window.confirm(
-      `Remove NAM Lab metadata from ${paths.length} file${paths.length !== 1 ? 's' : ''}?\n\nThis will permanently delete the custom capture details (mics, amp settings, comments, etc.) from the file${paths.length !== 1 ? 's' : ''} on disk.`
+      `Remove NAM Lab Custom Metadata from ${paths.length} file${paths.length !== 1 ? 's' : ''}?\n\nThis will permanently delete the custom capture details (mics, amp settings, comments, etc.) from the file${paths.length !== 1 ? 's' : ''} on disk.`
     )
     if (!confirmed) return
     const results = await window.api.clearNamLab(paths)
@@ -990,6 +1001,145 @@ export default function App() {
     const filename = `nam-export-${folderName}`
     if (format === 'csv') doExportCSV(targets, ALL_GRID_COLUMNS, filename)
     else doExportXLSX(targets, ALL_GRID_COLUMNS, filename)
+  }
+
+  // Column definition for import/export template — editable fields only, in user-preferred order
+  const IMPORT_COLUMNS: { header: string; field: keyof NamFile['metadata'] | null }[] = [
+    { header: 'Capture Name',       field: 'name' },
+    { header: 'Modeled By',         field: 'modeled_by' },
+    { header: 'Manufacturer',       field: 'gear_make' },
+    { header: 'Model',              field: 'gear_model' },
+    { header: 'Gear Type',          field: 'gear_type' },
+    { header: 'Tone Type',          field: 'tone_type' },
+    { header: 'Amp Channel',        field: 'nl_amp_channel' },
+    { header: 'Amp Settings',       field: 'nl_amp_settings' },
+    { header: 'Amp Switches',       field: 'nl_amp_switches' },
+    { header: 'Boost Pedal',        field: 'nl_boost_pedal' },
+    { header: 'Pedal Settings',     field: 'nl_pedal_settings' },
+    { header: 'Cabinet',            field: 'nl_cabinet' },
+    { header: 'Cab Config',         field: 'nl_cabinet_config' },
+    { header: 'Reamp Send (dBu)',   field: 'input_level_dbu' },
+    { header: 'Reamp Return (dBu)', field: 'output_level_dbu' },
+    { header: 'Trained Epochs',     field: 'nb_trained_epochs' },
+    { header: 'NAM-BOT Preset',     field: null }, // read-only — shown in template, skipped on import
+    { header: 'Mic(s)',             field: 'nl_mics' },
+    { header: 'Comments',           field: 'nl_comments' },
+  ]
+
+  const handleGenerateTemplate = (folderPath: string | null) => {
+    const targets = folderPath === null
+      ? files
+      : files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(folderPath.replace(/\\/g, '/') + '/') || f.filePath.replace(/\\/g, '/') === folderPath.replace(/\\/g, '/'))
+    const rows = targets.map((f) => {
+      const row: Record<string, unknown> = {}
+      for (const col of IMPORT_COLUMNS) {
+        if (col.field === null) {
+          // NAM-BOT Preset is read-only
+          row[col.header] = f.metadata.nb_preset_name ?? ''
+        } else {
+          const val = f.metadata[col.field]
+          row[col.header] = val != null ? val : ''
+        }
+      }
+      return row
+    })
+    const ws = XLSX.utils.json_to_sheet(rows, { header: IMPORT_COLUMNS.map((c) => c.header) })
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Import Template')
+    const folderName = folderPath ? folderPath.replace(/\\/g, '/').split('/').pop() : (librarian.rootFolder ? librarian.rootFolder.replace(/\\/g, '/').split('/').pop() : 'library')
+    const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `nam-import-template-${folderName}.xlsx`; a.click()
+    URL.revokeObjectURL(url)
+    setStatus({ message: `Template generated with ${rows.length} capture${rows.length !== 1 ? 's' : ''}`, type: 'success' })
+  }
+
+  const handleImportMetadata = async (folderPath: string | null) => {
+    const filePath = await window.api.openImportFile()
+    if (!filePath) return
+
+    // Parse the spreadsheet
+    let rows: Record<string, unknown>[]
+    try {
+      const raw = await window.api.readFile(filePath) as { raw?: string; error?: string }
+      if (raw.error) { setStatus({ message: `Could not read file: ${raw.error}`, type: 'error' }); return }
+      // Read the file as binary via fetch (renderer has file:// access via IPC path)
+      const resp = await fetch(`file://${filePath.replace(/\\/g, '/')}`)
+      const buf = await resp.arrayBuffer()
+      const wb = XLSX.read(buf, { type: 'array' })
+      const ws = wb.Sheets[wb.SheetNames[0]]
+      rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
+    } catch (err) {
+      setStatus({ message: `Failed to parse spreadsheet: ${String(err)}`, type: 'error' })
+      return
+    }
+
+    // Build lookup: name (lowercase) → NamFile, scoped to folderPath
+    const scopedFiles = folderPath === null
+      ? files
+      : files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(folderPath.replace(/\\/g, '/') + '/'))
+    const nameMap = new Map<string, NamFile>()
+    for (const f of scopedFiles) {
+      const key = (f.metadata.name || f.fileName || '').toLowerCase().trim()
+      if (key) nameMap.set(key, f)
+    }
+
+    // Match rows to files
+    const matches: ImportMatch[] = []
+    const unmatchedNames: string[] = []
+    for (const row of rows) {
+      const captureName = String(row['Capture Name'] ?? '').trim()
+      if (!captureName) continue
+      const file = nameMap.get(captureName.toLowerCase())
+      if (!file) { unmatchedNames.push(captureName); continue }
+
+      const incoming: Partial<NamFile['metadata']> = {}
+      const changedFields: string[] = []
+      for (const col of IMPORT_COLUMNS) {
+        if (!col.field) continue // skip read-only NAM-BOT Preset
+        if (col.field === 'name') continue // never overwrite the name (it's the match key)
+        const val = row[col.header]
+        if (val === '' || val == null) continue // skip empty cells
+        const strVal = String(val).trim();
+        (incoming as Record<string, unknown>)[col.field] = strVal
+        if (String(file.metadata[col.field] ?? '') !== strVal) changedFields.push(col.header)
+      }
+      if (Object.keys(incoming).length > 0) matches.push({ file, incoming, changedFields })
+    }
+
+    if (matches.length === 0 && unmatchedNames.length === 0) {
+      setStatus({ message: 'No matching captures found in spreadsheet', type: 'error' })
+      return
+    }
+
+    const folderName = folderPath ? folderPath.replace(/\\/g, '/').split('/').pop()! : (librarian.rootFolder ? librarian.rootFolder.replace(/\\/g, '/').split('/').pop()! : 'library')
+    setImportModal({ folderName, matches, unmatchedNames })
+  }
+
+  const handleImportConfirm = async () => {
+    if (!importModal) return
+    const { matches } = importModal
+    setImportModal(null)
+    let updated = 0; let failed = 0
+    for (const { file, incoming } of matches) {
+      const newMeta = { ...file.metadata, ...incoming }
+      const result = await window.api.writeMetadata(file.filePath, newMeta)
+      if ((result as { success: boolean }).success) {
+        updated++
+        setFiles((prev) => prev.map((f) =>
+          f.filePath === file.filePath
+            ? { ...f, metadata: newMeta, originalMetadata: newMeta, isDirty: false, autoFilledFields: [] }
+            : f
+        ))
+      } else { failed++ }
+    }
+    const unmatched = importModal.unmatchedNames.length
+    let msg = `Imported metadata for ${updated} capture${updated !== 1 ? 's' : ''}`
+    if (failed > 0) msg += `, ${failed} failed`
+    if (unmatched > 0) msg += ` · ${unmatched} unmatched: ${importModal.unmatchedNames.slice(0, 3).join(', ')}${unmatched > 3 ? '…' : ''}`
+    setStatus({ message: msg, type: failed > 0 ? 'error' : 'success' })
   }
 
   const handleMoveDuplicates = async (moves: { filePath: string; destName: string }[]) => {
@@ -1181,6 +1331,8 @@ export default function App() {
                   }
                 }}
                 onExportFolder={handleExportFolder}
+                onGenerateTemplate={handleGenerateTemplate}
+                onImportMetadata={handleImportMetadata}
               />
             </div>
             <DragHandle onMouseDown={(e) => onDragStart('tree', e)} onCollapse={() => setTreeCollapsed((v) => !v)} collapsed={treeCollapsed} />
@@ -1199,7 +1351,9 @@ export default function App() {
               onViewModeChange={(mode) => {
                 setListViewMode(mode)
                 const layout = loadLayout()
-                setListWidth(mode === 'grid' ? layout.listWidthGrid : layout.listWidthList)
+                const maxList = window.innerWidth - treeWidth - 300
+                const raw = mode === 'grid' ? layout.listWidthGrid : layout.listWidthList
+                setListWidth(Math.min(raw, maxList))
               }}
               onSelect={(id, multi) => {
                 if (multi) {
@@ -1381,6 +1535,16 @@ export default function App() {
           onClose={() => setShowDuplicates(false)}
           onMoveDuplicates={handleMoveDuplicates}
           onTrashDuplicates={handleTrashDuplicates}
+        />
+      )}
+
+      {importModal && (
+        <ImportMetadataModal
+          folderName={importModal.folderName}
+          matches={importModal.matches}
+          unmatchedNames={importModal.unmatchedNames}
+          onConfirm={handleImportConfirm}
+          onClose={() => setImportModal(null)}
         />
       )}
     </div>

@@ -246,6 +246,7 @@ export function FileList({
   draggable = false
 }: FileListProps) {
   const [search, setSearch] = useState('')
+  const [nameSearch, setNameSearch] = useState('')
   const [filter, setFilter] = useState<FilterMode>('all')
   const [gearFilter, setGearFilter] = useState('')
   const [toneFilter, setToneFilter] = useState('')
@@ -316,6 +317,11 @@ export function FileList({
       const haystack = [f.fileName, m.name, m.gear_make, m.gear_model, m.modeled_by]
         .filter(Boolean).join(' ').toLowerCase()
       if (!haystack.includes(q)) return false
+    }
+    if (nameSearch) {
+      const q = nameSearch.toLowerCase()
+      const namVal = (m.name || f.fileName || '').toLowerCase()
+      if (!namVal.includes(q)) return false
     }
     if (gearFilter && m.gear_type !== gearFilter) return false
     if (toneFilter && m.tone_type !== toneFilter) return false
@@ -403,6 +409,7 @@ export function FileList({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search files…"
+            title="Searches: filename, capture name, manufacturer, model, modeled by"
             className="w-full pl-7 pr-7 py-1.5 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 transition-colors"
           />
           {search && (
@@ -562,6 +569,32 @@ export function FileList({
           <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Tone type…</option>
           {TONE_TYPES.map((t) => <option key={t} value={t} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{t}</option>)}
         </select>
+        {/* Name-only filter */}
+        <div className="relative ml-1">
+          <input
+            type="text"
+            value={nameSearch}
+            onChange={(e) => setNameSearch(e.target.value)}
+            placeholder="Name contains…"
+            title="Filters to files where the capture name contains this text"
+            className={`text-xs py-0.5 pl-2.5 pr-6 rounded-full border transition-colors focus:outline-none focus:border-indigo-500 ${
+              nameSearch
+                ? 'bg-teal-100 dark:bg-teal-900/30 border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400'
+                : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400 placeholder-gray-400 dark:placeholder-gray-600'
+            }`}
+            style={{ width: 130 }}
+          />
+          {nameSearch && (
+            <button
+              onClick={() => setNameSearch('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-teal-500 hover:text-teal-700 dark:hover:text-teal-300"
+            >
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Header */}
@@ -753,7 +786,7 @@ export function FileList({
               <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
               </svg>
-              Remove NAM Lab metadata
+              Remove NAM Lab Custom Metadata
             </button>
           )}
           {(onSaveSelected || onBatchEditSelected) && (

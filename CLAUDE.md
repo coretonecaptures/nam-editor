@@ -209,6 +209,7 @@ App IDs:
 
 - **App icon** — user has design concepts (lab beaker theme). Needs `.ico` (Windows) and `.icns` (macOS) files generated from artwork. Currently uses Electron default musical note icon.
 - **Code signing** — app is unsigned. Users bypass SmartScreen (Windows) or Gatekeeper (macOS) on first launch. Options discussed: Apple Developer account ($99/yr) for notarization, EV certificate for Windows SmartScreen reputation.
+- **Maximize grid view** — button to collapse both left (folder tree) and right (editor) panels so grid fills full width, with horizontal scroll if still too wide. Toggle to restore panels.
 - **Column drag-to-reorder** in grid view — mentioned as a future improvement, not yet implemented.
 - **Detected Preset label refinement** — current fingerprint covers Standard/Complex/Lite/Feather/Nano/REVySTD/REVyHI/REVxSTD. Awaiting confirmation from NAM developer or forum on complete channel→preset mapping before adding friendly labels back to Model Channels column.
 - **NAM-BOT `trained_epochs`** — field is supported for reading and backfilling. NAM-BOT trainer will write it natively in future; field naming confirmed as `metadata.training.nam_bot.trained_epochs`.
@@ -270,6 +271,8 @@ These have been discussed and approved — remove each item when implemented.
 - **[x] Extended NAM Lab metadata** — 9 nl_ fields stored at `metadata.nam_lab.*`, lifted to flat `nl_` keys. Toggle via Settings → Library → Show NAM Lab metadata fields. In grid and export.
 
 - **[x] Duplicate detection** — Toolbar "Duplicates" button opens DuplicatesModal. Modes: by filename, by metadata name. Select which copy to keep. Move non-kept to `_Duplicates` folder or trash.
+
+- **[x] Bulk metadata import from spreadsheet** — Right-click folder → "Generate import template…" exports editable fields only as `.xlsx` (pre-filled with current values). Right-click folder → "Import metadata from spreadsheet…" opens file picker, matches rows by Capture Name, shows warning modal with match count + unmatched list, requires checkbox confirmation, writes non-empty cells only. Columns: Capture Name, Modeled By, Manufacturer, Model, Gear Type, Tone Type, Amp Channel, Amp Settings, Amp Switches, Boost Pedal, Pedal Settings, Cabinet, Cab Config, Reamp Send (dBu), Reamp Return (dBu), Trained Epochs, NAM-BOT Preset (read-only), Mic(s), Comments.
 
 - **[ ] Jump to file's folder** — Clicking a file should highlight/scroll to its folder in the tree panel.
 

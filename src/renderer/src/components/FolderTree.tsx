@@ -18,6 +18,8 @@ interface FolderTreeProps {
   onRenameFolder?: (folderPath: string, newName: string) => Promise<{ success: boolean; error?: string }>
   onMoveFolder?: (sourcePath: string, destParentPath: string) => Promise<{ success: boolean; error?: string }>
   onExportFolder?: (folderPath: string | null, format: 'csv' | 'xlsx') => void
+  onGenerateTemplate?: (folderPath: string | null) => void
+  onImportMetadata?: (folderPath: string | null) => void
 }
 
 function matchesFilter(
@@ -196,6 +198,8 @@ export function FolderTree({
           onDropFolder={onMoveFolder ? (src) => onMoveFolder(src, tree.path) : undefined}
           onCreateFolder={onCreateFolder ? (name) => onCreateFolder(tree.path, name) : undefined}
           onExportFolder={onExportFolder ? (fmt) => onExportFolder(null, fmt) : undefined}
+          onGenerateTemplate={onGenerateTemplate ? () => onGenerateTemplate(null) : undefined}
+          onImportMetadata={onImportMetadata ? () => onImportMetadata(null) : undefined}
         />
 
         {tree.children.map((child) => (
@@ -216,6 +220,8 @@ export function FolderTree({
             onRenameFolder={onRenameFolder}
             onMoveFolder={onMoveFolder}
             onExportFolder={onExportFolder}
+            onGenerateTemplate={onGenerateTemplate}
+            onImportMetadata={onImportMetadata}
           />
         ))}
       </div>
@@ -243,6 +249,8 @@ function TreeNode({
   onRenameFolder?: (folderPath: string, newName: string) => Promise<{ success: boolean; error?: string }>
   onMoveFolder?: (sourcePath: string, destParentPath: string) => Promise<{ success: boolean; error?: string }>
   onExportFolder?: (folderPath: string, format: 'csv' | 'xlsx') => void
+  onGenerateTemplate?: (folderPath: string | null) => void
+  onImportMetadata?: (folderPath: string | null) => void
 }) {
   const [expanded, setExpanded] = useState(true)
   const isSelected = selectedFolder === node.path
@@ -288,6 +296,8 @@ function TreeNode({
         onCreateFolder={onCreateFolder ? (name) => onCreateFolder(node.path, name) : undefined}
         onRenameFolder={onRenameFolder ? (newName) => onRenameFolder(node.path, newName) : undefined}
         onExportFolder={onExportFolder ? (fmt) => onExportFolder(node.path, fmt) : undefined}
+        onGenerateTemplate={onGenerateTemplate ? () => onGenerateTemplate(node.path) : undefined}
+        onImportMetadata={onImportMetadata ? () => onImportMetadata(node.path) : undefined}
         isDraggableFolder
       />
 
@@ -311,6 +321,8 @@ function TreeNode({
               onRenameFolder={onRenameFolder}
               onMoveFolder={onMoveFolder}
               onExportFolder={onExportFolder}
+              onGenerateTemplate={onGenerateTemplate}
+              onImportMetadata={onImportMetadata}
             />
           ))}
         </div>
@@ -324,7 +336,7 @@ interface ContextMenuState { x: number; y: number }
 function FolderRow({
   label, folderPath, isRoot, isSelected, totalCount, dirtyCount, depth,
   hasChildren, expanded, onToggleExpand, onClick, onSave, onRevert,
-  onBatchEdit, onReveal, isFiltered, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, isDraggableFolder
+  onBatchEdit, onReveal, isFiltered, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, isDraggableFolder
 }: {
   label: string
   folderPath: string
@@ -347,6 +359,8 @@ function FolderRow({
   onCreateFolder?: (name: string) => Promise<{ success: boolean; error?: string }>
   onRenameFolder?: (newName: string) => Promise<{ success: boolean; error?: string }>
   onExportFolder?: (format: 'csv' | 'xlsx') => void
+  onGenerateTemplate?: () => void
+  onImportMetadata?: () => void
   isDraggableFolder?: boolean
 }) {
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
@@ -594,6 +608,27 @@ function FolderRow({
               >
                 Export folder as Excel
               </button>
+            </>
+          )}
+          {(onGenerateTemplate || onImportMetadata) && (
+            <>
+              <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
+              {onGenerateTemplate && (
+                <button
+                  className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
+                  onClick={() => { setMenu(null); onGenerateTemplate() }}
+                >
+                  Generate import template…
+                </button>
+              )}
+              {onImportMetadata && (
+                <button
+                  className="w-full text-left px-3 py-1.5 text-teal-700 dark:text-teal-400 hover:bg-indigo-600/40 transition-colors"
+                  onClick={() => { setMenu(null); onImportMetadata() }}
+                >
+                  Import metadata from spreadsheet…
+                </button>
+              )}
             </>
           )}
         </div>

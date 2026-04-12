@@ -404,6 +404,15 @@ app.whenReady().then(() => {
     return result.filePaths
   })
 
+  // IPC: Open import spreadsheet file picker (.xlsx or .csv)
+  ipcMain.handle('dialog:openImportFile', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: 'Spreadsheet', extensions: ['xlsx', 'csv'] }]
+    })
+    return result.filePaths[0] ?? null
+  })
+
   // IPC: Open folder dialog
   ipcMain.handle('dialog:openFolder', async () => {
     const result = await dialog.showOpenDialog({
