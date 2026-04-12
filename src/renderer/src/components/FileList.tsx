@@ -34,6 +34,9 @@ interface FileListProps {
   onTrashSelected?: (paths: string[]) => Promise<void>
   onCopyToFolder?: (paths: string[]) => Promise<void>
   onApplyDefaults?: (paths: string[]) => void
+  metadataClipboard?: { sourceName: string; metadata: Partial<NamFile['metadata']> } | null
+  onCopyMetadata?: (filePath: string) => void
+  onPasteMetadata?: (filePaths: string[]) => void
   viewMode: ViewMode
   onViewModeChange: (mode: ViewMode) => void
   solidPills?: boolean
@@ -232,6 +235,9 @@ export function FileList({
   onTrashSelected,
   onCopyToFolder,
   onApplyDefaults,
+  metadataClipboard,
+  onCopyMetadata,
+  onPasteMetadata,
   viewMode,
   onViewModeChange,
   solidPills = false,
@@ -704,6 +710,34 @@ export function FileList({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
               </svg>
               Rename {selectedIds.size} selected…
+            </button>
+          )}
+          {(onCopyMetadata || onPasteMetadata) && (
+            <div className="border-t border-gray-200 dark:border-gray-700 my-1" />
+          )}
+          {onCopyMetadata && selectedIds.size === 1 && (
+            <button
+              className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
+              onClick={() => { onCopyMetadata(ctxMenu.filePath); setCtxMenu(null) }}
+            >
+              <svg className="w-3.5 h-3.5 text-teal-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+              Copy metadata
+            </button>
+          )}
+          {onPasteMetadata && metadataClipboard && (
+            <button
+              className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
+              onClick={() => { onPasteMetadata([...selectedIds]); setCtxMenu(null) }}
+            >
+              <svg className="w-3.5 h-3.5 text-teal-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m0 0v3" />
+              </svg>
+              <span>
+                Paste metadata
+                <span className="ml-1.5 text-xs text-gray-400 dark:text-gray-600">from {metadataClipboard.sourceName}</span>
+              </span>
             </button>
           )}
           {(onSaveSelected || onBatchEditSelected) && (

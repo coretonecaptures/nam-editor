@@ -162,6 +162,7 @@ export default function App() {
   const [listCollapsed, setListCollapsed] = useState(false)
   const [folderChanged, setFolderChanged] = useState(false)
   const [showDuplicates, setShowDuplicates] = useState(false)
+  const [metadataClipboard, setMetadataClipboard] = useState<{ sourceName: string; metadata: Partial<NamFile['metadata']> } | null>(null)
   const [watcherKey, setWatcherKey] = useState(0)
   const [recentFolders, setRecentFolders] = useState<string[]>(() => {
     try {
@@ -905,6 +906,51 @@ export default function App() {
     setStatus({ message: `Applied defaults to ${paths.length} file${paths.length !== 1 ? 's' : ''}`, type: 'success' })
   }
 
+  // Fields that make sense to copy — editable metadata only, no read-only stats
+  const COPYABLE_FIELDS: (keyof NamFile['metadata'])[] = [
+    'name', 'modeled_by', 'gear_type', 'gear_make', 'gear_model', 'tone_type',
+    'input_level_dbu', 'output_level_dbu', 'nb_trained_epochs',
+    'nl_mics', 'nl_amp_channel', 'nl_cabinet', 'nl_cabinet_config',
+    'nl_amp_settings', 'nl_boost_pedal', 'nl_pedal_settings', 'nl_amp_switches', 'nl_comments',
+  ]
+
+  const handleCopyMetadata = (filePath: string) => {
+    const file = files.find((f) => f.filePath === filePath)
+    if (!file) return
+    const meta: Partial<NamFile['metadata']> = {}
+    for (const k of COPYABLE_FIELDS) {
+      if (file.metadata[k] != null) (meta as Record<string, unknown>)[k] = file.metadata[k]
+    }
+    setMetadataClipboard({ sourceName: file.metadata.name || file.fileName, metadata: meta })
+    setStatus({ message: `Copied metadata from: ${file.metadata.name || file.fileName}`, type: 'info' })
+  }
+
+  const handlePasteMetadata = async (targetPaths: string[]) => {
+    if (!metadataClipboard) return
+    const { sourceName, metadata } = metadataClipboard
+
+    // Build preview of non-empty fields being pasted
+    const fieldLabels: Record<string, string> = {
+      name: 'Capture Name', modeled_by: 'Modeled By', gear_type: 'Gear Type',
+      gear_make: 'Manufacturer', gear_model: 'Model', tone_type: 'Tone Type',
+      input_level_dbu: 'Input (dBu)', output_level_dbu: 'Output (dBu)', nb_trained_epochs: 'Trained Epochs',
+      nl_mics: 'Mics', nl_amp_channel: 'Amp Channel', nl_cabinet: 'Cabinet',
+      nl_cabinet_config: 'Cabinet Config', nl_amp_settings: 'Amp Settings',
+      nl_boost_pedal: 'Boost Pedal', nl_pedal_settings: 'Pedal Settings',
+      nl_amp_switches: 'Amp Switches', nl_comments: 'Comments',
+    }
+    const fieldSummary = Object.entries(metadata)
+      .filter(([, v]) => v != null && v !== '')
+      .map(([k, v]) => `${fieldLabels[k] ?? k}: ${v}`)
+      .join('\n  ')
+
+    const confirmed = window.confirm(
+      `Paste metadata from "${sourceName}" to ${targetPaths.length} file${targetPaths.length !== 1 ? 's' : ''}?\n\n  ${fieldSummary}\n\nThis will overwrite those fields in the target file${targetPaths.length !== 1 ? 's' : ''}.`
+    )
+    if (!confirmed) return
+    await handleMultiSelectApply(targetPaths, metadata)
+  }
+
   const handleExportFolder = (folderPath: string | null, format: 'csv' | 'xlsx') => {
     const targets = folderPath === null
       ? files
@@ -1190,6 +1236,9 @@ export default function App() {
               onTrashSelected={handleTrashFiles}
               onCopyToFolder={handleCopyToFolder}
               onApplyDefaults={handleApplyDefaultsToSelection}
+              metadataClipboard={metadataClipboard}
+              onCopyMetadata={handleCopyMetadata}
+              onPasteMetadata={handlePasteMetadata}
             />
           </div>
           <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} onCollapse={() => setListCollapsed((v) => !v)} collapsed={listCollapsed} />
