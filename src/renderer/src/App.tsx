@@ -4,7 +4,7 @@ import { NamFile, TONE_TYPES, GEAR_TYPES } from './types/nam'
 import { AppSettings, loadSettings, saveSettings } from './types/settings'
 import { loadLayout, saveLayout } from './types/layout'
 import { LibrarianState } from './types/librarian'
-import { FileList } from './components/FileList'
+import { FileList, ALL_GRID_COLUMNS, doExportCSV, doExportXLSX } from './components/FileList'
 import { MetadataEditor } from './components/MetadataEditor'
 import { Toolbar } from './components/Toolbar'
 import { BatchEditor, BatchApplyOptions } from './components/BatchEditor'
@@ -12,6 +12,7 @@ import { MultiSelectEditor } from './components/MultiSelectEditor'
 import { StatusBar } from './components/StatusBar'
 import { SettingsPanel } from './components/SettingsPanel'
 import { FolderTree } from './components/FolderTree'
+import { DuplicatesModal } from './components/DuplicatesModal'
 import { FolderNode } from './types/librarian'
 
 declare global {
@@ -44,6 +45,8 @@ declare global {
       createFolder: (parentPath: string, name: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       renameFolder: (folderPath: string, newName: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       moveFolder: (sourcePath: string, destParentPath: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
+      trashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; error?: string }[]>
+      copyFiles: (filePaths: string[], destDir: string) => Promise<{ filePath: string; success: boolean; destPath?: string; error?: string }[]>
       getPendingFiles: () => Promise<string[]>
       onOpenFiles: (cb: (paths: string[]) => void) => () => void
       platform: string
@@ -158,6 +161,7 @@ export default function App() {
   const [treeCollapsed, setTreeCollapsed] = useState(false)
   const [listCollapsed, setListCollapsed] = useState(false)
   const [folderChanged, setFolderChanged] = useState(false)
+  const [showDuplicates, setShowDuplicates] = useState(false)
   const [watcherKey, setWatcherKey] = useState(0)
   const [recentFolders, setRecentFolders] = useState<string[]>(() => {
     try {
@@ -846,6 +850,120 @@ export default function App() {
     return result
   }
 
+  const handleTrashFiles = async (paths: string[]) => {
+    const fileNames = paths.map((p) => p.replace(/\\/g, '/').split('/').pop()).join('\n')
+    const confirmed = window.confirm(
+      `Move ${paths.length} file${paths.length !== 1 ? 's' : ''} to trash?\n\n${fileNames}\n\nThis can be recovered from the trash.`
+    )
+    if (!confirmed) return
+    const results = await window.api.trashFiles(paths)
+    const trashed = results.filter((r) => r.success).map((r) => r.filePath)
+    const failed = results.filter((r) => !r.success).length
+    if (trashed.length > 0) {
+      const trashedSet = new Set(trashed)
+      setFiles((prev) => prev.filter((f) => !trashedSet.has(f.filePath)))
+      setSelectedIds((prev) => {
+        const next = new Set(prev)
+        for (const p of trashed) next.delete(p)
+        return next
+      })
+    }
+    if (failed > 0) {
+      setStatus({ message: `Trashed ${trashed.length}, failed ${failed}`, type: 'error' })
+    } else {
+      setStatus({ message: `Moved ${trashed.length} file${trashed.length !== 1 ? 's' : ''} to trash`, type: 'success' })
+    }
+  }
+
+  const handleCopyToFolder = async (paths: string[]) => {
+    const destFolder = await window.api.openFolder()
+    if (!destFolder) return
+    const results = await window.api.copyFiles(paths, destFolder)
+    const copied = results.filter((r) => r.success).length
+    const failed = results.filter((r) => !r.success).length
+    if (failed > 0) {
+      setStatus({ message: `Copied ${copied}, failed ${failed}`, type: 'error' })
+    } else {
+      setStatus({ message: `Copied ${copied} file${copied !== 1 ? 's' : ''} to ${destFolder.split('/').pop()}`, type: 'success' })
+    }
+  }
+
+  const handleApplyDefaultsToSelection = (paths: string[]) => {
+    const pathSet = new Set(paths)
+    setFiles((prev) => prev.map((f) => {
+      if (!pathSet.has(f.filePath)) return f
+      const baseName = f.fileName.replace(/\.nam$/i, '')
+      const newMeta = applyDefaults({ ...f.metadata }, baseName, settings)
+      const newAutoFilled = (Object.keys(newMeta) as (keyof NamFile['metadata'])[]).filter(
+        (k) => newMeta[k] != null && (f.metadata[k] == null || f.metadata[k] === '') && !f.autoFilledFields.includes(k)
+      )
+      const wasChanged = JSON.stringify(newMeta) !== JSON.stringify(f.originalMetadata)
+      return { ...f, metadata: newMeta, isDirty: wasChanged, autoFilledFields: [...f.autoFilledFields, ...newAutoFilled] }
+    }))
+    setStatus({ message: `Applied defaults to ${paths.length} file${paths.length !== 1 ? 's' : ''}`, type: 'success' })
+  }
+
+  const handleExportFolder = (folderPath: string | null, format: 'csv' | 'xlsx') => {
+    const targets = folderPath === null
+      ? files
+      : files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(folderPath + '/'))
+    const folderName = folderPath ? folderPath.split('/').pop() : (librarian.rootFolder ? librarian.rootFolder.split('/').pop() : 'export')
+    const filename = `nam-export-${folderName}`
+    if (format === 'csv') doExportCSV(targets, ALL_GRID_COLUMNS, filename)
+    else doExportXLSX(targets, ALL_GRID_COLUMNS, filename)
+  }
+
+  const handleMoveDuplicates = async (filePaths: string[]) => {
+    if (!librarian.rootFolder) return
+    // Create _Duplicates folder (ignore error if already exists)
+    await window.api.createFolder(librarian.rootFolder, '_Duplicates')
+    const destDir = librarian.rootFolder + '/_Duplicates'
+    const results = await Promise.all(filePaths.map((fp) => window.api.moveFile(fp, destDir)))
+    const moved = results
+      .map((r, i) => r.success && r.destPath ? { oldPath: filePaths[i], newPath: r.destPath } : null)
+      .filter((x): x is { oldPath: string; newPath: string } => x !== null)
+    if (moved.length > 0) {
+      const movedMap = new Map(moved.map((m) => [m.oldPath, m.newPath]))
+      setFiles((prev) => prev.map((f) => {
+        const newPath = movedMap.get(f.filePath)
+        if (!newPath) return f
+        return { ...f, filePath: newPath, isDirty: false, autoFilledFields: [] }
+      }))
+      if (librarian.rootFolder) {
+        const treeResult = await window.api.scanTree(librarian.rootFolder, settings.hiddenFolders ?? '')
+        if (treeResult.success && treeResult.tree) {
+          setLibrarian((prev) => ({ ...prev, folderTree: treeResult.tree! }))
+        }
+      }
+    }
+    const failed = filePaths.length - moved.length
+    if (failed > 0) {
+      setStatus({ message: `Moved ${moved.length} to _Duplicates, failed ${failed}`, type: 'error' })
+    } else {
+      setStatus({ message: `Moved ${moved.length} duplicate${moved.length !== 1 ? 's' : ''} to _Duplicates`, type: 'success' })
+    }
+  }
+
+  const handleTrashDuplicates = async (filePaths: string[]) => {
+    const results = await window.api.trashFiles(filePaths)
+    const trashed = results.filter((r) => r.success).map((r) => r.filePath)
+    if (trashed.length > 0) {
+      const trashedSet = new Set(trashed)
+      setFiles((prev) => prev.filter((f) => !trashedSet.has(f.filePath)))
+      setSelectedIds((prev) => {
+        const next = new Set(prev)
+        for (const p of trashed) next.delete(p)
+        return next
+      })
+    }
+    const failed = filePaths.length - trashed.length
+    if (failed > 0) {
+      setStatus({ message: `Trashed ${trashed.length}, failed ${failed}`, type: 'error' })
+    } else {
+      setStatus({ message: `Trashed ${trashed.length} duplicate${trashed.length !== 1 ? 's' : ''}`, type: 'success' })
+    }
+  }
+
   // Filter files by selected folder and/or library search filter
   const visibleFiles = files.filter((f) => {
     const norm = f.filePath.replace(/\\/g, '/')
@@ -892,6 +1010,7 @@ export default function App() {
         onRefresh={handleRefresh}
         recentFolders={recentFolders}
         onOpenRecentFolder={(path) => loadFolderByPath(path)}
+        onFindDuplicates={files.length > 1 ? () => setShowDuplicates(true) : undefined}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -967,6 +1086,7 @@ export default function App() {
                     setBatchFolder({ path, name })
                   }
                 }}
+                onExportFolder={handleExportFolder}
               />
             </div>
             <DragHandle onMouseDown={(e) => onDragStart('tree', e)} onCollapse={() => setTreeCollapsed((v) => !v)} collapsed={treeCollapsed} />
@@ -1050,6 +1170,9 @@ export default function App() {
                 }
               }}
               onBatchRename={handleBatchRename}
+              onTrashSelected={handleTrashFiles}
+              onCopyToFolder={handleCopyToFolder}
+              onApplyDefaults={handleApplyDefaultsToSelection}
             />
           </div>
           <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} onCollapse={() => setListCollapsed((v) => !v)} collapsed={listCollapsed} />
@@ -1092,6 +1215,7 @@ export default function App() {
               onRenameFile={handleRenameFile}
               gearMakeSuggestions={gearMakeSuggestions}
               gearModelSuggestions={gearModelSuggestions}
+              showNamLabFields={settings.showNamLabFields}
               hasActiveDefaults={
                 settings.enableAmpInfo ||
                 settings.enableCaptureDefaults ||
@@ -1151,6 +1275,16 @@ export default function App() {
         </div>
       )}
       <StatusBar message={status.message} type={status.type} logPath={status.logPath} />
+
+      {showDuplicates && (
+        <DuplicatesModal
+          files={files}
+          rootFolder={librarian.rootFolder}
+          onClose={() => setShowDuplicates(false)}
+          onMoveDuplicates={handleMoveDuplicates}
+          onTrashDuplicates={handleTrashDuplicates}
+        />
+      )}
     </div>
   )
 }

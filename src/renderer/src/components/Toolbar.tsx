@@ -16,6 +16,7 @@ interface ToolbarProps {
   onRefresh: () => void
   recentFolders: string[]
   onOpenRecentFolder: (path: string) => void
+  onFindDuplicates?: () => void
 }
 
 export function Toolbar({
@@ -33,7 +34,8 @@ export function Toolbar({
   rootFolder,
   onRefresh,
   recentFolders,
-  onOpenRecentFolder
+  onOpenRecentFolder,
+  onFindDuplicates
 }: ToolbarProps) {
   const [showRecent, setShowRecent] = useState(false)
   const recentRef = useRef<HTMLDivElement>(null)
@@ -141,6 +143,20 @@ export function Toolbar({
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
           </svg>
           Refresh
+        </button>
+      )}
+
+      {onFindDuplicates && fileCount > 1 && (
+        <button
+          onClick={onFindDuplicates}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          title="Find duplicate .nam files across your library"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+          </svg>
+          Duplicates
         </button>
       )}
 

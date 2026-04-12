@@ -321,6 +321,12 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
               <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
             </div>
             <div className="space-y-4">
+              <CheckboxField
+                label="Show NAM Lab metadata fields"
+                description="Show and edit extended capture details (mics, cabinet, amp channel, settings, comments) in the metadata editor."
+                checked={draft.showNamLabFields}
+                onChange={(v) => update('showNamLabFields', v)}
+              />
               <SettingsField label="Hidden Folders" hint="Folder names to exclude when scanning — subfolders are also excluded">
                 <div className="space-y-1.5">
                   <input

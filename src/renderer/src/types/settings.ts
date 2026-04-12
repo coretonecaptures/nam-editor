@@ -46,6 +46,9 @@ export interface AppSettings {
 
   // Hidden folders (comma-separated folder names to exclude from scans)
   hiddenFolders: string
+
+  // Show/edit NAM Lab extended capture detail fields
+  showNamLabFields: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -78,7 +81,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
   renameTemplate: '{name}',
   watchFolder: false,
-  hiddenFolders: 'lightning_logs,version_0,checkpoints'
+  hiddenFolders: 'lightning_logs,version_0,checkpoints',
+  showNamLabFields: true
 }
 
 const STORAGE_KEY = 'nam-editor-settings'

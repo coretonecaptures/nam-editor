@@ -31,6 +31,9 @@ interface FileListProps {
   onBatchEditSelected?: (paths: string[]) => void
   onSaveSelected?: (paths: string[]) => void
   onBatchRename?: (renames: { filePath: string; newBaseName: string }[]) => void
+  onTrashSelected?: (paths: string[]) => Promise<void>
+  onCopyToFolder?: (paths: string[]) => Promise<void>
+  onApplyDefaults?: (paths: string[]) => void
   viewMode: ViewMode
   onViewModeChange: (mode: ViewMode) => void
   solidPills?: boolean
@@ -55,10 +58,21 @@ const ALL_GRID_COLUMNS: { key: string; label: string; minWidth: number; defaultV
   { key: 'model_size',        label: 'Model Channels',     minWidth: 120, defaultVisible: false },
   { key: 'checks_passed',     label: 'Checks Passed',      minWidth: 110, defaultVisible: false },
   { key: 'latency_samples',   label: 'Latency (samples)',  minWidth: 110, defaultVisible: false },
-  { key: 'nb_trained_epochs', label: 'Trained Epochs',     minWidth: 100, defaultVisible: false },
-  { key: 'nb_preset_name',    label: 'NAM-BOT Preset',     minWidth: 120, defaultVisible: false },
-  { key: 'detected_preset',   label: 'Detected Preset',    minWidth: 120, defaultVisible: false },
+  { key: 'nb_trained_epochs',  label: 'Trained Epochs',     minWidth: 100, defaultVisible: false },
+  { key: 'nb_preset_name',     label: 'NAM-BOT Preset',     minWidth: 120, defaultVisible: false },
+  { key: 'detected_preset',    label: 'Detected Preset',    minWidth: 120, defaultVisible: false },
+  { key: 'nl_mics',            label: 'Mic(s)',             minWidth: 130, defaultVisible: false },
+  { key: 'nl_cabinet',         label: 'Cabinet',            minWidth: 140, defaultVisible: false },
+  { key: 'nl_cabinet_config',  label: 'Cab Config',         minWidth: 90,  defaultVisible: false },
+  { key: 'nl_amp_channel',     label: 'Amp Channel',        minWidth: 100, defaultVisible: false },
+  { key: 'nl_boost_pedal',     label: 'Boost Pedal',        minWidth: 140, defaultVisible: false },
+  { key: 'nl_amp_settings',    label: 'Amp Settings',       minWidth: 160, defaultVisible: false },
+  { key: 'nl_pedal_settings',  label: 'Pedal Settings',     minWidth: 160, defaultVisible: false },
+  { key: 'nl_amp_switches',    label: 'Amp Switches',       minWidth: 130, defaultVisible: false },
+  { key: 'nl_comments',        label: 'Comments',           minWidth: 180, defaultVisible: false },
 ]
+
+export { ALL_GRID_COLUMNS }
 
 const DEFAULT_VISIBLE_COLS = ALL_GRID_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key)
 const GRID_COL_STORAGE_KEY = 'nam-lab-grid-columns'
@@ -129,9 +143,20 @@ function getCellValue(file: NamFile, key: string): string {
       return m.nb_preset_name ?? ''
     case 'detected_preset':
       return detectPreset(file.config) ?? ''
+    case 'nl_mics':           return m.nl_mics           ?? ''
+    case 'nl_cabinet':        return m.nl_cabinet        ?? ''
+    case 'nl_cabinet_config': return m.nl_cabinet_config ?? ''
+    case 'nl_amp_channel':    return m.nl_amp_channel    ?? ''
+    case 'nl_boost_pedal':    return m.nl_boost_pedal    ?? ''
+    case 'nl_amp_settings':   return m.nl_amp_settings   ?? ''
+    case 'nl_pedal_settings': return m.nl_pedal_settings ?? ''
+    case 'nl_amp_switches':   return m.nl_amp_switches   ?? ''
+    case 'nl_comments':       return m.nl_comments       ?? ''
     default: return ''
   }
 }
+
+export { getCellValue, buildExportRows, doExportCSV, doExportXLSX }
 
 function getSortValue(file: NamFile, key: string): string | number {
   if (key === 'date') {
@@ -204,6 +229,9 @@ export function FileList({
   onBatchEditSelected,
   onSaveSelected,
   onBatchRename,
+  onTrashSelected,
+  onCopyToFolder,
+  onApplyDefaults,
   viewMode,
   onViewModeChange,
   solidPills = false,
@@ -621,6 +649,52 @@ export function FileList({
             </svg>
             Show in folder
           </button>
+          <button
+            className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
+            onClick={() => {
+              const names = files.filter((f) => selectedIds.has(f.filePath)).map((f) => f.metadata.name || f.fileName)
+              navigator.clipboard.writeText(names.join('\n'))
+              setCtxMenu(null)
+            }}
+          >
+            <svg className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+            </svg>
+            Copy {selectedIds.size > 1 ? `${selectedIds.size} names` : 'name'} to clipboard
+          </button>
+          {onCopyToFolder && (
+            <button
+              className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
+              onClick={() => { onCopyToFolder([...selectedIds]); setCtxMenu(null) }}
+            >
+              <svg className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+              Copy {selectedIds.size > 1 ? `${selectedIds.size} files` : 'file'} to folder…
+            </button>
+          )}
+          {onApplyDefaults && (
+            <button
+              className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
+              onClick={() => { onApplyDefaults([...selectedIds]); setCtxMenu(null) }}
+            >
+              <svg className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Apply defaults to {selectedIds.size > 1 ? `${selectedIds.size} files` : 'file'}
+            </button>
+          )}
+          {onTrashSelected && (
+            <button
+              className="w-full text-left px-3 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-2"
+              onClick={() => { onTrashSelected([...selectedIds]); setCtxMenu(null) }}
+            >
+              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Delete {selectedIds.size > 1 ? `${selectedIds.size} files` : 'file'} (trash)
+            </button>
+          )}
           {onBatchRename && selectedIds.size > 1 && (
             <button
               className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"

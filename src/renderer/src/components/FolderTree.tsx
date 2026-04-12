@@ -17,6 +17,7 @@ interface FolderTreeProps {
   onCreateFolder?: (parentPath: string, name: string) => Promise<{ success: boolean; error?: string }>
   onRenameFolder?: (folderPath: string, newName: string) => Promise<{ success: boolean; error?: string }>
   onMoveFolder?: (sourcePath: string, destParentPath: string) => Promise<{ success: boolean; error?: string }>
+  onExportFolder?: (folderPath: string | null, format: 'csv' | 'xlsx') => void
 }
 
 function matchesFilter(
@@ -43,7 +44,7 @@ function matchesFilter(
 export function FolderTree({
   tree, files, selectedFolder, onSelect, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, onFilterChange, onDropFiles,
-  onCreateFolder, onRenameFolder, onMoveFolder
+  onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder
 }: FolderTreeProps) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -194,6 +195,7 @@ export function FolderTree({
           onDropFiles={onDropFiles}
           onDropFolder={onMoveFolder ? (src) => onMoveFolder(src, tree.path) : undefined}
           onCreateFolder={onCreateFolder ? (name) => onCreateFolder(tree.path, name) : undefined}
+          onExportFolder={onExportFolder ? (fmt) => onExportFolder(null, fmt) : undefined}
         />
 
         {tree.children.map((child) => (
@@ -213,6 +215,7 @@ export function FolderTree({
             onCreateFolder={onCreateFolder}
             onRenameFolder={onRenameFolder}
             onMoveFolder={onMoveFolder}
+            onExportFolder={onExportFolder}
           />
         ))}
       </div>
@@ -223,7 +226,7 @@ export function FolderTree({
 function TreeNode({
   node, selectedFolder, onSelect, depth, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, matchingPaths, onDropFiles,
-  onCreateFolder, onRenameFolder, onMoveFolder
+  onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder
 }: {
   node: FolderNode
   selectedFolder: string | null
@@ -239,6 +242,7 @@ function TreeNode({
   onCreateFolder?: (parentPath: string, name: string) => Promise<{ success: boolean; error?: string }>
   onRenameFolder?: (folderPath: string, newName: string) => Promise<{ success: boolean; error?: string }>
   onMoveFolder?: (sourcePath: string, destParentPath: string) => Promise<{ success: boolean; error?: string }>
+  onExportFolder?: (folderPath: string, format: 'csv' | 'xlsx') => void
 }) {
   const [expanded, setExpanded] = useState(true)
   const isSelected = selectedFolder === node.path
@@ -283,6 +287,7 @@ function TreeNode({
         onDropFolder={onMoveFolder ? (src) => onMoveFolder(src, node.path) : undefined}
         onCreateFolder={onCreateFolder ? (name) => onCreateFolder(node.path, name) : undefined}
         onRenameFolder={onRenameFolder ? (newName) => onRenameFolder(node.path, newName) : undefined}
+        onExportFolder={onExportFolder ? (fmt) => onExportFolder(node.path, fmt) : undefined}
         isDraggableFolder
       />
 
@@ -305,6 +310,7 @@ function TreeNode({
               onCreateFolder={onCreateFolder}
               onRenameFolder={onRenameFolder}
               onMoveFolder={onMoveFolder}
+              onExportFolder={onExportFolder}
             />
           ))}
         </div>
@@ -318,7 +324,7 @@ interface ContextMenuState { x: number; y: number }
 function FolderRow({
   label, folderPath, isRoot, isSelected, totalCount, dirtyCount, depth,
   hasChildren, expanded, onToggleExpand, onClick, onSave, onRevert,
-  onBatchEdit, onReveal, isFiltered, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, isDraggableFolder
+  onBatchEdit, onReveal, isFiltered, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, isDraggableFolder
 }: {
   label: string
   folderPath: string
@@ -340,6 +346,7 @@ function FolderRow({
   onDropFolder?: (sourceFolderPath: string) => void
   onCreateFolder?: (name: string) => Promise<{ success: boolean; error?: string }>
   onRenameFolder?: (newName: string) => Promise<{ success: boolean; error?: string }>
+  onExportFolder?: (format: 'csv' | 'xlsx') => void
   isDraggableFolder?: boolean
 }) {
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
@@ -572,6 +579,23 @@ function FolderRow({
           >
             Reveal in Explorer
           </button>
+          {onExportFolder && (
+            <>
+              <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
+              <button
+                className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
+                onClick={() => { setMenu(null); onExportFolder('csv') }}
+              >
+                Export folder as CSV
+              </button>
+              <button
+                className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
+                onClick={() => { setMenu(null); onExportFolder('xlsx') }}
+              >
+                Export folder as Excel
+              </button>
+            </>
+          )}
         </div>
       )}
 

@@ -22,6 +22,16 @@ export interface NamMetadata {
   training?: unknown
   nb_trained_epochs?: number | null
   nb_preset_name?: string | null
+  // NAM Lab extended capture details (stored in metadata.nam_lab.*)
+  nl_mics?: string | null
+  nl_cabinet?: string | null
+  nl_cabinet_config?: string | null
+  nl_amp_channel?: string | null
+  nl_boost_pedal?: string | null
+  nl_amp_settings?: string | null
+  nl_pedal_settings?: string | null
+  nl_amp_switches?: string | null
+  nl_comments?: string | null
 }
 
 export interface NamFile {

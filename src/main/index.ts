@@ -211,6 +211,56 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+// Patch a field inside metadata.nam_lab, creating the block if needed.
+// field = bare key (e.g. "mics"), NOT the nl_-prefixed renderer key
+function patchNamLabField(content: string, field: string, value: unknown): string {
+  const newVal = serializeJsonValue(value)
+  const fieldRe = new RegExp(
+    `("${escapeRe(field)}")(\\s*:\\s*)(null|"(?:[^"\\\\]|\\\\.)*"|-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)`
+  )
+
+  // Try to find existing nam_lab block inside metadata and update/insert the field
+  const namLabRe = /"nam_lab"\s*:\s*\{/
+  const namLabMatch = namLabRe.exec(content)
+  if (namLabMatch) {
+    const openBrace = namLabMatch.index + namLabMatch[0].length - 1
+    const closeBrace = findMatchingBrace(content, openBrace)
+    if (closeBrace !== -1) {
+      let inner = content.slice(openBrace + 1, closeBrace)
+      if (fieldRe.test(inner)) {
+        inner = inner.replace(fieldRe, (_m, k, sep) => k + sep + newVal)
+        return content.slice(0, openBrace + 1) + inner + content.slice(closeBrace)
+      } else if (value !== null && value !== undefined) {
+        const indentMatch = /\n([ \t]+)"/.exec(inner)
+        const indent = indentMatch ? indentMatch[1] : '    '
+        const trimmed = inner.trimEnd()
+        const needsComma = trimmed.length > 0 && !trimmed.endsWith(',')
+        const trailing = inner.slice(trimmed.length)
+        inner = trimmed + (needsComma ? ',' : '') + `\n${indent}"${field}": ${newVal}` + trailing
+        return content.slice(0, openBrace + 1) + inner + content.slice(closeBrace)
+      }
+      return content
+    }
+  }
+
+  // No nam_lab block — inject it directly into the metadata block
+  if (value === null || value === undefined) return content
+  const metaKeyMatch = /"metadata"\s*:\s*\{/.exec(content)
+  if (!metaKeyMatch) return content
+  const openBrace = metaKeyMatch.index + metaKeyMatch[0].length - 1
+  const closeBrace = findMatchingBrace(content, openBrace)
+  if (closeBrace === -1) return content
+  let inner = content.slice(openBrace + 1, closeBrace)
+  const indentMatch = /\n([ \t]+)"/.exec(inner)
+  const indent = indentMatch ? indentMatch[1] : '    '
+  const trimmed = inner.trimEnd()
+  const needsComma = trimmed.length > 0 && !trimmed.endsWith(',')
+  const trailing = inner.slice(trimmed.length)
+  const namLabBlock = `\n${indent}"nam_lab": {\n${indent}  "${field}": ${newVal}\n${indent}}`
+  inner = trimmed + (needsComma ? ',' : '') + namLabBlock + trailing
+  return content.slice(0, openBrace + 1) + inner + content.slice(closeBrace)
+}
+
 // Patch a field inside metadata.training.nam_bot, creating the structure if needed.
 function patchNamBotField(content: string, field: string, value: unknown): string {
   const newVal = serializeJsonValue(value)
@@ -344,6 +394,14 @@ app.whenReady().then(() => {
       const nb = meta.training?.nam_bot
       if (nb?.trained_epochs != null) meta.nb_trained_epochs = nb.trained_epochs
       if (nb?.preset_name != null) meta.nb_preset_name = nb.preset_name
+      // Lift NAM Lab extended fields (metadata.nam_lab.*) up to flat nl_ keys
+      const nl = meta.nam_lab
+      if (nl) {
+        const nlKeys = ['mics','cabinet','cabinet_config','amp_channel','boost_pedal','amp_settings','pedal_settings','amp_switches','comments'] as const
+        for (const k of nlKeys) {
+          if (nl[k] != null) (meta as Record<string, unknown>)[`nl_${k}`] = nl[k]
+        }
+      }
       return {
         success: true,
         filePath,
@@ -393,6 +451,18 @@ app.whenReady().then(() => {
       const newEpochs = incoming.nb_trained_epochs != null ? Number(incoming.nb_trained_epochs) : null
       if (newEpochs !== origEpochs) {
         patched = patchNamBotField(patched, 'trained_epochs', newEpochs)
+      }
+
+      // Handle NAM Lab extended fields — stored at metadata.nam_lab.*
+      const origNl = (orig.nam_lab ?? {}) as Record<string, unknown>
+      const nlKeys = ['mics','cabinet','cabinet_config','amp_channel','boost_pedal','amp_settings','pedal_settings','amp_switches','comments'] as const
+      for (const k of nlKeys) {
+        const rendererKey = `nl_${k}`
+        const origVal = origNl[k] ?? null
+        const newVal = incoming[rendererKey] != null ? incoming[rendererKey] : null
+        if (origVal !== newVal || (origVal == null && newVal != null)) {
+          patched = patchNamLabField(patched, k, newVal)
+        }
       }
 
       fs.writeFileSync(filePath, patched, 'utf-8')
@@ -480,6 +550,40 @@ app.whenReady().then(() => {
     } catch (err) {
       return { success: false, error: String(err) }
     }
+  })
+
+  // IPC: Move file(s) to the OS trash (recoverable)
+  ipcMain.handle('file:trash', async (_event, filePaths: string[]) => {
+    const results: { filePath: string; success: boolean; error?: string }[] = []
+    for (const filePath of filePaths) {
+      try {
+        await shell.trashItem(filePath)
+        results.push({ filePath, success: true })
+      } catch (err) {
+        results.push({ filePath, success: false, error: String(err) })
+      }
+    }
+    return results
+  })
+
+  // IPC: Copy file(s) to a destination folder (non-destructive)
+  ipcMain.handle('file:copy', async (_event, filePaths: string[], destDir: string) => {
+    const results: { filePath: string; success: boolean; destPath?: string; error?: string }[] = []
+    for (const filePath of filePaths) {
+      try {
+        const fileName = filePath.replace(/\\/g, '/').split('/').pop()!
+        const destPath = join(destDir, fileName)
+        if (fs.existsSync(destPath)) {
+          results.push({ filePath, success: false, error: 'exists' })
+          continue
+        }
+        fs.copyFileSync(filePath, destPath)
+        results.push({ filePath, success: true, destPath: destPath.replace(/\\/g, '/') })
+      } catch (err) {
+        results.push({ filePath, success: false, error: String(err) })
+      }
+    }
+    return results
   })
 
   // IPC: Check whether a path is a directory (used for drag-drop folder detection)

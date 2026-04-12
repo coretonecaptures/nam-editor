@@ -15,6 +15,7 @@ interface MetadataEditorProps {
   onRenameFile?: (filePath: string, newBaseName: string) => Promise<void>
   gearMakeSuggestions?: string[]
   gearModelSuggestions?: string[]
+  showNamLabFields?: boolean
 }
 
 function buildRenamePreview(template: string, meta: NamMetadata, fileName: string): string {
@@ -33,7 +34,7 @@ function buildRenamePreview(template: string, meta: NamMetadata, fileName: strin
   return result || fileName
 }
 
-export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFinder, onReapplyDefaults, hasActiveDefaults, renameTemplate, onRenameFile, gearMakeSuggestions = [], gearModelSuggestions = [] }: MetadataEditorProps) {
+export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFinder, onReapplyDefaults, hasActiveDefaults, renameTemplate, onRenameFile, gearMakeSuggestions = [], gearModelSuggestions = [], showNamLabFields = true }: MetadataEditorProps) {
   const m = file.metadata
   const orig = file.originalMetadata
 
@@ -360,6 +361,54 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
               {dateStr && <StatCard label="Captured On" value={dateStr} />}
             </div>
           </Section>
+
+          {/* Capture Details section (NAM Lab extended fields) */}
+          {showNamLabFields && (
+            <Section title="Capture Details" icon={
+              <svg className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+            }>
+              <div className="grid grid-cols-2 gap-4">
+                <Field label="Microphone(s)" hint="e.g. SM57 + Royer 121">
+                  <TextInput value={m.nl_mics ?? ''} onChange={(v) => update('nl_mics', v)} placeholder="e.g. SM57" changed={isManuallyChanged('nl_mics')} />
+                </Field>
+                <Field label="Amp Channel" hint="e.g. Crunch, Lead 2">
+                  <TextInput value={m.nl_amp_channel ?? ''} onChange={(v) => update('nl_amp_channel', v)} placeholder="e.g. Lead" changed={isManuallyChanged('nl_amp_channel')} />
+                </Field>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <Field label="Cabinet" hint="e.g. Marshall 1960A">
+                  <TextInput value={m.nl_cabinet ?? ''} onChange={(v) => update('nl_cabinet', v)} placeholder="e.g. Marshall 1960A" changed={isManuallyChanged('nl_cabinet')} />
+                </Field>
+                <Field label="Cabinet Config" hint="e.g. 4x12, 2x12">
+                  <TextInput value={m.nl_cabinet_config ?? ''} onChange={(v) => update('nl_cabinet_config', v)} placeholder="e.g. 4x12" changed={isManuallyChanged('nl_cabinet_config')} />
+                </Field>
+              </div>
+              <Field label="Boost Pedal" hint="Pedal used as a boost into the amp">
+                <TextInput value={m.nl_boost_pedal ?? ''} onChange={(v) => update('nl_boost_pedal', v)} placeholder="e.g. Klon Centaur — Gain 10, Vol 2" changed={isManuallyChanged('nl_boost_pedal')} />
+              </Field>
+              <Field label="Amp Settings" hint="Knob positions, e.g. Gain 7, Bass 5, Mid 4, Treb 6">
+                <TextInput value={m.nl_amp_settings ?? ''} onChange={(v) => update('nl_amp_settings', v)} placeholder="e.g. Gain 7, Bass 5, Mid 4, Treb 6" changed={isManuallyChanged('nl_amp_settings')} />
+              </Field>
+              <Field label="Pedal Settings" hint="Any pedals in the chain (non-boost)">
+                <TextInput value={m.nl_pedal_settings ?? ''} onChange={(v) => update('nl_pedal_settings', v)} placeholder="e.g. TS9 — Drive 5, Tone 12, Level 5" changed={isManuallyChanged('nl_pedal_settings')} />
+              </Field>
+              <Field label="Amp Switches" hint="e.g. Bright on, Fat off">
+                <TextInput value={m.nl_amp_switches ?? ''} onChange={(v) => update('nl_amp_switches', v)} placeholder="e.g. Bright on, Fat off" changed={isManuallyChanged('nl_amp_switches')} />
+              </Field>
+              <Field label="Comments">
+                <textarea
+                  value={m.nl_comments ?? ''}
+                  onChange={(e) => update('nl_comments', e.target.value)}
+                  placeholder="Any additional notes about this capture…"
+                  rows={3}
+                  maxLength={500}
+                  className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none transition-colors resize-none ${inputClass(isManuallyChanged('nl_comments'))}`}
+                />
+              </Field>
+            </Section>
+          )}
 
         </div>
       </div>
