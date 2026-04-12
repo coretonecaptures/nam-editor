@@ -378,8 +378,7 @@ function FolderRow({
   const openMenu = (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    // TODO: re-add viewport clamping here once blank-screen root cause is confirmed
-    setMenu({ x: e.clientX, y: e.clientY })
+    setMenu({ x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 300) })
   }
 
   const commitRename = async () => {

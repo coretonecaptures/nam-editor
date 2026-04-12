@@ -597,8 +597,7 @@ export function FileList({
           onContextMenu={(e, filePath) => {
             e.preventDefault()
             if (!selectedIds.has(filePath)) onSelect(filePath, false)
-            // TODO: re-add viewport clamping here once blank-screen root cause is confirmed
-            setCtxMenu({ x: e.clientX, y: e.clientY, filePath })
+            setCtxMenu({ x: Math.min(e.clientX, window.innerWidth - 224), y: Math.min(e.clientY, window.innerHeight - 500), filePath })
           }}
         />
       ) : (
@@ -627,8 +626,7 @@ export function FileList({
                 onContextMenu={(e) => {
                   e.preventDefault()
                   if (!selectedIds.has(file.filePath)) onSelect(file.filePath, false)
-                  // TODO: re-add viewport clamping here once blank-screen root cause is confirmed
-                  setCtxMenu({ x: e.clientX, y: e.clientY, filePath: file.filePath })
+                  setCtxMenu({ x: Math.min(e.clientX, window.innerWidth - 224), y: Math.min(e.clientY, window.innerHeight - 500), filePath: file.filePath })
                 }}
                 onDragStart={draggable ? (e) => {
                   const paths = selectedIds.has(file.filePath) ? [...selectedIds] : [file.filePath]

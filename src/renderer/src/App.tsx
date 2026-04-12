@@ -939,7 +939,7 @@ export default function App() {
 
   // Fields that make sense to copy — editable metadata only, no read-only stats
   const COPYABLE_FIELDS: (keyof NamFile['metadata'])[] = [
-    'name', 'modeled_by', 'gear_type', 'gear_make', 'gear_model', 'tone_type',
+    'modeled_by', 'gear_type', 'gear_make', 'gear_model', 'tone_type',
     'input_level_dbu', 'output_level_dbu', 'nb_trained_epochs',
     'nl_mics', 'nl_amp_channel', 'nl_cabinet', 'nl_cabinet_config',
     'nl_amp_settings', 'nl_boost_pedal', 'nl_pedal_settings', 'nl_amp_switches', 'nl_comments',
