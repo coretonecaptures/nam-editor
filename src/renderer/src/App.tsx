@@ -47,6 +47,7 @@ declare global {
       moveFolder: (sourcePath: string, destParentPath: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       trashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; error?: string }[]>
       copyFiles: (filePaths: string[], destDir: string) => Promise<{ filePath: string; success: boolean; destPath?: string; error?: string }[]>
+      clearNamLab: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; error?: string }[]>
       getPendingFiles: () => Promise<string[]>
       onOpenFiles: (cb: (paths: string[]) => void) => () => void
       platform: string
@@ -878,6 +879,36 @@ export default function App() {
     }
   }
 
+  const handleClearNamLab = async (paths: string[]) => {
+    const confirmed = window.confirm(
+      `Remove NAM Lab metadata from ${paths.length} file${paths.length !== 1 ? 's' : ''}?\n\nThis will permanently delete the custom capture details (mics, amp settings, comments, etc.) from the file${paths.length !== 1 ? 's' : ''} on disk.`
+    )
+    if (!confirmed) return
+    const results = await window.api.clearNamLab(paths)
+    const cleared = results.filter((r) => r.success).map((r) => r.filePath)
+    const failed = results.filter((r) => !r.success).length
+    if (cleared.length > 0) {
+      const clearedSet = new Set(cleared)
+      const nlKeys: (keyof NamFile['metadata'])[] = [
+        'nl_mics', 'nl_amp_channel', 'nl_cabinet', 'nl_cabinet_config',
+        'nl_amp_settings', 'nl_boost_pedal', 'nl_pedal_settings', 'nl_amp_switches', 'nl_comments',
+      ]
+      setFiles((prev) => prev.map((f) => {
+        if (!clearedSet.has(f.filePath)) return f
+        const newMeta = { ...f.metadata }
+        for (const k of nlKeys) delete newMeta[k]
+        const newOrig = { ...f.originalMetadata }
+        for (const k of nlKeys) delete newOrig[k]
+        return { ...f, metadata: newMeta, originalMetadata: newOrig, isDirty: false }
+      }))
+    }
+    if (failed > 0) {
+      setStatus({ message: `Cleared ${cleared.length}, failed ${failed}`, type: 'error' })
+    } else {
+      setStatus({ message: `Removed NAM Lab metadata from ${cleared.length} file${cleared.length !== 1 ? 's' : ''}`, type: 'success' })
+    }
+  }
+
   const handleCopyToFolder = async (paths: string[]) => {
     const destFolder = await window.api.openFolder()
     if (!destFolder) return
@@ -1239,6 +1270,7 @@ export default function App() {
               metadataClipboard={metadataClipboard}
               onCopyMetadata={handleCopyMetadata}
               onPasteMetadata={handlePasteMetadata}
+              onClearNamLab={handleClearNamLab}
             />
           </div>
           <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} onCollapse={() => setListCollapsed((v) => !v)} collapsed={listCollapsed} />

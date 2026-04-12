@@ -37,6 +37,7 @@ interface FileListProps {
   metadataClipboard?: { sourceName: string; metadata: Partial<NamFile['metadata']> } | null
   onCopyMetadata?: (filePath: string) => void
   onPasteMetadata?: (filePaths: string[]) => void
+  onClearNamLab?: (filePaths: string[]) => void
   viewMode: ViewMode
   onViewModeChange: (mode: ViewMode) => void
   solidPills?: boolean
@@ -755,6 +756,17 @@ export function FileList({
                 Paste metadata
                 <span className="ml-1.5 text-xs text-gray-400 dark:text-gray-600">from {metadataClipboard.sourceName}</span>
               </span>
+            </button>
+          )}
+          {onClearNamLab && (
+            <button
+              className="w-full text-left px-3 py-2 text-sm text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/20 transition-colors flex items-center gap-2"
+              onClick={() => { onClearNamLab([...selectedIds]); setCtxMenu(null) }}
+            >
+              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m6 5l-6 6m0 0l-6-6m6 6V10" />
+              </svg>
+              Remove NAM Lab metadata
             </button>
           )}
           {(onSaveSelected || onBatchEditSelected) && (

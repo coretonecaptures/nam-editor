@@ -34,6 +34,8 @@ const api = {
     ipcRenderer.invoke('file:trash', filePaths),
   copyFiles: (filePaths: string[], destDir: string): Promise<{ filePath: string; success: boolean; destPath?: string; error?: string }[]> =>
     ipcRenderer.invoke('file:copy', filePaths, destDir),
+  clearNamLab: (filePaths: string[]): Promise<{ filePath: string; success: boolean; error?: string }[]> =>
+    ipcRenderer.invoke('file:clearNamLab', filePaths),
   getPendingFiles: (): Promise<string[]> => ipcRenderer.invoke('app:getPendingFiles'),
   onOpenFiles: (cb: (paths: string[]) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, paths: string[]) => cb(paths)

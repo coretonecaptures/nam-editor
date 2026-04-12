@@ -211,6 +211,32 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+// Surgically remove the entire "nam_lab": {...} block from metadata.
+// Handles leading comma (block in middle/end) and trailing comma (block at start).
+function removeNamLabBlock(content: string): string {
+  const namLabRe = /"nam_lab"\s*:\s*\{/
+  const match = namLabRe.exec(content)
+  if (!match) return content
+  const openBrace = match.index + match[0].length - 1
+  const closeBrace = findMatchingBrace(content, openBrace)
+  if (closeBrace === -1) return content
+  // The full block span: from `"nam_lab"` key to closing `}`
+  const blockStart = match.index
+  const blockEnd = closeBrace + 1
+  // Remove preceding comma+whitespace if present, otherwise trailing comma+whitespace
+  const before = content.slice(0, blockStart)
+  const after = content.slice(blockEnd)
+  const precedingComma = /,\s*$/.exec(before)
+  if (precedingComma) {
+    return before.slice(0, precedingComma.index) + after
+  }
+  const trailingComma = /^\s*,/.exec(after)
+  if (trailingComma) {
+    return before + after.slice(trailingComma[0].length)
+  }
+  return before + after
+}
+
 // Patch a field inside metadata.nam_lab, creating the block if needed.
 // field = bare key (e.g. "mics"), NOT the nl_-prefixed renderer key
 function patchNamLabField(content: string, field: string, value: unknown): string {
@@ -579,6 +605,22 @@ app.whenReady().then(() => {
         }
         fs.copyFileSync(filePath, destPath)
         results.push({ filePath, success: true, destPath: destPath.replace(/\\/g, '/') })
+      } catch (err) {
+        results.push({ filePath, success: false, error: String(err) })
+      }
+    }
+    return results
+  })
+
+  // IPC: Remove the metadata.nam_lab block from files (cleans up NAM Lab custom fields)
+  ipcMain.handle('file:clearNamLab', async (_event, filePaths: string[]) => {
+    const results: { filePath: string; success: boolean; error?: string }[] = []
+    for (const filePath of filePaths) {
+      try {
+        const content = fs.readFileSync(filePath, 'utf8')
+        const patched = removeNamLabBlock(content)
+        if (patched !== content) fs.writeFileSync(filePath, patched, 'utf8')
+        results.push({ filePath, success: true })
       } catch (err) {
         results.push({ filePath, success: false, error: String(err) })
       }
