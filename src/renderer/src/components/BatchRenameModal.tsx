@@ -56,12 +56,21 @@ export function BatchRenameModal({ files, onApply, onClose }: Props) {
     newName: computeNewName(mode, f, inputA, inputB)
   }))
 
-  const conflicts = new Set(
-    previews.map((p) => p.newName).filter((n, i, arr) => arr.indexOf(n) !== i)
+  // Conflicts are scoped per-directory: same new name in the same folder is a conflict,
+  // but identical names across different folders are fine (rename is always in-place)
+  const dirNameCounts = new Map<string, number>()
+  for (const p of previews) {
+    const dir = p.filePath.replace(/\\/g, '/').split('/').slice(0, -1).join('/')
+    const key = `${dir}::${p.newName}`
+    dirNameCounts.set(key, (dirNameCounts.get(key) ?? 0) + 1)
+  }
+  const conflictKeys = new Set(
+    [...dirNameCounts.entries()].filter(([, count]) => count > 1).map(([key]) => key)
   )
+
   const unchanged = previews.filter((p) => p.newName === p.oldName)
   const hasChanges = unchanged.length < previews.length
-  const hasConflicts = conflicts.size > 0
+  const hasConflicts = conflictKeys.size > 0
 
   const handleApply = () => {
     const toRename = previews.filter((p) => p.newName !== p.oldName && p.newName.trim() !== '')
@@ -189,7 +198,8 @@ export function BatchRenameModal({ files, onApply, onClose }: Props) {
           <div className="divide-y divide-gray-100 dark:divide-gray-800">
             {previews.map((p) => {
               const changed = p.newName !== p.oldName
-              const isConflict = conflicts.has(p.newName) && changed
+              const dir = p.filePath.replace(/\\/g, '/').split('/').slice(0, -1).join('/')
+              const isConflict = conflictKeys.has(`${dir}::${p.newName}`) && changed
               const isEmpty = p.newName.trim() === ''
               return (
                 <div key={p.filePath} className={`px-4 py-2 ${isConflict || isEmpty ? 'bg-red-50 dark:bg-red-900/10' : ''}`}>
