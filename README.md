@@ -72,7 +72,7 @@ This is especially useful for capture artists who want to properly tag their `.n
 - **Edited** chip shows count of manually-changed files and filters to just those
 - **Incomplete** chip shows count of files missing any of the 7 core shareable fields (name, modeled_by, gear_make, gear_model, gear_type, tone_type, input_level_dbu) and filters to just those
 - **Gear Type** and **Tone Type** dropdowns filter to a specific type — highlight in their respective colors when active
-- Search bar in the file list to search by name, filename, make, model, or modeled-by
+- **Search bar** — searches capture name, filename, manufacturer, model, and modeled-by (hover the icon for details). **Name contains…** box filters by capture name only — handy when you need exact name matches without broader results
 - Files are sorted by Capture Name by default; click any column header in grid view to re-sort
 - **Ctrl+A / Cmd+A** selects all visible files
 - **↑/↓ arrow keys** navigate the selection when the file list has focus; **Shift+↑/↓** extends the selection
@@ -170,6 +170,28 @@ A slim bar above the status bar shows which defaults are currently active (e.g. 
 - **Right-click folder → Save all in folder** — saves all unsaved files under that folder path
 - Batch edit writes directly to disk — no separate Save step needed
 
+### Right-Click Context Menu (File List)
+Right-click any file or selection for quick actions:
+- **Show in Folder** — reveals the file in Explorer/Finder
+- **Copy name(s) to clipboard** — copies the capture name(s) as plain text
+- **Copy to folder…** — copies selected files to a chosen destination (non-destructive)
+- **Apply defaults** — re-runs your Settings defaults on the selected files
+- **Delete (trash)** — moves selected files to the OS trash with confirmation
+- **Rename N selected…** — opens the batch rename dialog for multi-file renaming
+- **Copy metadata** *(single file only)* — copies the file's editable metadata fields to a clipboard buffer
+- **Paste metadata (from X)** — pastes the copied fields to all selected files with confirmation; overwrites matching fields but never overwrites the Capture Name
+- **Remove NAM Lab Custom Metadata** — permanently removes the `nam_lab` block from selected files on disk, clearing all Capture Details fields
+- **Save N selected** — saves only the selected files
+- **Batch edit N selected** — opens the batch editor for the selection
+
+### Duplicate Detection
+- Click **Duplicates** in the toolbar to scan your loaded library for duplicate captures
+- Detect by **filename** or by **metadata Capture Name**
+- NAM Lab auto-selects the most complete copy to keep (based on how many fields are filled); you can click any other copy to change the keep choice
+- Per-group actions: **Move non-kept copies** to a `_Duplicates` subfolder, or **Trash** them
+- **Move all** and **Trash all** buttons in the footer handle all pending groups at once
+- The `_Duplicates` folder is always hidden from the library tree
+
 ### Multi-Select Editor
 - Select 2 or more files to open the **multi-select editor** in the detail panel
 - Fields where all selected files share the same value are pre-filled and marked **shared**
@@ -186,7 +208,7 @@ A slim bar above the status bar shows which defaults are currently active (e.g. 
 - **Revert Capture Name to filename** checkbox available in batch edit — sets each file's name to its own filename
 - Only the checked fields are written to disk; auto-fills and other pending changes are preserved separately
 - Confirmation dialog shows exactly which fields and how many files will be affected (skippable in Settings)
-- Editable fields include: Modeled By, Gear Type, Manufacturer, Model, Tone Type, Reamp Send/Return, Trained Epochs
+- Editable fields include: Modeled By, Gear Type, Manufacturer, Model, Tone Type, Reamp Send/Return, Trained Epochs, plus all Capture Details fields
 - Manufacturer and Model fields include **autocomplete suggestions** (same seed list as the single-file editor)
 
 ### Per-Folder Right-Click Actions
@@ -194,10 +216,34 @@ A slim bar above the status bar shows which defaults are currently active (e.g. 
 - **Revert all in folder** — discards unsaved changes (with confirmation)
 - **Batch edit…** — opens the batch editor scoped to that folder
 - **Reveal in Explorer** — opens the folder in Finder or Explorer
+- **Export folder as CSV / Excel** — exports all files under that folder with all available columns
+- **Generate import template…** — exports an editable `.xlsx` pre-filled with the folder's current metadata (editable fields only). Edit it in Excel, then import it back
+- **Import metadata from spreadsheet…** — picks an `.xlsx` or `.csv`, matches rows to captures by Capture Name, and writes non-empty cells back to disk. Empty cells are skipped — only what you fill in is written. Requires a confirmation checkbox before anything is written. Supports **prefix match mode**: if your spreadsheet has DI captures but you want to apply their settings to amp_cab variants with the same name prefix, enable prefix matching in the import dialog — Cabinet, Cab Config, and Mic(s) are automatically skipped for prefix matches since those vary per variant
 
 ### Name from Filename
 - If loaded files have no Capture Name set, a **"Name from File (N)"** button appears in the toolbar
 - One click sets the capture name to the filename (minus `.nam`) for all unnamed files
+
+### Capture Details (NAM Lab Custom Metadata)
+NAM Lab can store extended capture details in a `nam_lab` block inside the `.nam` file's metadata. These fields are entirely optional and don't affect playback — they're for documentation purposes.
+
+Enable via **Settings → Library → Show NAM Lab metadata fields** (on by default).
+
+| Field | What it's for |
+|---|---|
+| Mic(s) | Microphone(s) used on the cabinet |
+| Amp Channel | Channel used (e.g. Lead, Clean, High Gain) |
+| Cabinet | Cabinet name/model |
+| Cabinet Config | Speaker config (e.g. 4x12 Closed) |
+| Amp Settings | Notable knob positions |
+| Amp Switches | Bright, Deep, Pentode/Triode, etc. |
+| Boost Pedal | Pedal placed in front of the amp |
+| Pedal Settings | Boost pedal knob positions |
+| Comments | Anything else worth noting |
+
+The **Capture Details** section in the editor shows only the fields **relevant to the selected Gear Type** by default. Use the **Relevant / All** toggle to see all fields. Available in the single-file editor, multi-select editor, and batch editor. Also available as optional columns in grid view and export.
+
+Right-click → **Remove NAM Lab Custom Metadata** to permanently strip the `nam_lab` block from files on disk if needed.
 
 ### NAM-BOT Integration
 NAM Lab supports metadata fields written by [NAM-BOT](https://github.com/nam-bot), a community NAM trainer wrapper:
