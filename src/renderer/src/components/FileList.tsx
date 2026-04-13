@@ -33,6 +33,7 @@ interface FileListProps {
   onBatchRename?: (renames: { filePath: string; newBaseName: string }[]) => void
   onTrashSelected?: (paths: string[]) => Promise<void>
   onCopyToFolder?: (paths: string[]) => Promise<void>
+  onMoveToFolder?: (paths: string[]) => Promise<void>
   onApplyDefaults?: (paths: string[]) => void
   metadataClipboard?: { sourceName: string; metadata: Partial<NamFile['metadata']> } | null
   onCopyMetadata?: (filePath: string) => void
@@ -235,6 +236,7 @@ export function FileList({
   onBatchRename,
   onTrashSelected,
   onCopyToFolder,
+  onMoveToFolder,
   onApplyDefaults,
   metadataClipboard,
   onCopyMetadata,
@@ -715,6 +717,17 @@ export function FileList({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
               Copy {selectedIds.size > 1 ? `${selectedIds.size} files` : 'file'} to folder…
+            </button>
+          )}
+          {onMoveToFolder && (
+            <button
+              className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
+              onClick={() => { onMoveToFolder([...selectedIds]); setCtxMenu(null) }}
+            >
+              <svg className="w-3.5 h-3.5 text-orange-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+              </svg>
+              Move {selectedIds.size > 1 ? `${selectedIds.size} files` : 'file'} to folder…
             </button>
           )}
           {onApplyDefaults && (

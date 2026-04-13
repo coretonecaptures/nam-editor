@@ -924,6 +924,26 @@ export default function App() {
     }
   }
 
+  const handleMoveToFolder = async (paths: string[]) => {
+    const destFolder = await window.api.openFolder()
+    if (!destFolder) return
+    const movedPaths = new Set<string>()
+    let failed = 0
+    for (const p of paths) {
+      const result = await window.api.moveFile(p, destFolder)
+      if (result.success) movedPaths.add(p)
+      else failed++
+    }
+    if (movedPaths.size > 0) {
+      setFiles((prev) => prev.filter((f) => !movedPaths.has(f.filePath)))
+    }
+    if (failed > 0) {
+      setStatus({ message: `Moved ${movedPaths.size}, failed ${failed}`, type: 'error' })
+    } else {
+      setStatus({ message: `Moved ${movedPaths.size} file${movedPaths.size !== 1 ? 's' : ''} to ${destFolder.replace(/\\/g, '/').split('/').pop()}`, type: 'success' })
+    }
+  }
+
   const handleCopyToFolder = async (paths: string[]) => {
     const destFolder = await window.api.openFolder()
     if (!destFolder) return
@@ -1477,6 +1497,7 @@ export default function App() {
               onBatchRename={handleBatchRename}
               onTrashSelected={handleTrashFiles}
               onCopyToFolder={handleCopyToFolder}
+              onMoveToFolder={handleMoveToFolder}
               onApplyDefaults={handleApplyDefaultsToSelection}
               metadataClipboard={metadataClipboard}
               onCopyMetadata={handleCopyMetadata}
