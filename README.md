@@ -229,17 +229,43 @@ NAM Lab can store extended capture details in a `nam_lab` block inside the `.nam
 
 Enable via **Settings → Library → Show NAM Lab metadata fields** (on by default).
 
-| Field | What it's for |
-|---|---|
-| Mic(s) | Microphone(s) used on the cabinet |
-| Amp Channel | Channel used (e.g. Lead, Clean, High Gain) |
-| Cabinet | Cabinet name/model |
-| Cabinet Config | Speaker config (e.g. 4x12 Closed) |
-| Amp Settings | Notable knob positions |
-| Amp Switches | Bright, Deep, Pentode/Triode, etc. |
-| Boost Pedal | Pedal placed in front of the amp |
-| Pedal Settings | Boost pedal knob positions |
-| Comments | Anything else worth noting |
+| Field | What it's for | JSON field |
+|---|---|---|
+| Mic(s) | Microphone(s) used on the cabinet | `metadata.nam_lab.mics` |
+| Amp Channel | Channel used (e.g. Lead, Clean, High Gain) | `metadata.nam_lab.amp_channel` |
+| Cabinet | Cabinet name/model | `metadata.nam_lab.cabinet` |
+| Cabinet Config | Speaker config (e.g. 4x12 Closed) | `metadata.nam_lab.cabinet_config` |
+| Amp Settings | Notable knob positions | `metadata.nam_lab.amp_settings` |
+| Amp Switches | Bright, Deep, Pentode/Triode, etc. | `metadata.nam_lab.amp_switches` |
+| Boost Pedal(s) | Pedal(s) placed in front of the amp | `metadata.nam_lab.boost_pedal` |
+| Pedal Settings | Boost pedal knob positions | `metadata.nam_lab.pedal_settings` |
+| Comments | Anything else worth noting | `metadata.nam_lab.comments` |
+
+All values are strings. All fields are optional — omit any you don't need.
+
+**Example JSON block:**
+```json
+"metadata": {
+  "name": "Friedman BE100 Lead",
+  "gear_make": "Friedman",
+  "gear_model": "BE100",
+  "gear_type": "amp_cab",
+  "tone_type": "hi_gain",
+  "nam_lab": {
+    "amp_channel": "BE Channel",
+    "amp_settings": "Gain 7, Bass 6, Mid 4, Treble 7, Presence 6",
+    "amp_switches": "Tight on, Crunch off",
+    "boost_pedal": "Klon Centaur",
+    "pedal_settings": "Gain 0, Treble max, Output unity",
+    "cabinet": "Friedman 412 Vintage",
+    "cabinet_config": "4x12 Closed Back",
+    "mics": "SM57 + Royer R121",
+    "comments": "No attenuator, room mic blended at -12dB"
+  }
+}
+```
+
+> **Note for developers:** If you're building a training tool, hardware device, plugin, or anything else that reads or writes `.nam` files, we encourage you to support the `metadata.nam_lab` block. It's a free-form string dictionary — write only the keys you have, ignore the rest, and never overwrite the block unless you intend to. This keeps capture metadata interoperable across tools.
 
 The **Capture Details** section in the editor shows only the fields **relevant to the selected Gear Type** by default. Use the **Relevant / All** toggle to see all fields. Available in the single-file editor, multi-select editor, and batch editor. Also available as optional columns in grid view and export.
 
