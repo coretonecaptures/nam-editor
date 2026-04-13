@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useLayoutEffect } from 'react'
 import { NamFile, NamMetadata, GEAR_TYPES, TONE_TYPES } from '../types/nam'
 import { gearImages } from '../assets/gear'
 import { detectPreset } from '../utils/detectPreset'
@@ -58,6 +58,12 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
   const m = file.metadata
   const orig = file.originalMetadata
   const [nlShowAll, setNlShowAll] = useState(false)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const savedScrollTop = useRef(0)
+
+  useLayoutEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = savedScrollTop.current
+  }, [file.filePath])
 
   const update = (key: keyof NamMetadata, value: unknown) => {
     onChange({ ...m, [key]: value === '' ? null : value })
@@ -180,7 +186,7 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
       </div>
 
       {/* Editor body */}
-      <div className="flex-1 overflow-y-auto px-6 py-5">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-5" onScroll={(e) => { savedScrollTop.current = (e.currentTarget as HTMLDivElement).scrollTop }}>
         <div className="max-w-2xl space-y-6">
 
           {/* Identity section */}
