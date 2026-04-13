@@ -34,6 +34,7 @@ interface FileListProps {
   onTrashSelected?: (paths: string[]) => Promise<void>
   onCopyToFolder?: (paths: string[]) => Promise<void>
   onMoveToFolder?: (paths: string[]) => Promise<void>
+  onShowInFolderTree?: (filePath: string) => void
   onApplyDefaults?: (paths: string[]) => void
   metadataClipboard?: { sourceName: string; metadata: Partial<NamFile['metadata']> } | null
   onCopyMetadata?: (filePath: string) => void
@@ -240,6 +241,7 @@ export function FileList({
   onTrashSelected,
   onCopyToFolder,
   onMoveToFolder,
+  onShowInFolderTree,
   onApplyDefaults,
   gridMaximized = false,
   onToggleGridMaximize,
@@ -731,6 +733,18 @@ export function FileList({
             </svg>
             Show in folder
           </button>
+          {onShowInFolderTree && selectedIds.size === 1 && (
+            <button
+              className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
+              onClick={() => { onShowInFolderTree(ctxMenu.filePath); setCtxMenu(null) }}
+            >
+              <svg className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 12l-4 4m0 0l4 4m-4-4h12" />
+              </svg>
+              Show in folder tree
+            </button>
+          )}
           <button
             className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
             onClick={() => {

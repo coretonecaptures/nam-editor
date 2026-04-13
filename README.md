@@ -53,11 +53,13 @@ This is especially useful for capture artists who want to properly tag their `.n
 - **Grid view** — spreadsheet-style table with configurable columns
   - Click any column header to **sort** ascending/descending
   - **Drag column edges** to resize individual columns
-  - **Column chooser** — click the columns icon (⊞) at the far right of the header to show/hide columns; choices persist across launches
-  - Available columns: Capture Name (always visible) · Date · Modeled By · Manufacturer · Model · Gear Type · Tone Type · Reamp Send (dBu) · Reamp Return (dBu) · ESR · Loudness · Gain · Architecture · NAM Version · Model Channels · Checks Passed · Latency (samples) · Trained Epochs · NAM-BOT Preset · Detected Preset
+  - **Column chooser** — click the columns icon (⊞) at the far right of the header to show/hide columns; choices persist across launches; **Show all** and **Reset to default** buttons at the bottom of the chooser
+  - Available columns: Capture Name (always visible) · Date · Modeled By · Manufacturer · Model · Gear Type · Tone Type · Reamp Send (dBu) · Reamp Return (dBu) · ESR · Loudness · Gain · Architecture · NAM Version · Model Channels · Checks Passed · Latency (samples) · Trained Epochs · NAM-BOT Preset · Detected Preset · plus all 9 Capture Details fields (Mic(s), Amp Channel, Cabinet, etc.)
   - **ESR column** is colour-coded: green < 0.01 (excellent) · amber 0.01–0.05 (acceptable) · red > 0.05; empty for captures that don't include training stats
-  - **Reset to default** option in the column chooser restores the original column set
   - Panel auto-widens when switching to grid view
+- **Maximize grid** — click the expand icon (next to the list/grid toggle) to collapse both the folder tree and editor panels, giving the grid the full window width. Click again to restore
+  - In maximize mode, select one or more files and click the **Edit** button (next to the All/None selector) to slide in the metadata editor from the right — single-file editor, multi-select editor, and batch editor all work in the slide panel
+  - Close the slide panel with the × button or by clearing your selection
 - Set your **default view** in Settings → Appearance — switches immediately, persists across launches
 - Per-mode width memory: list and grid each remember their last-used panel width separately
 
@@ -173,8 +175,10 @@ A slim bar above the status bar shows which defaults are currently active (e.g. 
 ### Right-Click Context Menu (File List)
 Right-click any file or selection for quick actions:
 - **Show in Folder** — reveals the file in Explorer/Finder
+- **Show in folder tree** *(single file only)* — scrolls the folder tree to the file's folder and highlights it in blue for 5 seconds
 - **Copy name(s) to clipboard** — copies the capture name(s) as plain text
 - **Copy to folder…** — copies selected files to a chosen destination (non-destructive)
+- **Move to folder…** — moves selected files to a chosen destination, removing them from the current view
 - **Apply defaults** — re-runs your Settings defaults on the selected files
 - **Delete (trash)** — moves selected files to the OS trash with confirmation
 - **Rename N selected…** — opens the batch rename dialog for multi-file renaming

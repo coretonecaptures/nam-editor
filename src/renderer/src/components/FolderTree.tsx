@@ -20,6 +20,7 @@ interface FolderTreeProps {
   onExportFolder?: (folderPath: string | null, format: 'csv' | 'xlsx') => void
   onGenerateTemplate?: (folderPath: string | null) => void
   onImportMetadata?: (folderPath: string | null) => void
+  scrollToFolder?: string | null
 }
 
 function matchesFilter(
@@ -46,7 +47,8 @@ function matchesFilter(
 export function FolderTree({
   tree, files, selectedFolder, onSelect, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, onFilterChange, onDropFiles,
-  onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata
+  onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata,
+  scrollToFolder
 }: FolderTreeProps) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -55,6 +57,19 @@ export function FolderTree({
   const inputRef = useRef<HTMLInputElement>(null)
 
   const isFiltered = query.trim() !== '' || activeTones.size > 0 || activeGears.size > 0
+
+  useEffect(() => {
+    if (!scrollToFolder) return
+    requestAnimationFrame(() => {
+      const els = document.querySelectorAll('[data-folder-path]')
+      for (const el of els) {
+        if ((el as HTMLElement).dataset.folderPath === scrollToFolder) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+          break
+        }
+      }
+    })
+  }, [scrollToFolder])
 
   useEffect(() => {
     if (!isFiltered) {
@@ -222,6 +237,7 @@ export function FolderTree({
             onExportFolder={onExportFolder}
             onGenerateTemplate={onGenerateTemplate}
             onImportMetadata={onImportMetadata}
+            scrollToFolder={scrollToFolder}
           />
         ))}
       </div>
@@ -232,7 +248,8 @@ export function FolderTree({
 function TreeNode({
   node, selectedFolder, onSelect, depth, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, matchingPaths, onDropFiles,
-  onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata
+  onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata,
+  scrollToFolder
 }: {
   node: FolderNode
   selectedFolder: string | null
@@ -251,8 +268,15 @@ function TreeNode({
   onExportFolder?: (folderPath: string, format: 'csv' | 'xlsx') => void
   onGenerateTemplate?: (folderPath: string | null) => void
   onImportMetadata?: (folderPath: string | null) => void
+  scrollToFolder?: string | null
 }) {
   const [expanded, setExpanded] = useState(true)
+
+  useEffect(() => {
+    if (scrollToFolder && scrollToFolder.startsWith(node.path + '/')) {
+      setExpanded(true)
+    }
+  }, [scrollToFolder, node.path])
   const isSelected = selectedFolder === node.path
   const hasChildren = node.children.length > 0
   const prefix = node.path + '/'
@@ -291,6 +315,7 @@ function TreeNode({
         onBatchEdit={() => onBatchEdit(node.path, node.name)}
         onReveal={() => onRevealFolder(node.path)}
         isFiltered={matchingPaths !== null}
+        isHighlighted={scrollToFolder === node.path}
         onDropFiles={onDropFiles}
         onDropFolder={onMoveFolder ? (src) => onMoveFolder(src, node.path) : undefined}
         onCreateFolder={onCreateFolder ? (name) => onCreateFolder(node.path, name) : undefined}
@@ -323,6 +348,7 @@ function TreeNode({
               onExportFolder={onExportFolder}
               onGenerateTemplate={onGenerateTemplate}
               onImportMetadata={onImportMetadata}
+              scrollToFolder={scrollToFolder}
             />
           ))}
         </div>
@@ -336,7 +362,7 @@ interface ContextMenuState { x: number; y: number }
 function FolderRow({
   label, folderPath, isRoot, isSelected, totalCount, dirtyCount, depth,
   hasChildren, expanded, onToggleExpand, onClick, onSave, onRevert,
-  onBatchEdit, onReveal, isFiltered, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, isDraggableFolder
+  onBatchEdit, onReveal, isFiltered, isHighlighted, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, isDraggableFolder
 }: {
   label: string
   folderPath: string
@@ -354,6 +380,7 @@ function FolderRow({
   onBatchEdit: () => void
   onReveal: () => void
   isFiltered: boolean
+  isHighlighted?: boolean
   onDropFiles?: (filePaths: string[], destFolderPath: string) => void
   onDropFolder?: (sourceFolderPath: string) => void
   onCreateFolder?: (name: string) => Promise<{ success: boolean; error?: string }>
@@ -426,16 +453,18 @@ function FolderRow({
     types.includes('application/x-nam-files') || types.includes('application/x-nam-folder')
 
   return (
-    <div className="relative group">
+    <div className="relative group" data-folder-path={folderPath}>
       <div
         className={`flex items-center gap-1.5 pr-2 py-1.5 cursor-pointer rounded-sm mx-1 transition-colors ${
           isDragOver
             ? 'bg-indigo-200 dark:bg-indigo-500/40 text-indigo-800 dark:text-indigo-200 ring-1 ring-indigo-400'
-            : isSelected
-              ? 'bg-indigo-100 dark:bg-indigo-600/30 text-indigo-700 dark:text-indigo-300'
-              : isRoot
-                ? 'text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800'
-                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800 hover:text-gray-800 dark:hover:text-gray-200'
+            : isHighlighted
+              ? 'bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300 ring-1 ring-sky-400 dark:ring-sky-500'
+              : isSelected
+                ? 'bg-indigo-100 dark:bg-indigo-600/30 text-indigo-700 dark:text-indigo-300'
+                : isRoot
+                  ? 'text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800'
+                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800 hover:text-gray-800 dark:hover:text-gray-200'
         }`}
         style={{ paddingLeft: isRoot ? '12px' : `${depth * 12 + 8}px` }}
         onClick={onClick}

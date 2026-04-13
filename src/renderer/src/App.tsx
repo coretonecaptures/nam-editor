@@ -169,6 +169,8 @@ export default function App() {
   const [listCollapsed, setListCollapsed] = useState(false)
   const [gridMaximized, setGridMaximized] = useState(false)
   const [gridSlideOpen, setGridSlideOpen] = useState(false)
+  const [treeScrollTarget, setTreeScrollTarget] = useState<string | null>(null)
+  const treeScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [folderChanged, setFolderChanged] = useState(false)
   const [showDuplicates, setShowDuplicates] = useState(false)
   const [metadataClipboard, setMetadataClipboard] = useState<{ sourceName: string; metadata: Partial<NamFile['metadata']> } | null>(null)
@@ -946,6 +948,14 @@ export default function App() {
     }
   }
 
+  const handleShowInFolderTree = (filePath: string) => {
+    const normalized = filePath.replace(/\\/g, '/')
+    const folderPath = normalized.split('/').slice(0, -1).join('/')
+    if (treeScrollTimerRef.current) clearTimeout(treeScrollTimerRef.current)
+    setTreeScrollTarget(folderPath)
+    treeScrollTimerRef.current = setTimeout(() => setTreeScrollTarget(null), 5000)
+  }
+
   const handleCopyToFolder = async (paths: string[]) => {
     const destFolder = await window.api.openFolder()
     if (!destFolder) return
@@ -1414,6 +1424,7 @@ export default function App() {
                 onExportFolder={handleExportFolder}
                 onGenerateTemplate={handleGenerateTemplate}
                 onImportMetadata={handleImportMetadata}
+                scrollToFolder={treeScrollTarget}
               />
             </div>
             {!gridMaximized && <DragHandle onMouseDown={(e) => onDragStart('tree', e)} onCollapse={() => setTreeCollapsed((v) => !v)} collapsed={treeCollapsed} />}
@@ -1503,6 +1514,7 @@ export default function App() {
               onTrashSelected={handleTrashFiles}
               onCopyToFolder={handleCopyToFolder}
               onMoveToFolder={handleMoveToFolder}
+              onShowInFolderTree={handleShowInFolderTree}
               gridMaximized={gridMaximized}
               onToggleGridMaximize={() => setGridMaximized((v) => { if (v) { setGridSlideOpen(false); setBatchFolder(null) } return !v })}
               onOpenEditor={() => setGridSlideOpen(true)}
