@@ -27,6 +27,7 @@ interface FileListProps {
   onSelectRange: (ids: string[]) => void
   onSelectAll: (filePaths: string[]) => void
   onDeselectAll: () => void
+  onTrimSelection: (visiblePaths: string[]) => void
   onRemove?: (id: string) => void
   onBatchEditSelected?: (paths: string[]) => void
   onSaveSelected?: (paths: string[]) => void
@@ -234,6 +235,7 @@ export function FileList({
   onSelectRange,
   onSelectAll,
   onDeselectAll,
+  onTrimSelection,
   onRemove = undefined,
   onBatchEditSelected,
   onSaveSelected,
@@ -273,53 +275,7 @@ export function FileList({
   const exportRef = useRef<HTMLDivElement>(null)
   const chooserRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (!showExport) return
-    const handler = (e: MouseEvent) => {
-      if (exportRef.current && !exportRef.current.contains(e.target as Node)) setShowExport(false)
-    }
-    window.addEventListener('mousedown', handler)
-    return () => window.removeEventListener('mousedown', handler)
-  }, [showExport])
-
-  useEffect(() => {
-    if (!showColChooser) return
-    const handler = (e: MouseEvent) => {
-      if (chooserRef.current && !chooserRef.current.contains(e.target as Node)) setShowColChooser(false)
-    }
-    window.addEventListener('mousedown', handler)
-    return () => window.removeEventListener('mousedown', handler)
-  }, [showColChooser])
-
-  const handleVisibleColsChange = (cols: string[]) => {
-    setVisibleCols(cols)
-    saveVisibleCols(cols)
-  }
-
-  const triggerExport = (allCols: boolean, format: 'csv' | 'xlsx') => {
-    setShowExport(false)
-    const cols = allCols ? ALL_GRID_COLUMNS : ALL_GRID_COLUMNS.filter((c) => visibleCols.includes(c.key))
-    const filename = `nam-library.${format}`
-    if (format === 'csv') doExportCSV(sorted, cols, filename)
-    else doExportXLSX(sorted, cols, filename)
-  }
-
-  useEffect(() => {
-    if (!ctxMenu) return
-    const close = () => setCtxMenu(null)
-    window.addEventListener('click', close)
-    return () => window.removeEventListener('click', close)
-  }, [ctxMenu])
-
-
-  if (files.length === 0) {
-    return (
-      <div className="flex-1 flex items-center justify-center p-4">
-        <p className="text-gray-400 dark:text-gray-600 text-xs text-center">No files loaded</p>
-      </div>
-    )
-  }
-
+  // Compute filtered + sorted here (before hooks) so the trim useEffect can reference sorted.
   const filtered = files.filter((f) => {
     const m = f.metadata
     const o = f.originalMetadata
@@ -362,6 +318,63 @@ export function FileList({
         return sortDir === 'asc' ? cmp : -cmp
       })
     : filtered
+
+  useEffect(() => {
+    if (!showExport) return
+    const handler = (e: MouseEvent) => {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) setShowExport(false)
+    }
+    window.addEventListener('mousedown', handler)
+    return () => window.removeEventListener('mousedown', handler)
+  }, [showExport])
+
+  useEffect(() => {
+    if (!showColChooser) return
+    const handler = (e: MouseEvent) => {
+      if (chooserRef.current && !chooserRef.current.contains(e.target as Node)) setShowColChooser(false)
+    }
+    window.addEventListener('mousedown', handler)
+    return () => window.removeEventListener('mousedown', handler)
+  }, [showColChooser])
+
+  const handleVisibleColsChange = (cols: string[]) => {
+    setVisibleCols(cols)
+    saveVisibleCols(cols)
+  }
+
+  const triggerExport = (allCols: boolean, format: 'csv' | 'xlsx') => {
+    setShowExport(false)
+    const cols = allCols ? ALL_GRID_COLUMNS : ALL_GRID_COLUMNS.filter((c) => visibleCols.includes(c.key))
+    const filename = `nam-library.${format}`
+    if (format === 'csv') doExportCSV(sorted, cols, filename)
+    else doExportXLSX(sorted, cols, filename)
+  }
+
+  useEffect(() => {
+    if (!ctxMenu) return
+    const close = () => setCtxMenu(null)
+    window.addEventListener('click', close)
+    return () => window.removeEventListener('click', close)
+  }, [ctxMenu])
+
+  // When the filtered list changes (search/filter applied), trim selectedIds in App.tsx
+  // so stale selections don't leak into editors or bulk actions.
+  useEffect(() => {
+    onTrimSelection(sorted.map((f) => f.filePath))
+  }, [sorted])
+
+
+  if (files.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-4">
+        <p className="text-gray-400 dark:text-gray-600 text-xs text-center">No files loaded</p>
+      </div>
+    )
+  }
+
+  // Only files that are both selected AND currently visible in the filtered list.
+  // Prevents stale selectedIds (from pre-filter selections) affecting bulk actions.
+  const selectedVisible = sorted.filter((f) => selectedIds.has(f.filePath)).map((f) => f.filePath)
 
   const handleSortClick = (key: string) => {
     if (sortKey === key) {
@@ -653,15 +666,15 @@ export function FileList({
           {sorted.length === files.length
             ? `${files.length} file${files.length !== 1 ? 's' : ''}`
             : `${sorted.length} / ${files.length}`}
-          {selectedIds.size > 0 && ` · ${selectedIds.size} selected`}
+          {selectedVisible.length > 0 && ` · ${selectedVisible.length} selected`}
         </span>
         <div className="flex items-center gap-1">
-          {gridMaximized && selectedIds.size >= 1 && onOpenEditor && (
+          {gridMaximized && selectedVisible.length >= 1 && onOpenEditor && (
             <button
               onClick={onOpenEditor}
               className="px-2 py-0.5 rounded text-xs font-medium bg-teal-600 text-white hover:bg-teal-700 transition-colors mr-1"
             >
-              Edit{selectedIds.size > 1 ? ` ${selectedIds.size}` : ''}
+              Edit{selectedVisible.length > 1 ? ` ${selectedVisible.length}` : ''}
             </button>
           )}
           <button onClick={() => onSelectAll(sorted.map((f) => f.filePath))} className="text-xs text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 px-1 transition-colors">All</button>
@@ -751,7 +764,7 @@ export function FileList({
             </svg>
             Show in folder
           </button>
-          {onShowInFolderTree && selectedIds.size === 1 && (
+          {onShowInFolderTree && selectedVisible.length === 1 && (
             <button
               className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
               onClick={() => { onShowInFolderTree(ctxMenu.filePath); setCtxMenu(null) }}
@@ -766,7 +779,7 @@ export function FileList({
           <button
             className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
             onClick={() => {
-              const names = files.filter((f) => selectedIds.has(f.filePath)).map((f) => f.metadata.name || f.fileName)
+              const names = sorted.filter((f) => selectedIds.has(f.filePath)).map((f) => f.metadata.name || f.fileName)
               navigator.clipboard.writeText(names.join('\n'))
               setCtxMenu(null)
             }}
@@ -774,53 +787,53 @@ export function FileList({
             <svg className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
             </svg>
-            Copy {selectedIds.size > 1 ? `${selectedIds.size} names` : 'name'} to clipboard
+            Copy {selectedVisible.length > 1 ? `${selectedVisible.length} names` : 'name'} to clipboard
           </button>
           {onCopyToFolder && (
             <button
               className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
-              onClick={() => { onCopyToFolder([...selectedIds]); setCtxMenu(null) }}
+              onClick={() => { onCopyToFolder(selectedVisible); setCtxMenu(null) }}
             >
               <svg className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
-              Copy {selectedIds.size > 1 ? `${selectedIds.size} files` : 'file'} to folder…
+              Copy {selectedVisible.length > 1 ? `${selectedVisible.length} files` : 'file'} to folder…
             </button>
           )}
           {onMoveToFolder && (
             <button
               className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
-              onClick={() => { onMoveToFolder([...selectedIds]); setCtxMenu(null) }}
+              onClick={() => { onMoveToFolder(selectedVisible); setCtxMenu(null) }}
             >
               <svg className="w-3.5 h-3.5 text-orange-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
               </svg>
-              Move {selectedIds.size > 1 ? `${selectedIds.size} files` : 'file'} to folder…
+              Move {selectedVisible.length > 1 ? `${selectedVisible.length} files` : 'file'} to folder…
             </button>
           )}
           {onApplyDefaults && (
             <button
               className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
-              onClick={() => { onApplyDefaults([...selectedIds]); setCtxMenu(null) }}
+              onClick={() => { onApplyDefaults(selectedVisible); setCtxMenu(null) }}
             >
               <svg className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
-              Apply defaults to {selectedIds.size > 1 ? `${selectedIds.size} files` : 'file'}
+              Apply defaults to {selectedVisible.length > 1 ? `${selectedVisible.length} files` : 'file'}
             </button>
           )}
           {onTrashSelected && (
             <button
               className="w-full text-left px-3 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-2"
-              onClick={() => { onTrashSelected([...selectedIds]); setCtxMenu(null) }}
+              onClick={() => { onTrashSelected(selectedVisible); setCtxMenu(null) }}
             >
               <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
               </svg>
-              Delete {selectedIds.size > 1 ? `${selectedIds.size} files` : 'file'} (trash)
+              Delete {selectedVisible.length > 1 ? `${selectedVisible.length} files` : 'file'} (trash)
             </button>
           )}
-          {onBatchRename && selectedIds.size > 1 && (
+          {onBatchRename && selectedVisible.length > 1 && (
             <button
               className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
               onClick={() => { setCtxMenu(null); setShowBatchRename(true) }}
@@ -828,13 +841,13 @@ export function FileList({
               <svg className="w-3.5 h-3.5 text-purple-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
               </svg>
-              Rename {selectedIds.size} selected…
+              Rename {selectedVisible.length} selected…
             </button>
           )}
           {(onCopyMetadata || onPasteMetadata) && (
             <div className="border-t border-gray-200 dark:border-gray-700 my-1" />
           )}
-          {onCopyMetadata && selectedIds.size === 1 && (
+          {onCopyMetadata && selectedVisible.length === 1 && (
             <button
               className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
               onClick={() => { onCopyMetadata(ctxMenu.filePath); setCtxMenu(null) }}
@@ -848,7 +861,7 @@ export function FileList({
           {onPasteMetadata && metadataClipboard && (
             <button
               className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
-              onClick={() => { onPasteMetadata([...selectedIds]); setCtxMenu(null) }}
+              onClick={() => { onPasteMetadata(selectedVisible); setCtxMenu(null) }}
             >
               <svg className="w-3.5 h-3.5 text-teal-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m0 0v3" />
@@ -862,7 +875,7 @@ export function FileList({
           {onClearNamLab && (
             <button
               className="w-full text-left px-3 py-2 text-sm text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/20 transition-colors flex items-center gap-2"
-              onClick={() => { onClearNamLab([...selectedIds]); setCtxMenu(null) }}
+              onClick={() => { onClearNamLab(selectedVisible); setCtxMenu(null) }}
             >
               <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -877,28 +890,28 @@ export function FileList({
             <button
               className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
               onClick={() => {
-                onSaveSelected([...selectedIds])
+                onSaveSelected(selectedVisible)
                 setCtxMenu(null)
               }}
             >
               <svg className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
               </svg>
-              Save {selectedIds.size} selected
+              Save {selectedVisible.length} selected
             </button>
           )}
           {onBatchEditSelected && (
             <button
               className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
               onClick={() => {
-                onBatchEditSelected([...selectedIds])
+                onBatchEditSelected(selectedVisible)
                 setCtxMenu(null)
               }}
             >
               <svg className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
               </svg>
-              Batch edit {selectedIds.size} selected
+              Batch edit {selectedVisible.length} selected
             </button>
           )}
         </div>

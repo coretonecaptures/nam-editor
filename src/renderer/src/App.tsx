@@ -1471,6 +1471,10 @@ export default function App() {
                 })
               }}
               onSelectAll={(filePaths) => setSelectedIds(new Set(filePaths))}
+              onTrimSelection={(visiblePaths) => {
+                const visibleSet = new Set(visiblePaths)
+                setSelectedIds((prev) => new Set([...prev].filter((id) => visibleSet.has(id))))
+              }}
               onDeselectAll={() => setSelectedIds(new Set())}
               onRemove={hasTree ? undefined : handleRemoveFile}
               onBatchEditSelected={(paths) => {
