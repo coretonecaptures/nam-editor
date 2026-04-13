@@ -167,6 +167,8 @@ export default function App() {
   const mainContentRef = useRef<HTMLDivElement>(null)
   const [treeCollapsed, setTreeCollapsed] = useState(false)
   const [listCollapsed, setListCollapsed] = useState(false)
+  const [gridMaximized, setGridMaximized] = useState(false)
+  const [gridSlideOpen, setGridSlideOpen] = useState(false)
   const [folderChanged, setFolderChanged] = useState(false)
   const [showDuplicates, setShowDuplicates] = useState(false)
   const [metadataClipboard, setMetadataClipboard] = useState<{ sourceName: string; metadata: Partial<NamFile['metadata']> } | null>(null)
@@ -1294,6 +1296,8 @@ export default function App() {
   })
 
   const selectedFiles = visibleFiles.filter((f) => selectedIds.has(f.filePath))
+  // Close slide panel if selection moves away from single-file
+  if (gridSlideOpen && selectedFiles.length !== 1) setGridSlideOpen(false)
   const dirtyCount = files.filter((f) => f.isDirty).length
   const unnamedCount = files.filter((f) => !f.metadata.name).length
   const hasTree = librarian.folderTree !== null
@@ -1334,11 +1338,11 @@ export default function App() {
         onFindDuplicates={files.length > 1 ? () => setShowDuplicates(true) : undefined}
       />
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden relative">
         {/* Folder tree — only shown when a folder is open */}
         {hasTree && (
           <>
-            <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: treeCollapsed ? 0 : treeWidth, overflow: 'hidden' }}>
+            <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: (treeCollapsed || gridMaximized) ? 0 : treeWidth, overflow: 'hidden' }}>
               <FolderTree
                 tree={librarian.folderTree!}
                 files={files}
@@ -1412,13 +1416,13 @@ export default function App() {
                 onImportMetadata={handleImportMetadata}
               />
             </div>
-            <DragHandle onMouseDown={(e) => onDragStart('tree', e)} onCollapse={() => setTreeCollapsed((v) => !v)} collapsed={treeCollapsed} />
+            {!gridMaximized && <DragHandle onMouseDown={(e) => onDragStart('tree', e)} onCollapse={() => setTreeCollapsed((v) => !v)} collapsed={treeCollapsed} />}
           </>
         )}
 
         {/* File list — only shown when files are loaded */}
         {files.length > 0 && <>
-          <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: listCollapsed ? 0 : listWidth }}>
+          <div className={gridMaximized ? 'flex-1 flex flex-col overflow-hidden' : 'flex-shrink-0 flex flex-col overflow-hidden'} style={gridMaximized ? undefined : { width: listCollapsed ? 0 : listWidth }}>
             <FileList
               files={visibleFiles}
               selectedIds={selectedIds}
@@ -1498,6 +1502,9 @@ export default function App() {
               onTrashSelected={handleTrashFiles}
               onCopyToFolder={handleCopyToFolder}
               onMoveToFolder={handleMoveToFolder}
+              gridMaximized={gridMaximized}
+              onToggleGridMaximize={() => setGridMaximized((v) => { if (v) setGridSlideOpen(false); return !v })}
+              onOpenEditor={() => setGridSlideOpen(true)}
               onApplyDefaults={handleApplyDefaultsToSelection}
               metadataClipboard={metadataClipboard}
               onCopyMetadata={handleCopyMetadata}
@@ -1505,11 +1512,11 @@ export default function App() {
               onClearNamLab={handleClearNamLab}
             />
           </div>
-          <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} onCollapse={() => setListCollapsed((v) => !v)} collapsed={listCollapsed} />
+          {!gridMaximized && <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} onCollapse={() => setListCollapsed((v) => !v)} collapsed={listCollapsed} />}
         </>}
 
         {/* Main content */}
-        <div ref={mainContentRef} tabIndex={-1} className="flex-1 overflow-hidden flex flex-col focus:outline-none" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        <div ref={mainContentRef} tabIndex={-1} className={`flex-1 overflow-hidden flex flex-col focus:outline-none${gridMaximized ? ' hidden' : ''}`} style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           {showSettings ? (
             <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} />
           ) : batchFolder !== null ? (
@@ -1584,6 +1591,55 @@ export default function App() {
             <MultiSelectHint count={selectedFiles.length} />
           )}
         </div>
+
+        {/* Slide-in editor overlay — maximized grid mode */}
+        {gridMaximized && selectedFiles.length === 1 && (
+          <div className={`absolute top-0 right-0 bottom-0 w-[460px] z-40 flex flex-col bg-white dark:bg-gray-950 border-l border-gray-200 dark:border-gray-700 shadow-2xl transition-transform duration-200 ${gridSlideOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+            <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+              <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Edit Capture</span>
+              <button onClick={() => setGridSlideOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <MetadataEditor
+              key={selectedFiles[0].filePath}
+              file={selectedFiles[0]}
+              onChange={(m) => handleMetadataChange(selectedFiles[0].filePath, m)}
+              onSave={() => handleSave(selectedFiles[0].filePath)}
+              onRevert={() => {
+                const f = selectedFiles[0]
+                setFiles((prev) => prev.map((x) =>
+                  x.filePath === f.filePath
+                    ? { ...x, metadata: { ...x.originalMetadata }, isDirty: false, autoFilledFields: [] }
+                    : x
+                ))
+              }}
+              onRevealInFinder={() => window.api.revealFile(selectedFiles[0].filePath)}
+              renameTemplate={settings.renameTemplate}
+              onRenameFile={handleRenameFile}
+              gearMakeSuggestions={gearMakeSuggestions}
+              gearModelSuggestions={gearModelSuggestions}
+              showNamLabFields={settings.showNamLabFields}
+              hasActiveDefaults={
+                settings.enableAmpInfo || settings.enableCaptureDefaults ||
+                settings.populateNameFromFilename || settings.autoDetectToneType || !!settings.ampSuffix
+              }
+              onReapplyDefaults={() => {
+                const f = selectedFiles[0]
+                const baseName = f.fileName.replace(/\.nam$/i, '')
+                const newMeta = applyDefaults({ ...f.metadata }, baseName, settings)
+                const newAutoFilled = (Object.keys(newMeta) as (keyof NamFile['metadata'])[]).filter(
+                  (k) => newMeta[k] != null && (f.metadata[k] == null || f.metadata[k] === '') && !f.autoFilledFields.includes(k)
+                )
+                setFiles((prev) => prev.map((x) =>
+                  x.filePath === f.filePath
+                    ? { ...x, metadata: newMeta, isDirty: JSON.stringify(newMeta) !== JSON.stringify(f.originalMetadata), autoFilledFields: [...f.autoFilledFields, ...newAutoFilled] }
+                    : x
+                ))
+              }}
+            />
+          </div>
+        )}
       </div>
 
       <DefaultsPill settings={settings} />
