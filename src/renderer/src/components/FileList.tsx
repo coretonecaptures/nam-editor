@@ -466,15 +466,6 @@ export function FileList({
               </svg>
             </button>
           )}
-          {gridMaximized && selectedIds.size === 1 && onOpenEditor && (
-            <button
-              onClick={onOpenEditor}
-              title="Edit capture"
-              className="px-2 py-1 rounded text-xs font-medium bg-teal-600 text-white hover:bg-teal-700 transition-colors ml-1"
-            >
-              Edit
-            </button>
-          )}
           {/* Column chooser */}
           <div ref={chooserRef} className="relative">
             <button
@@ -487,29 +478,31 @@ export function FileList({
               </svg>
             </button>
             {showColChooser && (
-              <div className="absolute right-0 top-full mt-1 w-52 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50 py-1">
-                <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-b border-gray-200 dark:border-gray-700">
+              <div className="absolute right-0 top-full mt-1 w-52 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50 flex flex-col" style={{ maxHeight: 'min(60vh, 480px)' }}>
+                <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
                   Columns
                 </div>
-                {ALL_GRID_COLUMNS.map((col) => (
-                  <label key={col.key} className={`flex items-center gap-2.5 px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 ${col.key === 'name' ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                    <input
-                      type="checkbox"
-                      checked={visibleCols.includes(col.key)}
-                      onChange={() => {
-                        if (col.key === 'name') return
-                        const next = visibleCols.includes(col.key)
-                          ? visibleCols.filter((k) => k !== col.key)
-                          : [...visibleCols, col.key]
-                        handleVisibleColsChange(next)
-                      }}
-                      disabled={col.key === 'name'}
-                      className="w-3.5 h-3.5 rounded border-gray-400 text-indigo-500 focus:ring-0 cursor-pointer disabled:cursor-not-allowed"
-                    />
-                    <span className="text-gray-700 dark:text-gray-300">{col.label}</span>
-                  </label>
-                ))}
-                <div className="border-t border-gray-200 dark:border-gray-700 mt-1 pt-1 px-3 pb-1 flex gap-3">
+                <div className="overflow-y-auto flex-1 py-1">
+                  {ALL_GRID_COLUMNS.map((col) => (
+                    <label key={col.key} className={`flex items-center gap-2.5 px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 ${col.key === 'name' ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                      <input
+                        type="checkbox"
+                        checked={visibleCols.includes(col.key)}
+                        onChange={() => {
+                          if (col.key === 'name') return
+                          const next = visibleCols.includes(col.key)
+                            ? visibleCols.filter((k) => k !== col.key)
+                            : [...visibleCols, col.key]
+                          handleVisibleColsChange(next)
+                        }}
+                        disabled={col.key === 'name'}
+                        className="w-3.5 h-3.5 rounded border-gray-400 text-indigo-500 focus:ring-0 cursor-pointer disabled:cursor-not-allowed"
+                      />
+                      <span className="text-gray-700 dark:text-gray-300">{col.label}</span>
+                    </label>
+                  ))}
+                </div>
+                <div className="border-t border-gray-200 dark:border-gray-700 pt-1 px-3 pb-1.5 flex gap-3 flex-shrink-0">
                   <button
                     onClick={() => handleVisibleColsChange(ALL_GRID_COLUMNS.map((c) => c.key))}
                     className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
@@ -642,7 +635,15 @@ export function FileList({
             : `${sorted.length} / ${files.length}`}
           {selectedIds.size > 0 && ` · ${selectedIds.size} selected`}
         </span>
-        <div className="flex gap-1">
+        <div className="flex items-center gap-1">
+          {gridMaximized && selectedIds.size >= 1 && onOpenEditor && (
+            <button
+              onClick={onOpenEditor}
+              className="px-2 py-0.5 rounded text-xs font-medium bg-teal-600 text-white hover:bg-teal-700 transition-colors mr-1"
+            >
+              Edit{selectedIds.size > 1 ? ` ${selectedIds.size}` : ''}
+            </button>
+          )}
           <button onClick={onSelectAll} className="text-xs text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 px-1 transition-colors">All</button>
           <span className="text-gray-400 dark:text-gray-700">·</span>
           <button onClick={onDeselectAll} className="text-xs text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 px-1 transition-colors">None</button>
