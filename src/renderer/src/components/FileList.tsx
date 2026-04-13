@@ -357,6 +357,16 @@ export function FileList({
     return () => window.removeEventListener('click', close)
   }, [ctxMenu])
 
+  useEffect(() => {
+    if (!ctxMenu || !ctxMenuRef.current) return
+    const rect = ctxMenuRef.current.getBoundingClientRect()
+    if (rect.bottom > window.innerHeight && rect.top > 0) {
+      const clamped = Math.max(4, window.innerHeight - rect.height - 4)
+      if (clamped !== ctxMenu.y) setCtxMenu((m) => m ? { ...m, y: clamped } : m)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctxMenu?.filePath])
+
   // When the filtered list changes (search/filter applied), trim selectedIds in App.tsx
   // so stale selections don't leak into editors or bulk actions.
   useEffect(() => {
@@ -701,7 +711,7 @@ export function FileList({
           onContextMenu={(e, filePath) => {
             e.preventDefault()
             if (!selectedIds.has(filePath)) onSelect(filePath, false)
-            setCtxMenu({ x: Math.min(e.clientX, window.innerWidth - 224), y: Math.min(e.clientY, window.innerHeight - 500), filePath })
+            setCtxMenu({ x: Math.min(e.clientX, window.innerWidth - 224), y: e.clientY, filePath})
           }}
         />
       ) : (
@@ -730,7 +740,7 @@ export function FileList({
                 onContextMenu={(e) => {
                   e.preventDefault()
                   if (!selectedIds.has(file.filePath)) onSelect(file.filePath, false)
-                  setCtxMenu({ x: Math.min(e.clientX, window.innerWidth - 224), y: Math.min(e.clientY, window.innerHeight - 500), filePath: file.filePath })
+                  setCtxMenu({ x: Math.min(e.clientX, window.innerWidth - 224), y: e.clientY, filePath: file.filePath })
                 }}
                 onDragStart={draggable ? (e) => {
                   const paths = selectedIds.has(file.filePath) ? [...selectedIds] : [file.filePath]
@@ -992,8 +1002,9 @@ function GridView({
     resizingRef.current = { key, startX: e.clientX, startWidth: colWidths[key] }
     const onMove = (ev: MouseEvent) => {
       if (!resizingRef.current) return
-      const next = Math.max(60, resizingRef.current.startWidth + ev.clientX - resizingRef.current.startX)
-      setColWidths((prev) => ({ ...prev, [resizingRef.current!.key]: next }))
+      const { key, startX, startWidth } = resizingRef.current
+      const next = Math.max(60, startWidth + ev.clientX - startX)
+      setColWidths((prev) => ({ ...prev, [key]: next }))
     }
     const onUp = () => {
       resizingRef.current = null

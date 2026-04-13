@@ -410,6 +410,16 @@ function FolderRow({
   }, [menu])
 
   useEffect(() => {
+    if (!menu || !menuRef.current) return
+    const rect = menuRef.current.getBoundingClientRect()
+    if (rect.bottom > window.innerHeight && rect.top > 0) {
+      const clamped = Math.max(4, window.innerHeight - rect.height - 4)
+      if (clamped !== menu.y) setMenu((m) => m ? { ...m, y: clamped } : m)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menu?.x])
+
+  useEffect(() => {
     if (isRenaming) {
       setRenameValue(label)
       setTimeout(() => renameInputRef.current?.select(), 30)
@@ -419,7 +429,7 @@ function FolderRow({
   const openMenu = (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    setMenu({ x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 300) })
+    setMenu({ x: Math.min(e.clientX, window.innerWidth - 200), y: e.clientY })
   }
 
   const commitRename = async () => {
