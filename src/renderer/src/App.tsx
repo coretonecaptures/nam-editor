@@ -1470,7 +1470,7 @@ export default function App() {
                   return next
                 })
               }}
-              onSelectAll={() => setSelectedIds(new Set(visibleFiles.map((f) => f.filePath)))}
+              onSelectAll={(filePaths) => setSelectedIds(new Set(filePaths))}
               onDeselectAll={() => setSelectedIds(new Set())}
               onRemove={hasTree ? undefined : handleRemoveFile}
               onBatchEditSelected={(paths) => {

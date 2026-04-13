@@ -192,7 +192,7 @@ npm run package:linux    # Linux AppImage
 
 CI runs on tag push via `.github/workflows/release.yml`. Tags matching `*-rc*` are automatically marked as GitHub pre-releases. Final releases use clean semver tags (`v0.4.2`).
 
-Current version: **0.5.4** (see `package.json`). Version is injected into the renderer via `VITE_APP_VERSION` in `electron.vite.config.ts`.
+Current version: **0.5.5** (see `package.json`). Version is injected into the renderer via `VITE_APP_VERSION` in `electron.vite.config.ts`.
 
 App IDs:
 - `appId`: `com.coretonecaptures.namlab`
@@ -299,6 +299,8 @@ These have been discussed and approved — remove each item when implemented.
 - **[x] Move to folder** — Right-click → Move N files to folder… (folder picker, removes files from list on success). Sits alongside Copy to folder in the context menu.
 
 - **[x] Jump to file's folder** — Right-click single file → "Show in folder tree" scrolls to and highlights the file's folder in the tree for 5 seconds.
+
+- **[ ] Check for Updates** — Settings panel button that hits the GitHub releases API (`repos/coretonecaptures/nam-editor/releases`), compares the running version to the latest release, and shows a banner with a "Download" link that opens the releases page in the browser. No auto-install (app is unsigned). Two new settings (both default off): `checkForRCBuilds` — includes pre-releases in the comparison; `checkOnStartup` — runs a silent background check at launch and shows a status bar notification if an update is found. Version comparison must handle RC semver strings (`0.5.5-rc1 < 0.5.5`). IPC channel: `app:checkForUpdates` → returns `{ hasUpdate: boolean, latestVersion: string, releaseUrl: string }`.
 
 - **[ ] OS "Open folder in NAM Lab"** — Right-click a folder in Explorer/Finder and open it directly in NAM Lab. Requires registering a protocol handler or custom verb in electron-builder config. Similar to file associations but for folders; macOS needs a folder UTI handler, Windows needs a registry shell extension verb.
 

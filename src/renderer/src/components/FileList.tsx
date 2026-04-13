@@ -25,7 +25,7 @@ interface FileListProps {
   selectedIds: Set<string>
   onSelect: (id: string, multi: boolean) => void
   onSelectRange: (ids: string[]) => void
-  onSelectAll: () => void
+  onSelectAll: (filePaths: string[]) => void
   onDeselectAll: () => void
   onRemove?: (id: string) => void
   onBatchEditSelected?: (paths: string[]) => void
@@ -386,7 +386,7 @@ export function FileList({
 
   return (
     <div className="flex flex-col h-full overflow-hidden" onKeyDown={(e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'a') { e.preventDefault(); onSelectAll(); return }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') { e.preventDefault(); onSelectAll(sorted.map((f) => f.filePath)); return }
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
         if (sorted.length === 0) return
@@ -664,7 +664,7 @@ export function FileList({
               Edit{selectedIds.size > 1 ? ` ${selectedIds.size}` : ''}
             </button>
           )}
-          <button onClick={onSelectAll} className="text-xs text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 px-1 transition-colors">All</button>
+          <button onClick={() => onSelectAll(sorted.map((f) => f.filePath))} className="text-xs text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 px-1 transition-colors">All</button>
           <span className="text-gray-400 dark:text-gray-700">·</span>
           <button onClick={onDeselectAll} className="text-xs text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 px-1 transition-colors">None</button>
         </div>
