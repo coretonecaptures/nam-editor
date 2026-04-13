@@ -438,6 +438,9 @@ app.whenReady().then(() => {
       const content = fs.readFileSync(filePath, 'utf-8')
       const data = JSON.parse(content)
       const meta = data.metadata ?? {}
+      // Normalize numeric fields — some tools (including a prior NAM Lab import bug) wrote these as strings
+      if (typeof meta.input_level_dbu === 'string') meta.input_level_dbu = parseFloat(meta.input_level_dbu)
+      if (typeof meta.output_level_dbu === 'string') meta.output_level_dbu = parseFloat(meta.output_level_dbu)
       // Lift nested NAM-BOT fields up to flat metadata for the UI
       const nb = meta.training?.nam_bot
       if (nb?.trained_epochs != null) meta.nb_trained_epochs = nb.trained_epochs
@@ -483,11 +486,19 @@ app.whenReady().then(() => {
       const orig = data.metadata ?? {}
       const incoming = metadata as Record<string, unknown>
 
+      // Numeric metadata fields — must always be written as JSON numbers, never strings
+      const NUMERIC_META_FIELDS = new Set(['input_level_dbu', 'output_level_dbu'])
+
       // Build patch map: only fields that exist on disk or are being set to a real value
       const patches: Record<string, unknown> = {}
       for (const key of EDITABLE_FIELDS) {
         if (Object.prototype.hasOwnProperty.call(orig, key) || incoming[key] != null) {
-          patches[key] = incoming[key] ?? null
+          let val: unknown = incoming[key] ?? null
+          // Coerce string numbers to actual numbers for numeric fields
+          if (val != null && NUMERIC_META_FIELDS.has(key) && typeof val === 'string') {
+            val = parseFloat(val as string)
+          }
+          patches[key] = val
         }
       }
 
@@ -513,6 +524,10 @@ app.whenReady().then(() => {
         }
       }
 
+      // Validate output is well-formed JSON before touching disk
+      try { JSON.parse(patched) } catch (ve) {
+        return { success: false, error: `Patch produced invalid JSON — file not written. ${String(ve)}` }
+      }
       suppressWatcher()
       fs.writeFileSync(filePath, patched, 'utf-8')
       return { success: true }

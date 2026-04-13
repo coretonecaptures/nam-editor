@@ -1096,7 +1096,10 @@ export default function App() {
         if (skipFields.has(col.field)) continue
         const val = row[col.header]
         if (val === '' || val == null) continue
-        ;(incoming as Record<string, unknown>)[col.field] = String(val).trim()
+        const strVal = String(val).trim()
+        if (strVal === '') continue
+        const isNumericField = col.field === 'input_level_dbu' || col.field === 'output_level_dbu' || col.field === 'nb_trained_epochs'
+        ;(incoming as Record<string, unknown>)[col.field] = isNumericField ? Number(strVal) : strVal
       }
       return incoming
     }
