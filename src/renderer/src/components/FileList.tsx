@@ -260,6 +260,7 @@ export function FileList({
   const [filter, setFilter] = useState<FilterMode>('all')
   const [gearFilter, setGearFilter] = useState('')
   const [toneFilter, setToneFilter] = useState('')
+  const [presetFilter, setPresetFilter] = useState('')
   const [sortKey, setSortKey] = useState<string | null>('name')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
   const [visibleCols, setVisibleCols] = useState<string[]>(loadVisibleCols)
@@ -335,6 +336,8 @@ export function FileList({
     }
     if (gearFilter && m.gear_type !== gearFilter) return false
     if (toneFilter && m.tone_type !== toneFilter) return false
+    if (presetFilter === '__none__' && detectPreset(f.config) !== null) return false
+    else if (presetFilter && presetFilter !== '__none__' && detectPreset(f.config) !== presetFilter) return false
     switch (filter) {
       case 'unnamed':    return !o.name
       case 'no-gear':    return !o.gear_type
@@ -600,6 +603,21 @@ export function FileList({
         >
           <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Tone type…</option>
           {TONE_TYPES.map((t) => <option key={t} value={t} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{t}</option>)}
+        </select>
+        <select
+          value={presetFilter}
+          onChange={(e) => setPresetFilter(e.target.value)}
+          className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
+            presetFilter
+              ? 'bg-teal-100 dark:bg-teal-900/30 border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400'
+              : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
+          }`}
+        >
+          <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Preset…</option>
+          {['Standard', 'Complex', 'Lite', 'Feather', 'Nano', 'REVySTD', 'REVyHI', 'REVxSTD'].map((p) => (
+            <option key={p} value={p} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{p}</option>
+          ))}
+          <option value="__none__" className="bg-white dark:bg-gray-900 text-gray-500 dark:text-gray-500">— None detected —</option>
         </select>
         {/* Name-only filter */}
         <div className="relative ml-1">
