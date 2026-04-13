@@ -277,6 +277,9 @@ export default function App() {
         // Sanitize unrecognized values into working copy only — originalMetadata
         // keeps the raw value so isDirty fires and the file surfaces for fixing
         const workingMeta: NamFile['metadata'] = { ...rawMeta }
+        // Normalize numeric fields written as strings by a prior import bug — causes isDirty=true so Save All heals the file
+        if (typeof workingMeta.input_level_dbu === 'string') workingMeta.input_level_dbu = parseFloat(workingMeta.input_level_dbu as unknown as string)
+        if (typeof workingMeta.output_level_dbu === 'string') workingMeta.output_level_dbu = parseFloat(workingMeta.output_level_dbu as unknown as string)
         if (workingMeta.tone_type && !(TONE_TYPES as readonly string[]).includes(workingMeta.tone_type)) {
           workingMeta.tone_type = null
         }

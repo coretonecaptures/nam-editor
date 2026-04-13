@@ -438,9 +438,6 @@ app.whenReady().then(() => {
       const content = fs.readFileSync(filePath, 'utf-8')
       const data = JSON.parse(content)
       const meta = data.metadata ?? {}
-      // Normalize numeric fields — some tools (including a prior NAM Lab import bug) wrote these as strings
-      if (typeof meta.input_level_dbu === 'string') meta.input_level_dbu = parseFloat(meta.input_level_dbu)
-      if (typeof meta.output_level_dbu === 'string') meta.output_level_dbu = parseFloat(meta.output_level_dbu)
       // Lift nested NAM-BOT fields up to flat metadata for the UI
       const nb = meta.training?.nam_bot
       if (nb?.trained_epochs != null) meta.nb_trained_epochs = nb.trained_epochs
