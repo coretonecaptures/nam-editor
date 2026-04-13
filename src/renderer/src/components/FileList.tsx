@@ -858,6 +858,15 @@ const DEFAULT_COL_WIDTHS: Record<string, number> = {
   nb_trained_epochs:  110,
   nb_preset_name:     140,
   detected_preset:    130,
+  nl_mics:            150,
+  nl_cabinet:         160,
+  nl_cabinet_config:  110,
+  nl_amp_channel:     120,
+  nl_boost_pedal:     160,
+  nl_amp_settings:    180,
+  nl_pedal_settings:  180,
+  nl_amp_switches:    150,
+  nl_comments:        200,
 }
 
 function GridView({
