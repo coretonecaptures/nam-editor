@@ -296,6 +296,8 @@ These have been discussed and approved — remove each item when implemented.
 
 - **[x] Bulk metadata import from spreadsheet** — Right-click folder → "Generate import template…" exports editable fields only as `.xlsx` (pre-filled with current values). Right-click folder → "Import metadata from spreadsheet…" opens file picker, matches rows by Capture Name, shows warning modal with match count + unmatched list, requires checkbox confirmation, writes non-empty cells only. Columns: Capture Name, Modeled By, Manufacturer, Model, Gear Type, Tone Type, Amp Channel, Amp Settings, Amp Switches, Boost Pedal, Pedal Settings, Cabinet, Cab Config, Reamp Send (dBu), Reamp Return (dBu), Trained Epochs, NAM-BOT Preset (read-only), Mic(s), Comments.
 
+- **[x] Move to folder** — Right-click → Move N files to folder… (folder picker, removes files from list on success). Sits alongside Copy to folder in the context menu.
+
 - **[ ] Jump to file's folder** — Clicking a file should highlight/scroll to its folder in the tree panel.
 
 - **[ ] OS "Open folder in NAM Lab"** — Right-click a folder in Explorer/Finder and open it directly in NAM Lab. Requires registering a protocol handler or custom verb in electron-builder config. Similar to file associations but for folders; macOS needs a folder UTI handler, Windows needs a registry shell extension verb.
