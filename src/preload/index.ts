@@ -39,6 +39,9 @@ const api = {
   clearNamLab: (filePaths: string[]): Promise<{ filePath: string; success: boolean; error?: string }[]> =>
     ipcRenderer.invoke('file:clearNamLab', filePaths),
   getPendingFiles: (): Promise<string[]> => ipcRenderer.invoke('app:getPendingFiles'),
+  checkForUpdates: (includeRc: boolean): Promise<{ hasUpdate?: boolean; latestVersion?: string; releaseUrl?: string; error?: string }> =>
+    ipcRenderer.invoke('app:checkForUpdates', includeRc),
+  openExternal: (url: string): Promise<void> => ipcRenderer.invoke('app:openExternal', url),
   onOpenFiles: (cb: (paths: string[]) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, paths: string[]) => cb(paths)
     ipcRenderer.on('app:openFiles', handler)

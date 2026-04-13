@@ -1,6 +1,13 @@
 import { useState } from 'react'
 import { AppSettings } from '../types/settings'
 
+type UpdateState =
+  | { status: 'idle' }
+  | { status: 'checking' }
+  | { status: 'up-to-date'; version: string }
+  | { status: 'available'; version: string; url: string }
+  | { status: 'error'; message: string }
+
 interface SettingsPanelProps {
   settings: AppSettings
   onSave: (settings: AppSettings) => void
@@ -10,6 +17,20 @@ interface SettingsPanelProps {
 export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps) {
   const [draft, setDraft] = useState<AppSettings>({ ...settings })
   const [saved, setSaved] = useState(false)
+  const [updateState, setUpdateState] = useState<UpdateState>({ status: 'idle' })
+
+  const handleCheckForUpdates = async () => {
+    setUpdateState({ status: 'checking' })
+    const result = await window.api.checkForUpdates(draft.checkForRCBuilds)
+    if (result.error) {
+      setUpdateState({ status: 'error', message: result.error })
+    } else if (result.hasUpdate && result.latestVersion && result.releaseUrl) {
+      setUpdateState({ status: 'available', version: result.latestVersion, url: result.releaseUrl })
+    } else {
+      const currentVersion = import.meta.env.VITE_APP_VERSION as string ?? ''
+      setUpdateState({ status: 'up-to-date', version: currentVersion })
+    }
+  }
 
   const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
     setDraft((prev) => ({ ...prev, [key]: value }))
@@ -377,29 +398,71 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
         </div>
       </div>
 
-      {/* About footer */}
-      <div className="flex-shrink-0 px-6 py-4 border-t border-gray-200 dark:border-gray-800 flex items-center justify-between">
-        <div className="text-xs text-gray-400 dark:text-gray-600">
-          Built by{' '}
+      {/* Footer */}
+      <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-800">
+        {/* Updates row */}
+        <div className="px-6 py-3 border-b border-gray-200 dark:border-gray-800 flex items-center gap-3 flex-wrap">
           <button
-            onClick={() => window.open('https://coretonecaptures.com/', '_blank')}
-            className="text-indigo-400 hover:text-indigo-300 transition-colors underline"
+            onClick={handleCheckForUpdates}
+            disabled={updateState.status === 'checking'}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white flex-shrink-0"
           >
-            Core Tone Captures
+            {updateState.status === 'checking' ? 'Checking…' : 'Check for Updates'}
           </button>
+          {updateState.status === 'idle' && (
+            <span className="text-xs text-gray-500 dark:text-gray-600">v{import.meta.env.VITE_APP_VERSION}</span>
+          )}
+          {updateState.status === 'up-to-date' && (
+            <span className="text-xs text-green-600 dark:text-green-400">✓ You're up to date (v{updateState.version})</span>
+          )}
+          {updateState.status === 'available' && (
+            <span className="text-xs text-amber-500 dark:text-amber-400">
+              v{updateState.version} is available —{' '}
+              <button
+                onClick={() => window.api.openExternal((updateState as { url: string }).url)}
+                className="underline hover:text-amber-400 transition-colors"
+              >
+                Download
+              </button>
+            </span>
+          )}
+          {updateState.status === 'error' && (
+            <span className="text-xs text-red-500 dark:text-red-400">Could not check: {(updateState as { message: string }).message}</span>
+          )}
+          <label className="flex items-center gap-1.5 ml-auto cursor-pointer select-none flex-shrink-0">
+            <input
+              type="checkbox"
+              checked={draft.checkForRCBuilds}
+              onChange={(e) => { update('checkForRCBuilds', e.target.checked); setUpdateState({ status: 'idle' }) }}
+              className="w-3.5 h-3.5 rounded accent-indigo-500"
+            />
+            <span className="text-xs text-gray-500 dark:text-gray-500">Include RC builds</span>
+          </label>
         </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={async () => {
-              const p = await window.api.getStartupLogPath()
-              window.api.revealFile(p)
-            }}
-            className="text-xs text-gray-500 dark:text-gray-600 hover:text-gray-400 dark:hover:text-gray-400 transition-colors underline"
-            title="Open the startup log folder — useful for reporting issues"
-          >
-            Open Log
-          </button>
-          <div className="text-xs text-gray-500 dark:text-gray-600">NAM Lab</div>
+        {/* About row */}
+        <div className="px-6 py-3 flex items-center justify-between">
+          <div className="text-xs text-gray-400 dark:text-gray-600">
+            Built by{' '}
+            <button
+              onClick={() => window.open('https://coretonecaptures.com/', '_blank')}
+              className="text-indigo-400 hover:text-indigo-300 transition-colors underline"
+            >
+              Core Tone Captures
+            </button>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={async () => {
+                const p = await window.api.getStartupLogPath()
+                window.api.revealFile(p)
+              }}
+              className="text-xs text-gray-500 dark:text-gray-600 hover:text-gray-400 dark:hover:text-gray-400 transition-colors underline"
+              title="Open the startup log folder — useful for reporting issues"
+            >
+              Open Log
+            </button>
+            <div className="text-xs text-gray-500 dark:text-gray-600">NAM Lab</div>
+          </div>
         </div>
       </div>
     </div>

@@ -5,6 +5,26 @@ import os from 'os'
 
 const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
 
+// Compares two semver strings (e.g. "0.5.5" > "0.5.4", "0.5.5" > "0.5.5-rc1")
+// Returns positive if a > b, negative if a < b, 0 if equal
+function compareVersions(a: string, b: string): number {
+  const parse = (v: string) => {
+    const [main, pre] = v.split('-')
+    const parts = main.split('.').map(Number)
+    return { parts, pre: pre ?? null }
+  }
+  const va = parse(a)
+  const vb = parse(b)
+  for (let i = 0; i < 3; i++) {
+    const diff = (va.parts[i] ?? 0) - (vb.parts[i] ?? 0)
+    if (diff !== 0) return diff
+  }
+  // Same numeric version: release (no pre) beats RC
+  if (va.pre === null && vb.pre !== null) return 1
+  if (va.pre !== null && vb.pre === null) return -1
+  return 0
+}
+
 // Module-level reference so IPC handlers can always reach the window
 let mainWindow: BrowserWindow | null = null
 
@@ -791,6 +811,31 @@ app.whenReady().then(() => {
   ipcMain.handle('app:getPendingFiles', () => {
     const valid = pendingOpenPaths.splice(0).filter((p) => p.toLowerCase().endsWith('.nam') && fs.existsSync(p))
     return valid
+  })
+
+  // IPC: Open URL in default browser
+  ipcMain.handle('app:openExternal', (_event, url: string) => {
+    shell.openExternal(url)
+  })
+
+  // IPC: Check for updates via GitHub releases API
+  ipcMain.handle('app:checkForUpdates', async (_event, includeRc: boolean) => {
+    try {
+      const res = await fetch('https://api.github.com/repos/coretonecaptures/nam-editor/releases?per_page=20', {
+        headers: { 'User-Agent': 'NAM-Lab-updater' }
+      })
+      if (!res.ok) return { error: `GitHub API returned ${res.status}` }
+      const releases = await res.json() as Array<{ tag_name: string; prerelease: boolean; html_url: string }>
+      const candidates = releases.filter((r) => includeRc ? true : !r.prerelease)
+      if (candidates.length === 0) return { hasUpdate: false }
+      const latest = candidates[0]
+      const latestVersion = latest.tag_name.replace(/^v/, '')
+      const currentVersion = app.getVersion()
+      const hasUpdate = compareVersions(latestVersion, currentVersion) > 0
+      return { hasUpdate, latestVersion, releaseUrl: latest.html_url }
+    } catch (e) {
+      return { error: String(e) }
+    }
   })
 
   app.on('activate', () => {

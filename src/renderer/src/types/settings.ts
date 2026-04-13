@@ -49,6 +49,9 @@ export interface AppSettings {
 
   // Show/edit NAM Lab extended capture detail fields
   showNamLabFields: boolean
+
+  // Updates
+  checkForRCBuilds: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -82,7 +85,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   renameTemplate: '{name}',
   watchFolder: false,
   hiddenFolders: 'lightning_logs,version_0,checkpoints',
-  showNamLabFields: true
+  showNamLabFields: true,
+  checkForRCBuilds: false
 }
 
 const STORAGE_KEY = 'nam-editor-settings'
