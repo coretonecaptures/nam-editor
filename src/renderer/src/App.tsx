@@ -219,7 +219,6 @@ export default function App() {
   // cycle in main process which resets OS-level keyboard routing (same as Alt+Tab).
   useEffect(() => {
     mainContentRef.current?.focus()
-    window.api.refocusWindow()
   }, [showSettings, batchFolder])
 
   const onDragStart = (panel: 'tree' | 'list', e: React.MouseEvent) => {
@@ -1339,7 +1338,7 @@ export default function App() {
         fileCount={files.length}
         isMac={window.api.platform === 'darwin'}
         showSettings={showSettings}
-        onToggleSettings={() => { setShowSettings((s) => !s); setBatchFolder(null) }}
+        onToggleSettings={() => { setShowSettings((s) => !s); setBatchFolder(null); if (gridMaximized) setGridSlideOpen(true) }}
         unnamedCount={unnamedCount}
         onNameFromFilename={handleNameFromFilename}
         onCloseAll={handleCloseAll}
@@ -1444,6 +1443,7 @@ export default function App() {
               viewMode={listViewMode}
               onViewModeChange={(mode) => {
                 setListViewMode(mode)
+                if (mode === 'list' && gridMaximized) { setGridMaximized(false); setGridSlideOpen(false) }
                 const layout = loadLayout()
                 const maxList = window.innerWidth - treeWidth - 300
                 const raw = mode === 'grid' ? layout.listWidthGrid : layout.listWidthList
@@ -1473,7 +1473,11 @@ export default function App() {
               onSelectAll={(filePaths) => setSelectedIds(new Set(filePaths))}
               onTrimSelection={(visiblePaths) => {
                 const visibleSet = new Set(visiblePaths)
-                setSelectedIds((prev) => new Set([...prev].filter((id) => visibleSet.has(id))))
+                setSelectedIds((prev) => {
+                  const filtered = [...prev].filter((id) => visibleSet.has(id))
+                  if (filtered.length === prev.size) return prev
+                  return new Set(filtered)
+                })
               }}
               onDeselectAll={() => setSelectedIds(new Set())}
               onRemove={hasTree ? undefined : handleRemoveFile}
@@ -1612,17 +1616,19 @@ export default function App() {
         </div>
 
         {/* Slide-in editor overlay — maximized grid mode */}
-        {gridMaximized && (selectedFiles.length >= 1 || batchFolder !== null) && (
+        {gridMaximized && (selectedFiles.length >= 1 || batchFolder !== null || showSettings) && (
           <div className={`absolute top-0 right-0 bottom-0 w-[460px] z-40 flex flex-col bg-white dark:bg-gray-950 border-l border-gray-200 dark:border-gray-700 shadow-2xl transition-transform duration-200 ${gridSlideOpen ? 'translate-x-0' : 'translate-x-full'}`}>
             <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
               <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                {batchFolder !== null ? `Batch Edit — ${batchFolder.name}` : selectedFiles.length > 1 ? `Edit ${selectedFiles.length} captures` : 'Edit Capture'}
+                {showSettings ? 'Settings' : batchFolder !== null ? `Batch Edit — ${batchFolder.name}` : selectedFiles.length > 1 ? `Edit ${selectedFiles.length} captures` : 'Edit Capture'}
               </span>
-              <button onClick={() => { setGridSlideOpen(false); if (batchFolder !== null) setBatchFolder(null) }} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
+              <button onClick={() => { setGridSlideOpen(false); if (batchFolder !== null) setBatchFolder(null); if (showSettings) setShowSettings(false) }} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
-            {batchFolder !== null ? (
+            {showSettings ? (
+              <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => { setShowSettings(false); setGridSlideOpen(false) }} />
+            ) : batchFolder !== null ? (
               <BatchEditor
                 folderName={batchFolder.name}
                 fileCount={batchFolder.filePaths

@@ -304,6 +304,8 @@ These have been discussed and approved — remove each item when implemented.
 
 - **[ ] Selective metadata copy** — *(High priority)* When right-clicking to "Copy metadata", show a checkbox list of fields (similar to the grid column chooser) so the user can choose which fields to include in the copy. The in-memory clipboard stores only the checked fields; paste then only writes those fields to target files. Default: all fields checked. Persist last-used selection across copies.
 
+- **[ ] Multi-window settings isolation** — When a second window opens it doesn't see the current saved settings. No live sync needed (last-saved-wins is fine, each window owns its own state). The fix is just ensuring the second window reads the correct saved settings at load time. Root cause TBD — likely separate session partitions between windows (each `BrowserWindow` may get its own localStorage partition), or the window is created before the first window has flushed its latest settings to localStorage. Investigate whether both windows share the same Electron session/partition; if not, either consolidate to a single partition or move settings storage to a main-process JSON file read via IPC at startup.
+
 - **[ ] OS "Open folder in NAM Lab"** — Right-click a folder in Explorer/Finder and open it directly in NAM Lab. Requires registering a protocol handler or custom verb in electron-builder config. Similar to file associations but for folders; macOS needs a folder UTI handler, Windows needs a registry shell extension verb.
 
 ---
