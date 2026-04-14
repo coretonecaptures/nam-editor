@@ -433,7 +433,12 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
             <input
               type="checkbox"
               checked={draft.checkForRCBuilds}
-              onChange={(e) => { update('checkForRCBuilds', e.target.checked); setUpdateState({ status: 'idle' }) }}
+              onChange={(e) => {
+                const updated = { ...draft, checkForRCBuilds: e.target.checked }
+                setDraft(updated)
+                onSave(updated)
+                setUpdateState({ status: 'idle' })
+              }}
               className="w-3.5 h-3.5 rounded accent-indigo-500"
             />
             <span className="text-xs text-gray-500 dark:text-gray-500">Include RC builds</span>

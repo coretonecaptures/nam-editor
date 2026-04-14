@@ -73,7 +73,7 @@ This is especially useful for capture artists who want to properly tag their `.n
 - **All / Edited / Incomplete / Unnamed / No Type / No Maker / No Tone** filter chips in the file list header
 - **Edited** chip shows count of manually-changed files and filters to just those
 - **Incomplete** chip shows count of files missing any of the 7 core shareable fields (name, modeled_by, gear_make, gear_model, gear_type, tone_type, input_level_dbu) and filters to just those
-- **Gear Type** and **Tone Type** dropdowns filter to a specific type — highlight in their respective colors when active
+- **Gear Type**, **Tone Type**, and **Detected Preset** dropdowns filter to a specific type — highlight in their respective colors when active. The Preset dropdown includes a **None detected** option to find files with unrecognized configs
 - **Search bar** — searches capture name, filename, manufacturer, model, and modeled-by (hover the icon for details). **Name contains…** box filters by capture name only — handy when you need exact name matches without broader results
 - Files are sorted by Capture Name by default; click any column header in grid view to re-sort
 - **Ctrl+A / Cmd+A** selects all visible files
@@ -279,6 +279,12 @@ Right-click → **Remove NAM Lab Custom Metadata** to permanently strip the `nam
 NAM Lab supports metadata fields written by [NAM-BOT](https://github.com/nam-bot), a community NAM trainer wrapper:
 - **Trained Epochs** (`metadata.training.nam_bot.trained_epochs`) — number of training epochs; editable in NAM Lab so capture artists can backfill existing captures
 - **Preset Name** (`metadata.training.nam_bot.preset_name`) — training preset used; displayed as read-only in Capture Stats
+
+### Check for Updates
+- **Settings → Check for Updates** button (bottom of the Settings panel) — checks GitHub for a newer release and shows the result inline
+- If an update is available, a **Download** link opens the releases page in your browser; installation is manual (the app is not yet code-signed for auto-update)
+- **Include RC builds** checkbox (default off) — when enabled, pre-release and release candidate builds also count as "newer"
+- Current version is always shown next to the button so you know what you're running without clicking
 
 ---
 
