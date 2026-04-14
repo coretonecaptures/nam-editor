@@ -22,6 +22,12 @@ function compareVersions(a: string, b: string): number {
   // Same numeric version: release (no pre) beats RC
   if (va.pre === null && vb.pre !== null) return 1
   if (va.pre !== null && vb.pre === null) return -1
+  // Both are RC: compare the numeric suffix (rc2 > rc1)
+  if (va.pre !== null && vb.pre !== null) {
+    const na = parseInt(va.pre.replace(/\D/g, ''), 10) || 0
+    const nb = parseInt(vb.pre.replace(/\D/g, ''), 10) || 0
+    return na - nb
+  }
   return 0
 }
 
