@@ -1197,8 +1197,9 @@ export default function App() {
       if (key) nameMap.set(key, f)
     }
 
-    // Fields skipped for prefix (variant-specific) matches
-    const PREFIX_SKIP: Set<keyof NamFile['metadata']> = new Set(['nl_cabinet', 'nl_cabinet_config', 'nl_mics'])
+    // Fields skipped for prefix (variant-specific) matches — gear_type and tone_type
+    // are variant-specific (a DI variant has a different type than its cab counterpart)
+    const PREFIX_SKIP: Set<keyof NamFile['metadata']> = new Set(['gear_type', 'tone_type', 'nl_cabinet', 'nl_cabinet_config', 'nl_mics'])
 
     // Helper: build incoming fields from a row, optionally skipping prefix-skip fields
     const buildIncoming = (row: Record<string, unknown>, skipFields: Set<keyof NamFile['metadata']> = new Set()): Partial<NamFile['metadata']> => {
@@ -1295,7 +1296,14 @@ export default function App() {
     setImportModal(null)
     let updated = 0; let failed = 0
     for (const { file, incoming } of matches) {
-      const newMeta = { ...file.metadata, ...incoming }
+      // gear_type and tone_type are fill-if-empty even for exact matches — never overwrite
+      // an existing value the user may have already corrected in the editor
+      const newMeta = { ...file.metadata }
+      for (const [key, val] of Object.entries(incoming)) {
+        const existing = (newMeta as Record<string, unknown>)[key]
+        if (key === 'gear_type' && existing != null && existing !== '') continue
+        ;(newMeta as Record<string, unknown>)[key] = val
+      }
       const result = await window.api.writeMetadata(file.filePath, newMeta)
       if ((result as { success: boolean }).success) {
         updated++
