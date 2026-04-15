@@ -84,7 +84,7 @@ export function ImportMetadataModal({
             </label>
             <p className="text-xs text-indigo-600 dark:text-indigo-400 mt-1.5 ml-5">
               Strips the last word from each row's name and matches any capture whose name starts with the remainder.
-              Tone Type, Cabinet, Cab Config, and Mic(s) are skipped for these matches — bulk edit those after import.
+              Cabinet, Cab Config, and Mic(s) are skipped for these matches. Gear Type and Tone Type are applied only if the value is a valid recognised option.
             </p>
           </div>
         )}

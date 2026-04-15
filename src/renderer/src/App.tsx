@@ -1121,7 +1121,7 @@ export default function App() {
     }
 
     // Fields skipped for prefix (variant-specific) matches
-    const PREFIX_SKIP: Set<keyof NamFile['metadata']> = new Set(['tone_type', 'nl_cabinet', 'nl_cabinet_config', 'nl_mics'])
+    const PREFIX_SKIP: Set<keyof NamFile['metadata']> = new Set(['nl_cabinet', 'nl_cabinet_config', 'nl_mics'])
 
     // Helper: build incoming fields from a row, optionally skipping prefix-skip fields
     const buildIncoming = (row: Record<string, unknown>, skipFields: Set<keyof NamFile['metadata']> = new Set()): Partial<NamFile['metadata']> => {
@@ -1134,6 +1134,9 @@ export default function App() {
         if (val === '' || val == null) continue
         const strVal = String(val).trim()
         if (strVal === '') continue
+        // Validate enum fields — ignore if not a recognised value
+        if (col.field === 'gear_type' && !(GEAR_TYPES as readonly string[]).includes(strVal)) continue
+        if (col.field === 'tone_type' && !(TONE_TYPES as readonly string[]).includes(strVal)) continue
         const isNumericField = col.field === 'input_level_dbu' || col.field === 'output_level_dbu' || col.field === 'nb_trained_epochs'
         ;(incoming as Record<string, unknown>)[col.field] = isNumericField ? Number(strVal) : strVal
       }
