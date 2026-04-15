@@ -625,12 +625,13 @@ app.whenReady().then(() => {
   })
 
   // IPC: Move a file to a different folder (physical rename on disk)
-  ipcMain.handle('file:move', async (_event, sourcePath: string, destDir: string) => {
+  ipcMain.handle('file:move', async (_event, sourcePath: string, destDir: string, force = false) => {
     try {
       const fileName = sourcePath.replace(/\\/g, '/').split('/').pop()!
       const destPath = join(destDir, fileName)
       if (fs.existsSync(destPath)) {
-        return { success: false, error: 'exists', destPath: destPath.replace(/\\/g, '/') }
+        if (!force) return { success: false, error: 'exists', destPath: destPath.replace(/\\/g, '/') }
+        fs.unlinkSync(destPath)
       }
       fs.renameSync(sourcePath, destPath)
       return { success: true, destPath: destPath.replace(/\\/g, '/') }
@@ -822,6 +823,61 @@ app.whenReady().then(() => {
   // IPC: Open URL in default browser
   ipcMain.handle('app:openExternal', (_event, url: string) => {
     shell.openExternal(url)
+  })
+
+  // IPC: Detect whether a non-NAM-Lab default handler is registered for .nam files
+  ipcMain.handle('app:detectNamPlayer', async () => {
+    try {
+      const { execSync } = await import('child_process')
+      if (process.platform === 'win32') {
+        const assoc = execSync('cmd /c assoc .nam', { encoding: 'utf8', timeout: 3000, windowsHide: true }).trim()
+        if (!assoc.includes('=')) return false
+        const progId = assoc.split('=')[1].trim()
+        const ftype = execSync(`cmd /c ftype ${progId}`, { encoding: 'utf8', timeout: 3000, windowsHide: true }).trim()
+        const ourExe = process.execPath.replace(/\\/g, '/').toLowerCase()
+        const ftypeLower = ftype.replace(/\\/g, '/').toLowerCase()
+        return ftypeLower.includes('.exe') && !ftypeLower.includes(ourExe)
+      }
+      // macOS / Linux: no reliable shell-only method — rely on manual path setting
+      return false
+    } catch {
+      return false
+    }
+  })
+
+  // IPC: Browse for NAM standalone executable
+  ipcMain.handle('dialog:browseExecutable', async () => {
+    if (!mainWindow) return null
+    const filters = process.platform === 'win32'
+      ? [{ name: 'Executable', extensions: ['exe'] }]
+      : process.platform === 'darwin'
+        ? [{ name: 'Application', extensions: ['app'] }]
+        : [{ name: 'All Files', extensions: ['*'] }]
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Select Neural Amp Modeler standalone',
+      properties: ['openFile'],
+      filters
+    })
+    return result.canceled ? null : result.filePaths[0]
+  })
+
+  // IPC: Open a .nam file in NAM standalone (via explicit path or OS default)
+  ipcMain.handle('app:openInNam', async (_event, filePath: string, standalonePath: string) => {
+    try {
+      if (standalonePath) {
+        const { spawn } = await import('child_process')
+        if (process.platform === 'darwin' && standalonePath.endsWith('.app')) {
+          spawn('open', ['-a', standalonePath, filePath], { detached: true, stdio: 'ignore' }).unref()
+        } else {
+          spawn(standalonePath, [filePath], { detached: true, stdio: 'ignore' }).unref()
+        }
+        return { success: true }
+      }
+      const err = await shell.openPath(filePath)
+      return { success: !err, error: err || undefined }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
   })
 
   // IPC: Check for updates via GitHub releases API

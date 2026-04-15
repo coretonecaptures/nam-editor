@@ -41,6 +41,8 @@ interface FileListProps {
   onCopyMetadata?: (filePath: string) => void
   onPasteMetadata?: (filePaths: string[]) => void
   onClearNamLab?: (filePaths: string[]) => void
+  namPlayerAvailable?: boolean
+  onOpenInNam?: (filePath: string) => void
   viewMode: ViewMode
   onViewModeChange: (mode: ViewMode) => void
   gridMaximized?: boolean
@@ -252,6 +254,8 @@ export function FileList({
   onCopyMetadata,
   onPasteMetadata,
   onClearNamLab,
+  namPlayerAvailable,
+  onOpenInNam,
   viewMode,
   onViewModeChange,
   solidPills = false,
@@ -924,6 +928,20 @@ export function FileList({
               Batch edit {selectedVisible.length} selected
             </button>
           )}
+          <div className="border-t border-gray-200 dark:border-gray-700 my-1" />
+          <button
+            className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 transition-colors ${namPlayerAvailable && onOpenInNam ? 'text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800' : 'text-gray-400 dark:text-gray-600 cursor-default'}`}
+            disabled={!namPlayerAvailable || !onOpenInNam}
+            onClick={() => {
+              if (namPlayerAvailable && onOpenInNam && ctxMenu) { onOpenInNam(ctxMenu.filePath); setCtxMenu(null) }
+            }}
+            title={namPlayerAvailable ? 'Launch Neural Amp Modeler standalone — load the file manually once it opens' : 'Neural Amp Modeler not found — set path in Settings'}
+          >
+            <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+            </svg>
+            Launch Neural Amp Modeler standalone…
+          </button>
         </div>
       )}
 

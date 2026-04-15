@@ -35,7 +35,7 @@ declare global {
         config?: unknown
       }>
       writeMetadata: (filePath: string, metadata: unknown) => Promise<{ success: boolean; error?: string }>
-      moveFile: (sourcePath: string, destDir: string) => Promise<{ success: boolean; error?: string; destPath?: string }>
+      moveFile: (sourcePath: string, destDir: string, force?: boolean) => Promise<{ success: boolean; error?: string; destPath?: string }>
       scanFolder: (folderPath: string, hiddenFolders?: string) => Promise<{ success: boolean; error?: string; files?: string[] }>
       scanTree: (folderPath: string, hiddenFolders?: string) => Promise<{ success: boolean; error?: string; tree?: FolderNode }>
       getErrorLogPath: () => Promise<string>
@@ -56,6 +56,9 @@ declare global {
       onOpenFiles: (cb: (paths: string[]) => void) => () => void
       checkForUpdates: (includeRc: boolean) => Promise<{ hasUpdate?: boolean; latestVersion?: string; releaseUrl?: string; error?: string }>
       openExternal: (url: string) => Promise<void>
+      detectNamPlayer: () => Promise<boolean>
+      browseExecutable: () => Promise<string | null>
+      openInNam: (filePath: string, standalonePath: string) => Promise<{ success: boolean; error?: string }>
       platform: string
     }
   }
@@ -154,6 +157,7 @@ export default function App() {
   const [batchFolder, setBatchFolder] = useState<{ path: string | null; name: string; filePaths?: string[] } | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
+  const [namPlayerDetected, setNamPlayerDetected] = useState(false)
   const [librarian, setLibrarian] = useState<LibrarianState>(EMPTY_LIBRARIAN)
   const [libraryFilter, setLibraryFilter] = useState<Set<string> | null>(null)
   const initialLayout = loadLayout()
@@ -388,6 +392,11 @@ export default function App() {
     const unsub = window.api.onOpenFiles((paths) => loadFiles(paths, 'append'))
     return unsub
   }, [loadFiles])
+
+  // Detect NAM standalone once on mount
+  useEffect(() => {
+    window.api.detectNamPlayer().then(setNamPlayerDetected)
+  }, [])
 
   // Combined startup effect: pending files take priority over default folder
   // Must be placed after loadFiles and loadFolderByPath are defined
@@ -932,20 +941,44 @@ export default function App() {
   const handleMoveToFolder = async (paths: string[]) => {
     const destFolder = await window.api.openFolder()
     if (!destFolder) return
+    const destName = destFolder.replace(/\\/g, '/').split('/').pop()
     const movedPaths = new Set<string>()
+    const conflictPaths: string[] = []
     let failed = 0
+
+    // First pass — move non-conflicting files
     for (const p of paths) {
       const result = await window.api.moveFile(p, destFolder)
       if (result.success) movedPaths.add(p)
+      else if (result.error === 'exists') conflictPaths.push(p)
       else failed++
     }
+
+    // If conflicts, ask user
+    if (conflictPaths.length > 0) {
+      const names = conflictPaths.map((p) => p.replace(/\\/g, '/').split('/').pop()).join('\n')
+      const overwrite = confirm(
+        `${conflictPaths.length} file${conflictPaths.length !== 1 ? 's' : ''} already exist in "${destName}":\n\n${names}\n\nOverwrite?`
+      )
+      if (overwrite) {
+        for (const p of conflictPaths) {
+          const result = await window.api.moveFile(p, destFolder, true)
+          if (result.success) movedPaths.add(p)
+          else failed++
+        }
+      }
+    }
+
     if (movedPaths.size > 0) {
       setFiles((prev) => prev.filter((f) => !movedPaths.has(f.filePath)))
     }
+    const skipped = conflictPaths.length - conflictPaths.filter((p) => movedPaths.has(p)).length
     if (failed > 0) {
       setStatus({ message: `Moved ${movedPaths.size}, failed ${failed}`, type: 'error' })
+    } else if (skipped > 0) {
+      setStatus({ message: `Moved ${movedPaths.size} file${movedPaths.size !== 1 ? 's' : ''} to ${destName} — ${skipped} skipped (already exist)`, type: 'info' })
     } else {
-      setStatus({ message: `Moved ${movedPaths.size} file${movedPaths.size !== 1 ? 's' : ''} to ${destFolder.replace(/\\/g, '/').split('/').pop()}`, type: 'success' })
+      setStatus({ message: `Moved ${movedPaths.size} file${movedPaths.size !== 1 ? 's' : ''} to ${destName}`, type: 'success' })
     }
   }
 
@@ -1536,6 +1569,11 @@ export default function App() {
               onCopyMetadata={handleCopyMetadata}
               onPasteMetadata={handlePasteMetadata}
               onClearNamLab={handleClearNamLab}
+              namPlayerAvailable={namPlayerDetected || !!settings.namStandalonePath}
+              onOpenInNam={async (filePath) => {
+                const result = await window.api.openInNam(filePath, settings.namStandalonePath)
+                if (!result.success) setStatus({ message: `Could not open in NAM: ${result.error}`, type: 'error' })
+              }}
             />
           </div>
           {!gridMaximized && <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} onCollapse={() => setListCollapsed((v) => !v)} collapsed={listCollapsed} />}

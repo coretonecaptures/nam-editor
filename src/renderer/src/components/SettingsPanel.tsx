@@ -444,6 +444,38 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
             <span className="text-xs text-gray-500 dark:text-gray-500">Include RC builds</span>
           </label>
         </div>
+        {/* NAM Standalone row */}
+        <div className="px-6 py-3 border-b border-gray-200 dark:border-gray-800 flex items-center gap-3">
+          <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">NAM Standalone</span>
+          <span className="text-xs text-gray-400 dark:text-gray-500 truncate flex-1 font-mono">
+            {draft.namStandalonePath || <span className="italic text-gray-400 dark:text-gray-600">Not configured</span>}
+          </span>
+          <button
+            onClick={async () => {
+              const p = await window.api.browseExecutable()
+              if (p) {
+                const updated = { ...draft, namStandalonePath: p }
+                setDraft(updated)
+                onSave(updated)
+              }
+            }}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 flex-shrink-0"
+          >
+            Browse…
+          </button>
+          {draft.namStandalonePath && (
+            <button
+              onClick={() => {
+                const updated = { ...draft, namStandalonePath: '' }
+                setDraft(updated)
+                onSave(updated)
+              }}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-red-500/20 text-gray-500 dark:text-gray-400 flex-shrink-0"
+            >
+              Clear
+            </button>
+          )}
+        </div>
         {/* About row */}
         <div className="px-6 py-3 flex items-center justify-between">
           <div className="text-xs text-gray-400 dark:text-gray-600">

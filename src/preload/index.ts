@@ -10,8 +10,8 @@ const api = {
     ipcRenderer.invoke('file:writeMetadata', filePath, metadata),
   scanFolder: (folderPath: string, hiddenFolders?: string) => ipcRenderer.invoke('folder:scanNam', folderPath, hiddenFolders),
   scanTree: (folderPath: string, hiddenFolders?: string) => ipcRenderer.invoke('folder:scanTree', folderPath, hiddenFolders),
-  moveFile: (sourcePath: string, destDir: string) =>
-    ipcRenderer.invoke('file:move', sourcePath, destDir) as Promise<{ success: boolean; error?: string; destPath?: string }>,
+  moveFile: (sourcePath: string, destDir: string, force = false) =>
+    ipcRenderer.invoke('file:move', sourcePath, destDir, force) as Promise<{ success: boolean; error?: string; destPath?: string }>,
   revealFile: (filePath: string) => ipcRenderer.invoke('shell:revealFile', filePath),
   getErrorLogPath: (): Promise<string> => ipcRenderer.invoke('log:getErrorLogPath'),
   getStartupLogPath: (): Promise<string> => ipcRenderer.invoke('log:getStartupLogPath'),
@@ -42,6 +42,10 @@ const api = {
   checkForUpdates: (includeRc: boolean): Promise<{ hasUpdate?: boolean; latestVersion?: string; releaseUrl?: string; error?: string }> =>
     ipcRenderer.invoke('app:checkForUpdates', includeRc),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('app:openExternal', url),
+  detectNamPlayer: (): Promise<boolean> => ipcRenderer.invoke('app:detectNamPlayer'),
+  browseExecutable: (): Promise<string | null> => ipcRenderer.invoke('dialog:browseExecutable'),
+  openInNam: (filePath: string, standalonePath: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('app:openInNam', filePath, standalonePath),
   onOpenFiles: (cb: (paths: string[]) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, paths: string[]) => cb(paths)
     ipcRenderer.on('app:openFiles', handler)

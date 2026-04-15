@@ -52,6 +52,9 @@ export interface AppSettings {
 
   // Updates
   checkForRCBuilds: boolean
+
+  // NAM Standalone
+  namStandalonePath: string
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -86,7 +89,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   watchFolder: false,
   hiddenFolders: 'lightning_logs,version_0,checkpoints',
   showNamLabFields: true,
-  checkForRCBuilds: false
+  checkForRCBuilds: false,
+  namStandalonePath: ''
 }
 
 const STORAGE_KEY = 'nam-editor-settings'
