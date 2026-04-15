@@ -14,6 +14,7 @@ import { SettingsPanel } from './components/SettingsPanel'
 import { FolderTree } from './components/FolderTree'
 import { DuplicatesModal } from './components/DuplicatesModal'
 import { ImportMetadataModal, ImportMatch } from './components/ImportMetadataModal'
+import { FolderGallery, FolderImagesData } from './components/FolderGallery'
 import * as XLSX from 'xlsx'
 import { FolderNode } from './types/librarian'
 
@@ -25,6 +26,7 @@ declare global {
       openImportFile: () => Promise<string | null>
       readFileBinary: (filePath: string) => Promise<{ data?: string; error?: string }>
       revealFile: (filePath: string) => Promise<void>
+      openFile: (filePath: string) => Promise<{ success: boolean; error?: string }>
       readFile: (filePath: string) => Promise<{
         success: boolean
         error?: string
@@ -59,6 +61,7 @@ declare global {
       detectNamPlayer: () => Promise<boolean>
       browseExecutable: () => Promise<string | null>
       openInNam: (filePath: string, standalonePath: string) => Promise<{ success: boolean; error?: string }>
+      scanImages: (folderPath: string) => Promise<{ success: boolean; images: string[] }>
       platform: string
     }
   }
@@ -190,6 +193,47 @@ export default function App() {
       return []
     }
   })
+
+  const [folderImages, setFolderImages] = useState<FolderImagesData>(null)
+
+  // Scan folder images when selected folder changes (only when feature is enabled)
+  useEffect(() => {
+    const sf = librarian.selectedFolder
+    const rf = librarian.rootFolder
+    if (!sf || !settings.showFolderImages) {
+      setFolderImages(null)
+      return
+    }
+    let cancelled = false
+    const norm = (p: string) => p.replace(/\\/g, '/')
+    const scan = async () => {
+      const ownResult = await window.api.scanImages(sf)
+      if (cancelled) return
+      const own = ownResult.success ? ownResult.images : []
+      const inherited: { folderName: string; paths: string[] }[] = []
+      if (rf && norm(sf) !== norm(rf)) {
+        let current = norm(sf)
+        const normRoot = norm(rf)
+        while (true) {
+          const lastSlash = current.lastIndexOf('/')
+          if (lastSlash <= 0) break
+          const parent = current.substring(0, lastSlash)
+          if (!parent.startsWith(normRoot) || parent.length < normRoot.length) break
+          const parentResult = await window.api.scanImages(parent)
+          if (cancelled) return
+          if (parentResult.success && parentResult.images.length > 0) {
+            const folderName = parent.substring(parent.lastIndexOf('/') + 1)
+            inherited.push({ folderName, paths: parentResult.images })
+          }
+          if (parent === normRoot) break
+          current = parent
+        }
+      }
+      setFolderImages({ own, inherited })
+    }
+    scan()
+    return () => { cancelled = true }
+  }, [librarian.selectedFolder, librarian.rootFolder, settings.showFolderImages])
 
   // Apply dark/light class to <html> whenever theme setting changes
   useEffect(() => {
@@ -1649,6 +1693,8 @@ export default function App() {
               gearMakeSuggestions={gearMakeSuggestions}
               gearModelSuggestions={gearModelSuggestions}
             />
+          ) : selectedFiles.length === 0 && librarian.selectedFolder !== null && folderImages !== null && (folderImages.own.length > 0 || folderImages.inherited.some((g) => g.paths.length > 0)) ? (
+            <FolderGallery data={folderImages} />
           ) : selectedFiles.length === 0 && files.length === 0 ? (
             <EmptyState onOpenFiles={handleOpenFiles} onOpenFolder={handleOpenFolder} />
           ) : (

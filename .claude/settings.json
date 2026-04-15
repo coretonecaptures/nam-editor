@@ -22,7 +22,10 @@
       "Bash(node -e \"const chunks=[]; process.stdin.on\\(''''data'''',c=>chunks.push\\(c\\)\\); process.stdin.on\\(''''end'''',\\(\\)=>{ const d=JSON.parse\\(Buffer.concat\\(chunks\\)\\); d.tree.forEach\\(f=>console.log\\(f.path\\)\\); }\\)\")",
       "Bash(for f:*)",
       "Bash(do echo:*)",
-      "Bash(node -e \"const chunks=[]; process.stdin.on\\(''''data'''',c=>chunks.push\\(c\\)\\); process.stdin.on\\(''''end'''',\\(\\)=>{ const d=JSON.parse\\(Buffer.concat\\(chunks\\)\\); console.log\\(Buffer.from\\(d.content,''''base64''''\\).toString\\(\\)\\); }\\)\" echo \"\" done)"
+      "Bash(node -e \"const chunks=[]; process.stdin.on\\(''''data'''',c=>chunks.push\\(c\\)\\); process.stdin.on\\(''''end'''',\\(\\)=>{ const d=JSON.parse\\(Buffer.concat\\(chunks\\)\\); console.log\\(Buffer.from\\(d.content,''''base64''''\\).toString\\(\\)\\); }\\)\" echo \"\" done)",
+      "WebFetch(domain:www.thenam.online)",
+      "WebFetch(domain:www.npmjs.com)",
+      "Bash(git tag:*)"
     ]
   }
 }

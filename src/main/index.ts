@@ -1,5 +1,5 @@
-import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
-import { join, dirname, basename, normalize as normalizePath } from 'path'
+import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net } from 'electron'
+import { join, dirname, basename, extname, normalize as normalizePath } from 'path'
 import fs from 'fs'
 import os from 'os'
 
@@ -411,7 +411,19 @@ function getArgvFiles(): string[] {
   return process.argv.slice(isDev ? 2 : 1).filter((a) => !a.startsWith('--') && a.toLowerCase().endsWith('.nam'))
 }
 
+// Allow local-file:// to bypass CSP so image src="local-file:///..." works
+// in both dev (localhost) and production (file://) renderer contexts.
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'local-file', privileges: { secure: true, bypassCSP: true, stream: true } }
+])
+
 app.whenReady().then(() => {
+  // Serve local filesystem files under local-file:// scheme
+  protocol.handle('local-file', (req) => {
+    const fileUrl = 'file://' + req.url.slice('local-file://'.length)
+    return net.fetch(fileUrl)
+  })
+
   log('app.whenReady fired')
   switchLogToUserData()
   log(`log file moved to userData: ${logPath}`)
@@ -586,6 +598,20 @@ app.whenReady().then(() => {
     }
   })
 
+  // IPC: Scan a folder for image files (non-recursive)
+  ipcMain.handle('folder:scanImages', async (_event, folderPath: string) => {
+    try {
+      const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif'])
+      const entries = fs.readdirSync(folderPath, { withFileTypes: true })
+      const images = entries
+        .filter((e) => e.isFile() && IMAGE_EXTS.has(extname(e.name).toLowerCase()))
+        .map((e) => join(folderPath, e.name).replace(/\\/g, '/'))
+      return { success: true, images }
+    } catch {
+      return { success: false, images: [] as string[] }
+    }
+  })
+
   // IPC: Scan a folder and return a tree structure for the Librarian
   // hiddenFolders: comma-separated folder names to skip entirely (case-insensitive)
   ipcMain.handle('folder:scanTree', async (_event, folderPath: string, hiddenFolders?: string) => {
@@ -702,6 +728,11 @@ app.whenReady().then(() => {
   // IPC: Reveal a file in Finder / Explorer
   ipcMain.handle('shell:revealFile', (_event, filePath: string) => {
     shell.showItemInFolder(filePath)
+  })
+
+  ipcMain.handle('shell:openFile', async (_event, filePath: string) => {
+    const err = await shell.openPath(filePath)
+    return { success: !err, error: err || undefined }
   })
 
   // IPC: Restore keyboard focus after native dialogs or component unmounts.

@@ -348,6 +348,12 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                 checked={draft.showNamLabFields}
                 onChange={(v) => update('showNamLabFields', v)}
               />
+              <CheckboxField
+                label="Show folder images"
+                description="When a folder is selected with no captures chosen, display image files from that folder (and parent folders) in the right panel."
+                checked={draft.showFolderImages}
+                onChange={(v) => update('showFolderImages', v)}
+              />
               <SettingsField label="Hidden Folders" hint="Folder names to exclude when scanning — subfolders are also excluded">
                 <div className="space-y-1.5">
                   <input

@@ -13,6 +13,7 @@ const api = {
   moveFile: (sourcePath: string, destDir: string, force = false) =>
     ipcRenderer.invoke('file:move', sourcePath, destDir, force) as Promise<{ success: boolean; error?: string; destPath?: string }>,
   revealFile: (filePath: string) => ipcRenderer.invoke('shell:revealFile', filePath),
+  openFile: (filePath: string): Promise<{ success: boolean; error?: string }> => ipcRenderer.invoke('shell:openFile', filePath),
   getErrorLogPath: (): Promise<string> => ipcRenderer.invoke('log:getErrorLogPath'),
   getStartupLogPath: (): Promise<string> => ipcRenderer.invoke('log:getStartupLogPath'),
   refocusWindow: () => ipcRenderer.invoke('window:refocus'),
@@ -42,6 +43,7 @@ const api = {
   checkForUpdates: (includeRc: boolean): Promise<{ hasUpdate?: boolean; latestVersion?: string; releaseUrl?: string; error?: string }> =>
     ipcRenderer.invoke('app:checkForUpdates', includeRc),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('app:openExternal', url),
+  scanImages: (folderPath: string): Promise<{ success: boolean; images: string[] }> => ipcRenderer.invoke('folder:scanImages', folderPath),
   detectNamPlayer: (): Promise<boolean> => ipcRenderer.invoke('app:detectNamPlayer'),
   browseExecutable: (): Promise<string | null> => ipcRenderer.invoke('dialog:browseExecutable'),
   openInNam: (filePath: string, standalonePath: string): Promise<{ success: boolean; error?: string }> =>

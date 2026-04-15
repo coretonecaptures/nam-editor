@@ -50,6 +50,9 @@ export interface AppSettings {
   // Show/edit NAM Lab extended capture detail fields
   showNamLabFields: boolean
 
+  // Show folder image gallery in right panel when a folder is selected
+  showFolderImages: boolean
+
   // Updates
   checkForRCBuilds: boolean
 
@@ -89,6 +92,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   watchFolder: false,
   hiddenFolders: 'lightning_logs,version_0,checkpoints',
   showNamLabFields: true,
+  showFolderImages: true,
   checkForRCBuilds: false,
   namStandalonePath: ''
 }
