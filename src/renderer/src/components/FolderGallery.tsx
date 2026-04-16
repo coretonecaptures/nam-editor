@@ -61,13 +61,12 @@ function ImageGrid({ paths, onOpen }: { paths: string[]; onOpen: (p: string) => 
           <div
             key={p}
             className={`overflow-hidden rounded-md cursor-pointer bg-gray-100 dark:bg-gray-800${spanFull ? ' col-span-2' : ''}`}
-            style={{ aspectRatio: '4/3' }}
             onClick={() => onOpen(p)}
           >
             <img
               src={toFileUrl(p)}
               alt=""
-              className="w-full h-full object-cover hover:opacity-90 transition-opacity"
+              className="w-full h-auto block hover:opacity-90 transition-opacity"
               loading="lazy"
             />
           </div>

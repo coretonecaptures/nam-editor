@@ -200,18 +200,26 @@ export default function App() {
   useEffect(() => {
     const sf = librarian.selectedFolder
     const rf = librarian.rootFolder
-    if (!sf || !settings.showFolderImages) {
+    if (!settings.showFolderImages) {
+      setFolderImages(null)
+      return
+    }
+    // When no subfolder is selected, scan the root folder itself
+    const targetFolder = sf ?? rf
+    if (!targetFolder) {
       setFolderImages(null)
       return
     }
     let cancelled = false
     const norm = (p: string) => p.replace(/\\/g, '/')
     const scan = async () => {
-      const ownResult = await window.api.scanImages(sf)
+      const ownResult = await window.api.scanImages(targetFolder)
       if (cancelled) return
       const own = ownResult.success ? ownResult.images : []
       const inherited: { folderName: string; paths: string[] }[] = []
-      if (rf && norm(sf) !== norm(rf)) {
+      // Only walk ancestors when a specific subfolder is selected (not root).
+      // Stop BEFORE reaching root so root-level images don't cascade into every subfolder.
+      if (sf && rf && norm(sf) !== norm(rf)) {
         let current = norm(sf)
         const normRoot = norm(rf)
         while (true) {
@@ -219,13 +227,13 @@ export default function App() {
           if (lastSlash <= 0) break
           const parent = current.substring(0, lastSlash)
           if (!parent.startsWith(normRoot) || parent.length < normRoot.length) break
+          if (parent === normRoot) break  // stop before root — root images only show at root
           const parentResult = await window.api.scanImages(parent)
           if (cancelled) return
           if (parentResult.success && parentResult.images.length > 0) {
             const folderName = parent.substring(parent.lastIndexOf('/') + 1)
             inherited.push({ folderName, paths: parentResult.images })
           }
-          if (parent === normRoot) break
           current = parent
         }
       }
@@ -1701,7 +1709,7 @@ export default function App() {
               gearMakeSuggestions={gearMakeSuggestions}
               gearModelSuggestions={gearModelSuggestions}
             />
-          ) : selectedFiles.length === 0 && librarian.selectedFolder !== null && folderImages !== null && (folderImages.own.length > 0 || folderImages.inherited.some((g) => g.paths.length > 0)) ? (
+          ) : selectedFiles.length === 0 && librarian.rootFolder !== null && folderImages !== null && (folderImages.own.length > 0 || folderImages.inherited.some((g) => g.paths.length > 0)) ? (
             <FolderGallery data={folderImages} />
           ) : selectedFiles.length === 0 && files.length === 0 ? (
             <EmptyState onOpenFiles={handleOpenFiles} onOpenFolder={handleOpenFolder} />
