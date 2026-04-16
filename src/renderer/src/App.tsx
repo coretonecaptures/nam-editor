@@ -1205,12 +1205,15 @@ export default function App() {
       if (key) nameMap.set(key, f)
     }
 
-    // Fields skipped for prefix (variant-specific) matches — gear_type and tone_type
-    // are variant-specific (a DI variant has a different type than its cab counterpart)
-    const PREFIX_SKIP: Set<keyof NamFile['metadata']> = new Set(['gear_type', 'tone_type', 'nl_cabinet', 'nl_cabinet_config', 'nl_mics'])
+    // Fields skipped for prefix (variant-specific) matches — tone_type and nl_ cabinet/mic
+    // fields vary per variant. gear_type is handled separately with cab-upgrade logic below.
+    const PREFIX_SKIP: Set<keyof NamFile['metadata']> = new Set(['tone_type', 'nl_cabinet', 'nl_cabinet_config', 'nl_mics'])
+
+    // For prefix matches only: amp→amp_cab, pedal_amp→pedal_amp_cab. All other gear_types skipped.
+    const CAB_UPGRADE: Record<string, string> = { amp: 'amp_cab', pedal_amp: 'pedal_amp_cab' }
 
     // Helper: build incoming fields from a row, optionally skipping prefix-skip fields
-    const buildIncoming = (row: Record<string, unknown>, skipFields: Set<keyof NamFile['metadata']> = new Set()): Partial<NamFile['metadata']> => {
+    const buildIncoming = (row: Record<string, unknown>, skipFields: Set<keyof NamFile['metadata']> = new Set(), isPrefix = false): Partial<NamFile['metadata']> => {
       const incoming: Partial<NamFile['metadata']> = {}
       for (const col of IMPORT_COLUMNS) {
         if (!col.field) continue
@@ -1220,8 +1223,16 @@ export default function App() {
         if (val === '' || val == null) continue
         const strVal = String(val).trim()
         if (strVal === '') continue
-        // Validate enum fields — ignore if not a recognised value
-        if (col.field === 'gear_type' && !(GEAR_TYPES as readonly string[]).includes(strVal)) continue
+        if (col.field === 'gear_type') {
+          if (isPrefix) {
+            // Prefix match: upgrade amp→amp_cab / pedal_amp→pedal_amp_cab; skip everything else
+            const upgraded = CAB_UPGRADE[strVal]
+            if (upgraded) (incoming as Record<string, unknown>)[col.field] = upgraded
+            continue
+          }
+          // Exact match: validate and overwrite normally
+          if (!(GEAR_TYPES as readonly string[]).includes(strVal)) continue
+        }
         if (col.field === 'tone_type' && !(TONE_TYPES as readonly string[]).includes(strVal)) continue
         const isNumericField = col.field === 'input_level_dbu' || col.field === 'output_level_dbu' || col.field === 'nb_trained_epochs'
         ;(incoming as Record<string, unknown>)[col.field] = isNumericField ? Number(strVal) : strVal
@@ -1258,7 +1269,7 @@ export default function App() {
         if (!fName.startsWith(prefix)) continue
         if (exactMatchedPaths.has(f.filePath)) continue
         if (prefixMatchedPaths.has(f.filePath)) continue
-        const incoming = buildIncoming(row, PREFIX_SKIP)
+        const incoming = buildIncoming(row, PREFIX_SKIP, true)
         if (Object.keys(incoming).length > 0) {
           prefixMatches.push({ file: f, incoming })
           prefixMatchedPaths.add(f.filePath)
@@ -1304,14 +1315,7 @@ export default function App() {
     setImportModal(null)
     let updated = 0; let failed = 0
     for (const { file, incoming } of matches) {
-      // gear_type and tone_type are fill-if-empty even for exact matches — never overwrite
-      // an existing value the user may have already corrected in the editor
-      const newMeta = { ...file.metadata }
-      for (const [key, val] of Object.entries(incoming)) {
-        const existing = (newMeta as Record<string, unknown>)[key]
-        if (key === 'gear_type' && existing != null && existing !== '') continue
-        ;(newMeta as Record<string, unknown>)[key] = val
-      }
+      const newMeta = { ...file.metadata, ...incoming }
       const result = await window.api.writeMetadata(file.filePath, newMeta)
       if ((result as { success: boolean }).success) {
         updated++
