@@ -1205,9 +1205,10 @@ export default function App() {
       if (key) nameMap.set(key, f)
     }
 
-    // Fields skipped for prefix (variant-specific) matches — tone_type and nl_ cabinet/mic
-    // fields vary per variant. gear_type is handled separately with cab-upgrade logic below.
-    const PREFIX_SKIP: Set<keyof NamFile['metadata']> = new Set(['tone_type', 'nl_cabinet', 'nl_cabinet_config', 'nl_mics'])
+    // Fields skipped for prefix (variant-specific) matches — nl_ cabinet/mic fields vary
+    // per variant. gear_type is handled separately with cab-upgrade logic below.
+    // tone_type is NOT skipped — it's the same across DI/cab variants of the same session.
+    const PREFIX_SKIP: Set<keyof NamFile['metadata']> = new Set(['nl_cabinet', 'nl_cabinet_config', 'nl_mics'])
 
     // For prefix matches only: amp→amp_cab, pedal_amp→pedal_amp_cab. All other gear_types skipped.
     const CAB_UPGRADE: Record<string, string> = { amp: 'amp_cab', pedal_amp: 'amp_pedal_cab' }
