@@ -602,7 +602,7 @@ app.whenReady().then(() => {
   ipcMain.handle('folder:scanImages', async (_event, folderPath: string) => {
     try {
       const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif'])
-      const entries = fs.readdirSync(folderPath, { withFileTypes: true })
+      const entries = await fs.promises.readdir(folderPath, { withFileTypes: true })
       const images = entries
         .filter((e) => e.isFile() && IMAGE_EXTS.has(extname(e.name).toLowerCase()))
         .map((e) => join(folderPath, e.name).replace(/\\/g, '/'))

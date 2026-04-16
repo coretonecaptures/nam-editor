@@ -1210,7 +1210,7 @@ export default function App() {
     const PREFIX_SKIP: Set<keyof NamFile['metadata']> = new Set(['tone_type', 'nl_cabinet', 'nl_cabinet_config', 'nl_mics'])
 
     // For prefix matches only: amp→amp_cab, pedal_amp→pedal_amp_cab. All other gear_types skipped.
-    const CAB_UPGRADE: Record<string, string> = { amp: 'amp_cab', pedal_amp: 'pedal_amp_cab' }
+    const CAB_UPGRADE: Record<string, string> = { amp: 'amp_cab', pedal_amp: 'amp_pedal_cab' }
 
     // Helper: build incoming fields from a row, optionally skipping prefix-skip fields
     const buildIncoming = (row: Record<string, unknown>, skipFields: Set<keyof NamFile['metadata']> = new Set(), isPrefix = false): Partial<NamFile['metadata']> => {

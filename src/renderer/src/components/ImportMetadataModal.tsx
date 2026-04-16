@@ -84,7 +84,7 @@ export function ImportMetadataModal({
             </label>
             <p className="text-xs text-indigo-600 dark:text-indigo-400 mt-1.5 ml-5">
               Strips the last word from each row's name and matches any capture whose name starts with the remainder.
-              Tone Type, Cabinet, Cab Config, and Mic(s) are skipped. Gear Type is auto-upgraded: amp→amp_cab and pedal_amp→pedal_amp_cab; all other gear types are skipped.
+              Tone Type, Cabinet, Cab Config, and Mic(s) are skipped. Gear Type is auto-upgraded: amp→amp_cab and pedal_amp→amp_pedal_cab; all other gear types are skipped.
             </p>
           </div>
         )}
