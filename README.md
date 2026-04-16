@@ -187,6 +187,7 @@ Right-click any file or selection for quick actions:
 - **Remove NAM Lab Custom Metadata** — permanently removes the `nam_lab` block from selected files on disk, clearing all Capture Details fields
 - **Save N selected** — saves only the selected files
 - **Batch edit N selected** — opens the batch editor for the selection
+- **Launch in Neural Amp Modeler standalone…** *(single file)* — opens the capture in the NAM standalone player. Available automatically if NAM is registered as the default handler for `.nam` files on your system, or configure a custom path in **Settings → NAM Standalone**
 
 ### Duplicate Detection
 - Click **Duplicates** in the toolbar to scan your loaded library for duplicate captures
@@ -222,7 +223,9 @@ Right-click any file or selection for quick actions:
 - **Reveal in Explorer** — opens the folder in Finder or Explorer
 - **Export folder as CSV / Excel** — exports all files under that folder with all available columns
 - **Generate import template…** — exports an editable `.xlsx` pre-filled with the folder's current metadata (editable fields only). Edit it in Excel, then import it back
-- **Import metadata from spreadsheet…** — picks an `.xlsx` or `.csv`, matches rows to captures by Capture Name, and writes non-empty cells back to disk. Empty cells are skipped — only what you fill in is written. Requires a confirmation checkbox before anything is written. Supports **prefix match mode**: if your spreadsheet has DI captures but you want to apply their settings to amp_cab variants with the same name prefix, enable prefix matching in the import dialog — Gear Type, Cabinet, Cab Config, and Mic(s) are automatically skipped for prefix matches since those vary per variant
+- **Import metadata from spreadsheet…** — picks an `.xlsx` or `.csv`, matches rows to captures by Capture Name, and writes non-empty cells back to disk. Empty cells are skipped — only what you fill in is written. Requires a confirmation checkbox before anything is written
+  - **Gear Type is never overwritten** — if a capture already has a Gear Type set, the import leaves it alone (Gear Type varies per variant and is easy to get wrong in a spreadsheet)
+  - Supports **prefix match mode**: if your spreadsheet has entries for DI captures but you want to apply their settings to amp_cab variants with the same name prefix, enable prefix matching in the import dialog — Gear Type, Tone Type, Cabinet, Cab Config, and Mic(s) are automatically skipped for prefix matches since those fields vary per variant
 
 ### Name from Filename
 - If loaded files have no Capture Name set, a **"Name from File (N)"** button appears in the toolbar
@@ -274,6 +277,18 @@ All values are strings. All fields are optional — omit any you don't need.
 The **Capture Details** section in the editor shows only the fields **relevant to the selected Gear Type** by default. Use the **Relevant / All** toggle to see all fields. Available in the single-file editor, multi-select editor, and batch editor. Also available as optional columns in grid view and export.
 
 Right-click → **Remove NAM Lab Custom Metadata** to permanently strip the `nam_lab` block from files on disk if needed.
+
+### Folder Image Gallery
+When you click a folder in the tree with no captures selected, the right panel shows any images stored in that folder (and its parent folders up to the library root).
+
+- Supports **jpg, jpeg, png, webp, gif**
+- Images from parent folders are shown below a *"From [folder name]"* divider — useful for storing an amp photo at the parent level and having it appear in every subfolder (DI, Full Rig, various cab variants, etc.)
+- **Adaptive grid layout**: 1 image fills the full width; 2 images sit side by side; 3 images form a 2+1 layout; 4 images form a 2×2 grid; 5+ images use a 3-column grid
+- **Click any thumbnail** to open a centered lightbox with the full image. Click the backdrop or press **Escape** to close. An **Open in viewer** button inside the lightbox opens the file in your OS default image app
+- Images are read-only — manage them in Finder/Explorer; NAM Lab just displays what's there
+- Toggle in **Settings → Library → Show folder images** (on by default)
+
+**Recommended image specs:** JPEG at 80% quality, longest edge ~1600px — looks sharp at any panel size and stays under 400KB.
 
 ### NAM-BOT Integration
 NAM Lab supports metadata fields written by [NAM-BOT](https://github.com/nam-bot), a community NAM trainer wrapper:

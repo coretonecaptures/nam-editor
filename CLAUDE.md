@@ -192,7 +192,7 @@ npm run package:linux    # Linux AppImage
 
 CI runs on tag push via `.github/workflows/release.yml`. Tags matching `*-rc*` are automatically marked as GitHub pre-releases. Final releases use clean semver tags (`v0.4.2`).
 
-Current version: **0.5.6** (see `package.json`). Version is injected into the renderer via `VITE_APP_VERSION` in `electron.vite.config.ts`.
+Current version: **0.5.7** (see `package.json`). Version is injected into the renderer via `VITE_APP_VERSION` in `electron.vite.config.ts`.
 
 App IDs:
 - `appId`: `com.coretonecaptures.namlab`
