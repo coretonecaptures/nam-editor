@@ -72,6 +72,12 @@ export function MultiSelectEditor({ files, onApply, skipConfirmation, gearMakeSu
 
   const canApply = changed.size > 0 || revertToFilename
 
+  const handleRevert = () => {
+    setEdits(Object.fromEntries(ALL_FIELDS.map((f) => [f.key, shared[f.key].value ?? ''])))
+    setChanged(new Set())
+    setRevertToFilename(false)
+  }
+
   const handleApply = () => {
     if (!canApply) return
 
@@ -118,16 +124,27 @@ export function MultiSelectEditor({ files, onApply, skipConfirmation, gearMakeSu
             Edit fields below — <span className="text-amber-400">amber</span> = changed · <span className="text-indigo-400">indigo badge</span> = all files share this value
           </p>
         </div>
-        <button
-          onClick={handleApply}
-          disabled={!canApply}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-indigo-600 hover:bg-indigo-500 text-white"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
-          </svg>
-          Apply to {files.length} files
-        </button>
+        <div className="flex items-center gap-2">
+          {canApply && (
+            <button
+              onClick={handleRevert}
+              className="px-3 py-2 rounded-lg text-sm font-medium transition-colors text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+              title="Discard edits and restore original values"
+            >
+              Revert
+            </button>
+          )}
+          <button
+            onClick={handleApply}
+            disabled={!canApply}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-indigo-600 hover:bg-indigo-500 text-white"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+            </svg>
+            Apply to {files.length} files
+          </button>
+        </div>
       </div>
 
       {/* Fields */}
