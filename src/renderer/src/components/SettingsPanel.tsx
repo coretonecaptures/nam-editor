@@ -354,6 +354,20 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                 checked={draft.showFolderImages}
                 onChange={(v) => update('showFolderImages', v)}
               />
+              <SettingsField label="Import Prefix Suffixes" hint="Last-word suffixes that trigger prefix matching during spreadsheet import">
+                <div className="space-y-1.5">
+                  <input
+                    type="text"
+                    value={draft.importPrefixSuffixes}
+                    onChange={(e) => update('importPrefixSuffixes', e.target.value)}
+                    placeholder="e.g. DI"
+                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors font-mono"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-500">
+                    Comma-separated. When a row's last word matches one of these (case-insensitive), the app strips it and looks for captures whose name starts with the remainder. e.g. a "Friedman BE100 DI" row matches "Friedman BE100 Crunch" captures.
+                  </p>
+                </div>
+              </SettingsField>
               <SettingsField label="Hidden Folders" hint="Folder names to exclude when scanning — subfolders are also excluded">
                 <div className="space-y-1.5">
                   <input

@@ -1288,7 +1288,11 @@ export default function App() {
       }
     }
 
-    // Pass 2: prefix matches (strip last word, match files whose name starts with prefix)
+    // Pass 2: prefix matches — only when last word is a known variant suffix (e.g. "DI")
+    const prefixSuffixSet = new Set(
+      (settings.importPrefixSuffixes || 'DI')
+        .split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
+    )
     const prefixMatches: ImportMatch[] = []
     const prefixMatchedPaths = new Set<string>()
     for (const row of rows) {
@@ -1296,6 +1300,8 @@ export default function App() {
       if (!captureName) continue
       const words = captureName.trim().split(/\s+/)
       if (words.length < 2) continue
+      const lastWord = words[words.length - 1].toUpperCase()
+      if (!prefixSuffixSet.has(lastWord)) continue  // only strip known suffixes
       const prefix = words.slice(0, -1).join(' ').toLowerCase()
       for (const f of scopedFiles) {
         const fName = (f.metadata.name || f.fileName || '').toLowerCase().trim()
@@ -1326,7 +1332,9 @@ export default function App() {
       if (hasExact) continue
       // Check if this row produced any prefix matches
       const words = captureName.trim().split(/\s+/)
-      const prefix = words.length >= 2 ? words.slice(0, -1).join(' ').toLowerCase() : ''
+      const lastWord = words.length >= 2 ? words[words.length - 1].toUpperCase() : ''
+      const prefix = lastWord && prefixSuffixSet.has(lastWord)
+        ? words.slice(0, -1).join(' ').toLowerCase() : ''
       const hasPrefixMatch = prefix ? scopedFiles.some(f => {
         const fName = (f.metadata.name || f.fileName || '').toLowerCase().trim()
         return fName.startsWith(prefix) && !exactMatchedPaths.has(f.filePath)

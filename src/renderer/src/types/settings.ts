@@ -58,6 +58,9 @@ export interface AppSettings {
 
   // NAM Standalone
   namStandalonePath: string
+
+  // Import: comma-separated suffix words that trigger prefix matching (e.g. "DI,DI2")
+  importPrefixSuffixes: string
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -94,7 +97,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showNamLabFields: true,
   showFolderImages: true,
   checkForRCBuilds: false,
-  namStandalonePath: ''
+  namStandalonePath: '',
+  importPrefixSuffixes: 'DI'
 }
 
 const STORAGE_KEY = 'nam-editor-settings'

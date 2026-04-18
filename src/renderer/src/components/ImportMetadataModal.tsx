@@ -83,8 +83,9 @@ export function ImportMetadataModal({
               </span>
             </label>
             <p className="text-xs text-indigo-600 dark:text-indigo-400 mt-1.5 ml-5">
-              Strips the last word from each row's name and matches any capture whose name starts with the remainder.
+              When a row's last word is a configured suffix (e.g. "DI"), strips it and matches any capture whose name starts with the remainder.
               Cabinet, Cab Config, and Mic(s) are skipped. Gear Type is auto-upgraded: amp→amp_cab and pedal_amp→amp_pedal_cab; all other gear types are skipped. Tone Type is applied normally.
+              Configure suffix words in Settings → Library → Import Prefix Suffixes.
             </p>
           </div>
         )}
