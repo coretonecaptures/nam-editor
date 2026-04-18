@@ -336,6 +336,8 @@ These have been discussed and approved — remove each item when implemented.
 
 - **[x] Filtered file count** — When any filter is active in FileList, a "X of Y files" count appears above the search bar in sky blue.
 
+- **[ ] Folder tree colorization** — Two-layer color system. Layer 1: name-based rules in Settings → Library (e.g. `DI=blue, CAB=green`) — any folder with that exact name gets a colored dot anywhere in the tree, set once. Layer 2: right-click any folder → "Set color" palette — stores color by folder path, applies to that specific folder. Parent color propagates to direct children as a subtle left accent bar (group membership signal), while the child's own dot shows its type. Two visual channels: left bar = amp group, dot = capture type. Storage: `folderNameColors: Record<string, string>` and `folderPathColors: Record<string, string>` in AppSettings. LOE: ~2–3 hours.
+
 ---
 
 ## Credits
