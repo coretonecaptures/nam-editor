@@ -316,6 +316,26 @@ These have been discussed and approved — remove each item when implemented.
 
 - **[ ] OS "Open folder in NAM Lab"** — Right-click a folder in Explorer/Finder and open it directly in NAM Lab. Requires registering a protocol handler or custom verb in electron-builder config. Similar to file associations but for folders; macOS needs a folder UTI handler, Windows needs a registry shell extension verb.
 
+### Quality of Life
+
+- **[ ] Last-used folder memory in file pickers** — Move to folder / Copy to folder pickers always open at the system default. Remember the last destination used per operation type and reopen there.
+
+- **[ ] Save and advance keyboard shortcut** — Ctrl+Enter (Cmd+Enter on Mac) saves the current file and moves selection to the next file in the list. Lets you rip through a batch without touching the mouse.
+
+- **[ ] Double-click filename to rename** — In MetadataEditor header, double-clicking the filename triggers inline rename instead of requiring the Rename button.
+
+- **[ ] Folder tree expand/collapse all** — Right-click folder tree background (or a button in the tree header) to expand or collapse the entire tree at once.
+
+- **[ ] Star / Pin captures** — Mark individual captures as starred/pinned for quick access. Stored as `metadata.nam_lab.starred` (boolean). Shown as a star icon in list and grid. Filterable chip in the file list toolbar. Separate from rating (see below).
+
+- **[ ] Capture rating** — 1–5 star rating stored as `metadata.nam_lab.rating`. Shown in list/grid. Sortable column. Filter chip. Intended for personal quality ranking after auditioning in a DAW — most useful once the in-app preview player exists, but the field infrastructure is worth having now. Star/pin shortcut could set rating = 5.
+
+- **[ ] Select all in folder** — Right-click a folder in the tree → "Select all in folder" selects all its files in the file list without needing to click into the folder first.
+
+- **[ ] Grid column sort persistence** — Current grid column sort resets when switching folders. Persist sort column and direction for the session.
+
+- **[ ] Filtered file count in status bar** — When any filter is active, show "X of Y files" in the status bar so it's always clear how many files are hidden.
+
 ---
 
 ## Credits

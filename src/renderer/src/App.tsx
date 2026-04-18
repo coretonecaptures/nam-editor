@@ -1249,10 +1249,12 @@ export default function App() {
       if (!captureName) continue
       const file = nameMap.get(captureName.toLowerCase())
       if (!file) continue
+      // Always mark as exact-matched even if incoming is empty — prevents a prefix
+      // match from a different row firing on a file that has its own exact row.
+      exactMatchedPaths.add(file.filePath)
       const incoming = buildIncoming(row)
       if (Object.keys(incoming).length > 0) {
         exactMatches.push({ file, incoming })
-        exactMatchedPaths.add(file.filePath)
       }
     }
 
@@ -1315,17 +1317,20 @@ export default function App() {
     const unmatched = importModal?.unmatchedNames.length ?? 0
     setImportModal(null)
     let updated = 0; let failed = 0
+    const successMap = new Map<string, NamFile['metadata']>()
     for (const { file, incoming } of matches) {
       const newMeta = { ...file.metadata, ...incoming }
       const result = await window.api.writeMetadata(file.filePath, newMeta)
       if ((result as { success: boolean }).success) {
         updated++
-        setFiles((prev) => prev.map((f) =>
-          f.filePath === file.filePath
-            ? { ...f, metadata: newMeta, originalMetadata: newMeta, isDirty: false, autoFilledFields: [] }
-            : f
-        ))
+        successMap.set(file.filePath, newMeta)
       } else { failed++ }
+    }
+    if (successMap.size > 0) {
+      setFiles((prev) => prev.map((f) => {
+        const newMeta = successMap.get(f.filePath)
+        return newMeta ? { ...f, metadata: newMeta, originalMetadata: newMeta, isDirty: false, autoFilledFields: [] } : f
+      }))
     }
     let msg = `Imported metadata for ${updated} capture${updated !== 1 ? 's' : ''}`
     if (failed > 0) msg += `, ${failed} failed`
