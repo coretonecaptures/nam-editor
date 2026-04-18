@@ -17,6 +17,7 @@ interface MetadataEditorProps {
   hasActiveDefaults?: boolean
   renameTemplate?: string
   onRenameFile?: (filePath: string, newBaseName: string) => Promise<void>
+  onSaveAndAdvance?: () => void
   gearMakeSuggestions?: string[]
   gearModelSuggestions?: string[]
   showNamLabFields?: boolean
@@ -57,10 +58,13 @@ function buildRenamePreview(template: string, meta: NamMetadata, fileName: strin
   return result || fileName
 }
 
-export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFinder, onReapplyDefaults, hasActiveDefaults, renameTemplate, onRenameFile, gearMakeSuggestions = [], gearModelSuggestions = [], showNamLabFields = true }: MetadataEditorProps) {
+export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFinder, onReapplyDefaults, hasActiveDefaults, renameTemplate, onRenameFile, onSaveAndAdvance, gearMakeSuggestions = [], gearModelSuggestions = [], showNamLabFields = true }: MetadataEditorProps) {
   const m = file.metadata
   const orig = file.originalMetadata
   const [nlShowAll, setNlShowAll] = useState(false)
+  const [isEditingName, setIsEditingName] = useState(false)
+  const [nameEditValue, setNameEditValue] = useState('')
+  const nameInputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useLayoutEffect(() => {
@@ -87,6 +91,21 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
       e.preventDefault()
       onSave()
     }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault()
+      onSaveAndAdvance?.()
+    }
+  }
+
+  const commitNameEdit = () => {
+    update('name', nameEditValue)
+    setIsEditingName(false)
+  }
+
+  const startNameEdit = () => {
+    setNameEditValue(m.name ?? '')
+    setIsEditingName(true)
+    setTimeout(() => { nameInputRef.current?.select() }, 20)
   }
 
   const dateStr = m.date
@@ -99,9 +118,28 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
       <div className="flex items-start justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 flex-shrink-0 flex-wrap gap-3">
         <div className="flex items-center gap-4 min-w-0">
           <div className="min-w-0">
-            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 truncate max-w-lg">
-              {m.name || file.fileName}
-            </h2>
+            {isEditingName ? (
+              <input
+                ref={nameInputRef}
+                value={nameEditValue}
+                onChange={(e) => setNameEditValue(e.target.value)}
+                onBlur={commitNameEdit}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); commitNameEdit() }
+                  if (e.key === 'Escape') { setIsEditingName(false) }
+                  e.stopPropagation()
+                }}
+                className="text-base font-semibold text-gray-900 dark:text-gray-100 bg-gray-100 dark:bg-gray-800 border border-indigo-500 rounded px-2 py-0.5 outline-none w-full max-w-lg"
+              />
+            ) : (
+              <h2
+                className="text-base font-semibold text-gray-900 dark:text-gray-100 truncate max-w-lg cursor-text select-none"
+                onDoubleClick={startNameEdit}
+                title="Double-click to edit capture name"
+              >
+                {m.name || file.fileName}
+              </h2>
+            )}
             <div className="flex items-center gap-3 mt-1">
               <button
                 onClick={onRevealInFinder}

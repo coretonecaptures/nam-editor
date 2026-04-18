@@ -452,9 +452,10 @@ app.whenReady().then(() => {
   })
 
   // IPC: Open folder dialog
-  ipcMain.handle('dialog:openFolder', async () => {
+  ipcMain.handle('dialog:openFolder', async (_event, defaultPath?: string) => {
     const result = await dialog.showOpenDialog({
-      properties: ['openDirectory']
+      properties: ['openDirectory'],
+      ...(defaultPath ? { defaultPath } : {})
     })
     return result.filePaths[0] ?? null
   })

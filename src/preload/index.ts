@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 const api = {
   openFiles: (): Promise<string[]> => ipcRenderer.invoke('dialog:openFiles'),
-  openFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:openFolder'),
+  openFolder: (defaultPath?: string): Promise<string | null> => ipcRenderer.invoke('dialog:openFolder', defaultPath),
   openImportFile: (): Promise<string | null> => ipcRenderer.invoke('dialog:openImportFile'),
   readFileBinary: (filePath: string): Promise<{ data?: string; error?: string }> => ipcRenderer.invoke('file:readBinary', filePath),
   readFile: (filePath: string) => ipcRenderer.invoke('file:read', filePath),

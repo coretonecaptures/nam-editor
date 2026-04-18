@@ -22,7 +22,7 @@ declare global {
   interface Window {
     api: {
       openFiles: () => Promise<string[]>
-      openFolder: () => Promise<string | null>
+      openFolder: (defaultPath?: string) => Promise<string | null>
       openImportFile: () => Promise<string | null>
       readFileBinary: (filePath: string) => Promise<{ data?: string; error?: string }>
       revealFile: (filePath: string) => Promise<void>
@@ -581,6 +581,32 @@ export default function App() {
     }
   }
 
+  const handleSaveAndAdvance = async (filePath: string) => {
+    await handleSave(filePath)
+    // Use same visibility logic as visibleFiles (folder filter only — no FileList internal filters)
+    const currentVisible = files.filter((f) => {
+      const norm = f.filePath.replace(/\\/g, '/')
+      if (librarian.selectedFolder && !norm.startsWith(librarian.selectedFolder + '/')) return false
+      return true
+    })
+    const idx = currentVisible.findIndex((f) => f.filePath === filePath)
+    if (idx !== -1 && idx < currentVisible.length - 1) {
+      setSelectedIds(new Set([currentVisible[idx + 1].filePath]))
+    }
+  }
+
+  const handleSelectAllInFolder = (folderPath: string | null) => {
+    const prefix = folderPath ? folderPath + '/' : null
+    const paths = files
+      .filter((f) => {
+        const norm = f.filePath.replace(/\\/g, '/')
+        return prefix ? norm.startsWith(prefix) : true
+      })
+      .map((f) => f.filePath)
+    setSelectedIds(new Set(paths))
+    if (folderPath) setLibrarian((prev) => ({ ...prev, selectedFolder: folderPath }))
+  }
+
   const handleSaveAll = async () => {
     const dirty = files.filter((f) => f.isDirty)
     if (dirty.length === 0) {
@@ -991,8 +1017,10 @@ export default function App() {
   }
 
   const handleMoveToFolder = async (paths: string[]) => {
-    const destFolder = await window.api.openFolder()
+    const lastMove = localStorage.getItem('nam-lab-last-folder-move') ?? undefined
+    const destFolder = await window.api.openFolder(lastMove)
     if (!destFolder) return
+    localStorage.setItem('nam-lab-last-folder-move', destFolder)
     const destName = destFolder.replace(/\\/g, '/').split('/').pop()
     const movedPaths = new Set<string>()
     const conflictPaths: string[] = []
@@ -1043,8 +1071,10 @@ export default function App() {
   }
 
   const handleCopyToFolder = async (paths: string[]) => {
-    const destFolder = await window.api.openFolder()
+    const lastCopy = localStorage.getItem('nam-lab-last-folder-copy') ?? undefined
+    const destFolder = await window.api.openFolder(lastCopy)
     if (!destFolder) return
+    localStorage.setItem('nam-lab-last-folder-copy', destFolder)
     const results = await window.api.copyFiles(paths, destFolder)
     const copied = results.filter((r) => r.success).length
     const failed = results.filter((r) => !r.success).length
@@ -1531,6 +1561,7 @@ export default function App() {
                 onExportFolder={handleExportFolder}
                 onGenerateTemplate={handleGenerateTemplate}
                 onImportMetadata={handleImportMetadata}
+                onSelectAllInFolder={handleSelectAllInFolder}
                 scrollToFolder={treeScrollTarget}
               />
             </div>
@@ -1673,6 +1704,7 @@ export default function App() {
               file={selectedFiles[0]}
               onChange={(m) => handleMetadataChange(selectedFiles[0].filePath, m)}
               onSave={() => handleSave(selectedFiles[0].filePath)}
+              onSaveAndAdvance={() => handleSaveAndAdvance(selectedFiles[0].filePath)}
               onRevert={() => {
                 const f = selectedFiles[0]
                 setFiles((prev) => prev.map((x) =>
@@ -1768,6 +1800,7 @@ export default function App() {
                 file={selectedFiles[0]}
                 onChange={(m) => handleMetadataChange(selectedFiles[0].filePath, m)}
                 onSave={() => handleSave(selectedFiles[0].filePath)}
+                onSaveAndAdvance={() => handleSaveAndAdvance(selectedFiles[0].filePath)}
                 onRevert={() => {
                   const f = selectedFiles[0]
                   setFiles((prev) => prev.map((x) =>

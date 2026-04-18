@@ -20,6 +20,7 @@ interface FolderTreeProps {
   onExportFolder?: (folderPath: string | null, format: 'csv' | 'xlsx') => void
   onGenerateTemplate?: (folderPath: string | null) => void
   onImportMetadata?: (folderPath: string | null) => void
+  onSelectAllInFolder?: (folderPath: string | null) => void
   scrollToFolder?: string | null
 }
 
@@ -48,9 +49,11 @@ export function FolderTree({
   tree, files, selectedFolder, onSelect, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, onFilterChange, onDropFiles,
   onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata,
-  scrollToFolder
+  onSelectAllInFolder, scrollToFolder
 }: FolderTreeProps) {
   const [searchOpen, setSearchOpen] = useState(false)
+  const [expandSeq, setExpandSeq] = useState(0)
+  const [collapseSeq, setCollapseSeq] = useState(0)
   const [query, setQuery] = useState('')
   const [activeTones, setActiveTones] = useState<Set<string>>(new Set())
   const [activeGears, setActiveGears] = useState<Set<string>>(new Set())
@@ -114,21 +117,41 @@ export function FolderTree({
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
         <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Library</span>
-        <button
-          onClick={() => {
-            setSearchOpen((v) => {
-              if (!v) setTimeout(() => inputRef.current?.focus(), 50)
-              else clearFilter()
-              return !v
-            })
-          }}
-          title={searchOpen ? 'Close search' : 'Search / filter library'}
-          className={`p-1 rounded transition-colors ${searchOpen ? 'text-indigo-400 bg-indigo-900/30' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800'}`}
-        >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-        </button>
+        <div className="flex items-center gap-0.5">
+          <button
+            onClick={() => setExpandSeq((s) => s + 1)}
+            title="Expand all folders"
+            className="p-1 rounded transition-colors text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          <button
+            onClick={() => setCollapseSeq((s) => s + 1)}
+            title="Collapse all folders"
+            className="p-1 rounded transition-colors text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+            </svg>
+          </button>
+          <button
+            onClick={() => {
+              setSearchOpen((v) => {
+                if (!v) setTimeout(() => inputRef.current?.focus(), 50)
+                else clearFilter()
+                return !v
+              })
+            }}
+            title={searchOpen ? 'Close search' : 'Search / filter library'}
+            className={`p-1 rounded transition-colors ${searchOpen ? 'text-indigo-400 bg-indigo-900/30' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800'}`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       {/* Search / filter panel */}
@@ -215,6 +238,7 @@ export function FolderTree({
           onExportFolder={onExportFolder ? (fmt) => onExportFolder(null, fmt) : undefined}
           onGenerateTemplate={onGenerateTemplate ? () => onGenerateTemplate(null) : undefined}
           onImportMetadata={onImportMetadata ? () => onImportMetadata(null) : undefined}
+          onSelectAll={onSelectAllInFolder ? () => onSelectAllInFolder(null) : undefined}
         />
 
         {tree.children.map((child) => (
@@ -237,6 +261,9 @@ export function FolderTree({
             onExportFolder={onExportFolder}
             onGenerateTemplate={onGenerateTemplate}
             onImportMetadata={onImportMetadata}
+            onSelectAllInFolder={onSelectAllInFolder}
+            expandSeq={expandSeq}
+            collapseSeq={collapseSeq}
             scrollToFolder={scrollToFolder}
           />
         ))}
@@ -249,7 +276,7 @@ function TreeNode({
   node, selectedFolder, onSelect, depth, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, matchingPaths, onDropFiles,
   onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata,
-  scrollToFolder
+  onSelectAllInFolder, expandSeq, collapseSeq, scrollToFolder
 }: {
   node: FolderNode
   selectedFolder: string | null
@@ -268,9 +295,20 @@ function TreeNode({
   onExportFolder?: (folderPath: string, format: 'csv' | 'xlsx') => void
   onGenerateTemplate?: (folderPath: string | null) => void
   onImportMetadata?: (folderPath: string | null) => void
+  onSelectAllInFolder?: (folderPath: string | null) => void
+  expandSeq?: number
+  collapseSeq?: number
   scrollToFolder?: string | null
 }) {
   const [expanded, setExpanded] = useState(true)
+
+  useEffect(() => {
+    if (expandSeq && expandSeq > 0) setExpanded(true)
+  }, [expandSeq])
+
+  useEffect(() => {
+    if (collapseSeq && collapseSeq > 0) setExpanded(false)
+  }, [collapseSeq])
 
   useEffect(() => {
     if (scrollToFolder && scrollToFolder.startsWith(node.path + '/')) {
@@ -323,6 +361,7 @@ function TreeNode({
         onExportFolder={onExportFolder ? (fmt) => onExportFolder(node.path, fmt) : undefined}
         onGenerateTemplate={onGenerateTemplate ? () => onGenerateTemplate(node.path) : undefined}
         onImportMetadata={onImportMetadata ? () => onImportMetadata(node.path) : undefined}
+        onSelectAll={onSelectAllInFolder ? () => onSelectAllInFolder(node.path) : undefined}
         isDraggableFolder
       />
 
@@ -348,6 +387,9 @@ function TreeNode({
               onExportFolder={onExportFolder}
               onGenerateTemplate={onGenerateTemplate}
               onImportMetadata={onImportMetadata}
+              onSelectAllInFolder={onSelectAllInFolder}
+              expandSeq={expandSeq}
+              collapseSeq={collapseSeq}
               scrollToFolder={scrollToFolder}
             />
           ))}
@@ -362,7 +404,7 @@ interface ContextMenuState { x: number; y: number }
 function FolderRow({
   label, folderPath, isRoot, isSelected, totalCount, dirtyCount, depth,
   hasChildren, expanded, onToggleExpand, onClick, onSave, onRevert,
-  onBatchEdit, onReveal, isFiltered, isHighlighted, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, isDraggableFolder
+  onBatchEdit, onReveal, isFiltered, isHighlighted, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSelectAll, isDraggableFolder
 }: {
   label: string
   folderPath: string
@@ -388,6 +430,7 @@ function FolderRow({
   onExportFolder?: (format: 'csv' | 'xlsx') => void
   onGenerateTemplate?: () => void
   onImportMetadata?: () => void
+  onSelectAll?: () => void
   isDraggableFolder?: boolean
 }) {
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
@@ -610,6 +653,14 @@ function FolderRow({
           >
             Batch edit…
           </button>
+          {onSelectAll && (
+            <button
+              className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
+              onClick={() => { setMenu(null); onSelectAll() }}
+            >
+              Select all in folder
+            </button>
+          )}
           {onCreateFolder && (
             <button
               className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"

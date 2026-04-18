@@ -88,6 +88,16 @@ export { ALL_GRID_COLUMNS }
 
 const DEFAULT_VISIBLE_COLS = ALL_GRID_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key)
 const GRID_COL_STORAGE_KEY = 'nam-lab-grid-columns'
+const SORT_STORAGE_KEY = 'nam-lab-sort'
+
+function loadSort(): { key: string | null; dir: SortDir } {
+  try {
+    const s = localStorage.getItem(SORT_STORAGE_KEY)
+    return s ? JSON.parse(s) : { key: 'name', dir: 'asc' }
+  } catch {
+    return { key: 'name', dir: 'asc' }
+  }
+}
 
 function loadVisibleCols(): string[] {
   try {
@@ -267,8 +277,8 @@ export function FileList({
   const [gearFilter, setGearFilter] = useState('')
   const [toneFilter, setToneFilter] = useState('')
   const [presetFilter, setPresetFilter] = useState('')
-  const [sortKey, setSortKey] = useState<string | null>('name')
-  const [sortDir, setSortDir] = useState<SortDir>('asc')
+  const [sortKey, setSortKey] = useState<string | null>(() => loadSort().key)
+  const [sortDir, setSortDir] = useState<SortDir>(() => loadSort().dir)
   const [visibleCols, setVisibleCols] = useState<string[]>(loadVisibleCols)
   const [showExport, setShowExport] = useState(false)
   const [showColChooser, setShowColChooser] = useState(false)
@@ -391,12 +401,11 @@ export function FileList({
   const selectedVisible = sorted.filter((f) => selectedIds.has(f.filePath)).map((f) => f.filePath)
 
   const handleSortClick = (key: string) => {
-    if (sortKey === key) {
-      setSortDir((d) => d === 'asc' ? 'desc' : 'asc')
-    } else {
-      setSortKey(key)
-      setSortDir('asc')
-    }
+    const newDir: SortDir = sortKey === key ? (sortDir === 'asc' ? 'desc' : 'asc') : 'asc'
+    const newKey = key
+    setSortKey(newKey)
+    setSortDir(newDir)
+    localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify({ key: newKey, dir: newDir }))
   }
 
   const editedCount = files.filter((f) => f.isDirty).length
@@ -438,6 +447,15 @@ export function FileList({
         }
       }
     }} tabIndex={-1}>
+      {/* Filtered count banner */}
+      {filtered.length < files.length && (
+        <div className="px-3 pt-1.5 pb-0 flex-shrink-0">
+          <span className="text-xs text-sky-500 dark:text-sky-400 font-medium">
+            {filtered.length} of {files.length} files
+          </span>
+        </div>
+      )}
+
       {/* Search + view toggle */}
       <div className="px-3 pt-2 pb-1 flex-shrink-0 flex items-center gap-1.5">
         <div className="relative flex-1 min-w-0">

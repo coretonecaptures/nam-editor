@@ -318,23 +318,23 @@ These have been discussed and approved — remove each item when implemented.
 
 ### Quality of Life
 
-- **[ ] Last-used folder memory in file pickers** — Move to folder / Copy to folder pickers always open at the system default. Remember the last destination used per operation type and reopen there.
+- **[x] Last-used folder memory in file pickers** — Move to folder / Copy to folder pickers remember the last destination per operation type (stored in localStorage). Passed as `defaultPath` to `dialog:openFolder` IPC.
 
-- **[ ] Save and advance keyboard shortcut** — Ctrl+Enter (Cmd+Enter on Mac) saves the current file and moves selection to the next file in the list. Lets you rip through a batch without touching the mouse.
+- **[x] Save and advance keyboard shortcut** — Ctrl+Enter (Cmd+Enter on Mac) saves the current file and moves selection to the next file in the visible folder list.
 
-- **[ ] Double-click filename to rename** — In MetadataEditor header, double-clicking the filename triggers inline rename instead of requiring the Rename button.
+- **[x] Double-click capture name to edit** — Double-clicking the capture name h2 in MetadataEditor header opens an inline input. Enter/blur commits; Escape cancels.
 
-- **[ ] Folder tree expand/collapse all** — Right-click folder tree background (or a button in the tree header) to expand or collapse the entire tree at once.
+- **[x] Folder tree expand/collapse all** — Two chevron buttons in the Library header (expand all ↓ / collapse all ↑). Signal propagates down through TreeNode via incrementing seq counters.
 
 - **[ ] Star / Pin captures** — Mark individual captures as starred/pinned for quick access. Stored as `metadata.nam_lab.starred` (boolean). Shown as a star icon in list and grid. Filterable chip in the file list toolbar. Separate from rating (see below).
 
 - **[ ] Capture rating** — 1–5 star rating stored as `metadata.nam_lab.rating`. Shown in list/grid. Sortable column. Filter chip. Intended for personal quality ranking after auditioning in a DAW — most useful once the in-app preview player exists, but the field infrastructure is worth having now. Star/pin shortcut could set rating = 5.
 
-- **[ ] Select all in folder** — Right-click a folder in the tree → "Select all in folder" selects all its files in the file list without needing to click into the folder first.
+- **[x] Select all in folder** — Right-click a folder in the tree → "Select all in folder" selects all files in that folder and navigates to it.
 
-- **[ ] Grid column sort persistence** — Current grid column sort resets when switching folders. Persist sort column and direction for the session.
+- **[x] Grid column sort persistence** — Sort column and direction persisted to localStorage (`nam-lab-sort`). Restored on next session.
 
-- **[ ] Filtered file count in status bar** — When any filter is active, show "X of Y files" in the status bar so it's always clear how many files are hidden.
+- **[x] Filtered file count** — When any filter is active in FileList, a "X of Y files" count appears above the search bar in sky blue.
 
 ---
 
