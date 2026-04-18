@@ -913,6 +913,86 @@ app.whenReady().then(() => {
   })
 
   // IPC: Check for updates via GitHub releases API
+  // IPC: Walk up from folderPath (exclusive) to rootPath (inclusive) and return
+  // the first ancestor directory that contains nam-pack.json, or null if none.
+  ipcMain.handle('folder:findPackOwner', async (_event, folderPath: string, rootPath: string) => {
+    const norm = (p: string) => p.replace(/\\/g, '/')
+    let current = norm(folderPath)
+    const root = norm(rootPath)
+    while (true) {
+      const lastSlash = current.lastIndexOf('/')
+      if (lastSlash <= 0) break
+      const parent = current.substring(0, lastSlash)
+      if (parent.length < root.length) break
+      try {
+        await fs.promises.access(join(parent, 'nam-pack.json'))
+        return parent  // found
+      } catch {
+        // not here, keep walking
+      }
+      if (parent === root) break
+      current = parent
+    }
+    return null
+  })
+
+  // IPC: Walk the folder tree and return paths of folders that have a non-empty nam-pack.json title
+  ipcMain.handle('folder:findPackFolders', async (_event, rootPath: string) => {
+    const results: string[] = []
+    const walk = async (dir: string, depth: number) => {
+      if (depth > 8) return
+      try {
+        const packPath = join(dir, 'nam-pack.json')
+        try {
+          const raw = await fs.promises.readFile(packPath, 'utf-8')
+          const data = JSON.parse(raw)
+          if (data && typeof data.title === 'string' && data.title.trim()) {
+            results.push(dir.replace(/\\/g, '/'))
+          }
+        } catch { /* no pack here */ }
+        const entries = await fs.promises.readdir(dir, { withFileTypes: true })
+        await Promise.all(entries.filter((e) => e.isDirectory()).map((e) => walk(join(dir, e.name), depth + 1)))
+      } catch { /* skip unreadable dirs */ }
+    }
+    await walk(rootPath, 0)
+    return results
+  })
+
+  // IPC: Read nam-pack.json from a folder
+  ipcMain.handle('folder:readPackInfo', async (_event, folderPath: string) => {
+    try {
+      const packPath = join(folderPath, 'nam-pack.json')
+      const raw = await fs.promises.readFile(packPath, 'utf-8')
+      return { success: true, data: JSON.parse(raw) }
+    } catch {
+      return { success: true, data: null }
+    }
+  })
+
+  // IPC: Write nam-pack.json to a folder
+  ipcMain.handle('folder:writePackInfo', async (_event, folderPath: string, data: unknown) => {
+    try {
+      const packPath = join(folderPath, 'nam-pack.json')
+      await fs.promises.writeFile(packPath, JSON.stringify(data, null, 2), 'utf-8')
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  })
+
+  // IPC: Write HTML to a temp file and open in default browser for PDF save
+  ipcMain.handle('app:exportPackSheet', async (_event, html: string) => {
+    try {
+      const os = await import('os')
+      const tmpFile = join(os.tmpdir(), `nam-pack-export-${Date.now()}.html`)
+      await fs.promises.writeFile(tmpFile, html, 'utf-8')
+      await shell.openExternal(`file://${tmpFile}`)
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  })
+
   ipcMain.handle('app:checkForUpdates', async (_event, includeRc: boolean) => {
     try {
       const res = await fetch('https://api.github.com/repos/coretonecaptures/nam-editor/releases?per_page=20', {

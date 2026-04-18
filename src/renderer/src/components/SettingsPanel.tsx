@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { AppSettings } from '../types/settings'
 
+type CatalogItem = AppSettings['packGearCatalog'][number]
+
 type UpdateState =
   | { status: 'idle' }
   | { status: 'checking' }
@@ -382,6 +384,71 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                   </p>
                 </div>
               </SettingsField>
+            </div>
+          </div>
+
+          {/* Pack Info Catalog */}
+          <div>
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-sm">📦</span>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Pack Info Catalog</h3>
+              <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
+            </div>
+            <p className="text-xs text-gray-500 dark:text-gray-500 mb-4">
+              Your personal gear library. Items saved here appear in the "From catalog" picker when editing a Pack Info sheet, so you never retype your standard rig.
+            </p>
+            <div className="space-y-5">
+              {(['equipment', 'pedals', 'glossary'] as const).map((cat) => {
+                const items = draft.packGearCatalog.filter((i) => i.category === cat)
+                const others = draft.packGearCatalog.filter((i) => i.category !== cat)
+                const label = cat === 'glossary' ? 'Glossary' : cat === 'equipment' ? 'Equipment' : 'Pedals'
+                const ph0 = cat === 'glossary' ? 'DI' : cat === 'equipment' ? 'Amp' : 'Boost'
+                const ph1 = cat === 'glossary' ? 'Direct Inject — no cabinet' : cat === 'equipment' ? 'Friedman BE-100 Deluxe V2' : 'Klon Centaur (unity gain)'
+                return (
+                  <div key={cat}>
+                    <p className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider mb-2">{label}</p>
+                    <div className="space-y-1.5">
+                      {items.map((item, i) => (
+                        <div key={i} className="flex gap-1.5 items-center">
+                          <input
+                            value={item.label}
+                            placeholder={ph0}
+                            onChange={(e) => {
+                              const updated = items.map((x, j) => j === i ? { ...x, label: e.target.value } : x)
+                              update('packGearCatalog', [...others, ...updated])
+                            }}
+                            className="w-28 flex-shrink-0 px-2 py-1.5 text-xs bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                          />
+                          <input
+                            value={item.value}
+                            placeholder={ph1}
+                            onChange={(e) => {
+                              const updated = items.map((x, j) => j === i ? { ...x, value: e.target.value } : x)
+                              update('packGearCatalog', [...others, ...updated])
+                            }}
+                            className="flex-1 px-2 py-1.5 text-xs bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                          />
+                          <button
+                            onClick={() => update('packGearCatalog', [...others, ...items.filter((_, j) => j !== i)])}
+                            className="text-gray-400 hover:text-red-500 transition-colors flex-shrink-0"
+                            title="Remove"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                      ))}
+                      <button
+                        onClick={() => update('packGearCatalog', [...draft.packGearCatalog, { category: cat, label: '', value: '' }])}
+                        className="text-xs text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300 font-medium transition-colors"
+                      >
+                        + Add {label.toLowerCase()} item
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </div>
 

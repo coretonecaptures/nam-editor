@@ -1,0 +1,830 @@
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { NamFile } from '../types/nam'
+import { AppSettings } from '../types/settings'
+
+export type CatalogItem = AppSettings['packGearCatalog'][number]
+
+export interface PackInfo {
+  title: string
+  subtitle: string
+  capturedBy: string
+  description: string
+  equipment: { label: string; value: string }[]
+  pedals: { label: string; value: string }[]
+  switches: { label: string; value: string }[]
+  glossary: { term: string; description: string }[]
+  exportExcludedSubfolders: string[]
+  exportColumns: string[]
+}
+
+// Available columns for the captures table — name is always first and fixed
+export const PACK_CAPTURE_COLUMNS: { id: string; label: string; accessor: (f: NamFile) => string; width: string }[] = [
+  { id: 'nl_amp_channel',  label: 'Channel',       accessor: (f) => f.metadata.nl_amp_channel  || '', width: '13%' },
+  { id: 'nl_amp_settings', label: 'Settings',      accessor: (f) => f.metadata.nl_amp_settings || '', width: '28%' },
+  { id: 'nl_amp_switches', label: 'Switches',      accessor: (f) => f.metadata.nl_amp_switches || '', width: '16%' },
+  { id: 'nl_boost_pedal',  label: 'Boost/OD',      accessor: (f) => f.metadata.nl_boost_pedal  || '', width: '13%' },
+  { id: 'nl_cabinet',      label: 'Cabinet',       accessor: (f) => f.metadata.nl_cabinet      || '', width: '13%' },
+  { id: 'nl_mics',         label: 'Mic(s)',         accessor: (f) => f.metadata.nl_mics         || '', width: '13%' },
+  { id: 'tone_type',       label: 'Tone Type',     accessor: (f) => f.metadata.tone_type        || '', width: '10%' },
+  { id: 'nl_comments',     label: 'Comments',      accessor: (f) => f.metadata.nl_comments     || '', width: '20%' },
+]
+
+const DEFAULT_EXPORT_COLUMNS = ['nl_amp_channel', 'nl_amp_settings', 'nl_amp_switches']
+
+const EMPTY_PACK: PackInfo = {
+  title: '',
+  subtitle: '',
+  capturedBy: '',
+  description: '',
+  equipment: [],
+  pedals: [],
+  switches: [],
+  glossary: [],
+  exportExcludedSubfolders: [],
+  exportColumns: DEFAULT_EXPORT_COLUMNS
+}
+
+// Named theme color tokens for [color] tags — values injected at render time
+const COLOR_TOKENS: Record<string, { light: string; dark: string }> = {
+  orange:  { light: '#e07020', dark: '#f97316' },
+  teal:    { light: '#0d9488', dark: '#2dd4bf' },
+  red:     { light: '#dc2626', dark: '#f87171' },
+  blue:    { light: '#2563eb', dark: '#60a5fa' },
+  green:   { light: '#16a34a', dark: '#4ade80' },
+  dim:     { light: '#94a3b8', dark: '#6b7280' },
+  white:   { light: '#1e2235', dark: '#f0f0f0' },
+}
+
+function parseDescription(raw: string, dark: boolean): string {
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const lines = raw.split('\n')
+  const out: string[] = []
+  let inList = false
+
+  const inlineFormat = (s: string) => {
+    // BBCode color: [orange]text[/orange] etc.
+    s = s.replace(/\[(\w+)\](.*?)\[\/\1\]/g, (_m, tag, content) => {
+      const token = COLOR_TOKENS[tag.toLowerCase()]
+      if (!token) return esc(content)
+      return `<span style="color:${dark ? token.dark : token.light}">${esc(content)}</span>`
+    })
+    // **bold**
+    s = s.replace(/\*\*(.*?)\*\*/g, (_m, t) => `<strong>${esc(t)}</strong>`)
+    // *italic*
+    s = s.replace(/\*(.*?)\*/g, (_m, t) => `<em>${esc(t)}</em>`)
+    // __underline__
+    s = s.replace(/__(.*?)__/g, (_m, t) => `<u>${esc(t)}</u>`)
+    return s
+  }
+
+  for (const raw of lines) {
+    const line = raw.trimEnd()
+    // Heading: # text
+    if (/^#{1,3}\s+/.test(line)) {
+      if (inList) { out.push('</ul>'); inList = false }
+      const text = line.replace(/^#+\s+/, '')
+      out.push(`<p style="font-size:13px;font-weight:700;margin:10px 0 4px">${inlineFormat(text)}</p>`)
+      continue
+    }
+    // Horizontal rule
+    if (/^---+$/.test(line.trim())) {
+      if (inList) { out.push('</ul>'); inList = false }
+      out.push(`<hr style="border:none;border-top:1px solid currentColor;opacity:0.2;margin:10px 0">`)
+      continue
+    }
+    // Bullet
+    if (/^[-*]\s+/.test(line)) {
+      if (!inList) { out.push('<ul style="margin:4px 0 4px 16px;padding:0">'); inList = true }
+      const text = line.replace(/^[-*]\s+/, '')
+      out.push(`<li style="margin-bottom:2px">${inlineFormat(text)}</li>`)
+      continue
+    }
+    // Close list if needed
+    if (inList) { out.push('</ul>'); inList = false }
+    // Empty line → paragraph break
+    if (line.trim() === '') {
+      out.push('<br>')
+    } else {
+      out.push(`<span>${inlineFormat(line)}</span><br>`)
+    }
+  }
+  if (inList) out.push('</ul>')
+  return out.join('\n')
+}
+
+function generateExportHtml(info: PackInfo, folderPath: string, folderName: string, allCaptures: NamFile[], dark: boolean): string {
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const normBase = folderPath.replace(/\\/g, '/') + '/'
+  const captures = allCaptures.filter((f) => {
+    if (info.exportExcludedSubfolders.length === 0) return true
+    const fp = f.filePath.replace(/\\/g, '/')
+    if (!fp.startsWith(normBase)) return true
+    const relFolder = fp.slice(normBase.length).split('/').slice(0, -1).join('/')
+    return !info.exportExcludedSubfolders.includes(relFolder)
+  })
+
+  const activeCols = PACK_CAPTURE_COLUMNS.filter((c) => (info.exportColumns ?? DEFAULT_EXPORT_COLUMNS).includes(c.id))
+  // Name column always first; remaining width split among active cols
+  const nameWidth = activeCols.length === 0 ? '100%' : `${Math.max(25, 65 - activeCols.length * 4)}%`
+
+  const captureHeaderCells = [
+    `<th style="width:${nameWidth}">Capture Name</th>`,
+    ...activeCols.map((c) => `<th style="width:${c.width}">${esc(c.label)}</th>`)
+  ].join('')
+
+  const captureRows = captures.map((f) => {
+    const cells = [
+      `<td class="col-name">${esc(f.metadata.name || f.fileName)}</td>`,
+      ...activeCols.map((c) => `<td>${esc(c.accessor(f))}</td>`)
+    ].join('')
+    return `<tr>${cells}</tr>`
+  }).join('')
+
+  const equipRows = info.equipment.map((e) =>
+    `<tr><td class="kv-label">${esc(e.label)}</td><td>${esc(e.value)}</td></tr>`
+  ).join('')
+
+  const pedalRows = info.pedals.map((e) =>
+    `<tr><td class="kv-label">${esc(e.label)}</td><td>${esc(e.value)}</td></tr>`
+  ).join('')
+
+  const switchRows = info.switches.map((e) =>
+    `<tr><td class="kv-label">${esc(e.label)}</td><td>${esc(e.value)}</td></tr>`
+  ).join('')
+
+  const glossaryItems = info.glossary.map((g) =>
+    `<div class="glossary-item"><span class="g-term">${esc(g.term)}</span><span class="g-sep"> — </span><span class="g-desc">${esc(g.description)}</span></div>`
+  ).join('')
+
+  const hasCaptures = captures.length > 0
+  const hasEquipment = info.equipment.length > 0
+  const hasPedals = info.pedals.length > 0
+  const hasSwitches = info.switches.length > 0
+  const hasGlossary = info.glossary.length > 0
+  const hasDesc = info.description.trim().length > 0
+
+  const kvTable = (rows: string) => `<table><tbody>${rows}</tbody></table>`
+
+  const t = dark ? {
+    bodyBg: '#0d0d0d', bodyColor: '#e8e8e8',
+    headerBg: '#000000', headerSub: '#888888', headerCapturedBy: '#aaaaaa',
+    descColor: '#c0c0c0',
+    sectionBorder: '#2a2a2a', sectionTitleColor: '#f97316',
+    thBg: '#1a1a1a', thColor: '#f97316', thBorder: '#2a2a2a',
+    tdBorder: '#1e1e1e', tdEvenBg: '#141414',
+    kvLabelColor: '#f97316',
+    glossItemBorder: '#1e1e1e', gTermColor: '#f97316', gSepColor: '#555', gDescColor: '#aaa',
+    footerBorder: '#2a2a2a', footerColor: '#555',
+  } : {
+    bodyBg: '#ffffff', bodyColor: '#1e2235',
+    headerBg: '#1a1f35', headerSub: '#94a3b8', headerCapturedBy: '#b0bec5',
+    descColor: '#475569',
+    sectionBorder: '#e2e8f0', sectionTitleColor: '#64748b',
+    thBg: '#f8fafc', thColor: '#64748b', thBorder: '#e2e8f0',
+    tdBorder: '#f1f5f9', tdEvenBg: '#fafbfc',
+    kvLabelColor: '#334155',
+    glossItemBorder: '#f1f5f9', gTermColor: '#1e2235', gSepColor: '#94a3b8', gDescColor: '#475569',
+    footerBorder: '#e2e8f0', footerColor: '#94a3b8',
+  }
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>${esc(info.title || folderName)} — NAM Pack</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: Inter, Arial, sans-serif; color: ${t.bodyColor}; background: ${t.bodyBg}; font-size: 10.5px; line-height: 1.45; }
+  .header { background: ${t.headerBg}; color: #fff; padding: 18px 32px 16px; }
+  .header-title { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
+  .header-meta { display: flex; justify-content: space-between; align-items: baseline; margin-top: 4px; gap: 16px; }
+  .header-sub { font-size: 11px; color: ${t.headerSub}; }
+  .header-captured { font-size: 10px; color: ${t.headerCapturedBy}; letter-spacing: 0.03em; white-space: nowrap; }
+  .content { padding: 18px 32px; }
+  .description { color: ${t.descColor}; margin-bottom: 16px; line-height: 1.6; width: 100%; }
+  .section { margin-bottom: 20px; }
+  .section-title { font-size: 10px; font-weight: 700; color: ${t.sectionTitleColor}; text-transform: uppercase; letter-spacing: 0.1em; text-align: center; margin-bottom: 8px; padding-bottom: 0; }
+  .section-title::after { content: ''; display: block; width: 28px; height: 2px; background: ${t.sectionTitleColor}; border-radius: 1px; margin: 5px auto 0; opacity: 0.7; }
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  thead th { background: ${t.thBg}; text-align: left; padding: 5px 8px; font-size: 9.5px; font-weight: 600; color: ${t.thColor}; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid ${t.thBorder}; white-space: nowrap; overflow: hidden; }
+  tbody td { padding: 4px 8px; border-bottom: 1px solid ${t.tdBorder}; vertical-align: top; overflow: hidden; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:nth-child(even) { background: ${t.tdEvenBg}; }
+  .col-name { overflow: hidden; }
+  .kv-label { font-weight: 600; color: ${t.kvLabelColor}; width: 110px; white-space: nowrap; }
+  .glossary-item { padding: 4px 0; border-bottom: 1px solid ${t.glossItemBorder}; }
+  .glossary-item:last-child { border-bottom: none; }
+  .g-term { font-weight: 600; color: ${t.gTermColor}; }
+  .g-sep { color: ${t.gSepColor}; }
+  .g-desc { color: ${t.gDescColor}; }
+  .footer { margin-top: 24px; padding-top: 8px; border-top: 1px solid ${t.footerBorder}; font-size: 9.5px; color: ${t.footerColor}; }
+  @media print {
+    body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    .header, thead th, tbody tr:nth-child(even) { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="header-title">${esc(info.title || folderName)}</div>
+  ${(info.subtitle || info.capturedBy) ? `<div class="header-meta">
+    <div class="header-sub">${esc(info.subtitle)}</div>
+    ${info.capturedBy ? `<div class="header-captured">Captured by ${esc(info.capturedBy)}</div>` : ''}
+  </div>` : ''}
+</div>
+<div class="content">
+  ${hasDesc ? `<div class="description">${parseDescription(info.description, dark)}</div>` : ''}
+
+  ${hasCaptures ? `<div class="section">
+    <div class="section-title">Captures</div>
+    <table>
+      <thead><tr>${captureHeaderCells}</tr></thead>
+      <tbody>${captureRows}</tbody>
+    </table>
+  </div>` : ''}
+
+  ${hasEquipment ? `<div class="section"><div class="section-title">Equipment</div>${kvTable(equipRows)}</div>` : ''}
+  ${hasPedals ? `<div class="section"><div class="section-title">Pedals</div>${kvTable(pedalRows)}</div>` : ''}
+  ${hasSwitches ? `<div class="section"><div class="section-title">Switches &amp; Modes</div>${kvTable(switchRows)}</div>` : ''}
+
+  ${hasGlossary ? `<div class="section">
+    <div class="section-title">Glossary</div>
+    <div>${glossaryItems}</div>
+  </div>` : ''}
+
+  <div class="footer">Generated by NAM Lab</div>
+</div>
+</body>
+</html>`
+}
+
+interface Props {
+  folderPath: string
+  folderName: string
+  captures: NamFile[]
+  defaultCapturedBy?: string
+  catalog?: CatalogItem[]
+  onCatalogChange?: (catalog: CatalogItem[]) => void
+  onPackSaved?: (folderPath: string, hasData: boolean) => void
+}
+
+function SectionHeader({ label, hint }: { label: string; hint?: string }) {
+  return (
+    <div className="flex flex-col items-start pt-3 pb-2">
+      <span className="text-xs font-bold text-gray-600 dark:text-gray-300 uppercase tracking-widest">{label}</span>
+      {hint && <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{hint}</span>}
+      <div className="mt-1.5 w-8 h-0.5 bg-teal-500 rounded-full" />
+    </div>
+  )
+}
+
+function RowEditor<T extends Record<string, string>>({
+  rows, onChange, keys, addLabel, placeholders, firstColWidth = 'max-w-[120px]',
+  catalogItems, onSaveToCatalog
+}: {
+  rows: T[]
+  onChange: (rows: T[]) => void
+  keys: (keyof T)[]
+  addLabel: string
+  placeholders: string[]
+  firstColWidth?: string
+  catalogItems?: { label: string; value: string }[]
+  onSaveToCatalog?: (label: string, value: string) => void
+}) {
+  const [showPicker, setShowPicker] = useState(false)
+  const pickerRef = useRef<HTMLDivElement>(null)
+  const emptyRow = () => Object.fromEntries(keys.map((k) => [k, ''])) as T
+
+  // Close picker on outside click
+  useEffect(() => {
+    if (!showPicker) return
+    const handler = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) setShowPicker(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showPicker])
+
+  return (
+    <div className="space-y-1.5">
+      {rows.map((row, i) => (
+        <div key={i} className="flex gap-1.5 items-start">
+          {keys.map((k, ki) => (
+            <input
+              key={String(k)}
+              value={row[k]}
+              placeholder={placeholders[ki]}
+              onChange={(e) => {
+                const next = [...rows]
+                next[i] = { ...next[i], [k]: e.target.value }
+                onChange(next)
+              }}
+              className={`flex-1 text-xs px-2 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500 ${ki === 0 ? firstColWidth : ''}`}
+            />
+          ))}
+          {onSaveToCatalog && (
+            <button
+              onClick={() => onSaveToCatalog(String(row[keys[0]]), String(row[keys[1] ?? keys[0]]))}
+              className="text-gray-300 dark:text-gray-600 hover:text-teal-500 dark:hover:text-teal-400 transition-colors mt-1 flex-shrink-0"
+              title="Save to catalog"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+              </svg>
+            </button>
+          )}
+          <button
+            onClick={() => onChange(rows.filter((_, j) => j !== i))}
+            className="text-gray-400 hover:text-red-500 transition-colors mt-1 flex-shrink-0"
+            title="Remove"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      ))}
+      <div className="flex items-center gap-3 flex-wrap">
+        <button
+          onClick={() => onChange([...rows, emptyRow()])}
+          className="text-xs text-teal-600 dark:text-teal-400 hover:text-teal-700 dark:hover:text-teal-300 font-medium transition-colors"
+        >
+          + {addLabel}
+        </button>
+        {catalogItems && catalogItems.length > 0 && (
+          <div className="relative" ref={pickerRef}>
+            <button
+              onClick={() => setShowPicker((v) => !v)}
+              className="text-xs text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300 font-medium transition-colors"
+            >
+              From catalog ({catalogItems.length})…
+            </button>
+            {showPicker && (
+              <div className="absolute left-0 top-5 z-30 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg min-w-[200px] max-w-[280px] max-h-48 overflow-y-auto py-1">
+                {catalogItems.map((item, i) => (
+                  <button
+                    key={i}
+                    onClick={() => {
+                      const newRow = Object.fromEntries(keys.map((k, ki) =>
+                        [k, ki === 0 ? item.label : item.value]
+                      )) as T
+                      onChange([...rows, newRow])
+                      setShowPicker(false)
+                    }}
+                    className="w-full text-left px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                  >
+                    <span className="text-xs font-medium text-gray-700 dark:text-gray-300">{item.label}</span>
+                    {item.value && (
+                      <span className="text-xs text-gray-400 dark:text-gray-500 ml-1.5 truncate">{item.value}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+export function PackInfoEditor({ folderPath, folderName, captures, defaultCapturedBy = '', catalog = [], onCatalogChange, onPackSaved }: Props) {
+  const [pack, setPack] = useState<PackInfo>(EMPTY_PACK)
+  const [saved, setSaved] = useState(true)
+  const [exporting, setExporting] = useState(false)
+  const [status, setStatus] = useState<string | null>(null)
+  const [subfoldersOpen, setSubfoldersOpen] = useState(false)
+  const subfoldersRef = useRef<HTMLDivElement>(null)
+  const [colsOpen, setColsOpen] = useState(false)
+  const colsRef = useRef<HTMLDivElement>(null)
+  const [darkExport, setDarkExport] = useState(() => {
+    try { return localStorage.getItem('nam-pack-dark-export') === '1' } catch { return false }
+  })
+
+  useEffect(() => {
+    let cancelled = false
+    window.api.readPackInfo(folderPath).then((res) => {
+      if (cancelled) return
+      if (res.success && res.data) {
+        const d = res.data as Partial<PackInfo>
+        setPack({
+          title: d.title ?? '',
+          subtitle: d.subtitle ?? '',
+          capturedBy: d.capturedBy ?? defaultCapturedBy,
+          description: d.description ?? '',
+          equipment: d.equipment ?? [],
+          pedals: d.pedals ?? [],
+          switches: d.switches ?? [],
+          glossary: d.glossary ?? [],
+          exportExcludedSubfolders: d.exportExcludedSubfolders ?? [],
+          exportColumns: d.exportColumns ?? DEFAULT_EXPORT_COLUMNS
+        })
+      } else {
+        setPack({ ...EMPTY_PACK, capturedBy: defaultCapturedBy })
+      }
+      setSaved(true)
+    })
+    return () => { cancelled = true }
+  }, [folderPath])
+
+  const update = useCallback(<K extends keyof PackInfo>(key: K, val: PackInfo[K]) => {
+    setPack((prev) => ({ ...prev, [key]: val }))
+    setSaved(false)
+    setStatus(null)
+  }, [])
+
+  const addToCatalog = useCallback((category: CatalogItem['category'], label: string, value: string) => {
+    if (!label.trim() || !onCatalogChange) return
+    onCatalogChange([...catalog, { category, label: label.trim(), value: value.trim() }])
+  }, [catalog, onCatalogChange])
+
+  const catalogFor = (cat: CatalogItem['category']) => catalog.filter((i) => i.category === cat)
+
+  const toggleDarkExport = (val: boolean) => {
+    setDarkExport(val)
+    try { localStorage.setItem('nam-pack-dark-export', val ? '1' : '0') } catch { /* */ }
+  }
+
+  // Close subfolder popup on outside click
+  useEffect(() => {
+    if (!subfoldersOpen) return
+    const handler = (e: MouseEvent) => {
+      if (subfoldersRef.current && !subfoldersRef.current.contains(e.target as Node)) {
+        setSubfoldersOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [subfoldersOpen])
+
+  // Close columns popup on outside click
+  useEffect(() => {
+    if (!colsOpen) return
+    const handler = (e: MouseEvent) => {
+      if (colsRef.current && !colsRef.current.contains(e.target as Node)) {
+        setColsOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [colsOpen])
+
+  // Derive all distinct relative folder paths containing captures (e.g. "V1/DI", "V2/HyperAccurate/DI").
+  // Each entry is the full relative path of the folder, not just a name segment.
+  const subfolders = useMemo(() => {
+    const base = folderPath.replace(/\\/g, '/') + '/'
+    const seen = new Set<string>()
+    for (const f of captures) {
+      const fp = f.filePath.replace(/\\/g, '/')
+      if (!fp.startsWith(base)) continue
+      const rel = fp.slice(base.length)
+      const parts = rel.split('/').slice(0, -1)
+      if (parts.length > 0) seen.add(parts.join('/'))
+    }
+    return [...seen].sort()
+  }, [captures, folderPath])
+
+  // Returns true if the file should be included — excluded if its folder path matches any excluded entry exactly
+  const isNotExcluded = useCallback((f: NamFile) => {
+    if (pack.exportExcludedSubfolders.length === 0) return true
+    const base = folderPath.replace(/\\/g, '/') + '/'
+    const fp = f.filePath.replace(/\\/g, '/')
+    if (!fp.startsWith(base)) return true
+    const relFolder = fp.slice(base.length).split('/').slice(0, -1).join('/')
+    return !pack.exportExcludedSubfolders.includes(relFolder)
+  }, [pack.exportExcludedSubfolders, folderPath])
+
+  const handleSave = async () => {
+    const res = await window.api.writePackInfo(folderPath, pack)
+    if (res.success) {
+      setSaved(true)
+      setStatus('Saved')
+      setTimeout(() => setStatus(null), 2000)
+      onPackSaved?.(folderPath.replace(/\\/g, '/'), !!pack.title.trim())
+    } else {
+      setStatus('Save failed')
+    }
+  }
+
+  const handleExport = async () => {
+    setExporting(true)
+    if (!saved) await handleSave()
+    const html = generateExportHtml(pack, folderPath, folderName, captures, darkExport)
+    const res = await window.api.exportPackSheet(html)
+    setExporting(false)
+    if (!res.success) setStatus('Export failed')
+  }
+
+  const inputCls = 'w-full text-xs px-2.5 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500'
+  const labelCls = 'text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 block'
+
+  return (
+    <div className="h-full flex flex-col overflow-hidden">
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Pack Info</h3>
+          <p className="text-xs text-gray-500 dark:text-gray-400">{folderName}</p>
+        </div>
+        <div className="flex items-center gap-3">
+          {status && (
+            <span className={`text-xs ${status === 'Saved' ? 'text-teal-600 dark:text-teal-400' : 'text-red-500'}`}>
+              {status}
+            </span>
+          )}
+          <label className="flex items-center gap-1.5 cursor-pointer select-none" title="Dark mode export">
+            <span className="text-xs text-gray-500 dark:text-gray-400">Dark</span>
+            <div
+              onClick={() => toggleDarkExport(!darkExport)}
+              className={`relative w-7 h-4 rounded-full transition-colors ${darkExport ? 'bg-orange-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+            >
+              <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${darkExport ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+            </div>
+          </label>
+          <button
+            onClick={handleExport}
+            disabled={exporting}
+            className="text-xs px-2.5 py-1 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+          >
+            Export PDF…
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saved}
+            className="text-xs px-2.5 py-1 rounded bg-teal-600 text-white hover:bg-teal-700 transition-colors disabled:opacity-40"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+
+      {/* Form */}
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-1">
+
+        {/* Identity */}
+        <div className="space-y-2 pb-1">
+          <div>
+            <label className={labelCls}>Pack Title</label>
+            <input
+              value={pack.title}
+              placeholder="e.g. FMAN 100 Deluxe V2 NAM Pack"
+              onChange={(e) => update('title', e.target.value)}
+              className={inputCls}
+            />
+          </div>
+          <div>
+            <label className={labelCls}>Subtitle</label>
+            <input
+              value={pack.subtitle}
+              placeholder="e.g. Based on a Friedman BE100 Deluxe"
+              onChange={(e) => update('subtitle', e.target.value)}
+              className={inputCls}
+            />
+          </div>
+          <div>
+            <label className={labelCls}>Captured By</label>
+            <input
+              value={pack.capturedBy}
+              placeholder="e.g. Core Tone Captures"
+              onChange={(e) => update('capturedBy', e.target.value)}
+              className={inputCls}
+            />
+          </div>
+        </div>
+
+        {/* Description */}
+        <div className="pb-1">
+          <label className={labelCls}>Description</label>
+          <textarea
+            value={pack.description}
+            placeholder="Describe the amp, the tones, how it was captured…"
+            onChange={(e) => update('description', e.target.value)}
+            rows={7}
+            className={`${inputCls} resize-y leading-relaxed min-h-[80px] font-mono text-xs`}
+          />
+          <div className="mt-1 px-1 text-[10px] text-gray-400 dark:text-gray-500 leading-relaxed">
+            <span className="font-semibold text-gray-500 dark:text-gray-400">Formatting (export only):</span>
+            {' '}<code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">**bold**</code>
+            {' '}<code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">*italic*</code>
+            {' '}<code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">__underline__</code>
+            {' '}<code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded"># Heading</code>
+            {' '}<code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">- bullet</code>
+            {' '}<code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">---</code>
+            {' '}Color: <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">[orange]text[/orange]</code>
+            {' — '}available: orange, teal, red, blue, green, dim, white
+          </div>
+        </div>
+
+        {/* Captures */}
+        <SectionHeader label="Captures" hint={`${captures.length} auto-populated from loaded files`} />
+        {/* Subfolder export filter */}
+        {subfolders.length > 0 && (
+          <div className="mb-2 flex items-center gap-2 relative" ref={subfoldersRef}>
+            <button
+              onClick={() => setSubfoldersOpen((v) => !v)}
+              className="flex items-center gap-1.5 px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:border-teal-500 dark:hover:border-teal-500 transition-colors"
+            >
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h4l2 2h10a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V4z" />
+              </svg>
+              Filter subfolders
+              {pack.exportExcludedSubfolders.length > 0 && (
+                <span className="ml-0.5 px-1 rounded-full bg-amber-500 text-white text-[10px] leading-4">
+                  {pack.exportExcludedSubfolders.length} hidden
+                </span>
+              )}
+              <svg className={`w-2.5 h-2.5 transition-transform ${subfoldersOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {subfoldersOpen && (
+              <div className="absolute top-full left-0 mt-1 z-30 w-80 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl">
+                <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-gray-700">
+                  <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">Include subfolders in export</span>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => update('exportExcludedSubfolders', [])}
+                      className="text-[10px] text-teal-600 dark:text-teal-400 hover:underline"
+                    >All</button>
+                    <button
+                      onClick={() => update('exportExcludedSubfolders', [...subfolders])}
+                      className="text-[10px] text-gray-400 hover:underline"
+                    >None</button>
+                  </div>
+                </div>
+                <div className="overflow-y-auto max-h-64 py-1">
+                  {subfolders.map((sub) => {
+                    const excluded = pack.exportExcludedSubfolders.includes(sub)
+                    const base = folderPath.replace(/\\/g, '/') + '/'
+                    const count = captures.filter((f) => {
+                      const fp = f.filePath.replace(/\\/g, '/')
+                      if (!fp.startsWith(base)) return false
+                      const relFolder = fp.slice(base.length).split('/').slice(0, -1).join('/')
+                      return relFolder === sub
+                    }).length
+                    return (
+                      <label key={sub} className="flex items-center gap-2 px-3 py-1 hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={!excluded}
+                          onChange={(e) => {
+                            const next = e.target.checked
+                              ? pack.exportExcludedSubfolders.filter((s) => s !== sub)
+                              : [...pack.exportExcludedSubfolders, sub]
+                            update('exportExcludedSubfolders', next)
+                          }}
+                          className="w-3 h-3 rounded accent-teal-600 flex-shrink-0"
+                        />
+                        <span className="text-xs text-gray-700 dark:text-gray-300 flex-1 truncate font-mono">{sub}</span>
+                        <span className="text-xs text-gray-400 flex-shrink-0">{count}</span>
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        {/* Column chooser */}
+        <div className="mb-2 relative" ref={colsRef}>
+          <button
+            onClick={() => setColsOpen((v) => !v)}
+            className="flex items-center gap-1.5 px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:border-teal-500 dark:hover:border-teal-500 transition-colors"
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+            Columns
+            <span className="text-gray-400 dark:text-gray-500 text-[10px]">{pack.exportColumns.length + 1} shown</span>
+            <svg className={`w-2.5 h-2.5 transition-transform ${colsOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {colsOpen && (
+            <div className="absolute top-full left-0 mt-1 z-30 w-56 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl">
+              <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 text-xs font-semibold text-gray-600 dark:text-gray-300">
+                Capture columns (max 6)
+              </div>
+              <div className="py-1">
+                <div className="flex items-center gap-2 px-3 py-1 opacity-50 select-none">
+                  <input type="checkbox" checked readOnly className="w-3 h-3 rounded" />
+                  <span className="text-xs text-gray-700 dark:text-gray-300">Capture Name</span>
+                  <span className="text-[10px] text-gray-400 ml-auto">always</span>
+                </div>
+                {PACK_CAPTURE_COLUMNS.map((col) => {
+                  const on = pack.exportColumns.includes(col.id)
+                  const atMax = pack.exportColumns.length >= 6 && !on
+                  return (
+                    <label key={col.id} className={`flex items-center gap-2 px-3 py-1 cursor-pointer select-none hover:bg-gray-50 dark:hover:bg-gray-700/50 ${atMax ? 'opacity-40 pointer-events-none' : ''}`}>
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        onChange={(e) => {
+                          const next = e.target.checked
+                            ? [...pack.exportColumns, col.id]
+                            : pack.exportColumns.filter((c) => c !== col.id)
+                          update('exportColumns', next)
+                        }}
+                        className="w-3 h-3 rounded accent-teal-600 flex-shrink-0"
+                      />
+                      <span className="text-xs text-gray-700 dark:text-gray-300">{col.label}</span>
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div>
+          {captures.length === 0 ? (
+            <p className="text-xs text-gray-400 dark:text-gray-500 italic text-center py-2">No captures loaded for this folder</p>
+          ) : (() => {
+            const visible = captures.filter(isNotExcluded)
+            const activeCols = PACK_CAPTURE_COLUMNS.filter((c) => pack.exportColumns.includes(c.id))
+            const colCount = activeCols.length + 1
+            return (
+              <div className="rounded border border-gray-200 dark:border-gray-700 overflow-hidden">
+                <table className="w-full text-xs table-fixed">
+                  <thead>
+                    <tr className="bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400">
+                      <th className="text-left px-2 py-1 font-medium">Name</th>
+                      {activeCols.map((c) => (
+                        <th key={c.id} className="text-left px-2 py-1 font-medium">{c.label}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visible.slice(0, 25).map((f) => (
+                      <tr key={f.filePath} className="border-t border-gray-100 dark:border-gray-800">
+                        <td className="px-2 py-0.5 text-gray-800 dark:text-gray-200 truncate">{f.metadata.name || f.fileName}</td>
+                        {activeCols.map((c) => (
+                          <td key={c.id} className="px-2 py-0.5 text-gray-600 dark:text-gray-400 truncate">{c.accessor(f)}</td>
+                        ))}
+                      </tr>
+                    ))}
+                    {visible.length > 25 && (
+                      <tr className="border-t border-gray-100 dark:border-gray-800">
+                        <td colSpan={colCount} className="px-2 py-0.5 text-gray-400 dark:text-gray-500 italic">+ {visible.length - 25} more…</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )
+          })()}
+        </div>
+
+        {/* Equipment */}
+        <SectionHeader label="Equipment" hint="Amp · Cabinet · Mic(s) · Preamp · Interface" />
+        <RowEditor
+          rows={pack.equipment}
+          onChange={(rows) => update('equipment', rows)}
+          keys={['label', 'value']}
+          addLabel="Add item"
+          placeholders={['Amp', 'Friedman BE-100 Deluxe V2']}
+          catalogItems={catalogFor('equipment')}
+          onSaveToCatalog={(label, value) => addToCatalog('equipment', label, value)}
+        />
+
+        {/* Pedals */}
+        <SectionHeader label="Pedals" hint="Boost · Drive · EQ · Effects in chain" />
+        <RowEditor
+          rows={pack.pedals}
+          onChange={(rows) => update('pedals', rows)}
+          keys={['label', 'value']}
+          addLabel="Add pedal"
+          placeholders={['Boost', 'Klon Centaur (unity gain)']}
+          catalogItems={catalogFor('pedals')}
+          onSaveToCatalog={(label, value) => addToCatalog('pedals', label, value)}
+        />
+
+        {/* Switches — no catalog (per-amp) */}
+        <SectionHeader label="Switches & Modes" hint="Channel modes · Tone stack · Voice switches" />
+        <RowEditor
+          rows={pack.switches}
+          onChange={(rows) => update('switches', rows)}
+          keys={['label', 'value']}
+          addLabel="Add switch"
+          placeholders={['Tight switch', 'Engaged on all BE channels']}
+          firstColWidth="max-w-[140px]"
+        />
+
+        {/* Glossary */}
+        <SectionHeader label="Glossary" hint="Define terms used in capture names" />
+        <div className="pb-4">
+          <RowEditor
+            rows={pack.glossary}
+            onChange={(rows) => update('glossary', rows)}
+            keys={['term', 'description']}
+            addLabel="Add entry"
+            placeholders={['DI', 'Direct Inject — no cabinet']}
+            catalogItems={catalogFor('glossary')}
+            onSaveToCatalog={(label, value) => addToCatalog('glossary', label, value)}
+          />
+        </div>
+      </div>
+    </div>
+  )
+}

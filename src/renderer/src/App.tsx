@@ -15,6 +15,7 @@ import { FolderTree } from './components/FolderTree'
 import { DuplicatesModal } from './components/DuplicatesModal'
 import { ImportMetadataModal, ImportMatch } from './components/ImportMetadataModal'
 import { FolderGallery, FolderImagesData } from './components/FolderGallery'
+import { PackInfoEditor } from './components/PackInfoEditor'
 import * as XLSX from 'xlsx'
 import { FolderNode } from './types/librarian'
 
@@ -62,6 +63,11 @@ declare global {
       browseExecutable: () => Promise<string | null>
       openInNam: (filePath: string, standalonePath: string) => Promise<{ success: boolean; error?: string }>
       scanImages: (folderPath: string) => Promise<{ success: boolean; images: string[] }>
+      findPackOwner: (folderPath: string, rootPath: string) => Promise<string | null>
+      findPackFolders: (rootPath: string) => Promise<string[]>
+      readPackInfo: (folderPath: string) => Promise<{ success: boolean; data: unknown }>
+      writePackInfo: (folderPath: string, data: unknown) => Promise<{ success: boolean; error?: string }>
+      exportPackSheet: (html: string) => Promise<{ success: boolean; error?: string }>
       platform: string
     }
   }
@@ -195,6 +201,41 @@ export default function App() {
   })
 
   const [folderImages, setFolderImages] = useState<FolderImagesData>(null)
+  const [folderPanelTab, setFolderPanelTab] = useState<'pack' | 'gallery'>('pack')
+  // Path of the ancestor that owns the pack info for the current folder (null = current folder may own one)
+  const [packInfoAncestor, setPackInfoAncestor] = useState<string | null>(null)
+  // Set of folder paths that have a valid nam-pack.json (non-empty title) — drives blue dot in tree
+  const [packInfoFolders, setPackInfoFolders] = useState<Set<string>>(new Set())
+
+  // Reset folder panel tab and check for pack-owning ancestor when selected folder changes
+  useEffect(() => {
+    setFolderPanelTab('pack')
+    const sf = librarian.selectedFolder
+    const rf = librarian.rootFolder
+    if (!sf || !rf || sf === rf) {
+      setPackInfoAncestor(null)
+      return
+    }
+    let cancelled = false
+    window.api.findPackOwner(sf, rf).then((owner) => {
+      if (!cancelled) setPackInfoAncestor(owner)
+    })
+    return () => { cancelled = true }
+  }, [librarian.selectedFolder, librarian.rootFolder])
+
+  // Scan all pack-info folders when root folder changes (drives blue dot in tree)
+  useEffect(() => {
+    const rf = librarian.rootFolder
+    if (!rf) {
+      setPackInfoFolders(new Set())
+      return
+    }
+    let cancelled = false
+    window.api.findPackFolders(rf).then((paths) => {
+      if (!cancelled) setPackInfoFolders(new Set(paths))
+    })
+    return () => { cancelled = true }
+  }, [librarian.rootFolder])
 
   // Scan folder images when selected folder changes (only when feature is enabled)
   useEffect(() => {
@@ -318,6 +359,16 @@ export default function App() {
       setListViewMode(updated.defaultView)
       setListWidth(updated.defaultView === 'grid' ? loadLayout().listWidthGrid : loadLayout().listWidthList)
     }
+  }
+
+  // Called by PackInfoEditor after saving — updates the blue-dot set in the tree
+  const handlePackSaved = (folderPath: string, hasData: boolean) => {
+    setPackInfoFolders((prev) => {
+      const next = new Set(prev)
+      if (hasData) next.add(folderPath)
+      else next.delete(folderPath)
+      return next
+    })
   }
 
   // Auto-load default folder on startup (moved below loadFolderByPath — see combined startup effect)
@@ -1571,6 +1622,7 @@ export default function App() {
                 onImportMetadata={handleImportMetadata}
                 onSelectAllInFolder={handleSelectAllInFolder}
                 scrollToFolder={treeScrollTarget}
+                packInfoFolders={packInfoFolders}
               />
             </div>
             {!gridMaximized && <DragHandle onMouseDown={(e) => onDragStart('tree', e)} onCollapse={() => setTreeCollapsed((v) => !v)} collapsed={treeCollapsed} />}
@@ -1759,9 +1811,55 @@ export default function App() {
               gearMakeSuggestions={gearMakeSuggestions}
               gearModelSuggestions={gearModelSuggestions}
             />
-          ) : selectedFiles.length === 0 && librarian.rootFolder !== null && folderImages !== null && (folderImages.own.length > 0 || folderImages.inherited.some((g) => g.paths.length > 0)) ? (
-            <FolderGallery data={folderImages} />
-          ) : selectedFiles.length === 0 && files.length === 0 ? (
+          ) : selectedFiles.length === 0 && librarian.rootFolder !== null ? (() => {
+            const activeFolderPath = (librarian.selectedFolder ?? librarian.rootFolder)!
+            const activeFolderName = activeFolderPath.split('/').pop() ?? activeFolderPath
+            const hasImages = folderImages !== null && (folderImages.own.length > 0 || folderImages.inherited.some((g) => g.paths.length > 0))
+            const showGallery = hasImages && settings.showFolderImages
+            // If an ancestor folder already owns a nam-pack.json, this folder is a sub-division
+            // of that pack — only show gallery here, never a second pack info editor
+            const isPackChild = packInfoAncestor !== null
+            const showPackEditor = !isPackChild
+            const showGalleryTab = showPackEditor && showGallery
+            return (
+              <div className="h-full flex flex-col">
+                {showGalleryTab && (
+                  <div className="flex border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+                    {(['pack', 'gallery'] as const).map((tab) => (
+                      <button
+                        key={tab}
+                        onClick={() => setFolderPanelTab(tab)}
+                        className={`px-4 py-2 text-xs font-medium transition-colors border-b-2 -mb-px ${
+                          folderPanelTab === tab
+                            ? 'border-teal-500 text-teal-600 dark:text-teal-400'
+                            : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                        }`}
+                      >
+                        {tab === 'pack' ? 'Pack Info' : 'Gallery'}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div className="flex-1 overflow-hidden">
+                  {showPackEditor && (!showGalleryTab || folderPanelTab === 'pack') ? (
+                    <PackInfoEditor
+                      key={activeFolderPath}
+                      folderPath={activeFolderPath}
+                      folderName={activeFolderName}
+                      captures={visibleFiles}
+                      defaultCapturedBy={settings.defaultModeledBy}
+                      catalog={settings.packGearCatalog}
+                      onCatalogChange={(catalog) => handleSaveSettings({ ...settings, packGearCatalog: catalog })}
+                      onPackSaved={handlePackSaved}
+                    />
+                  ) : showGallery ? (
+                    <FolderGallery data={folderImages!} />
+                  ) : null}
+                </div>
+              </div>
+            )
+          })()
+          : selectedFiles.length === 0 && files.length === 0 ? (
             <EmptyState onOpenFiles={handleOpenFiles} onOpenFolder={handleOpenFolder} />
           ) : (
             <MultiSelectHint count={selectedFiles.length} />

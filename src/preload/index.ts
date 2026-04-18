@@ -48,6 +48,16 @@ const api = {
   browseExecutable: (): Promise<string | null> => ipcRenderer.invoke('dialog:browseExecutable'),
   openInNam: (filePath: string, standalonePath: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('app:openInNam', filePath, standalonePath),
+  findPackFolders: (rootPath: string): Promise<string[]> =>
+    ipcRenderer.invoke('folder:findPackFolders', rootPath),
+  findPackOwner: (folderPath: string, rootPath: string): Promise<string | null> =>
+    ipcRenderer.invoke('folder:findPackOwner', folderPath, rootPath),
+  readPackInfo: (folderPath: string): Promise<{ success: boolean; data: unknown }> =>
+    ipcRenderer.invoke('folder:readPackInfo', folderPath),
+  writePackInfo: (folderPath: string, data: unknown): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('folder:writePackInfo', folderPath, data),
+  exportPackSheet: (html: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('app:exportPackSheet', html),
   onOpenFiles: (cb: (paths: string[]) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, paths: string[]) => cb(paths)
     ipcRenderer.on('app:openFiles', handler)

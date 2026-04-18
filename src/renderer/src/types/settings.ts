@@ -61,10 +61,13 @@ export interface AppSettings {
 
   // Import: comma-separated suffix words that trigger prefix matching (e.g. "DI,DI2")
   importPrefixSuffixes: string
+
+  // Pack Info: global gear catalog reused across packs
+  packGearCatalog: { category: 'equipment' | 'pedals' | 'glossary'; label: string; value: string }[]
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  enableAmpInfo: true,
+  enableAmpInfo: false,
   defaultManufacturer: '',
   defaultModel: '',
 
@@ -98,7 +101,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showFolderImages: true,
   checkForRCBuilds: false,
   namStandalonePath: '',
-  importPrefixSuffixes: 'DI'
+  importPrefixSuffixes: 'DI',
+  packGearCatalog: []
 }
 
 const STORAGE_KEY = 'nam-editor-settings'

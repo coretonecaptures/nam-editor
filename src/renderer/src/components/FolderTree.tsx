@@ -22,6 +22,7 @@ interface FolderTreeProps {
   onImportMetadata?: (folderPath: string | null) => void
   onSelectAllInFolder?: (folderPath: string | null) => void
   scrollToFolder?: string | null
+  packInfoFolders?: Set<string>
 }
 
 function matchesFilter(
@@ -49,7 +50,7 @@ export function FolderTree({
   tree, files, selectedFolder, onSelect, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, onFilterChange, onDropFiles,
   onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata,
-  onSelectAllInFolder, scrollToFolder
+  onSelectAllInFolder, scrollToFolder, packInfoFolders
 }: FolderTreeProps) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [expandSeq, setExpandSeq] = useState(0)
@@ -265,6 +266,7 @@ export function FolderTree({
             expandSeq={expandSeq}
             collapseSeq={collapseSeq}
             scrollToFolder={scrollToFolder}
+            packInfoFolders={packInfoFolders}
           />
         ))}
       </div>
@@ -276,7 +278,7 @@ function TreeNode({
   node, selectedFolder, onSelect, depth, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, matchingPaths, onDropFiles,
   onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata,
-  onSelectAllInFolder, expandSeq, collapseSeq, scrollToFolder
+  onSelectAllInFolder, expandSeq, collapseSeq, scrollToFolder, packInfoFolders
 }: {
   node: FolderNode
   selectedFolder: string | null
@@ -299,6 +301,7 @@ function TreeNode({
   expandSeq?: number
   collapseSeq?: number
   scrollToFolder?: string | null
+  packInfoFolders?: Set<string>
 }) {
   const [expanded, setExpanded] = useState(true)
 
@@ -363,6 +366,7 @@ function TreeNode({
         onImportMetadata={onImportMetadata ? () => onImportMetadata(node.path) : undefined}
         onSelectAll={onSelectAllInFolder ? () => onSelectAllInFolder(node.path) : undefined}
         isDraggableFolder
+        hasPackInfo={packInfoFolders?.has(node.path.replace(/\\/g, '/')) ?? false}
       />
 
       {expanded && hasChildren && (
@@ -391,6 +395,7 @@ function TreeNode({
               expandSeq={expandSeq}
               collapseSeq={collapseSeq}
               scrollToFolder={scrollToFolder}
+              packInfoFolders={packInfoFolders}
             />
           ))}
         </div>
@@ -404,7 +409,7 @@ interface ContextMenuState { x: number; y: number }
 function FolderRow({
   label, folderPath, isRoot, isSelected, totalCount, dirtyCount, depth,
   hasChildren, expanded, onToggleExpand, onClick, onSave, onRevert,
-  onBatchEdit, onReveal, isFiltered, isHighlighted, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSelectAll, isDraggableFolder
+  onBatchEdit, onReveal, isFiltered, isHighlighted, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSelectAll, isDraggableFolder, hasPackInfo
 }: {
   label: string
   folderPath: string
@@ -432,6 +437,7 @@ function FolderRow({
   onImportMetadata?: () => void
   onSelectAll?: () => void
   isDraggableFolder?: boolean
+  hasPackInfo?: boolean
 }) {
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -577,8 +583,8 @@ function FolderRow({
         )}
 
         <svg
-          className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? 'text-indigo-400' : isRoot ? 'text-indigo-400' : 'text-gray-500'}`}
-          fill={!isRoot && expanded && hasChildren ? 'currentColor' : 'none'}
+          className={`w-3.5 h-3.5 flex-shrink-0 ${hasPackInfo ? 'text-blue-500' : isSelected ? 'text-indigo-400' : isRoot ? 'text-indigo-400' : 'text-gray-500'}`}
+          fill={hasPackInfo ? (expanded && hasChildren ? 'currentColor' : 'none') : (!isRoot && expanded && hasChildren ? 'currentColor' : 'none')}
           viewBox="0 0 24 24" stroke="currentColor"
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={isRoot ? 2 : 1.5}
