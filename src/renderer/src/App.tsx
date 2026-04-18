@@ -1623,6 +1623,13 @@ export default function App() {
                 onSelectAllInFolder={handleSelectAllInFolder}
                 scrollToFolder={treeScrollTarget}
                 packInfoFolders={packInfoFolders}
+                folderNameColors={settings.folderNameColors}
+                onSetFolderColor={(folderName, color) => {
+                  const next = { ...settings.folderNameColors }
+                  if (color === null) delete next[folderName]
+                  else next[folderName] = color
+                  handleSaveSettings({ ...settings, folderNameColors: next })
+                }}
               />
             </div>
             {!gridMaximized && <DragHandle onMouseDown={(e) => onDragStart('tree', e)} onCollapse={() => setTreeCollapsed((v) => !v)} collapsed={treeCollapsed} />}

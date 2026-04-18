@@ -64,6 +64,9 @@ export interface AppSettings {
 
   // Pack Info: global gear catalog reused across packs
   packGearCatalog: { category: 'equipment' | 'pedals' | 'glossary'; label: string; value: string }[]
+
+  // Folder tree colorization: maps folder name → hex color
+  folderNameColors: Record<string, string>
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -102,7 +105,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   checkForRCBuilds: false,
   namStandalonePath: '',
   importPrefixSuffixes: 'DI',
-  packGearCatalog: []
+  packGearCatalog: [],
+  folderNameColors: {}
 }
 
 const STORAGE_KEY = 'nam-editor-settings'

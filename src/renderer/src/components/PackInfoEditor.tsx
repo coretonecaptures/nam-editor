@@ -17,16 +17,17 @@ export interface PackInfo {
   exportColumns: string[]
 }
 
-// Available columns for the captures table — name is always first and fixed
-export const PACK_CAPTURE_COLUMNS: { id: string; label: string; accessor: (f: NamFile) => string; width: string }[] = [
-  { id: 'nl_amp_channel',  label: 'Channel',       accessor: (f) => f.metadata.nl_amp_channel  || '', width: '13%' },
-  { id: 'nl_amp_settings', label: 'Settings',      accessor: (f) => f.metadata.nl_amp_settings || '', width: '28%' },
-  { id: 'nl_amp_switches', label: 'Switches',      accessor: (f) => f.metadata.nl_amp_switches || '', width: '16%' },
-  { id: 'nl_boost_pedal',  label: 'Boost/OD',      accessor: (f) => f.metadata.nl_boost_pedal  || '', width: '13%' },
-  { id: 'nl_cabinet',      label: 'Cabinet',       accessor: (f) => f.metadata.nl_cabinet      || '', width: '13%' },
-  { id: 'nl_mics',         label: 'Mic(s)',         accessor: (f) => f.metadata.nl_mics         || '', width: '13%' },
-  { id: 'tone_type',       label: 'Tone Type',     accessor: (f) => f.metadata.tone_type        || '', width: '10%' },
-  { id: 'nl_comments',     label: 'Comments',      accessor: (f) => f.metadata.nl_comments     || '', width: '20%' },
+// Available columns for the captures table — name is always first and fixed.
+// width is a percentage integer; name gets 100 - sum(active widths), min 20%.
+export const PACK_CAPTURE_COLUMNS: { id: string; label: string; accessor: (f: NamFile) => string; width: number }[] = [
+  { id: 'nl_amp_channel',  label: 'Channel',   accessor: (f) => f.metadata.nl_amp_channel  || '', width: 11 },
+  { id: 'nl_amp_settings', label: 'Settings',  accessor: (f) => f.metadata.nl_amp_settings || '', width: 30 },
+  { id: 'nl_amp_switches', label: 'Switches',  accessor: (f) => f.metadata.nl_amp_switches || '', width: 22 },
+  { id: 'nl_boost_pedal',  label: 'Boost/OD',  accessor: (f) => f.metadata.nl_boost_pedal  || '', width: 13 },
+  { id: 'nl_cabinet',      label: 'Cabinet',   accessor: (f) => f.metadata.nl_cabinet      || '', width: 14 },
+  { id: 'nl_mics',         label: 'Mic(s)',    accessor: (f) => f.metadata.nl_mics         || '', width: 12 },
+  { id: 'tone_type',       label: 'Tone Type', accessor: (f) => f.metadata.tone_type        || '', width: 10 },
+  { id: 'nl_comments',     label: 'Comments',  accessor: (f) => f.metadata.nl_comments     || '', width: 22 },
 ]
 
 const DEFAULT_EXPORT_COLUMNS = ['nl_amp_channel', 'nl_amp_settings', 'nl_amp_switches']
@@ -124,12 +125,17 @@ function generateExportHtml(info: PackInfo, folderPath: string, folderName: stri
   })
 
   const activeCols = PACK_CAPTURE_COLUMNS.filter((c) => (info.exportColumns ?? DEFAULT_EXPORT_COLUMNS).includes(c.id))
-  // Name column always first; remaining width split among active cols
-  const nameWidth = activeCols.length === 0 ? '100%' : `${Math.max(25, 65 - activeCols.length * 4)}%`
+  const colSum = activeCols.reduce((s, c) => s + c.width, 0)
+  // Name gets the remainder, minimum 20%. If active cols alone exceed 80%, scale everything down proportionally.
+  const nameMinPct = 20
+  const totalAvail = 100 - nameMinPct // 80% max for active cols
+  const scale = colSum > totalAvail ? totalAvail / colSum : 1
+  const namePct = Math.round(100 - colSum * scale)
+  const nameWidth = `${namePct}%`
 
   const captureHeaderCells = [
     `<th style="width:${nameWidth}">Capture Name</th>`,
-    ...activeCols.map((c) => `<th style="width:${c.width}">${esc(c.label)}</th>`)
+    ...activeCols.map((c) => `<th style="width:${Math.round(c.width * scale)}%">${esc(c.label)}</th>`)
   ].join('')
 
   const captureRows = captures.map((f) => {
@@ -197,18 +203,18 @@ function generateExportHtml(info: PackInfo, folderPath: string, folderName: stri
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: Inter, Arial, sans-serif; color: ${t.bodyColor}; background: ${t.bodyBg}; font-size: 10.5px; line-height: 1.45; }
   .header { background: ${t.headerBg}; color: #fff; padding: 18px 32px 16px; }
-  .header-title { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
-  .header-meta { display: flex; justify-content: space-between; align-items: baseline; margin-top: 4px; gap: 16px; }
-  .header-sub { font-size: 11px; color: ${t.headerSub}; }
+  .header-title { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
+  .header-meta { display: flex; justify-content: space-between; align-items: baseline; margin-top: 6px; gap: 16px; }
+  .header-sub { font-size: 14px; color: ${t.headerSub}; }
   .header-captured { font-size: 10px; color: ${t.headerCapturedBy}; letter-spacing: 0.03em; white-space: nowrap; }
   .content { padding: 18px 32px; }
-  .description { color: ${t.descColor}; margin-bottom: 16px; line-height: 1.6; width: 100%; }
+  .description { color: ${t.descColor}; margin-bottom: 16px; line-height: 1.7; width: 100%; font-size: 12px; }
   .section { margin-bottom: 20px; }
   .section-title { font-size: 10px; font-weight: 700; color: ${t.sectionTitleColor}; text-transform: uppercase; letter-spacing: 0.1em; text-align: center; margin-bottom: 8px; padding-bottom: 0; }
   .section-title::after { content: ''; display: block; width: 28px; height: 2px; background: ${t.sectionTitleColor}; border-radius: 1px; margin: 5px auto 0; opacity: 0.7; }
   table { width: 100%; border-collapse: collapse; table-layout: fixed; }
   thead th { background: ${t.thBg}; text-align: left; padding: 5px 8px; font-size: 9.5px; font-weight: 600; color: ${t.thColor}; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid ${t.thBorder}; white-space: nowrap; overflow: hidden; }
-  tbody td { padding: 4px 8px; border-bottom: 1px solid ${t.tdBorder}; vertical-align: top; overflow: hidden; }
+  tbody td { padding: 4px 8px; border-bottom: 1px solid ${t.tdBorder}; vertical-align: top; word-break: break-word; }
   tbody tr:last-child td { border-bottom: none; }
   tbody tr:nth-child(even) { background: ${t.tdEvenBg}; }
   .col-name { overflow: hidden; }
@@ -618,9 +624,10 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
 
         {/* Captures */}
         <SectionHeader label="Captures" hint={`${captures.length} auto-populated from loaded files`} />
-        {/* Subfolder export filter */}
+        {/* Subfolder filter + column chooser row */}
+        <div className="mb-2 flex items-center gap-2">
         {subfolders.length > 0 && (
-          <div className="mb-2 flex items-center gap-2 relative" ref={subfoldersRef}>
+          <div className="flex items-center gap-2 relative" ref={subfoldersRef}>
             <button
               onClick={() => setSubfoldersOpen((v) => !v)}
               className="flex items-center gap-1.5 px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:border-teal-500 dark:hover:border-teal-500 transition-colors"
@@ -687,7 +694,7 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
           </div>
         )}
         {/* Column chooser */}
-        <div className="mb-2 relative" ref={colsRef}>
+        <div className="relative" ref={colsRef}>
           <button
             onClick={() => setColsOpen((v) => !v)}
             className="flex items-center gap-1.5 px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:border-teal-500 dark:hover:border-teal-500 transition-colors"
@@ -736,6 +743,7 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
             </div>
           )}
         </div>
+        </div>{/* end filter+columns row */}
 
         <div>
           {captures.length === 0 ? (
