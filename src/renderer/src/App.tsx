@@ -910,43 +910,78 @@ export default function App() {
     }
   }
 
-  const handleBatchRename = async (renames: { filePath: string; newBaseName: string }[]) => {
-    let succeeded = 0
+  const handleBatchRename = async (renames: { filePath: string; newBaseName: string }[], renameFiles: boolean) => {
+    const renameMap = new Map(renames.map((r) => [r.filePath, r.newBaseName]))
+    // Keys that factor into isDirty so we can recalculate after a partial save
+    const dirtyKeys: (keyof NamMetadata)[] = [
+      'name', 'modeled_by', 'gear_type', 'gear_make', 'gear_model',
+      'tone_type', 'input_level_dbu', 'output_level_dbu', 'nb_trained_epochs',
+      'nl_mics', 'nl_cabinet', 'nl_cabinet_config', 'nl_amp_channel',
+      'nl_boost_pedal', 'nl_amp_settings', 'nl_pedal_settings', 'nl_amp_switches', 'nl_comments'
+    ]
+
+    const saved = new Map<string, { newBaseName: string; newPath: string }>()
     let failed = 0
-    const updates: { oldPath: string; newPath: string; newBaseName: string }[] = []
 
     for (const { filePath, newBaseName } of renames) {
-      const result = await window.api.renameFile(filePath, newBaseName)
-      if (result.success && result.newPath) {
-        updates.push({ oldPath: filePath, newPath: result.newPath, newBaseName })
-        succeeded++
+      const file = files.find((f) => f.filePath === filePath)
+      if (!file) continue
+
+      let targetPath = filePath
+      if (renameFiles) {
+        const renameResult = await window.api.renameFile(filePath, newBaseName)
+        if (!renameResult.success || !renameResult.newPath) { failed++; continue }
+        targetPath = renameResult.newPath
+      }
+
+      // Write updated name to disk (surgical patch of the name field only)
+      const writeResult = await window.api.writeMetadata(targetPath, { ...file.metadata, name: newBaseName })
+      if (writeResult.success) {
+        saved.set(filePath, { newBaseName, newPath: targetPath })
       } else {
         failed++
       }
     }
 
-    if (updates.length > 0) {
-      const updateMap = new Map(updates.map((u) => [u.oldPath, u]))
+    if (saved.size > 0) {
       setFiles((prev) => prev.map((f) => {
-        const u = updateMap.get(f.filePath)
-        if (!u) return f
-        return { ...f, filePath: u.newPath, fileName: u.newBaseName }
-      }))
-      setSelectedIds((prev) => {
-        const next = new Set<string>()
-        for (const id of prev) {
-          const u = updateMap.get(id)
-          next.add(u ? u.newPath : id)
+        const s = saved.get(f.filePath)
+        if (!s) return f
+        const updatedMetadata = { ...f.metadata, name: s.newBaseName }
+        const updatedOriginal = { ...f.originalMetadata, name: s.newBaseName }
+        const isDirty = dirtyKeys.some((k) => updatedMetadata[k] !== updatedOriginal[k])
+        return {
+          ...f,
+          filePath: s.newPath,
+          fileName: renameFiles ? s.newBaseName : f.fileName,
+          metadata: updatedMetadata,
+          originalMetadata: updatedOriginal,
+          isDirty,
+          autoFilledFields: f.autoFilledFields.filter((k) => k !== 'name')
         }
-        return next
-      })
+      }))
+      if (renameFiles) {
+        setSelectedIds((prev) => {
+          const next = new Set<string>()
+          for (const id of prev) {
+            next.add(saved.get(id)?.newPath ?? id)
+          }
+          return next
+        })
+      }
+
+      const n = saved.size
+      const msg = renameFiles
+        ? `Renamed ${n} file${n !== 1 ? 's' : ''}${failed > 0 ? `, ${failed} failed` : ''}`
+        : `Updated ${n} capture name${n !== 1 ? 's' : ''}${failed > 0 ? `, ${failed} failed` : ''}`
+      setStatus({ message: msg, type: failed > 0 ? 'error' : 'success' })
+      return
     }
 
     if (failed > 0) {
-      setStatus({ message: `Renamed ${succeeded}, failed ${failed}`, type: 'error' })
-    } else {
-      setStatus({ message: `Renamed ${succeeded} file${succeeded !== 1 ? 's' : ''}`, type: 'success' })
+      setStatus({ message: `Rename failed (${failed} error${failed !== 1 ? 's' : ''})`, type: 'error' })
     }
+
   }
 
   const handleCreateFolder = async (parentPath: string, name: string) => {
@@ -1277,14 +1312,19 @@ export default function App() {
       return
     }
 
-    // Build lookup: name (lowercase) → NamFile, scoped to folderPath
+    // Build lookup: name (lowercase) → NamFile[], scoped to folderPath.
+    // Stores arrays to handle multiple files sharing the same capture name (different subfolders).
     const scopedFiles = folderPath === null
       ? files
       : files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(folderPath.replace(/\\/g, '/') + '/'))
-    const nameMap = new Map<string, NamFile>()
+    const nameToFiles = new Map<string, NamFile[]>()
     for (const f of scopedFiles) {
       const key = (f.metadata.name || f.fileName || '').toLowerCase().trim()
-      if (key) nameMap.set(key, f)
+      if (key) {
+        const arr = nameToFiles.get(key) ?? []
+        arr.push(f)
+        nameToFiles.set(key, arr)
+      }
     }
 
     // Fields skipped for prefix (variant-specific) matches — nl_ cabinet/mic fields vary
@@ -1292,7 +1332,7 @@ export default function App() {
     // tone_type is NOT skipped — it's the same across DI/cab variants of the same session.
     const PREFIX_SKIP: Set<keyof NamFile['metadata']> = new Set(['nl_cabinet', 'nl_cabinet_config', 'nl_mics'])
 
-    // For prefix matches only: amp→amp_cab, pedal_amp→pedal_amp_cab. All other gear_types skipped.
+    // For prefix matches only: amp→amp_cab, pedal_amp→amp_pedal_cab. All other gear_types skipped.
     const CAB_UPGRADE: Record<string, string> = { amp: 'amp_cab', pedal_amp: 'amp_pedal_cab' }
 
     // Helper: build incoming fields from a row, optionally skipping prefix-skip fields
@@ -1308,12 +1348,12 @@ export default function App() {
         if (strVal === '') continue
         if (col.field === 'gear_type') {
           if (isPrefix) {
-            // Prefix match: upgrade amp→amp_cab / pedal_amp→pedal_amp_cab; skip everything else
+            // Prefix match: upgrade amp→amp_cab / pedal_amp→amp_pedal_cab; skip everything else
             const upgraded = CAB_UPGRADE[strVal]
             if (upgraded) (incoming as Record<string, unknown>)[col.field] = upgraded
             continue
           }
-          // Exact match: validate and overwrite normally
+          // Exact match: validate and write as-is (no upgrade)
           if (!(GEAR_TYPES as readonly string[]).includes(strVal)) continue
         }
         if (col.field === 'tone_type' && !(TONE_TYPES as readonly string[]).includes(strVal)) continue
@@ -1323,24 +1363,27 @@ export default function App() {
       return incoming
     }
 
-    // Pass 1: exact matches
+    // Pass 1: exact matches — all files sharing a name get claimed; track which have explicit gear_type
     const exactMatches: ImportMatch[] = []
     const exactMatchedPaths = new Set<string>()
+    const exactGearTypePaths = new Set<string>()  // files where exact row explicitly set gear_type
     for (const row of rows) {
       const captureName = String(row['Capture Name'] ?? '').trim()
       if (!captureName) continue
-      const file = nameMap.get(captureName.toLowerCase())
-      if (!file) continue
-      // Always mark as exact-matched even if incoming is empty — prevents a prefix
-      // match from a different row firing on a file that has its own exact row.
-      exactMatchedPaths.add(file.filePath)
-      const incoming = buildIncoming(row)
-      if (Object.keys(incoming).length > 0) {
-        exactMatches.push({ file, incoming })
+      const matchedFiles = nameToFiles.get(captureName.toLowerCase())
+      if (!matchedFiles || matchedFiles.length === 0) continue
+      for (const file of matchedFiles) {
+        // Always mark exact-matched — prevents prefix from a different row overriding it
+        exactMatchedPaths.add(file.filePath)
+        const incoming = buildIncoming(row)
+        if ('gear_type' in incoming) exactGearTypePaths.add(file.filePath)
+        if (Object.keys(incoming).length > 0) {
+          exactMatches.push({ file, incoming })
+        }
       }
     }
 
-    // Pass 2: prefix matches — only when last word is a known variant suffix (e.g. "DI")
+    // Pass 2: prefix matches — only for files WITHOUT an exact match row
     const prefixSuffixSet = new Set(
       (settings.importPrefixSuffixes || 'DI')
         .split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
@@ -1358,13 +1401,50 @@ export default function App() {
       for (const f of scopedFiles) {
         const fName = (f.metadata.name || f.fileName || '').toLowerCase().trim()
         if (!fName.startsWith(prefix)) continue
-        if (exactMatchedPaths.has(f.filePath)) continue
+        if (exactMatchedPaths.has(f.filePath)) continue  // file has its own exact row
         if (prefixMatchedPaths.has(f.filePath)) continue
         const incoming = buildIncoming(row, PREFIX_SKIP, true)
         if (Object.keys(incoming).length > 0) {
           prefixMatches.push({ file: f, incoming })
           prefixMatchedPaths.add(f.filePath)
         }
+      }
+    }
+
+    // Pass 3: supplement gear_type for exact-matched files whose Excel row had no gear_type.
+    // These files are blocked from prefix matching above, but should still inherit
+    // the CAB_UPGRADE gear_type from a matching DI row (e.g. "BE100 Mars" has its own row
+    // with tone_type set but no gear_type → "BE100 DI" row contributes amp_cab).
+    const pathToFile = new Map(scopedFiles.map(f => [f.filePath, f]))
+    const exactMatchByPath = new Map(exactMatches.map(m => [m.file.filePath, m]))
+    for (const row of rows) {
+      const captureName = String(row['Capture Name'] ?? '').trim()
+      if (!captureName) continue
+      const words = captureName.split(/\s+/)
+      if (words.length < 2) continue
+      const lastWord = words[words.length - 1].toUpperCase()
+      if (!prefixSuffixSet.has(lastWord)) continue
+      const rowGearType = String(row['Gear Type'] ?? '').trim()
+      if (!rowGearType) continue
+      const upgraded = CAB_UPGRADE[rowGearType]
+      if (!upgraded) continue
+      const prefix = words.slice(0, -1).join(' ').toLowerCase()
+      for (const filePath of exactMatchedPaths) {
+        if (exactGearTypePaths.has(filePath)) continue  // already has gear_type from exact row
+        const f = pathToFile.get(filePath)
+        if (!f) continue
+        const fName = (f.metadata.name || f.fileName || '').toLowerCase().trim()
+        if (!fName.startsWith(prefix)) continue
+        // Supplement this file's incoming with the upgraded gear_type
+        const existingMatch = exactMatchByPath.get(filePath)
+        if (existingMatch) {
+          existingMatch.incoming.gear_type = upgraded
+        } else {
+          const newMatch: ImportMatch = { file: f, incoming: { gear_type: upgraded } }
+          exactMatches.push(newMatch)
+          exactMatchByPath.set(filePath, newMatch)
+        }
+        exactGearTypePaths.add(filePath)  // prevent double-supplement from another DI row
       }
     }
 
@@ -1380,7 +1460,7 @@ export default function App() {
     for (const row of rows) {
       const captureName = String(row['Capture Name'] ?? '').trim()
       if (!captureName) continue
-      const hasExact = !!nameMap.get(captureName.toLowerCase())
+      const hasExact = (nameToFiles.get(captureName.toLowerCase()) ?? []).length > 0
       if (hasExact) continue
       // Check if this row produced any prefix matches
       const words = captureName.trim().split(/\s+/)
@@ -1827,11 +1907,13 @@ export default function App() {
             // If an ancestor folder already owns a nam-pack.json, this folder is a sub-division
             // of that pack — only show gallery here, never a second pack info editor
             const isPackChild = packInfoAncestor !== null
-            const showPackEditor = !isPackChild
-            const showGalleryTab = showPackEditor && showGallery
+            const hasPack = packInfoFolders.has(activeFolderPath)
+            const showPackEditor = !isPackChild && hasPack
+            const showCreatePrompt = !isPackChild && !hasPack
+            const showGalleryTab = !isPackChild && showGallery
             return (
               <div className="h-full flex flex-col">
-                {showGalleryTab && (
+                {showGalleryTab && (showPackEditor || showCreatePrompt) && (
                   <div className="flex border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
                     {(['pack', 'gallery'] as const).map((tab) => (
                       <button
@@ -1862,6 +1944,25 @@ export default function App() {
                       logoLight={settings.packLogoLight}
                       logoDark={settings.packLogoDark}
                     />
+                  ) : showCreatePrompt && (!showGalleryTab || folderPanelTab === 'pack') ? (
+                    <div className="h-full flex flex-col items-center justify-center gap-4 px-8 text-center">
+                      <svg className="w-10 h-10 text-gray-300 dark:text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      <div>
+                        <p className="text-sm font-medium text-gray-600 dark:text-gray-400">No Pack Info for this folder</p>
+                        <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">{activeFolderName}</p>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          const res = await window.api.writePackInfo(activeFolderPath, {})
+                          if (res.success) handlePackSaved(activeFolderPath, true)
+                        }}
+                        className="px-4 py-2 text-sm rounded-lg bg-teal-600 hover:bg-teal-700 text-white transition-colors"
+                      >
+                        Create Pack Info
+                      </button>
+                    </div>
                   ) : showGallery ? (
                     <FolderGallery data={folderImages!} />
                   ) : null}

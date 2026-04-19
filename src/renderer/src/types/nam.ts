@@ -32,6 +32,7 @@ export interface NamMetadata {
   nl_pedal_settings?: string | null
   nl_amp_switches?: string | null
   nl_comments?: string | null
+  nl_rating?: number | null
 }
 
 export interface NamFile {

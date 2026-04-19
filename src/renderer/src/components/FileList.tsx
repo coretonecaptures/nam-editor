@@ -5,7 +5,7 @@ import { gearChipClass, toneChipClass, getGearImageSrc } from '../assets/gear'
 import { detectPreset } from '../utils/detectPreset'
 import { BatchRenameModal } from './BatchRenameModal'
 
-type FilterMode = 'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited' | 'incomplete'
+type FilterMode = 'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited' | 'incomplete' | 'rated'
 
 // Completeness: 7 core shareable fields (output level and epochs are optional/technical)
 const COMPLETENESS_FIELDS: (keyof NamFile['metadata'])[] = [
@@ -31,7 +31,7 @@ interface FileListProps {
   onRemove?: (id: string) => void
   onBatchEditSelected?: (paths: string[]) => void
   onSaveSelected?: (paths: string[]) => void
-  onBatchRename?: (renames: { filePath: string; newBaseName: string }[]) => void
+  onBatchRename?: (renames: { filePath: string; newBaseName: string }[], renameFiles: boolean) => void
   onTrashSelected?: (paths: string[]) => Promise<void>
   onCopyToFolder?: (paths: string[]) => Promise<void>
   onMoveToFolder?: (paths: string[]) => Promise<void>
@@ -82,6 +82,7 @@ const ALL_GRID_COLUMNS: { key: string; label: string; minWidth: number; defaultV
   { key: 'nl_pedal_settings',  label: 'Pedal Settings',     minWidth: 160, defaultVisible: false },
   { key: 'nl_amp_switches',    label: 'Amp Switches',       minWidth: 130, defaultVisible: false },
   { key: 'nl_comments',        label: 'Comments',           minWidth: 180, defaultVisible: false },
+  { key: 'nl_rating',          label: 'Rating',             minWidth: 100, defaultVisible: false },
 ]
 
 export { ALL_GRID_COLUMNS }
@@ -174,6 +175,7 @@ function getCellValue(file: NamFile, key: string): string {
     case 'nl_pedal_settings': return m.nl_pedal_settings ?? ''
     case 'nl_amp_switches':   return m.nl_amp_switches   ?? ''
     case 'nl_comments':       return m.nl_comments       ?? ''
+    case 'nl_rating':         return m.nl_rating         ?? 0
     default: return ''
   }
 }
@@ -315,6 +317,7 @@ export function FileList({
       case 'no-tone':    return !o.tone_type
       case 'edited':     return f.isDirty
       case 'incomplete': return COMPLETENESS_FIELDS.some((k) => m[k] == null || m[k] === '')
+      case 'rated':      return (m.nl_rating ?? 0) > 0
       default:           return true
     }
   })
@@ -418,6 +421,7 @@ export function FileList({
     { value: 'no-gear',    label: 'No Type' },
     { value: 'no-maker',   label: 'No Maker' },
     { value: 'no-tone',    label: 'No Tone' },
+    { value: 'rated',      label: 'Rated' },
   ]
 
   return (
@@ -967,7 +971,7 @@ export function FileList({
       {showBatchRename && onBatchRename && (
         <BatchRenameModal
           files={files.filter((f) => selectedIds.has(f.filePath))}
-          onApply={(renames) => { onBatchRename(renames); setShowBatchRename(false) }}
+          onApply={(renames, renameFiles) => { onBatchRename(renames, renameFiles); setShowBatchRename(false) }}
           onClose={() => setShowBatchRename(false)}
         />
       )}
@@ -1007,6 +1011,7 @@ const DEFAULT_COL_WIDTHS: Record<string, number> = {
   nl_pedal_settings:  180,
   nl_amp_switches:    150,
   nl_comments:        200,
+  nl_rating:          100,
 }
 
 function GridView({
@@ -1139,6 +1144,14 @@ function GridView({
                           <span className={`truncate block text-sm font-semibold ${val ? 'text-gray-900 dark:text-gray-100' : 'text-gray-400 dark:text-gray-600'}`}>
                             {val || '—'}
                           </span>
+                        ) : col.key === 'nl_rating' ? (
+                          <span className="flex gap-px">
+                            {[1,2,3,4,5].map((s) => (
+                              <svg key={s} className={`w-3 h-3 ${(file.metadata.nl_rating ?? 0) >= s ? 'text-amber-400' : 'text-gray-300 dark:text-gray-600'}`} fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+                              </svg>
+                            ))}
+                          </span>
                         ) : col.key === 'validation_esr' && val ? (
                           <span className={`truncate block font-mono ${
                             parseFloat(val) < 0.01  ? 'text-green-500' :
@@ -1242,6 +1255,16 @@ function FileItem({
           )}
         </div>
       </div>
+
+      {(meta.nl_rating ?? 0) > 0 && (
+        <div className="flex-shrink-0 flex items-center gap-px mt-1.5">
+          {[1,2,3,4,5].map((s) => (
+            <svg key={s} className={`w-2.5 h-2.5 ${(meta.nl_rating ?? 0) >= s ? 'text-amber-400' : 'text-gray-300 dark:text-gray-600'}`} fill="currentColor" viewBox="0 0 24 24">
+              <path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+            </svg>
+          ))}
+        </div>
+      )}
 
       {meta.gear_type && (() => {
         const src = getGearImageSrc(meta.gear_type)

@@ -493,7 +493,7 @@ app.whenReady().then(() => {
       // Lift NAM Lab extended fields (metadata.nam_lab.*) up to flat nl_ keys
       const nl = meta.nam_lab
       if (nl) {
-        const nlKeys = ['mics','cabinet','cabinet_config','amp_channel','boost_pedal','amp_settings','pedal_settings','amp_switches','comments'] as const
+        const nlKeys = ['mics','cabinet','cabinet_config','amp_channel','boost_pedal','amp_settings','pedal_settings','amp_switches','comments','rating'] as const
         for (const k of nlKeys) {
           if (nl[k] != null) (meta as Record<string, unknown>)[`nl_${k}`] = nl[k]
         }
@@ -559,7 +559,7 @@ app.whenReady().then(() => {
 
       // Handle NAM Lab extended fields — stored at metadata.nam_lab.*
       const origNl = (orig.nam_lab ?? {}) as Record<string, unknown>
-      const nlKeys = ['mics','cabinet','cabinet_config','amp_channel','boost_pedal','amp_settings','pedal_settings','amp_switches','comments'] as const
+      const nlKeys = ['mics','cabinet','cabinet_config','amp_channel','boost_pedal','amp_settings','pedal_settings','amp_switches','comments','rating'] as const
       for (const k of nlKeys) {
         const rendererKey = `nl_${k}`
         const origVal = origNl[k] ?? null
@@ -768,6 +768,7 @@ app.whenReady().then(() => {
       if (fs.existsSync(newPath)) {
         return { success: false, error: 'A file with that name already exists' }
       }
+      suppressWatcher()
       fs.renameSync(oldPath, newPath)
       return { success: true, newPath: newPath.replace(/\\/g, '/') }
     } catch (err) {

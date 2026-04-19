@@ -5,7 +5,7 @@ type Mode = 'suffix' | 'prefix' | 'find-replace' | 'template'
 
 interface Props {
   files: NamFile[]         // the selected files (in display order)
-  onApply: (renames: { filePath: string; newBaseName: string }[]) => void
+  onApply: (renames: { filePath: string; newBaseName: string }[], renameFiles: boolean) => void
   onClose: () => void
 }
 
@@ -23,8 +23,7 @@ function applyTemplate(template: string, file: NamFile): string {
     .trim()
 }
 
-function computeNewName(mode: Mode, file: NamFile, a: string, b: string): string {
-  const base = file.fileName
+function computeNewName(mode: Mode, base: string, file: NamFile, a: string, b: string): string {
   switch (mode) {
     case 'suffix':       return a ? `${base} ${a}`.trim() : base
     case 'prefix':       return a ? `${a} ${base}`.trim() : base
@@ -37,6 +36,7 @@ export function BatchRenameModal({ files, onApply, onClose }: Props) {
   const [mode, setMode] = useState<Mode>('suffix')
   const [inputA, setInputA] = useState('')
   const [inputB, setInputB] = useState('')
+  const [renameFiles, setRenameFiles] = useState(true)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -50,19 +50,25 @@ export function BatchRenameModal({ files, onApply, onClose }: Props) {
     return () => window.removeEventListener('keydown', handler)
   }, [onClose])
 
-  const previews = files.map((f) => ({
-    filePath: f.filePath,
-    oldName: f.fileName,
-    newName: computeNewName(mode, f, inputA, inputB)
-  }))
+  const previews = files.map((f) => {
+    // When renaming files, operate on the filename. When metadata-only, operate on
+    // the current metadata name so the preview accurately reflects what will change.
+    const oldName = renameFiles ? f.fileName : (f.metadata.name || f.fileName)
+    return {
+      filePath: f.filePath,
+      oldName,
+      newName: computeNewName(mode, oldName, f, inputA, inputB)
+    }
+  })
 
-  // Conflicts are scoped per-directory: same new name in the same folder is a conflict,
-  // but identical names across different folders are fine (rename is always in-place)
+  // Conflicts are only relevant when actually renaming files on disk
   const dirNameCounts = new Map<string, number>()
-  for (const p of previews) {
-    const dir = p.filePath.replace(/\\/g, '/').split('/').slice(0, -1).join('/')
-    const key = `${dir}::${p.newName}`
-    dirNameCounts.set(key, (dirNameCounts.get(key) ?? 0) + 1)
+  if (renameFiles) {
+    for (const p of previews) {
+      const dir = p.filePath.replace(/\\/g, '/').split('/').slice(0, -1).join('/')
+      const key = `${dir}::${p.newName}`
+      dirNameCounts.set(key, (dirNameCounts.get(key) ?? 0) + 1)
+    }
   }
   const conflictKeys = new Set(
     [...dirNameCounts.entries()].filter(([, count]) => count > 1).map(([key]) => key)
@@ -75,7 +81,7 @@ export function BatchRenameModal({ files, onApply, onClose }: Props) {
   const handleApply = () => {
     const toRename = previews.filter((p) => p.newName !== p.oldName && p.newName.trim() !== '')
     if (toRename.length === 0) return
-    onApply(toRename.map((p) => ({ filePath: p.filePath, newBaseName: p.newName })))
+    onApply(toRename.map((p) => ({ filePath: p.filePath, newBaseName: p.newName })), renameFiles)
   }
 
   return (
@@ -184,6 +190,22 @@ export function BatchRenameModal({ files, onApply, onClose }: Props) {
           )}
         </div>
 
+        {/* Options */}
+        <div className="px-5 pb-3 flex-shrink-0 flex items-center gap-2 border-b border-gray-200 dark:border-gray-800">
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={renameFiles}
+              onChange={(e) => setRenameFiles(e.target.checked)}
+              className="w-3.5 h-3.5 rounded accent-indigo-600"
+            />
+            <span className="text-xs text-gray-600 dark:text-gray-400">Also rename files on disk</span>
+          </label>
+          {!renameFiles && (
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 italic">— updates metadata name only, files stay unchanged</span>
+          )}
+        </div>
+
         {/* Preview list */}
         <div className="flex-1 overflow-y-auto border-t border-gray-200 dark:border-gray-800 min-h-0">
           <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
@@ -221,9 +243,12 @@ export function BatchRenameModal({ files, onApply, onClose }: Props) {
         {/* Footer */}
         <div className="flex items-center justify-between px-5 py-3.5 border-t border-gray-200 dark:border-gray-800 flex-shrink-0">
           <span className="text-xs text-gray-400 dark:text-gray-500">
-            {hasChanges
-              ? `${previews.filter((p) => p.newName !== p.oldName && p.newName.trim() !== '').length} file${previews.filter((p) => p.newName !== p.oldName && p.newName.trim() !== '').length !== 1 ? 's' : ''} will be renamed`
-              : 'No changes'}
+            {hasChanges ? (() => {
+              const n = previews.filter((p) => p.newName !== p.oldName && p.newName.trim() !== '').length
+              return renameFiles
+                ? `${n} file${n !== 1 ? 's' : ''} will be renamed`
+                : `${n} capture name${n !== 1 ? 's' : ''} will be updated`
+            })() : 'No changes'}
           </span>
           <div className="flex gap-2">
             <button

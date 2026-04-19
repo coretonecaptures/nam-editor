@@ -239,13 +239,13 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
               />
 
               <SettingsField label="Amp Suffix" hint="Filename endings that identify a capture as Amp type — comma separated">
-                <div className="flex items-center gap-3">
+                <div className="space-y-1">
                   <input
                     type="text"
                     value={draft.ampSuffix}
                     onChange={(e) => update('ampSuffix', e.target.value)}
                     placeholder="e.g. DI, DIR, DIRECT"
-                    className="w-52 px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors font-mono"
+                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors font-mono"
                   />
                   <p className="text-xs text-gray-500 dark:text-gray-500">
                     Leave blank to disable. Case-insensitive, spaces ignored.
