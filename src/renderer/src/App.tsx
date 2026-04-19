@@ -16,6 +16,7 @@ import { DuplicatesModal } from './components/DuplicatesModal'
 import { ImportMetadataModal, ImportMatch } from './components/ImportMetadataModal'
 import { FolderGallery, FolderImagesData } from './components/FolderGallery'
 import { PackInfoEditor } from './components/PackInfoEditor'
+import { PlayerPanel } from './components/PlayerPanel'
 import * as XLSX from 'xlsx'
 import { FolderNode } from './types/librarian'
 
@@ -166,6 +167,7 @@ export default function App() {
   })
   const [batchFolder, setBatchFolder] = useState<{ path: string | null; name: string; filePaths?: string[] } | null>(null)
   const [showSettings, setShowSettings] = useState(false)
+  const [playerFile, setPlayerFile] = useState<NamFile | null>(null)
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
   const [namPlayerDetected, setNamPlayerDetected] = useState(false)
   const [librarian, setLibrarian] = useState<LibrarianState>(EMPTY_LIBRARIAN)
@@ -1823,6 +1825,11 @@ export default function App() {
                 const result = await window.api.openInNam(filePath, settings.namStandalonePath)
                 if (!result.success) setStatus({ message: `Could not open in NAM: ${result.error}`, type: 'error' })
               }}
+              onPlay={(file) => {
+                setPlayerFile(file)
+                // Also select the file so it stays highlighted
+                onSelect(file.filePath, false)
+              }}
             />
           </div>
           {!gridMaximized && <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} onCollapse={() => setListCollapsed((v) => !v)} collapsed={listCollapsed} />}
@@ -1830,7 +1837,13 @@ export default function App() {
 
         {/* Main content */}
         <div ref={mainContentRef} tabIndex={-1} className={`flex-1 overflow-hidden flex flex-col focus:outline-none${gridMaximized ? ' hidden' : ''}`} style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-          {showSettings ? (
+          {playerFile !== null ? (
+            <PlayerPanel
+              key={playerFile.filePath}
+              file={playerFile}
+              onClose={() => setPlayerFile(null)}
+            />
+          ) : showSettings ? (
             <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} />
           ) : batchFolder !== null ? (
             <BatchEditor

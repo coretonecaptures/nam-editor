@@ -43,6 +43,7 @@ interface FileListProps {
   onClearNamLab?: (filePaths: string[]) => void
   namPlayerAvailable?: boolean
   onOpenInNam?: (filePath: string) => void
+  onPlay?: (file: NamFile) => void
   viewMode: ViewMode
   onViewModeChange: (mode: ViewMode) => void
   gridMaximized?: boolean
@@ -268,6 +269,7 @@ export function FileList({
   onClearNamLab,
   namPlayerAvailable,
   onOpenInNam,
+  onPlay,
   viewMode,
   onViewModeChange,
   solidPills = false,
@@ -774,6 +776,7 @@ export function FileList({
                   e.dataTransfer.setData('application/x-nam-files', JSON.stringify(paths))
                 } : undefined}
                 onRemove={onRemove ? () => onRemove(file.filePath) : undefined}
+                onPlay={onPlay ? () => onPlay(file) : undefined}
               />
             ))
           )}
@@ -1185,6 +1188,7 @@ function FileItem({
   onSelect,
   onDragStart,
   onRemove,
+  onPlay,
   onContextMenu
 }: {
   file: NamFile
@@ -1193,6 +1197,7 @@ function FileItem({
   onSelect: (e: React.MouseEvent) => void
   onDragStart?: (e: React.DragEvent<HTMLDivElement>) => void
   onRemove?: () => void
+  onPlay?: () => void
   onContextMenu?: (e: React.MouseEvent) => void
 }) {
   const meta = file.metadata
@@ -1270,6 +1275,18 @@ function FileItem({
         const src = getGearImageSrc(meta.gear_type)
         return src ? <img src={src} alt={meta.gear_type} className="flex-shrink-0 h-6 w-auto object-contain opacity-60" /> : null
       })()}
+
+      {onPlay && (
+        <button
+          className="flex-shrink-0 opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-green-100 dark:hover:bg-green-900/30 text-green-500 dark:text-green-400 hover:text-green-600 dark:hover:text-green-300 transition-all"
+          onClick={(e) => { e.stopPropagation(); onPlay() }}
+          title="Play capture"
+        >
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M8 5.14v14l11-7-11-7z"/>
+          </svg>
+        </button>
+      )}
 
       {onRemove && (
         <button
