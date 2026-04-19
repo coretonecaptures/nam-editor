@@ -152,19 +152,6 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
-  // Inject Cross-Origin-Isolation headers so SharedArrayBuffer is available for the WASM player.
-  // COOP + COEP on the page, CORP on every sub-resource (so local-file:// images aren't blocked).
-  mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
-    callback({
-      responseHeaders: {
-        ...details.responseHeaders,
-        'Cross-Origin-Opener-Policy': ['same-origin'],
-        'Cross-Origin-Embedder-Policy': ['require-corp'],
-        'Cross-Origin-Resource-Policy': ['cross-origin'],
-      }
-    })
-  })
-
   // Prevent Electron from navigating to dropped file URLs — without this,
   // dropping a file onto the window replaces the app with the raw file contents.
   mainWindow.webContents.on('will-navigate', (event) => {
@@ -175,7 +162,8 @@ function createWindow(): void {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
     mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    // Use app:// so the renderer is served with COOP/COEP headers (enables SharedArrayBuffer)
+    mainWindow.loadURL('app://./index.html')
   }
 }
 
@@ -424,10 +412,12 @@ function getArgvFiles(): string[] {
   return process.argv.slice(isDev ? 2 : 1).filter((a) => !a.startsWith('--') && a.toLowerCase().endsWith('.nam'))
 }
 
-// Allow local-file:// to bypass CSP so image src="local-file:///..." works
-// in both dev (localhost) and production (file://) renderer contexts.
+// Register custom schemes before app.ready.
+// - local-file://  serves filesystem images with CSP bypass
+// - app://         serves the production renderer with COOP/COEP for cross-origin isolation
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'local-file', privileges: { secure: true, bypassCSP: true, stream: true } }
+  { scheme: 'local-file', privileges: { secure: true, bypassCSP: true, stream: true } },
+  { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
 ])
 
 app.whenReady().then(() => {
@@ -435,6 +425,22 @@ app.whenReady().then(() => {
   protocol.handle('local-file', (req) => {
     const fileUrl = 'file://' + req.url.slice('local-file://'.length)
     return net.fetch(fileUrl)
+  })
+
+  // Serve the production renderer under app:// with COOP/COEP headers so that
+  // cross-origin isolation is achieved and SharedArrayBuffer is available for WASM.
+  protocol.handle('app', async (req) => {
+    const url = new URL(req.url)
+    // Map app://./path to the renderer build directory
+    const relPath = url.pathname === '/' ? 'index.html' : url.pathname.replace(/^\//, '')
+    const filePath = join(__dirname, '../renderer', relPath)
+    const fileUrl = `file://${filePath.replace(/\\/g, '/')}`
+    const response = await net.fetch(fileUrl)
+    const headers = new Headers(response.headers)
+    headers.set('Cross-Origin-Opener-Policy', 'same-origin')
+    headers.set('Cross-Origin-Embedder-Policy', 'require-corp')
+    headers.set('Cross-Origin-Resource-Policy', 'cross-origin')
+    return new Response(response.body, { status: response.status, headers })
   })
 
   log('app.whenReady fired')

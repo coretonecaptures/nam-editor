@@ -2,6 +2,19 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { T3kPlayerContextProvider, useT3kPlayerContext } from 'neural-amp-modeler-wasm'
 import { NamFile } from '../types/nam'
 
+// Electron 41 hides window.SharedArrayBuffer when crossOriginIsolated is false,
+// but WebAssembly.Memory({shared:true}) still works internally. Extract the real
+// Chromium SAB constructor so instanceof checks in t3k-wasm-module.js pass.
+if (typeof SharedArrayBuffer === 'undefined') {
+  try {
+    const m = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true })
+    if (m.buffer.constructor.name !== 'ArrayBuffer') {
+      ;(globalThis as any).SharedArrayBuffer = m.buffer.constructor
+    }
+  } catch (_) { /* not available */ }
+}
+
+
 // ─── Level meter hook ────────────────────────────────────────────────────────
 
 function useLevelMeter(analyserNode: AnalyserNode | null) {
@@ -92,6 +105,12 @@ function PlayerPanelInner({ file, onClose }: PlayerPanelInnerProps) {
 
   // Load the file on mount
   useEffect(() => {
+    console.log('[Player] crossOriginIsolated:', (window as any).crossOriginIsolated, '| SharedArrayBuffer:', typeof SharedArrayBuffer, '| polyfilled:', (globalThis as any).SharedArrayBuffer?.name)
+    try {
+      const testMem = new WebAssembly.Memory({ shared: true, initial: 1, maximum: 10 })
+      console.log('[Player] WebAssembly.Memory(shared) buffer type:', testMem.buffer.constructor.name, '| instanceof SAB:', testMem.buffer instanceof SharedArrayBuffer)
+    } catch (e) { console.log('[Player] WebAssembly.Memory(shared) failed:', e) }
+    console.log('[Player] typeof Atomics:', typeof Atomics)
     let cancelled = false
     const load = async () => {
       setStatus('loading')
@@ -108,7 +127,9 @@ function PlayerPanelInner({ file, onClose }: PlayerPanelInnerProps) {
 
         if (cancelled) { URL.revokeObjectURL(url); return }
 
+        console.log('[Player] calling init()...')
         await init({ modelUrl: url })
+        console.log('[Player] init() resolved — ready')
         if (cancelled) return
         setStatus('ready')
         // Fetch device list once ready
