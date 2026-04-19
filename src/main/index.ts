@@ -442,6 +442,15 @@ app.whenReady().then(() => {
     return result.filePaths
   })
 
+  // IPC: Open image file picker (PNG/JPG/SVG/WEBP) for logo upload
+  ipcMain.handle('dialog:openImageFile', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'svg', 'webp'] }]
+    })
+    return result.filePaths[0] ?? null
+  })
+
   // IPC: Open import spreadsheet file picker (.xlsx or .csv)
   ipcMain.handle('dialog:openImportFile', async () => {
     const result = await dialog.showOpenDialog({

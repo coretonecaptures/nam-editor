@@ -67,6 +67,10 @@ export interface AppSettings {
 
   // Folder tree colorization: maps folder name → hex color
   folderNameColors: Record<string, string>
+
+  // Pack Info export logos (base64 data URIs, empty = no logo)
+  packLogoLight: string
+  packLogoDark: string
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -106,7 +110,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   namStandalonePath: '',
   importPrefixSuffixes: 'DI',
   packGearCatalog: [],
-  folderNameColors: {}
+  folderNameColors: {},
+  packLogoLight: '',
+  packLogoDark: ''
 }
 
 const STORAGE_KEY = 'nam-editor-settings'

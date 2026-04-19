@@ -452,6 +452,70 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
             </div>
           </div>
 
+          {/* Pack Export Logos */}
+          <div>
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-sm">🖼️</span>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Pack Export Logos</h3>
+              <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
+            </div>
+            <p className="text-xs text-gray-500 dark:text-gray-500 mb-4">
+              Optional logo shown in the top-right corner of exported Pack Info sheets. Set one for each export theme. Recommended max size ~200 KB.
+            </p>
+            <div className="space-y-4">
+              {(['Light mode logo', 'Dark mode logo'] as const).map((label, idx) => {
+                const key = idx === 0 ? 'packLogoLight' : 'packLogoDark'
+                const val = draft[key]
+                return (
+                  <div key={key}>
+                    <p className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">{label}</p>
+                    <div className="flex items-center gap-3">
+                      {val ? (
+                        <img
+                          src={val}
+                          alt={label}
+                          className="h-10 max-w-[120px] object-contain rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 p-1"
+                        />
+                      ) : (
+                        <div className="h-10 w-24 rounded border border-dashed border-gray-300 dark:border-gray-600 flex items-center justify-center">
+                          <span className="text-[10px] text-gray-400">No logo</span>
+                        </div>
+                      )}
+                      <button
+                        onClick={async () => {
+                          const filePath = await window.api.openImageFile()
+                          if (!filePath) return
+                          const result = await window.api.readFileBinary(filePath)
+                          if (!result.data) return
+                          const ext = filePath.split('.').pop()?.toLowerCase() ?? 'png'
+                          const mime = ext === 'svg' ? 'image/svg+xml' : ext === 'webp' ? 'image/webp' : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/png'
+                          const dataUri = `data:${mime};base64,${result.data}`
+                          const approxKb = result.data.length * 0.75 / 1024
+                          if (approxKb > 200) {
+                            alert(`This image is approximately ${Math.round(approxKb)} KB. Large logos will bloat your settings storage. Consider resizing to under 200 KB.`)
+                          }
+                          update(key, dataUri)
+                        }}
+                        className="text-xs px-2.5 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:border-teal-500 dark:hover:border-teal-500 transition-colors"
+                      >
+                        Choose…
+                      </button>
+                      {val && (
+                        <button
+                          onClick={() => update(key, '')}
+                          className="text-xs text-gray-400 hover:text-red-500 transition-colors"
+                          title="Remove logo"
+                        >
+                          ✕ Clear
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
           {/* Current Amp Info */}
           <Section
             icon="🔊"

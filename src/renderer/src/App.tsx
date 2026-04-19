@@ -25,6 +25,7 @@ declare global {
       openFiles: () => Promise<string[]>
       openFolder: (defaultPath?: string) => Promise<string | null>
       openImportFile: () => Promise<string | null>
+      openImageFile: () => Promise<string | null>
       readFileBinary: (filePath: string) => Promise<{ data?: string; error?: string }>
       revealFile: (filePath: string) => Promise<void>
       openFile: (filePath: string) => Promise<{ success: boolean; error?: string }>
@@ -1858,6 +1859,8 @@ export default function App() {
                       catalog={settings.packGearCatalog}
                       onCatalogChange={(catalog) => handleSaveSettings({ ...settings, packGearCatalog: catalog })}
                       onPackSaved={handlePackSaved}
+                      logoLight={settings.packLogoLight}
+                      logoDark={settings.packLogoDark}
                     />
                   ) : showGallery ? (
                     <FolderGallery data={folderImages!} />

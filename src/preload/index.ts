@@ -4,6 +4,7 @@ const api = {
   openFiles: (): Promise<string[]> => ipcRenderer.invoke('dialog:openFiles'),
   openFolder: (defaultPath?: string): Promise<string | null> => ipcRenderer.invoke('dialog:openFolder', defaultPath),
   openImportFile: (): Promise<string | null> => ipcRenderer.invoke('dialog:openImportFile'),
+  openImageFile: (): Promise<string | null> => ipcRenderer.invoke('dialog:openImageFile'),
   readFileBinary: (filePath: string): Promise<{ data?: string; error?: string }> => ipcRenderer.invoke('file:readBinary', filePath),
   readFile: (filePath: string) => ipcRenderer.invoke('file:read', filePath),
   writeMetadata: (filePath: string, metadata: unknown) =>

@@ -13,6 +13,7 @@ export interface PackInfo {
   pedals: { label: string; value: string }[]
   switches: { label: string; value: string }[]
   glossary: { term: string; description: string }[]
+  footer: string
   exportExcludedSubfolders: string[]
   exportColumns: string[]
 }
@@ -41,6 +42,7 @@ const EMPTY_PACK: PackInfo = {
   pedals: [],
   switches: [],
   glossary: [],
+  footer: '',
   exportExcludedSubfolders: [],
   exportColumns: DEFAULT_EXPORT_COLUMNS
 }
@@ -63,18 +65,20 @@ function parseDescription(raw: string, dark: boolean): string {
   let inList = false
 
   const inlineFormat = (s: string) => {
-    // BBCode color: [orange]text[/orange] etc.
+    // Escape HTML entities first so subsequent replacers don't double-escape
+    s = esc(s)
+    // BBCode color: [orange]text[/orange] etc. — content already escaped
     s = s.replace(/\[(\w+)\](.*?)\[\/\1\]/g, (_m, tag, content) => {
       const token = COLOR_TOKENS[tag.toLowerCase()]
-      if (!token) return esc(content)
-      return `<span style="color:${dark ? token.dark : token.light}">${esc(content)}</span>`
+      if (!token) return content
+      return `<span style="color:${dark ? token.dark : token.light}">${content}</span>`
     })
-    // **bold**
-    s = s.replace(/\*\*(.*?)\*\*/g, (_m, t) => `<strong>${esc(t)}</strong>`)
+    // **bold** — content may already contain span tags from color pass, don't re-escape
+    s = s.replace(/\*\*(.*?)\*\*/g, (_m, t) => `<strong>${t}</strong>`)
     // *italic*
-    s = s.replace(/\*(.*?)\*/g, (_m, t) => `<em>${esc(t)}</em>`)
+    s = s.replace(/\*(.*?)\*/g, (_m, t) => `<em>${t}</em>`)
     // __underline__
-    s = s.replace(/__(.*?)__/g, (_m, t) => `<u>${esc(t)}</u>`)
+    s = s.replace(/__(.*?)__/g, (_m, t) => `<u>${t}</u>`)
     return s
   }
 
@@ -113,7 +117,7 @@ function parseDescription(raw: string, dark: boolean): string {
   return out.join('\n')
 }
 
-function generateExportHtml(info: PackInfo, folderPath: string, folderName: string, allCaptures: NamFile[], dark: boolean): string {
+function generateExportHtml(info: PackInfo, folderPath: string, folderName: string, allCaptures: NamFile[], dark: boolean, logo?: string): string {
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const normBase = folderPath.replace(/\\/g, '/') + '/'
   const captures = allCaptures.filter((f) => {
@@ -202,11 +206,12 @@ function generateExportHtml(info: PackInfo, folderPath: string, folderName: stri
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: Inter, Arial, sans-serif; color: ${t.bodyColor}; background: ${t.bodyBg}; font-size: 10.5px; line-height: 1.45; }
-  .header { background: ${t.headerBg}; color: #fff; padding: 18px 32px 16px; }
+  .header { background: ${t.headerBg}; color: #fff; padding: 18px 32px 16px; display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
+  .header-left { flex: 1; min-width: 0; }
   .header-title { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
   .header-meta { display: flex; justify-content: space-between; align-items: baseline; margin-top: 6px; gap: 16px; }
   .header-sub { font-size: 14px; color: ${t.headerSub}; }
-  .header-captured { font-size: 10px; color: ${t.headerCapturedBy}; letter-spacing: 0.03em; white-space: nowrap; }
+  .header-logo { flex-shrink: 0; display: flex; align-items: center; }
   .content { padding: 18px 32px; }
   .description { color: ${t.descColor}; margin-bottom: 16px; line-height: 1.7; width: 100%; font-size: 14px; }
   .section { margin-bottom: 20px; }
@@ -225,19 +230,21 @@ function generateExportHtml(info: PackInfo, folderPath: string, folderName: stri
   .g-sep { color: ${t.gSepColor}; }
   .g-desc { color: ${t.gDescColor}; }
   .footer { margin-top: 24px; padding-top: 8px; border-top: 1px solid ${t.footerBorder}; font-size: 9.5px; color: ${t.footerColor}; }
+  @page { margin: 0; }
   @media print {
     body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
     .header, thead th, tbody tr:nth-child(even) { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .content { padding: 14px 28px; }
   }
 </style>
 </head>
 <body>
 <div class="header">
-  <div class="header-title">${esc(info.title || folderName)}</div>
-  ${(info.subtitle || info.capturedBy) ? `<div class="header-meta">
-    <div class="header-sub">${esc(info.subtitle)}</div>
-    ${info.capturedBy ? `<div class="header-captured">Captured by ${esc(info.capturedBy)}</div>` : ''}
-  </div>` : ''}
+  <div class="header-left">
+    <div class="header-title">${esc(info.title || folderName)}</div>
+    ${info.subtitle ? `<div class="header-meta"><div class="header-sub">${esc(info.subtitle)}</div></div>` : ''}
+  </div>
+  ${logo ? `<div class="header-logo"><img src="${logo}" style="max-height:56px;max-width:180px;object-fit:contain" /></div>` : ''}
 </div>
 <div class="content">
   ${hasDesc ? `<div class="description">${parseDescription(info.description, dark)}</div>` : ''}
@@ -259,7 +266,7 @@ function generateExportHtml(info: PackInfo, folderPath: string, folderName: stri
     <div>${glossaryItems}</div>
   </div>` : ''}
 
-  <div class="footer">Generated by NAM Lab</div>
+  <div class="footer">${info.footer.trim() ? parseDescription(info.footer, dark) : 'Generated by NAM Lab'}</div>
 </div>
 </body>
 </html>`
@@ -273,6 +280,8 @@ interface Props {
   catalog?: CatalogItem[]
   onCatalogChange?: (catalog: CatalogItem[]) => void
   onPackSaved?: (folderPath: string, hasData: boolean) => void
+  logoLight?: string
+  logoDark?: string
 }
 
 function SectionHeader({ label, hint }: { label: string; hint?: string }) {
@@ -316,6 +325,29 @@ function RowEditor<T extends Record<string, string>>({
     <div className="space-y-1.5">
       {rows.map((row, i) => (
         <div key={i} className="flex gap-1.5 items-start">
+          {/* Up/down reorder */}
+          <div className="flex flex-col mt-0.5 flex-shrink-0">
+            <button
+              onClick={() => { const n = [...rows]; [n[i-1], n[i]] = [n[i], n[i-1]]; onChange(n) }}
+              disabled={i === 0}
+              className="text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 disabled:opacity-20 disabled:pointer-events-none transition-colors leading-none"
+              title="Move up"
+            >
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 15l7-7 7 7" />
+              </svg>
+            </button>
+            <button
+              onClick={() => { const n = [...rows]; [n[i], n[i+1]] = [n[i+1], n[i]]; onChange(n) }}
+              disabled={i === rows.length - 1}
+              className="text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 disabled:opacity-20 disabled:pointer-events-none transition-colors leading-none"
+              title="Move down"
+            >
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+          </div>
           {keys.map((k, ki) => (
             <input
               key={String(k)}
@@ -329,7 +361,14 @@ function RowEditor<T extends Record<string, string>>({
               className={`flex-1 text-xs px-2 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500 ${ki === 0 ? firstColWidth : ''}`}
             />
           ))}
-          {onSaveToCatalog && (
+          {onSaveToCatalog && (() => {
+            const rowLabel = String(row[keys[0]]).trim()
+            const rowValue = String(row[keys[1] ?? keys[0]]).trim()
+            const alreadyInCatalog = !!catalogItems?.some(
+              (c) => c.label.trim() === rowLabel && c.value.trim() === rowValue
+            )
+            if (alreadyInCatalog) return null
+            return (
             <button
               onClick={() => onSaveToCatalog(String(row[keys[0]]), String(row[keys[1] ?? keys[0]]))}
               className="text-gray-300 dark:text-gray-600 hover:text-teal-500 dark:hover:text-teal-400 transition-colors mt-1 flex-shrink-0"
@@ -339,7 +378,8 @@ function RowEditor<T extends Record<string, string>>({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
               </svg>
             </button>
-          )}
+            )
+          })()}
           <button
             onClick={() => onChange(rows.filter((_, j) => j !== i))}
             className="text-gray-400 hover:text-red-500 transition-colors mt-1 flex-shrink-0"
@@ -367,7 +407,23 @@ function RowEditor<T extends Record<string, string>>({
               From catalog ({catalogItems.length})…
             </button>
             {showPicker && (
-              <div className="absolute left-0 top-5 z-30 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg min-w-[200px] max-w-[280px] max-h-48 overflow-y-auto py-1">
+              <div className="absolute left-0 top-5 z-30 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg min-w-[200px] max-w-[280px]">
+                <div className="flex items-center justify-between px-3 py-1.5 border-b border-gray-100 dark:border-gray-800">
+                  <span className="text-[10px] text-gray-400 dark:text-gray-500">{catalogItems.length} items</span>
+                  <button
+                    onClick={() => {
+                      const newRows = catalogItems.map((item) =>
+                        Object.fromEntries(keys.map((k, ki) => [k, ki === 0 ? item.label : item.value])) as T
+                      )
+                      onChange([...rows, ...newRows])
+                      setShowPicker(false)
+                    }}
+                    className="text-[10px] font-medium text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300"
+                  >
+                    Add all
+                  </button>
+                </div>
+                <div className="max-h-48 overflow-y-auto py-1">
                 {catalogItems.map((item, i) => (
                   <button
                     key={i}
@@ -386,6 +442,7 @@ function RowEditor<T extends Record<string, string>>({
                     )}
                   </button>
                 ))}
+                </div>
               </div>
             )}
           </div>
@@ -395,8 +452,9 @@ function RowEditor<T extends Record<string, string>>({
   )
 }
 
-export function PackInfoEditor({ folderPath, folderName, captures, defaultCapturedBy = '', catalog = [], onCatalogChange, onPackSaved }: Props) {
+export function PackInfoEditor({ folderPath, folderName, captures, defaultCapturedBy = '', catalog = [], onCatalogChange, onPackSaved, logoLight, logoDark }: Props) {
   const [pack, setPack] = useState<PackInfo>(EMPTY_PACK)
+  const savedPackRef = useRef<PackInfo>(EMPTY_PACK)
   const [saved, setSaved] = useState(true)
   const [exporting, setExporting] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
@@ -412,23 +470,26 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
     let cancelled = false
     window.api.readPackInfo(folderPath).then((res) => {
       if (cancelled) return
-      if (res.success && res.data) {
-        const d = res.data as Partial<PackInfo>
-        setPack({
-          title: d.title ?? '',
-          subtitle: d.subtitle ?? '',
-          capturedBy: d.capturedBy ?? defaultCapturedBy,
-          description: d.description ?? '',
-          equipment: d.equipment ?? [],
-          pedals: d.pedals ?? [],
-          switches: d.switches ?? [],
-          glossary: d.glossary ?? [],
-          exportExcludedSubfolders: d.exportExcludedSubfolders ?? [],
-          exportColumns: d.exportColumns ?? DEFAULT_EXPORT_COLUMNS
-        })
-      } else {
-        setPack({ ...EMPTY_PACK, capturedBy: defaultCapturedBy })
-      }
+      const loaded: PackInfo = res.success && res.data
+        ? (() => {
+            const d = res.data as Partial<PackInfo>
+            return {
+              title: d.title ?? '',
+              subtitle: d.subtitle ?? '',
+              capturedBy: d.capturedBy ?? defaultCapturedBy,
+              description: d.description ?? '',
+              equipment: d.equipment ?? [],
+              pedals: d.pedals ?? [],
+              switches: d.switches ?? [],
+              glossary: d.glossary ?? [],
+              footer: d.footer ?? '',
+              exportExcludedSubfolders: d.exportExcludedSubfolders ?? [],
+              exportColumns: d.exportColumns ?? DEFAULT_EXPORT_COLUMNS
+            }
+          })()
+        : { ...EMPTY_PACK, capturedBy: defaultCapturedBy }
+      setPack(loaded)
+      savedPackRef.current = loaded
       setSaved(true)
     })
     return () => { cancelled = true }
@@ -504,6 +565,7 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
   const handleSave = async () => {
     const res = await window.api.writePackInfo(folderPath, pack)
     if (res.success) {
+      savedPackRef.current = pack
       setSaved(true)
       setStatus('Saved')
       setTimeout(() => setStatus(null), 2000)
@@ -516,13 +578,23 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
   const handleExport = async () => {
     setExporting(true)
     if (!saved) await handleSave()
-    const html = generateExportHtml(pack, folderPath, folderName, captures, darkExport)
+    const logo = darkExport ? (logoDark || undefined) : (logoLight || undefined)
+    const html = generateExportHtml(pack, folderPath, folderName, captures, darkExport, logo)
     const res = await window.api.exportPackSheet(html)
     setExporting(false)
     if (!res.success) setStatus('Export failed')
   }
 
-  const inputCls = 'w-full text-xs px-2.5 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500'
+  const isChanged = (key: keyof PackInfo) =>
+    JSON.stringify(pack[key]) !== JSON.stringify(savedPackRef.current[key])
+
+  const baseInputCls = 'w-full text-xs px-2.5 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none'
+  const inputCls = (key?: keyof PackInfo) =>
+    key && isChanged(key)
+      ? `${baseInputCls} border-amber-500/60 bg-amber-50 dark:bg-amber-900/10 focus:border-amber-400`
+      : `${baseInputCls} border-gray-200 dark:border-gray-700 focus:border-teal-500`
+  const sectionChanged = (key: keyof PackInfo) =>
+    isChanged(key) ? 'ring-1 ring-amber-500/40 rounded' : ''
   const labelCls = 'text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 block'
 
   return (
@@ -558,7 +630,7 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
           <button
             onClick={handleSave}
             disabled={saved}
-            className="text-xs px-2.5 py-1 rounded bg-teal-600 text-white hover:bg-teal-700 transition-colors disabled:opacity-40"
+            className={`text-xs px-2.5 py-1 rounded text-white transition-colors ${saved ? 'bg-teal-600 opacity-40' : 'bg-teal-600 hover:bg-teal-700'}`}
           >
             Save
           </button>
@@ -576,7 +648,7 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
               value={pack.title}
               placeholder="e.g. FMAN 100 Deluxe V2 NAM Pack"
               onChange={(e) => update('title', e.target.value)}
-              className={inputCls}
+              className={inputCls('title')}
             />
           </div>
           <div>
@@ -585,7 +657,7 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
               value={pack.subtitle}
               placeholder="e.g. Based on a Friedman BE100 Deluxe"
               onChange={(e) => update('subtitle', e.target.value)}
-              className={inputCls}
+              className={inputCls('subtitle')}
             />
           </div>
           <div>
@@ -594,7 +666,7 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
               value={pack.capturedBy}
               placeholder="e.g. Core Tone Captures"
               onChange={(e) => update('capturedBy', e.target.value)}
-              className={inputCls}
+              className={inputCls('capturedBy')}
             />
           </div>
         </div>
@@ -607,7 +679,7 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
             placeholder="Describe the amp, the tones, how it was captured…"
             onChange={(e) => update('description', e.target.value)}
             rows={7}
-            className={`${inputCls} resize-y leading-relaxed min-h-[80px] font-mono text-xs`}
+            className={`${inputCls('description')} resize-y leading-relaxed min-h-[80px] font-mono text-xs`}
           />
           <div className="mt-1 px-1 text-[10px] text-gray-400 dark:text-gray-500 leading-relaxed">
             <span className="font-semibold text-gray-500 dark:text-gray-400">Formatting (export only):</span>
@@ -786,42 +858,48 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
 
         {/* Equipment */}
         <SectionHeader label="Equipment" hint="Amp · Cabinet · Mic(s) · Preamp · Interface" />
-        <RowEditor
-          rows={pack.equipment}
-          onChange={(rows) => update('equipment', rows)}
-          keys={['label', 'value']}
-          addLabel="Add item"
-          placeholders={['Amp', 'Friedman BE-100 Deluxe V2']}
-          catalogItems={catalogFor('equipment')}
-          onSaveToCatalog={(label, value) => addToCatalog('equipment', label, value)}
-        />
+        <div className={sectionChanged('equipment')}>
+          <RowEditor
+            rows={pack.equipment}
+            onChange={(rows) => update('equipment', rows)}
+            keys={['label', 'value']}
+            addLabel="Add item"
+            placeholders={['Amp', 'Friedman BE-100 Deluxe V2']}
+            catalogItems={catalogFor('equipment')}
+            onSaveToCatalog={(label, value) => addToCatalog('equipment', label, value)}
+          />
+        </div>
 
         {/* Pedals */}
         <SectionHeader label="Pedals" hint="Boost · Drive · EQ · Effects in chain" />
-        <RowEditor
-          rows={pack.pedals}
-          onChange={(rows) => update('pedals', rows)}
-          keys={['label', 'value']}
-          addLabel="Add pedal"
-          placeholders={['Boost', 'Klon Centaur (unity gain)']}
-          catalogItems={catalogFor('pedals')}
-          onSaveToCatalog={(label, value) => addToCatalog('pedals', label, value)}
-        />
+        <div className={sectionChanged('pedals')}>
+          <RowEditor
+            rows={pack.pedals}
+            onChange={(rows) => update('pedals', rows)}
+            keys={['label', 'value']}
+            addLabel="Add pedal"
+            placeholders={['Boost', 'Klon Centaur (unity gain)']}
+            catalogItems={catalogFor('pedals')}
+            onSaveToCatalog={(label, value) => addToCatalog('pedals', label, value)}
+          />
+        </div>
 
         {/* Switches — no catalog (per-amp) */}
         <SectionHeader label="Switches & Modes" hint="Channel modes · Tone stack · Voice switches" />
-        <RowEditor
-          rows={pack.switches}
-          onChange={(rows) => update('switches', rows)}
-          keys={['label', 'value']}
-          addLabel="Add switch"
-          placeholders={['Tight switch', 'Engaged on all BE channels']}
-          firstColWidth="max-w-[140px]"
-        />
+        <div className={sectionChanged('switches')}>
+          <RowEditor
+            rows={pack.switches}
+            onChange={(rows) => update('switches', rows)}
+            keys={['label', 'value']}
+            addLabel="Add switch"
+            placeholders={['Tight switch', 'Engaged on all BE channels']}
+            firstColWidth="max-w-[140px]"
+          />
+        </div>
 
         {/* Glossary */}
         <SectionHeader label="Glossary" hint="Define terms used in capture names" />
-        <div className="pb-4">
+        <div className={`pb-4 ${sectionChanged('glossary')}`}>
           <RowEditor
             rows={pack.glossary}
             onChange={(rows) => update('glossary', rows)}
@@ -831,6 +909,29 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
             catalogItems={catalogFor('glossary')}
             onSaveToCatalog={(label, value) => addToCatalog('glossary', label, value)}
           />
+        </div>
+
+        {/* Footer */}
+        <SectionHeader label="Footer" hint="Contact info, copyright, links…" />
+        <div className="pb-4">
+          <textarea
+            value={pack.footer}
+            placeholder="© 2025 Core Tone Captures · cortonecaptures.com"
+            onChange={(e) => update('footer', e.target.value)}
+            rows={2}
+            className={`${inputCls('footer')} resize-none font-mono text-xs`}
+          />
+          <p className="mt-1 px-1 text-[10px] text-gray-400 dark:text-gray-500">
+            Supports same formatting as description — <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">**bold**</code>, <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">[orange]color[/orange]</code>, etc.
+          </p>
+        </div>
+
+        {/* Print tips */}
+        <div className="mt-2 mb-4 px-3 py-2.5 rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+          <p className="text-[10px] italic text-gray-400 dark:text-gray-500 leading-relaxed">
+            * <span className="font-semibold not-italic text-gray-500 dark:text-gray-400">Printing to PDF from browser:</span> recommend <span className="font-semibold not-italic">landscape</span> orientation for best results.
+            For dark mode exports, set margins to <span className="font-semibold not-italic">None</span> and enable <span className="font-semibold not-italic">Background Graphics</span> in the print dialog to preserve background colours.
+          </p>
         </div>
       </div>
     </div>
