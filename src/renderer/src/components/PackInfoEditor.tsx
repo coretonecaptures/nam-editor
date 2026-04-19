@@ -208,7 +208,7 @@ function generateExportHtml(info: PackInfo, folderPath: string, folderName: stri
   .header-sub { font-size: 14px; color: ${t.headerSub}; }
   .header-captured { font-size: 10px; color: ${t.headerCapturedBy}; letter-spacing: 0.03em; white-space: nowrap; }
   .content { padding: 18px 32px; }
-  .description { color: ${t.descColor}; margin-bottom: 16px; line-height: 1.7; width: 100%; font-size: 12px; }
+  .description { color: ${t.descColor}; margin-bottom: 16px; line-height: 1.7; width: 100%; font-size: 14px; }
   .section { margin-bottom: 20px; }
   .section-title { font-size: 10px; font-weight: 700; color: ${t.sectionTitleColor}; text-transform: uppercase; letter-spacing: 0.1em; text-align: center; margin-bottom: 8px; padding-bottom: 0; }
   .section-title::after { content: ''; display: block; width: 28px; height: 2px; background: ${t.sectionTitleColor}; border-radius: 1px; margin: 5px auto 0; opacity: 0.7; }
@@ -219,7 +219,7 @@ function generateExportHtml(info: PackInfo, folderPath: string, folderName: stri
   tbody tr:nth-child(even) { background: ${t.tdEvenBg}; }
   .col-name { overflow: hidden; }
   .kv-label { font-weight: 600; color: ${t.kvLabelColor}; width: 110px; white-space: nowrap; }
-  .glossary-item { padding: 4px 0; border-bottom: 1px solid ${t.glossItemBorder}; }
+  .glossary-item { padding: 4px 8px; border-bottom: 1px solid ${t.glossItemBorder}; }
   .glossary-item:last-child { border-bottom: none; }
   .g-term { font-weight: 600; color: ${t.gTermColor}; }
   .g-sep { color: ${t.gSepColor}; }
