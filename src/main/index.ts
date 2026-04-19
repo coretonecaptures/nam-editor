@@ -152,6 +152,19 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
+  // Inject Cross-Origin-Isolation headers so SharedArrayBuffer is available for the WASM player.
+  // COOP + COEP on the page, CORP on every sub-resource (so local-file:// images aren't blocked).
+  mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Cross-Origin-Opener-Policy': ['same-origin'],
+        'Cross-Origin-Embedder-Policy': ['require-corp'],
+        'Cross-Origin-Resource-Policy': ['cross-origin'],
+      }
+    })
+  })
+
   // Prevent Electron from navigating to dropped file URLs — without this,
   // dropping a file onto the window replaces the app with the raw file contents.
   mainWindow.webContents.on('will-navigate', (event) => {

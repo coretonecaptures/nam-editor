@@ -1827,8 +1827,7 @@ export default function App() {
               }}
               onPlay={(file) => {
                 setPlayerFile(file)
-                // Also select the file so it stays highlighted
-                onSelect(file.filePath, false)
+                setSelectedIds(new Set([file.filePath]))
               }}
             />
           </div>
