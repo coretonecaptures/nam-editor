@@ -1376,7 +1376,11 @@ export default function App() {
         // Always mark exact-matched — prevents prefix from a different row overriding it
         exactMatchedPaths.add(file.filePath)
         const incoming = buildIncoming(row)
-        if ('gear_type' in incoming) exactGearTypePaths.add(file.filePath)
+        // Only block Pass 3 cab upgrade if gear_type is already a cab-inclusive type.
+        // If exact row has amp/pedal_amp, Pass 3 can still upgrade to amp_cab/amp_pedal_cab.
+        if ('gear_type' in incoming && Object.values(CAB_UPGRADE).includes(incoming.gear_type as string)) {
+          exactGearTypePaths.add(file.filePath)
+        }
         if (Object.keys(incoming).length > 0) {
           exactMatches.push({ file, incoming })
         }
