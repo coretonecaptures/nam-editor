@@ -1335,6 +1335,12 @@ export default function App() {
     // For prefix matches only: amp→amp_cab, pedal_amp→amp_pedal_cab. All other gear_types skipped.
     const CAB_UPGRADE: Record<string, string> = { amp: 'amp_cab', pedal_amp: 'amp_pedal_cab' }
 
+    // Defined early so Pass 1 can use it to detect DI files by their own name suffix.
+    const prefixSuffixSet = new Set(
+      (settings.importPrefixSuffixes || 'DI')
+        .split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
+    )
+
     // Helper: build incoming fields from a row, optionally skipping prefix-skip fields
     const buildIncoming = (row: Record<string, unknown>, skipFields: Set<keyof NamFile['metadata']> = new Set(), isPrefix = false): Partial<NamFile['metadata']> => {
       const incoming: Partial<NamFile['metadata']> = {}
@@ -1376,9 +1382,16 @@ export default function App() {
         // Always mark exact-matched — prevents prefix from a different row overriding it
         exactMatchedPaths.add(file.filePath)
         const incoming = buildIncoming(row)
-        // Only block Pass 3 cab upgrade if gear_type is already a cab-inclusive type.
-        // If exact row has amp/pedal_amp, Pass 3 can still upgrade to amp_cab/amp_pedal_cab.
-        if ('gear_type' in incoming && Object.values(CAB_UPGRADE).includes(incoming.gear_type as string)) {
+        // Block Pass 3 cab upgrade if:
+        //   (a) gear_type is already a cab-inclusive type (amp_cab / amp_pedal_cab), OR
+        //   (b) this file's own name ends with a configured DI suffix — it IS the DI capture,
+        //       not a cab variant, so it must keep its gear_type unchanged.
+        // Non-DI files with amp/pedal_amp are left unprotected so Pass 3 can upgrade them.
+        const fileWords = (file.metadata.name || file.fileName || '').trim().split(/\s+/)
+        const fileEndsWithDiSuffix = prefixSuffixSet.has(fileWords[fileWords.length - 1]?.toUpperCase() ?? '')
+        if ('gear_type' in incoming && (
+          Object.values(CAB_UPGRADE).includes(incoming.gear_type as string) || fileEndsWithDiSuffix
+        )) {
           exactGearTypePaths.add(file.filePath)
         }
         if (Object.keys(incoming).length > 0) {
@@ -1410,10 +1423,6 @@ export default function App() {
     }
 
     // Pass 2: prefix matches — only for files WITHOUT an exact match row
-    const prefixSuffixSet = new Set(
-      (settings.importPrefixSuffixes || 'DI')
-        .split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
-    )
     const prefixMatches: ImportMatch[] = []
     const prefixMatchedPaths = new Set<string>()
     for (const row of rows) {
