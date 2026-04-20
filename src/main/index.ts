@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, protocol, session } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, protocol, session, net } from 'electron'
 import { createServer, type Server as HttpServer, type IncomingMessage, type ServerResponse } from 'http'
 import type { AddressInfo } from 'net'
 import { join, dirname, basename, extname, normalize as normalizePath } from 'path'
@@ -158,7 +158,7 @@ async function handleAppProtocol(req: Request): Promise<Response> {
     .split('/')
     .filter(Boolean)
     .filter((segment) => segment !== '.' && segment !== '..')
-  const targetPath = isDev ? getRendererAssetPath(safeSegments) : join(__dirname, '../renderer', ...safeSegments)
+  const targetPath = join(__dirname, '../renderer', ...safeSegments)
 
   try {
     const body = await fs.promises.readFile(targetPath)
@@ -183,11 +183,15 @@ async function handleAppProtocol(req: Request): Promise<Response> {
 }
 
 async function handleLocalFileProtocol(req: Request): Promise<Response> {
-  const relativePath = req.url.slice('local-file://'.length)
-  const filePath = process.platform === 'win32'
-    ? decodeURIComponent(relativePath.replace(/^\/*/, ''))
-    : decodeURIComponent(relativePath)
-
+  const url = new URL(req.url)
+  // On Windows, the drive letter ends up as the URL host component:
+  // local-file://F/path/to/file -> host="F", pathname="/path/to/file"
+  let filePath: string
+  if (process.platform === 'win32' && url.host.length === 1) {
+    filePath = url.host + ':' + decodeURIComponent(url.pathname)
+  } else {
+    filePath = decodeURIComponent(url.pathname)
+  }
   try {
     const body = await fs.promises.readFile(filePath)
     return new Response(body, {
@@ -357,10 +361,10 @@ function createWindow(): void {
   })
 
   if (isDev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(getRendererEntryUrl())
+    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
     mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
-    mainWindow.loadURL(getRendererEntryUrl())
+    mainWindow.loadURL(`${APP_ORIGIN}/index.html`)
   }
 }
 
@@ -1077,17 +1081,9 @@ app.whenReady().then(() => {
     }
   })
 
-  ensureRendererServer()
-    .then(() => {
-      log(`renderer origin: ${getRendererEntryUrl()}`)
-      log('creating window...')
-      createWindow()
-      log('window created')
-    })
-    .catch((error) => {
-      log(`renderer server failed: ${String(error)}`)
-      throw error
-    })
+  log('creating window...')
+  createWindow()
+  log('window created')
 
   // Send any files queued before window was ready (macOS open-file events + Windows argv)
   const argvFiles = getArgvFiles()
