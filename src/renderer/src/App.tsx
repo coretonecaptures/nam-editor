@@ -1383,6 +1383,28 @@ export default function App() {
       }
     }
 
+    // Pass 1.5: full-name prefix matches — file name starts with "{rowName} "
+    // Treated as direct matches (all fields, no cab upgrade). Covers variants like
+    // "FMAN100V2 BE HG C45 DI HYPER" when the row is "FMAN100V2 BE HG C45 DI".
+    const fullPrefixMatchedRowNames = new Set<string>()
+    for (const row of rows) {
+      const captureName = String(row['Capture Name'] ?? '').trim()
+      if (!captureName) continue
+      const rowPrefix = captureName.toLowerCase() + ' '
+      for (const f of scopedFiles) {
+        if (exactMatchedPaths.has(f.filePath)) continue
+        const fName = (f.metadata.name || f.fileName || '').toLowerCase().trim()
+        if (!fName.startsWith(rowPrefix)) continue
+        exactMatchedPaths.add(f.filePath)
+        const incoming = buildIncoming(row)
+        if ('gear_type' in incoming) exactGearTypePaths.add(f.filePath)
+        if (Object.keys(incoming).length > 0) {
+          exactMatches.push({ file: f, incoming })
+          fullPrefixMatchedRowNames.add(captureName.toLowerCase())
+        }
+      }
+    }
+
     // Pass 2: prefix matches — only for files WITHOUT an exact match row
     const prefixSuffixSet = new Set(
       (settings.importPrefixSuffixes || 'DI')
@@ -1462,7 +1484,9 @@ export default function App() {
       if (!captureName) continue
       const hasExact = (nameToFiles.get(captureName.toLowerCase()) ?? []).length > 0
       if (hasExact) continue
-      // Check if this row produced any prefix matches
+      // Check if this row produced Pass 1.5 full-name prefix matches
+      if (fullPrefixMatchedRowNames.has(captureName.toLowerCase())) continue
+      // Check if this row produced any suffix-strip prefix matches
       const words = captureName.trim().split(/\s+/)
       const lastWord = words.length >= 2 ? words[words.length - 1].toUpperCase() : ''
       const prefix = lastWord && prefixSuffixSet.has(lastWord)
