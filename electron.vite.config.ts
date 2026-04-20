@@ -29,6 +29,17 @@ export default defineConfig({
     define: {
       'import.meta.env.VITE_APP_VERSION': JSON.stringify(version)
     },
+    server: {
+      hmr: false
+    },
+    preview: {
+      headers: {
+        'Cross-Origin-Opener-Policy': 'same-origin',
+        'Cross-Origin-Embedder-Policy': 'require-corp',
+        'Cross-Origin-Resource-Policy': 'cross-origin',
+        'Permissions-Policy': 'cross-origin-isolated=(self)'
+      }
+    },
     resolve: {
       alias: {
         '@renderer': resolve('src/renderer/src')

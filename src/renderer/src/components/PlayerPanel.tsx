@@ -2,18 +2,132 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { T3kPlayerContextProvider, useT3kPlayerContext } from 'neural-amp-modeler-wasm'
 import { NamFile } from '../types/nam'
 
-// Electron 41 hides window.SharedArrayBuffer when crossOriginIsolated is false,
-// but WebAssembly.Memory({shared:true}) still works internally. Extract the real
-// Chromium SAB constructor so instanceof checks in t3k-wasm-module.js pass.
-if (typeof SharedArrayBuffer === 'undefined') {
+function getSharedArrayBufferCtor(): typeof SharedArrayBuffer | undefined {
+  if (typeof SharedArrayBuffer !== 'undefined') return SharedArrayBuffer
+
   try {
-    const m = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true })
-    if (m.buffer.constructor.name !== 'ArrayBuffer') {
-      ;(globalThis as any).SharedArrayBuffer = m.buffer.constructor
-    }
-  } catch (_) { /* not available */ }
+    const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true })
+    const ctor = memory.buffer.constructor as typeof SharedArrayBuffer
+    if (ctor?.name && ctor.name !== 'ArrayBuffer') return ctor
+  } catch {
+    // Ignore and fall back to the normal failure path below.
+  }
+
+  return undefined
 }
 
+function canUseSharedWasmMemory() {
+  try {
+    const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true })
+    return {
+      supported: true,
+      buffer: memory.buffer,
+      ctor: memory.buffer.constructor as typeof SharedArrayBuffer
+    }
+  } catch (error) {
+    return {
+      supported: false,
+      error
+    }
+  }
+}
+
+function formatPlayerError(error: unknown): string {
+  if (error instanceof Error) return `${error.name}: ${error.message}`
+  if (typeof error === 'number') return `WASM exception pointer: ${error}`
+  return String(error)
+}
+
+function serializePlayerLogValue(value: unknown): string {
+  if (value instanceof Error) return `${value.name}: ${value.message}\n${value.stack ?? ''}`
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function appendPlayerLog(level: 'info' | 'warn' | 'error', message: string, details?: unknown) {
+  const suffix = details === undefined ? '' : ` | ${serializePlayerLogValue(details)}`
+  void window.api.appendRendererLog(`[Player][${level}] ${message}${suffix}`)
+}
+
+function installAudioWorkletDebugHooks() {
+  const restorers: Array<() => void> = []
+
+  if (typeof AudioWorklet !== 'undefined') {
+    const originalAddModule = AudioWorklet.prototype.addModule
+    AudioWorklet.prototype.addModule = function addModuleWithLogging(moduleURL: string | URL, options?: WorkletOptions) {
+      console.log('[Player] AudioWorklet.addModule ->', String(moduleURL))
+      return originalAddModule.call(this, moduleURL, options)
+        .then((result) => {
+          console.log('[Player] AudioWorklet.addModule ok <-', String(moduleURL))
+          return result
+        })
+        .catch((error) => {
+          console.error('[Player] AudioWorklet.addModule failed <-', String(moduleURL), error)
+          appendPlayerLog('error', `AudioWorklet.addModule failed <- ${String(moduleURL)}`, error)
+          throw error
+        })
+    }
+    restorers.push(() => {
+      AudioWorklet.prototype.addModule = originalAddModule
+    })
+  }
+
+  if (typeof AudioWorkletNode !== 'undefined') {
+    const NativeAudioWorkletNode = AudioWorkletNode
+    const LoggedAudioWorkletNode = class extends NativeAudioWorkletNode {
+      constructor(context: BaseAudioContext, name: string, options?: AudioWorkletNodeOptions) {
+        console.log(
+          '[Player] new AudioWorkletNode ->',
+          name,
+          options,
+          '| window.crossOriginIsolated:',
+          window.crossOriginIsolated,
+          '| globalThis.crossOriginIsolated:',
+          globalThis.crossOriginIsolated
+        )
+        try {
+          super(context, name, options)
+          console.log('[Player] new AudioWorkletNode ok <-', name)
+        } catch (error) {
+          console.error('[Player] new AudioWorkletNode failed <-', name, error)
+          appendPlayerLog('error', `new AudioWorkletNode failed <- ${name}`, {
+            error: serializePlayerLogValue(error),
+            windowCrossOriginIsolated: window.crossOriginIsolated,
+            globalCrossOriginIsolated: globalThis.crossOriginIsolated
+          })
+          throw error
+        }
+      }
+    }
+
+    Object.defineProperty(window, 'AudioWorkletNode', {
+      configurable: true,
+      writable: true,
+      value: LoggedAudioWorkletNode
+    })
+
+    restorers.push(() => {
+      Object.defineProperty(window, 'AudioWorkletNode', {
+        configurable: true,
+        writable: true,
+        value: NativeAudioWorkletNode
+      })
+    })
+  }
+
+  return () => {
+    for (const restore of restorers.reverse()) restore()
+  }
+}
+
+const sharedArrayBufferCtor = getSharedArrayBufferCtor()
+if (typeof SharedArrayBuffer === 'undefined' && sharedArrayBufferCtor) {
+  ;(globalThis as typeof globalThis & { SharedArrayBuffer?: typeof SharedArrayBuffer }).SharedArrayBuffer = sharedArrayBufferCtor
+}
 
 // ─── Level meter hook ────────────────────────────────────────────────────────
 
@@ -105,13 +219,86 @@ function PlayerPanelInner({ file, onClose }: PlayerPanelInnerProps) {
 
   // Load the file on mount
   useEffect(() => {
-    console.log('[Player] crossOriginIsolated:', (window as any).crossOriginIsolated, '| SharedArrayBuffer:', typeof SharedArrayBuffer, '| polyfilled:', (globalThis as any).SharedArrayBuffer?.name)
-    try {
-      const testMem = new WebAssembly.Memory({ shared: true, initial: 1, maximum: 10 })
-      console.log('[Player] WebAssembly.Memory(shared) buffer type:', testMem.buffer.constructor.name, '| instanceof SAB:', testMem.buffer instanceof SharedArrayBuffer)
-    } catch (e) { console.log('[Player] WebAssembly.Memory(shared) failed:', e) }
+    const wasmMemoryProbe = canUseSharedWasmMemory()
+    const hasSharedArrayBufferCtor = typeof SharedArrayBuffer !== 'undefined'
+    const canProceed = window.crossOriginIsolated || wasmMemoryProbe.supported
+
+    console.log(
+      '[Player] crossOriginIsolated:',
+      window.crossOriginIsolated,
+      '| SharedArrayBuffer:',
+      typeof SharedArrayBuffer,
+      '| sharedWasmMemory:',
+      wasmMemoryProbe.supported
+    )
+    appendPlayerLog('info', 'initial isolation probe', {
+      crossOriginIsolated: window.crossOriginIsolated,
+      sharedArrayBufferType: typeof SharedArrayBuffer,
+      sharedWasmMemory: wasmMemoryProbe.supported
+    })
+
+    if (!canProceed) {
+      const message = 'NAM player requires shared WebAssembly memory, but this renderer cannot create it yet.'
+      console.error('[Player]', message)
+      appendPlayerLog('error', message, 'error' in wasmMemoryProbe ? wasmMemoryProbe.error : undefined)
+      if ('error' in wasmMemoryProbe) {
+        console.error('[Player] WebAssembly.Memory(shared) failed:', wasmMemoryProbe.error)
+      }
+      setErrorMsg(message)
+      setStatus('error')
+      return
+    }
+
+    if (wasmMemoryProbe.supported) {
+      console.log(
+        '[Player] WebAssembly.Memory(shared) buffer type:',
+        wasmMemoryProbe.buffer.constructor.name,
+        '| instanceof SAB:',
+        hasSharedArrayBufferCtor ? wasmMemoryProbe.buffer instanceof SharedArrayBuffer : 'n/a'
+      )
+    }
+
     console.log('[Player] typeof Atomics:', typeof Atomics)
     let cancelled = false
+    let workletCallbackSeen = false
+    const restoreAudioWorkletDebugHooks = installAudioWorkletDebugHooks()
+    const workletCallbackTimeout = window.setTimeout(() => {
+      if (!cancelled && !workletCallbackSeen) {
+        console.warn('[Player] wasmAudioWorkletCreated has not fired yet')
+        appendPlayerLog('warn', 'wasmAudioWorkletCreated has not fired yet')
+      }
+    }, 5000)
+
+    const windowWithCallback = window as Window & {
+      wasmAudioWorkletCreated?: ((node: AudioWorkletNode, context: AudioContext) => void) | undefined
+    }
+    const originalDescriptor = Object.getOwnPropertyDescriptor(windowWithCallback, 'wasmAudioWorkletCreated')
+
+    Object.defineProperty(windowWithCallback, 'wasmAudioWorkletCreated', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        return undefined
+      },
+      set(callback) {
+        const wrappedCallback = typeof callback === 'function'
+          ? ((node: AudioWorkletNode, context: AudioContext) => {
+              workletCallbackSeen = true
+              console.log('[Player] wasmAudioWorkletCreated fired')
+              appendPlayerLog('info', 'wasmAudioWorkletCreated fired')
+              return callback(node, context)
+            })
+          : callback
+
+        Object.defineProperty(windowWithCallback, 'wasmAudioWorkletCreated', {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value: wrappedCallback
+        })
+      }
+    })
+
     const load = async () => {
       setStatus('loading')
       try {
@@ -128,15 +315,19 @@ function PlayerPanelInner({ file, onClose }: PlayerPanelInnerProps) {
         if (cancelled) { URL.revokeObjectURL(url); return }
 
         console.log('[Player] calling init()...')
+        appendPlayerLog('info', 'calling init()')
         await init({ modelUrl: url })
         console.log('[Player] init() resolved — ready')
+        appendPlayerLog('info', 'init() resolved — ready')
         if (cancelled) return
         setStatus('ready')
         // Fetch device list once ready
         refreshAudioInputDevices()
       } catch (err) {
         if (!cancelled) {
-          setErrorMsg(String(err))
+          console.error('[Player] init failed:', err)
+          appendPlayerLog('error', 'init failed', err)
+          setErrorMsg(formatPlayerError(err))
           setStatus('error')
         }
       }
@@ -144,6 +335,13 @@ function PlayerPanelInner({ file, onClose }: PlayerPanelInnerProps) {
     load()
     return () => {
       cancelled = true
+      window.clearTimeout(workletCallbackTimeout)
+      restoreAudioWorkletDebugHooks()
+      if (originalDescriptor) {
+        Object.defineProperty(windowWithCallback, 'wasmAudioWorkletCreated', originalDescriptor)
+      } else {
+        delete windowWithCallback.wasmAudioWorkletCreated
+      }
       if (blobUrlRef.current) { URL.revokeObjectURL(blobUrlRef.current); blobUrlRef.current = null }
     }
   }, [file.filePath])

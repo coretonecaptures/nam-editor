@@ -44,6 +44,8 @@ declare global {
       scanFolder: (folderPath: string, hiddenFolders?: string) => Promise<{ success: boolean; error?: string; files?: string[] }>
       scanTree: (folderPath: string, hiddenFolders?: string) => Promise<{ success: boolean; error?: string; tree?: FolderNode }>
       getErrorLogPath: () => Promise<string>
+      getRendererLogPath: () => Promise<string>
+      appendRendererLog: (line: string) => Promise<{ success: boolean; error?: string }>
       getStartupLogPath: () => Promise<string>
       refocusWindow: () => Promise<void>
       statPath: (p: string) => Promise<{ isDirectory: boolean }>

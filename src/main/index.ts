@@ -1,9 +1,207 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, protocol, session } from 'electron'
+import { createServer, type Server as HttpServer, type IncomingMessage, type ServerResponse } from 'http'
+import type { AddressInfo } from 'net'
 import { join, dirname, basename, extname, normalize as normalizePath } from 'path'
 import fs from 'fs'
 import os from 'os'
 
 const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
+const APP_SCHEME = 'app'
+const APP_HOST = '-'
+const APP_ORIGIN = `${APP_SCHEME}://${APP_HOST}`
+const ISOLATION_HEADERS = {
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Embedder-Policy': 'require-corp'
+} as const
+let rendererServer: HttpServer | null = null
+let rendererOrigin = APP_ORIGIN
+
+function getRendererEntryUrl(): string {
+  return `${rendererOrigin}/index.html`
+}
+
+function getRendererDistRoot(): string {
+  return join(process.cwd(), 'out/renderer')
+}
+
+function getRendererAssetPath(safeSegments: string[]): string {
+  const distRoot = getRendererDistRoot()
+  return join(distRoot, ...safeSegments)
+}
+
+function contentTypeForFile(filePath: string): string {
+  switch (extname(filePath).toLowerCase()) {
+    case '.html': return 'text/html; charset=utf-8'
+    case '.js':
+    case '.mjs': return 'text/javascript; charset=utf-8'
+    case '.css': return 'text/css; charset=utf-8'
+    case '.json': return 'application/json; charset=utf-8'
+    case '.wasm': return 'application/wasm'
+    case '.svg': return 'image/svg+xml'
+    case '.png': return 'image/png'
+    case '.jpg':
+    case '.jpeg': return 'image/jpeg'
+    case '.gif': return 'image/gif'
+    case '.webp': return 'image/webp'
+    case '.ico': return 'image/x-icon'
+    case '.map': return 'application/json; charset=utf-8'
+    default: return 'application/octet-stream'
+  }
+}
+
+function responseHeadersFor(filePath: string, extra: Record<string, string> = {}): Record<string, string> {
+  return {
+    'Content-Type': contentTypeForFile(filePath),
+    'Cache-Control': isDev ? 'no-store' : 'public, max-age=31536000, immutable',
+    ...ISOLATION_HEADERS,
+    ...extra
+  }
+}
+
+function shouldForceIsolationHeaders(url: string): boolean {
+  return url.startsWith(`${APP_SCHEME}://`)
+}
+
+function applyIsolationHeaders(headers: Record<string, string>): Record<string, string> {
+  const nextHeaders: Record<string, string> = {}
+  for (const [key, value] of Object.entries(headers)) {
+    const lower = key.toLowerCase()
+    if (
+      lower === 'cross-origin-opener-policy'
+      || lower === 'cross-origin-embedder-policy'
+      || lower === 'cross-origin-resource-policy'
+    ) {
+      continue
+    }
+    nextHeaders[key] = value
+  }
+
+  return {
+    ...nextHeaders,
+    'Cross-Origin-Opener-Policy': 'same-origin',
+    'Cross-Origin-Embedder-Policy': 'require-corp',
+    'Cross-Origin-Resource-Policy': 'cross-origin'
+  }
+}
+
+async function proxyDevServerRequest(reqUrl: URL): Promise<Response> {
+  const devServerOrigin = process.env['ELECTRON_RENDERER_URL']!.replace(/\/$/, '')
+  return fetch(`${devServerOrigin}${reqUrl.pathname}${reqUrl.search}`)
+}
+
+async function serveRendererHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const reqUrl = new URL(req.url ?? '/', 'http://127.0.0.1')
+
+  const relativePath = decodeURIComponent(reqUrl.pathname === '/' ? '/index.html' : reqUrl.pathname)
+  const safeSegments = relativePath
+    .split('/')
+    .filter(Boolean)
+    .filter((segment) => segment !== '.' && segment !== '..')
+  const targetPath = isDev ? getRendererAssetPath(safeSegments) : join(__dirname, '../renderer', ...safeSegments)
+
+  try {
+    const body = await fs.promises.readFile(targetPath)
+    res.writeHead(200, applyIsolationHeaders({
+      'Content-Type': contentTypeForFile(targetPath),
+      'Cache-Control': 'public, max-age=31536000, immutable'
+    }))
+    res.end(body)
+  } catch {
+    const fallbackPath = join(__dirname, '../renderer/index.html')
+    try {
+      const body = await fs.promises.readFile(fallbackPath)
+      res.writeHead(200, applyIsolationHeaders({
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store'
+      }))
+      res.end(body)
+    } catch {
+      res.writeHead(404, applyIsolationHeaders({ 'Content-Type': 'text/plain; charset=utf-8' }))
+      res.end('Not found')
+    }
+  }
+}
+
+async function ensureRendererServer(): Promise<void> {
+  if (rendererServer) return
+
+  rendererServer = createServer((req, res) => {
+    void serveRendererHttp(req, res)
+  })
+
+  await new Promise<void>((resolve, reject) => {
+    const server = rendererServer!
+    const onError = (error: Error) => {
+      server.off('listening', onListening)
+      reject(error)
+    }
+    const onListening = () => {
+      server.off('error', onError)
+      const address = server.address() as AddressInfo | null
+      if (!address) {
+        reject(new Error('Renderer server did not expose an address'))
+        return
+      }
+      rendererOrigin = `http://127.0.0.1:${address.port}`
+      resolve()
+    }
+    server.once('error', onError)
+    server.once('listening', onListening)
+    server.listen(0, '127.0.0.1')
+  })
+}
+
+async function handleAppProtocol(req: Request): Promise<Response> {
+  const url = new URL(req.url)
+  const relativePath = decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname)
+  const safeSegments = relativePath
+    .split('/')
+    .filter(Boolean)
+    .filter((segment) => segment !== '.' && segment !== '..')
+  const targetPath = isDev ? getRendererAssetPath(safeSegments) : join(__dirname, '../renderer', ...safeSegments)
+
+  try {
+    const body = await fs.promises.readFile(targetPath)
+    return new Response(body, {
+      headers: responseHeadersFor(targetPath, {
+        'Cross-Origin-Resource-Policy': 'same-origin'
+      })
+    })
+  } catch {
+    const fallbackPath = join(__dirname, '../renderer/index.html')
+    try {
+      const body = await fs.promises.readFile(fallbackPath)
+      return new Response(body, {
+        headers: responseHeadersFor(fallbackPath, {
+          'Cross-Origin-Resource-Policy': 'same-origin'
+        })
+      })
+    } catch {
+      return new Response('Not found', { status: 404 })
+    }
+  }
+}
+
+async function handleLocalFileProtocol(req: Request): Promise<Response> {
+  const relativePath = req.url.slice('local-file://'.length)
+  const filePath = process.platform === 'win32'
+    ? decodeURIComponent(relativePath.replace(/^\/*/, ''))
+    : decodeURIComponent(relativePath)
+
+  try {
+    const body = await fs.promises.readFile(filePath)
+    return new Response(body, {
+      headers: {
+        'Content-Type': contentTypeForFile(filePath),
+        'Cache-Control': 'no-store',
+        'Cross-Origin-Resource-Policy': 'cross-origin',
+        'Access-Control-Allow-Origin': '*'
+      }
+    })
+  } catch {
+    return new Response('Not found', { status: 404 })
+  }
+}
 
 // Compares two semver strings (e.g. "0.5.5" > "0.5.4", "0.5.5" > "0.5.5-rc1")
 // Returns positive if a > b, negative if a < b, 0 if equal
@@ -159,11 +357,10 @@ function createWindow(): void {
   })
 
   if (isDev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    mainWindow.loadURL(getRendererEntryUrl())
     mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
-    // Use app:// so the renderer is served with COOP/COEP headers (enables SharedArrayBuffer)
-    mainWindow.loadURL('app://./index.html')
+    mainWindow.loadURL(getRendererEntryUrl())
   }
 }
 
@@ -416,32 +613,36 @@ function getArgvFiles(): string[] {
 // - local-file://  serves filesystem images with CSP bypass
 // - app://         serves the production renderer with COOP/COEP for cross-origin isolation
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'local-file', privileges: { secure: true, bypassCSP: true, stream: true } },
-  { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
+  {
+    scheme: 'local-file',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true }
+  },
+  {
+    scheme: APP_SCHEME,
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true }
+  },
 ])
 
 app.whenReady().then(() => {
-  // Serve local filesystem files under local-file:// scheme
-  protocol.handle('local-file', (req) => {
-    const fileUrl = 'file://' + req.url.slice('local-file://'.length)
-    return net.fetch(fileUrl)
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    const nextHeaders = details.responseHeaders ?? {}
+    if (!shouldForceIsolationHeaders(details.url)) {
+      callback({ responseHeaders: nextHeaders })
+      return
+    }
+
+    callback({
+      responseHeaders: {
+        ...nextHeaders,
+        'Cross-Origin-Opener-Policy': ['same-origin'],
+        'Cross-Origin-Embedder-Policy': ['require-corp'],
+        'Cross-Origin-Resource-Policy': ['cross-origin']
+      }
+    })
   })
 
-  // Serve the production renderer under app:// with COOP/COEP headers so that
-  // cross-origin isolation is achieved and SharedArrayBuffer is available for WASM.
-  protocol.handle('app', async (req) => {
-    const url = new URL(req.url)
-    // Map app://./path to the renderer build directory
-    const relPath = url.pathname === '/' ? 'index.html' : url.pathname.replace(/^\//, '')
-    const filePath = join(__dirname, '../renderer', relPath)
-    const fileUrl = `file://${filePath.replace(/\\/g, '/')}`
-    const response = await net.fetch(fileUrl)
-    const headers = new Headers(response.headers)
-    headers.set('Cross-Origin-Opener-Policy', 'same-origin')
-    headers.set('Cross-Origin-Embedder-Policy', 'require-corp')
-    headers.set('Cross-Origin-Resource-Policy', 'cross-origin')
-    return new Response(response.body, { status: response.status, headers })
-  })
+  protocol.handle('local-file', handleLocalFileProtocol)
+  protocol.handle(APP_SCHEME, handleAppProtocol)
 
   log('app.whenReady fired')
   switchLogToUserData()
@@ -534,6 +735,16 @@ app.whenReady().then(() => {
 
   // IPC: Return the path to the parse error log file
   ipcMain.handle('log:getErrorLogPath', () => errorLogPath)
+  const rendererLogPath = join(app.getPath('userData'), 'renderer-errors.log')
+  ipcMain.handle('log:getRendererLogPath', () => rendererLogPath)
+  ipcMain.handle('log:appendRendererLog', (_event, line: string) => {
+    try {
+      fs.appendFileSync(rendererLogPath, `[${new Date().toISOString()}] ${line}\n`, 'utf-8')
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  })
 
   // IPC: Write updated metadata back to file (preserves weights and all non-editable fields)
   // Only updates the fields the editor explicitly manages — never injects new keys.
@@ -866,9 +1077,17 @@ app.whenReady().then(() => {
     }
   })
 
-  log('creating window...')
-  createWindow()
-  log('window created')
+  ensureRendererServer()
+    .then(() => {
+      log(`renderer origin: ${getRendererEntryUrl()}`)
+      log('creating window...')
+      createWindow()
+      log('window created')
+    })
+    .catch((error) => {
+      log(`renderer server failed: ${String(error)}`)
+      throw error
+    })
 
   // Send any files queued before window was ready (macOS open-file events + Windows argv)
   const argvFiles = getArgvFiles()
@@ -1050,4 +1269,8 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+app.on('will-quit', () => {
+  try { rendererServer?.close() } catch { /* ignore */ }
 })

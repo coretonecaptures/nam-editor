@@ -14,7 +14,5 @@ window.confirm = (message?: string): boolean => {
 }
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
+  <App />
 )

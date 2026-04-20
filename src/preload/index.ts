@@ -16,6 +16,9 @@ const api = {
   revealFile: (filePath: string) => ipcRenderer.invoke('shell:revealFile', filePath),
   openFile: (filePath: string): Promise<{ success: boolean; error?: string }> => ipcRenderer.invoke('shell:openFile', filePath),
   getErrorLogPath: (): Promise<string> => ipcRenderer.invoke('log:getErrorLogPath'),
+  getRendererLogPath: (): Promise<string> => ipcRenderer.invoke('log:getRendererLogPath'),
+  appendRendererLog: (line: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('log:appendRendererLog', line),
   getStartupLogPath: (): Promise<string> => ipcRenderer.invoke('log:getStartupLogPath'),
   refocusWindow: () => ipcRenderer.invoke('window:refocus'),
   statPath: (p: string): Promise<{ isDirectory: boolean }> => ipcRenderer.invoke('path:stat', p),
