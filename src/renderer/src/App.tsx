@@ -1452,18 +1452,23 @@ export default function App() {
     // with tone_type set but no gear_type → "BE100 DI" row contributes amp_cab).
     const pathToFile = new Map(scopedFiles.map(f => [f.filePath, f]))
     const exactMatchByPath = new Map(exactMatches.map(m => [m.file.filePath, m]))
-    for (const row of rows) {
-      const captureName = String(row['Capture Name'] ?? '').trim()
-      if (!captureName) continue
-      const words = captureName.split(/\s+/)
-      if (words.length < 2) continue
-      const lastWord = words[words.length - 1].toUpperCase()
-      if (!prefixSuffixSet.has(lastWord)) continue
-      const rowGearType = String(row['Gear Type'] ?? '').trim()
-      if (!rowGearType) continue
-      const upgraded = CAB_UPGRADE[rowGearType]
-      if (!upgraded) continue
-      const prefix = words.slice(0, -1).join(' ').toLowerCase()
+    // Sort DI rows longest-prefix-first so the most specific row wins when multiple
+    // DI rows share a common base (e.g. "FMAN100V2 Plexi HG Koko DI" beats "FMAN100V2 Plexi HG DI").
+    const diRowsSorted = rows
+      .map(row => {
+        const captureName = String(row['Capture Name'] ?? '').trim()
+        const words = captureName.split(/\s+/)
+        const lastWord = words[words.length - 1]?.toUpperCase() ?? ''
+        if (words.length < 2 || !prefixSuffixSet.has(lastWord)) return null
+        const rowGearType = String(row['Gear Type'] ?? '').trim()
+        const upgraded = CAB_UPGRADE[rowGearType]
+        if (!upgraded) return null
+        const prefix = words.slice(0, -1).join(' ').toLowerCase()
+        return { row, prefix, upgraded }
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+      .sort((a, b) => b.prefix.length - a.prefix.length)
+    for (const { prefix, upgraded } of diRowsSorted) {
       for (const filePath of exactMatchedPaths) {
         if (exactGearTypePaths.has(filePath)) continue  // already has gear_type from exact row
         const f = pathToFile.get(filePath)
