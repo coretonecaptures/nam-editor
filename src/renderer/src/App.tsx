@@ -1422,17 +1422,23 @@ export default function App() {
       }
     }
 
-    // Pass 2: prefix matches — only for files WITHOUT an exact match row
+    // Pass 2: prefix matches — only for files WITHOUT an exact match row.
+    // Sort by prefix length descending so the most specific (longest) DI row wins
+    // when multiple DI rows share a common base prefix.
     const prefixMatches: ImportMatch[] = []
     const prefixMatchedPaths = new Set<string>()
-    for (const row of rows) {
-      const captureName = String(row['Capture Name'] ?? '').trim()
-      if (!captureName) continue
-      const words = captureName.trim().split(/\s+/)
-      if (words.length < 2) continue
-      const lastWord = words[words.length - 1].toUpperCase()
-      if (!prefixSuffixSet.has(lastWord)) continue  // only strip known suffixes
-      const prefix = words.slice(0, -1).join(' ').toLowerCase()
+    const diRowsPass2 = rows
+      .map(row => {
+        const captureName = String(row['Capture Name'] ?? '').trim()
+        const words = captureName.split(/\s+/)
+        if (words.length < 2) return null
+        const lastWord = words[words.length - 1].toUpperCase()
+        if (!prefixSuffixSet.has(lastWord)) return null
+        return { row, prefix: words.slice(0, -1).join(' ').toLowerCase() }
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+      .sort((a, b) => b.prefix.length - a.prefix.length)
+    for (const { row, prefix } of diRowsPass2) {
       for (const f of scopedFiles) {
         const fName = (f.metadata.name || f.fileName || '').toLowerCase().trim()
         if (!fName.startsWith(prefix)) continue
