@@ -33,6 +33,7 @@ interface FolderTreeProps {
   onGenerateTemplate?: (folderPath: string | null) => void
   onImportMetadata?: (folderPath: string | null) => void
   onSelectAllInFolder?: (folderPath: string | null) => void
+  onCoverageReport?: (folderPath: string) => void
   scrollToFolder?: string | null
   packInfoFolders?: Set<string>
   folderNameColors?: Record<string, string>
@@ -64,7 +65,7 @@ export function FolderTree({
   tree, files, selectedFolder, onSelect, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, onFilterChange, onDropFiles,
   onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata,
-  onSelectAllInFolder, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor
+  onSelectAllInFolder, onCoverageReport, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor
 }: FolderTreeProps) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [expandSeq, setExpandSeq] = useState(0)
@@ -254,6 +255,7 @@ export function FolderTree({
           onGenerateTemplate={onGenerateTemplate ? () => onGenerateTemplate(null) : undefined}
           onImportMetadata={onImportMetadata ? () => onImportMetadata(null) : undefined}
           onSelectAll={onSelectAllInFolder ? () => onSelectAllInFolder(null) : undefined}
+          onCoverageReport={onCoverageReport ? () => onCoverageReport(tree.path) : undefined}
         />
 
         {tree.children.map((child) => (
@@ -277,6 +279,7 @@ export function FolderTree({
             onGenerateTemplate={onGenerateTemplate}
             onImportMetadata={onImportMetadata}
             onSelectAllInFolder={onSelectAllInFolder}
+            onCoverageReport={onCoverageReport}
             expandSeq={expandSeq}
             collapseSeq={collapseSeq}
             scrollToFolder={scrollToFolder}
@@ -294,7 +297,7 @@ function TreeNode({
   node, selectedFolder, onSelect, depth, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, matchingPaths, onDropFiles,
   onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata,
-  onSelectAllInFolder, expandSeq, collapseSeq, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor
+  onSelectAllInFolder, onCoverageReport, expandSeq, collapseSeq, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor
 }: {
   node: FolderNode
   selectedFolder: string | null
@@ -314,6 +317,7 @@ function TreeNode({
   onGenerateTemplate?: (folderPath: string | null) => void
   onImportMetadata?: (folderPath: string | null) => void
   onSelectAllInFolder?: (folderPath: string | null) => void
+  onCoverageReport?: (folderPath: string) => void
   expandSeq?: number
   collapseSeq?: number
   scrollToFolder?: string | null
@@ -383,6 +387,7 @@ function TreeNode({
         onGenerateTemplate={onGenerateTemplate ? () => onGenerateTemplate(node.path) : undefined}
         onImportMetadata={onImportMetadata ? () => onImportMetadata(node.path) : undefined}
         onSelectAll={onSelectAllInFolder ? () => onSelectAllInFolder(node.path) : undefined}
+        onCoverageReport={onCoverageReport ? () => onCoverageReport(node.path) : undefined}
         isDraggableFolder
         hasPackInfo={packInfoFolders?.has(node.path.replace(/\\/g, '/')) ?? false}
         folderColor={folderNameColors?.[node.name] ?? null}
@@ -412,6 +417,7 @@ function TreeNode({
               onGenerateTemplate={onGenerateTemplate}
               onImportMetadata={onImportMetadata}
               onSelectAllInFolder={onSelectAllInFolder}
+              onCoverageReport={onCoverageReport}
               expandSeq={expandSeq}
               collapseSeq={collapseSeq}
               scrollToFolder={scrollToFolder}
@@ -431,7 +437,7 @@ interface ContextMenuState { x: number; y: number }
 function FolderRow({
   label, folderPath, isRoot, isSelected, totalCount, dirtyCount, depth,
   hasChildren, expanded, onToggleExpand, onClick, onSave, onRevert,
-  onBatchEdit, onReveal, isFiltered, isHighlighted, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSelectAll, isDraggableFolder, hasPackInfo, folderColor, onSetFolderColor
+  onBatchEdit, onReveal, isFiltered, isHighlighted, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSelectAll, onCoverageReport, isDraggableFolder, hasPackInfo, folderColor, onSetFolderColor
 }: {
   label: string
   folderPath: string
@@ -458,6 +464,7 @@ function FolderRow({
   onGenerateTemplate?: () => void
   onImportMetadata?: () => void
   onSelectAll?: () => void
+  onCoverageReport?: () => void
   isDraggableFolder?: boolean
   hasPackInfo?: boolean
   folderColor?: string | null
@@ -764,6 +771,17 @@ function FolderRow({
                   Import metadata from spreadsheet…
                 </button>
               )}
+            </>
+          )}
+          {onCoverageReport && (
+            <>
+              <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
+              <button
+                className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
+                onClick={() => { setMenu(null); onCoverageReport() }}
+              >
+                Training version report…
+              </button>
             </>
           )}
           {!isRoot && onSetFolderColor && (

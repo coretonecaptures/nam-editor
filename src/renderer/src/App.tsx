@@ -14,6 +14,7 @@ import { SettingsPanel } from './components/SettingsPanel'
 import { FolderTree } from './components/FolderTree'
 import { DuplicatesModal } from './components/DuplicatesModal'
 import { ImportMetadataModal, ImportMatch } from './components/ImportMetadataModal'
+import { TrainingCoverageModal } from './components/TrainingCoverageModal'
 import { FolderGallery, FolderImagesData } from './components/FolderGallery'
 import { PackInfoEditor } from './components/PackInfoEditor'
 import * as XLSX from 'xlsx'
@@ -191,6 +192,7 @@ export default function App() {
   const [showDuplicates, setShowDuplicates] = useState(false)
   const [metadataClipboard, setMetadataClipboard] = useState<{ sourceName: string; metadata: Partial<NamFile['metadata']> } | null>(null)
   const [importModal, setImportModal] = useState<{ folderName: string; exactMatches: ImportMatch[]; prefixMatches: ImportMatch[]; unmatchedNames: string[] } | null>(null)
+  const [coverageReport, setCoverageReport] = useState<{ folderPath: string } | null>(null)
   const [watcherKey, setWatcherKey] = useState(0)
   const [recentFolders, setRecentFolders] = useState<string[]>(() => {
     try {
@@ -1750,6 +1752,7 @@ export default function App() {
                 onGenerateTemplate={handleGenerateTemplate}
                 onImportMetadata={handleImportMetadata}
                 onSelectAllInFolder={handleSelectAllInFolder}
+                onCoverageReport={(folderPath) => setCoverageReport({ folderPath })}
                 scrollToFolder={treeScrollTarget}
                 packInfoFolders={packInfoFolders}
                 folderNameColors={settings.folderNameColors}
@@ -2141,6 +2144,15 @@ export default function App() {
           unmatchedNames={importModal.unmatchedNames}
           onConfirm={handleImportConfirm}
           onClose={() => setImportModal(null)}
+        />
+      )}
+
+      {coverageReport && (
+        <TrainingCoverageModal
+          files={files}
+          folderPath={coverageReport.folderPath}
+          prefixSuffixes={settings.importPrefixSuffixes || 'DI'}
+          onClose={() => setCoverageReport(null)}
         />
       )}
     </div>
