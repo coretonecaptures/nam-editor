@@ -1994,6 +1994,16 @@ export default function App() {
                       onPackSaved={handlePackSaved}
                       logoLight={settings.packLogoLight}
                       logoDark={settings.packLogoDark}
+                      allFolderPaths={(() => {
+                        const paths: string[] = []
+                        const walk = (node: typeof librarian.folderTree) => {
+                          if (!node) return
+                          paths.push(node.path)
+                          node.children.forEach(walk)
+                        }
+                        walk(librarian.folderTree)
+                        return paths
+                      })()}
                     />
                   ) : showCreatePrompt && (!showGalleryTab || folderPanelTab === 'pack') ? (
                     <div className="h-full flex flex-col items-center justify-center gap-4 px-8 text-center">
