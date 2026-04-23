@@ -12,14 +12,15 @@ interface Props {
 
 interface CoverageCell {
   fileName: string
+  variant: string        // capture name suffix after the base (e.g. "Mars2", "DI HYPER", "")
   epochs: number | null
 }
 
 interface CoverageRow {
   baseName: string
-  gearTypes: string[]    // unique gear types contributing to this base name
-  subfolders: string[]   // unique relative subfolder paths
-  cells: Record<string, CoverageCell | null>
+  gearTypes: string[]
+  subfolders: string[]
+  cells: Record<string, CoverageCell[]>  // array: multiple captures can share same base+preset
 }
 
 const DI_GEAR_TYPES = new Set(['amp', 'pedal_amp'])
@@ -90,8 +91,17 @@ function buildRows(
   // Pass 2: resolve all DI files (including non-suffix variants like "DI HYPER")
   const diBaseNames = [...diBaseNameSet].sort((a, b) => b.length - a.length)
 
+  function getVariant(f: NamFile, base: string): string {
+    const raw = (f.metadata.name || f.fileName || '').trim()
+    const baseLower = base.toLowerCase()
+    const rawLower = raw.toLowerCase()
+    if (rawLower === baseLower) return ''
+    if (rawLower.startsWith(baseLower + ' ')) return raw.slice(base.length + 1).trim()
+    return raw
+  }
+
   // Accumulator maps: base → { cells, gearTypes, subfolders }
-  type RowAccum = { cells: Map<string, CoverageCell>; gearTypes: Set<string>; subfolders: Set<string> }
+  type RowAccum = { cells: Map<string, CoverageCell[]>; gearTypes: Set<string>; subfolders: Set<string> }
   const diAccum = new Map<string, RowAccum>()
   const cabAccum = new Map<string, RowAccum>()
 
@@ -108,10 +118,13 @@ function buildRows(
     else hasUnknown = true
 
     const accum = getOrCreate(diAccum, base)
-    accum.cells.set(key, {
+    const entry: CoverageCell = {
       fileName: f.fileName,
+      variant: getVariant(f, base),
       epochs: typeof f.metadata.nb_trained_epochs === 'number' ? f.metadata.nb_trained_epochs : null,
-    })
+    }
+    const existing = accum.cells.get(key) ?? []
+    accum.cells.set(key, [...existing, entry])
     if (f.metadata.gear_type) accum.gearTypes.add(f.metadata.gear_type)
     accum.subfolders.add(relativeSubfolder(f.filePath, folderPath))
   }
@@ -126,10 +139,13 @@ function buildRows(
     else hasUnknown = true
 
     const accum = getOrCreate(cabAccum, base)
-    accum.cells.set(key, {
+    const entry: CoverageCell = {
       fileName: f.fileName,
+      variant: getVariant(f, base),
       epochs: typeof f.metadata.nb_trained_epochs === 'number' ? f.metadata.nb_trained_epochs : null,
-    })
+    }
+    const existing = accum.cells.get(key) ?? []
+    accum.cells.set(key, [...existing, entry])
     if (f.metadata.gear_type) accum.gearTypes.add(f.metadata.gear_type)
     accum.subfolders.add(relativeSubfolder(f.filePath, folderPath))
   }
@@ -149,7 +165,7 @@ function buildRows(
         baseName,
         gearTypes: [...gearTypes].sort(),
         subfolders: [...subfolders].sort(),
-        cells: Object.fromEntries(sortedPresets.map((p) => [p, cells.get(p) ?? null])),
+        cells: Object.fromEntries(sortedPresets.map((p) => [p, cells.get(p) ?? []])),
       }))
 
   return { diRows: makeRows(diAccum), cabRows: makeRows(cabAccum), presets: sortedPresets }
@@ -168,9 +184,12 @@ function exportToSheet(
     r.gearTypes.join(', '),
     r.subfolders.join(', '),
     ...presets.map((p) => {
-      const c = r.cells[p]
-      if (!c) return ''
-      return c.epochs != null ? `✓ (${c.epochs})` : '✓'
+      const arr = r.cells[p]
+      if (!arr || arr.length === 0) return ''
+      return arr.map((c) => {
+        const label = c.variant || '✓'
+        return c.epochs != null ? `${label} (${c.epochs})` : label
+      }).join(' / ')
     }),
   ])]
 
@@ -224,13 +243,17 @@ function CoverageTable({ rows, presets, emptyMsg }: { rows: CoverageRow[]; prese
                 {row.subfolders.join(', ')}
               </td>
               {presets.map((p) => {
-                const cell = row.cells[p]
+                const arr = row.cells[p]
                 return (
                   <td key={p} className="px-3 py-1.5 border border-gray-700 text-center whitespace-nowrap">
-                    {cell ? (
-                      <span className="text-green-400 font-medium" title={cell.fileName}>
-                        ✓{cell.epochs != null ? ` (${cell.epochs})` : ''}
-                      </span>
+                    {arr && arr.length > 0 ? (
+                      <div className="flex flex-col gap-0.5 items-center">
+                        {arr.map((c, i) => (
+                          <span key={i} className="text-green-400 font-medium" title={c.fileName}>
+                            {c.variant || '✓'}{c.epochs != null ? ` (${c.epochs})` : ''}
+                          </span>
+                        ))}
+                      </div>
                     ) : (
                       <span className="text-gray-700">—</span>
                     )}
