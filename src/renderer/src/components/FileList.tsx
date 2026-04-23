@@ -705,6 +705,27 @@ export function FileList({
           {selectedVisible.length > 0 && ` · ${selectedVisible.length} selected`}
         </span>
         <div className="flex items-center gap-1">
+          {viewMode === 'list' && (
+            <select
+              value={sortKey ? `${sortKey}-${sortDir}` : ''}
+              onChange={(e) => {
+                if (!e.target.value) { setSortKey(null); return }
+                const [key, dir] = e.target.value.split('-')
+                setSortKey(key)
+                setSortDir(dir as SortDir)
+                localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify({ key, dir }))
+              }}
+              className="text-xs py-0.5 px-1.5 rounded border bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400 appearance-none focus:outline-none mr-1"
+            >
+              <option value="">Sort…</option>
+              <option value="date-desc">Date: newest</option>
+              <option value="date-asc">Date: oldest</option>
+              <option value="name-asc">Name: A→Z</option>
+              <option value="name-desc">Name: Z→A</option>
+              <option value="gear_make-asc">Manufacturer: A→Z</option>
+              <option value="modeled_by-asc">Modeled By: A→Z</option>
+            </select>
+          )}
           {gridMaximized && selectedVisible.length >= 1 && onOpenEditor && (
             <button
               onClick={onOpenEditor}
@@ -1255,6 +1276,12 @@ function FileItem({
           )}
         </div>
       </div>
+
+      {meta.date && (
+        <div className="flex-shrink-0 text-xs text-gray-400 dark:text-gray-600 mt-0.5 tabular-nums">
+          {`${meta.date.year}-${String(meta.date.month).padStart(2, '0')}-${String(meta.date.day).padStart(2, '0')}`}
+        </div>
+      )}
 
       {(meta.nl_rating ?? 0) > 0 && (
         <div className="flex-shrink-0 flex items-center gap-px mt-1.5">
