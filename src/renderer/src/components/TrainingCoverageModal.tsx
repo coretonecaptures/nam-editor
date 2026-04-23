@@ -276,6 +276,9 @@ export function TrainingCoverageModal({ files, folderPath, prefixSuffixes, onClo
 
   const folderName = folderPath.replace(/\\/g, '/').split('/').pop() ?? 'folder'
 
+  const countCaptures = (rows: CoverageRow[]) =>
+    rows.reduce((sum, r) => sum + Object.values(r.cells).reduce((s, arr) => s + arr.length, 0), 0)
+
   const { diRows, cabRows, presets } = useMemo(
     () => buildRows(files, folderPath, prefixSuffixSet),
     [files, folderPath, prefixSuffixSet]
@@ -306,7 +309,7 @@ export function TrainingCoverageModal({ files, folderPath, prefixSuffixes, onClo
           <section>
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                DI Captures (amp / pedal_amp) — {diRows.length} base{diRows.length !== 1 ? 's' : ''}
+                DI Captures (amp / pedal_amp) — {diRows.length} base{diRows.length !== 1 ? 's' : ''} | {countCaptures(diRows)} capture{countCaptures(diRows) !== 1 ? 's' : ''}
               </h3>
               {diRows.length > 0 && (
                 <div className="flex gap-2">
@@ -334,7 +337,7 @@ export function TrainingCoverageModal({ files, folderPath, prefixSuffixes, onClo
           <section>
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                Amp+Cab Captures (amp_cab / amp_pedal_cab) — {cabRows.length} base{cabRows.length !== 1 ? 's' : ''}
+                Amp+Cab Captures (amp_cab / amp_pedal_cab) — {cabRows.length} base{cabRows.length !== 1 ? 's' : ''} | {countCaptures(cabRows)} capture{countCaptures(cabRows) !== 1 ? 's' : ''}
               </h3>
               {cabRows.length > 0 && (
                 <div className="flex gap-2">

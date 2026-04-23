@@ -1051,7 +1051,10 @@ export default function App() {
   }
 
   const handleTrashFiles = async (paths: string[]) => {
-    const fileNames = paths.map((p) => p.replace(/\\/g, '/').split('/').pop()).join('\n')
+    const fileNames = paths.map((p) => {
+      const parts = p.replace(/\\/g, '/').split('/')
+      return parts.length >= 2 ? parts.slice(-2).join('/') : parts[parts.length - 1]
+    }).join('\n')
     const confirmed = window.confirm(
       `Move ${paths.length} file${paths.length !== 1 ? 's' : ''} to trash?\n\n${fileNames}\n\nThis can be recovered from the trash.`
     )
