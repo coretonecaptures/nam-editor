@@ -134,20 +134,21 @@ function generateExportHtml(info: PackInfo, folderPath: string, folderName: stri
 
   const activeCols = PACK_CAPTURE_COLUMNS.filter((c) => (info.exportColumns ?? DEFAULT_EXPORT_COLUMNS).includes(c.id))
 
+  const colSum = activeCols.reduce((s, c) => s + c.width, 0)
+  const nameMinPct = 20
+  const totalAvail = 100 - nameMinPct
+  const scale = colSum > totalAvail ? totalAvail / colSum : 1
+  const namePct = Math.round(100 - colSum * scale)
+
   const captureHeaderCells = [
-    `<th>Capture Name</th>`,
-    ...activeCols.map((c) => `<th>${esc(c.label)}</th>`)
+    `<th style="width:${namePct}%">Capture Name</th>`,
+    ...activeCols.map((c) => `<th style="width:${Math.round(c.width * scale)}%">${esc(c.label)}</th>`)
   ].join('')
 
   const captureRows = captures.map((f) => {
     const cells = [
       `<td class="col-name">${esc(f.metadata.name || f.fileName)}</td>`,
-      ...activeCols.map((c) => {
-        const cls = c.id === 'nl_amp_channel' ? ' class="col-channel"'
-                  : c.id === 'tone_type'       ? ' class="col-tonetype"'
-                  : ''
-        return `<td${cls}>${esc(c.accessor(f))}</td>`
-      })
+      ...activeCols.map((c) => `<td>${esc(c.accessor(f))}</td>`)
     ].join('')
     return `<tr>${cells}</tr>`
   }).join('')
@@ -217,24 +218,24 @@ function generateExportHtml(info: PackInfo, folderPath: string, folderName: stri
   .section { margin-bottom: 20px; }
   .section-title { font-size: 10px; font-weight: 700; color: ${t.sectionTitleColor}; text-transform: uppercase; letter-spacing: 0.1em; text-align: center; margin-bottom: 8px; padding-bottom: 0; }
   .section-title::after { content: ''; display: block; width: 28px; height: 2px; background: ${t.sectionTitleColor}; border-radius: 1px; margin: 5px auto 0; opacity: 0.7; }
-  table { width: 100%; border-collapse: collapse; table-layout: auto; }
-  thead th { background: ${t.thBg}; text-align: left; padding: 5px 8px; font-size: 9.5px; font-weight: 600; color: ${t.thColor}; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid ${t.thBorder}; white-space: nowrap; }
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  thead th { background: ${t.thBg}; text-align: left; padding: 5px 8px; font-size: 9.5px; font-weight: 600; color: ${t.thColor}; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid ${t.thBorder}; white-space: nowrap; overflow: hidden; }
   tbody td { padding: 4px 8px; border-bottom: 1px solid ${t.tdBorder}; vertical-align: top; word-break: break-word; }
   tbody tr:last-child td { border-bottom: none; }
   tbody tr:nth-child(even) { background: ${t.tdEvenBg}; }
-  .col-name { word-break: break-word; }
-  .col-channel, .col-tonetype { white-space: nowrap; width: 1px; }
+  .col-name { overflow: hidden; }
   .kv-label { font-weight: 600; color: ${t.kvLabelColor}; width: 110px; white-space: nowrap; }
   .footer { margin-top: 24px; padding-top: 8px; border-top: 1px solid ${t.footerBorder}; font-size: 9.5px; color: ${t.footerColor}; }
+  /* TODO (week of 2026-04-28): revisit print layout improvements suggested by Claude Design.
+     Tried table-layout:auto + col-channel/col-tonetype shrink-to-content, @page :first margin:0 /
+     @page margin:10mm, and @media print page-break rules. The @page margin made page-1 gap worse
+     and didn't help page breaks enough to justify the regressions. Leaving original layout for now.
+     Ref: rc7 commit 068a0bf. */
   @page { margin: 0; }
   @media print {
     body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
     .header, thead th, tbody tr:nth-child(even) { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .content { padding: 20px 48px 32px; }
-    .section-title { page-break-after: avoid; break-after: avoid; }
-    .section { page-break-inside: avoid; break-inside: avoid; }
-    tbody tr { page-break-inside: avoid; break-inside: avoid; }
-    thead { display: table-header-group; }
+    .content { padding: 14px 28px; }
   }
 </style>
 </head>
