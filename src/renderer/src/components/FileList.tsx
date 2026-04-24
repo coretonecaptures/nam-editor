@@ -1173,12 +1173,13 @@ function GridView({
     if (!ctx) return
     // Name renders text-sm/600 (14px semibold); all others 12px/400
     const dataFont = key === 'name' ? '600 14px ui-sans-serif,system-ui,sans-serif' : '400 12px ui-sans-serif,system-ui,sans-serif'
-    // Header uses 11px/600 uppercase + tracking-wider (letter-spacing ~0.05em — canvas misses this)
+    // Header uses 11px/600 uppercase + tracking-wider; canvas consistently undershoots
+    // rendered width, so apply a generous multiplier and extra right clearance for filter icon
     ctx.font = '600 11px ui-sans-serif,system-ui,sans-serif'
     const rawLabelW = ctx.measureText(colDef.label.toUpperCase()).width
-    const labelW = rawLabelW * 1.08 // compensate for tracking-wider + canvas undershoot
-    // left-pad(12) + label + right zone: paddingRight(28) in label div covers filter icon, +8px breath
-    const headerW = 12 + labelW + 28 + 8
+    const labelW = rawLabelW * 1.2 // ~15% for tracking-wider + canvas undershoot
+    // left-pad(12) + label + paddingRight(28) + filter-icon clearance(12) + breath(8)
+    const headerW = 12 + labelW + 28 + 12 + 8
     // Data: px-3 both sides (24px) + 8px breath
     ctx.font = dataFont
     const dataW = allFiles.reduce((max, f) => {
