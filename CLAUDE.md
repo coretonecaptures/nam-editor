@@ -363,7 +363,7 @@ These have been discussed and approved — remove each item when implemented.
 
 - **[x] Double-click grid column header to auto-size** — Double-click the resize handle (right edge of header) to auto-size the column to fit the widest value across all rows. Canvas `measureText` approach.
 
-- **[x] Drag-to-reorder grid columns** — Drag any column header (except Name) to reorder. Order persisted to localStorage alongside visibility settings via `visibleCols` array.
+- **[ ] Drag-to-reorder grid columns** — Multiple attempts made; drag ghost shows but drop never fires (Electron Chromium drops on child elements without bubbling to `<th>`). Tried: draggable on th, draggable on inner div + pointer-events:none, duplicate onDrop on inner label div. Still not working. Needs a fresh approach — possibly use mousedown+mousemove custom drag (no HTML5 API) or a dedicated drag-handle element that is the sole drag target and drop zone.
 
 - **[x] CSV export from grid not working** — Fixed: `nl_rating` in `getCellValue` was returning a number (`?? 0`), causing `.includes()` to throw. Changed to `String(m.nl_rating)` or `''`. Also fixed export column order to respect `visibleCols` order.
 
@@ -373,7 +373,9 @@ These have been discussed and approved — remove each item when implemented.
 
 - **[x] Per-column grid filters (multi-select + text search)** — Filter icon on each grid column header opens a popup with a text search (contains mode) and a checklist of distinct values (exact match mode). Multiple columns compose with AND logic. Active filter shown as a filled/indigo icon. All gear/tone/preset/name dropdowns hidden in grid mode (they are commented out, not deleted). "Column filters active — Clear all" banner shows when any column filter is set.
 
-- **[ ] README cleanup / wiki** — README is too long for casual readers. Trim README to high-level highlights (what it is, install, key features summary). Move the exhaustive feature list, architecture notes, and dev docs to a GitHub Wiki or a `docs/` folder. Goal: README ≤ 80 lines for a first-time visitor.
+- **[x] README cleanup / wiki** — README trimmed to ~65 lines. Full feature reference moved to `docs/features.md`; first-launch instructions to `docs/install.md`.
+
+- **[ ] Unify list-view filter bar controls** — The Manufacturer dropdown has an explicit × clear button but Gear Type, Tone Type, Preset, and Name Contains do not — they require re-selecting the placeholder option. All five controls should behave the same way: either all have an × clear button when active, or none do and all rely on the placeholder option. Manufacturer's × works well; add the same pattern to the other four.
 
 - **[ ] Folder tree colorization** — Two-layer color system. Layer 1: name-based rules in Settings → Library (e.g. `DI=blue, CAB=green`) — any folder with that exact name gets a colored dot anywhere in the tree, set once. Layer 2: right-click any folder → "Set color" palette — stores color by folder path, applies to that specific folder. Parent color propagates to direct children as a subtle left accent bar (group membership signal), while the child's own dot shows its type. Two visual channels: left bar = amp group, dot = capture type. Storage: `folderNameColors: Record<string, string>` and `folderPathColors: Record<string, string>` in AppSettings. LOE: ~2–3 hours.
 
