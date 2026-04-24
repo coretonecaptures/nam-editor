@@ -305,21 +305,25 @@ export function FileList({
         .filter(Boolean).join(' ').toLowerCase()
       if (!haystack.includes(q)) return false
     }
-    if (nameSearch) {
-      const q = nameSearch.toLowerCase()
-      const namVal = (m.name || f.fileName || '').toLowerCase()
-      if (!namVal.includes(q)) return false
+    if (viewMode === 'list') {
+      if (gearFilter && m.gear_type !== gearFilter) return false
+      if (toneFilter && m.tone_type !== toneFilter) return false
+      if (presetFilter === '__none__' && detectPreset(f.config) !== null) return false
+      else if (presetFilter && presetFilter !== '__none__' && detectPreset(f.config) !== presetFilter) return false
+      if (mfrFilter && m.gear_make !== mfrFilter) return false
+      if (nameSearch) {
+        const q = nameSearch.toLowerCase()
+        const namVal = (m.name || f.fileName || '').toLowerCase()
+        if (!namVal.includes(q)) return false
+      }
     }
-    if (gearFilter && m.gear_type !== gearFilter) return false
-    if (toneFilter && m.tone_type !== toneFilter) return false
-    if (presetFilter === '__none__' && detectPreset(f.config) !== null) return false
-    else if (presetFilter && presetFilter !== '__none__' && detectPreset(f.config) !== presetFilter) return false
-    if (mfrFilter && m.gear_make !== mfrFilter) return false
-    for (const [key, { text, selected }] of Object.entries(columnFilters)) {
-      if (selected.length > 0) {
-        if (!selected.includes(getCellValue(f, key))) return false
-      } else if (text) {
-        if (!getCellValue(f, key).toLowerCase().includes(text.toLowerCase())) return false
+    if (viewMode === 'grid') {
+      for (const [key, { text, selected }] of Object.entries(columnFilters)) {
+        if (selected.length > 0) {
+          if (!selected.includes(getCellValue(f, key))) return false
+        } else if (text) {
+          if (!getCellValue(f, key).toLowerCase().includes(text.toLowerCase())) return false
+        }
       }
     }
     switch (filter) {
@@ -1108,6 +1112,7 @@ function GridView({
 }) {
   const [colWidths, setColWidths] = useState<Record<string, number>>(DEFAULT_COL_WIDTHS)
   const [dragOverCol, setDragOverCol] = useState<string | null>(null)
+  const [isDraggingCol, setIsDraggingCol] = useState(false)
   const [openFilterCol, setOpenFilterCol] = useState<string | null>(null)
   const [filterSearch, setFilterSearch] = useState('')
   const filterPopupRef = useRef<HTMLDivElement>(null)
@@ -1208,16 +1213,17 @@ function GridView({
                   newOrder.splice(toIdx, 0, from)
                   onVisibleColsChange(newOrder)
                 }}
-                onDragEnd={() => { dragColRef.current = null; setDragOverCol(null) }}
+                onDragEnd={() => { dragColRef.current = null; setDragOverCol(null); setIsDraggingCol(false) }}
               >
                 <div
                   className={`flex items-center gap-1 px-3 py-2 whitespace-nowrap overflow-hidden hover:text-gray-800 dark:hover:text-gray-200 ${col.key !== 'name' ? 'cursor-grab' : 'cursor-pointer'}`}
-                  style={{ paddingRight: 28 }}
+                  style={{ paddingRight: 28, pointerEvents: isDraggingCol ? 'none' : undefined }}
                   draggable={col.key !== 'name'}
                   onDragStart={(e) => {
                     dragColRef.current = col.key
                     e.dataTransfer.effectAllowed = 'move'
                     e.dataTransfer.setData('text/plain', col.key)
+                    setIsDraggingCol(true)
                   }}
                   onClick={() => onSortClick(col.key)}
                 >
@@ -1232,6 +1238,7 @@ function GridView({
                 {/* Filter icon */}
                 <button
                   className={`absolute right-2.5 top-1/2 -translate-y-1/2 z-20 p-0.5 rounded transition-colors ${hasFilter ? 'text-indigo-400' : 'text-gray-400 dark:text-gray-600 hover:text-gray-600 dark:hover:text-gray-400'}`}
+                  style={{ pointerEvents: isDraggingCol ? 'none' : undefined }}
                   onClick={(e) => { e.stopPropagation(); setOpenFilterCol(isFilterOpen ? null : col.key); setFilterSearch('') }}
                   title={hasFilter ? 'Filter active — click to edit' : 'Filter column'}
                 >
@@ -1314,6 +1321,7 @@ function GridView({
                 {/* Resize handle */}
                 <div
                   className="absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-indigo-400/40 z-30"
+                  style={{ pointerEvents: isDraggingCol ? 'none' : undefined }}
                   onMouseDown={(e) => onResizeStart(e, col.key)}
                   onDoubleClick={(e) => { e.preventDefault(); onAutoSize(col.key) }}
                 />
