@@ -35,6 +35,8 @@ This is especially useful for capture artists who want to properly tag their `.n
 - **Recent folders** — click the dropdown arrow (▾) next to Open Folder to quickly reopen any of your last 10 folders
 - Remembers the last opened folder and reopens it automatically on next launch
 - Panel widths and window size are remembered between sessions
+- **Expand all / Collapse all** — two chevron buttons in the Library header instantly expand or collapse the entire folder tree
+- **Watch folder** — when enabled in Settings → Startup, monitors the open folder for new `.nam` files and shows an amber banner prompting you to refresh. Not supported on Linux
 
 ### Library Search & Filter
 - Click the **🔍** icon in the Library header to open the collapsible search panel
@@ -49,12 +51,13 @@ This is especially useful for capture artists who want to properly tag their `.n
 
 ### List View & Grid View
 - Toggle between **List** and **Grid** views using the icons to the right of the search bar
-- **List view** — compact single-row per file with name, subtitle, gear/tone chips, and missing-field badge
+- **List view** — compact single-row per file with name, subtitle, gear/tone chips, missing-field badge, and capture date
+  - **Sort dropdown** in the header bar (next to All/None): Date newest/oldest, Name A→Z/Z→A, Manufacturer A→Z, Modeled By A→Z — persists across sessions
 - **Grid view** — spreadsheet-style table with configurable columns
-  - Click any column header to **sort** ascending/descending
+  - Click any column header to **sort** ascending/descending; sort persists across sessions
   - **Drag column edges** to resize individual columns
   - **Column chooser** — click the columns icon (⊞) at the far right of the header to show/hide columns; choices persist across launches; **Show all** and **Reset to default** buttons at the bottom of the chooser
-  - Available columns: Capture Name (always visible) · Date · Modeled By · Manufacturer · Model · Gear Type · Tone Type · Reamp Send (dBu) · Reamp Return (dBu) · ESR · Loudness · Gain · Architecture · NAM Version · Model Channels · Checks Passed · Latency (samples) · Trained Epochs · NAM-BOT Preset · Detected Preset · plus all 9 Capture Details fields (Mic(s), Amp Channel, Cabinet, etc.)
+  - Available columns: Capture Name (always visible) · Date · Modeled By · Manufacturer · Model · Gear Type · Tone Type · Reamp Send (dBu) · Reamp Return (dBu) · ESR · Loudness · Gain · Architecture · NAM Version · Model Channels · Checks Passed · Latency (samples) · Trained Epochs · NAM-BOT Preset · Detected Preset · Rating · plus all 9 Capture Details fields (Mic(s), Amp Channel, Cabinet, etc.)
   - **ESR column** is colour-coded: green < 0.01 (excellent) · amber 0.01–0.05 (acceptable) · red > 0.05; empty for captures that don't include training stats
   - Panel auto-widens when switching to grid view
 - **Maximize grid** — click the expand icon (next to the list/grid toggle) to collapse both the folder tree and editor panels, giving the grid the full window width. Click again to restore
@@ -68,6 +71,11 @@ This is especially useful for capture artists who want to properly tag their `.n
 - Choose **CSV** or **Excel (.xlsx)** format
 - Choose **Visible columns** (respects your column chooser selection) or **All columns** (every available field)
 - Export respects active search and filters — only visible rows are exported
+
+### Capture Rating
+- Rate captures 1–5 stars stored in `metadata.nam_lab.rating`
+- Stars are shown in the file list and as an optional grid column (**Rating**)
+- Edit the rating in the **Capture Details** section of the metadata editor
 
 ### File List Filters
 - **All / Edited / Incomplete / Unnamed / No Type / No Maker / No Tone** filter chips in the file list header
@@ -91,8 +99,20 @@ This is especially useful for capture artists who want to properly tag their `.n
   - Warns if any files have unsaved changes; skips files that already exist at the destination
   - Folder tree counts update and the view switches to the destination folder automatically
 
+### Keyboard Shortcuts
+| Shortcut | Action |
+|----------|--------|
+| Ctrl+S / Cmd+S | Save current file |
+| Ctrl+Enter / Cmd+Enter | Save current file and advance to the next file in the list |
+| Ctrl+A / Cmd+A | Select all visible files |
+| ↑ / ↓ | Navigate selection in file list |
+| Shift+↑ / Shift+↓ | Extend selection |
+| Escape | Close modal or lightbox |
+| Double-click capture name | Edit capture name inline in the metadata editor header |
+
 ### Metadata Editing
 - **Capture Name** — display name shown in plugins; click **↺ filename** button to reset it to the filename
+- **Double-click the capture name** in the editor header to edit it inline — Enter/blur commits, Escape cancels
 - **Modeled By** — capture artist / creator
 - **Gear Type** — amp, pedal, pedal_amp, amp_cab, amp_pedal_cab, preamp, studio
 - **Tone Type** — clean, crunch, hi_gain, fuzz, overdrive, distortion, other
@@ -172,6 +192,14 @@ A slim bar above the status bar shows which defaults are currently active (e.g. 
 - **Right-click folder → Save all in folder** — saves all unsaved files under that folder path
 - Batch edit writes directly to disk — no separate Save step needed
 
+### Batch Rename
+Right-click one or more files → **Rename N selected…** to open the Batch Rename dialog:
+- **Suffix / Prefix** — append or prepend text to all selected filenames
+- **Find & Replace** — replace a substring in all selected filenames
+- **Template** — rename from a pattern using tokens: `{name}` `{gear_make}` `{gear_model}` `{gear_type}` `{tone_type}` `{modeled_by}`
+- Live preview shows the before/after for every file; per-directory conflict detection flags duplicates before you commit
+- Toggle **Rename files on disk** to also rename the `.nam` file itself (not just the metadata name)
+
 ### Right-Click Context Menu (File List)
 Right-click any file or selection for quick actions:
 - **Show in Folder** — reveals the file in Explorer/Finder
@@ -222,6 +250,10 @@ Right-click any file or selection for quick actions:
 - **Batch edit…** — opens the batch editor scoped to that folder
 - **Reveal in Explorer** — opens the folder in Finder or Explorer
 - **Export folder as CSV / Excel** — exports all files under that folder with all available columns
+- **Select all in folder** — selects all files in that folder and navigates to it
+- **Rename folder** — inline rename of the folder on disk
+- **New subfolder** — creates a new subfolder with an inline name input
+- **Training version report…** — opens the Training Version Report for that folder (see below)
 - **Generate import template…** — exports an editable `.xlsx` pre-filled with the folder's current metadata (editable fields only). Edit it in Excel, then import it back
 - **Import metadata from spreadsheet…** — picks an `.xlsx` or `.csv`, matches rows to captures by Capture Name, and writes non-empty cells back to disk. Empty cells are skipped — only what you fill in is written. Requires a confirmation checkbox before anything is written
   - **Gear Type is never overwritten** — if a capture already has a Gear Type set, the import leaves it alone (Gear Type varies per variant and is easy to get wrong in a spreadsheet)
@@ -277,6 +309,39 @@ All values are strings. All fields are optional — omit any you don't need.
 The **Capture Details** section in the editor shows only the fields **relevant to the selected Gear Type** by default. Use the **Relevant / All** toggle to see all fields. Available in the single-file editor, multi-select editor, and batch editor. Also available as optional columns in grid view and export.
 
 Right-click → **Remove NAM Lab Custom Metadata** to permanently strip the `nam_lab` block from files on disk if needed.
+
+### Training Version Report
+Right-click any folder → **Training version report…** to open a pivot table showing training coverage across all captures in that folder.
+
+- **DI Captures table** — rows = base capture names, columns = detected training preset (Standard, REVxSTD, Complex, Lite, Feather, Nano, etc.)
+- **Amp+Cab Captures table** — same structure; each cell shows the variant suffix (e.g. Mars2, Mesa, MarsBE) so you can see which specific cab was trained at each preset
+- Cells show a checkmark and trained epoch count where available (e.g. `Mars2 (100)`)
+- **Type** and **Folder** columns help cross-check gear type and subfolder location
+- Header shows total base count and total capture count per table
+- **Export CSV** and **Export Excel** buttons per table
+
+### Pack Info Editor
+When you click a folder in the tree with no captures selected, the right panel shows the **Pack Info** editor — a documentation sheet for that amp pack.
+
+**Pack Info tab:**
+- **Title** and **Subtitle** — displayed prominently in the exported PDF header
+- **Description** — supports rich formatting: `**bold**`, `*italic*`, `# Heading`, `---` divider, `- bullet`, and color accents (`[orange]text[/orange]`, `[dim]text[/dim]`)
+- **Equipment** — key/value rows for amp, cabinet, mic, interface, etc.
+- **Pedals** — key/value rows for pedals in the signal chain
+- **Switches & Modes** — key/value rows for amp channels, switches, or modes
+- **Glossary** — term/description pairs defining abbreviations or capture variants used in the pack
+- **Captures table** — auto-populated from files in the folder. Use the subfolder checklist to include/exclude specific subfolders, and individual checkboxes to exclude specific captures. The footer shows the current included count
+- **Column chooser** — choose which columns appear in the exported captures table (Channel, Settings, Switches, Mic, Tone Type, etc.); use the ▲▼ arrows to reorder them
+- **Export PDF…** — generates a styled HTML document and opens it in your default browser for printing or saving as PDF. Toggle **Dark** / **Light** mode before exporting
+- **Captured By** — auto-populates from Settings → Capture Defaults → Modeled By
+
+**Gear Catalog (Settings → Pack Info):**
+- Maintain a personal catalog of Equipment, Pedals, and Glossary entries that you reuse across packs
+- Click **Add from catalog…** in any section to pick entries and insert them as rows — no retyping across packs
+
+**Logo (Settings → Pack Info):**
+- Upload separate logos for light and dark mode exports
+- Logo appears top-right in the PDF header; max 56px tall, auto-scaled
 
 ### Folder Image Gallery
 When you click a folder in the tree with no captures selected, the right panel shows any images stored in that folder (and its parent folders up to the library root).
