@@ -1159,16 +1159,19 @@ function GridView({
     const canvas = document.createElement('canvas')
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-    ctx.font = '12px ui-sans-serif, system-ui, sans-serif'
-    // Header: label in uppercase + sort icon space + padding
-    const headerW = ctx.measureText(colDef.label.toUpperCase()).width + 48
-    // Data: measure all rows
+    // Header is 11px uppercase + letter-spacing ~0.05em; data Name is 14px/600, others 12px/400
+    const dataFont = key === 'name' ? '600 14px ui-sans-serif,system-ui,sans-serif' : '400 12px ui-sans-serif,system-ui,sans-serif'
+    const headerFont = '600 11px ui-sans-serif,system-ui,sans-serif'
+    // Header: label text + left pad (12) + right pad includes filter icon + resize handle (28) + 8px breathing room
+    ctx.font = headerFont
+    const headerW = ctx.measureText(colDef.label.toUpperCase()).width + 12 + 28 + 8
+    // Data: cell has px-3 (12px each side = 24px), plus 8px breathing room
+    ctx.font = dataFont
     const dataW = allFiles.reduce((max, f) => {
       const val = getCellValue(f, key)
-      return Math.max(max, ctx.measureText(val).width + 24)
+      return Math.max(max, ctx.measureText(val).width + 24 + 8)
     }, 0)
-    const MAX_AUTO = 500
-    setColWidths((prev) => ({ ...prev, [key]: Math.min(MAX_AUTO, Math.max(headerW, dataW, colDef.minWidth)) }))
+    setColWidths((prev) => ({ ...prev, [key]: Math.max(headerW, dataW, colDef.minWidth) }))
   }
 
   const getUniqueValues = (key: string): string[] => {
