@@ -587,21 +587,25 @@ app.whenReady().then(() => {
     const hidden = new Set(
       ['_duplicates', ...(hiddenFolders ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)]
     )
-    try {
-      const files: string[] = []
-      const scan = (dir: string) => {
-        const entries = fs.readdirSync(dir, { withFileTypes: true })
-        for (const entry of entries) {
-          const full = join(dir, entry.name)
-          if (entry.isDirectory()) {
-            if (hidden.has(entry.name.toLowerCase())) continue
-            scan(full)
-          } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.nam')) {
-            files.push(full.replace(/\\/g, '/'))
-          }
+    const scan = async (dir: string, files: string[]): Promise<void> => {
+      const entries = await fs.promises.readdir(dir, { withFileTypes: true })
+      for (const entry of entries) {
+        const full = join(dir, entry.name)
+        if (entry.isDirectory()) {
+          if (hidden.has(entry.name.toLowerCase())) continue
+          await scan(full, files)
+        } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.nam')) {
+          files.push(full.replace(/\\/g, '/'))
         }
       }
-      scan(folderPath)
+    }
+    const TIMEOUT_MS = 30000
+    try {
+      const files: string[] = []
+      await Promise.race([
+        scan(folderPath, files),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Scan timed out after 30s — check network share connectivity')), TIMEOUT_MS))
+      ])
       return { success: true, files }
     } catch (err) {
       return { success: false, error: String(err) }
@@ -636,24 +640,28 @@ app.whenReady().then(() => {
       fileCount: number
       totalCount: number
     }
-    try {
-      const buildTree = (dir: string): FolderNode => {
-        const entries = fs.readdirSync(dir, { withFileTypes: true })
-        const children: FolderNode[] = []
-        let fileCount = 0
-        for (const entry of entries) {
-          if (entry.isDirectory()) {
-            if (hidden.has(entry.name.toLowerCase())) continue
-            children.push(buildTree(join(dir, entry.name)))
-          } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.nam')) {
-            fileCount++
-          }
+    const buildTree = async (dir: string): Promise<FolderNode> => {
+      const entries = await fs.promises.readdir(dir, { withFileTypes: true })
+      const children: FolderNode[] = []
+      let fileCount = 0
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          if (hidden.has(entry.name.toLowerCase())) continue
+          children.push(await buildTree(join(dir, entry.name)))
+        } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.nam')) {
+          fileCount++
         }
-        const totalCount = fileCount + children.reduce((s, c) => s + c.totalCount, 0)
-        const name = norm(dir).split('/').pop() ?? dir
-        return { name, path: norm(dir), children, fileCount, totalCount }
       }
-      const tree = buildTree(folderPath)
+      const totalCount = fileCount + children.reduce((s, c) => s + c.totalCount, 0)
+      const name = norm(dir).split('/').pop() ?? dir
+      return { name, path: norm(dir), children, fileCount, totalCount }
+    }
+    const TIMEOUT_MS = 30000
+    try {
+      const tree = await Promise.race([
+        buildTree(folderPath),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Scan timed out after 30s — check network share connectivity')), TIMEOUT_MS))
+      ])
       return { success: true, tree }
     } catch (err) {
       return { success: false, error: String(err) }
