@@ -339,6 +339,8 @@ These have been discussed and approved — remove each item when implemented.
 
 ### Quality of Life
 
+- **[x] Amber blinking status bar during load** — Status dot and text turn amber + animate-pulse when message matches /loading|scanning/i.
+
 - **[x] Last-used folder memory in file pickers** — Move to folder / Copy to folder pickers remember the last destination per operation type (stored in localStorage). Passed as `defaultPath` to `dialog:openFolder` IPC.
 
 - **[x] Save and advance keyboard shortcut** — Ctrl+Enter (Cmd+Enter on Mac) saves the current file and moves selection to the next file in the visible folder list.
