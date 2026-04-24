@@ -686,7 +686,7 @@ export function FileList({
           {/* Manufacturer filter */}
           {(() => {
             const mfrOptions = [...new Set(files.map((f) => f.metadata.gear_make).filter((v): v is string => !!v))].sort()
-            return mfrOptions.length > 0 ? (
+            return (
               <select
                 value={mfrFilter}
                 onChange={(e) => setMfrFilter(e.target.value)}
@@ -699,7 +699,7 @@ export function FileList({
                 <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Manufacturer…</option>
                 {mfrOptions.map((m) => <option key={m} value={m} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{m}</option>)}
               </select>
-            ) : null
+            )
           })()}
           {/* Name-only filter */}
           <div className="relative ml-1">
@@ -1162,7 +1162,8 @@ function GridView({
       const val = getCellValue(f, key)
       return Math.max(max, ctx.measureText(val).width + 24)
     }, 0)
-    setColWidths((prev) => ({ ...prev, [key]: Math.max(headerW, dataW, colDef.minWidth) }))
+    const MAX_AUTO = 500
+    setColWidths((prev) => ({ ...prev, [key]: Math.min(MAX_AUTO, Math.max(headerW, dataW, colDef.minWidth)) }))
   }
 
   const getUniqueValues = (key: string): string[] => {
@@ -1186,13 +1187,6 @@ function GridView({
                 key={col.key}
                 className={`relative text-left font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-r border-gray-200 dark:border-gray-700 select-none transition-colors ${isDragOver ? 'bg-indigo-100 dark:bg-indigo-900/40' : ''}`}
                 style={{ width: colWidths[col.key] }}
-                draggable={col.key !== 'name'}
-                onDragStart={(e) => {
-                  if (col.key === 'name') { e.preventDefault(); return }
-                  dragColRef.current = col.key
-                  e.dataTransfer.effectAllowed = 'move'
-                  e.dataTransfer.setData('text/plain', col.key)
-                }}
                 onDragOver={(e) => {
                   if (dragColRef.current && dragColRef.current !== col.key) {
                     e.preventDefault()
@@ -1217,8 +1211,14 @@ function GridView({
                 onDragEnd={() => { dragColRef.current = null; setDragOverCol(null) }}
               >
                 <div
-                  className="flex items-center gap-1 px-3 py-2 cursor-pointer hover:text-gray-800 dark:hover:text-gray-200 whitespace-nowrap overflow-hidden"
+                  className={`flex items-center gap-1 px-3 py-2 whitespace-nowrap overflow-hidden hover:text-gray-800 dark:hover:text-gray-200 ${col.key !== 'name' ? 'cursor-grab' : 'cursor-pointer'}`}
                   style={{ paddingRight: 28 }}
+                  draggable={col.key !== 'name'}
+                  onDragStart={(e) => {
+                    dragColRef.current = col.key
+                    e.dataTransfer.effectAllowed = 'move'
+                    e.dataTransfer.setData('text/plain', col.key)
+                  }}
                   onClick={() => onSortClick(col.key)}
                 >
                   <span className="truncate">{col.label}</span>
