@@ -363,7 +363,12 @@ These have been discussed and approved — remove each item when implemented.
 
 - **[x] Double-click grid column header to auto-size** — Double-click the resize handle (right edge of header) to auto-size the column to fit the widest value across all rows. Canvas `measureText` approach.
 
-- **[ ] Drag-to-reorder grid columns** — Multiple attempts made; drag ghost shows but drop never fires (Electron Chromium drops on child elements without bubbling to `<th>`). Tried: draggable on th, draggable on inner div + pointer-events:none, duplicate onDrop on inner label div. Still not working. Needs a fresh approach — possibly use mousedown+mousemove custom drag (no HTML5 API) or a dedicated drag-handle element that is the sole drag target and drop zone.
+- **[ ] Drag-to-reorder grid columns** — HTML5 drag API exhaustively tried, never works reliably in Electron Chromium. All failed approaches:
+  1. `draggable` on `<th>` + `dragColRef` + duplicate `onDrop` on inner `<div>`
+  2. Inner `<div>` draggable + `pointer-events: none` on children (killed drag initiation)
+  3. Unconditional `e.preventDefault()` in `onDragOver` + `e.dataTransfer.getData('text/plain')` in `onDrop` instead of ref — ghost drags but drop still does not reliably fire
+  - Root cause: Electron Chromium delivers drop to deepest child, not `<th>`. `dataTransfer` data also inaccessible in `onDragOver` (browser security).
+  - **Only viable path**: `mousedown`/`mousemove`/`mouseup` custom drag — no HTML5 API. Portal-rendered ghost div follows cursor; on `mouseup` determine target column via `getBoundingClientRect`. Sidesteps all child-element drop issues.
 
 - **[x] CSV export from grid not working** — Fixed: `nl_rating` in `getCellValue` was returning a number (`?? 0`), causing `.includes()` to throw. Changed to `String(m.nl_rating)` or `''`. Also fixed export column order to respect `visibleCols` order.
 

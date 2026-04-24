@@ -1218,15 +1218,13 @@ function GridView({
                   e.dataTransfer.setData('text/plain', col.key)
                 }}
                 onDragOver={(e) => {
-                  if (dragColRef.current && dragColRef.current !== col.key) {
-                    e.preventDefault()
-                    setDragOverCol(col.key)
-                  }
+                  e.preventDefault()
+                  if (col.key !== 'name') setDragOverCol(col.key)
                 }}
                 onDragLeave={() => setDragOverCol(null)}
                 onDrop={(e) => {
                   e.preventDefault()
-                  const from = dragColRef.current
+                  const from = e.dataTransfer.getData('text/plain')
                   setDragOverCol(null)
                   dragColRef.current = null
                   if (!from || from === col.key) return
@@ -1243,23 +1241,6 @@ function GridView({
                 <div
                   className={`flex items-center gap-1 px-3 py-2 whitespace-nowrap overflow-hidden hover:text-gray-800 dark:hover:text-gray-200 ${col.key !== 'name' ? 'cursor-grab' : 'cursor-pointer'}`}
                   style={{ paddingRight: 28 }}
-                  onDragOver={(e) => {
-                    if (dragColRef.current && dragColRef.current !== col.key) e.preventDefault()
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault()
-                    const from = dragColRef.current
-                    setDragOverCol(null)
-                    dragColRef.current = null
-                    if (!from || from === col.key) return
-                    const newOrder = [...visibleCols]
-                    const fromIdx = newOrder.indexOf(from)
-                    const toIdx = newOrder.indexOf(col.key)
-                    if (fromIdx < 0 || toIdx < 0) return
-                    newOrder.splice(fromIdx, 1)
-                    newOrder.splice(toIdx, 0, from)
-                    onVisibleColsChange(newOrder)
-                  }}
                   onClick={() => onSortClick(col.key)}
                 >
                   <span className="truncate">{col.label}</span>
