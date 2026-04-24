@@ -691,18 +691,31 @@ export function FileList({
           {(() => {
             const mfrOptions = [...new Set(files.map((f) => f.metadata.gear_make).filter((v): v is string => !!v))].sort()
             return (
-              <select
-                value={mfrFilter}
-                onChange={(e) => setMfrFilter(e.target.value)}
-                className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
-                  mfrFilter
-                    ? 'bg-purple-100 dark:bg-purple-900/30 border-purple-300 dark:border-purple-700 text-purple-700 dark:text-purple-400'
-                    : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
-                }`}
-              >
-                <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Manufacturer…</option>
-                {mfrOptions.map((m) => <option key={m} value={m} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{m}</option>)}
-              </select>
+              <div className="flex items-center gap-0.5">
+                <select
+                  value={mfrFilter}
+                  onChange={(e) => setMfrFilter(e.target.value)}
+                  className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
+                    mfrFilter
+                      ? 'bg-purple-100 dark:bg-purple-900/30 border-purple-300 dark:border-purple-700 text-purple-700 dark:text-purple-400'
+                      : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
+                  }`}
+                >
+                  <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Manufacturer…</option>
+                  {mfrOptions.map((m) => <option key={m} value={m} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{m}</option>)}
+                </select>
+                {mfrFilter && (
+                  <button
+                    onClick={() => setMfrFilter('')}
+                    className="text-purple-500 hover:text-purple-700 dark:hover:text-purple-300 transition-colors"
+                    title="Clear manufacturer filter"
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
             )
           })()}
           {/* Name-only filter */}
@@ -1112,7 +1125,6 @@ function GridView({
 }) {
   const [colWidths, setColWidths] = useState<Record<string, number>>(DEFAULT_COL_WIDTHS)
   const [dragOverCol, setDragOverCol] = useState<string | null>(null)
-  const [isDraggingCol, setIsDraggingCol] = useState(false)
   const [openFilterCol, setOpenFilterCol] = useState<string | null>(null)
   const [filterSearch, setFilterSearch] = useState('')
   const filterPopupRef = useRef<HTMLDivElement>(null)
@@ -1159,13 +1171,15 @@ function GridView({
     const canvas = document.createElement('canvas')
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-    // Header is 11px uppercase + letter-spacing ~0.05em; data Name is 14px/600, others 12px/400
+    // Name renders text-sm/600 (14px semibold); all others 12px/400
     const dataFont = key === 'name' ? '600 14px ui-sans-serif,system-ui,sans-serif' : '400 12px ui-sans-serif,system-ui,sans-serif'
-    const headerFont = '600 11px ui-sans-serif,system-ui,sans-serif'
-    // Header: label text + left pad (12) + right pad includes filter icon + resize handle (28) + 8px breathing room
-    ctx.font = headerFont
-    const headerW = ctx.measureText(colDef.label.toUpperCase()).width + 12 + 28 + 8
-    // Data: cell has px-3 (12px each side = 24px), plus 8px breathing room
+    // Header uses 11px/600 uppercase + tracking-wider (letter-spacing ~0.05em — canvas misses this)
+    ctx.font = '600 11px ui-sans-serif,system-ui,sans-serif'
+    const rawLabelW = ctx.measureText(colDef.label.toUpperCase()).width
+    const labelW = rawLabelW * 1.08 // compensate for tracking-wider + canvas undershoot
+    // left-pad(12) + label + right zone: paddingRight(28) in label div covers filter icon, +8px breath
+    const headerW = 12 + labelW + 28 + 8
+    // Data: px-3 both sides (24px) + 8px breath
     ctx.font = dataFont
     const dataW = allFiles.reduce((max, f) => {
       const val = getCellValue(f, key)
@@ -1195,6 +1209,13 @@ function GridView({
                 key={col.key}
                 className={`relative text-left font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-r border-gray-200 dark:border-gray-700 select-none transition-colors ${isDragOver ? 'bg-indigo-100 dark:bg-indigo-900/40' : ''}`}
                 style={{ width: colWidths[col.key] }}
+                draggable={col.key !== 'name'}
+                onDragStart={(e) => {
+                  if (col.key === 'name') { e.preventDefault(); return }
+                  dragColRef.current = col.key
+                  e.dataTransfer.effectAllowed = 'move'
+                  e.dataTransfer.setData('text/plain', col.key)
+                }}
                 onDragOver={(e) => {
                   if (dragColRef.current && dragColRef.current !== col.key) {
                     e.preventDefault()
@@ -1216,17 +1237,27 @@ function GridView({
                   newOrder.splice(toIdx, 0, from)
                   onVisibleColsChange(newOrder)
                 }}
-                onDragEnd={() => { dragColRef.current = null; setDragOverCol(null); setIsDraggingCol(false) }}
+                onDragEnd={() => { dragColRef.current = null; setDragOverCol(null) }}
               >
                 <div
                   className={`flex items-center gap-1 px-3 py-2 whitespace-nowrap overflow-hidden hover:text-gray-800 dark:hover:text-gray-200 ${col.key !== 'name' ? 'cursor-grab' : 'cursor-pointer'}`}
-                  style={{ paddingRight: 28, pointerEvents: isDraggingCol ? 'none' : undefined }}
-                  draggable={col.key !== 'name'}
-                  onDragStart={(e) => {
-                    dragColRef.current = col.key
-                    e.dataTransfer.effectAllowed = 'move'
-                    e.dataTransfer.setData('text/plain', col.key)
-                    setIsDraggingCol(true)
+                  style={{ paddingRight: 28 }}
+                  onDragOver={(e) => {
+                    if (dragColRef.current && dragColRef.current !== col.key) e.preventDefault()
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    const from = dragColRef.current
+                    setDragOverCol(null)
+                    dragColRef.current = null
+                    if (!from || from === col.key) return
+                    const newOrder = [...visibleCols]
+                    const fromIdx = newOrder.indexOf(from)
+                    const toIdx = newOrder.indexOf(col.key)
+                    if (fromIdx < 0 || toIdx < 0) return
+                    newOrder.splice(fromIdx, 1)
+                    newOrder.splice(toIdx, 0, from)
+                    onVisibleColsChange(newOrder)
                   }}
                   onClick={() => onSortClick(col.key)}
                 >
@@ -1241,7 +1272,6 @@ function GridView({
                 {/* Filter icon */}
                 <button
                   className={`absolute right-2.5 top-1/2 -translate-y-1/2 z-20 p-0.5 rounded transition-colors ${hasFilter ? 'text-indigo-400' : 'text-gray-400 dark:text-gray-600 hover:text-gray-600 dark:hover:text-gray-400'}`}
-                  style={{ pointerEvents: isDraggingCol ? 'none' : undefined }}
                   onClick={(e) => { e.stopPropagation(); setOpenFilterCol(isFilterOpen ? null : col.key); setFilterSearch('') }}
                   title={hasFilter ? 'Filter active — click to edit' : 'Filter column'}
                 >
@@ -1324,7 +1354,6 @@ function GridView({
                 {/* Resize handle */}
                 <div
                   className="absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-indigo-400/40 z-30"
-                  style={{ pointerEvents: isDraggingCol ? 'none' : undefined }}
                   onMouseDown={(e) => onResizeStart(e, col.key)}
                   onDoubleClick={(e) => { e.preventDefault(); onAutoSize(col.key) }}
                 />
