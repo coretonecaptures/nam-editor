@@ -119,13 +119,29 @@ const STORAGE_KEY = 'nam-editor-settings'
 
 export function loadSettings(): AppSettings {
   try {
+    // Primary: settings.json in userData (survives app updates/reinstalls)
+    const api = (window as Window & { api?: { initialSettings?: unknown; saveSettingsToFile?: (json: string) => void } }).api
+    if (api?.initialSettings) {
+      return { ...DEFAULT_SETTINGS, ...(api.initialSettings as Partial<AppSettings>) }
+    }
+    // Migration: first launch after this change — read from localStorage and persist to file
     const stored = localStorage.getItem(STORAGE_KEY)
-    return stored ? { ...DEFAULT_SETTINGS, ...JSON.parse(stored) } : DEFAULT_SETTINGS
+    if (stored) {
+      const parsed = { ...DEFAULT_SETTINGS, ...JSON.parse(stored) }
+      api?.saveSettingsToFile?.(JSON.stringify(parsed))
+      return parsed
+    }
+    return DEFAULT_SETTINGS
   } catch {
     return DEFAULT_SETTINGS
   }
 }
 
 export function saveSettings(settings: AppSettings): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
+  const json = JSON.stringify(settings)
+  localStorage.setItem(STORAGE_KEY, json)
+  try {
+    const api = (window as Window & { api?: { saveSettingsToFile?: (json: string) => void } }).api
+    api?.saveSettingsToFile?.(json)
+  } catch { /* renderer-only context (tests/storybook) */ }
 }

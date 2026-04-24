@@ -71,6 +71,8 @@ declare global {
       writePackInfo: (folderPath: string, data: unknown) => Promise<{ success: boolean; error?: string }>
       exportPackSheet: (html: string) => Promise<{ success: boolean; error?: string }>
       platform: string
+      initialSettings: unknown
+      saveSettingsToFile: (json: string) => void
     }
   }
 }

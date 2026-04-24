@@ -433,6 +433,20 @@ app.whenReady().then(() => {
     app.setAppUserModelId('com.coretonecaptures.namlab')
   }
 
+  // IPC: Expose userData path synchronously (used by preload to read settings.json)
+  ipcMain.on('app:getUserDataPath', (event) => {
+    event.returnValue = app.getPath('userData')
+  })
+
+  // IPC: Persist settings to userData/settings.json (fire-and-forget from renderer)
+  ipcMain.on('settings:save', (_event, json: string) => {
+    try {
+      fs.writeFileSync(join(app.getPath('userData'), 'settings.json'), json, 'utf-8')
+    } catch (err) {
+      log(`settings:save error: ${String(err)}`)
+    }
+  })
+
   // IPC: Open file dialog
   ipcMain.handle('dialog:openFiles', async () => {
     const result = await dialog.showOpenDialog({

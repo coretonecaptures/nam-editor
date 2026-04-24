@@ -1,4 +1,15 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import fs from 'fs'
+import path from 'path'
+
+// Read settings.json from userData synchronously so the renderer has settings
+// available immediately — no async flash, no re-render on load.
+let initialSettings: unknown = null
+try {
+  const userData = ipcRenderer.sendSync('app:getUserDataPath') as string
+  const settingsPath = path.join(userData, 'settings.json')
+  initialSettings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
+} catch { /* file doesn't exist yet — renderer will migrate from localStorage */ }
 
 const api = {
   openFiles: (): Promise<string[]> => ipcRenderer.invoke('dialog:openFiles'),
@@ -64,7 +75,9 @@ const api = {
     ipcRenderer.on('app:openFiles', handler)
     return () => ipcRenderer.removeListener('app:openFiles', handler)
   },
-  platform: process.platform
+  platform: process.platform,
+  initialSettings,
+  saveSettingsToFile: (json: string) => ipcRenderer.send('settings:save', json)
 }
 
 if (process.contextIsolated) {
