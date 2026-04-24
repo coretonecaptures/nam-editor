@@ -144,6 +144,7 @@ function generateExportHtml(info: PackInfo, folderPath: string, folderName: stri
     `<th style="width:${namePct}%">Capture Name</th>`,
     ...activeCols.map((c) => `<th style="width:${Math.round(c.width * scale)}%">${esc(c.label)}</th>`)
   ].join('')
+  const captureFooterCells = `<td colspan="${activeCols.length + 1}"></td>`
 
   const captureRows = captures.map((f) => {
     const cells = [
@@ -175,8 +176,9 @@ function generateExportHtml(info: PackInfo, folderPath: string, folderName: stri
   const hasSwitches = info.switches.length > 0
   const hasGlossary = info.glossary.length > 0
   const hasDesc = info.description.trim().length > 0
+  const captureSectionClass = hasDesc ? 'section capture-section capture-section-page' : 'section capture-section'
 
-  const kvTable = (rows: string) => `<table><tbody>${rows}</tbody></table>`
+  const kvTable = (rows: string) => `<table class="kv-table"><tbody>${rows}</tbody></table>`
 
   const t = dark ? {
     bodyBg: '#0d0d0d', bodyColor: '#e8e8e8',
@@ -206,6 +208,7 @@ function generateExportHtml(info: PackInfo, folderPath: string, folderName: stri
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { background: ${t.bodyBg}; }
   body { font-family: Inter, Arial, sans-serif; color: ${t.bodyColor}; background: ${t.bodyBg}; font-size: 10.5px; line-height: 1.45; }
   .header { background: ${t.headerBg}; color: #fff; padding: 18px 32px 16px; display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
   .header-left { flex: 1; min-width: 0; }
@@ -213,29 +216,37 @@ function generateExportHtml(info: PackInfo, folderPath: string, folderName: stri
   .header-meta { display: flex; justify-content: space-between; align-items: baseline; margin-top: 6px; gap: 16px; }
   .header-sub { font-size: 14px; color: ${t.headerSub}; }
   .header-logo { flex-shrink: 0; display: flex; align-items: center; }
-  .content { padding: 18px 32px; }
+  .content { padding: 18px 44px; }
   .description { color: ${t.descColor}; margin-bottom: 16px; line-height: 1.7; width: 100%; font-size: 14px; }
   .section { margin-bottom: 20px; }
   .section-title { font-size: 10px; font-weight: 700; color: ${t.sectionTitleColor}; text-transform: uppercase; letter-spacing: 0.1em; text-align: center; margin-bottom: 8px; padding-bottom: 0; }
   .section-title::after { content: ''; display: block; width: 28px; height: 2px; background: ${t.sectionTitleColor}; border-radius: 1px; margin: 5px auto 0; opacity: 0.7; }
-  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; break-inside: auto; page-break-inside: auto; }
+  thead { display: table-header-group; }
+  tfoot { display: none; }
   thead th { background: ${t.thBg}; text-align: left; padding: 5px 8px; font-size: 9.5px; font-weight: 600; color: ${t.thColor}; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid ${t.thBorder}; white-space: nowrap; overflow: hidden; }
+  tbody tr { break-inside: avoid; page-break-inside: avoid; }
   tbody td { padding: 4px 8px; border-bottom: 1px solid ${t.tdBorder}; vertical-align: top; word-break: break-word; }
   tbody tr:last-child td { border-bottom: none; }
   tbody tr:nth-child(even) { background: ${t.tdEvenBg}; }
   .col-name { overflow: hidden; }
   .kv-label { font-weight: 600; color: ${t.kvLabelColor}; width: 110px; white-space: nowrap; }
   .footer { margin-top: 24px; padding-top: 8px; border-top: 1px solid ${t.footerBorder}; font-size: 9.5px; color: ${t.footerColor}; }
-  /* TODO (week of 2026-04-28): revisit print layout improvements suggested by Claude Design.
-     Tried table-layout:auto + col-channel/col-tonetype shrink-to-content, @page :first margin:0 /
-     @page margin:10mm, and @media print page-break rules. The @page margin made page-1 gap worse
-     and didn't help page breaks enough to justify the regressions. Leaving original layout for now.
-     Ref: rc7 commit 068a0bf. */
   @page { margin: 0; }
   @media print {
+    html, body { background: ${t.bodyBg}; }
     body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
     .header, thead th, tbody tr:nth-child(even) { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .content { padding: 14px 28px; }
+    .header { padding: 20px 52px 17px; break-inside: avoid; page-break-inside: avoid; }
+    .content { padding: 18px 52px 24px; }
+    .capture-section-page { break-before: page; page-break-before: always; padding-top: 12mm; }
+    .keep-together { break-inside: avoid; page-break-inside: avoid; padding-top: 10mm; }
+    .keep-together table, .keep-together tbody, .keep-together tr { break-inside: avoid; page-break-inside: avoid; }
+    .section-title { break-after: avoid; page-break-after: avoid; }
+    thead th { border-top: 9mm solid ${t.bodyBg}; }
+    tfoot { display: table-footer-group; }
+    tfoot td { height: 10mm; padding: 0; border: 0; background: ${t.bodyBg}; }
+    .footer { break-inside: avoid; page-break-inside: avoid; margin-top: 10mm; padding-top: 6mm; padding-bottom: 12mm; }
   }
 </style>
 </head>
@@ -250,18 +261,19 @@ function generateExportHtml(info: PackInfo, folderPath: string, folderName: stri
 <div class="content">
   ${hasDesc ? `<div class="description">${parseDescription(info.description, dark)}</div>` : ''}
 
-  ${hasCaptures ? `<div class="section">
+  ${hasCaptures ? `<div class="${captureSectionClass}">
     <div class="section-title">Captures</div>
     <table>
       <thead><tr>${captureHeaderCells}</tr></thead>
+      <tfoot><tr>${captureFooterCells}</tr></tfoot>
       <tbody>${captureRows}</tbody>
     </table>
   </div>` : ''}
 
-  ${hasEquipment ? `<div class="section"><div class="section-title">Equipment</div>${kvTable(equipRows)}</div>` : ''}
-  ${hasPedals ? `<div class="section"><div class="section-title">Pedals</div>${kvTable(pedalRows)}</div>` : ''}
-  ${hasSwitches ? `<div class="section"><div class="section-title">Switches &amp; Modes</div>${kvTable(switchRows)}</div>` : ''}
-  ${hasGlossary ? `<div class="section"><div class="section-title">Glossary</div>${kvTable(glossaryRows)}</div>` : ''}
+  ${hasEquipment ? `<div class="section keep-together"><div class="section-title">Equipment</div>${kvTable(equipRows)}</div>` : ''}
+  ${hasPedals ? `<div class="section keep-together"><div class="section-title">Pedals</div>${kvTable(pedalRows)}</div>` : ''}
+  ${hasSwitches ? `<div class="section keep-together"><div class="section-title">Switches &amp; Modes</div>${kvTable(switchRows)}</div>` : ''}
+  ${hasGlossary ? `<div class="section keep-together"><div class="section-title">Glossary</div>${kvTable(glossaryRows)}</div>` : ''}
 
   <div class="footer">${info.footer.trim() ? parseDescription(info.footer, dark) : 'Generated by NAM Lab'}</div>
 </div>
