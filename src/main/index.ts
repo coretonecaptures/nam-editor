@@ -599,12 +599,12 @@ app.whenReady().then(() => {
         }
       }
     }
-    const TIMEOUT_MS = 30000
+    const TIMEOUT_MS = 300000
     try {
       const files: string[] = []
       await Promise.race([
         scan(folderPath, files),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Scan timed out after 30s — check network share connectivity')), TIMEOUT_MS))
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Scan timed out after 5 minutes — check network share connectivity')), TIMEOUT_MS))
       ])
       return { success: true, files }
     } catch (err) {
@@ -656,11 +656,11 @@ app.whenReady().then(() => {
       const name = norm(dir).split('/').pop() ?? dir
       return { name, path: norm(dir), children, fileCount, totalCount }
     }
-    const TIMEOUT_MS = 30000
+    const TIMEOUT_MS = 300000
     try {
       const tree = await Promise.race([
         buildTree(folderPath),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Scan timed out after 30s — check network share connectivity')), TIMEOUT_MS))
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Scan timed out after 5 minutes — check network share connectivity')), TIMEOUT_MS))
       ])
       return { success: true, tree }
     } catch (err) {

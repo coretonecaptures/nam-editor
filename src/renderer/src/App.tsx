@@ -452,7 +452,7 @@ export default function App() {
 
   // Shared logic for opening a folder by path (used by Open Folder and Refresh)
   const loadFolderByPath = useCallback(async (folder: string) => {
-    setStatus({ message: 'Scanning folder...', type: 'info' })
+    setStatus({ message: 'Scanning folder... (large or network folders may take a minute)', type: 'info' })
     setFolderChanged(false)
     // Stop watcher during reload so the scan itself doesn't re-trigger the banner
     window.api.watchFolder(null)
