@@ -681,7 +681,7 @@ app.whenReady().then(() => {
     const results: { filePath: string; success: boolean; error?: string }[] = []
     for (const filePath of filePaths) {
       try {
-        await shell.trashItem(filePath.replace(/\//g, '\\'))
+        await shell.trashItem(process.platform === 'win32' ? filePath.replace(/\//g, '\\') : filePath)
         results.push({ filePath, success: true })
       } catch (err) {
         results.push({ filePath, success: false, error: String(err) })
