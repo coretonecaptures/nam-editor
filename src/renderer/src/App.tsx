@@ -1072,7 +1072,9 @@ export default function App() {
       })
     }
     if (failed > 0) {
-      setStatus({ message: `Trashed ${trashed.length}, failed ${failed}`, type: 'error' })
+      const errors = results.filter((r) => !r.success).map((r) => r.error).filter(Boolean)
+      const detail = errors.length > 0 ? `: ${errors[0]}` : ''
+      setStatus({ message: `Trashed ${trashed.length}, failed ${failed}${detail}`, type: 'error' })
     } else {
       setStatus({ message: `Moved ${trashed.length} file${trashed.length !== 1 ? 's' : ''} to trash`, type: 'success' })
     }

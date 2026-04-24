@@ -681,7 +681,7 @@ app.whenReady().then(() => {
     const results: { filePath: string; success: boolean; error?: string }[] = []
     for (const filePath of filePaths) {
       try {
-        await shell.trashItem(filePath)
+        await shell.trashItem(filePath.replace(/\//g, path.sep))
         results.push({ filePath, success: true })
       } catch (err) {
         results.push({ filePath, success: false, error: String(err) })
