@@ -183,6 +183,7 @@ export default function App() {
     const maxList = window.innerWidth - initialLayout.treeWidth - 300
     return Math.min(raw, Math.max(140, maxList))
   })
+  const loadGenRef = useRef(0)  // increments on every new folder load; stale scans discard results
   const draggingRef = useRef<null | { panel: 'tree' | 'list'; startX: number; startWidth: number }>(null)
   const mainContentRef = useRef<HTMLDivElement>(null)
   const [treeCollapsed, setTreeCollapsed] = useState(false)
@@ -457,6 +458,7 @@ export default function App() {
 
   // Shared logic for opening a folder by path (used by Open Folder and Refresh)
   const loadFolderByPath = useCallback(async (folder: string) => {
+    const gen = ++loadGenRef.current
     setStatus({ message: 'Scanning folder... (large or network folders may take a minute)', type: 'info' })
     setFolderChanged(false)
     // Stop watcher during reload so the scan itself doesn't re-trigger the banner
@@ -473,6 +475,8 @@ export default function App() {
       window.api.scanFolder(folder, hiddenFolders),
       window.api.scanTree(folder, hiddenFolders)
     ])
+    // A newer load started while we were scanning — discard these results
+    if (gen !== loadGenRef.current) return
     if (!flatResult.success) {
       setStatus({ message: `Error: ${flatResult.error}`, type: 'error' })
       return
@@ -494,6 +498,7 @@ export default function App() {
       return next
     })
     await loadFiles(flatResult.files, 'replace')
+    if (gen !== loadGenRef.current) return
     // Bump watcherKey to restart the folder watcher now that the scan is done
     setWatcherKey((k) => k + 1)
   }, [loadFiles, settings])
