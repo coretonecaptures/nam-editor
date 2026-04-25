@@ -44,6 +44,7 @@ declare global {
       moveFile: (sourcePath: string, destDir: string, force?: boolean) => Promise<{ success: boolean; error?: string; destPath?: string }>
       scanFolder: (folderPath: string, hiddenFolders?: string) => Promise<{ success: boolean; error?: string; files?: string[] }>
       scanTree: (folderPath: string, hiddenFolders?: string) => Promise<{ success: boolean; error?: string; tree?: FolderNode }>
+      scanAndRead: (folderPath: string, hiddenFolders?: string) => Promise<{ success: boolean; error?: string; files?: unknown[] }>
       getErrorLogPath: () => Promise<string>
       getStartupLogPath: () => Promise<string>
       refocusWindow: () => Promise<void>
@@ -383,11 +384,62 @@ export default function App() {
   // Auto-load default folder on startup (moved below loadFolderByPath — see combined startup effect)
 
   // mode='replace': clear existing, load fresh (open folder/files)
+  // Shared: turn raw IPC read results into NamFile[] and update state
+  const applyParsedResults = useCallback(async (
+    results: { success: boolean; filePath?: string; metadata?: NamFile['metadata']; version?: string; architecture?: string; config?: unknown; error?: string }[],
+    mode: 'replace' | 'append'
+  ) => {
+    const loaded: NamFile[] = []
+    let errors = 0
+    for (const r of results) {
+      if (r.success && r.filePath && r.metadata !== undefined) {
+        const fileName = r.filePath.replace(/\\/g, '/').split('/').pop() ?? r.filePath
+        const baseName = fileName.replace(/\.nam$/i, '')
+        const rawMeta = r.metadata ?? {}
+        const workingMeta: NamFile['metadata'] = { ...rawMeta }
+        if (typeof workingMeta.input_level_dbu === 'string') workingMeta.input_level_dbu = parseFloat(workingMeta.input_level_dbu as unknown as string)
+        if (typeof workingMeta.output_level_dbu === 'string') workingMeta.output_level_dbu = parseFloat(workingMeta.output_level_dbu as unknown as string)
+        if (workingMeta.tone_type && !(TONE_TYPES as readonly string[]).includes(workingMeta.tone_type)) workingMeta.tone_type = null
+        if (workingMeta.gear_type && !(GEAR_TYPES as readonly string[]).includes(workingMeta.gear_type)) workingMeta.gear_type = null
+        const meta = applyDefaults(workingMeta, baseName, settings)
+        const wasChanged = JSON.stringify(meta) !== JSON.stringify(rawMeta)
+        const autoFilledFields = (Object.keys(meta) as (keyof NamFile['metadata'])[]).filter(
+          (k) => meta[k] != null && (workingMeta[k] == null || workingMeta[k] === '')
+        )
+        loaded.push({ filePath: r.filePath, fileName: baseName, version: r.version ?? '?', metadata: meta, originalMetadata: rawMeta, autoFilledFields, architecture: r.architecture ?? '?', config: r.config, isDirty: wasChanged })
+      } else {
+        errors++
+      }
+    }
+    setFiles((prev) => {
+      if (mode === 'replace') return loaded
+      const existing = new Set(prev.map((f) => f.filePath))
+      return [...prev, ...loaded.filter((f) => !existing.has(f.filePath))]
+    })
+    setSelectedIds((prev) => {
+      if (loaded.length === 0) return prev
+      if (mode === 'replace') return new Set([loaded[0].filePath])
+      if (prev.size === 0) return new Set([loaded[0].filePath])
+      return prev
+    })
+    if (errors > 0) {
+      const logPath = await window.api.getErrorLogPath()
+      setStatus({ message: `Loaded ${loaded.length} file(s) — ${errors} could not be parsed (skipped)`, type: 'error', logPath })
+    } else {
+      setStatus({ message: `Loaded ${loaded.length} file(s)`, type: 'success' })
+    }
+  }, [settings])
+
+  // Used by folder open: results already parsed in main process, no IPC per file
+  const loadParsedFiles = useCallback(async (rawResults: unknown[], mode: 'replace' | 'append', genToken?: number) => {
+    setStatus({ message: `Processing ${rawResults.length} file(s)...`, type: 'info' })
+    if (genToken !== undefined && genToken !== loadGenRef.current) return
+    await applyParsedResults(rawResults as Parameters<typeof applyParsedResults>[0], mode)
+  }, [applyParsedResults])
+
   // mode='append': dedup against current files (drag & drop)
   const loadFiles = useCallback(async (paths: string[], mode: 'replace' | 'append' = 'append', genToken?: number) => {
     setStatus({ message: `Loading ${paths.length} file(s)...`, type: 'info' })
-    // Batch IPC calls with concurrency limit — firing all at once for large collections
-    // saturates the IPC channel and freezes the renderer.
     const CONCURRENCY = 50
     const results: Awaited<ReturnType<typeof window.api.readFile>>[] = []
     for (let i = 0; i < paths.length; i += CONCURRENCY) {
@@ -400,74 +452,8 @@ export default function App() {
       }
     }
     if (genToken !== undefined && genToken !== loadGenRef.current) return
-
-    const loaded: NamFile[] = []
-    let errors = 0
-    for (const r of results) {
-      if (r.success && r.filePath && r.metadata !== undefined) {
-        const fileName = r.filePath.replace(/\\/g, '/').split('/').pop() ?? r.filePath
-        const baseName = fileName.replace(/\.nam$/i, '')
-        const rawMeta = r.metadata ?? {}
-        // Sanitize unrecognized values into working copy only — originalMetadata
-        // keeps the raw value so isDirty fires and the file surfaces for fixing
-        const workingMeta: NamFile['metadata'] = { ...rawMeta }
-        // Normalize numeric fields written as strings by a prior import bug — causes isDirty=true so Save All heals the file
-        if (typeof workingMeta.input_level_dbu === 'string') workingMeta.input_level_dbu = parseFloat(workingMeta.input_level_dbu as unknown as string)
-        if (typeof workingMeta.output_level_dbu === 'string') workingMeta.output_level_dbu = parseFloat(workingMeta.output_level_dbu as unknown as string)
-        if (workingMeta.tone_type && !(TONE_TYPES as readonly string[]).includes(workingMeta.tone_type)) {
-          workingMeta.tone_type = null
-        }
-        if (workingMeta.gear_type && !(GEAR_TYPES as readonly string[]).includes(workingMeta.gear_type)) {
-          workingMeta.gear_type = null
-        }
-        const meta = applyDefaults(workingMeta, baseName, settings)
-        const wasChanged = JSON.stringify(meta) !== JSON.stringify(rawMeta)
-        // Track which fields were set by applyDefaults (weren't in workingMeta before)
-        const autoFilledFields = (Object.keys(meta) as (keyof NamFile['metadata'])[]).filter(
-          (k) => meta[k] != null && (workingMeta[k] == null || workingMeta[k] === '')
-        )
-        loaded.push({
-          filePath: r.filePath,
-          fileName: baseName,
-          version: r.version ?? '?',
-          metadata: meta,
-          originalMetadata: rawMeta,
-          autoFilledFields,
-          architecture: r.architecture ?? '?',
-          config: r.config,
-          isDirty: wasChanged
-        })
-      } else {
-        errors++
-      }
-    }
-
-    // Dedup inside functional update so prev is always current (fixes stale closure bug)
-    setFiles((prev) => {
-      if (mode === 'replace') return loaded
-      const existing = new Set(prev.map((f) => f.filePath))
-      return [...prev, ...loaded.filter((f) => !existing.has(f.filePath))]
-    })
-
-    // Auto-select first file when replacing, or when nothing is selected on append
-    setSelectedIds((prev) => {
-      if (loaded.length === 0) return prev
-      if (mode === 'replace') return new Set([loaded[0].filePath])
-      if (prev.size === 0) return new Set([loaded[0].filePath])
-      return prev
-    })
-
-    if (errors > 0) {
-      const logPath = await window.api.getErrorLogPath()
-      setStatus({
-        message: `Loaded ${loaded.length} file(s) — ${errors} could not be parsed (skipped)`,
-        type: 'error',
-        logPath
-      })
-    } else {
-      setStatus({ message: `Loaded ${loaded.length} file(s)`, type: 'success' })
-    }
-  }, [settings]) // no longer depends on files or selectedIds
+    await applyParsedResults(results, mode)
+  }, [applyParsedResults]) // no longer depends on files or selectedIds
 
   // Shared logic for opening a folder by path (used by Open Folder and Refresh)
   const loadFolderByPath = useCallback(async (folder: string) => {
@@ -484,17 +470,18 @@ export default function App() {
       return updated
     })
     const hiddenFolders = settings.hiddenFolders ?? ''
-    const [flatResult, treeResult] = await Promise.all([
-      window.api.scanFolder(folder, hiddenFolders),
+    // scanAndRead + scanTree run in parallel — one combined round-trip replaces N×readFile calls
+    const [scanResult, treeResult] = await Promise.all([
+      window.api.scanAndRead(folder, hiddenFolders),
       window.api.scanTree(folder, hiddenFolders)
     ])
     // A newer load started while we were scanning — discard these results
     if (gen !== loadGenRef.current) return
-    if (!flatResult.success) {
-      setStatus({ message: `Error: ${flatResult.error}`, type: 'error' })
+    if (!scanResult.success) {
+      setStatus({ message: `Error: ${scanResult.error}`, type: 'error' })
       return
     }
-    if (!flatResult.files || flatResult.files.length === 0) {
+    if (!scanResult.files || scanResult.files.length === 0) {
       setStatus({ message: 'No .nam files found in that folder', type: 'info' })
       return
     }
@@ -510,7 +497,8 @@ export default function App() {
       localStorage.setItem('nam-lab-recent-folders', JSON.stringify(next))
       return next
     })
-    await loadFiles(flatResult.files, 'replace', gen)
+    // Results already parsed — feed directly into loadFiles via the parsed-results path
+    await loadParsedFiles(scanResult.files, 'replace', gen)
     if (gen !== loadGenRef.current) return
     // Bump watcherKey to restart the folder watcher now that the scan is done
     setWatcherKey((k) => k + 1)

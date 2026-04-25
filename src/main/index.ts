@@ -626,6 +626,66 @@ app.whenReady().then(() => {
     }
   })
 
+  // IPC: Scan folder + read all .nam files in one round-trip.
+  // Returns combined scan+parse results so renderer avoids N individual readFile calls.
+  ipcMain.handle('folder:scanAndRead', async (_event, folderPath: string, hiddenFolders?: string) => {
+    const hidden = new Set(
+      ['_duplicates', ...(hiddenFolders ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)]
+    )
+    const paths: string[] = []
+    const scan = async (dir: string): Promise<void> => {
+      const entries = await fs.promises.readdir(dir, { withFileTypes: true })
+      for (const entry of entries) {
+        const full = join(dir, entry.name)
+        if (entry.isDirectory()) {
+          if (hidden.has(entry.name.toLowerCase())) continue
+          await scan(full)
+        } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.nam')) {
+          paths.push(full.replace(/\\/g, '/'))
+        }
+      }
+    }
+    const TIMEOUT_MS = 300000
+    try {
+      await Promise.race([
+        scan(folderPath),
+        new Promise<never>((_, reject) => { const t = setTimeout(() => reject(new Error('Scan timed out after 5 minutes')), TIMEOUT_MS); t.unref() })
+      ])
+    } catch (err) {
+      return { success: false, error: String(err), files: [] }
+    }
+    // Read all files concurrently (20 at a time) — in-process, no IPC per file
+    const CONCURRENCY = 20
+    const results: unknown[] = []
+    for (let i = 0; i < paths.length; i += CONCURRENCY) {
+      const batch = paths.slice(i, i + CONCURRENCY)
+      const batchResults = await Promise.all(batch.map((filePath) => {
+        try {
+          const content = fs.readFileSync(filePath, 'utf-8')
+          const data = JSON.parse(content)
+          const meta = data.metadata ?? {}
+          const nb = meta.training?.nam_bot
+          if (nb?.trained_epochs != null) meta.nb_trained_epochs = nb.trained_epochs
+          if (nb?.preset_name != null) meta.nb_preset_name = nb.preset_name
+          const nl = meta.nam_lab
+          if (nl) {
+            const nlKeys = ['mics','cabinet','cabinet_config','amp_channel','boost_pedal','amp_settings','pedal_settings','amp_switches','comments','rating'] as const
+            for (const k of nlKeys) {
+              if (nl[k] != null) (meta as Record<string, unknown>)[`nl_${k}`] = nl[k]
+            }
+          }
+          return { success: true, filePath, version: data.version ?? '?', metadata: meta, architecture: data.architecture ?? '?', config: data.config ?? null }
+        } catch (err) {
+          const line = `[${new Date().toISOString()}] ${filePath}\n  ${String(err)}\n`
+          fs.appendFileSync(errorLogPath, line, 'utf-8')
+          return { success: false, error: String(err) }
+        }
+      }))
+      results.push(...batchResults)
+    }
+    return { success: true, files: results }
+  })
+
   // IPC: Scan a folder for image files (non-recursive)
   ipcMain.handle('folder:scanImages', async (_event, folderPath: string) => {
     try {

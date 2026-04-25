@@ -22,6 +22,7 @@ const api = {
     ipcRenderer.invoke('file:writeMetadata', filePath, metadata),
   scanFolder: (folderPath: string, hiddenFolders?: string) => ipcRenderer.invoke('folder:scanNam', folderPath, hiddenFolders),
   scanTree: (folderPath: string, hiddenFolders?: string) => ipcRenderer.invoke('folder:scanTree', folderPath, hiddenFolders),
+  scanAndRead: (folderPath: string, hiddenFolders?: string) => ipcRenderer.invoke('folder:scanAndRead', folderPath, hiddenFolders),
   moveFile: (sourcePath: string, destDir: string, force = false) =>
     ipcRenderer.invoke('file:move', sourcePath, destDir, force) as Promise<{ success: boolean; error?: string; destPath?: string }>,
   revealFile: (filePath: string) => ipcRenderer.invoke('shell:revealFile', filePath),
