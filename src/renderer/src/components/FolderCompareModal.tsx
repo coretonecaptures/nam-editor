@@ -9,8 +9,15 @@ interface Props {
 
 type ShowMode = 'all' | 'missing'
 
-function lastName(p: string) {
-  return p.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? p
+function lastSegments(p: string, n: number) {
+  const parts = p.replace(/\\/g, '/').split('/').filter(Boolean)
+  return parts.slice(-n).join('/')
+}
+
+function disambiguatedLabel(folderPath: string, allPaths: string[]) {
+  const name = lastSegments(folderPath, 1)
+  const hasDupe = allPaths.some((p) => p !== folderPath && lastSegments(p, 1) === name)
+  return hasDupe ? lastSegments(folderPath, 2) : name
 }
 
 function normPath(p: string) {
@@ -128,7 +135,7 @@ export function FolderCompareModal({ folderPaths, files, onClose }: Props) {
                 </th>
                 {folders.map((fp) => (
                   <th key={fp} className="text-center px-3 py-2 font-medium text-gray-600 dark:text-gray-400 max-w-36 truncate" title={fp}>
-                    {lastName(fp)}
+                    {disambiguatedLabel(fp, folders)}
                   </th>
                 ))}
               </tr>

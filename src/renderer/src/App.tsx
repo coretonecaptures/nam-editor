@@ -2034,6 +2034,9 @@ export default function App() {
                             if (parentRes.success && parentRes.data) {
                               const p = parentRes.data as Record<string, unknown>
                               initial = {
+                                title: p.title ?? '',
+                                subtitle: p.subtitle ?? '',
+                                description: p.description ?? '',
                                 equipment: p.equipment ?? [],
                                 pedals: p.pedals ?? [],
                                 glossary: p.glossary ?? [],
@@ -2050,7 +2053,7 @@ export default function App() {
                       </button>
                       {packInfoAncestor && (
                         <p className="text-xs text-gray-400 dark:text-gray-500">
-                          Equipment, pedals & glossary will be copied from parent pack
+                          Title, description, equipment, pedals & glossary will be copied from parent pack
                         </p>
                       )}
                     </div>
