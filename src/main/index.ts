@@ -75,6 +75,33 @@ log(`Electron: ${process.versions.electron}, Chrome: ${process.versions.chrome}`
 log(`Args: ${process.argv.join(' ')}`)
 log(`isDev: ${isDev}`)
 
+// ---- File metadata cache ----
+// Persists parsed .nam metadata keyed by file path so reopening the same
+// folder only IPC-reads files whose mtime or size changed since last open.
+interface CacheEntry { mtimeMs: number; size: number; data: unknown }
+let _fileCache: Record<string, CacheEntry> | null = null
+
+function fileCachePath(): string {
+  return join(app.getPath('userData'), 'nam-file-cache.json')
+}
+
+function loadFileCache(): Record<string, CacheEntry> {
+  if (_fileCache) return _fileCache
+  try {
+    _fileCache = JSON.parse(fs.readFileSync(fileCachePath(), 'utf-8'))
+  } catch {
+    _fileCache = {}
+  }
+  return _fileCache!
+}
+
+function saveFileCache(): void {
+  if (!_fileCache) return
+  try {
+    fs.writeFileSync(fileCachePath(), JSON.stringify(_fileCache), 'utf-8')
+  } catch { /* non-fatal */ }
+}
+
 // Persist window size and maximized state between launches
 // Path is computed lazily inside each function — app.getPath() must not be
 // called at module load time (before app ready) or it throws on some macOS configs
@@ -497,6 +524,12 @@ app.whenReady().then(() => {
   const errorLogPath = join(app.getPath('userData'), 'parse-errors.log')
   ipcMain.handle('file:read', async (_event, filePath: string) => {
     try {
+      const stat = await fs.promises.stat(filePath)
+      const cache = loadFileCache()
+      const cached = cache[filePath]
+      if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+        return { success: true, ...(cached.data as object), filePath }
+      }
       const content = await fs.promises.readFile(filePath, 'utf-8')
       const data = JSON.parse(content)
       const meta = data.metadata ?? {}
@@ -512,7 +545,7 @@ app.whenReady().then(() => {
           if (nl[k] != null) (meta as Record<string, unknown>)[`nl_${k}`] = nl[k]
         }
       }
-      return {
+      const result = {
         success: true,
         filePath,
         version: data.version ?? '?',
@@ -520,6 +553,10 @@ app.whenReady().then(() => {
         architecture: data.architecture ?? '?',
         config: data.config ?? null
       }
+      // Update cache entry — save lazily (written on app quit or folder scan)
+      const cache = loadFileCache()
+      cache[filePath] = { mtimeMs: stat.mtimeMs, size: stat.size, data: { version: result.version, metadata: meta, architecture: result.architecture, config: result.config } }
+      return result
     } catch (err) {
       const line = `[${new Date().toISOString()}] ${filePath}\n  ${String(err)}\n`
       fs.appendFileSync(errorLogPath, line, 'utf-8')
@@ -589,6 +626,7 @@ app.whenReady().then(() => {
       }
       suppressWatcher()
       fs.writeFileSync(filePath, patched, 'utf-8')
+      delete loadFileCache()[filePath]
       return { success: true }
     } catch (err) {
       return { success: false, error: String(err) }
@@ -620,6 +658,18 @@ app.whenReady().then(() => {
         scan(folderPath, files),
         new Promise<never>((_, reject) => { const t = setTimeout(() => reject(new Error('Scan timed out after 5 minutes — check network share connectivity')), TIMEOUT_MS); t.unref() })
       ])
+      // Prune cache entries for files no longer in this folder
+      const fileSet = new Set(files)
+      const normFolder = folderPath.replace(/\\/g, '/')
+      const cache = loadFileCache()
+      let pruned = false
+      for (const key of Object.keys(cache)) {
+        if (key.startsWith(normFolder + '/') && !fileSet.has(key)) {
+          delete cache[key]
+          pruned = true
+        }
+      }
+      if (pruned) saveFileCache()
       return { success: true, files }
     } catch (err) {
       return { success: false, error: String(err) }
@@ -1124,6 +1174,7 @@ app.whenReady().then(() => {
 })
 
 app.on('will-quit', () => {
+  saveFileCache()
   if (folderWatcher) {
     try { folderWatcher.close() } catch { /* ignore */ }
     folderWatcher = null
