@@ -39,6 +39,7 @@ interface FolderTreeProps {
   folderNameColors?: Record<string, string>
   onSetFolderColor?: (folderName: string, color: string | null) => void
   onCompareFolders?: (folderPaths: string[]) => void
+  onDeletePackInfo?: (folderPath: string) => void
 }
 
 function matchesFilter(
@@ -67,7 +68,7 @@ export function FolderTree({
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, onFilterChange, onDropFiles,
   onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata,
   onSelectAllInFolder, onCoverageReport, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor,
-  onCompareFolders
+  onCompareFolders, onDeletePackInfo
 }: FolderTreeProps) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [expandSeq, setExpandSeq] = useState(0)
@@ -289,6 +290,7 @@ export function FolderTree({
             folderNameColors={folderNameColors}
             onSetFolderColor={onSetFolderColor}
             onCompareFolders={onCompareFolders}
+            onDeletePackInfo={onDeletePackInfo}
           />
         ))}
       </div>
@@ -301,7 +303,7 @@ function TreeNode({
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, matchingPaths, onDropFiles,
   onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata,
   onSelectAllInFolder, onCoverageReport, expandSeq, collapseSeq, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor,
-  onCompareFolders
+  onCompareFolders, onDeletePackInfo
 }: {
   node: FolderNode
   selectedFolders: string[]
@@ -329,6 +331,7 @@ function TreeNode({
   folderNameColors?: Record<string, string>
   onSetFolderColor?: (folderName: string, color: string | null) => void
   onCompareFolders?: (folderPaths: string[]) => void
+  onDeletePackInfo?: (folderPath: string) => void
 }) {
   const [expanded, setExpanded] = useState(true)
 
@@ -400,6 +403,7 @@ function TreeNode({
         onSetFolderColor={onSetFolderColor ? (color) => onSetFolderColor(node.name, color) : undefined}
         isMultiSelect={isMultiSelect}
         onCompareFolders={onCompareFolders ? () => onCompareFolders(selectedFolders) : undefined}
+        onDeletePackInfo={onDeletePackInfo && packInfoFolders?.has(node.path.replace(/\\/g, '/')) ? () => onDeletePackInfo(node.path) : undefined}
       />
 
       {expanded && hasChildren && (
@@ -433,6 +437,7 @@ function TreeNode({
               folderNameColors={folderNameColors}
               onSetFolderColor={onSetFolderColor}
               onCompareFolders={onCompareFolders}
+              onDeletePackInfo={onDeletePackInfo}
             />
           ))}
         </div>
@@ -446,7 +451,7 @@ interface ContextMenuState { x: number; y: number }
 function FolderRow({
   label, folderPath, isRoot, isSelected, totalCount, dirtyCount, depth,
   hasChildren, expanded, onToggleExpand, onClick, onSave, onRevert,
-  onBatchEdit, onReveal, isFiltered, isHighlighted, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSelectAll, onCoverageReport, isDraggableFolder, hasPackInfo, folderColor, onSetFolderColor, isMultiSelect, onCompareFolders
+  onBatchEdit, onReveal, isFiltered, isHighlighted, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSelectAll, onCoverageReport, isDraggableFolder, hasPackInfo, folderColor, onSetFolderColor, isMultiSelect, onCompareFolders, onDeletePackInfo
 }: {
   label: string
   folderPath: string
@@ -480,6 +485,7 @@ function FolderRow({
   onSetFolderColor?: (color: string | null) => void
   isMultiSelect?: boolean
   onCompareFolders?: () => void
+  onDeletePackInfo?: () => void
 }) {
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -828,6 +834,17 @@ function FolderRow({
                 onClick={() => { setMenu(null); onCoverageReport() }}
               >
                 Training version report…
+              </button>
+            </>
+          )}
+          {onDeletePackInfo && (
+            <>
+              <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
+              <button
+                className="w-full text-left px-3 py-1.5 text-red-600 dark:text-red-400 hover:bg-red-600/20 transition-colors"
+                onClick={() => { setMenu(null); onDeletePackInfo() }}
+              >
+                Remove Pack Info…
               </button>
             </>
           )}

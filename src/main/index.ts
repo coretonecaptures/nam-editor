@@ -870,7 +870,8 @@ app.whenReady().then(() => {
     let debounceTimer: ReturnType<typeof setTimeout> | null = null
     try {
       folderWatcher = fs.watch(folderPath, { recursive: true }, (_eventType, filename) => {
-        if (!filename || !filename.toLowerCase().endsWith('.nam')) return
+        const f = filename?.toLowerCase() ?? ''
+        if (!f.endsWith('.nam') || f.endsWith('.json')) return
         if (debounceTimer) clearTimeout(debounceTimer)
         debounceTimer = setTimeout(() => {
           if (Date.now() < watcherSuppressUntil) return
@@ -1065,7 +1066,20 @@ app.whenReady().then(() => {
   ipcMain.handle('folder:writePackInfo', async (_event, folderPath: string, data: unknown) => {
     try {
       const packPath = join(folderPath, 'nam-pack.json')
+      suppressWatcher()
       await fs.promises.writeFile(packPath, JSON.stringify(data, null, 2), 'utf-8')
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  })
+
+  // IPC: Delete nam-pack.json from a folder
+  ipcMain.handle('folder:deletePackInfo', async (_event, folderPath: string) => {
+    try {
+      const packPath = join(folderPath, 'nam-pack.json')
+      suppressWatcher()
+      await fs.promises.unlink(packPath)
       return { success: true }
     } catch (e) {
       return { success: false, error: String(e) }

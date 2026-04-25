@@ -68,6 +68,8 @@ const api = {
     ipcRenderer.invoke('folder:readPackInfo', folderPath),
   writePackInfo: (folderPath: string, data: unknown): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('folder:writePackInfo', folderPath, data),
+  deletePackInfo: (folderPath: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('folder:deletePackInfo', folderPath),
   exportPackSheet: (html: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('app:exportPackSheet', html),
   onOpenFiles: (cb: (paths: string[]) => void): (() => void) => {

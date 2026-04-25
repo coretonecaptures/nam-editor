@@ -70,6 +70,7 @@ declare global {
       findPackFolders: (rootPath: string) => Promise<string[]>
       readPackInfo: (folderPath: string) => Promise<{ success: boolean; data: unknown }>
       writePackInfo: (folderPath: string, data: unknown) => Promise<{ success: boolean; error?: string }>
+      deletePackInfo: (folderPath: string) => Promise<{ success: boolean; error?: string }>
       exportPackSheet: (html: string) => Promise<{ success: boolean; error?: string }>
       platform: string
       initialSettings: unknown
@@ -368,6 +369,13 @@ export default function App() {
       setListViewMode(updated.defaultView)
       setListWidth(updated.defaultView === 'grid' ? loadLayout().listWidthGrid : loadLayout().listWidthList)
     }
+  }
+
+  const handleDeletePackInfo = async (folderPath: string) => {
+    if (!window.confirm(`Delete the Pack Info file for "${folderPath.split('/').pop()}"?\n\nThis cannot be undone.`)) return
+    const res = await window.api.deletePackInfo(folderPath)
+    if (res.success) handlePackSaved(folderPath, false)
+    else setStatus({ message: `Failed to delete pack info: ${res.error}`, type: 'error' })
   }
 
   // Called by PackInfoEditor after saving — updates the blue-dot set in the tree
@@ -1770,6 +1778,7 @@ export default function App() {
                   handleSaveSettings({ ...settings, folderNameColors: next })
                 }}
                 onCompareFolders={(paths) => setCompareFolderPaths(paths)}
+                onDeletePackInfo={handleDeletePackInfo}
               />
             </div>
             {!gridMaximized && <DragHandle onMouseDown={(e) => onDragStart('tree', e)} onCollapse={() => setTreeCollapsed((v) => !v)} collapsed={treeCollapsed} />}
