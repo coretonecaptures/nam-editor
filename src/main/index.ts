@@ -618,7 +618,7 @@ app.whenReady().then(() => {
       const files: string[] = []
       await Promise.race([
         scan(folderPath, files),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Scan timed out after 5 minutes — check network share connectivity')), TIMEOUT_MS))
+        new Promise<never>((_, reject) => { const t = setTimeout(() => reject(new Error('Scan timed out after 5 minutes — check network share connectivity')), TIMEOUT_MS); t.unref() })
       ])
       return { success: true, files }
     } catch (err) {
@@ -674,7 +674,7 @@ app.whenReady().then(() => {
     try {
       const tree = await Promise.race([
         buildTree(folderPath),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Scan timed out after 5 minutes — check network share connectivity')), TIMEOUT_MS))
+        new Promise<never>((_, reject) => { const t = setTimeout(() => reject(new Error('Scan timed out after 5 minutes — check network share connectivity')), TIMEOUT_MS); t.unref() })
       ])
       return { success: true, tree }
     } catch (err) {
@@ -1047,6 +1047,13 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+})
+
+app.on('will-quit', () => {
+  if (folderWatcher) {
+    try { folderWatcher.close() } catch { /* ignore */ }
+    folderWatcher = null
+  }
 })
 
 app.on('window-all-closed', () => {
