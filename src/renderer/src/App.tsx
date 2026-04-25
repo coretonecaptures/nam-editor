@@ -384,9 +384,22 @@ export default function App() {
 
   // mode='replace': clear existing, load fresh (open folder/files)
   // mode='append': dedup against current files (drag & drop)
-  const loadFiles = useCallback(async (paths: string[], mode: 'replace' | 'append' = 'append') => {
+  const loadFiles = useCallback(async (paths: string[], mode: 'replace' | 'append' = 'append', genToken?: number) => {
     setStatus({ message: `Loading ${paths.length} file(s)...`, type: 'info' })
-    const results = await Promise.all(paths.map((p) => window.api.readFile(p)))
+    // Batch IPC calls with concurrency limit — firing all at once for large collections
+    // saturates the IPC channel and freezes the renderer.
+    const CONCURRENCY = 50
+    const results: Awaited<ReturnType<typeof window.api.readFile>>[] = []
+    for (let i = 0; i < paths.length; i += CONCURRENCY) {
+      if (genToken !== undefined && genToken !== loadGenRef.current) return
+      const batch = paths.slice(i, i + CONCURRENCY)
+      const batchResults = await Promise.all(batch.map((p) => window.api.readFile(p)))
+      results.push(...batchResults)
+      if (paths.length > CONCURRENCY) {
+        setStatus({ message: `Loading files… ${Math.min(i + CONCURRENCY, paths.length)} / ${paths.length}`, type: 'info' })
+      }
+    }
+    if (genToken !== undefined && genToken !== loadGenRef.current) return
 
     const loaded: NamFile[] = []
     let errors = 0
@@ -497,7 +510,7 @@ export default function App() {
       localStorage.setItem('nam-lab-recent-folders', JSON.stringify(next))
       return next
     })
-    await loadFiles(flatResult.files, 'replace')
+    await loadFiles(flatResult.files, 'replace', gen)
     if (gen !== loadGenRef.current) return
     // Bump watcherKey to restart the folder watcher now that the scan is done
     setWatcherKey((k) => k + 1)
