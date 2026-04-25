@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
 import { NamFile, GEAR_TYPES, TONE_TYPES } from '../types/nam'
 import { gearChipClass, toneChipClass, getGearImageSrc } from '../assets/gear'
@@ -1128,6 +1129,7 @@ function GridView({
   const [openFilterCol, setOpenFilterCol] = useState<string | null>(null)
   const [filterSearch, setFilterSearch] = useState('')
   const filterPopupRef = useRef<HTMLDivElement>(null)
+  const filterAnchorRef = useRef<{ top: number; left: number; width: number } | null>(null)
   const dragColRef = useRef<string | null>(null)
   const resizingRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null)
 
@@ -1254,23 +1256,38 @@ function GridView({
                 {/* Filter icon */}
                 <button
                   className={`absolute right-2.5 top-1/2 -translate-y-1/2 z-20 p-0.5 rounded transition-colors ${hasFilter ? 'text-indigo-400' : 'text-gray-400 dark:text-gray-600 hover:text-gray-600 dark:hover:text-gray-400'}`}
-                  onClick={(e) => { e.stopPropagation(); setOpenFilterCol(isFilterOpen ? null : col.key); setFilterSearch('') }}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (isFilterOpen) {
+                      setOpenFilterCol(null)
+                      setFilterSearch('')
+                    } else {
+                      const th = (e.currentTarget as HTMLElement).closest('th')
+                      if (th) {
+                        const r = th.getBoundingClientRect()
+                        filterAnchorRef.current = { top: r.bottom, left: r.left, width: r.width }
+                      }
+                      setOpenFilterCol(col.key)
+                      setFilterSearch('')
+                    }
+                  }}
                   title={hasFilter ? 'Filter active — click to edit' : 'Filter column'}
                 >
                   <svg className="w-3 h-3" fill={hasFilter ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
                   </svg>
                 </button>
-                {/* Filter popup */}
-                {isFilterOpen && (() => {
+                {/* Filter popup — rendered via portal so it never lives inside <th>, keeping drag events clean */}
+                {isFilterOpen && filterAnchorRef.current && createPortal((() => {
                   const state = columnFilters[col.key] ?? { text: '', selected: [] }
                   const allVals = getUniqueValues(col.key)
                   const shown = filterSearch ? allVals.filter((v) => v.toLowerCase().includes(filterSearch.toLowerCase())) : allVals
+                  const anchor = filterAnchorRef.current!
                   return (
                     <div
                       ref={filterPopupRef}
-                      className="absolute left-0 top-full mt-0.5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50 flex flex-col"
-                      style={{ minWidth: 200, maxHeight: 320, width: Math.max(colWidths[col.key], 200) }}
+                      className="fixed bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-[9999] flex flex-col"
+                      style={{ top: anchor.top + 2, left: anchor.left, minWidth: 200, maxHeight: 320, width: Math.max(anchor.width, 200) }}
                       onClick={(e) => e.stopPropagation()}
                     >
                       <div className="p-1.5 border-b border-gray-200 dark:border-gray-700 flex gap-1">
@@ -1332,7 +1349,7 @@ function GridView({
                       )}
                     </div>
                   )
-                })()}
+                })(), document.body)}
                 {/* Resize handle */}
                 <div
                   className="absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-indigo-400/40 z-30"
