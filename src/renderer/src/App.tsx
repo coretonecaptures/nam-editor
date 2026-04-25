@@ -15,6 +15,7 @@ import { FolderTree } from './components/FolderTree'
 import { DuplicatesModal } from './components/DuplicatesModal'
 import { ImportMetadataModal, ImportMatch } from './components/ImportMetadataModal'
 import { TrainingCoverageModal } from './components/TrainingCoverageModal'
+import { FolderCompareModal } from './components/FolderCompareModal'
 import { FolderGallery, FolderImagesData } from './components/FolderGallery'
 import { PackInfoEditor } from './components/PackInfoEditor'
 import * as XLSX from 'xlsx'
@@ -211,6 +212,8 @@ export default function App() {
   const [packInfoAncestor, setPackInfoAncestor] = useState<string | null>(null)
   // Set of folder paths that have a valid nam-pack.json (non-empty title) — drives blue dot in tree
   const [packInfoFolders, setPackInfoFolders] = useState<Set<string>>(new Set())
+  // Folder compare modal: array of paths to compare (null = closed)
+  const [compareFolderPaths, setCompareFolderPaths] = useState<string[] | null>(null)
 
   // Reset folder panel tab and check for pack-owning ancestor when selected folder changes
   useEffect(() => {
@@ -1773,6 +1776,7 @@ export default function App() {
                   else next[folderName] = color
                   handleSaveSettings({ ...settings, folderNameColors: next })
                 }}
+                onCompareFolders={(paths) => setCompareFolderPaths(paths)}
               />
             </div>
             {!gridMaximized && <DragHandle onMouseDown={(e) => onDragStart('tree', e)} onCollapse={() => setTreeCollapsed((v) => !v)} collapsed={treeCollapsed} />}
@@ -2189,6 +2193,14 @@ export default function App() {
           folderPath={coverageReport.folderPath}
           prefixSuffixes={settings.importPrefixSuffixes || 'DI'}
           onClose={() => setCoverageReport(null)}
+        />
+      )}
+
+      {compareFolderPaths && (
+        <FolderCompareModal
+          folderPaths={compareFolderPaths}
+          files={files}
+          onClose={() => setCompareFolderPaths(null)}
         />
       )}
     </div>

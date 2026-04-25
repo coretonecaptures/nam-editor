@@ -38,6 +38,7 @@ interface FolderTreeProps {
   packInfoFolders?: Set<string>
   folderNameColors?: Record<string, string>
   onSetFolderColor?: (folderName: string, color: string | null) => void
+  onCompareFolders?: (folderPaths: string[]) => void
 }
 
 function matchesFilter(
@@ -65,7 +66,8 @@ export function FolderTree({
   tree, files, selectedFolders, onSelect, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, onFilterChange, onDropFiles,
   onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata,
-  onSelectAllInFolder, onCoverageReport, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor
+  onSelectAllInFolder, onCoverageReport, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor,
+  onCompareFolders
 }: FolderTreeProps) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [expandSeq, setExpandSeq] = useState(0)
@@ -286,6 +288,7 @@ export function FolderTree({
             packInfoFolders={packInfoFolders}
             folderNameColors={folderNameColors}
             onSetFolderColor={onSetFolderColor}
+            onCompareFolders={onCompareFolders}
           />
         ))}
       </div>
@@ -297,7 +300,8 @@ function TreeNode({
   node, selectedFolders, onSelect, depth, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, matchingPaths, onDropFiles,
   onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata,
-  onSelectAllInFolder, onCoverageReport, expandSeq, collapseSeq, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor
+  onSelectAllInFolder, onCoverageReport, expandSeq, collapseSeq, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor,
+  onCompareFolders
 }: {
   node: FolderNode
   selectedFolders: string[]
@@ -324,6 +328,7 @@ function TreeNode({
   packInfoFolders?: Set<string>
   folderNameColors?: Record<string, string>
   onSetFolderColor?: (folderName: string, color: string | null) => void
+  onCompareFolders?: (folderPaths: string[]) => void
 }) {
   const [expanded, setExpanded] = useState(true)
 
@@ -394,6 +399,7 @@ function TreeNode({
         folderColor={folderNameColors?.[node.name] ?? null}
         onSetFolderColor={onSetFolderColor ? (color) => onSetFolderColor(node.name, color) : undefined}
         isMultiSelect={isMultiSelect}
+        onCompareFolders={onCompareFolders ? () => onCompareFolders(selectedFolders) : undefined}
       />
 
       {expanded && hasChildren && (
@@ -426,6 +432,7 @@ function TreeNode({
               packInfoFolders={packInfoFolders}
               folderNameColors={folderNameColors}
               onSetFolderColor={onSetFolderColor}
+              onCompareFolders={onCompareFolders}
             />
           ))}
         </div>
@@ -439,7 +446,7 @@ interface ContextMenuState { x: number; y: number }
 function FolderRow({
   label, folderPath, isRoot, isSelected, totalCount, dirtyCount, depth,
   hasChildren, expanded, onToggleExpand, onClick, onSave, onRevert,
-  onBatchEdit, onReveal, isFiltered, isHighlighted, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSelectAll, onCoverageReport, isDraggableFolder, hasPackInfo, folderColor, onSetFolderColor, isMultiSelect
+  onBatchEdit, onReveal, isFiltered, isHighlighted, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSelectAll, onCoverageReport, isDraggableFolder, hasPackInfo, folderColor, onSetFolderColor, isMultiSelect, onCompareFolders
 }: {
   label: string
   folderPath: string
@@ -472,6 +479,7 @@ function FolderRow({
   folderColor?: string | null
   onSetFolderColor?: (color: string | null) => void
   isMultiSelect?: boolean
+  onCompareFolders?: () => void
 }) {
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -628,9 +636,9 @@ function FolderRow({
         )}
 
         <svg
-          className={`w-3.5 h-3.5 flex-shrink-0 ${folderColor ? '' : hasPackInfo ? 'text-blue-500' : isSelected ? 'text-indigo-400' : isRoot ? 'text-indigo-400' : 'text-gray-500'}`}
+          className={`w-3.5 h-3.5 flex-shrink-0 ${folderColor ? '' : isSelected ? 'text-indigo-400' : isRoot ? 'text-indigo-400' : 'text-gray-500'}`}
           style={folderColor ? { color: folderColor } : undefined}
-          fill={(hasPackInfo || folderColor) ? (expanded && hasChildren ? 'currentColor' : 'none') : (!isRoot && expanded && hasChildren ? 'currentColor' : 'none')}
+          fill={folderColor ? (expanded && hasChildren ? 'currentColor' : 'none') : (!isRoot && expanded && hasChildren ? 'currentColor' : 'none')}
           viewBox="0 0 24 24" stroke="currentColor"
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={isRoot ? 2 : 1.5}
@@ -668,6 +676,9 @@ function FolderRow({
           </svg>
         </button>
 
+        {hasPackInfo && (
+          <span className="w-1.5 h-1.5 rounded-full bg-blue-500 flex-shrink-0" title="Pack Info" />
+        )}
         {totalCount > 0 && (
           <span className={`text-xs flex-shrink-0 ${countColor}`}>{totalCount}</span>
         )}
@@ -690,12 +701,14 @@ function FolderRow({
           {isMultiSelect ? (
             /* Reduced menu when 2+ folders are selected */
             <>
-              <button
-                className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
-                onClick={() => { setMenu(null); onBatchEdit() }}
-              >
-                Batch edit this folder…
-              </button>
+              {onCompareFolders && (
+                <button
+                  className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
+                  onClick={() => { setMenu(null); onCompareFolders() }}
+                >
+                  Compare selected folders…
+                </button>
+              )}
               {onExportFolder && (
                 <>
                   <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
@@ -703,23 +716,16 @@ function FolderRow({
                     className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
                     onClick={() => { setMenu(null); onExportFolder('csv') }}
                   >
-                    Export folder as CSV
+                    Export this folder as CSV
                   </button>
                   <button
                     className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
                     onClick={() => { setMenu(null); onExportFolder('xlsx') }}
                   >
-                    Export folder as Excel
+                    Export this folder as Excel
                   </button>
                 </>
               )}
-              <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
-              <button
-                className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
-                onClick={() => { setMenu(null); onReveal() }}
-              >
-                Reveal in Explorer
-              </button>
             </>
           ) : (
             /* Full menu for single folder */
