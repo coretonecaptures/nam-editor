@@ -44,7 +44,6 @@ declare global {
       moveFile: (sourcePath: string, destDir: string, force?: boolean) => Promise<{ success: boolean; error?: string; destPath?: string }>
       scanFolder: (folderPath: string, hiddenFolders?: string) => Promise<{ success: boolean; error?: string; files?: string[] }>
       scanTree: (folderPath: string, hiddenFolders?: string) => Promise<{ success: boolean; error?: string; tree?: FolderNode }>
-      scanAndRead: (folderPath: string, hiddenFolders?: string) => Promise<{ success: boolean; error?: string; files?: unknown[] }>
       getErrorLogPath: () => Promise<string>
       getStartupLogPath: () => Promise<string>
       refocusWindow: () => Promise<void>
@@ -430,13 +429,6 @@ export default function App() {
     }
   }, [settings])
 
-  // Used by folder open: results already parsed in main process, no IPC per file
-  const loadParsedFiles = useCallback(async (rawResults: unknown[], mode: 'replace' | 'append', genToken?: number) => {
-    setStatus({ message: `Processing ${rawResults.length} file(s)...`, type: 'info' })
-    if (genToken !== undefined && genToken !== loadGenRef.current) return
-    await applyParsedResults(rawResults as Parameters<typeof applyParsedResults>[0], mode)
-  }, [applyParsedResults])
-
   // mode='append': dedup against current files (drag & drop)
   const loadFiles = useCallback(async (paths: string[], mode: 'replace' | 'append' = 'append', genToken?: number) => {
     setStatus({ message: `Loading ${paths.length} file(s)...`, type: 'info' })
@@ -470,18 +462,16 @@ export default function App() {
       return updated
     })
     const hiddenFolders = settings.hiddenFolders ?? ''
-    // scanAndRead + scanTree run in parallel — one combined round-trip replaces N×readFile calls
-    const [scanResult, treeResult] = await Promise.all([
-      window.api.scanAndRead(folder, hiddenFolders),
+    const [flatResult, treeResult] = await Promise.all([
+      window.api.scanFolder(folder, hiddenFolders),
       window.api.scanTree(folder, hiddenFolders)
     ])
-    // A newer load started while we were scanning — discard these results
     if (gen !== loadGenRef.current) return
-    if (!scanResult.success) {
-      setStatus({ message: `Error: ${scanResult.error}`, type: 'error' })
+    if (!flatResult.success) {
+      setStatus({ message: `Error: ${flatResult.error}`, type: 'error' })
       return
     }
-    if (!scanResult.files || scanResult.files.length === 0) {
+    if (!flatResult.files || flatResult.files.length === 0) {
       setStatus({ message: 'No .nam files found in that folder', type: 'info' })
       return
     }
@@ -491,16 +481,13 @@ export default function App() {
       folderTree: treeResult.success && treeResult.tree ? treeResult.tree : null,
       selectedFolders: []
     })
-    // Track recent folders
     setRecentFolders((prev) => {
       const next = [normalizedFolder, ...prev.filter((f) => f !== normalizedFolder)].slice(0, 10)
       localStorage.setItem('nam-lab-recent-folders', JSON.stringify(next))
       return next
     })
-    // Results already parsed — feed directly into loadFiles via the parsed-results path
-    await loadParsedFiles(scanResult.files, 'replace', gen)
+    await loadFiles(flatResult.files, 'replace', gen)
     if (gen !== loadGenRef.current) return
-    // Bump watcherKey to restart the folder watcher now that the scan is done
     setWatcherKey((k) => k + 1)
   }, [loadFiles, settings])
 

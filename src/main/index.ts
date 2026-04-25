@@ -497,7 +497,7 @@ app.whenReady().then(() => {
   const errorLogPath = join(app.getPath('userData'), 'parse-errors.log')
   ipcMain.handle('file:read', async (_event, filePath: string) => {
     try {
-      const content = fs.readFileSync(filePath, 'utf-8')
+      const content = await fs.promises.readFile(filePath, 'utf-8')
       const data = JSON.parse(content)
       const meta = data.metadata ?? {}
       // Lift nested NAM-BOT fields up to flat metadata for the UI
