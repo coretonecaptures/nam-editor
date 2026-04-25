@@ -554,7 +554,6 @@ app.whenReady().then(() => {
         config: data.config ?? null
       }
       // Update cache entry — save lazily (written on app quit or folder scan)
-      const cache = loadFileCache()
       cache[filePath] = { mtimeMs: stat.mtimeMs, size: stat.size, data: { version: result.version, metadata: meta, architecture: result.architecture, config: result.config } }
       return result
     } catch (err) {
