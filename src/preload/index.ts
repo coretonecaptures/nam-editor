@@ -1,4 +1,15 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import fs from 'fs'
+import path from 'path'
+
+// Read settings.json from userData synchronously so the renderer has settings
+// available immediately — no async flash, no re-render on load.
+let initialSettings: unknown = null
+try {
+  const userData = ipcRenderer.sendSync('app:getUserDataPath') as string
+  const settingsPath = path.join(userData, 'settings.json')
+  initialSettings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
+} catch { /* file doesn't exist yet — renderer will migrate from localStorage */ }
 
 const api = {
   openFiles: (): Promise<string[]> => ipcRenderer.invoke('dialog:openFiles'),
@@ -60,6 +71,8 @@ const api = {
     ipcRenderer.invoke('folder:readPackInfo', folderPath),
   writePackInfo: (folderPath: string, data: unknown): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('folder:writePackInfo', folderPath, data),
+  deletePackInfo: (folderPath: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('folder:deletePackInfo', folderPath),
   exportPackSheet: (html: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('app:exportPackSheet', html),
   onOpenFiles: (cb: (paths: string[]) => void): (() => void) => {
@@ -67,7 +80,9 @@ const api = {
     ipcRenderer.on('app:openFiles', handler)
     return () => ipcRenderer.removeListener('app:openFiles', handler)
   },
-  platform: process.platform
+  platform: process.platform,
+  initialSettings,
+  saveSettingsToFile: (json: string) => ipcRenderer.send('settings:save', json)
 }
 
 if (process.contextIsolated) {

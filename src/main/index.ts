@@ -277,6 +277,33 @@ log(`Electron: ${process.versions.electron}, Chrome: ${process.versions.chrome}`
 log(`Args: ${process.argv.join(' ')}`)
 log(`isDev: ${isDev}`)
 
+// ---- File metadata cache ----
+// Persists parsed .nam metadata keyed by file path so reopening the same
+// folder only IPC-reads files whose mtime or size changed since last open.
+interface CacheEntry { mtimeMs: number; size: number; data: unknown }
+let _fileCache: Record<string, CacheEntry> | null = null
+
+function fileCachePath(): string {
+  return join(app.getPath('userData'), 'nam-file-cache.json')
+}
+
+function loadFileCache(): Record<string, CacheEntry> {
+  if (_fileCache) return _fileCache
+  try {
+    _fileCache = JSON.parse(fs.readFileSync(fileCachePath(), 'utf-8'))
+  } catch {
+    _fileCache = {}
+  }
+  return _fileCache!
+}
+
+function saveFileCache(): void {
+  if (!_fileCache) return
+  try {
+    fs.writeFileSync(fileCachePath(), JSON.stringify(_fileCache), 'utf-8')
+  } catch { /* non-fatal */ }
+}
+
 // Persist window size and maximized state between launches
 // Path is computed lazily inside each function — app.getPath() must not be
 // called at module load time (before app ready) or it throws on some macOS configs
@@ -657,6 +684,20 @@ app.whenReady().then(() => {
     app.setAppUserModelId('com.coretonecaptures.namlab')
   }
 
+  // IPC: Expose userData path synchronously (used by preload to read settings.json)
+  ipcMain.on('app:getUserDataPath', (event) => {
+    event.returnValue = app.getPath('userData')
+  })
+
+  // IPC: Persist settings to userData/settings.json (fire-and-forget from renderer)
+  ipcMain.on('settings:save', (_event, json: string) => {
+    try {
+      fs.writeFileSync(join(app.getPath('userData'), 'settings.json'), json, 'utf-8')
+    } catch (err) {
+      log(`settings:save error: ${String(err)}`)
+    }
+  })
+
   // IPC: Open file dialog
   ipcMain.handle('dialog:openFiles', async () => {
     const result = await dialog.showOpenDialog({
@@ -707,7 +748,13 @@ app.whenReady().then(() => {
   const errorLogPath = join(app.getPath('userData'), 'parse-errors.log')
   ipcMain.handle('file:read', async (_event, filePath: string) => {
     try {
-      const content = fs.readFileSync(filePath, 'utf-8')
+      const stat = await fs.promises.stat(filePath)
+      const cache = loadFileCache()
+      const cached = cache[filePath]
+      if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+        return { success: true, ...(cached.data as object), filePath }
+      }
+      const content = await fs.promises.readFile(filePath, 'utf-8')
       const data = JSON.parse(content)
       const meta = data.metadata ?? {}
       // Lift nested NAM-BOT fields up to flat metadata for the UI
@@ -722,7 +769,7 @@ app.whenReady().then(() => {
           if (nl[k] != null) (meta as Record<string, unknown>)[`nl_${k}`] = nl[k]
         }
       }
-      return {
+      const result = {
         success: true,
         filePath,
         version: data.version ?? '?',
@@ -730,6 +777,9 @@ app.whenReady().then(() => {
         architecture: data.architecture ?? '?',
         config: data.config ?? null
       }
+      // Update cache entry — save lazily (written on app quit or folder scan)
+      cache[filePath] = { mtimeMs: stat.mtimeMs, size: stat.size, data: { version: result.version, metadata: meta, architecture: result.architecture, config: result.config } }
+      return result
     } catch (err) {
       const line = `[${new Date().toISOString()}] ${filePath}\n  ${String(err)}\n`
       fs.appendFileSync(errorLogPath, line, 'utf-8')
@@ -809,6 +859,7 @@ app.whenReady().then(() => {
       }
       suppressWatcher()
       fs.writeFileSync(filePath, patched, 'utf-8')
+      delete loadFileCache()[filePath]
       return { success: true }
     } catch (err) {
       return { success: false, error: String(err) }
@@ -821,25 +872,101 @@ app.whenReady().then(() => {
     const hidden = new Set(
       ['_duplicates', ...(hiddenFolders ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)]
     )
-    try {
-      const files: string[] = []
-      const scan = (dir: string) => {
-        const entries = fs.readdirSync(dir, { withFileTypes: true })
-        for (const entry of entries) {
-          const full = join(dir, entry.name)
-          if (entry.isDirectory()) {
-            if (hidden.has(entry.name.toLowerCase())) continue
-            scan(full)
-          } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.nam')) {
-            files.push(full.replace(/\\/g, '/'))
-          }
+    const scan = async (dir: string, files: string[]): Promise<void> => {
+      const entries = await fs.promises.readdir(dir, { withFileTypes: true })
+      for (const entry of entries) {
+        const full = join(dir, entry.name)
+        if (entry.isDirectory()) {
+          if (hidden.has(entry.name.toLowerCase())) continue
+          await scan(full, files)
+        } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.nam')) {
+          files.push(full.replace(/\\/g, '/'))
         }
       }
-      scan(folderPath)
+    }
+    const TIMEOUT_MS = 300000
+    try {
+      const files: string[] = []
+      await Promise.race([
+        scan(folderPath, files),
+        new Promise<never>((_, reject) => { const t = setTimeout(() => reject(new Error('Scan timed out after 5 minutes — check network share connectivity')), TIMEOUT_MS); t.unref() })
+      ])
+      // Prune cache entries for files no longer in this folder
+      const fileSet = new Set(files)
+      const normFolder = folderPath.replace(/\\/g, '/')
+      const cache = loadFileCache()
+      let pruned = false
+      for (const key of Object.keys(cache)) {
+        if (key.startsWith(normFolder + '/') && !fileSet.has(key)) {
+          delete cache[key]
+          pruned = true
+        }
+      }
+      if (pruned) saveFileCache()
       return { success: true, files }
     } catch (err) {
       return { success: false, error: String(err) }
     }
+  })
+
+  // IPC: Scan folder + read all .nam files in one round-trip.
+  // Returns combined scan+parse results so renderer avoids N individual readFile calls.
+  ipcMain.handle('folder:scanAndRead', async (_event, folderPath: string, hiddenFolders?: string) => {
+    const hidden = new Set(
+      ['_duplicates', ...(hiddenFolders ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)]
+    )
+    const paths: string[] = []
+    const scan = async (dir: string): Promise<void> => {
+      const entries = await fs.promises.readdir(dir, { withFileTypes: true })
+      for (const entry of entries) {
+        const full = join(dir, entry.name)
+        if (entry.isDirectory()) {
+          if (hidden.has(entry.name.toLowerCase())) continue
+          await scan(full)
+        } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.nam')) {
+          paths.push(full.replace(/\\/g, '/'))
+        }
+      }
+    }
+    const TIMEOUT_MS = 300000
+    try {
+      await Promise.race([
+        scan(folderPath),
+        new Promise<never>((_, reject) => { const t = setTimeout(() => reject(new Error('Scan timed out after 5 minutes')), TIMEOUT_MS); t.unref() })
+      ])
+    } catch (err) {
+      return { success: false, error: String(err), files: [] }
+    }
+    // Read all files concurrently (20 at a time) — in-process, no IPC per file
+    const CONCURRENCY = 20
+    const results: unknown[] = []
+    for (let i = 0; i < paths.length; i += CONCURRENCY) {
+      const batch = paths.slice(i, i + CONCURRENCY)
+      const batchResults = await Promise.all(batch.map((filePath) => {
+        try {
+          const content = fs.readFileSync(filePath, 'utf-8')
+          const data = JSON.parse(content)
+          const meta = data.metadata ?? {}
+          const nb = meta.training?.nam_bot
+          if (nb?.trained_epochs != null) meta.nb_trained_epochs = nb.trained_epochs
+          if (nb?.preset_name != null) meta.nb_preset_name = nb.preset_name
+          const nl = meta.nam_lab
+          if (nl) {
+            const nlKeys = ['mics','cabinet','cabinet_config','amp_channel','boost_pedal','amp_settings','pedal_settings','amp_switches','comments','rating'] as const
+            for (const k of nlKeys) {
+              if (nl[k] != null) (meta as Record<string, unknown>)[`nl_${k}`] = nl[k]
+            }
+          }
+          return { success: true, filePath, version: data.version ?? '?', metadata: meta, architecture: data.architecture ?? '?', config: data.config ?? null }
+        } catch (err) {
+          const line = `[${new Date().toISOString()}] ${filePath}\n  ${String(err)}\n`
+          fs.appendFileSync(errorLogPath, line, 'utf-8')
+          return { success: false, error: String(err) }
+        }
+      }))
+      results.push(...batchResults)
+    }
+    return { success: true, files: results }
   })
 
   // IPC: Scan a folder for image files (non-recursive)
@@ -870,24 +997,28 @@ app.whenReady().then(() => {
       fileCount: number
       totalCount: number
     }
-    try {
-      const buildTree = (dir: string): FolderNode => {
-        const entries = fs.readdirSync(dir, { withFileTypes: true })
-        const children: FolderNode[] = []
-        let fileCount = 0
-        for (const entry of entries) {
-          if (entry.isDirectory()) {
-            if (hidden.has(entry.name.toLowerCase())) continue
-            children.push(buildTree(join(dir, entry.name)))
-          } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.nam')) {
-            fileCount++
-          }
+    const buildTree = async (dir: string): Promise<FolderNode> => {
+      const entries = await fs.promises.readdir(dir, { withFileTypes: true })
+      const children: FolderNode[] = []
+      let fileCount = 0
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          if (hidden.has(entry.name.toLowerCase())) continue
+          children.push(await buildTree(join(dir, entry.name)))
+        } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.nam')) {
+          fileCount++
         }
-        const totalCount = fileCount + children.reduce((s, c) => s + c.totalCount, 0)
-        const name = norm(dir).split('/').pop() ?? dir
-        return { name, path: norm(dir), children, fileCount, totalCount }
       }
-      const tree = buildTree(folderPath)
+      const totalCount = fileCount + children.reduce((s, c) => s + c.totalCount, 0)
+      const name = norm(dir).split('/').pop() ?? dir
+      return { name, path: norm(dir), children, fileCount, totalCount }
+    }
+    const TIMEOUT_MS = 300000
+    try {
+      const tree = await Promise.race([
+        buildTree(folderPath),
+        new Promise<never>((_, reject) => { const t = setTimeout(() => reject(new Error('Scan timed out after 5 minutes — check network share connectivity')), TIMEOUT_MS); t.unref() })
+      ])
       return { success: true, tree }
     } catch (err) {
       return { success: false, error: String(err) }
@@ -915,7 +1046,7 @@ app.whenReady().then(() => {
     const results: { filePath: string; success: boolean; error?: string }[] = []
     for (const filePath of filePaths) {
       try {
-        await shell.trashItem(filePath)
+        await shell.trashItem(process.platform === 'win32' ? filePath.replace(/\//g, '\\') : filePath)
         results.push({ filePath, success: true })
       } catch (err) {
         results.push({ filePath, success: false, error: String(err) })
@@ -1022,7 +1153,8 @@ app.whenReady().then(() => {
     let debounceTimer: ReturnType<typeof setTimeout> | null = null
     try {
       folderWatcher = fs.watch(folderPath, { recursive: true }, (_eventType, filename) => {
-        if (!filename || !filename.toLowerCase().endsWith('.nam')) return
+        const f = filename?.toLowerCase() ?? ''
+        if (!f.endsWith('.nam') || f.endsWith('.json')) return
         if (debounceTimer) clearTimeout(debounceTimer)
         debounceTimer = setTimeout(() => {
           if (Date.now() < watcherSuppressUntil) return
@@ -1217,7 +1349,20 @@ app.whenReady().then(() => {
   ipcMain.handle('folder:writePackInfo', async (_event, folderPath: string, data: unknown) => {
     try {
       const packPath = join(folderPath, 'nam-pack.json')
+      suppressWatcher()
       await fs.promises.writeFile(packPath, JSON.stringify(data, null, 2), 'utf-8')
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  })
+
+  // IPC: Delete nam-pack.json from a folder
+  ipcMain.handle('folder:deletePackInfo', async (_event, folderPath: string) => {
+    try {
+      const packPath = join(folderPath, 'nam-pack.json')
+      suppressWatcher()
+      await fs.promises.unlink(packPath)
       return { success: true }
     } catch (e) {
       return { success: false, error: String(e) }
@@ -1259,6 +1404,14 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+})
+
+app.on('will-quit', () => {
+  saveFileCache()
+  if (folderWatcher) {
+    try { folderWatcher.close() } catch { /* ignore */ }
+    folderWatcher = null
+  }
 })
 
 app.on('window-all-closed', () => {

@@ -19,6 +19,8 @@ function getCompletenessColor(meta: NamFile['metadata']): string | null {
 }
 type ViewMode = 'list' | 'grid'
 type SortDir = 'asc' | 'desc'
+// Per-column filter: selected = exact match values; text = contains filter (used when selected is empty)
+type ColFilterState = { text: string; selected: string[] }
 
 interface FileListProps {
   files: NamFile[]
@@ -176,7 +178,7 @@ function getCellValue(file: NamFile, key: string): string {
     case 'nl_pedal_settings': return m.nl_pedal_settings ?? ''
     case 'nl_amp_switches':   return m.nl_amp_switches   ?? ''
     case 'nl_comments':       return m.nl_comments       ?? ''
-    case 'nl_rating':         return m.nl_rating         ?? 0
+    case 'nl_rating':         return m.nl_rating != null ? String(m.nl_rating) : ''
     default: return ''
   }
 }
@@ -281,6 +283,8 @@ export function FileList({
   const [gearFilter, setGearFilter] = useState('')
   const [toneFilter, setToneFilter] = useState('')
   const [presetFilter, setPresetFilter] = useState('')
+  const [mfrFilter, setMfrFilter] = useState('')
+  const [columnFilters, setColumnFilters] = useState<Record<string, ColFilterState>>({})
   const [sortKey, setSortKey] = useState<string | null>(() => loadSort().key)
   const [sortDir, setSortDir] = useState<SortDir>(() => loadSort().dir)
   const [visibleCols, setVisibleCols] = useState<string[]>(loadVisibleCols)
@@ -303,15 +307,27 @@ export function FileList({
         .filter(Boolean).join(' ').toLowerCase()
       if (!haystack.includes(q)) return false
     }
-    if (nameSearch) {
-      const q = nameSearch.toLowerCase()
-      const namVal = (m.name || f.fileName || '').toLowerCase()
-      if (!namVal.includes(q)) return false
+    if (viewMode === 'list') {
+      if (gearFilter && m.gear_type !== gearFilter) return false
+      if (toneFilter && m.tone_type !== toneFilter) return false
+      if (presetFilter === '__none__' && detectPreset(f.config) !== null) return false
+      else if (presetFilter && presetFilter !== '__none__' && detectPreset(f.config) !== presetFilter) return false
+      if (mfrFilter && m.gear_make !== mfrFilter) return false
+      if (nameSearch) {
+        const q = nameSearch.toLowerCase()
+        const namVal = (m.name || f.fileName || '').toLowerCase()
+        if (!namVal.includes(q)) return false
+      }
     }
-    if (gearFilter && m.gear_type !== gearFilter) return false
-    if (toneFilter && m.tone_type !== toneFilter) return false
-    if (presetFilter === '__none__' && detectPreset(f.config) !== null) return false
-    else if (presetFilter && presetFilter !== '__none__' && detectPreset(f.config) !== presetFilter) return false
+    if (viewMode === 'grid') {
+      for (const [key, { text, selected }] of Object.entries(columnFilters)) {
+        if (selected.length > 0) {
+          if (!selected.includes(getCellValue(f, key))) return false
+        } else if (text) {
+          if (!getCellValue(f, key).toLowerCase().includes(text.toLowerCase())) return false
+        }
+      }
+    }
     switch (filter) {
       case 'unnamed':    return !o.name
       case 'no-gear':    return !o.gear_type
@@ -363,7 +379,9 @@ export function FileList({
 
   const triggerExport = (allCols: boolean, format: 'csv' | 'xlsx') => {
     setShowExport(false)
-    const cols = allCols ? ALL_GRID_COLUMNS : ALL_GRID_COLUMNS.filter((c) => visibleCols.includes(c.key))
+    const cols = allCols
+      ? ALL_GRID_COLUMNS
+      : visibleCols.map((k) => ALL_GRID_COLUMNS.find((c) => c.key === k)).filter((c): c is typeof ALL_GRID_COLUMNS[0] => c != null)
     const filename = `nam-library.${format}`
     if (format === 'csv') doExportCSV(sorted, cols, filename)
     else doExportXLSX(sorted, cols, filename)
@@ -629,74 +647,114 @@ export function FileList({
         ))}
       </div>
 
-      {/* Gear + Tone dropdowns */}
-      <div className="px-3 pb-2 flex gap-1.5 flex-shrink-0">
-        <select
-          value={gearFilter}
-          onChange={(e) => setGearFilter(e.target.value)}
-          className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
-            gearFilter
-              ? 'bg-orange-100 dark:bg-orange-900/30 border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-400'
-              : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
-          }`}
-        >
-          <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Gear type…</option>
-          {GEAR_TYPES.map((g) => <option key={g} value={g} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{g}</option>)}
-        </select>
-        <select
-          value={toneFilter}
-          onChange={(e) => setToneFilter(e.target.value)}
-          className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
-            toneFilter
-              ? 'bg-indigo-100 dark:bg-indigo-900/40 border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-400'
-              : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
-          }`}
-        >
-          <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Tone type…</option>
-          {TONE_TYPES.map((t) => <option key={t} value={t} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{t}</option>)}
-        </select>
-        <select
-          value={presetFilter}
-          onChange={(e) => setPresetFilter(e.target.value)}
-          className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
-            presetFilter
-              ? 'bg-teal-100 dark:bg-teal-900/30 border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400'
-              : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
-          }`}
-        >
-          <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Preset…</option>
-          {['Standard', 'Complex', 'Lite', 'Feather', 'Nano', 'REVySTD', 'REVyHI', 'REVxSTD'].map((p) => (
-            <option key={p} value={p} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{p}</option>
-          ))}
-          <option value="__none__" className="bg-white dark:bg-gray-900 text-gray-500 dark:text-gray-500">— None detected —</option>
-        </select>
-        {/* Name-only filter */}
-        <div className="relative ml-1">
-          <input
-            type="text"
-            value={nameSearch}
-            onChange={(e) => setNameSearch(e.target.value)}
-            placeholder="Name contains…"
-            title="Filters to files where the capture name contains this text"
-            className={`text-xs py-0.5 pl-2.5 pr-6 rounded-full border transition-colors focus:outline-none focus:border-indigo-500 ${
-              nameSearch
-                ? 'bg-teal-100 dark:bg-teal-900/30 border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400'
-                : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400 placeholder-gray-400 dark:placeholder-gray-600'
+      {/* Gear + Tone dropdowns — list mode only; grid mode uses per-column header filters */}
+      {viewMode === 'list' && (
+        <div className="px-3 pb-2 flex gap-1.5 flex-shrink-0 flex-wrap">
+          <select
+            value={gearFilter}
+            onChange={(e) => setGearFilter(e.target.value)}
+            className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
+              gearFilter
+                ? 'bg-orange-100 dark:bg-orange-900/30 border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-400'
+                : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
             }`}
-            style={{ width: 130 }}
-          />
-          {nameSearch && (
-            <button
-              onClick={() => setNameSearch('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-teal-500 hover:text-teal-700 dark:hover:text-teal-300"
-            >
-              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          )}
+          >
+            <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Gear type…</option>
+            {GEAR_TYPES.map((g) => <option key={g} value={g} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{g}</option>)}
+          </select>
+          <select
+            value={toneFilter}
+            onChange={(e) => setToneFilter(e.target.value)}
+            className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
+              toneFilter
+                ? 'bg-indigo-100 dark:bg-indigo-900/40 border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-400'
+                : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
+            }`}
+          >
+            <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Tone type…</option>
+            {TONE_TYPES.map((t) => <option key={t} value={t} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{t}</option>)}
+          </select>
+          <select
+            value={presetFilter}
+            onChange={(e) => setPresetFilter(e.target.value)}
+            className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
+              presetFilter
+                ? 'bg-teal-100 dark:bg-teal-900/30 border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400'
+                : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
+            }`}
+          >
+            <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Preset…</option>
+            {['Standard', 'Complex', 'Lite', 'Feather', 'Nano', 'REVySTD', 'REVyHI', 'REVxSTD'].map((p) => (
+              <option key={p} value={p} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{p}</option>
+            ))}
+            <option value="__none__" className="bg-white dark:bg-gray-900 text-gray-500 dark:text-gray-500">— None detected —</option>
+          </select>
+          {/* Manufacturer filter */}
+          {(() => {
+            const mfrOptions = [...new Set(files.map((f) => f.metadata.gear_make).filter((v): v is string => !!v))].sort()
+            return (
+              <div className="flex items-center gap-0.5">
+                <select
+                  value={mfrFilter}
+                  onChange={(e) => setMfrFilter(e.target.value)}
+                  className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
+                    mfrFilter
+                      ? 'bg-purple-100 dark:bg-purple-900/30 border-purple-300 dark:border-purple-700 text-purple-700 dark:text-purple-400'
+                      : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
+                  }`}
+                >
+                  <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Manufacturer…</option>
+                  {mfrOptions.map((m) => <option key={m} value={m} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{m}</option>)}
+                </select>
+                {mfrFilter && (
+                  <button
+                    onClick={() => setMfrFilter('')}
+                    className="text-purple-500 hover:text-purple-700 dark:hover:text-purple-300 transition-colors"
+                    title="Clear manufacturer filter"
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            )
+          })()}
+          {/* Name-only filter */}
+          <div className="relative ml-1">
+            <input
+              type="text"
+              value={nameSearch}
+              onChange={(e) => setNameSearch(e.target.value)}
+              placeholder="Name contains…"
+              title="Filters to files where the capture name contains this text"
+              className={`text-xs py-0.5 pl-2.5 pr-6 rounded-full border transition-colors focus:outline-none focus:border-indigo-500 ${
+                nameSearch
+                  ? 'bg-teal-100 dark:bg-teal-900/30 border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400'
+                  : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400 placeholder-gray-400 dark:placeholder-gray-600'
+              }`}
+              style={{ width: 130 }}
+            />
+            {nameSearch && (
+              <button
+                onClick={() => setNameSearch('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-teal-500 hover:text-teal-700 dark:hover:text-teal-300"
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
+      {/* Grid mode: active column filter indicator */}
+      {viewMode === 'grid' && Object.values(columnFilters).some((f) => f.text || f.selected.length > 0) && (
+        <div className="px-3 pb-1.5 flex items-center gap-2 flex-shrink-0">
+          <span className="text-xs text-amber-400">Column filters active</span>
+          <button onClick={() => setColumnFilters({})} className="text-xs text-gray-400 hover:text-gray-300 underline transition-colors">Clear all</button>
+        </div>
+      )}
 
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-1.5 border-t border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
@@ -707,6 +765,27 @@ export function FileList({
           {selectedVisible.length > 0 && ` · ${selectedVisible.length} selected`}
         </span>
         <div className="flex items-center gap-1">
+          {viewMode === 'list' && (
+            <select
+              value={sortKey ? `${sortKey}-${sortDir}` : ''}
+              onChange={(e) => {
+                if (!e.target.value) { setSortKey(null); return }
+                const [key, dir] = e.target.value.split('-')
+                setSortKey(key)
+                setSortDir(dir as SortDir)
+                localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify({ key, dir }))
+              }}
+              className="text-xs py-0.5 px-1.5 rounded border bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400 appearance-none focus:outline-none mr-1"
+            >
+              <option value="">Sort…</option>
+              <option value="date-desc">Date: newest</option>
+              <option value="date-asc">Date: oldest</option>
+              <option value="name-asc">Name: A→Z</option>
+              <option value="name-desc">Name: Z→A</option>
+              <option value="gear_make-asc">Manufacturer: A→Z</option>
+              <option value="modeled_by-asc">Modeled By: A→Z</option>
+            </select>
+          )}
           {gridMaximized && selectedVisible.length >= 1 && onOpenEditor && (
             <button
               onClick={onOpenEditor}
@@ -725,6 +804,7 @@ export function FileList({
       {viewMode === 'grid' ? (
         <GridView
           files={sorted}
+          allFiles={files}
           selectedIds={selectedIds}
           sortKey={sortKey}
           sortDir={sortDir}
@@ -736,6 +816,13 @@ export function FileList({
           draggable={draggable}
           visibleCols={visibleCols}
           onVisibleColsChange={handleVisibleColsChange}
+          columnFilters={columnFilters}
+          onColumnFilterChange={(key, state) => setColumnFilters((prev) => {
+            const next = { ...prev }
+            if (!state.text && state.selected.length === 0) delete next[key]
+            else next[key] = state
+            return next
+          })}
           onContextMenu={(e, filePath) => {
             e.preventDefault()
             if (!selectedIds.has(filePath)) onSelect(filePath, false)
@@ -1018,10 +1105,12 @@ const DEFAULT_COL_WIDTHS: Record<string, number> = {
 }
 
 function GridView({
-  files, selectedIds, sortKey, sortDir, onSortClick,
-  anchorIndexRef, onSelect, onSelectRange, solidPills, draggable, visibleCols, onVisibleColsChange, onContextMenu
+  files, allFiles, selectedIds, sortKey, sortDir, onSortClick,
+  anchorIndexRef, onSelect, onSelectRange, solidPills, draggable, visibleCols, onVisibleColsChange,
+  columnFilters, onColumnFilterChange, onContextMenu
 }: {
   files: NamFile[]
+  allFiles: NamFile[]
   selectedIds: Set<string>
   sortKey: string | null
   sortDir: SortDir
@@ -1033,12 +1122,32 @@ function GridView({
   draggable: boolean
   visibleCols: string[]
   onVisibleColsChange: (cols: string[]) => void
+  columnFilters: Record<string, ColFilterState>
+  onColumnFilterChange: (key: string, state: ColFilterState) => void
   onContextMenu: (e: React.MouseEvent, filePath: string) => void
 }) {
   const [colWidths, setColWidths] = useState<Record<string, number>>(DEFAULT_COL_WIDTHS)
+  const [dragOverCol, setDragOverCol] = useState<string | null>(null)
+  const [openFilterCol, setOpenFilterCol] = useState<string | null>(null)
+  const [filterSearch, setFilterSearch] = useState('')
+  const filterPopupRef = useRef<HTMLDivElement>(null)
+  const dragColRef = useRef<string | null>(null)
   const resizingRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null)
 
-  const activeColumns = ALL_GRID_COLUMNS.filter((c) => visibleCols.includes(c.key))
+  // Order-preserving: visibleCols drives display order
+  const activeColumns = visibleCols.map((k) => ALL_GRID_COLUMNS.find((c) => c.key === k)).filter((c): c is typeof ALL_GRID_COLUMNS[0] => c != null)
+
+  useEffect(() => {
+    if (!openFilterCol) return
+    const handler = (e: MouseEvent) => {
+      if (filterPopupRef.current && !filterPopupRef.current.contains(e.target as Node)) {
+        setOpenFilterCol(null)
+        setFilterSearch('')
+      }
+    }
+    window.addEventListener('mousedown', handler)
+    return () => window.removeEventListener('mousedown', handler)
+  }, [openFilterCol])
 
   const onResizeStart = (e: React.MouseEvent, key: string) => {
     e.preventDefault()
@@ -1059,20 +1168,82 @@ function GridView({
     window.addEventListener('mouseup', onUp)
   }
 
+  const onAutoSize = (key: string) => {
+    const colDef = ALL_GRID_COLUMNS.find((c) => c.key === key)
+    if (!colDef) return
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    // Name renders text-sm/600 (14px semibold); all others 12px/400
+    const dataFont = key === 'name' ? '600 14px ui-sans-serif,system-ui,sans-serif' : '400 12px ui-sans-serif,system-ui,sans-serif'
+    // Header uses 11px/600 uppercase + tracking-wider; canvas consistently undershoots
+    // rendered width, so apply a generous multiplier and extra right clearance for filter icon
+    ctx.font = '600 11px ui-sans-serif,system-ui,sans-serif'
+    const rawLabelW = ctx.measureText(colDef.label.toUpperCase()).width
+    const labelW = rawLabelW * 1.2 // ~15% for tracking-wider + canvas undershoot
+    // left-pad(12) + label + paddingRight(28) + filter-icon clearance(12) + breath(8)
+    const headerW = 12 + labelW + 28 + 12 + 8
+    // Data: px-3 both sides (24px) + 8px breath
+    ctx.font = dataFont
+    const dataW = allFiles.reduce((max, f) => {
+      const val = getCellValue(f, key)
+      return Math.max(max, ctx.measureText(val).width + 24 + 8)
+    }, 0)
+    setColWidths((prev) => ({ ...prev, [key]: Math.max(headerW, dataW, colDef.minWidth) }))
+  }
+
+  const getUniqueValues = (key: string): string[] => {
+    const vals = new Set<string>()
+    allFiles.forEach((f) => { const v = getCellValue(f, key); if (v) vals.add(v) })
+    return [...vals].sort()
+  }
+
   return (
     <div className="flex-1 overflow-auto relative">
       <table className="border-collapse text-xs" style={{ tableLayout: 'fixed', width: activeColumns.reduce((s, c) => s + colWidths[c.key], 24) }}>
         <thead className="sticky top-0 z-10">
           <tr className="bg-gray-100 dark:bg-gray-900 border-b-2 border-gray-300 dark:border-gray-700">
             <th className="border-r border-gray-200 dark:border-gray-700" style={{ width: 24 }} />
-            {activeColumns.map((col) => (
+            {activeColumns.map((col) => {
+              const hasFilter = !!(columnFilters[col.key]?.text || columnFilters[col.key]?.selected?.length)
+              const isFilterOpen = openFilterCol === col.key
+              const isDragOver = dragOverCol === col.key
+              return (
               <th
                 key={col.key}
-                className="relative text-left font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-r border-gray-200 dark:border-gray-700 select-none"
+                className={`relative text-left font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-r border-gray-200 dark:border-gray-700 select-none transition-colors ${isDragOver ? 'bg-indigo-100 dark:bg-indigo-900/40' : ''}`}
                 style={{ width: colWidths[col.key] }}
+                draggable={col.key !== 'name'}
+                onDragStart={(e) => {
+                  if (col.key === 'name') { e.preventDefault(); return }
+                  dragColRef.current = col.key
+                  e.dataTransfer.effectAllowed = 'move'
+                  e.dataTransfer.setData('text/plain', col.key)
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  if (col.key !== 'name') setDragOverCol(col.key)
+                }}
+                onDragLeave={() => setDragOverCol(null)}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  const from = e.dataTransfer.getData('text/plain')
+                  setDragOverCol(null)
+                  dragColRef.current = null
+                  if (!from || from === col.key) return
+                  const newOrder = [...visibleCols]
+                  const fromIdx = newOrder.indexOf(from)
+                  const toIdx = newOrder.indexOf(col.key)
+                  if (fromIdx < 0 || toIdx < 0) return
+                  newOrder.splice(fromIdx, 1)
+                  newOrder.splice(toIdx, 0, from)
+                  onVisibleColsChange(newOrder)
+                }}
+                onDragEnd={() => { dragColRef.current = null; setDragOverCol(null) }}
               >
                 <div
-                  className="flex items-center gap-1 px-3 py-2 cursor-pointer hover:text-gray-800 dark:hover:text-gray-200 whitespace-nowrap overflow-hidden pr-4"
+                  className={`flex items-center gap-1 px-3 py-2 whitespace-nowrap overflow-hidden hover:text-gray-800 dark:hover:text-gray-200 ${col.key !== 'name' ? 'cursor-grab' : 'cursor-pointer'}`}
+                  style={{ paddingRight: 28 }}
                   onClick={() => onSortClick(col.key)}
                 >
                   <span className="truncate">{col.label}</span>
@@ -1083,12 +1254,96 @@ function GridView({
                     </svg>
                   )}
                 </div>
+                {/* Filter icon */}
+                <button
+                  className={`absolute right-2.5 top-1/2 -translate-y-1/2 z-20 p-0.5 rounded transition-colors ${hasFilter ? 'text-indigo-400' : 'text-gray-400 dark:text-gray-600 hover:text-gray-600 dark:hover:text-gray-400'}`}
+                  onClick={(e) => { e.stopPropagation(); setOpenFilterCol(isFilterOpen ? null : col.key); setFilterSearch('') }}
+                  title={hasFilter ? 'Filter active — click to edit' : 'Filter column'}
+                >
+                  <svg className="w-3 h-3" fill={hasFilter ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
+                  </svg>
+                </button>
+                {/* Filter popup */}
+                {isFilterOpen && (() => {
+                  const state = columnFilters[col.key] ?? { text: '', selected: [] }
+                  const allVals = getUniqueValues(col.key)
+                  const shown = filterSearch ? allVals.filter((v) => v.toLowerCase().includes(filterSearch.toLowerCase())) : allVals
+                  return (
+                    <div
+                      ref={filterPopupRef}
+                      className="absolute left-0 top-full mt-0.5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50 flex flex-col"
+                      style={{ minWidth: 200, maxHeight: 320, width: Math.max(colWidths[col.key], 200) }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="p-1.5 border-b border-gray-200 dark:border-gray-700 flex gap-1">
+                        <input
+                          autoFocus
+                          type="text"
+                          value={filterSearch}
+                          onChange={(e) => setFilterSearch(e.target.value)}
+                          placeholder="Search values…"
+                          className="flex-1 text-xs px-2 py-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded focus:outline-none focus:border-indigo-500 text-gray-900 dark:text-gray-100"
+                        />
+                        {(state.text || state.selected.length > 0) && (
+                          <button
+                            onClick={() => { onColumnFilterChange(col.key, { text: '', selected: [] }); setOpenFilterCol(null) }}
+                            className="text-xs text-red-400 hover:text-red-300 px-1.5 flex-shrink-0"
+                          >Clear</button>
+                        )}
+                      </div>
+                      {/* Text contains filter */}
+                      {state.selected.length === 0 && (
+                        <div className="px-2 pt-1.5 pb-1 border-b border-gray-100 dark:border-gray-800">
+                          <div className="relative">
+                            <input
+                              type="text"
+                              value={state.text}
+                              onChange={(e) => onColumnFilterChange(col.key, { ...state, text: e.target.value })}
+                              placeholder="Contains text…"
+                              className={`w-full text-xs px-2 py-1 rounded border focus:outline-none focus:border-indigo-500 ${state.text ? 'bg-indigo-50 dark:bg-indigo-900/30 border-indigo-300 dark:border-indigo-700 text-indigo-800 dark:text-indigo-200' : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300'}`}
+                            />
+                          </div>
+                        </div>
+                      )}
+                      <div className="overflow-y-auto flex-1 py-1">
+                        {shown.length === 0 ? (
+                          <div className="px-3 py-2 text-xs text-gray-400">No values</div>
+                        ) : (
+                          shown.map((val) => (
+                            <label key={val} className="flex items-center gap-2 px-2.5 py-1 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 text-xs text-gray-700 dark:text-gray-300">
+                              <input
+                                type="checkbox"
+                                checked={state.selected.includes(val)}
+                                onChange={() => {
+                                  const next = state.selected.includes(val)
+                                    ? state.selected.filter((v) => v !== val)
+                                    : [...state.selected, val]
+                                  onColumnFilterChange(col.key, { text: '', selected: next })
+                                }}
+                                className="w-3 h-3 rounded border-gray-400 text-indigo-500 focus:ring-0 cursor-pointer"
+                              />
+                              <span className="truncate">{val}</span>
+                            </label>
+                          ))
+                        )}
+                      </div>
+                      {state.selected.length > 0 && (
+                        <div className="px-2.5 py-1 border-t border-gray-100 dark:border-gray-800 text-xs text-indigo-400">
+                          {state.selected.length} selected
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
+                {/* Resize handle */}
                 <div
-                  className="absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-indigo-400/40 z-20"
+                  className="absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-indigo-400/40 z-30"
                   onMouseDown={(e) => onResizeStart(e, col.key)}
+                  onDoubleClick={(e) => { e.preventDefault(); onAutoSize(col.key) }}
                 />
               </th>
-            ))}
+            )})}
           </tr>
         </thead>
         <tbody>
@@ -1260,6 +1515,12 @@ function FileItem({
           )}
         </div>
       </div>
+
+      {meta.date && (
+        <div className="flex-shrink-0 text-xs text-gray-400 dark:text-gray-600 mt-0.5 tabular-nums">
+          {`${meta.date.year}-${String(meta.date.month).padStart(2, '0')}-${String(meta.date.day).padStart(2, '0')}`}
+        </div>
+      )}
 
       {(meta.nl_rating ?? 0) > 0 && (
         <div className="flex-shrink-0 flex items-center gap-px mt-1.5">

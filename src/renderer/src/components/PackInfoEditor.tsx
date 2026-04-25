@@ -15,6 +15,7 @@ export interface PackInfo {
   glossary: { term: string; description: string }[]
   footer: string
   exportExcludedSubfolders: string[]
+  exportExcludedCaptures: string[]
   exportColumns: string[]
 }
 
@@ -44,6 +45,7 @@ const EMPTY_PACK: PackInfo = {
   glossary: [],
   footer: '',
   exportExcludedSubfolders: [],
+  exportExcludedCaptures: [],
   exportColumns: DEFAULT_EXPORT_COLUMNS
 }
 
@@ -121,6 +123,8 @@ function generateExportHtml(info: PackInfo, folderPath: string, folderName: stri
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const normBase = folderPath.replace(/\\/g, '/') + '/'
   const captures = allCaptures.filter((f) => {
+    const captureKey = f.metadata.name || f.fileName
+    if (info.exportExcludedCaptures?.includes(captureKey)) return false
     if (info.exportExcludedSubfolders.length === 0) return true
     const fp = f.filePath.replace(/\\/g, '/')
     if (!fp.startsWith(normBase)) return true
@@ -129,18 +133,18 @@ function generateExportHtml(info: PackInfo, folderPath: string, folderName: stri
   })
 
   const activeCols = PACK_CAPTURE_COLUMNS.filter((c) => (info.exportColumns ?? DEFAULT_EXPORT_COLUMNS).includes(c.id))
+
   const colSum = activeCols.reduce((s, c) => s + c.width, 0)
-  // Name gets the remainder, minimum 20%. If active cols alone exceed 80%, scale everything down proportionally.
   const nameMinPct = 20
-  const totalAvail = 100 - nameMinPct // 80% max for active cols
+  const totalAvail = 100 - nameMinPct
   const scale = colSum > totalAvail ? totalAvail / colSum : 1
   const namePct = Math.round(100 - colSum * scale)
-  const nameWidth = `${namePct}%`
 
   const captureHeaderCells = [
-    `<th style="width:${nameWidth}">Capture Name</th>`,
+    `<th style="width:${namePct}%">Capture Name</th>`,
     ...activeCols.map((c) => `<th style="width:${Math.round(c.width * scale)}%">${esc(c.label)}</th>`)
   ].join('')
+  const captureFooterCells = `<td colspan="${activeCols.length + 1}"></td>`
 
   const captureRows = captures.map((f) => {
     const cells = [
@@ -162,8 +166,8 @@ function generateExportHtml(info: PackInfo, folderPath: string, folderName: stri
     `<tr><td class="kv-label">${esc(e.label)}</td><td>${esc(e.value)}</td></tr>`
   ).join('')
 
-  const glossaryItems = info.glossary.map((g) =>
-    `<div class="glossary-item"><span class="g-term">${esc(g.term)}</span><span class="g-sep"> — </span><span class="g-desc">${esc(g.description)}</span></div>`
+  const glossaryRows = info.glossary.map((g) =>
+    `<tr><td class="kv-label">${esc(g.term)}</td><td>${esc(g.description)}</td></tr>`
   ).join('')
 
   const hasCaptures = captures.length > 0
@@ -172,8 +176,9 @@ function generateExportHtml(info: PackInfo, folderPath: string, folderName: stri
   const hasSwitches = info.switches.length > 0
   const hasGlossary = info.glossary.length > 0
   const hasDesc = info.description.trim().length > 0
+  const captureSectionClass = hasDesc ? 'section capture-section capture-section-page' : 'section capture-section'
 
-  const kvTable = (rows: string) => `<table><tbody>${rows}</tbody></table>`
+  const kvTable = (rows: string) => `<table class="kv-table"><tbody>${rows}</tbody></table>`
 
   const t = dark ? {
     bodyBg: '#0d0d0d', bodyColor: '#e8e8e8',
@@ -183,7 +188,6 @@ function generateExportHtml(info: PackInfo, folderPath: string, folderName: stri
     thBg: '#1a1a1a', thColor: '#f97316', thBorder: '#2a2a2a',
     tdBorder: '#1e1e1e', tdEvenBg: '#141414',
     kvLabelColor: '#f97316',
-    glossItemBorder: '#1e1e1e', gTermColor: '#f97316', gSepColor: '#555', gDescColor: '#aaa',
     footerBorder: '#2a2a2a', footerColor: '#555',
   } : {
     bodyBg: '#ffffff', bodyColor: '#1e2235',
@@ -193,7 +197,6 @@ function generateExportHtml(info: PackInfo, folderPath: string, folderName: stri
     thBg: '#f8fafc', thColor: '#64748b', thBorder: '#e2e8f0',
     tdBorder: '#f1f5f9', tdEvenBg: '#fafbfc',
     kvLabelColor: '#334155',
-    glossItemBorder: '#f1f5f9', gTermColor: '#1e2235', gSepColor: '#94a3b8', gDescColor: '#475569',
     footerBorder: '#e2e8f0', footerColor: '#94a3b8',
   }
 
@@ -205,6 +208,7 @@ function generateExportHtml(info: PackInfo, folderPath: string, folderName: stri
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { background: ${t.bodyBg}; }
   body { font-family: Inter, Arial, sans-serif; color: ${t.bodyColor}; background: ${t.bodyBg}; font-size: 10.5px; line-height: 1.45; }
   .header { background: ${t.headerBg}; color: #fff; padding: 18px 32px 16px; display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
   .header-left { flex: 1; min-width: 0; }
@@ -212,29 +216,37 @@ function generateExportHtml(info: PackInfo, folderPath: string, folderName: stri
   .header-meta { display: flex; justify-content: space-between; align-items: baseline; margin-top: 6px; gap: 16px; }
   .header-sub { font-size: 14px; color: ${t.headerSub}; }
   .header-logo { flex-shrink: 0; display: flex; align-items: center; }
-  .content { padding: 18px 32px; }
+  .content { padding: 18px 44px; }
   .description { color: ${t.descColor}; margin-bottom: 16px; line-height: 1.7; width: 100%; font-size: 14px; }
   .section { margin-bottom: 20px; }
   .section-title { font-size: 10px; font-weight: 700; color: ${t.sectionTitleColor}; text-transform: uppercase; letter-spacing: 0.1em; text-align: center; margin-bottom: 8px; padding-bottom: 0; }
   .section-title::after { content: ''; display: block; width: 28px; height: 2px; background: ${t.sectionTitleColor}; border-radius: 1px; margin: 5px auto 0; opacity: 0.7; }
-  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; break-inside: auto; page-break-inside: auto; }
+  thead { display: table-header-group; }
+  tfoot { display: none; }
   thead th { background: ${t.thBg}; text-align: left; padding: 5px 8px; font-size: 9.5px; font-weight: 600; color: ${t.thColor}; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid ${t.thBorder}; white-space: nowrap; overflow: hidden; }
+  tbody tr { break-inside: avoid; page-break-inside: avoid; }
   tbody td { padding: 4px 8px; border-bottom: 1px solid ${t.tdBorder}; vertical-align: top; word-break: break-word; }
   tbody tr:last-child td { border-bottom: none; }
   tbody tr:nth-child(even) { background: ${t.tdEvenBg}; }
   .col-name { overflow: hidden; }
   .kv-label { font-weight: 600; color: ${t.kvLabelColor}; width: 110px; white-space: nowrap; }
-  .glossary-item { padding: 4px 8px; border-bottom: 1px solid ${t.glossItemBorder}; }
-  .glossary-item:last-child { border-bottom: none; }
-  .g-term { font-weight: 600; color: ${t.gTermColor}; }
-  .g-sep { color: ${t.gSepColor}; }
-  .g-desc { color: ${t.gDescColor}; }
   .footer { margin-top: 24px; padding-top: 8px; border-top: 1px solid ${t.footerBorder}; font-size: 9.5px; color: ${t.footerColor}; }
   @page { margin: 0; }
   @media print {
+    html, body { background: ${t.bodyBg}; }
     body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
     .header, thead th, tbody tr:nth-child(even) { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .content { padding: 14px 28px; }
+    .header { padding: 20px 52px 17px; break-inside: avoid; page-break-inside: avoid; }
+    .content { padding: 18px 52px 24px; }
+    .capture-section-page { break-before: page; page-break-before: always; padding-top: 12mm; }
+    .keep-together { break-inside: avoid; page-break-inside: avoid; padding-top: 10mm; }
+    .keep-together table, .keep-together tbody, .keep-together tr { break-inside: avoid; page-break-inside: avoid; }
+    .section-title { break-after: avoid; page-break-after: avoid; }
+    thead th { border-top: 9mm solid ${t.bodyBg}; }
+    tfoot { display: table-footer-group; }
+    tfoot td { height: 10mm; padding: 0; border: 0; background: ${t.bodyBg}; }
+    .footer { break-inside: avoid; page-break-inside: avoid; margin-top: 10mm; padding-top: 6mm; padding-bottom: 12mm; }
   }
 </style>
 </head>
@@ -249,22 +261,19 @@ function generateExportHtml(info: PackInfo, folderPath: string, folderName: stri
 <div class="content">
   ${hasDesc ? `<div class="description">${parseDescription(info.description, dark)}</div>` : ''}
 
-  ${hasCaptures ? `<div class="section">
+  ${hasCaptures ? `<div class="${captureSectionClass}">
     <div class="section-title">Captures</div>
     <table>
       <thead><tr>${captureHeaderCells}</tr></thead>
+      <tfoot><tr>${captureFooterCells}</tr></tfoot>
       <tbody>${captureRows}</tbody>
     </table>
   </div>` : ''}
 
-  ${hasEquipment ? `<div class="section"><div class="section-title">Equipment</div>${kvTable(equipRows)}</div>` : ''}
-  ${hasPedals ? `<div class="section"><div class="section-title">Pedals</div>${kvTable(pedalRows)}</div>` : ''}
-  ${hasSwitches ? `<div class="section"><div class="section-title">Switches &amp; Modes</div>${kvTable(switchRows)}</div>` : ''}
-
-  ${hasGlossary ? `<div class="section">
-    <div class="section-title">Glossary</div>
-    <div>${glossaryItems}</div>
-  </div>` : ''}
+  ${hasEquipment ? `<div class="section keep-together"><div class="section-title">Equipment</div>${kvTable(equipRows)}</div>` : ''}
+  ${hasPedals ? `<div class="section keep-together"><div class="section-title">Pedals</div>${kvTable(pedalRows)}</div>` : ''}
+  ${hasSwitches ? `<div class="section keep-together"><div class="section-title">Switches &amp; Modes</div>${kvTable(switchRows)}</div>` : ''}
+  ${hasGlossary ? `<div class="section keep-together"><div class="section-title">Glossary</div>${kvTable(glossaryRows)}</div>` : ''}
 
   <div class="footer">${info.footer.trim() ? parseDescription(info.footer, dark) : 'Generated by NAM Lab'}</div>
 </div>
@@ -282,6 +291,84 @@ interface Props {
   onPackSaved?: (folderPath: string, hasData: boolean) => void
   logoLight?: string
   logoDark?: string
+  allFolderPaths?: string[]
+}
+
+function CopyFolderPicker({
+  currentPath,
+  allFolderPaths,
+  onSelect,
+  onClose,
+}: {
+  currentPath: string
+  allFolderPaths: string[]
+  onSelect: (path: string) => void
+  onClose: () => void
+}) {
+  const [search, setSearch] = useState('')
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [onClose])
+
+  const normCurrent = currentPath.replace(/\\/g, '/')
+  const filtered = allFolderPaths
+    .filter((p) => p.replace(/\\/g, '/') !== normCurrent)
+    .filter((p) => {
+      if (!search.trim()) return true
+      const name = p.replace(/\\/g, '/').split('/').pop() ?? p
+      return name.toLowerCase().includes(search.toLowerCase())
+    })
+    .sort((a, b) => {
+      const na = a.replace(/\\/g, '/').split('/').pop() ?? a
+      const nb = b.replace(/\\/g, '/').split('/').pop() ?? b
+      return na.localeCompare(nb)
+    })
+
+  return (
+    <div
+      ref={ref}
+      className="absolute z-50 top-full right-0 mt-1 w-72 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl overflow-hidden"
+    >
+      <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 text-xs font-semibold text-gray-600 dark:text-gray-300">
+        Copy pack info to…
+      </div>
+      <div className="px-2 py-1.5 border-b border-gray-200 dark:border-gray-700">
+        <input
+          autoFocus
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Filter folders…"
+          className="w-full px-2 py-1 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-gray-800 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:border-teal-500"
+        />
+      </div>
+      <div className="max-h-56 overflow-y-auto">
+        {filtered.length === 0 ? (
+          <div className="px-3 py-3 text-xs text-gray-400 dark:text-gray-500">No folders found</div>
+        ) : (
+          filtered.map((p) => {
+            const name = p.replace(/\\/g, '/').split('/').pop() ?? p
+            return (
+              <button
+                key={p}
+                onClick={() => onSelect(p)}
+                className="w-full text-left px-3 py-2 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-colors truncate"
+                title={p}
+              >
+                {name}
+              </button>
+            )
+          })
+        )}
+      </div>
+    </div>
+  )
 }
 
 function SectionHeader({ label, hint }: { label: string; hint?: string }) {
@@ -452,7 +539,7 @@ function RowEditor<T extends Record<string, string>>({
   )
 }
 
-export function PackInfoEditor({ folderPath, folderName, captures, defaultCapturedBy = '', catalog = [], onCatalogChange, onPackSaved, logoLight, logoDark }: Props) {
+export function PackInfoEditor({ folderPath, folderName, captures, defaultCapturedBy = '', catalog = [], onCatalogChange, onPackSaved, logoLight, logoDark, allFolderPaths = [] }: Props) {
   const [pack, setPack] = useState<PackInfo>(EMPTY_PACK)
   const savedPackRef = useRef<PackInfo>(EMPTY_PACK)
   const [saved, setSaved] = useState(true)
@@ -465,6 +552,8 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
   const [darkExport, setDarkExport] = useState(() => {
     try { return localStorage.getItem('nam-pack-dark-export') === '1' } catch { return false }
   })
+  const [copyPickerOpen, setCopyPickerOpen] = useState(false)
+  const [copyStatus, setCopyStatus] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -484,6 +573,7 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
               glossary: d.glossary ?? [],
               footer: d.footer ?? '',
               exportExcludedSubfolders: d.exportExcludedSubfolders ?? [],
+              exportExcludedCaptures: d.exportExcludedCaptures ?? [],
               exportColumns: d.exportColumns ?? DEFAULT_EXPORT_COLUMNS
             }
           })()
@@ -554,13 +644,15 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
 
   // Returns true if the file should be included — excluded if its folder path matches any excluded entry exactly
   const isNotExcluded = useCallback((f: NamFile) => {
+    const captureKey = f.metadata.name || f.fileName
+    if (pack.exportExcludedCaptures.includes(captureKey)) return false
     if (pack.exportExcludedSubfolders.length === 0) return true
     const base = folderPath.replace(/\\/g, '/') + '/'
     const fp = f.filePath.replace(/\\/g, '/')
     if (!fp.startsWith(base)) return true
     const relFolder = fp.slice(base.length).split('/').slice(0, -1).join('/')
     return !pack.exportExcludedSubfolders.includes(relFolder)
-  }, [pack.exportExcludedSubfolders, folderPath])
+  }, [pack.exportExcludedCaptures, pack.exportExcludedSubfolders, folderPath])
 
   const handleSave = async () => {
     const res = await window.api.writePackInfo(folderPath, pack)
@@ -585,6 +677,20 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
     if (!res.success) setStatus('Export failed')
   }
 
+  const handleCopyTo = async (targetPath: string) => {
+    setCopyPickerOpen(false)
+    const res = await window.api.writePackInfo(targetPath, pack)
+    if (res.success) {
+      const targetName = targetPath.replace(/\\/g, '/').split('/').pop() ?? targetPath
+      onPackSaved?.(targetPath.replace(/\\/g, '/'), !!pack.title.trim())
+      setCopyStatus(`Copied to "${targetName}"`)
+      setTimeout(() => setCopyStatus(null), 3000)
+    } else {
+      setCopyStatus('Copy failed')
+      setTimeout(() => setCopyStatus(null), 3000)
+    }
+  }
+
   const isChanged = (key: keyof PackInfo) =>
     JSON.stringify(pack[key]) !== JSON.stringify(savedPackRef.current[key])
 
@@ -605,10 +711,10 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
           <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Pack Info</h3>
           <p className="text-xs text-gray-500 dark:text-gray-400">{folderName}</p>
         </div>
-        <div className="flex items-center gap-3">
-          {status && (
-            <span className={`text-xs ${status === 'Saved' ? 'text-teal-600 dark:text-teal-400' : 'text-red-500'}`}>
-              {status}
+        <div className="flex items-center gap-2 relative">
+          {(status || copyStatus) && (
+            <span className={`text-xs ${copyStatus ? 'text-teal-600 dark:text-teal-400' : status === 'Saved' ? 'text-teal-600 dark:text-teal-400' : 'text-red-500'}`}>
+              {copyStatus ?? status}
             </span>
           )}
           <label className="flex items-center gap-1.5 cursor-pointer select-none" title="Dark mode export">
@@ -627,6 +733,21 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
           >
             Export PDF…
           </button>
+          {/* Copy to… — deferred: NAM Lab's nested folder structure makes target
+              selection non-trivial; capture-lab has flat folders so its picker
+              worked out of the box. Needs UX design before enabling. */}
+          {false && allFolderPaths.length > 1 && (
+            <button
+              onClick={() => setCopyPickerOpen((v) => !v)}
+              title="Copy pack info to another folder"
+              className="text-xs px-2.5 py-1 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors flex items-center gap-1"
+            >
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+              Copy to…
+            </button>
+          )}
           <button
             onClick={handleSave}
             disabled={saved}
@@ -634,6 +755,14 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
           >
             Save
           </button>
+          {copyPickerOpen && (
+            <CopyFolderPicker
+              currentPath={folderPath}
+              allFolderPaths={allFolderPaths}
+              onSelect={handleCopyTo}
+              onClose={() => setCopyPickerOpen(false)}
+            />
+          )}
         </div>
       </div>
 
@@ -695,7 +824,7 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
         </div>
 
         {/* Captures */}
-        <SectionHeader label="Captures" hint={`${captures.length} auto-populated from loaded files`} />
+        <SectionHeader label="Captures" hint={`${captures.length} loaded from files — check/uncheck to include in export`} />
         {/* Subfolder filter + column chooser row */}
         <div className="mb-2 flex items-center gap-2">
         {subfolders.length > 0 && (
@@ -786,28 +915,72 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
                 Capture columns (max 6)
               </div>
               <div className="py-1">
+                {/* Fixed: Capture Name always first */}
                 <div className="flex items-center gap-2 px-3 py-1 opacity-50 select-none">
-                  <input type="checkbox" checked readOnly className="w-3 h-3 rounded" />
-                  <span className="text-xs text-gray-700 dark:text-gray-300">Capture Name</span>
-                  <span className="text-[10px] text-gray-400 ml-auto">always</span>
+                  <div className="w-3.5 flex-shrink-0" />
+                  <input type="checkbox" checked readOnly className="w-3 h-3 rounded flex-shrink-0" />
+                  <span className="text-xs text-gray-700 dark:text-gray-300 flex-1">Capture Name</span>
+                  <span className="text-[10px] text-gray-400">always</span>
                 </div>
-                {PACK_CAPTURE_COLUMNS.map((col) => {
-                  const on = pack.exportColumns.includes(col.id)
-                  const atMax = pack.exportColumns.length >= 6 && !on
+                {/* Active columns in order with reorder arrows */}
+                {pack.exportColumns.map((id, idx) => {
+                  const col = PACK_CAPTURE_COLUMNS.find((c) => c.id === id)
+                  if (!col) return null
                   return (
-                    <label key={col.id} className={`flex items-center gap-2 px-3 py-1 cursor-pointer select-none hover:bg-gray-50 dark:hover:bg-gray-700/50 ${atMax ? 'opacity-40 pointer-events-none' : ''}`}>
+                    <div key={id} className="flex items-center gap-1 px-2 py-0.5 hover:bg-gray-50 dark:hover:bg-gray-700/50 group">
+                      <div className="flex flex-col flex-shrink-0">
+                        <button
+                          onClick={() => {
+                            if (idx === 0) return
+                            const next = [...pack.exportColumns]
+                            ;[next[idx - 1], next[idx]] = [next[idx], next[idx - 1]]
+                            update('exportColumns', next)
+                          }}
+                          disabled={idx === 0}
+                          className="text-gray-300 dark:text-gray-600 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-20 disabled:pointer-events-none leading-none"
+                        >
+                          <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 15l7-7 7 7" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (idx === pack.exportColumns.length - 1) return
+                            const next = [...pack.exportColumns]
+                            ;[next[idx], next[idx + 1]] = [next[idx + 1], next[idx]]
+                            update('exportColumns', next)
+                          }}
+                          disabled={idx === pack.exportColumns.length - 1}
+                          className="text-gray-300 dark:text-gray-600 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-20 disabled:pointer-events-none leading-none"
+                        >
+                          <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </button>
+                      </div>
                       <input
                         type="checkbox"
-                        checked={on}
-                        onChange={(e) => {
-                          const next = e.target.checked
-                            ? [...pack.exportColumns, col.id]
-                            : pack.exportColumns.filter((c) => c !== col.id)
-                          update('exportColumns', next)
-                        }}
+                        checked
+                        onChange={() => update('exportColumns', pack.exportColumns.filter((c) => c !== id))}
+                        className="w-3 h-3 rounded accent-teal-600 flex-shrink-0 cursor-pointer"
+                      />
+                      <span className="text-xs text-gray-700 dark:text-gray-300 flex-1 select-none">{col.label}</span>
+                    </div>
+                  )
+                })}
+                {/* Inactive columns — click to add at end */}
+                {PACK_CAPTURE_COLUMNS.filter((c) => !pack.exportColumns.includes(c.id)).map((col) => {
+                  const atMax = pack.exportColumns.length >= 6
+                  return (
+                    <label key={col.id} className={`flex items-center gap-1 px-2 py-0.5 cursor-pointer select-none hover:bg-gray-50 dark:hover:bg-gray-700/50 ${atMax ? 'opacity-40 pointer-events-none' : ''}`}>
+                      <div className="w-3.5 flex-shrink-0" />
+                      <input
+                        type="checkbox"
+                        checked={false}
+                        onChange={() => { if (!atMax) update('exportColumns', [...pack.exportColumns, col.id]) }}
                         className="w-3 h-3 rounded accent-teal-600 flex-shrink-0"
                       />
-                      <span className="text-xs text-gray-700 dark:text-gray-300">{col.label}</span>
+                      <span className="text-xs text-gray-400 dark:text-gray-500 flex-1">{col.label}</span>
                     </label>
                   )
                 })}
@@ -821,36 +994,81 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
           {captures.length === 0 ? (
             <p className="text-xs text-gray-400 dark:text-gray-500 italic text-center py-2">No captures loaded for this folder</p>
           ) : (() => {
-            const visible = captures.filter(isNotExcluded)
-            const activeCols = PACK_CAPTURE_COLUMNS.filter((c) => pack.exportColumns.includes(c.id))
-            const colCount = activeCols.length + 1
+            const activeCols = pack.exportColumns
+              .map((id) => PACK_CAPTURE_COLUMNS.find((c) => c.id === id))
+              .filter((c): c is typeof PACK_CAPTURE_COLUMNS[number] => !!c)
+            // Only show captures that pass the subfolder filter
+            const base = folderPath.replace(/\\/g, '/') + '/'
+            const subfoldVisible = captures.filter((f) => {
+              if (pack.exportExcludedSubfolders.length === 0) return true
+              const fp = f.filePath.replace(/\\/g, '/')
+              if (!fp.startsWith(base)) return true
+              const relFolder = fp.slice(base.length).split('/').slice(0, -1).join('/')
+              return !pack.exportExcludedSubfolders.includes(relFolder)
+            })
+            const includedCount = subfoldVisible.filter((f) => !pack.exportExcludedCaptures.includes(f.metadata.name || f.fileName)).length
             return (
               <div className="rounded border border-gray-200 dark:border-gray-700 overflow-hidden">
-                <table className="w-full text-xs table-fixed">
-                  <thead>
-                    <tr className="bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400">
-                      <th className="text-left px-2 py-1 font-medium">Name</th>
-                      {activeCols.map((c) => (
-                        <th key={c.id} className="text-left px-2 py-1 font-medium">{c.label}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visible.slice(0, 25).map((f) => (
-                      <tr key={f.filePath} className="border-t border-gray-100 dark:border-gray-800">
-                        <td className="px-2 py-0.5 text-gray-800 dark:text-gray-200 truncate">{f.metadata.name || f.fileName}</td>
+                <div className="max-h-64 overflow-y-auto">
+                  <table className="w-full text-xs table-fixed">
+                    <thead className="sticky top-0 z-10">
+                      <tr className="bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400">
+                        <th className="w-6 px-1 py-1" title="Include in export" />
+                        <th className="text-left px-2 py-1 font-medium">Name</th>
                         {activeCols.map((c) => (
-                          <td key={c.id} className="px-2 py-0.5 text-gray-600 dark:text-gray-400 truncate">{c.accessor(f)}</td>
+                          <th key={c.id} className="text-left px-2 py-1 font-medium">{c.label}</th>
                         ))}
                       </tr>
-                    ))}
-                    {visible.length > 25 && (
-                      <tr className="border-t border-gray-100 dark:border-gray-800">
-                        <td colSpan={colCount} className="px-2 py-0.5 text-gray-400 dark:text-gray-500 italic">+ {visible.length - 25} more…</td>
-                      </tr>
+                    </thead>
+                    <tbody>
+                      {subfoldVisible.map((f) => {
+                        const key = f.metadata.name || f.fileName
+                        const excluded = pack.exportExcludedCaptures.includes(key)
+                        return (
+                          <tr key={f.filePath} className={`border-t border-gray-100 dark:border-gray-800 ${excluded ? 'opacity-40' : ''}`}>
+                            <td className="px-1 py-0.5 text-center">
+                              <input
+                                type="checkbox"
+                                checked={!excluded}
+                                onChange={(e) => {
+                                  const next = e.target.checked
+                                    ? pack.exportExcludedCaptures.filter((k) => k !== key)
+                                    : [...pack.exportExcludedCaptures, key]
+                                  update('exportExcludedCaptures', next)
+                                }}
+                                className="w-3 h-3 rounded accent-teal-600 cursor-pointer"
+                                title={excluded ? 'Excluded from export — click to include' : 'Included in export — click to exclude'}
+                              />
+                            </td>
+                            <td className="px-2 py-0.5 text-gray-800 dark:text-gray-200 truncate">{key}</td>
+                            {activeCols.map((c) => (
+                              <td key={c.id} className="px-2 py-0.5 text-gray-600 dark:text-gray-400 truncate">{c.accessor(f)}</td>
+                            ))}
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="px-3 py-1.5 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between bg-gray-50 dark:bg-gray-800/50">
+                  <span className="text-[10px] text-gray-500 dark:text-gray-400">
+                    <span className="font-medium text-gray-700 dark:text-gray-300">{includedCount}</span>
+                    {' of '}
+                    <span className="font-medium text-gray-700 dark:text-gray-300">{subfoldVisible.length}</span>
+                    {' captures in export'}
+                    {captures.length !== subfoldVisible.length && (
+                      <span className="text-gray-400 dark:text-gray-600"> · {captures.length - subfoldVisible.length} hidden by folder filter</span>
                     )}
-                  </tbody>
-                </table>
+                  </span>
+                  {pack.exportExcludedCaptures.length > 0 && (
+                    <button
+                      onClick={() => update('exportExcludedCaptures', [])}
+                      className="text-[10px] text-teal-600 dark:text-teal-400 hover:underline"
+                    >
+                      Include all
+                    </button>
+                  )}
+                </div>
               </div>
             )
           })()}

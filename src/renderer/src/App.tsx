@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+﻿import { useState, useCallback, useEffect, useRef } from 'react'
 import beakerTransparent from './assets/images/beaker.only.transparent.png'
 import { NamFile, TONE_TYPES, GEAR_TYPES } from './types/nam'
 import { AppSettings, loadSettings, saveSettings } from './types/settings'
@@ -14,6 +14,8 @@ import { SettingsPanel } from './components/SettingsPanel'
 import { FolderTree } from './components/FolderTree'
 import { DuplicatesModal } from './components/DuplicatesModal'
 import { ImportMetadataModal, ImportMatch } from './components/ImportMetadataModal'
+import { TrainingCoverageModal } from './components/TrainingCoverageModal'
+import { FolderCompareModal } from './components/FolderCompareModal'
 import { FolderGallery, FolderImagesData } from './components/FolderGallery'
 import { PackInfoEditor } from './components/PackInfoEditor'
 import { PlayerPanel } from './components/PlayerPanel'
@@ -71,8 +73,11 @@ declare global {
       findPackFolders: (rootPath: string) => Promise<string[]>
       readPackInfo: (folderPath: string) => Promise<{ success: boolean; data: unknown }>
       writePackInfo: (folderPath: string, data: unknown) => Promise<{ success: boolean; error?: string }>
+      deletePackInfo: (folderPath: string) => Promise<{ success: boolean; error?: string }>
       exportPackSheet: (html: string) => Promise<{ success: boolean; error?: string }>
       platform: string
+      initialSettings: unknown
+      saveSettingsToFile: (json: string) => void
     }
   }
 }
@@ -157,7 +162,7 @@ function detectToneType(baseName: string): typeof TONE_TYPES[number] | null {
 const EMPTY_LIBRARIAN: LibrarianState = {
   rootFolder: null,
   folderTree: null,
-  selectedFolder: null
+  selectedFolders: []
 }
 
 export default function App() {
@@ -183,6 +188,7 @@ export default function App() {
     const maxList = window.innerWidth - initialLayout.treeWidth - 300
     return Math.min(raw, Math.max(140, maxList))
   })
+  const loadGenRef = useRef(0)  // increments on every new folder load; stale scans discard results
   const draggingRef = useRef<null | { panel: 'tree' | 'list'; startX: number; startWidth: number }>(null)
   const mainContentRef = useRef<HTMLDivElement>(null)
   const [treeCollapsed, setTreeCollapsed] = useState(false)
@@ -195,6 +201,7 @@ export default function App() {
   const [showDuplicates, setShowDuplicates] = useState(false)
   const [metadataClipboard, setMetadataClipboard] = useState<{ sourceName: string; metadata: Partial<NamFile['metadata']> } | null>(null)
   const [importModal, setImportModal] = useState<{ folderName: string; exactMatches: ImportMatch[]; prefixMatches: ImportMatch[]; unmatchedNames: string[] } | null>(null)
+  const [coverageReport, setCoverageReport] = useState<{ folderPath: string } | null>(null)
   const [watcherKey, setWatcherKey] = useState(0)
   const [recentFolders, setRecentFolders] = useState<string[]>(() => {
     try {
@@ -205,28 +212,36 @@ export default function App() {
     }
   })
 
-  const [folderImages, setFolderImages] = useState<FolderImagesData>(null)
+  const [folderImages, setFolderImages] = useState<FolderImagesData | null>(null)
   const [folderPanelTab, setFolderPanelTab] = useState<'pack' | 'gallery'>('pack')
   // Path of the ancestor that owns the pack info for the current folder (null = current folder may own one)
   const [packInfoAncestor, setPackInfoAncestor] = useState<string | null>(null)
   // Set of folder paths that have a valid nam-pack.json (non-empty title) — drives blue dot in tree
   const [packInfoFolders, setPackInfoFolders] = useState<Set<string>>(new Set())
+  // Folder compare modal: array of paths to compare (null = closed)
+  const [compareFolderPaths, setCompareFolderPaths] = useState<string[] | null>(null)
 
   // Reset folder panel tab and check for pack-owning ancestor when selected folder changes
   useEffect(() => {
-    setFolderPanelTab('pack')
-    const sf = librarian.selectedFolder
+    const sf = librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null
     const rf = librarian.rootFolder
     if (!sf || !rf || sf === rf) {
       setPackInfoAncestor(null)
+      setFolderPanelTab('pack')
       return
     }
     let cancelled = false
+    const sfNorm = sf.replace(/\\/g, '/')
     window.api.findPackOwner(sf, rf).then((owner) => {
-      if (!cancelled) setPackInfoAncestor(owner)
+      if (cancelled) return
+      setPackInfoAncestor(owner)
+      const ownPack = packInfoFolders.has(sfNorm)
+      // Default to gallery when folder has no own pack but a parent pack exists
+      setFolderPanelTab(!ownPack && owner ? 'gallery' : 'pack')
     })
     return () => { cancelled = true }
-  }, [librarian.selectedFolder, librarian.rootFolder])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [librarian.selectedFolders, librarian.rootFolder])
 
   // Scan all pack-info folders when root folder changes (drives blue dot in tree)
   useEffect(() => {
@@ -244,7 +259,7 @@ export default function App() {
 
   // Scan folder images when selected folder changes (only when feature is enabled)
   useEffect(() => {
-    const sf = librarian.selectedFolder
+    const sf = librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null
     const rf = librarian.rootFolder
     if (!settings.showFolderImages) {
       setFolderImages(null)
@@ -287,7 +302,7 @@ export default function App() {
     }
     scan()
     return () => { cancelled = true }
-  }, [librarian.selectedFolder, librarian.rootFolder, settings.showFolderImages])
+  }, [librarian.selectedFolders, librarian.rootFolder, settings.showFolderImages])
 
   // Apply dark/light class to <html> whenever theme setting changes
   useEffect(() => {
@@ -366,6 +381,13 @@ export default function App() {
     }
   }
 
+  const handleDeletePackInfo = async (folderPath: string) => {
+    if (!window.confirm(`Delete the Pack Info file for "${folderPath.split('/').pop()}"?\n\nThis cannot be undone.`)) return
+    const res = await window.api.deletePackInfo(folderPath)
+    if (res.success) handlePackSaved(folderPath, false)
+    else setStatus({ message: `Failed to delete pack info: ${res.error}`, type: 'error' })
+  }
+
   // Called by PackInfoEditor after saving — updates the blue-dot set in the tree
   const handlePackSaved = (folderPath: string, hasData: boolean) => {
     setPackInfoFolders((prev) => {
@@ -379,11 +401,11 @@ export default function App() {
   // Auto-load default folder on startup (moved below loadFolderByPath — see combined startup effect)
 
   // mode='replace': clear existing, load fresh (open folder/files)
-  // mode='append': dedup against current files (drag & drop)
-  const loadFiles = useCallback(async (paths: string[], mode: 'replace' | 'append' = 'append') => {
-    setStatus({ message: `Loading ${paths.length} file(s)...`, type: 'info' })
-    const results = await Promise.all(paths.map((p) => window.api.readFile(p)))
-
+  // Shared: turn raw IPC read results into NamFile[] and update state
+  const applyParsedResults = useCallback(async (
+    results: { success: boolean; filePath?: string; metadata?: NamFile['metadata']; version?: string; architecture?: string; config?: unknown; error?: string }[],
+    mode: 'replace' | 'append'
+  ) => {
     const loaded: NamFile[] = []
     let errors = 0
     for (const r of results) {
@@ -391,70 +413,62 @@ export default function App() {
         const fileName = r.filePath.replace(/\\/g, '/').split('/').pop() ?? r.filePath
         const baseName = fileName.replace(/\.nam$/i, '')
         const rawMeta = r.metadata ?? {}
-        // Sanitize unrecognized values into working copy only — originalMetadata
-        // keeps the raw value so isDirty fires and the file surfaces for fixing
         const workingMeta: NamFile['metadata'] = { ...rawMeta }
-        // Normalize numeric fields written as strings by a prior import bug — causes isDirty=true so Save All heals the file
         if (typeof workingMeta.input_level_dbu === 'string') workingMeta.input_level_dbu = parseFloat(workingMeta.input_level_dbu as unknown as string)
         if (typeof workingMeta.output_level_dbu === 'string') workingMeta.output_level_dbu = parseFloat(workingMeta.output_level_dbu as unknown as string)
-        if (workingMeta.tone_type && !(TONE_TYPES as readonly string[]).includes(workingMeta.tone_type)) {
-          workingMeta.tone_type = null
-        }
-        if (workingMeta.gear_type && !(GEAR_TYPES as readonly string[]).includes(workingMeta.gear_type)) {
-          workingMeta.gear_type = null
-        }
+        if (workingMeta.tone_type && !(TONE_TYPES as readonly string[]).includes(workingMeta.tone_type)) workingMeta.tone_type = null
+        if (workingMeta.gear_type && !(GEAR_TYPES as readonly string[]).includes(workingMeta.gear_type)) workingMeta.gear_type = null
         const meta = applyDefaults(workingMeta, baseName, settings)
         const wasChanged = JSON.stringify(meta) !== JSON.stringify(rawMeta)
-        // Track which fields were set by applyDefaults (weren't in workingMeta before)
         const autoFilledFields = (Object.keys(meta) as (keyof NamFile['metadata'])[]).filter(
           (k) => meta[k] != null && (workingMeta[k] == null || workingMeta[k] === '')
         )
-        loaded.push({
-          filePath: r.filePath,
-          fileName: baseName,
-          version: r.version ?? '?',
-          metadata: meta,
-          originalMetadata: rawMeta,
-          autoFilledFields,
-          architecture: r.architecture ?? '?',
-          config: r.config,
-          isDirty: wasChanged
-        })
+        loaded.push({ filePath: r.filePath, fileName: baseName, version: r.version ?? '?', metadata: meta, originalMetadata: rawMeta, autoFilledFields, architecture: r.architecture ?? '?', config: r.config, isDirty: wasChanged })
       } else {
         errors++
       }
     }
-
-    // Dedup inside functional update so prev is always current (fixes stale closure bug)
     setFiles((prev) => {
       if (mode === 'replace') return loaded
       const existing = new Set(prev.map((f) => f.filePath))
       return [...prev, ...loaded.filter((f) => !existing.has(f.filePath))]
     })
-
-    // Auto-select first file when replacing, or when nothing is selected on append
     setSelectedIds((prev) => {
       if (loaded.length === 0) return prev
       if (mode === 'replace') return new Set([loaded[0].filePath])
       if (prev.size === 0) return new Set([loaded[0].filePath])
       return prev
     })
-
     if (errors > 0) {
       const logPath = await window.api.getErrorLogPath()
-      setStatus({
-        message: `Loaded ${loaded.length} file(s) — ${errors} could not be parsed (skipped)`,
-        type: 'error',
-        logPath
-      })
+      setStatus({ message: `Loaded ${loaded.length} file(s) — ${errors} could not be parsed (skipped)`, type: 'error', logPath })
     } else {
       setStatus({ message: `Loaded ${loaded.length} file(s)`, type: 'success' })
     }
-  }, [settings]) // no longer depends on files or selectedIds
+  }, [settings])
+
+  // mode='append': dedup against current files (drag & drop)
+  const loadFiles = useCallback(async (paths: string[], mode: 'replace' | 'append' = 'append', genToken?: number) => {
+    setStatus({ message: `Loading ${paths.length} file(s)...`, type: 'info' })
+    const CONCURRENCY = 50
+    const results: Awaited<ReturnType<typeof window.api.readFile>>[] = []
+    for (let i = 0; i < paths.length; i += CONCURRENCY) {
+      if (genToken !== undefined && genToken !== loadGenRef.current) return
+      const batch = paths.slice(i, i + CONCURRENCY)
+      const batchResults = await Promise.all(batch.map((p) => window.api.readFile(p)))
+      results.push(...batchResults)
+      if (paths.length > CONCURRENCY) {
+        setStatus({ message: `Loading files… ${Math.min(i + CONCURRENCY, paths.length)} / ${paths.length}`, type: 'info' })
+      }
+    }
+    if (genToken !== undefined && genToken !== loadGenRef.current) return
+    await applyParsedResults(results, mode)
+  }, [applyParsedResults]) // no longer depends on files or selectedIds
 
   // Shared logic for opening a folder by path (used by Open Folder and Refresh)
   const loadFolderByPath = useCallback(async (folder: string) => {
-    setStatus({ message: 'Scanning folder...', type: 'info' })
+    const gen = ++loadGenRef.current
+    setStatus({ message: 'Scanning folder... (large or network folders may take a minute)', type: 'info' })
     setFolderChanged(false)
     // Stop watcher during reload so the scan itself doesn't re-trigger the banner
     window.api.watchFolder(null)
@@ -470,6 +484,7 @@ export default function App() {
       window.api.scanFolder(folder, hiddenFolders),
       window.api.scanTree(folder, hiddenFolders)
     ])
+    if (gen !== loadGenRef.current) return
     if (!flatResult.success) {
       setStatus({ message: `Error: ${flatResult.error}`, type: 'error' })
       return
@@ -482,16 +497,15 @@ export default function App() {
     setLibrarian({
       rootFolder: normalizedFolder,
       folderTree: treeResult.success && treeResult.tree ? treeResult.tree : null,
-      selectedFolder: null
+      selectedFolders: []
     })
-    // Track recent folders
     setRecentFolders((prev) => {
       const next = [normalizedFolder, ...prev.filter((f) => f !== normalizedFolder)].slice(0, 10)
       localStorage.setItem('nam-lab-recent-folders', JSON.stringify(next))
       return next
     })
-    await loadFiles(flatResult.files, 'replace')
-    // Bump watcherKey to restart the folder watcher now that the scan is done
+    await loadFiles(flatResult.files, 'replace', gen)
+    if (gen !== loadGenRef.current) return
     setWatcherKey((k) => k + 1)
   }, [loadFiles, settings])
 
@@ -642,7 +656,7 @@ export default function App() {
     // Use same visibility logic as visibleFiles (folder filter only — no FileList internal filters)
     const currentVisible = files.filter((f) => {
       const norm = f.filePath.replace(/\\/g, '/')
-      if (librarian.selectedFolder && !norm.startsWith(librarian.selectedFolder + '/')) return false
+      if (librarian.selectedFolders.length > 0 && !librarian.selectedFolders.some((sf) => norm.startsWith(sf + '/'))) return false
       return true
     })
     const idx = currentVisible.findIndex((f) => f.filePath === filePath)
@@ -660,7 +674,7 @@ export default function App() {
       })
       .map((f) => f.filePath)
     setSelectedIds(new Set(paths))
-    if (folderPath) setLibrarian((prev) => ({ ...prev, selectedFolder: folderPath }))
+    if (folderPath) setLibrarian((prev) => ({ ...prev, selectedFolders: [folderPath] }))
   }
 
   const handleSaveAll = async () => {
@@ -874,7 +888,7 @@ export default function App() {
     }
 
     // Switch selected folder to destination
-    setLibrarian((prev) => ({ ...prev, selectedFolder: destFolderPath }))
+    setLibrarian((prev) => ({ ...prev, selectedFolders: [destFolderPath] }))
     setSelectedIds(new Set())
 
     const msg = failCount > 0
@@ -1053,7 +1067,10 @@ export default function App() {
   }
 
   const handleTrashFiles = async (paths: string[]) => {
-    const fileNames = paths.map((p) => p.replace(/\\/g, '/').split('/').pop()).join('\n')
+    const fileNames = paths.map((p) => {
+      const parts = p.replace(/\\/g, '/').split('/')
+      return parts.length >= 2 ? parts.slice(-2).join('/') : parts[parts.length - 1]
+    }).join('\n')
     const confirmed = window.confirm(
       `Move ${paths.length} file${paths.length !== 1 ? 's' : ''} to trash?\n\n${fileNames}\n\nThis can be recovered from the trash.`
     )
@@ -1071,7 +1088,9 @@ export default function App() {
       })
     }
     if (failed > 0) {
-      setStatus({ message: `Trashed ${trashed.length}, failed ${failed}`, type: 'error' })
+      const errors = results.filter((r) => !r.success).map((r) => r.error).filter(Boolean)
+      const detail = errors.length > 0 ? `: ${errors[0]}` : ''
+      setStatus({ message: `Trashed ${trashed.length}, failed ${failed}${detail}`, type: 'error' })
     } else {
       setStatus({ message: `Moved ${trashed.length} file${trashed.length !== 1 ? 's' : ''} to trash`, type: 'success' })
     }
@@ -1339,6 +1358,12 @@ export default function App() {
     // For prefix matches only: amp→amp_cab, pedal_amp→amp_pedal_cab. All other gear_types skipped.
     const CAB_UPGRADE: Record<string, string> = { amp: 'amp_cab', pedal_amp: 'amp_pedal_cab' }
 
+    // Defined early so Pass 1 can use it to detect DI files by their own name suffix.
+    const prefixSuffixSet = new Set(
+      (settings.importPrefixSuffixes || 'DI')
+        .split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
+    )
+
     // Helper: build incoming fields from a row, optionally skipping prefix-skip fields
     const buildIncoming = (row: Record<string, unknown>, skipFields: Set<keyof NamFile['metadata']> = new Set(), isPrefix = false): Partial<NamFile['metadata']> => {
       const incoming: Partial<NamFile['metadata']> = {}
@@ -1380,7 +1405,18 @@ export default function App() {
         // Always mark exact-matched — prevents prefix from a different row overriding it
         exactMatchedPaths.add(file.filePath)
         const incoming = buildIncoming(row)
-        if ('gear_type' in incoming) exactGearTypePaths.add(file.filePath)
+        // Block Pass 3 cab upgrade if:
+        //   (a) gear_type is already a cab-inclusive type (amp_cab / amp_pedal_cab), OR
+        //   (b) this file's own name ends with a configured DI suffix — it IS the DI capture,
+        //       not a cab variant, so it must keep its gear_type unchanged.
+        // Non-DI files with amp/pedal_amp are left unprotected so Pass 3 can upgrade them.
+        const fileWords = (file.metadata.name || file.fileName || '').trim().split(/\s+/)
+        const fileEndsWithDiSuffix = prefixSuffixSet.has(fileWords[fileWords.length - 1]?.toUpperCase() ?? '')
+        if ('gear_type' in incoming && (
+          Object.values(CAB_UPGRADE).includes(incoming.gear_type as string) || fileEndsWithDiSuffix
+        )) {
+          exactGearTypePaths.add(file.filePath)
+        }
         if (Object.keys(incoming).length > 0) {
           exactMatches.push({ file, incoming })
         }
@@ -1409,21 +1445,23 @@ export default function App() {
       }
     }
 
-    // Pass 2: prefix matches — only for files WITHOUT an exact match row
-    const prefixSuffixSet = new Set(
-      (settings.importPrefixSuffixes || 'DI')
-        .split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
-    )
+    // Pass 2: prefix matches — only for files WITHOUT an exact match row.
+    // Sort by prefix length descending so the most specific (longest) DI row wins
+    // when multiple DI rows share a common base prefix.
     const prefixMatches: ImportMatch[] = []
     const prefixMatchedPaths = new Set<string>()
-    for (const row of rows) {
-      const captureName = String(row['Capture Name'] ?? '').trim()
-      if (!captureName) continue
-      const words = captureName.trim().split(/\s+/)
-      if (words.length < 2) continue
-      const lastWord = words[words.length - 1].toUpperCase()
-      if (!prefixSuffixSet.has(lastWord)) continue  // only strip known suffixes
-      const prefix = words.slice(0, -1).join(' ').toLowerCase()
+    const diRowsPass2 = rows
+      .map(row => {
+        const captureName = String(row['Capture Name'] ?? '').trim()
+        const words = captureName.split(/\s+/)
+        if (words.length < 2) return null
+        const lastWord = words[words.length - 1].toUpperCase()
+        if (!prefixSuffixSet.has(lastWord)) return null
+        return { row, prefix: words.slice(0, -1).join(' ').toLowerCase() }
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+      .sort((a, b) => b.prefix.length - a.prefix.length)
+    for (const { row, prefix } of diRowsPass2) {
       for (const f of scopedFiles) {
         const fName = (f.metadata.name || f.fileName || '').toLowerCase().trim()
         if (!fName.startsWith(prefix)) continue
@@ -1443,18 +1481,23 @@ export default function App() {
     // with tone_type set but no gear_type → "BE100 DI" row contributes amp_cab).
     const pathToFile = new Map(scopedFiles.map(f => [f.filePath, f]))
     const exactMatchByPath = new Map(exactMatches.map(m => [m.file.filePath, m]))
-    for (const row of rows) {
-      const captureName = String(row['Capture Name'] ?? '').trim()
-      if (!captureName) continue
-      const words = captureName.split(/\s+/)
-      if (words.length < 2) continue
-      const lastWord = words[words.length - 1].toUpperCase()
-      if (!prefixSuffixSet.has(lastWord)) continue
-      const rowGearType = String(row['Gear Type'] ?? '').trim()
-      if (!rowGearType) continue
-      const upgraded = CAB_UPGRADE[rowGearType]
-      if (!upgraded) continue
-      const prefix = words.slice(0, -1).join(' ').toLowerCase()
+    // Sort DI rows longest-prefix-first so the most specific row wins when multiple
+    // DI rows share a common base (e.g. "FMAN100V2 Plexi HG Koko DI" beats "FMAN100V2 Plexi HG DI").
+    const diRowsSorted = rows
+      .map(row => {
+        const captureName = String(row['Capture Name'] ?? '').trim()
+        const words = captureName.split(/\s+/)
+        const lastWord = words[words.length - 1]?.toUpperCase() ?? ''
+        if (words.length < 2 || !prefixSuffixSet.has(lastWord)) return null
+        const rowGearType = String(row['Gear Type'] ?? '').trim()
+        const upgraded = CAB_UPGRADE[rowGearType]
+        if (!upgraded) return null
+        const prefix = words.slice(0, -1).join(' ').toLowerCase()
+        return { row, prefix, upgraded }
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+      .sort((a, b) => b.prefix.length - a.prefix.length)
+    for (const { prefix, upgraded } of diRowsSorted) {
       for (const filePath of exactMatchedPaths) {
         if (exactGearTypePaths.has(filePath)) continue  // already has gear_type from exact row
         const f = pathToFile.get(filePath)
@@ -1605,7 +1648,7 @@ export default function App() {
   // Filter files by selected folder and/or library search filter
   const visibleFiles = files.filter((f) => {
     const norm = f.filePath.replace(/\\/g, '/')
-    if (librarian.selectedFolder && !norm.startsWith(librarian.selectedFolder + '/')) return false
+    if (librarian.selectedFolders.length > 0 && !librarian.selectedFolders.some((sf) => norm.startsWith(sf + '/'))) return false
     if (libraryFilter && !libraryFilter.has(norm)) return false
     return true
   })
@@ -1661,12 +1704,16 @@ export default function App() {
               <FolderTree
                 tree={librarian.folderTree!}
                 files={files}
-                selectedFolder={librarian.selectedFolder}
+                selectedFolders={librarian.selectedFolders}
                 dirtyPaths={dirtyPaths}
                 onFilterChange={(matching) => setLibraryFilter(matching)}
-                onSelect={(path) => {
-                  setLibrarian((prev) => ({ ...prev, selectedFolder: path }))
-                  setSelectedIds(new Set())
+                onSelect={(path, ctrl) => {
+                  setLibrarian((prev) => {
+                    if (path === null || !ctrl) return { ...prev, selectedFolders: path ? [path] : [] }
+                    const isIn = prev.selectedFolders.includes(path)
+                    return { ...prev, selectedFolders: isIn ? prev.selectedFolders.filter((f) => f !== path) : [...prev.selectedFolders, path] }
+                  })
+                  if (!ctrl) setSelectedIds(new Set())
                 }}
                 onSaveFolder={async (path) => {
                   const targets = path === null
@@ -1730,6 +1777,7 @@ export default function App() {
                 onGenerateTemplate={handleGenerateTemplate}
                 onImportMetadata={handleImportMetadata}
                 onSelectAllInFolder={handleSelectAllInFolder}
+                onCoverageReport={(folderPath) => setCoverageReport({ folderPath })}
                 scrollToFolder={treeScrollTarget}
                 packInfoFolders={packInfoFolders}
                 folderNameColors={settings.folderNameColors}
@@ -1739,6 +1787,8 @@ export default function App() {
                   else next[folderName] = color
                   handleSaveSettings({ ...settings, folderNameColors: next })
                 }}
+                onCompareFolders={(paths) => setCompareFolderPaths(paths)}
+                onDeletePackInfo={handleDeletePackInfo}
               />
             </div>
             {!gridMaximized && <DragHandle onMouseDown={(e) => onDragStart('tree', e)} onCollapse={() => setTreeCollapsed((v) => !v)} collapsed={treeCollapsed} />}
@@ -1938,17 +1988,14 @@ export default function App() {
               gearModelSuggestions={gearModelSuggestions}
             />
           ) : selectedFiles.length === 0 && librarian.rootFolder !== null ? (() => {
-            const activeFolderPath = (librarian.selectedFolder ?? librarian.rootFolder)!
+            const activeFolderPath = ((librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null) ?? librarian.rootFolder)!
             const activeFolderName = activeFolderPath.split('/').pop() ?? activeFolderPath
             const hasImages = folderImages !== null && (folderImages.own.length > 0 || folderImages.inherited.some((g) => g.paths.length > 0))
             const showGallery = hasImages && settings.showFolderImages
-            // If an ancestor folder already owns a nam-pack.json, this folder is a sub-division
-            // of that pack — only show gallery here, never a second pack info editor
-            const isPackChild = packInfoAncestor !== null
             const hasPack = packInfoFolders.has(activeFolderPath)
-            const showPackEditor = !isPackChild && hasPack
-            const showCreatePrompt = !isPackChild && !hasPack
-            const showGalleryTab = !isPackChild && showGallery
+            const showPackEditor = hasPack
+            const showCreatePrompt = !hasPack && packInfoAncestor !== null
+            const showGalleryTab = showGallery
             return (
               <div className="h-full flex flex-col">
                 {showGalleryTab && (showPackEditor || showCreatePrompt) && (
@@ -1981,6 +2028,16 @@ export default function App() {
                       onPackSaved={handlePackSaved}
                       logoLight={settings.packLogoLight}
                       logoDark={settings.packLogoDark}
+                      allFolderPaths={(() => {
+                        const paths: string[] = []
+                        const walk = (node: typeof librarian.folderTree) => {
+                          if (!node) return
+                          paths.push(node.path)
+                          node.children.forEach(walk)
+                        }
+                        walk(librarian.folderTree)
+                        return paths
+                      })()}
                     />
                   ) : showCreatePrompt && (!showGalleryTab || folderPanelTab === 'pack') ? (
                     <div className="h-full flex flex-col items-center justify-center gap-4 px-8 text-center">
@@ -1993,13 +2050,34 @@ export default function App() {
                       </div>
                       <button
                         onClick={async () => {
-                          const res = await window.api.writePackInfo(activeFolderPath, {})
+                          let initial: Record<string, unknown> = {}
+                          if (packInfoAncestor) {
+                            const parentRes = await window.api.readPackInfo(packInfoAncestor)
+                            if (parentRes.success && parentRes.data) {
+                              const p = parentRes.data as Record<string, unknown>
+                              initial = {
+                                title: p.title ?? '',
+                                subtitle: p.subtitle ?? '',
+                                description: p.description ?? '',
+                                equipment: p.equipment ?? [],
+                                pedals: p.pedals ?? [],
+                                glossary: p.glossary ?? [],
+                                footer: p.footer ?? '',
+                              }
+                            }
+                          }
+                          const res = await window.api.writePackInfo(activeFolderPath, initial)
                           if (res.success) handlePackSaved(activeFolderPath, true)
                         }}
                         className="px-4 py-2 text-sm rounded-lg bg-teal-600 hover:bg-teal-700 text-white transition-colors"
                       >
                         Create Pack Info
                       </button>
+                      {packInfoAncestor && (
+                        <p className="text-xs text-gray-400 dark:text-gray-500">
+                          Title, description, equipment, pedals & glossary will be copied from parent pack
+                        </p>
+                      )}
                     </div>
                   ) : showGallery ? (
                     <FolderGallery data={folderImages!} />
@@ -2131,6 +2209,23 @@ export default function App() {
           unmatchedNames={importModal.unmatchedNames}
           onConfirm={handleImportConfirm}
           onClose={() => setImportModal(null)}
+        />
+      )}
+
+      {coverageReport && (
+        <TrainingCoverageModal
+          files={files}
+          folderPath={coverageReport.folderPath}
+          prefixSuffixes={settings.importPrefixSuffixes || 'DI'}
+          onClose={() => setCoverageReport(null)}
+        />
+      )}
+
+      {compareFolderPaths && (
+        <FolderCompareModal
+          folderPaths={compareFolderPaths}
+          files={files}
+          onClose={() => setCompareFolderPaths(null)}
         />
       )}
     </div>

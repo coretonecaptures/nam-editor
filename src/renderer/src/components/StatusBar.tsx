@@ -5,20 +5,22 @@ interface StatusBarProps {
 }
 
 export function StatusBar({ message, type, logPath }: StatusBarProps) {
-  const colors = {
-    info: 'text-gray-500',
-    success: 'text-green-500',
-    error: 'text-red-400'
-  }
+  const isLoading = type === 'info' && /loading|scanning/i.test(message)
+
+  const dotClass = type === 'success' ? 'bg-green-500'
+    : type === 'error' ? 'bg-red-400'
+    : isLoading ? 'bg-amber-400 animate-pulse'
+    : 'bg-gray-400 dark:bg-gray-600'
+
+  const textClass = type === 'success' ? 'text-green-500'
+    : type === 'error' ? 'text-red-400'
+    : isLoading ? 'text-amber-400 animate-pulse'
+    : 'text-gray-500'
 
   return (
     <div className="h-6 flex items-center gap-2 px-4 bg-gray-100 dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 flex-shrink-0">
-      <div
-        className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-          type === 'success' ? 'bg-green-500' : type === 'error' ? 'bg-red-400' : 'bg-gray-400 dark:bg-gray-600'
-        }`}
-      />
-      <span className={`text-xs ${colors[type]}`}>{message}</span>
+      <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dotClass}`} />
+      <span className={`text-xs ${textClass}`}>{message}</span>
       {logPath && type === 'error' && (
         <button
           onClick={() => window.api.revealFile(logPath)}
