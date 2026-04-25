@@ -219,18 +219,24 @@ export default function App() {
 
   // Reset folder panel tab and check for pack-owning ancestor when selected folder changes
   useEffect(() => {
-    setFolderPanelTab('pack')
     const sf = librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null
     const rf = librarian.rootFolder
     if (!sf || !rf || sf === rf) {
       setPackInfoAncestor(null)
+      setFolderPanelTab('pack')
       return
     }
     let cancelled = false
+    const sfNorm = sf.replace(/\\/g, '/')
     window.api.findPackOwner(sf, rf).then((owner) => {
-      if (!cancelled) setPackInfoAncestor(owner)
+      if (cancelled) return
+      setPackInfoAncestor(owner)
+      const ownPack = packInfoFolders.has(sfNorm)
+      // Default to gallery when folder has no own pack but a parent pack exists
+      setFolderPanelTab(!ownPack && owner ? 'gallery' : 'pack')
     })
     return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [librarian.selectedFolders, librarian.rootFolder])
 
   // Scan all pack-info folders when root folder changes (drives blue dot in tree)
@@ -1974,7 +1980,7 @@ export default function App() {
             const showGallery = hasImages && settings.showFolderImages
             const hasPack = packInfoFolders.has(activeFolderPath)
             const showPackEditor = hasPack
-            const showCreatePrompt = !hasPack
+            const showCreatePrompt = !hasPack && packInfoAncestor !== null
             const showGalleryTab = showGallery
             return (
               <div className="h-full flex flex-col">

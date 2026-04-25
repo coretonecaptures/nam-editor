@@ -33,6 +33,7 @@ function inFolder(filePath: string, folderPath: string) {
 export function FolderCompareModal({ folderPaths, files, onClose }: Props) {
   const [showMode, setShowMode] = useState<ShowMode>('all')
   const [search, setSearch] = useState('')
+  const [filterColumn, setFilterColumn] = useState<string | null>(null)
 
   const { rows, folders } = useMemo(() => {
     const folders = folderPaths.map((p) => normPath(p))
@@ -66,13 +67,14 @@ export function FolderCompareModal({ folderPaths, files, onClose }: Props) {
 
   const filtered = useMemo(() => {
     let r = rows
-    if (showMode === 'missing') r = r.filter((row) => row.missingFrom.length > 0)
+    if (filterColumn) r = r.filter((row) => !row.presentIn.has(filterColumn))
+    else if (showMode === 'missing') r = r.filter((row) => row.missingFrom.length > 0)
     if (search.trim()) {
       const q = search.trim().toLowerCase()
       r = r.filter((row) => row.name.includes(q))
     }
     return r
-  }, [rows, showMode, search])
+  }, [rows, showMode, search, filterColumn])
 
   const missingCount = rows.filter((r) => r.missingFrom.length > 0).length
 
@@ -109,11 +111,11 @@ export function FolderCompareModal({ folderPaths, files, onClose }: Props) {
           <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-gray-600 text-xs">
             <button
               className={`px-3 py-1.5 transition-colors ${showMode === 'all' ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-700'}`}
-              onClick={() => setShowMode('all')}
+              onClick={() => { setShowMode('all'); setFilterColumn(null) }}
             >All ({rows.length})</button>
             <button
               className={`px-3 py-1.5 transition-colors ${showMode === 'missing' ? 'bg-amber-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-700'}`}
-              onClick={() => setShowMode('missing')}
+              onClick={() => { setShowMode('missing'); setFilterColumn(null) }}
             >Missing ({missingCount})</button>
           </div>
           <input
@@ -133,11 +135,20 @@ export function FolderCompareModal({ folderPaths, files, onClose }: Props) {
                 <th className="text-left px-4 py-2 font-medium text-gray-600 dark:text-gray-400 w-64 min-w-48">
                   Capture Name
                 </th>
-                {folders.map((fp) => (
-                  <th key={fp} className="text-center px-3 py-2 font-medium text-gray-600 dark:text-gray-400 max-w-36 truncate" title={fp}>
-                    {disambiguatedLabel(fp, folders)}
-                  </th>
-                ))}
+                {folders.map((fp) => {
+                  const active = filterColumn === fp
+                  return (
+                    <th
+                      key={fp}
+                      className={`text-center px-3 py-2 font-medium max-w-36 truncate cursor-pointer select-none transition-colors ${active ? 'text-amber-500 bg-amber-500/10' : 'text-gray-600 dark:text-gray-400 hover:text-amber-400'}`}
+                      title={active ? `Showing missing from ${fp} — click to clear` : `Click to show only captures missing from this folder`}
+                      onClick={() => setFilterColumn(active ? null : fp)}
+                    >
+                      {disambiguatedLabel(fp, folders)}
+                      {active && <span className="ml-1 text-[10px]">✕</span>}
+                    </th>
+                  )
+                })}
               </tr>
             </thead>
             <tbody>
