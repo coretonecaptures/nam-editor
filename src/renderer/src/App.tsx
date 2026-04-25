@@ -1966,13 +1966,10 @@ export default function App() {
             const activeFolderName = activeFolderPath.split('/').pop() ?? activeFolderPath
             const hasImages = folderImages !== null && (folderImages.own.length > 0 || folderImages.inherited.some((g) => g.paths.length > 0))
             const showGallery = hasImages && settings.showFolderImages
-            // If an ancestor folder already owns a nam-pack.json, this folder is a sub-division
-            // of that pack — only show gallery here, never a second pack info editor
-            const isPackChild = packInfoAncestor !== null
             const hasPack = packInfoFolders.has(activeFolderPath)
-            const showPackEditor = !isPackChild && hasPack
-            const showCreatePrompt = !isPackChild && !hasPack
-            const showGalleryTab = !isPackChild && showGallery
+            const showPackEditor = hasPack
+            const showCreatePrompt = !hasPack
+            const showGalleryTab = showGallery
             return (
               <div className="h-full flex flex-col">
                 {showGalleryTab && (showPackEditor || showCreatePrompt) && (
@@ -2027,13 +2024,31 @@ export default function App() {
                       </div>
                       <button
                         onClick={async () => {
-                          const res = await window.api.writePackInfo(activeFolderPath, {})
+                          let initial: Record<string, unknown> = {}
+                          if (packInfoAncestor) {
+                            const parentRes = await window.api.readPackInfo(packInfoAncestor)
+                            if (parentRes.success && parentRes.data) {
+                              const p = parentRes.data as Record<string, unknown>
+                              initial = {
+                                equipment: p.equipment ?? [],
+                                pedals: p.pedals ?? [],
+                                glossary: p.glossary ?? [],
+                                footer: p.footer ?? '',
+                              }
+                            }
+                          }
+                          const res = await window.api.writePackInfo(activeFolderPath, initial)
                           if (res.success) handlePackSaved(activeFolderPath, true)
                         }}
                         className="px-4 py-2 text-sm rounded-lg bg-teal-600 hover:bg-teal-700 text-white transition-colors"
                       >
                         Create Pack Info
                       </button>
+                      {packInfoAncestor && (
+                        <p className="text-xs text-gray-400 dark:text-gray-500">
+                          Equipment, pedals & glossary will be copied from parent pack
+                        </p>
+                      )}
                     </div>
                   ) : showGallery ? (
                     <FolderGallery data={folderImages!} />
