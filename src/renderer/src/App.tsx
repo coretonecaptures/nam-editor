@@ -157,7 +157,7 @@ function detectToneType(baseName: string): typeof TONE_TYPES[number] | null {
 const EMPTY_LIBRARIAN: LibrarianState = {
   rootFolder: null,
   folderTree: null,
-  selectedFolder: null
+  selectedFolders: []
 }
 
 export default function App() {
@@ -205,7 +205,7 @@ export default function App() {
     }
   })
 
-  const [folderImages, setFolderImages] = useState<FolderImagesData>(null)
+  const [folderImages, setFolderImages] = useState<FolderImagesData | null>(null)
   const [folderPanelTab, setFolderPanelTab] = useState<'pack' | 'gallery'>('pack')
   // Path of the ancestor that owns the pack info for the current folder (null = current folder may own one)
   const [packInfoAncestor, setPackInfoAncestor] = useState<string | null>(null)
@@ -215,7 +215,7 @@ export default function App() {
   // Reset folder panel tab and check for pack-owning ancestor when selected folder changes
   useEffect(() => {
     setFolderPanelTab('pack')
-    const sf = librarian.selectedFolder
+    const sf = librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null
     const rf = librarian.rootFolder
     if (!sf || !rf || sf === rf) {
       setPackInfoAncestor(null)
@@ -226,7 +226,7 @@ export default function App() {
       if (!cancelled) setPackInfoAncestor(owner)
     })
     return () => { cancelled = true }
-  }, [librarian.selectedFolder, librarian.rootFolder])
+  }, [librarian.selectedFolders, librarian.rootFolder])
 
   // Scan all pack-info folders when root folder changes (drives blue dot in tree)
   useEffect(() => {
@@ -244,7 +244,7 @@ export default function App() {
 
   // Scan folder images when selected folder changes (only when feature is enabled)
   useEffect(() => {
-    const sf = librarian.selectedFolder
+    const sf = librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null
     const rf = librarian.rootFolder
     if (!settings.showFolderImages) {
       setFolderImages(null)
@@ -287,7 +287,7 @@ export default function App() {
     }
     scan()
     return () => { cancelled = true }
-  }, [librarian.selectedFolder, librarian.rootFolder, settings.showFolderImages])
+  }, [librarian.selectedFolders, librarian.rootFolder, settings.showFolderImages])
 
   // Apply dark/light class to <html> whenever theme setting changes
   useEffect(() => {
@@ -482,7 +482,7 @@ export default function App() {
     setLibrarian({
       rootFolder: normalizedFolder,
       folderTree: treeResult.success && treeResult.tree ? treeResult.tree : null,
-      selectedFolder: null
+      selectedFolders: []
     })
     // Track recent folders
     setRecentFolders((prev) => {
@@ -642,7 +642,7 @@ export default function App() {
     // Use same visibility logic as visibleFiles (folder filter only — no FileList internal filters)
     const currentVisible = files.filter((f) => {
       const norm = f.filePath.replace(/\\/g, '/')
-      if (librarian.selectedFolder && !norm.startsWith(librarian.selectedFolder + '/')) return false
+      if (librarian.selectedFolders.length > 0 && !librarian.selectedFolders.some((sf) => norm.startsWith(sf + '/'))) return false
       return true
     })
     const idx = currentVisible.findIndex((f) => f.filePath === filePath)
@@ -660,7 +660,7 @@ export default function App() {
       })
       .map((f) => f.filePath)
     setSelectedIds(new Set(paths))
-    if (folderPath) setLibrarian((prev) => ({ ...prev, selectedFolder: folderPath }))
+    if (folderPath) setLibrarian((prev) => ({ ...prev, selectedFolders: [folderPath] }))
   }
 
   const handleSaveAll = async () => {
@@ -874,7 +874,7 @@ export default function App() {
     }
 
     // Switch selected folder to destination
-    setLibrarian((prev) => ({ ...prev, selectedFolder: destFolderPath }))
+    setLibrarian((prev) => ({ ...prev, selectedFolders: [destFolderPath] }))
     setSelectedIds(new Set())
 
     const msg = failCount > 0
@@ -1634,7 +1634,7 @@ export default function App() {
   // Filter files by selected folder and/or library search filter
   const visibleFiles = files.filter((f) => {
     const norm = f.filePath.replace(/\\/g, '/')
-    if (librarian.selectedFolder && !norm.startsWith(librarian.selectedFolder + '/')) return false
+    if (librarian.selectedFolders.length > 0 && !librarian.selectedFolders.some((sf) => norm.startsWith(sf + '/'))) return false
     if (libraryFilter && !libraryFilter.has(norm)) return false
     return true
   })
@@ -1690,12 +1690,16 @@ export default function App() {
               <FolderTree
                 tree={librarian.folderTree!}
                 files={files}
-                selectedFolder={librarian.selectedFolder}
+                selectedFolders={librarian.selectedFolders}
                 dirtyPaths={dirtyPaths}
                 onFilterChange={(matching) => setLibraryFilter(matching)}
-                onSelect={(path) => {
-                  setLibrarian((prev) => ({ ...prev, selectedFolder: path }))
-                  setSelectedIds(new Set())
+                onSelect={(path, ctrl) => {
+                  setLibrarian((prev) => {
+                    if (path === null || !ctrl) return { ...prev, selectedFolders: path ? [path] : [] }
+                    const isIn = prev.selectedFolders.includes(path)
+                    return { ...prev, selectedFolders: isIn ? prev.selectedFolders.filter((f) => f !== path) : [...prev.selectedFolders, path] }
+                  })
+                  if (!ctrl) setSelectedIds(new Set())
                 }}
                 onSaveFolder={async (path) => {
                   const targets = path === null
@@ -1958,7 +1962,7 @@ export default function App() {
               gearModelSuggestions={gearModelSuggestions}
             />
           ) : selectedFiles.length === 0 && librarian.rootFolder !== null ? (() => {
-            const activeFolderPath = (librarian.selectedFolder ?? librarian.rootFolder)!
+            const activeFolderPath = ((librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null) ?? librarian.rootFolder)!
             const activeFolderName = activeFolderPath.split('/').pop() ?? activeFolderPath
             const hasImages = folderImages !== null && (folderImages.own.length > 0 || folderImages.inherited.some((g) => g.paths.length > 0))
             const showGallery = hasImages && settings.showFolderImages

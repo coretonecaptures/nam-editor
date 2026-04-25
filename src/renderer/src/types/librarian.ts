@@ -9,5 +9,5 @@ export interface FolderNode {
 export interface LibrarianState {
   rootFolder: string | null
   folderTree: FolderNode | null
-  selectedFolder: string | null  // null = root = show everything
+  selectedFolders: string[]  // empty = root = show everything; 2+ = multi-select
 }
