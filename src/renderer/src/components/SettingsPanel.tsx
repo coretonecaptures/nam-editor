@@ -1,8 +1,6 @@
 import { useState } from 'react'
 import { AppSettings } from '../types/settings'
 
-type CatalogItem = AppSettings['packGearCatalog'][number]
-
 type UpdateState =
   | { status: 'idle' }
   | { status: 'checking' }

@@ -1,4 +1,4 @@
-import { useState, useRef, useLayoutEffect, useEffect } from 'react'
+import { useState, useRef, useLayoutEffect } from 'react'
 
 // Survives component remounts (caused by key={filePath} in App.tsx)
 let sharedScrollTop = 0

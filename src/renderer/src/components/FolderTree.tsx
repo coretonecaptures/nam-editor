@@ -40,6 +40,9 @@ interface FolderTreeProps {
   onSetFolderColor?: (folderName: string, color: string | null) => void
   onCompareFolders?: (folderPaths: string[]) => void
   onDeletePackInfo?: (folderPath: string) => void
+  bundleFolders?: Set<string>
+  onCreateBundle?: (folderPath: string) => void
+  onDeleteBundle?: (folderPath: string) => void
 }
 
 function matchesFilter(
@@ -68,7 +71,7 @@ export function FolderTree({
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, onFilterChange, onDropFiles,
   onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata,
   onSelectAllInFolder, onCoverageReport, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor,
-  onCompareFolders, onDeletePackInfo
+  onCompareFolders, onDeletePackInfo, bundleFolders, onCreateBundle, onDeleteBundle
 }: FolderTreeProps) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [expandSeq, setExpandSeq] = useState(0)
@@ -291,6 +294,9 @@ export function FolderTree({
             onSetFolderColor={onSetFolderColor}
             onCompareFolders={onCompareFolders}
             onDeletePackInfo={onDeletePackInfo}
+            bundleFolders={bundleFolders}
+            onCreateBundle={onCreateBundle}
+            onDeleteBundle={onDeleteBundle}
           />
         ))}
       </div>
@@ -303,7 +309,7 @@ function TreeNode({
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, matchingPaths, onDropFiles,
   onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata,
   onSelectAllInFolder, onCoverageReport, expandSeq, collapseSeq, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor,
-  onCompareFolders, onDeletePackInfo
+  onCompareFolders, onDeletePackInfo, bundleFolders, onCreateBundle, onDeleteBundle
 }: {
   node: FolderNode
   selectedFolders: string[]
@@ -332,6 +338,9 @@ function TreeNode({
   onSetFolderColor?: (folderName: string, color: string | null) => void
   onCompareFolders?: (folderPaths: string[]) => void
   onDeletePackInfo?: (folderPath: string) => void
+  bundleFolders?: Set<string>
+  onCreateBundle?: (folderPath: string) => void
+  onDeleteBundle?: (folderPath: string) => void
 }) {
   const [expanded, setExpanded] = useState(true)
 
@@ -399,11 +408,14 @@ function TreeNode({
         onCoverageReport={onCoverageReport ? () => onCoverageReport(node.path) : undefined}
         isDraggableFolder
         hasPackInfo={packInfoFolders?.has(node.path.replace(/\\/g, '/')) ?? false}
+        hasBundle={bundleFolders?.has(node.path.replace(/\\/g, '/')) ?? false}
         folderColor={folderNameColors?.[node.name] ?? null}
         onSetFolderColor={onSetFolderColor ? (color) => onSetFolderColor(node.name, color) : undefined}
         isMultiSelect={isMultiSelect}
         onCompareFolders={onCompareFolders ? () => onCompareFolders(selectedFolders) : undefined}
         onDeletePackInfo={onDeletePackInfo && packInfoFolders?.has(node.path.replace(/\\/g, '/')) ? () => onDeletePackInfo(node.path) : undefined}
+        onCreateBundle={onCreateBundle && !(bundleFolders?.has(node.path.replace(/\\/g, '/'))) ? () => onCreateBundle(node.path) : undefined}
+        onDeleteBundle={onDeleteBundle && bundleFolders?.has(node.path.replace(/\\/g, '/')) ? () => onDeleteBundle(node.path) : undefined}
       />
 
       {expanded && hasChildren && (
@@ -438,6 +450,9 @@ function TreeNode({
               onSetFolderColor={onSetFolderColor}
               onCompareFolders={onCompareFolders}
               onDeletePackInfo={onDeletePackInfo}
+              bundleFolders={bundleFolders}
+              onCreateBundle={onCreateBundle}
+              onDeleteBundle={onDeleteBundle}
             />
           ))}
         </div>
@@ -451,7 +466,7 @@ interface ContextMenuState { x: number; y: number }
 function FolderRow({
   label, folderPath, isRoot, isSelected, totalCount, dirtyCount, depth,
   hasChildren, expanded, onToggleExpand, onClick, onSave, onRevert,
-  onBatchEdit, onReveal, isFiltered, isHighlighted, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSelectAll, onCoverageReport, isDraggableFolder, hasPackInfo, folderColor, onSetFolderColor, isMultiSelect, onCompareFolders, onDeletePackInfo
+  onBatchEdit, onReveal, isFiltered, isHighlighted, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSelectAll, onCoverageReport, isDraggableFolder, hasPackInfo, hasBundle, folderColor, onSetFolderColor, isMultiSelect, onCompareFolders, onDeletePackInfo, onCreateBundle, onDeleteBundle
 }: {
   label: string
   folderPath: string
@@ -481,11 +496,14 @@ function FolderRow({
   onCoverageReport?: () => void
   isDraggableFolder?: boolean
   hasPackInfo?: boolean
+  hasBundle?: boolean
   folderColor?: string | null
   onSetFolderColor?: (color: string | null) => void
   isMultiSelect?: boolean
   onCompareFolders?: () => void
   onDeletePackInfo?: () => void
+  onCreateBundle?: () => void
+  onDeleteBundle?: () => void
 }) {
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -685,6 +703,12 @@ function FolderRow({
         {hasPackInfo && (
           <span className="w-1.5 h-1.5 rounded-full bg-blue-500 flex-shrink-0" title="Pack Info" />
         )}
+        {hasBundle && (
+          <svg className="w-3 h-3 text-amber-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <title>Marketing Bundle</title>
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+          </svg>
+        )}
         {totalCount > 0 && (
           <span className={`text-xs flex-shrink-0 ${countColor}`}>{totalCount}</span>
         )}
@@ -845,6 +869,28 @@ function FolderRow({
                 onClick={() => { setMenu(null); onDeletePackInfo() }}
               >
                 Remove Pack Info…
+              </button>
+            </>
+          )}
+          {onCreateBundle && (
+            <>
+              <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
+              <button
+                className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
+                onClick={() => { setMenu(null); onCreateBundle?.() }}
+              >
+                Create Marketing Bundle…
+              </button>
+            </>
+          )}
+          {onDeleteBundle && (
+            <>
+              <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
+              <button
+                className="w-full text-left px-3 py-1.5 text-red-600 dark:text-red-400 hover:bg-red-600/20 transition-colors"
+                onClick={() => { setMenu(null); onDeleteBundle?.() }}
+              >
+                Remove Marketing Bundle…
               </button>
             </>
           )}

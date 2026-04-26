@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import beakerTransparent from './assets/images/beaker.only.transparent.png'
-import { NamFile, TONE_TYPES, GEAR_TYPES } from './types/nam'
+import { NamFile, NamMetadata, TONE_TYPES, GEAR_TYPES } from './types/nam'
 import { AppSettings, loadSettings, saveSettings } from './types/settings'
 import { loadLayout, saveLayout } from './types/layout'
 import { LibrarianState } from './types/librarian'
@@ -18,6 +18,7 @@ import { TrainingCoverageModal } from './components/TrainingCoverageModal'
 import { FolderCompareModal } from './components/FolderCompareModal'
 import { FolderGallery, FolderImagesData } from './components/FolderGallery'
 import { PackInfoEditor } from './components/PackInfoEditor'
+import { BundleEditor } from './components/BundleEditor'
 import { NamDashboard } from './components/NamDashboard'
 import { SessionHistoryPanel } from './components/SessionHistoryPanel'
 import * as XLSX from 'xlsx'
@@ -82,6 +83,11 @@ declare global {
       writePackInfo: (folderPath: string, data: unknown) => Promise<{ success: boolean; error?: string }>
       deletePackInfo: (folderPath: string) => Promise<{ success: boolean; error?: string }>
       exportPackSheet: (html: string) => Promise<{ success: boolean; error?: string }>
+      readBundle: (folderPath: string) => Promise<{ success: boolean; data: unknown }>
+      writeBundle: (folderPath: string, data: unknown) => Promise<{ success: boolean; error?: string }>
+      deleteBundle: (folderPath: string) => Promise<{ success: boolean; error?: string }>
+      scanBundlePaths: (rootPath: string) => Promise<string[]>
+      findBundlePackFolders: (rootPath: string) => Promise<{ folderPath: string; title: string }[]>
       platform: string
       initialSettings: unknown
       saveSettingsToFile: (json: string) => void
@@ -224,6 +230,8 @@ export default function App() {
   const [packInfoAncestor, setPackInfoAncestor] = useState<string | null>(null)
   // Set of folder paths that have a valid nam-pack.json (non-empty title) — drives blue dot in tree
   const [packInfoFolders, setPackInfoFolders] = useState<Set<string>>(new Set())
+  // Set of folder paths that have a nam-bundle.json — drives chain-link icon in tree
+  const [bundleFolders, setBundleFolders] = useState<Set<string>>(new Set())
   // Folder compare modal: array of paths to compare (null = closed)
   const [compareFolderPaths, setCompareFolderPaths] = useState<string[] | null>(null)
   const [showDashboard, setShowDashboard] = useState(false)
@@ -268,6 +276,29 @@ export default function App() {
     })
     return () => { cancelled = true }
   }, [librarian.rootFolder])
+
+  // Scan bundle folders when root folder changes (drives chain-link icon in tree)
+  const refreshBundleFolders = useCallback(() => {
+    const rf = librarian.rootFolder
+    if (!rf) { setBundleFolders(new Set()); return }
+    window.api.scanBundlePaths(rf)
+      .then((paths) => setBundleFolders(new Set(paths)))
+      .catch(console.error)
+  }, [librarian.rootFolder])
+
+  useEffect(() => { refreshBundleFolders() }, [refreshBundleFolders])
+
+  const handleCreateBundle = useCallback(async (folderPath: string) => {
+    const empty = { title: '', subtitle: '', description: '', linkedPacks: [] }
+    await window.api.writeBundle(folderPath, empty)
+    refreshBundleFolders()
+  }, [refreshBundleFolders])
+
+  const handleDeleteBundle = useCallback((_folderPath: string) => {
+    refreshBundleFolders()
+    // navigate away from the bundle folder so BundleEditor unmounts cleanly
+    setLibrarian((prev) => ({ ...prev, selectedFolders: prev.selectedFolders }))
+  }, [refreshBundleFolders])
 
   // Scan folder images when selected folder changes (only when feature is enabled)
   useEffect(() => {
@@ -952,7 +983,6 @@ export default function App() {
   }
 
   const handleBatchRename = async (renames: { filePath: string; newBaseName: string }[], renameFiles: boolean) => {
-    const renameMap = new Map(renames.map((r) => [r.filePath, r.newBaseName]))
     // Keys that factor into isDirty so we can recalculate after a partial save
     const dirtyKeys: (keyof NamMetadata)[] = [
       'name', 'modeled_by', 'gear_type', 'gear_make', 'gear_model',
@@ -1543,13 +1573,6 @@ export default function App() {
 
     // Unmatched: rows with no exact match and no prefix match
     const unmatchedNames: string[] = []
-    const allMatchedNames = new Set([
-      ...exactMatches.map(m => (m.file.metadata.name || m.file.fileName || '').toLowerCase()),
-      ...rows.filter(row => {
-        const n = String(row['Capture Name'] ?? '').trim().toLowerCase()
-        return exactMatches.some(m => (m.file.metadata.name || m.file.fileName || '').toLowerCase() === n)
-      }).map(row => String(row['Capture Name'] ?? '').trim().toLowerCase())
-    ])
     for (const row of rows) {
       const captureName = String(row['Capture Name'] ?? '').trim()
       if (!captureName) continue
@@ -1819,6 +1842,9 @@ export default function App() {
                 }}
                 onCompareFolders={(paths) => setCompareFolderPaths(paths)}
                 onDeletePackInfo={handleDeletePackInfo}
+                bundleFolders={bundleFolders}
+                onCreateBundle={(folderPath) => { void handleCreateBundle(folderPath) }}
+                onDeleteBundle={(folderPath) => handleDeleteBundle(folderPath)}
               />
             </div>
             {!gridMaximized && <DragHandle onMouseDown={(e) => onDragStart('tree', e)} onCollapse={() => setTreeCollapsed((v) => !v)} collapsed={treeCollapsed} />}
@@ -2045,6 +2071,22 @@ export default function App() {
           ) : selectedFiles.length === 0 && librarian.rootFolder !== null ? (() => {
             const activeFolderPath = ((librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null) ?? librarian.rootFolder)!
             const activeFolderName = activeFolderPath.split('/').pop() ?? activeFolderPath
+            const hasBundle = bundleFolders.has(activeFolderPath.replace(/\\/g, '/'))
+            if (hasBundle) {
+              return (
+                <BundleEditor
+                  key={activeFolderPath}
+                  folderPath={activeFolderPath}
+                  rootFolder={librarian.rootFolder!}
+                  dark={(() => { try { return localStorage.getItem('nam-pack-dark-export') === '1' } catch { return false } })()}
+                  logoLight={settings.packLogoLight}
+                  logoDark={settings.packLogoDark}
+                  defaultCapturedBy={settings.defaultModeledBy}
+                  onSaved={() => refreshBundleFolders()}
+                  onDeleted={() => handleDeleteBundle(activeFolderPath)}
+                />
+              )
+            }
             const hasImages = folderImages !== null && (folderImages.own.length > 0 || folderImages.inherited.some((g) => g.paths.length > 0))
             const showGallery = hasImages && settings.showFolderImages
             const hasPack = packInfoFolders.has(activeFolderPath)
