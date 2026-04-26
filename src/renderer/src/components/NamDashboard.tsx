@@ -306,28 +306,33 @@ export function NamDashboard({ files, activeCreator, onCreatorClick, onClearCrea
           </div>
         )}
 
-        {/* 2-column: creators + recent */}
-        <div className="grid grid-cols-2 gap-3">
-          {/* Top creators */}
-          {topCreators.length > 0 && (
-            <div>
-              <h3 className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-1.5">
-                Top Creators
-                <span className="normal-case font-normal text-gray-300 dark:text-gray-600 ml-1">(click to filter)</span>
-              </h3>
-              <BarChart
-                rows={topCreators}
-                max={topCreators[0]?.count ?? 1}
-                color="bg-indigo-500"
-                onLabelClick={onCreatorClick}
-              />
-            </div>
-          )}
+        {/* Top creators — full width */}
+        {topCreators.length > 0 && (
+          <div>
+            <h3 className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-1.5">
+              Top Creators
+              <span className="normal-case font-normal text-gray-300 dark:text-gray-600 ml-1">(click to filter)</span>
+            </h3>
+            <BarChart
+              rows={topCreators}
+              max={topCreators[0]?.count ?? 1}
+              color="bg-indigo-500"
+              onLabelClick={onCreatorClick}
+            />
+          </div>
+        )}
 
-          {/* Recently updated */}
+        {/* Completeness bar */}
+        <div>
+          <h3 className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-1.5">Completeness (7 fields)</h3>
+          <CompletenessBar complete={complete} partial={partial} incomplete={incomplete} />
+        </div>
+
+        {/* Recently updated */}
+        {recentFiles.length > 0 && (
           <div>
             <h3 className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-1.5">Recently Updated</h3>
-            <div className="flex flex-col gap-1">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
               {recentFiles.map((f) => (
                 <div key={f.filePath} className="flex flex-col min-w-0">
                   <span className="text-[11px] text-gray-700 dark:text-gray-300 truncate" title={f.metadata.name ?? f.fileName}>
@@ -340,13 +345,7 @@ export function NamDashboard({ files, activeCreator, onCreatorClick, onClearCrea
               ))}
             </div>
           </div>
-        </div>
-
-        {/* Completeness bar */}
-        <div>
-          <h3 className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-1.5">Completeness (7 fields)</h3>
-          <CompletenessBar complete={complete} partial={partial} incomplete={incomplete} />
-        </div>
+        )}
       </div>
     </div>
   )

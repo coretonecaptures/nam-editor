@@ -19,7 +19,15 @@ import { FolderCompareModal } from './components/FolderCompareModal'
 import { FolderGallery, FolderImagesData } from './components/FolderGallery'
 import { PackInfoEditor } from './components/PackInfoEditor'
 import { NamDashboard } from './components/NamDashboard'
+import { SessionHistoryPanel } from './components/SessionHistoryPanel'
 import * as XLSX from 'xlsx'
+
+export interface HistoryEntry {
+  id: string
+  timestamp: Date
+  operation: string
+  summary: string
+}
 import { FolderNode } from './types/librarian'
 
 declare global {
@@ -219,6 +227,8 @@ export default function App() {
   // Folder compare modal: array of paths to compare (null = closed)
   const [compareFolderPaths, setCompareFolderPaths] = useState<string[] | null>(null)
   const [showDashboard, setShowDashboard] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [sessionHistory, setSessionHistory] = useState<HistoryEntry[]>([])
   const [creatorFilter, setCreatorFilter] = useState<string | null>(null)
   const [gearTypeFilter, setGearTypeFilter] = useState<string | null>(null)
   const [toneTypeFilter, setToneTypeFilter] = useState<string | null>(null)
@@ -624,6 +634,13 @@ export default function App() {
     }
   }
 
+  const addHistoryEntry = useCallback((entry: Omit<HistoryEntry, 'id' | 'timestamp'>) => {
+    setSessionHistory((current) => {
+      const next: HistoryEntry = { ...entry, id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, timestamp: new Date() }
+      return [next, ...current].slice(0, 100)
+    })
+  }, [])
+
   const handleMetadataChange = (filePath: string, updated: NamFile['metadata']) => {
     setFiles((prev) =>
       prev.map((f) => {
@@ -647,6 +664,7 @@ export default function App() {
           ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [] }
           : f
       ))
+      addHistoryEntry({ operation: 'save', summary: `Saved ${file.fileName}` })
       setStatus({ message: `Saved: ${file.fileName}`, type: 'success' })
     } else {
       setStatus({ message: `Save failed: ${result.error}`, type: 'error' })
@@ -713,6 +731,7 @@ export default function App() {
     if (failed > 0) {
       setStatus({ message: `Saved ${savedPaths.size}, failed ${failed}`, type: 'error' })
     } else {
+      addHistoryEntry({ operation: 'save-all', summary: `Saved ${savedPaths.size} file${savedPaths.size !== 1 ? 's' : ''}` })
       setStatus({ message: `Saved ${savedPaths.size} file(s)`, type: 'success' })
     }
   }
@@ -787,6 +806,7 @@ export default function App() {
     if (failed > 0) {
       setStatus({ message: `Batch saved ${savedPaths.size}, failed ${failed}`, type: 'error' })
     } else {
+      addHistoryEntry({ operation: 'batch-edit', summary: `Batch edited ${savedPaths.size} file${savedPaths.size !== 1 ? 's' : ''} (${Object.keys(batchFields).join(', ')})` })
       setStatus({ message: `Batch saved ${savedPaths.size} file(s)`, type: 'success' })
     }
   }
@@ -924,6 +944,7 @@ export default function App() {
         next.add(result.newPath!)
         return next
       })
+      addHistoryEntry({ operation: 'rename', summary: `Renamed file to "${newBaseName}"` })
       setStatus({ message: `Renamed to: ${newBaseName}.nam`, type: 'success' })
     } else {
       setStatus({ message: `Rename failed: ${result.error}`, type: 'error' })
@@ -994,6 +1015,7 @@ export default function App() {
       const msg = renameFiles
         ? `Renamed ${n} file${n !== 1 ? 's' : ''}${failed > 0 ? `, ${failed} failed` : ''}`
         : `Updated ${n} capture name${n !== 1 ? 's' : ''}${failed > 0 ? `, ${failed} failed` : ''}`
+      if (failed === 0) addHistoryEntry({ operation: 'batch-rename', summary: msg })
       setStatus({ message: msg, type: failed > 0 ? 'error' : 'success' })
       return
     }
@@ -1698,7 +1720,9 @@ export default function App() {
         onFindDuplicates={files.length > 1 ? () => setShowDuplicates(true) : undefined}
         showDashboard={files.length > 0}
         dashboardActive={showDashboard}
-        onToggleDashboard={() => setShowDashboard((v) => !v)}
+        onToggleDashboard={() => { setShowDashboard((v) => !v); setHistoryOpen(false) }}
+        historyOpen={historyOpen}
+        onHistoryToggle={() => { setHistoryOpen((v) => !v); setShowDashboard(false) }}
       />
 
       <div className="flex flex-1 overflow-hidden relative">
@@ -1919,7 +1943,9 @@ export default function App() {
 
         {/* Main content */}
         <div ref={mainContentRef} tabIndex={-1} className={`flex-1 overflow-hidden flex flex-col focus:outline-none${gridMaximized ? ' hidden' : ''}`} style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-          {showDashboard && !showSettings && batchFolder === null && selectedFiles.length === 0 ? (
+          {showSettings ? (
+            <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} />
+          ) : showDashboard ? (
             <NamDashboard
               files={files}
               activeCreator={creatorFilter ?? undefined}
@@ -1943,8 +1969,12 @@ export default function App() {
                 setLibrarian((prev) => ({ ...prev, selectedFolders: [] }))
               }}
             />
-          ) : showSettings ? (
-            <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} />
+          ) : historyOpen ? (
+            <SessionHistoryPanel
+              entries={sessionHistory}
+              onClear={() => setSessionHistory([])}
+              onClose={() => setHistoryOpen(false)}
+            />
           ) : batchFolder !== null ? (
             <BatchEditor
               folderName={batchFolder.name}
