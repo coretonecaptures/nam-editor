@@ -18,6 +18,7 @@ import { TrainingCoverageModal } from './components/TrainingCoverageModal'
 import { FolderCompareModal } from './components/FolderCompareModal'
 import { FolderGallery, FolderImagesData } from './components/FolderGallery'
 import { PackInfoEditor } from './components/PackInfoEditor'
+import { NamDashboard } from './components/NamDashboard'
 import * as XLSX from 'xlsx'
 import { FolderNode } from './types/librarian'
 
@@ -39,6 +40,7 @@ declare global {
         metadata?: NamFile['metadata']
         architecture?: string
         config?: unknown
+        mtimeMs?: number
       }>
       writeMetadata: (filePath: string, metadata: unknown) => Promise<{ success: boolean; error?: string }>
       moveFile: (sourcePath: string, destDir: string, force?: boolean) => Promise<{ success: boolean; error?: string; destPath?: string }>
@@ -216,6 +218,10 @@ export default function App() {
   const [packInfoFolders, setPackInfoFolders] = useState<Set<string>>(new Set())
   // Folder compare modal: array of paths to compare (null = closed)
   const [compareFolderPaths, setCompareFolderPaths] = useState<string[] | null>(null)
+  const [showDashboard, setShowDashboard] = useState(false)
+  const [creatorFilter, setCreatorFilter] = useState<string | null>(null)
+  const [gearTypeFilter, setGearTypeFilter] = useState<string | null>(null)
+  const [toneTypeFilter, setToneTypeFilter] = useState<string | null>(null)
 
   // Reset folder panel tab and check for pack-owning ancestor when selected folder changes
   useEffect(() => {
@@ -399,7 +405,7 @@ export default function App() {
   // mode='replace': clear existing, load fresh (open folder/files)
   // Shared: turn raw IPC read results into NamFile[] and update state
   const applyParsedResults = useCallback(async (
-    results: { success: boolean; filePath?: string; metadata?: NamFile['metadata']; version?: string; architecture?: string; config?: unknown; error?: string }[],
+    results: { success: boolean; filePath?: string; metadata?: NamFile['metadata']; version?: string; architecture?: string; config?: unknown; error?: string; mtimeMs?: number }[],
     mode: 'replace' | 'append'
   ) => {
     const loaded: NamFile[] = []
@@ -419,7 +425,7 @@ export default function App() {
         const autoFilledFields = (Object.keys(meta) as (keyof NamFile['metadata'])[]).filter(
           (k) => meta[k] != null && (workingMeta[k] == null || workingMeta[k] === '')
         )
-        loaded.push({ filePath: r.filePath, fileName: baseName, version: r.version ?? '?', metadata: meta, originalMetadata: rawMeta, autoFilledFields, architecture: r.architecture ?? '?', config: r.config, isDirty: wasChanged })
+        loaded.push({ filePath: r.filePath, fileName: baseName, version: r.version ?? '?', metadata: meta, originalMetadata: rawMeta, autoFilledFields, architecture: r.architecture ?? '?', config: r.config, isDirty: wasChanged, mtimeMs: r.mtimeMs })
       } else {
         errors++
       }
@@ -1690,6 +1696,9 @@ export default function App() {
         recentFolders={recentFolders}
         onOpenRecentFolder={(path) => loadFolderByPath(path)}
         onFindDuplicates={files.length > 1 ? () => setShowDuplicates(true) : undefined}
+        showDashboard={files.length > 0}
+        dashboardActive={showDashboard}
+        onToggleDashboard={() => setShowDashboard((v) => !v)}
       />
 
       <div className="flex flex-1 overflow-hidden relative">
@@ -1709,6 +1718,7 @@ export default function App() {
                     const isIn = prev.selectedFolders.includes(path)
                     return { ...prev, selectedFolders: isIn ? prev.selectedFolders.filter((f) => f !== path) : [...prev.selectedFolders, path] }
                   })
+                  setCreatorFilter(null)
                   if (!ctrl) setSelectedIds(new Set())
                 }}
                 onSaveFolder={async (path) => {
@@ -1897,6 +1907,11 @@ export default function App() {
                 const result = await window.api.openInNam(filePath, settings.namStandalonePath)
                 if (!result.success) setStatus({ message: `Could not open in NAM: ${result.error}`, type: 'error' })
               }}
+              defaultSearch={creatorFilter ?? undefined}
+              defaultGearFilter={gearTypeFilter ?? undefined}
+              defaultToneFilter={toneTypeFilter ?? undefined}
+              onGearFilterClear={() => setGearTypeFilter(null)}
+              onToneFilterClear={() => setToneTypeFilter(null)}
             />
           </div>
           {!gridMaximized && <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} onCollapse={() => setListCollapsed((v) => !v)} collapsed={listCollapsed} />}
@@ -1904,7 +1919,31 @@ export default function App() {
 
         {/* Main content */}
         <div ref={mainContentRef} tabIndex={-1} className={`flex-1 overflow-hidden flex flex-col focus:outline-none${gridMaximized ? ' hidden' : ''}`} style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-          {showSettings ? (
+          {showDashboard && !showSettings && batchFolder === null && selectedFiles.length === 0 ? (
+            <NamDashboard
+              files={files}
+              activeCreator={creatorFilter ?? undefined}
+              onCreatorClick={(creator) => {
+                setCreatorFilter(creator)
+                setGearTypeFilter(null)
+                setToneTypeFilter(null)
+                setLibrarian((prev) => ({ ...prev, selectedFolders: [] }))
+              }}
+              onClearCreatorFilter={() => setCreatorFilter(null)}
+              onGearTypeClick={(gearType) => {
+                setGearTypeFilter(gearType)
+                setCreatorFilter(null)
+                setToneTypeFilter(null)
+                setLibrarian((prev) => ({ ...prev, selectedFolders: [] }))
+              }}
+              onToneTypeClick={(toneType) => {
+                setToneTypeFilter(toneType)
+                setCreatorFilter(null)
+                setGearTypeFilter(null)
+                setLibrarian((prev) => ({ ...prev, selectedFolders: [] }))
+              }}
+            />
+          ) : showSettings ? (
             <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} />
           ) : batchFolder !== null ? (
             <BatchEditor

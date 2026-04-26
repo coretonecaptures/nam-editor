@@ -45,6 +45,7 @@ export interface NamFile {
   architecture: string
   config: unknown
   isDirty: boolean
+  mtimeMs?: number
   loadError?: string
 }
 

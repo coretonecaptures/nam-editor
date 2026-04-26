@@ -53,6 +53,11 @@ interface FileListProps {
   onOpenEditor?: () => void
   solidPills?: boolean
   draggable?: boolean
+  defaultSearch?: string
+  defaultGearFilter?: string
+  defaultToneFilter?: string
+  onGearFilterClear?: () => void
+  onToneFilterClear?: () => void
 }
 
 const ALL_GRID_COLUMNS: { key: string; label: string; minWidth: number; defaultVisible: boolean }[] = [
@@ -274,13 +279,18 @@ export function FileList({
   viewMode,
   onViewModeChange,
   solidPills = false,
-  draggable = false
+  draggable = false,
+  defaultSearch = '',
+  defaultGearFilter,
+  defaultToneFilter,
+  onGearFilterClear,
+  onToneFilterClear,
 }: FileListProps) {
-  const [search, setSearch] = useState('')
+  const [search, setSearch] = useState(defaultSearch)
   const [nameSearch, setNameSearch] = useState('')
   const [filter, setFilter] = useState<FilterMode>('all')
-  const [gearFilter, setGearFilter] = useState('')
-  const [toneFilter, setToneFilter] = useState('')
+  const [gearFilter, setGearFilter] = useState(defaultGearFilter ?? '')
+  const [toneFilter, setToneFilter] = useState(defaultToneFilter ?? '')
   const [presetFilter, setPresetFilter] = useState('')
   const [mfrFilter, setMfrFilter] = useState('')
   const [columnFilters, setColumnFilters] = useState<Record<string, ColFilterState>>({})
@@ -402,6 +412,18 @@ export function FileList({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctxMenu?.filePath])
+
+  useEffect(() => {
+    setSearch(defaultSearch ?? '')
+  }, [defaultSearch])
+
+  useEffect(() => {
+    setGearFilter(defaultGearFilter ?? '')
+  }, [defaultGearFilter])
+
+  useEffect(() => {
+    setToneFilter(defaultToneFilter ?? '')
+  }, [defaultToneFilter])
 
   // When the filtered list changes (search/filter applied), trim selectedIds in App.tsx
   // so stale selections don't leak into editors or bulk actions.
@@ -651,7 +673,7 @@ export function FileList({
         <div className="px-3 pb-2 flex gap-1.5 flex-shrink-0 flex-wrap">
           <select
             value={gearFilter}
-            onChange={(e) => setGearFilter(e.target.value)}
+            onChange={(e) => { setGearFilter(e.target.value); if (!e.target.value) onGearFilterClear?.() }}
             className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
               gearFilter
                 ? 'bg-orange-100 dark:bg-orange-900/30 border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-400'
@@ -663,7 +685,7 @@ export function FileList({
           </select>
           <select
             value={toneFilter}
-            onChange={(e) => setToneFilter(e.target.value)}
+            onChange={(e) => { setToneFilter(e.target.value); if (!e.target.value) onToneFilterClear?.() }}
             className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
               toneFilter
                 ? 'bg-indigo-100 dark:bg-indigo-900/40 border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-400'

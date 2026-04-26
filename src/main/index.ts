@@ -528,7 +528,7 @@ app.whenReady().then(() => {
       const cache = loadFileCache()
       const cached = cache[filePath]
       if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
-        return { success: true, ...(cached.data as object), filePath }
+        return { success: true, ...(cached.data as object), filePath, mtimeMs: stat.mtimeMs }
       }
       const content = await fs.promises.readFile(filePath, 'utf-8')
       const data = JSON.parse(content)
@@ -551,7 +551,8 @@ app.whenReady().then(() => {
         version: data.version ?? '?',
         metadata: meta,
         architecture: data.architecture ?? '?',
-        config: data.config ?? null
+        config: data.config ?? null,
+        mtimeMs: stat.mtimeMs,
       }
       // Update cache entry — save lazily (written on app quit or folder scan)
       cache[filePath] = { mtimeMs: stat.mtimeMs, size: stat.size, data: { version: result.version, metadata: meta, architecture: result.architecture, config: result.config } }
