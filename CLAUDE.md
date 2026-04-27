@@ -192,7 +192,7 @@ npm run package:linux    # Linux AppImage
 
 CI runs on tag push via `.github/workflows/release.yml`. Tags matching `*-rc*` are automatically marked as GitHub pre-releases. Final releases use clean semver tags (`v0.4.2`).
 
-Current version: **0.5.8** (see `package.json`). Version is injected into the renderer via `VITE_APP_VERSION` in `electron.vite.config.ts`.
+Current version: **0.5.11** (see `package.json`). Version is injected into the renderer via `VITE_APP_VERSION` in `electron.vite.config.ts`.
 
 App IDs:
 - `appId`: `com.coretonecaptures.namlab`
@@ -392,58 +392,9 @@ These have been discussed and approved — remove each item when implemented.
 
 - **[ ] Folder tree colorization** — Two-layer color system. Layer 1: name-based rules in Settings → Library (e.g. `DI=blue, CAB=green`) — any folder with that exact name gets a colored dot anywhere in the tree, set once. Layer 2: right-click any folder → "Set color" palette — stores color by folder path, applies to that specific folder. Parent color propagates to direct children as a subtle left accent bar (group membership signal), while the child's own dot shows its type. Two visual channels: left bar = amp group, dot = capture type. Storage: `folderNameColors: Record<string, string>` and `folderPathColors: Record<string, string>` in AppSettings. LOE: ~2–3 hours.
 
-- **[ ] Marketing Bundle** — `nam-bundle.json` sidecar in a folder links multiple Pack Info folders into a single combined PDF (cover page + ToC + each pack sheet). LOE ~4–5 hrs. Full plan below.
+- **[x] Multi-Amp Bundle** — `nam-bundle.json` sidecar in a folder links multiple Pack Info folders. Right-click any folder → "Create Multi-Amp Bundle…". BundleEditor shows title/subtitle/description (markdown/BBCode), linked packs list (add/reorder/remove/include toggle, per-row PDF export), and footer. "Export Cover PDF" generates a cover sheet (description + numbered contents + footer) — each pack is exported separately via its own PDF button (calls `generatePackHtml` same as Pack Info export). `BundleData` shape: `{ title, subtitle, description, footer, linkedPacks: [{ folderPath, overrideName, included }] }`. Amber chain-link icon on bundle folders in tree. IPC: `folder:readBundle`, `folder:writeBundle`, `folder:deleteBundle`, `folder:scanBundlePaths`, `folder:findBundlePackFolders`. Shared HTML generation extracted to `utils/packExport.ts`.
 
----
-
-## Marketing Bundle — Final Design Plan
-
-A Bundle is a meta-document that lives in any folder and links to existing Pack Info folders elsewhere in the library. No capture data is duplicated — it only references `nam-pack.json` folders.
-
-### `nam-bundle.json` shape
-```json
-{
-  "title": "Hard Rock Bundle",
-  "subtitle": "Marshall Plexi & JCM Series",
-  "description": "Free-form marketing copy",
-  "linkedPacks": [
-    { "folderPath": "relative/to/root/Plexi", "overrideName": "", "included": true },
-    { "folderPath": "relative/to/root/JCM800", "overrideName": "JCM 800 Lead", "included": true }
-  ]
-}
-```
-`folderPath` is **relative to the open root folder** (portable when library moves). `overrideName` blank = use the pack's own title. `included` = print toggle.
-
-### IPC channels (5 new + 1 existing)
-| Channel | Purpose |
-|---|---|
-| `folder:readBundle(path)` | Read `nam-bundle.json` → data or null |
-| `folder:writeBundle(path, data)` | Write `nam-bundle.json` |
-| `folder:deleteBundle(path)` | Delete `nam-bundle.json` |
-| `folder:findPackFolders(rootPath)` | Scan tree → `{ folderPath, title }[]` for all `nam-pack.json` folders (Add Pack picker) |
-| `folder:scanBundlePaths(rootPath)` | Scan tree → `string[]` of folders containing `nam-bundle.json` (for chain-link icon set) |
-| `app:exportPackSheet` | **Already exists** — reuse; HTML assembled in renderer |
-
-### Files to create/modify
-- **`src/main/index.ts`** — 5 new handlers. `findPackFolders` reuses the existing `nam-pack.json` walk. `scanBundlePaths` is the same walk for `nam-bundle.json`.
-- **`src/preload/index.ts`** — expose 5 new channels on `window.api`.
-- **`src/renderer/src/utils/packExport.ts`** *(new)* — extract `generateExportHtml()` from `PackInfoEditor.tsx`, rename `generatePackHtml(info, folderPath, folderName, files, dark, logo)`. `PackInfoEditor` imports from here so nothing changes for existing export.
-- **`src/renderer/src/components/BundleEditor.tsx`** *(new)* — props: `folderPath`, `rootFolder`, `capturedBy`, `logoLight`, `logoDark`, `dark`, `onSaved`, `onDeleted`. Sections: title/subtitle/description; linked pack list (checkbox + override name + reorder + remove); "Add Pack from Library" picker (excludes already-linked); "Export Bundle PDF" button; "Delete Bundle" button. Export: reads each included pack's `nam-pack.json` + scans `.nam` files in that folder, calls `generatePackHtml` per pack, prepends cover + ToC, calls `exportPackSheet`.
-- **`src/renderer/src/App.tsx`** — `bundleFolders: Set<string>` state; `refreshBundleFolders()` called after root loads and after save/delete; `handleCreateBundle(path)`; `handleDeleteBundle(path)`. Right panel condition: `bundleFolders.has(activeFolderPath)` → BundleEditor, else existing PackInfo/Gallery logic.
-- **`src/renderer/src/components/FolderTree.tsx`** — `bundleFolders`, `onCreateBundle`, `onDeleteBundle` props. Chain-link SVG icon on matching rows. Right-click → "Create Bundle…" / "Delete Bundle".
-
-### Creation UX
-Right-click any folder in tree → "Create Bundle…" → writes empty `nam-bundle.json` → BundleEditor opens in right panel.
-
-### Implementation order (~4–5 hrs)
-1. Main: `readBundle` / `writeBundle` / `deleteBundle` — 30 min
-2. Main: `findPackFolders` / `scanBundlePaths` — 20 min
-3. Preload: expose all 5 — 10 min
-4. Extract `generatePackHtml` to `packExport.ts` — 30 min
-5. `BundleEditor.tsx` — form + linked pack list + add/remove/reorder — 2 hrs
-6. `FolderTree` icon + context menu — 20 min
-7. `App.tsx` state + right panel condition — 30 min
-8. Export assembly (cover + ToC + pack sheets in renderer) — 1 hr
+- **[x] Pack Status fields** — New section at bottom of Pack Info editor (between Glossary and Footer): Live Date (date picker), Version (text, e.g. "v3.1"), Recommended Input Gain (text), Notes/Comments (4-row expandable textarea). Stored in `nam-pack.json`.
 
 ---
 
