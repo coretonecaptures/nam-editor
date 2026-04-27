@@ -105,7 +105,7 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
   }
 
   const handleDelete = async () => {
-    if (!window.confirm(`Remove the Marketing Bundle from this folder?\n\nThe folder and its contents are untouched — only the bundle config is removed.`)) return
+    if (!window.confirm(`Remove the Multi-Amp Bundle from this folder?\n\nThe folder and its contents are untouched — only the bundle config is removed.`)) return
     await window.api.deleteBundle(folderPath)
     onDeleted()
   }
@@ -238,7 +238,7 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
           <svg className="w-4 h-4 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
           </svg>
-          <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Marketing Bundle</span>
+          <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Multi-Amp Bundle</span>
           <span className="text-xs text-gray-400 dark:text-gray-600 truncate max-w-32">{folderName}</span>
         </div>
         <div className="flex items-center gap-2">
@@ -431,7 +431,7 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
             onClick={() => void handleDelete()}
             className="text-xs text-red-500 hover:text-red-700 dark:hover:text-red-400 transition-colors"
           >
-            Remove Marketing Bundle…
+            Remove Multi-Amp Bundle…
           </button>
         </div>
       </div>

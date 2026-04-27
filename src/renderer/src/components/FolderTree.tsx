@@ -705,7 +705,7 @@ function FolderRow({
         )}
         {hasBundle && (
           <svg className="w-3 h-3 text-amber-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <title>Marketing Bundle</title>
+            <title>Multi-Amp Bundle</title>
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
           </svg>
         )}
@@ -879,7 +879,7 @@ function FolderRow({
                 className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
                 onClick={() => { setMenu(null); onCreateBundle?.() }}
               >
-                Create Marketing Bundle…
+                Create Multi-Amp Bundle…
               </button>
             </>
           )}
@@ -890,7 +890,7 @@ function FolderRow({
                 className="w-full text-left px-3 py-1.5 text-red-600 dark:text-red-400 hover:bg-red-600/20 transition-colors"
                 onClick={() => { setMenu(null); onDeleteBundle?.() }}
               >
-                Remove Marketing Bundle…
+                Remove Multi-Amp Bundle…
               </button>
             </>
           )}
