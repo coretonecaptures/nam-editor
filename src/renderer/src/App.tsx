@@ -17,6 +17,7 @@ import { ImportMetadataModal, ImportMatch } from './components/ImportMetadataMod
 import { TrainingCoverageModal } from './components/TrainingCoverageModal'
 import { FolderCompareModal } from './components/FolderCompareModal'
 import { FolderGallery, FolderImagesData } from './components/FolderGallery'
+import { FolderDashboard } from './components/FolderDashboard'
 import { PackInfoEditor } from './components/PackInfoEditor'
 import { BundleEditor } from './components/BundleEditor'
 import { NamDashboard } from './components/NamDashboard'
@@ -225,7 +226,7 @@ export default function App() {
   })
 
   const [folderImages, setFolderImages] = useState<FolderImagesData | null>(null)
-  const [folderPanelTab, setFolderPanelTab] = useState<'pack' | 'gallery'>('pack')
+  const [folderPanelTab, setFolderPanelTab] = useState<'overview' | 'pack' | 'gallery'>('pack')
   // Path of the ancestor that owns the pack info for the current folder (null = current folder may own one)
   const [packInfoAncestor, setPackInfoAncestor] = useState<string | null>(null)
   // Set of folder paths that have a valid nam-pack.json (non-empty title) — drives blue dot in tree
@@ -256,7 +257,7 @@ export default function App() {
       if (cancelled) return
       setPackInfoAncestor(owner)
       const ownPack = packInfoFolders.has(sfNorm)
-      // Default to gallery when folder has no own pack but a parent pack exists
+      // Default to gallery when folder has no own pack but a parent pack exists; else pack
       setFolderPanelTab(!ownPack && owner ? 'gallery' : 'pack')
     })
     return () => { cancelled = true }
@@ -2095,9 +2096,10 @@ export default function App() {
             const showGalleryTab = showGallery
             return (
               <div className="h-full flex flex-col">
-                {showGalleryTab && (showPackEditor || showCreatePrompt) && (
-                  <div className="flex border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
-                    {(['pack', 'gallery'] as const).map((tab) => (
+                <div className="flex border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+                  {(['overview', 'pack', 'gallery'] as const)
+                    .filter((tab) => tab !== 'gallery' || showGalleryTab)
+                    .map((tab) => (
                       <button
                         key={tab}
                         onClick={() => setFolderPanelTab(tab)}
@@ -2107,13 +2109,16 @@ export default function App() {
                             : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
                         }`}
                       >
-                        {tab === 'pack' ? 'Pack Info' : 'Gallery'}
+                        {tab === 'overview' ? 'Overview' : tab === 'pack' ? 'Pack Info' : 'Gallery'}
                       </button>
                     ))}
-                  </div>
-                )}
+                </div>
                 <div className="flex-1 overflow-hidden">
-                  {showPackEditor && (!showGalleryTab || folderPanelTab === 'pack') ? (
+                  {folderPanelTab === 'overview' ? (
+                    <FolderDashboard files={visibleFiles} folderName={activeFolderName} />
+                  ) : folderPanelTab === 'gallery' && showGalleryTab ? (
+                    <FolderGallery data={folderImages!} />
+                  ) : showPackEditor ? (
                     <PackInfoEditor
                       key={activeFolderPath}
                       folderPath={activeFolderPath}
@@ -2136,7 +2141,7 @@ export default function App() {
                         return paths
                       })()}
                     />
-                  ) : showCreatePrompt && (!showGalleryTab || folderPanelTab === 'pack') ? (
+                  ) : showCreatePrompt ? (
                     <div className="h-full flex flex-col items-center justify-center gap-4 px-8 text-center">
                       <svg className="w-10 h-10 text-gray-300 dark:text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -2176,8 +2181,6 @@ export default function App() {
                         </p>
                       )}
                     </div>
-                  ) : showGallery ? (
-                    <FolderGallery data={folderImages!} />
                   ) : null}
                 </div>
               </div>
