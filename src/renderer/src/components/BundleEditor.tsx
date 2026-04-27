@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { NamFile } from '../types/nam'
 import type { PackInfo } from './PackInfoEditor'
-import { generatePackHtml } from '../utils/packExport'
+import { generatePackHtml, parseDescription } from '../utils/packExport'
 
 export interface BundleLinkedPack {
   folderPath: string  // relative to root folder
@@ -13,6 +13,7 @@ export interface BundleData {
   title: string
   subtitle: string
   description: string
+  footer: string
   linkedPacks: BundleLinkedPack[]
 }
 
@@ -31,6 +32,7 @@ const EMPTY_BUNDLE: BundleData = {
   title: '',
   subtitle: '',
   description: '',
+  footer: '',
   linkedPacks: [],
 }
 
@@ -47,11 +49,12 @@ function absPath(rel: string, rootFolder: string): string {
   return rel.startsWith('/') ? rel : `${r}/${rel}`
 }
 
-export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark, defaultCapturedBy, onSaved, onDeleted }: Props) {
+export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark, onSaved, onDeleted }: Props) {
   const [bundle, setBundle] = useState<BundleData>(EMPTY_BUNDLE)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [exportingPack, setExportingPack] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
   const [showPicker, setShowPicker] = useState(false)
   const [packOptions, setPackOptions] = useState<{ folderPath: string; title: string }[]>([])
@@ -59,7 +62,6 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
   const pickerRef = useRef<HTMLDivElement>(null)
   const dragIndexRef = useRef<number | null>(null)
 
-  // Load existing bundle on mount
   useEffect(() => {
     setLoading(true)
     window.api.readBundle(folderPath).then((res) => {
@@ -69,6 +71,7 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
           title: d.title ?? '',
           subtitle: d.subtitle ?? '',
           description: d.description ?? '',
+          footer: d.footer ?? '',
           linkedPacks: Array.isArray(d.linkedPacks) ? d.linkedPacks : [],
         })
       } else {
@@ -79,7 +82,6 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
     })
   }, [folderPath])
 
-  // Close picker on outside click
   useEffect(() => {
     if (!showPicker) return
     const handler = (e: MouseEvent) => {
@@ -130,18 +132,15 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
   }
 
   const removePack = (idx: number) => {
-    const next = bundle.linkedPacks.filter((_, i) => i !== idx)
-    update({ linkedPacks: next })
+    update({ linkedPacks: bundle.linkedPacks.filter((_, i) => i !== idx) })
   }
 
   const toggleIncluded = (idx: number) => {
-    const next = bundle.linkedPacks.map((p, i) => i === idx ? { ...p, included: !p.included } : p)
-    update({ linkedPacks: next })
+    update({ linkedPacks: bundle.linkedPacks.map((p, i) => i === idx ? { ...p, included: !p.included } : p) })
   }
 
   const setOverrideName = (idx: number, name: string) => {
-    const next = bundle.linkedPacks.map((p, i) => i === idx ? { ...p, overrideName: name } : p)
-    update({ linkedPacks: next })
+    update({ linkedPacks: bundle.linkedPacks.map((p, i) => i === idx ? { ...p, overrideName: name } : p) })
   }
 
   const movePack = (from: number, to: number) => {
@@ -152,62 +151,120 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
     update({ linkedPacks: next })
   }
 
+  // Export a single pack — identical to clicking Export PDF from its Pack Info editor
+  const handleExportPack = async (lp: BundleLinkedPack) => {
+    const key = lp.folderPath
+    setExportingPack(key)
+    try {
+      const absFolder = absPath(lp.folderPath, rootFolder)
+      const packRes = await window.api.readPackInfo(absFolder)
+      if (!packRes.success || !packRes.data) return
+      const pack = packRes.data as PackInfo
+      const filesRaw = await window.api.scanFolder(absFolder)
+      const files: NamFile[] = (Array.isArray(filesRaw) ? filesRaw : []) as NamFile[]
+      const folderName = absFolder.replace(/\\/g, '/').split('/').pop() ?? absFolder
+      const logo = dark ? (logoDark || undefined) : (logoLight || undefined)
+      const html = generatePackHtml(pack, absFolder, folderName, files, dark, logo)
+      await window.api.exportPackSheet(html)
+    } finally {
+      setExportingPack(null)
+    }
+  }
+
+  // Export the bundle cover sheet: description + contents list + footer
   const handleExport = async () => {
     if (dirty) await handleSave()
     setExporting(true)
     try {
-      const logo = dark ? (logoDark || undefined) : (logoLight || undefined)
       const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      const logo = dark ? (logoDark || undefined) : (logoLight || undefined)
       const included = bundle.linkedPacks.filter((p) => p.included)
-      const sections: string[] = []
 
-      for (const lp of included) {
-        const absFolder = absPath(lp.folderPath, rootFolder)
-        const packRes = await window.api.readPackInfo(absFolder)
-        if (!packRes.success || !packRes.data) continue
-        const pack = packRes.data as PackInfo
-        const filesRaw = await window.api.scanFolder(absFolder)
-        const files: NamFile[] = (Array.isArray(filesRaw) ? filesRaw : []) as NamFile[]
-        const folderName = absFolder.replace(/\\/g, '/').split('/').pop() ?? absFolder
-        const packHtml = generatePackHtml(pack, absFolder, folderName, files, dark, logo)
-        const bodyMatch = /<body>([\s\S]*)<\/body>/.exec(packHtml)
-        if (bodyMatch) sections.push(bodyMatch[1])
+      const t = dark ? {
+        bodyBg: '#0d0d0d', bodyColor: '#e8e8e8',
+        headerBg: '#000000', headerSub: '#888888',
+        descColor: '#c0c0c0',
+        sectionBorder: '#2a2a2a', sectionTitleColor: '#f97316',
+        thBg: '#1a1a1a', thColor: '#f97316', thBorder: '#2a2a2a',
+        tdBorder: '#1e1e1e', tdEvenBg: '#141414',
+        footerBorder: '#2a2a2a', footerColor: '#555',
+      } : {
+        bodyBg: '#ffffff', bodyColor: '#1e2235',
+        headerBg: '#1a1f35', headerSub: '#94a3b8',
+        descColor: '#475569',
+        sectionBorder: '#e2e8f0', sectionTitleColor: '#64748b',
+        thBg: '#f8fafc', thColor: '#64748b', thBorder: '#e2e8f0',
+        tdBorder: '#f1f5f9', tdEvenBg: '#fafbfc',
+        footerBorder: '#e2e8f0', footerColor: '#94a3b8',
       }
-
-      const t = dark
-        ? { bg: '#0d0d0d', fg: '#e8e8e8', headerBg: '#000', sub: '#888', accent: '#f97316', border: '#2a2a2a' }
-        : { bg: '#fff', fg: '#1e2235', headerBg: '#1a1f35', sub: '#94a3b8', accent: '#f97316', border: '#e2e8f0' }
 
       const tocRows = included.map((p, i) => {
         const display = p.overrideName || p.folderPath.replace(/\\/g, '/').split('/').pop() || p.folderPath
-        return `<div style="display:flex;gap:12px;padding:5px 0;border-bottom:1px solid ${t.border}">
-          <span style="color:${t.sub};font-size:10px;min-width:1.5em">${i + 1}</span>
-          <span>${esc(display)}</span>
-        </div>`
+        return `<tr>
+          <td style="padding:5px 8px;border-bottom:1px solid ${t.tdBorder};color:${t.sectionTitleColor};width:32px;font-size:10px;white-space:nowrap">${i + 1}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid ${t.tdBorder};word-break:break-word">${esc(display)}</td>
+        </tr>`
       }).join('')
 
-      const coverHtml = `<div style="background:${t.headerBg};color:#fff;padding:40px 52px 36px;page-break-after:always;break-after:page">
-        ${logo ? `<div style="margin-bottom:20px"><img src="${logo}" style="max-height:56px;max-width:180px;object-fit:contain"></div>` : ''}
-        <div style="font-size:32px;font-weight:700;letter-spacing:-0.02em">${esc(bundle.title || 'NAM Bundle')}</div>
-        ${bundle.subtitle ? `<div style="font-size:16px;color:${t.sub};margin-top:8px">${esc(bundle.subtitle)}</div>` : ''}
-        ${bundle.description ? `<div style="font-size:12px;color:#aaa;margin-top:16px;line-height:1.6;max-width:600px">${esc(bundle.description)}</div>` : ''}
-        ${defaultCapturedBy ? `<div style="font-size:11px;color:${t.sub};margin-top:24px">Captured by ${esc(defaultCapturedBy)}</div>` : ''}
-      </div>
-      <div style="padding:32px 52px;background:${t.bg};color:${t.fg};page-break-after:always;break-after:page">
-        <div style="font-size:10px;font-weight:700;color:${t.accent};text-transform:uppercase;letter-spacing:0.1em;margin-bottom:16px">Contents</div>
-        ${tocRows}
-      </div>`
+      const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>${esc(bundle.title || 'Multi-Amp Bundle')}</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html { background:${t.bodyBg}; }
+  body { font-family:Inter,Arial,sans-serif; color:${t.bodyColor}; background:${t.bodyBg}; font-size:10.5px; line-height:1.45; }
+  .header { background:${t.headerBg}; color:#fff; padding:18px 32px 16px; display:flex; justify-content:space-between; align-items:flex-start; gap:24px; }
+  .header-left { flex:1; min-width:0; }
+  .header-title { font-size:26px; font-weight:700; letter-spacing:-0.02em; }
+  .header-sub { font-size:14px; color:${t.headerSub}; margin-top:6px; }
+  .header-logo { flex-shrink:0; display:flex; align-items:center; }
+  .content { padding:18px 44px; }
+  .description { color:${t.descColor}; margin-bottom:16px; line-height:1.7; width:100%; font-size:14px; }
+  .section { margin-bottom:20px; }
+  .section-title { font-size:10px; font-weight:700; color:${t.sectionTitleColor}; text-transform:uppercase; letter-spacing:0.1em; text-align:center; margin-bottom:8px; }
+  .section-title::after { content:''; display:block; width:28px; height:2px; background:${t.sectionTitleColor}; border-radius:1px; margin:5px auto 0; opacity:0.7; }
+  table { width:100%; border-collapse:collapse; table-layout:fixed; }
+  thead th { background:${t.thBg}; text-align:left; padding:5px 8px; font-size:9.5px; font-weight:600; color:${t.thColor}; text-transform:uppercase; letter-spacing:0.06em; border-bottom:1px solid ${t.thBorder}; }
+  tbody td { padding:4px 8px; border-bottom:1px solid ${t.tdBorder}; vertical-align:top; }
+  tbody tr:last-child td { border-bottom:none; }
+  tbody tr:nth-child(even) { background:${t.tdEvenBg}; }
+  .footer { margin-top:24px; padding-top:8px; border-top:1px solid ${t.footerBorder}; font-size:9.5px; color:${t.footerColor}; }
+  @page { margin:0; }
+  @media print {
+    html, body { background:${t.bodyBg}; }
+    body { print-color-adjust:exact; -webkit-print-color-adjust:exact; }
+    .header { padding:20px 52px 17px; break-inside:avoid; }
+    .content { padding:18px 52px 24px; }
+    .footer { break-inside:avoid; margin-top:10mm; padding-top:6mm; padding-bottom:12mm; }
+  }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="header-left">
+    <div class="header-title">${esc(bundle.title || 'Multi-Amp Bundle')}</div>
+    ${bundle.subtitle ? `<div class="header-sub">${esc(bundle.subtitle)}</div>` : ''}
+  </div>
+  ${logo ? `<div class="header-logo"><img src="${logo}" style="max-height:56px;max-width:180px;object-fit:contain" /></div>` : ''}
+</div>
+<div class="content">
+  ${bundle.description.trim() ? `<div class="description">${parseDescription(bundle.description, dark)}</div>` : ''}
 
-      const pageBreakStyle = `<style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-        * { margin:0; padding:0; box-sizing:border-box; }
-        body { font-family: Inter, Arial, sans-serif; background:${t.bg}; color:${t.fg}; font-size:10.5px; }
-        .pack-section { page-break-before: always; break-before: page; }
-        @media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
-      </style>`
+  ${included.length > 0 ? `<div class="section">
+    <div class="section-title">Contents</div>
+    <table>
+      <thead><tr><th style="width:32px">#</th><th>Pack</th></tr></thead>
+      <tbody>${tocRows}</tbody>
+    </table>
+  </div>` : ''}
 
-      const packSections = sections.map((s) => `<div class="pack-section">${s}</div>`).join('\n')
-      const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>${esc(bundle.title || 'NAM Bundle')}</title>${pageBreakStyle}</head><body>${coverHtml}${packSections}</body></html>`
+  <div class="footer">${bundle.footer.trim() ? parseDescription(bundle.footer, dark) : 'Generated by NAM Lab'}</div>
+</div>
+</body>
+</html>`
 
       await window.api.exportPackSheet(html)
     } finally {
@@ -229,6 +286,9 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
     const name = o.title || o.folderPath.replace(/\\/g, '/').split('/').pop() || ''
     return name.toLowerCase().includes(pickerSearch.toLowerCase())
   })
+
+  const inputCls = 'w-full px-3 py-1.5 text-sm rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-teal-500'
+  const labelCls = 'block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1'
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100">
@@ -253,10 +313,11 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
           )}
           <button
             onClick={() => void handleExport()}
-            disabled={exporting || bundle.linkedPacks.filter((p) => p.included).length === 0}
+            disabled={exporting}
             className="px-3 py-1 text-xs rounded bg-indigo-600 hover:bg-indigo-700 text-white transition-colors disabled:opacity-50"
+            title="Export bundle cover sheet to PDF"
           >
-            {exporting ? 'Exporting…' : 'Export PDF'}
+            {exporting ? 'Exporting…' : 'Export Cover PDF'}
           </button>
         </div>
       </div>
@@ -269,28 +330,44 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
             value={bundle.title}
             onChange={(e) => update({ title: e.target.value })}
             placeholder="Bundle title…"
-            className="w-full px-3 py-1.5 text-sm rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-teal-500"
+            className={inputCls}
           />
           <input
             type="text"
             value={bundle.subtitle}
             onChange={(e) => update({ subtitle: e.target.value })}
             placeholder="Subtitle (optional)…"
-            className="w-full px-3 py-1.5 text-sm rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-teal-500"
+            className={inputCls}
           />
+        </div>
+
+        {/* Description */}
+        <div>
+          <label className={labelCls}>Description</label>
           <textarea
             value={bundle.description}
             onChange={(e) => update({ description: e.target.value })}
-            placeholder="Description / marketing copy (optional)…"
-            rows={3}
-            className="w-full px-3 py-1.5 text-sm rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-teal-500 resize-none"
+            placeholder="Describe this collection of amp captures…"
+            rows={7}
+            className={`${inputCls} resize-y leading-relaxed min-h-[80px] font-mono text-xs`}
           />
+          <div className="mt-1 px-1 text-[10px] text-gray-400 dark:text-gray-500 leading-relaxed">
+            <span className="font-semibold text-gray-500 dark:text-gray-400">Formatting (export only):</span>
+            {' '}<code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">**bold**</code>
+            {' '}<code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">*italic*</code>
+            {' '}<code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">__underline__</code>
+            {' '}<code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded"># Heading</code>
+            {' '}<code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">- bullet</code>
+            {' '}<code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">---</code>
+            {' '}Color: <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">[orange]text[/orange]</code>
+            {' — '}available: orange, teal, red, blue, green, dim, white
+          </div>
         </div>
 
         {/* Linked Packs */}
         <div>
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Linked Packs</span>
+            <span className={labelCls}>Linked Packs</span>
             <div className="relative">
               <button
                 onClick={() => void openPicker()}
@@ -347,7 +424,8 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
           ) : (
             <div className="space-y-1">
               {bundle.linkedPacks.map((lp, idx) => {
-                const displayPath = lp.folderPath.replace(/\\/g, '/').split('/').pop() ?? lp.folderPath
+                const displayPath = lp.overrideName || lp.folderPath.replace(/\\/g, '/').split('/').pop() || lp.folderPath
+                const isExportingThis = exportingPack === lp.folderPath
                 return (
                   <div
                     key={idx}
@@ -374,8 +452,9 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
                       checked={lp.included}
                       onChange={() => toggleIncluded(idx)}
                       className="flex-shrink-0 accent-teal-600"
+                      title="Include in cover sheet contents"
                     />
-                    {/* Pack name / path */}
+                    {/* Pack name */}
                     <div className="flex-1 min-w-0">
                       <div className="text-xs font-medium text-gray-700 dark:text-gray-300 truncate">{displayPath}</div>
                       <div className="text-[10px] text-gray-400 truncate">{lp.folderPath}</div>
@@ -385,9 +464,21 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
                       type="text"
                       value={lp.overrideName}
                       onChange={(e) => setOverrideName(idx, e.target.value)}
-                      placeholder="Override name…"
-                      className="w-32 flex-shrink-0 px-1.5 py-0.5 text-xs rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:border-teal-500"
+                      placeholder="Display name…"
+                      className="w-28 flex-shrink-0 px-1.5 py-0.5 text-xs rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:border-teal-500"
                     />
+                    {/* Export this pack PDF */}
+                    <button
+                      onClick={() => void handleExportPack(lp)}
+                      disabled={isExportingThis}
+                      title="Export this pack's PDF (same as Pack Info export)"
+                      className="flex-shrink-0 flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-colors disabled:opacity-40"
+                    >
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                      </svg>
+                      {isExportingThis ? '…' : 'PDF'}
+                    </button>
                     {/* Up/Down */}
                     <div className="flex flex-col gap-0.5 flex-shrink-0">
                       <button
@@ -423,6 +514,21 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
               })}
             </div>
           )}
+        </div>
+
+        {/* Footer */}
+        <div>
+          <label className={labelCls}>Footer</label>
+          <textarea
+            value={bundle.footer}
+            onChange={(e) => update({ footer: e.target.value })}
+            placeholder="© 2025 Your Name · yoursite.com"
+            rows={2}
+            className={`${inputCls} resize-none font-mono text-xs`}
+          />
+          <div className="mt-1 px-1 text-[10px] text-gray-400 dark:text-gray-500">
+            Supports same formatting — <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">**bold**</code>, <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">[orange]color[/orange]</code>, etc.
+          </div>
         </div>
 
         {/* Delete */}
