@@ -18,6 +18,10 @@ export interface PackInfo {
   exportExcludedSubfolders: string[]
   exportExcludedCaptures: string[]
   exportColumns: string[]
+  recommendedInputGain: string
+  notes: string
+  liveDate: string
+  versionInfo: string
 }
 
 const EMPTY_PACK: PackInfo = {
@@ -32,7 +36,11 @@ const EMPTY_PACK: PackInfo = {
   footer: '',
   exportExcludedSubfolders: [],
   exportExcludedCaptures: [],
-  exportColumns: DEFAULT_EXPORT_COLUMNS
+  exportColumns: DEFAULT_EXPORT_COLUMNS,
+  recommendedInputGain: '',
+  notes: '',
+  liveDate: '',
+  versionInfo: '',
 }
 
 interface Props {
@@ -328,7 +336,11 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
               footer: d.footer ?? '',
               exportExcludedSubfolders: d.exportExcludedSubfolders ?? [],
               exportExcludedCaptures: d.exportExcludedCaptures ?? [],
-              exportColumns: d.exportColumns ?? DEFAULT_EXPORT_COLUMNS
+              exportColumns: d.exportColumns ?? DEFAULT_EXPORT_COLUMNS,
+              recommendedInputGain: d.recommendedInputGain ?? '',
+              notes: d.notes ?? '',
+              liveDate: d.liveDate ?? '',
+              versionInfo: d.versionInfo ?? '',
             }
           })()
         : { ...EMPTY_PACK, capturedBy: defaultCapturedBy }
@@ -869,6 +881,52 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
             catalogItems={catalogFor('glossary')}
             onSaveToCatalog={(label, value) => addToCatalog('glossary', label, value)}
           />
+        </div>
+
+        {/* Pack Status & Notes */}
+        <SectionHeader label="Pack Status" hint="Version, release date, and notes" />
+        <div className="pb-4 space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className={labelCls}>Live Date</label>
+              <input
+                type="date"
+                value={pack.liveDate}
+                onChange={(e) => update('liveDate', e.target.value)}
+                className={inputCls('liveDate')}
+              />
+            </div>
+            <div>
+              <label className={labelCls}>Version</label>
+              <input
+                type="text"
+                value={pack.versionInfo}
+                onChange={(e) => update('versionInfo', e.target.value)}
+                placeholder="v1.0"
+                className={inputCls('versionInfo')}
+              />
+            </div>
+          </div>
+          <div>
+            <label className={labelCls}>Recommended Input Gain</label>
+            <input
+              type="text"
+              value={pack.recommendedInputGain}
+              onChange={(e) => update('recommendedInputGain', e.target.value)}
+              placeholder="e.g. –18 dBu, unity, …"
+              className={inputCls('recommendedInputGain')}
+            />
+          </div>
+          <div>
+            <label className={labelCls}>Notes / Comments</label>
+            <textarea
+              value={pack.notes}
+              onChange={(e) => update('notes', e.target.value)}
+              placeholder="Internal notes, change log, known issues…"
+              rows={4}
+              className={`${inputCls('notes')} resize-y min-h-[80px]`}
+            />
+          </div>
         </div>
 
         {/* Footer */}
