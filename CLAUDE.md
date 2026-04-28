@@ -358,7 +358,7 @@ These have been discussed and approved — remove each item when implemented.
 
 - **[x] Folder tree expand/collapse all** — Two chevron buttons in the Library header (expand all ↓ / collapse all ↑). Signal propagates down through TreeNode via incrementing seq counters.
 
-- **[ ] Star / Pin captures** — Mark individual captures as starred/pinned for quick access. Stored as `metadata.nam_lab.starred` (boolean). Shown as a star icon in list and grid. Filterable chip in the file list toolbar. Separate from rating (see below).
+- **[x] Star / Pin captures** — Starred captures stored as `metadata.nam_lab.starred` (boolean). Shown as a star icon in list and grid. Filterable chip in the file list toolbar.
 
 - **[x] Capture rating** — 1–5 star rating stored as `metadata.nam_lab.rating` (`nl_rating` flat key). Shown as ★ stars in list and grid. "Rated" filter chip. Rating distribution shown in Library Overview and Folder Overview dashboards. Clickable bars filter the list to that exact rating. `ratingFilter` state in App.tsx; amber dismissible chip in FileList.
 
@@ -393,11 +393,13 @@ These have been discussed and approved — remove each item when implemented.
 
 - **[ ] Large collection / network share load performance** — Partially done: `file:read` is now async (`fs.promises.readFile`); renderer batches 50 IPC calls at a time with a generation token so stale loads are discarded if user opens a new folder mid-scan. Remaining: **(3) mtime cache** — during scan, stat each file; persist `{ mtimeMs, size, parsedData }` to `userData/nam-file-cache.json` keyed by file path; on reopen only IPC-read files whose mtime/size changed. Makes reopening the same folder near-instant when few files changed. Storage: `userData` JSON file (no localStorage size limit). Scoped per folder so stale entries prune automatically.
 
-- **[ ] Folder tree colorization** — Two-layer color system. Layer 1: name-based rules in Settings → Library (e.g. `DI=blue, CAB=green`) — any folder with that exact name gets a colored dot anywhere in the tree, set once. Layer 2: right-click any folder → "Set color" palette — stores color by folder path, applies to that specific folder. Parent color propagates to direct children as a subtle left accent bar (group membership signal), while the child's own dot shows its type. Two visual channels: left bar = amp group, dot = capture type. Storage: `folderNameColors: Record<string, string>` and `folderPathColors: Record<string, string>` in AppSettings. LOE: ~2–3 hours.
+- **[x] Folder tree colorization** — Two-layer color system: name-based rules in Settings → Library (any folder with that name gets a colored dot) and per-path colors via right-click "Set color" palette. `folderNameColors` and `folderPathColors` in AppSettings.
 
 - **[x] Multi-Amp Bundle** — `nam-bundle.json` sidecar in a folder links multiple Pack Info folders. Right-click any folder → "Create Multi-Amp Bundle…". BundleEditor shows title/subtitle/description (markdown/BBCode), linked packs list (add/reorder/remove/include toggle, per-row PDF export), and footer. "Export Cover PDF" generates a cover sheet (description + numbered contents + footer) — each pack is exported separately via its own PDF button (calls `generatePackHtml` same as Pack Info export). `BundleData` shape: `{ title, subtitle, description, footer, linkedPacks: [{ folderPath, overrideName, included }] }`. Amber chain-link icon on bundle folders in tree. IPC: `folder:readBundle`, `folder:writeBundle`, `folder:deleteBundle`, `folder:scanBundlePaths`, `folder:findBundlePackFolders`. Shared HTML generation extracted to `utils/packExport.ts`.
 
 - **[x] Pack Status fields** — New section at bottom of Pack Info editor (between Glossary and Footer): Live Date (date picker), Version (text, e.g. "v3.1"), Recommended Input Gain (text), Notes/Comments (4-row expandable textarea). Stored in `nam-pack.json`.
+
+- **[ ] Capture file size stats** — Model weight size in MB surfaced per file and aggregated per folder/library. Useful for pack release prep (Complex models bloat pack size). Display options: (a) size column in grid view; (b) total size shown in Folder Overview dashboard; (c) size breakdown by preset type (Standard/Complex/Lite etc.) in Library Overview. `file:stat` or `file:read` already returns `birthtimeMs` / `mtimeMs` — add `fileSize: number` (bytes) to the same IPC response. Show as "X MB" in grid; sum in folder/library dashboards with a per-preset-type breakdown.
 
 ---
 
