@@ -109,9 +109,9 @@ const SORT_STORAGE_KEY = 'nam-lab-sort'
 function loadSort(): { key: string | null; dir: SortDir } {
   try {
     const s = localStorage.getItem(SORT_STORAGE_KEY)
-    return s ? JSON.parse(s) : { key: 'name', dir: 'asc' }
+    return s ? JSON.parse(s) : { key: 'date', dir: 'desc' }
   } catch {
-    return { key: 'name', dir: 'asc' }
+    return { key: 'date', dir: 'desc' }
   }
 }
 

@@ -93,6 +93,8 @@ Layout uses three resizable panels: **FolderTree | FileList | MetadataEditor/Bat
 | `BatchEditor` | Right panel: batch field editor for a folder or selection |
 | `SettingsPanel` | Right panel: app settings (replaces editor content when open) |
 | `DuplicatesModal` | Full-screen modal: find dupes by filename or metadata name, choose keep, move to _Duplicates or trash |
+| `NamDashboard` | Right panel: Library Overview — gear/tone/creator/completeness/rating stats, recent files; shown when no file selected and `showDashboard` is true |
+| `FolderDashboard` | Right panel (Overview tab): folder-level stats — gear/tone/preset/ESR/completeness/rating bars; shown when a folder is selected, no file selected |
 | `StatusBar` | Bottom bar: status messages, version number |
 
 ### Types
@@ -165,6 +167,7 @@ Settings are stored in `localStorage` via `loadSettings()`/`saveSettings()`. Key
 - **Current Amp Info** (`enableAmpInfo`) — default manufacturer/model; disable when browsing shared libraries
 - **Behavior** — name from filename, auto-detect tone type, amp suffix detection
 - **Library** — `showNamLabFields` (show Capture Details section in MetadataEditor, default on), `hiddenFolders` (comma-separated folder names to exclude from scans)
+- **Startup** — `showDashboardOnLaunch` (show Library Overview on launch, default on), `defaultFolderTab` ('overview' | 'pack' | 'gallery', default 'overview')
 
 `applyDefaults()` in App.tsx runs on every file at load time and on "↺ Defaults" button press. It only fills empty fields — never overwrites existing values.
 
@@ -192,7 +195,7 @@ npm run package:linux    # Linux AppImage
 
 CI runs on tag push via `.github/workflows/release.yml`. Tags matching `*-rc*` are automatically marked as GitHub pre-releases. Final releases use clean semver tags (`v0.4.2`).
 
-Current version: **0.5.11** (see `package.json`). Version is injected into the renderer via `VITE_APP_VERSION` in `electron.vite.config.ts`.
+Current version: **0.5.11** (final release — see `package.json`). Version is injected into the renderer via `VITE_APP_VERSION` in `electron.vite.config.ts`.
 
 App IDs:
 - `appId`: `com.coretonecaptures.namlab`
@@ -357,7 +360,7 @@ These have been discussed and approved — remove each item when implemented.
 
 - **[ ] Star / Pin captures** — Mark individual captures as starred/pinned for quick access. Stored as `metadata.nam_lab.starred` (boolean). Shown as a star icon in list and grid. Filterable chip in the file list toolbar. Separate from rating (see below).
 
-- **[ ] Capture rating** — 1–5 star rating stored as `metadata.nam_lab.rating`. Shown in list/grid. Sortable column. Filter chip. Intended for personal quality ranking after auditioning in a DAW — most useful once the in-app preview player exists, but the field infrastructure is worth having now. Star/pin shortcut could set rating = 5.
+- **[x] Capture rating** — 1–5 star rating stored as `metadata.nam_lab.rating` (`nl_rating` flat key). Shown as ★ stars in list and grid. "Rated" filter chip. Rating distribution shown in Library Overview and Folder Overview dashboards. Clickable bars filter the list to that exact rating. `ratingFilter` state in App.tsx; amber dismissible chip in FileList.
 
 - **[x] Select all in folder** — Right-click a folder in the tree → "Select all in folder" selects all files in that folder and navigates to it.
 
