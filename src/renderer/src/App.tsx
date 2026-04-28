@@ -259,13 +259,11 @@ export default function App() {
       return
     }
     let cancelled = false
-    const sfNorm = sf.replace(/\\/g, '/')
     window.api.findPackOwner(sf, rf).then((owner) => {
       if (cancelled) return
       setPackInfoAncestor(owner)
-      const ownPack = packInfoFolders.has(sfNorm)
-      // Default to gallery when folder has no own pack but a parent pack exists; else use user's default
-      setFolderPanelTab(!ownPack && owner ? 'gallery' : settings.defaultFolderTab)
+      // Always use the user's default tab; gallery auto-override is skipped when a preference is set
+      setFolderPanelTab(settings.defaultFolderTab)
     })
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
