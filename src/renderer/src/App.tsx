@@ -2025,6 +2025,12 @@ export default function App() {
               onRecentFileClick={(filePath) => {
                 const normalized = filePath.replace(/\\/g, '/')
                 const folderPath = normalized.split('/').slice(0, -1).join('/')
+                setGearTypeFilter(null)
+                setToneTypeFilter(null)
+                setCreatorFilter(null)
+                setFilterModeOverride(null)
+                setEsrFilterOverride(null)
+                setPresetFilterOverride(null)
                 setLibrarian((prev) => ({ ...prev, selectedFolders: [folderPath] }))
                 setSelectedIds(new Set([filePath]))
                 setShowDashboard(false)
