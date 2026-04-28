@@ -30,6 +30,20 @@ export interface HistoryEntry {
   operation: string
   summary: string
 }
+
+const HISTORY_STORAGE_KEY = 'nam-lab-history'
+const HISTORY_MAX = 100
+
+function loadHistory(): HistoryEntry[] {
+  try {
+    const stored = localStorage.getItem(HISTORY_STORAGE_KEY)
+    if (!stored) return []
+    const parsed = JSON.parse(stored) as Array<{ id: string; timestamp: string; operation: string; summary: string }>
+    return parsed.slice(0, HISTORY_MAX).map((e) => ({ ...e, timestamp: new Date(e.timestamp) }))
+  } catch {
+    return []
+  }
+}
 import { FolderNode } from './types/librarian'
 
 declare global {
@@ -240,7 +254,7 @@ export default function App() {
   // so the dashboard stays visible after the default folder loads.
   const suppressStartupAutoSelectRef = useRef(settings.showDashboardOnLaunch)
   const [historyOpen, setHistoryOpen] = useState(false)
-  const [sessionHistory, setSessionHistory] = useState<HistoryEntry[]>([])
+  const [sessionHistory, setSessionHistory] = useState<HistoryEntry[]>(() => loadHistory())
   const [creatorFilter, setCreatorFilter] = useState<string | null>(null)
   const [gearTypeFilter, setGearTypeFilter] = useState<string | null>(null)
   const [toneTypeFilter, setToneTypeFilter] = useState<string | null>(null)
@@ -682,10 +696,15 @@ export default function App() {
     }
   }
 
+  // Persist history to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(sessionHistory))
+  }, [sessionHistory])
+
   const addHistoryEntry = useCallback((entry: Omit<HistoryEntry, 'id' | 'timestamp'>) => {
     setSessionHistory((current) => {
       const next: HistoryEntry = { ...entry, id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, timestamp: new Date() }
-      return [next, ...current].slice(0, 100)
+      return [next, ...current].slice(0, HISTORY_MAX)
     })
   }, [])
 

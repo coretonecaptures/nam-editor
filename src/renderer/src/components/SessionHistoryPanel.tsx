@@ -15,7 +15,15 @@ const OPERATION_LABELS: Record<string, string> = {
 }
 
 function formatTime(date: Date): string {
-  return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  const now = new Date()
+  const isToday = date.toDateString() === now.toDateString()
+  if (isToday) return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  const yesterday = new Date(now)
+  yesterday.setDate(yesterday.getDate() - 1)
+  const isYesterday = date.toDateString() === yesterday.toDateString()
+  const timePart = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  if (isYesterday) return `Yesterday ${timePart}`
+  return `${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${timePart}`
 }
 
 function OperationBadge({ operation }: { operation: string }) {
@@ -90,7 +98,7 @@ export function SessionHistoryPanel({ entries, onClear, onClose }: Props) {
 
       {entries.length > 0 && (
         <div className="px-3 py-1.5 border-t border-gray-200 dark:border-gray-800 flex-shrink-0">
-          <p className="text-[10px] text-gray-400 dark:text-gray-600">{entries.length} action{entries.length !== 1 ? 's' : ''} this session</p>
+          <p className="text-[10px] text-gray-400 dark:text-gray-600">{entries.length} action{entries.length !== 1 ? 's' : ''} recorded (last 100)</p>
         </div>
       )}
     </div>
