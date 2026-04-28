@@ -236,6 +236,9 @@ export default function App() {
   // Folder compare modal: array of paths to compare (null = closed)
   const [compareFolderPaths, setCompareFolderPaths] = useState<string[] | null>(null)
   const [showDashboard, setShowDashboard] = useState(settings.showDashboardOnLaunch)
+  // Suppress auto-selection of the first file on startup when the dashboard is shown on launch,
+  // so the dashboard stays visible after the default folder loads.
+  const suppressStartupAutoSelectRef = useRef(settings.showDashboardOnLaunch)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [sessionHistory, setSessionHistory] = useState<HistoryEntry[]>([])
   const [creatorFilter, setCreatorFilter] = useState<string | null>(null)
@@ -490,6 +493,10 @@ export default function App() {
     })
     setSelectedIds((prev) => {
       if (loaded.length === 0) return prev
+      if (suppressStartupAutoSelectRef.current) {
+        suppressStartupAutoSelectRef.current = false
+        return prev
+      }
       if (mode === 'replace') return new Set([loaded[0].filePath])
       if (prev.size === 0) return new Set([loaded[0].filePath])
       return prev
