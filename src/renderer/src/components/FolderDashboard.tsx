@@ -34,7 +34,7 @@ const GEAR_COLORS: Record<string, string> = {
 }
 const GEAR_LABELS: Record<string, string> = {
   amp: 'Amp', amp_cab: 'Amp + Cab', pedal: 'Pedal',
-  pedal_amp: 'Pedal Amp', amp_pedal_cab: 'Full Rig',
+  pedal_amp: 'Pedal + Amp', amp_pedal_cab: 'Amp + Pedal + Cab',
   preamp: 'Preamp', studio: 'Studio',
 }
 
