@@ -242,7 +242,7 @@ export default function App() {
   const [gearTypeFilter, setGearTypeFilter] = useState<string | null>(null)
   const [toneTypeFilter, setToneTypeFilter] = useState<string | null>(null)
   const [presetFilterOverride, setPresetFilterOverride] = useState<string | null>(null)
-  const [filterModeOverride, setFilterModeOverride] = useState<'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited' | 'incomplete' | 'rated' | null>(null)
+  const [filterModeOverride, setFilterModeOverride] = useState<'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited' | 'incomplete' | 'complete' | 'rated' | null>(null)
   const [esrFilterOverride, setEsrFilterOverride] = useState<string | null>(null)
 
   // Reset folder panel tab and check for pack-owning ancestor when selected folder changes
@@ -450,7 +450,7 @@ export default function App() {
   // mode='replace': clear existing, load fresh (open folder/files)
   // Shared: turn raw IPC read results into NamFile[] and update state
   const applyParsedResults = useCallback(async (
-    results: { success: boolean; filePath?: string; metadata?: NamFile['metadata']; version?: string; architecture?: string; config?: unknown; error?: string; mtimeMs?: number }[],
+    results: { success: boolean; filePath?: string; metadata?: NamFile['metadata']; version?: string; architecture?: string; config?: unknown; error?: string; mtimeMs?: number; birthtimeMs?: number }[],
     mode: 'replace' | 'append'
   ) => {
     const loaded: NamFile[] = []
@@ -470,7 +470,7 @@ export default function App() {
         const autoFilledFields = (Object.keys(meta) as (keyof NamFile['metadata'])[]).filter(
           (k) => meta[k] != null && (workingMeta[k] == null || workingMeta[k] === '')
         )
-        loaded.push({ filePath: r.filePath, fileName: baseName, version: r.version ?? '?', metadata: meta, originalMetadata: rawMeta, autoFilledFields, architecture: r.architecture ?? '?', config: r.config, isDirty: wasChanged, mtimeMs: r.mtimeMs })
+        loaded.push({ filePath: r.filePath, fileName: baseName, version: r.version ?? '?', metadata: meta, originalMetadata: rawMeta, autoFilledFields, architecture: r.architecture ?? '?', config: r.config, isDirty: wasChanged, mtimeMs: r.mtimeMs, birthtimeMs: r.birthtimeMs })
       } else {
         errors++
       }
@@ -1988,6 +1988,7 @@ export default function App() {
                 setCreatorFilter(creator)
                 setGearTypeFilter(null)
                 setToneTypeFilter(null)
+                setFilterModeOverride(null)
                 setLibrarian((prev) => ({ ...prev, selectedFolders: [] }))
               }}
               onClearCreatorFilter={() => setCreatorFilter(null)}
@@ -1995,13 +1996,38 @@ export default function App() {
                 setGearTypeFilter(gearType)
                 setCreatorFilter(null)
                 setToneTypeFilter(null)
+                setFilterModeOverride(null)
                 setLibrarian((prev) => ({ ...prev, selectedFolders: [] }))
               }}
               onToneTypeClick={(toneType) => {
                 setToneTypeFilter(toneType)
                 setCreatorFilter(null)
                 setGearTypeFilter(null)
+                setFilterModeOverride(null)
                 setLibrarian((prev) => ({ ...prev, selectedFolders: [] }))
+              }}
+              onCompleteClick={() => {
+                setFilterModeOverride('complete')
+                setGearTypeFilter(null)
+                setToneTypeFilter(null)
+                setCreatorFilter(null)
+                setLibrarian((prev) => ({ ...prev, selectedFolders: [] }))
+                setShowDashboard(false)
+              }}
+              onIncompleteClick={() => {
+                setFilterModeOverride('incomplete')
+                setGearTypeFilter(null)
+                setToneTypeFilter(null)
+                setCreatorFilter(null)
+                setLibrarian((prev) => ({ ...prev, selectedFolders: [] }))
+                setShowDashboard(false)
+              }}
+              onRecentFileClick={(filePath) => {
+                const normalized = filePath.replace(/\\/g, '/')
+                const folderPath = normalized.split('/').slice(0, -1).join('/')
+                setLibrarian((prev) => ({ ...prev, selectedFolders: [folderPath] }))
+                setSelectedIds(new Set([filePath]))
+                setShowDashboard(false)
               }}
             />
           ) : historyOpen ? (

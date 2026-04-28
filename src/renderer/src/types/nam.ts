@@ -46,6 +46,7 @@ export interface NamFile {
   config: unknown
   isDirty: boolean
   mtimeMs?: number
+  birthtimeMs?: number
   loadError?: string
 }
 

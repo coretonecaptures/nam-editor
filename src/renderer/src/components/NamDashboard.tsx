@@ -53,6 +53,9 @@ interface Props {
   onClearCreatorFilter?: () => void
   onGearTypeClick: (gearType: string) => void
   onToneTypeClick: (toneType: string) => void
+  onCompleteClick?: () => void
+  onIncompleteClick?: () => void
+  onRecentFileClick?: (filePath: string) => void
 }
 
 function countBy<K extends string>(
@@ -187,7 +190,7 @@ function formatDate(isoOrMs: string | number | undefined): string {
   return d.toLocaleDateString()
 }
 
-export function NamDashboard({ files, activeCreator, onCreatorClick, onClearCreatorFilter, onGearTypeClick, onToneTypeClick }: Props) {
+export function NamDashboard({ files, activeCreator, onCreatorClick, onClearCreatorFilter, onGearTypeClick, onToneTypeClick, onCompleteClick, onIncompleteClick, onRecentFileClick }: Props) {
   if (files.length === 0) {
     return (
       <div className="flex flex-col h-full items-center justify-center gap-3 text-center px-8">
@@ -215,13 +218,14 @@ export function NamDashboard({ files, activeCreator, onCreatorClick, onClearCrea
     else incomplete++
   }
 
-  // Top 10 recently updated by file mtime, fallback to metadata.date
-  const recentFiles = [...files]
-    .sort((a, b) => {
-      const ta = a.mtimeMs ?? 0
-      const tb = b.mtimeMs ?? 0
-      return tb - ta
-    })
+  const recentlyUpdated = [...files]
+    .filter((f) => f.mtimeMs)
+    .sort((a, b) => (b.mtimeMs ?? 0) - (a.mtimeMs ?? 0))
+    .slice(0, 10)
+
+  const recentlyAdded = [...files]
+    .filter((f) => f.birthtimeMs)
+    .sort((a, b) => (b.birthtimeMs ?? 0) - (a.birthtimeMs ?? 0))
     .slice(0, 10)
 
   return (
@@ -258,8 +262,18 @@ export function NamDashboard({ files, activeCreator, onCreatorClick, onClearCrea
         <div className="grid grid-cols-2 gap-1.5">
           <StatCard label="Total Captures" value={files.length} />
           <StatCard label="Unsaved Changes" value={dirtyCount} />
-          <StatCard label="Complete" value={complete} sub={`${Math.round((complete / files.length) * 100)}% of library`} />
-          <StatCard label="Incomplete" value={partial + incomplete} sub={`${partial} partial · ${incomplete} missing 2+`} />
+          <StatCard
+            label="Complete"
+            value={complete}
+            sub={`${Math.round((complete / files.length) * 100)}% of library`}
+            onClick={onCompleteClick}
+          />
+          <StatCard
+            label="Incomplete"
+            value={partial + incomplete}
+            sub={`${partial} partial · ${incomplete} missing 2+`}
+            onClick={onIncompleteClick}
+          />
         </div>
 
         {/* Gear & Tone Type section */}
@@ -328,22 +342,53 @@ export function NamDashboard({ files, activeCreator, onCreatorClick, onClearCrea
           <CompletenessBar complete={complete} partial={partial} incomplete={incomplete} />
         </div>
 
-        {/* Recently updated */}
-        {recentFiles.length > 0 && (
-          <div>
-            <h3 className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-1.5">Recently Updated</h3>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-              {recentFiles.map((f) => (
-                <div key={f.filePath} className="flex flex-col min-w-0">
-                  <span className="text-[11px] text-gray-700 dark:text-gray-300 truncate" title={f.metadata.name ?? f.fileName}>
-                    {f.metadata.name || f.fileName}
-                  </span>
-                  <span className="text-[10px] text-gray-400 dark:text-gray-600 truncate">
-                    {f.mtimeMs ? formatDate(f.mtimeMs) : (f.metadata.modeled_by ?? '')}
-                  </span>
+        {/* Recent files — two columns */}
+        {(recentlyUpdated.length > 0 || recentlyAdded.length > 0) && (
+          <div className="grid grid-cols-2 gap-3">
+            {recentlyUpdated.length > 0 && (
+              <div>
+                <h3 className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-1">Recently Updated</h3>
+                <div className="flex flex-col gap-0.5">
+                  {recentlyUpdated.map((f) => (
+                    <button
+                      key={f.filePath}
+                      className="text-left flex flex-col min-w-0 px-1.5 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800/60 transition-colors group"
+                      onClick={() => onRecentFileClick?.(f.filePath)}
+                      title={f.filePath}
+                    >
+                      <span className="text-[11px] text-gray-700 dark:text-gray-300 group-hover:text-gray-900 dark:group-hover:text-white truncate transition-colors">
+                        {f.metadata.name || f.fileName}
+                      </span>
+                      <span className="text-[10px] text-gray-400 dark:text-gray-600 truncate">
+                        {formatDate(f.mtimeMs)}
+                      </span>
+                    </button>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </div>
+            )}
+            {recentlyAdded.length > 0 && (
+              <div>
+                <h3 className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-1">Recently Added</h3>
+                <div className="flex flex-col gap-0.5">
+                  {recentlyAdded.map((f) => (
+                    <button
+                      key={f.filePath}
+                      className="text-left flex flex-col min-w-0 px-1.5 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800/60 transition-colors group"
+                      onClick={() => onRecentFileClick?.(f.filePath)}
+                      title={f.filePath}
+                    >
+                      <span className="text-[11px] text-gray-700 dark:text-gray-300 group-hover:text-gray-900 dark:group-hover:text-white truncate transition-colors">
+                        {f.metadata.name || f.fileName}
+                      </span>
+                      <span className="text-[10px] text-gray-400 dark:text-gray-600 truncate">
+                        {formatDate(f.birthtimeMs)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

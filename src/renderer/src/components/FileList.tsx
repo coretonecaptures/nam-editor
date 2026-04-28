@@ -6,7 +6,7 @@ import { gearChipClass, toneChipClass, getGearImageSrc } from '../assets/gear'
 import { detectPreset } from '../utils/detectPreset'
 import { BatchRenameModal } from './BatchRenameModal'
 
-type FilterMode = 'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited' | 'incomplete' | 'rated'
+type FilterMode = 'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited' | 'incomplete' | 'complete' | 'rated'
 
 // Completeness: 7 core shareable fields (output level and epochs are optional/technical)
 const COMPLETENESS_FIELDS: (keyof NamFile['metadata'])[] = [
@@ -362,6 +362,7 @@ export function FileList({
       case 'no-tone':    return !o.tone_type
       case 'edited':     return f.isDirty
       case 'incomplete': return COMPLETENESS_FIELDS.some((k) => m[k] == null || m[k] === '')
+      case 'complete':   return !COMPLETENESS_FIELDS.some((k) => m[k] == null || m[k] === '')
       case 'rated':      return (m.nl_rating ?? 0) > 0
       default:           return true
     }
