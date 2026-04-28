@@ -1,6 +1,6 @@
 ﻿import { useState, useCallback, useEffect, useRef } from 'react'
 import beakerTransparent from './assets/images/beaker.only.transparent.png'
-import { NamFile, TONE_TYPES, GEAR_TYPES } from './types/nam'
+import { NamFile, NamMetadata, TONE_TYPES, GEAR_TYPES } from './types/nam'
 import { AppSettings, loadSettings, saveSettings } from './types/settings'
 import { loadLayout, saveLayout } from './types/layout'
 import { LibrarianState } from './types/librarian'
@@ -17,9 +17,34 @@ import { ImportMetadataModal, ImportMatch } from './components/ImportMetadataMod
 import { TrainingCoverageModal } from './components/TrainingCoverageModal'
 import { FolderCompareModal } from './components/FolderCompareModal'
 import { FolderGallery, FolderImagesData } from './components/FolderGallery'
+import { FolderDashboard } from './components/FolderDashboard'
 import { PackInfoEditor } from './components/PackInfoEditor'
 import { PlayerPanel } from './components/PlayerPanel'
+import { BundleEditor } from './components/BundleEditor'
+import { NamDashboard } from './components/NamDashboard'
+import { SessionHistoryPanel } from './components/SessionHistoryPanel'
 import * as XLSX from 'xlsx'
+
+export interface HistoryEntry {
+  id: string
+  timestamp: Date
+  operation: string
+  summary: string
+}
+
+const HISTORY_STORAGE_KEY = 'nam-lab-history'
+const HISTORY_MAX = 100
+
+function loadHistory(): HistoryEntry[] {
+  try {
+    const stored = localStorage.getItem(HISTORY_STORAGE_KEY)
+    if (!stored) return []
+    const parsed = JSON.parse(stored) as Array<{ id: string; timestamp: string; operation: string; summary: string }>
+    return parsed.slice(0, HISTORY_MAX).map((e) => ({ ...e, timestamp: new Date(e.timestamp) }))
+  } catch {
+    return []
+  }
+}
 import { FolderNode } from './types/librarian'
 
 declare global {
@@ -40,6 +65,7 @@ declare global {
         metadata?: NamFile['metadata']
         architecture?: string
         config?: unknown
+        mtimeMs?: number
       }>
       writeMetadata: (filePath: string, metadata: unknown) => Promise<{ success: boolean; error?: string }>
       moveFile: (sourcePath: string, destDir: string, force?: boolean) => Promise<{ success: boolean; error?: string; destPath?: string }>
@@ -75,6 +101,11 @@ declare global {
       writePackInfo: (folderPath: string, data: unknown) => Promise<{ success: boolean; error?: string }>
       deletePackInfo: (folderPath: string) => Promise<{ success: boolean; error?: string }>
       exportPackSheet: (html: string) => Promise<{ success: boolean; error?: string }>
+      readBundle: (folderPath: string) => Promise<{ success: boolean; data: unknown }>
+      writeBundle: (folderPath: string, data: unknown) => Promise<{ success: boolean; error?: string }>
+      deleteBundle: (folderPath: string) => Promise<{ success: boolean; error?: string }>
+      scanBundlePaths: (rootPath: string) => Promise<string[]>
+      findBundlePackFolders: (rootPath: string) => Promise<{ folderPath: string; title: string }[]>
       platform: string
       initialSettings: unknown
       saveSettingsToFile: (json: string) => void
@@ -213,13 +244,28 @@ export default function App() {
   })
 
   const [folderImages, setFolderImages] = useState<FolderImagesData | null>(null)
-  const [folderPanelTab, setFolderPanelTab] = useState<'pack' | 'gallery'>('pack')
+  const [folderPanelTab, setFolderPanelTab] = useState<'overview' | 'pack' | 'gallery'>(settings.defaultFolderTab)
   // Path of the ancestor that owns the pack info for the current folder (null = current folder may own one)
   const [packInfoAncestor, setPackInfoAncestor] = useState<string | null>(null)
   // Set of folder paths that have a valid nam-pack.json (non-empty title) — drives blue dot in tree
   const [packInfoFolders, setPackInfoFolders] = useState<Set<string>>(new Set())
+  // Set of folder paths that have a nam-bundle.json — drives chain-link icon in tree
+  const [bundleFolders, setBundleFolders] = useState<Set<string>>(new Set())
   // Folder compare modal: array of paths to compare (null = closed)
   const [compareFolderPaths, setCompareFolderPaths] = useState<string[] | null>(null)
+  const [showDashboard, setShowDashboard] = useState(settings.showDashboardOnLaunch)
+  // Suppress auto-selection of the first file on startup when the dashboard is shown on launch,
+  // so the dashboard stays visible after the default folder loads.
+  const suppressStartupAutoSelectRef = useRef(settings.showDashboardOnLaunch)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [sessionHistory, setSessionHistory] = useState<HistoryEntry[]>(() => loadHistory())
+  const [creatorFilter, setCreatorFilter] = useState<string | null>(null)
+  const [gearTypeFilter, setGearTypeFilter] = useState<string | null>(null)
+  const [toneTypeFilter, setToneTypeFilter] = useState<string | null>(null)
+  const [presetFilterOverride, setPresetFilterOverride] = useState<string | null>(null)
+  const [filterModeOverride, setFilterModeOverride] = useState<'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited' | 'incomplete' | 'complete' | 'rated' | null>(null)
+  const [esrFilterOverride, setEsrFilterOverride] = useState<string | null>(null)
+  const [ratingFilter, setRatingFilter] = useState<number | null>(null)
 
   // Reset folder panel tab and check for pack-owning ancestor when selected folder changes
   useEffect(() => {
@@ -227,17 +273,15 @@ export default function App() {
     const rf = librarian.rootFolder
     if (!sf || !rf || sf === rf) {
       setPackInfoAncestor(null)
-      setFolderPanelTab('pack')
+      setFolderPanelTab(settings.defaultFolderTab)
       return
     }
     let cancelled = false
-    const sfNorm = sf.replace(/\\/g, '/')
     window.api.findPackOwner(sf, rf).then((owner) => {
       if (cancelled) return
       setPackInfoAncestor(owner)
-      const ownPack = packInfoFolders.has(sfNorm)
-      // Default to gallery when folder has no own pack but a parent pack exists
-      setFolderPanelTab(!ownPack && owner ? 'gallery' : 'pack')
+      // Always use the user's default tab; gallery auto-override is skipped when a preference is set
+      setFolderPanelTab(settings.defaultFolderTab)
     })
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -256,6 +300,29 @@ export default function App() {
     })
     return () => { cancelled = true }
   }, [librarian.rootFolder])
+
+  // Scan bundle folders when root folder changes (drives chain-link icon in tree)
+  const refreshBundleFolders = useCallback(() => {
+    const rf = librarian.rootFolder
+    if (!rf) { setBundleFolders(new Set()); return }
+    window.api.scanBundlePaths(rf)
+      .then((paths) => setBundleFolders(new Set(paths)))
+      .catch(console.error)
+  }, [librarian.rootFolder])
+
+  useEffect(() => { refreshBundleFolders() }, [refreshBundleFolders])
+
+  const handleCreateBundle = useCallback(async (folderPath: string) => {
+    const empty = { title: '', subtitle: '', description: '', linkedPacks: [] }
+    await window.api.writeBundle(folderPath, empty)
+    refreshBundleFolders()
+  }, [refreshBundleFolders])
+
+  const handleDeleteBundle = useCallback((_folderPath: string) => {
+    refreshBundleFolders()
+    // navigate away from the bundle folder so BundleEditor unmounts cleanly
+    setLibrarian((prev) => ({ ...prev, selectedFolders: prev.selectedFolders }))
+  }, [refreshBundleFolders])
 
   // Scan folder images when selected folder changes (only when feature is enabled)
   useEffect(() => {
@@ -338,6 +405,13 @@ export default function App() {
     mainContentRef.current?.focus()
   }, [showSettings, batchFolder])
 
+  useEffect(() => {
+    if (selectedIds.size > 0) {
+      setShowDashboard(false)
+      setHistoryOpen(false)
+    }
+  }, [selectedIds])
+
   const onDragStart = (panel: 'tree' | 'list', e: React.MouseEvent) => {
     e.preventDefault()
     const startWidth = panel === 'tree' ? treeWidth : listWidth
@@ -403,7 +477,7 @@ export default function App() {
   // mode='replace': clear existing, load fresh (open folder/files)
   // Shared: turn raw IPC read results into NamFile[] and update state
   const applyParsedResults = useCallback(async (
-    results: { success: boolean; filePath?: string; metadata?: NamFile['metadata']; version?: string; architecture?: string; config?: unknown; error?: string }[],
+    results: { success: boolean; filePath?: string; metadata?: NamFile['metadata']; version?: string; architecture?: string; config?: unknown; error?: string; mtimeMs?: number; birthtimeMs?: number }[],
     mode: 'replace' | 'append'
   ) => {
     const loaded: NamFile[] = []
@@ -423,7 +497,7 @@ export default function App() {
         const autoFilledFields = (Object.keys(meta) as (keyof NamFile['metadata'])[]).filter(
           (k) => meta[k] != null && (workingMeta[k] == null || workingMeta[k] === '')
         )
-        loaded.push({ filePath: r.filePath, fileName: baseName, version: r.version ?? '?', metadata: meta, originalMetadata: rawMeta, autoFilledFields, architecture: r.architecture ?? '?', config: r.config, isDirty: wasChanged })
+        loaded.push({ filePath: r.filePath, fileName: baseName, version: r.version ?? '?', metadata: meta, originalMetadata: rawMeta, autoFilledFields, architecture: r.architecture ?? '?', config: r.config, isDirty: wasChanged, mtimeMs: r.mtimeMs, birthtimeMs: r.birthtimeMs })
       } else {
         errors++
       }
@@ -433,8 +507,12 @@ export default function App() {
       const existing = new Set(prev.map((f) => f.filePath))
       return [...prev, ...loaded.filter((f) => !existing.has(f.filePath))]
     })
+    // Read and clear outside the updater — updaters can be called multiple times in Concurrent Mode
+    const shouldSuppressSelect = suppressStartupAutoSelectRef.current
+    suppressStartupAutoSelectRef.current = false
     setSelectedIds((prev) => {
       if (loaded.length === 0) return prev
+      if (shouldSuppressSelect) return prev
       if (mode === 'replace') return new Set([loaded[0].filePath])
       if (prev.size === 0) return new Set([loaded[0].filePath])
       return prev
@@ -485,20 +563,24 @@ export default function App() {
       window.api.scanTree(folder, hiddenFolders)
     ])
     if (gen !== loadGenRef.current) return
-    if (!flatResult.success) {
-      setStatus({ message: `Error: ${flatResult.error}`, type: 'error' })
-      return
-    }
-    if (!flatResult.files || flatResult.files.length === 0) {
-      setStatus({ message: 'No .nam files found in that folder', type: 'info' })
-      return
-    }
     const normalizedFolder = folder.replace(/\\/g, '/')
+    // Always apply the fresh tree so deleted/added folders are reflected immediately,
+    // even if the scan returns an error or finds no .nam files.
     setLibrarian({
       rootFolder: normalizedFolder,
       folderTree: treeResult.success && treeResult.tree ? treeResult.tree : null,
       selectedFolders: []
     })
+    if (!flatResult.success) {
+      setStatus({ message: `Error: ${flatResult.error}`, type: 'error' })
+      return
+    }
+    if (!flatResult.files || flatResult.files.length === 0) {
+      setFiles([])
+      setSelectedIds(new Set())
+      setStatus({ message: 'No .nam files found in that folder', type: 'info' })
+      return
+    }
     setRecentFolders((prev) => {
       const next = [normalizedFolder, ...prev.filter((f) => f !== normalizedFolder)].slice(0, 10)
       localStorage.setItem('nam-lab-recent-folders', JSON.stringify(next))
@@ -622,6 +704,18 @@ export default function App() {
     }
   }
 
+  // Persist history to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(sessionHistory))
+  }, [sessionHistory])
+
+  const addHistoryEntry = useCallback((entry: Omit<HistoryEntry, 'id' | 'timestamp'>) => {
+    setSessionHistory((current) => {
+      const next: HistoryEntry = { ...entry, id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, timestamp: new Date() }
+      return [next, ...current].slice(0, HISTORY_MAX)
+    })
+  }, [])
+
   const handleMetadataChange = (filePath: string, updated: NamFile['metadata']) => {
     setFiles((prev) =>
       prev.map((f) => {
@@ -645,6 +739,7 @@ export default function App() {
           ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [] }
           : f
       ))
+      addHistoryEntry({ operation: 'save', summary: `Saved ${file.fileName}` })
       setStatus({ message: `Saved: ${file.fileName}`, type: 'success' })
     } else {
       setStatus({ message: `Save failed: ${result.error}`, type: 'error' })
@@ -711,6 +806,7 @@ export default function App() {
     if (failed > 0) {
       setStatus({ message: `Saved ${savedPaths.size}, failed ${failed}`, type: 'error' })
     } else {
+      addHistoryEntry({ operation: 'save-all', summary: `Saved ${savedPaths.size} file${savedPaths.size !== 1 ? 's' : ''}` })
       setStatus({ message: `Saved ${savedPaths.size} file(s)`, type: 'success' })
     }
   }
@@ -785,6 +881,7 @@ export default function App() {
     if (failed > 0) {
       setStatus({ message: `Batch saved ${savedPaths.size}, failed ${failed}`, type: 'error' })
     } else {
+      addHistoryEntry({ operation: 'batch-edit', summary: `Batch edited ${savedPaths.size} file${savedPaths.size !== 1 ? 's' : ''} (${Object.keys(batchFields).join(', ')})` })
       setStatus({ message: `Batch saved ${savedPaths.size} file(s)`, type: 'success' })
     }
   }
@@ -922,6 +1019,7 @@ export default function App() {
         next.add(result.newPath!)
         return next
       })
+      addHistoryEntry({ operation: 'rename', summary: `Renamed file to "${newBaseName}"` })
       setStatus({ message: `Renamed to: ${newBaseName}.nam`, type: 'success' })
     } else {
       setStatus({ message: `Rename failed: ${result.error}`, type: 'error' })
@@ -929,7 +1027,6 @@ export default function App() {
   }
 
   const handleBatchRename = async (renames: { filePath: string; newBaseName: string }[], renameFiles: boolean) => {
-    const renameMap = new Map(renames.map((r) => [r.filePath, r.newBaseName]))
     // Keys that factor into isDirty so we can recalculate after a partial save
     const dirtyKeys: (keyof NamMetadata)[] = [
       'name', 'modeled_by', 'gear_type', 'gear_make', 'gear_model',
@@ -992,6 +1089,7 @@ export default function App() {
       const msg = renameFiles
         ? `Renamed ${n} file${n !== 1 ? 's' : ''}${failed > 0 ? `, ${failed} failed` : ''}`
         : `Updated ${n} capture name${n !== 1 ? 's' : ''}${failed > 0 ? `, ${failed} failed` : ''}`
+      if (failed === 0) addHistoryEntry({ operation: 'batch-rename', summary: msg })
       setStatus({ message: msg, type: failed > 0 ? 'error' : 'success' })
       return
     }
@@ -1519,13 +1617,6 @@ export default function App() {
 
     // Unmatched: rows with no exact match and no prefix match
     const unmatchedNames: string[] = []
-    const allMatchedNames = new Set([
-      ...exactMatches.map(m => (m.file.metadata.name || m.file.fileName || '').toLowerCase()),
-      ...rows.filter(row => {
-        const n = String(row['Capture Name'] ?? '').trim().toLowerCase()
-        return exactMatches.some(m => (m.file.metadata.name || m.file.fileName || '').toLowerCase() === n)
-      }).map(row => String(row['Capture Name'] ?? '').trim().toLowerCase())
-    ])
     for (const row of rows) {
       const captureName = String(row['Capture Name'] ?? '').trim()
       if (!captureName) continue
@@ -1694,6 +1785,11 @@ export default function App() {
         recentFolders={recentFolders}
         onOpenRecentFolder={(path) => loadFolderByPath(path)}
         onFindDuplicates={files.length > 1 ? () => setShowDuplicates(true) : undefined}
+        showDashboard={files.length > 0}
+        dashboardActive={showDashboard}
+        onToggleDashboard={() => { setShowDashboard((v) => !v); setHistoryOpen(false) }}
+        historyOpen={historyOpen}
+        onHistoryToggle={() => { setHistoryOpen((v) => !v); setShowDashboard(false) }}
       />
 
       <div className="flex flex-1 overflow-hidden relative">
@@ -1713,6 +1809,7 @@ export default function App() {
                     const isIn = prev.selectedFolders.includes(path)
                     return { ...prev, selectedFolders: isIn ? prev.selectedFolders.filter((f) => f !== path) : [...prev.selectedFolders, path] }
                   })
+                  setCreatorFilter(null)
                   if (!ctrl) setSelectedIds(new Set())
                 }}
                 onSaveFolder={async (path) => {
@@ -1789,6 +1886,9 @@ export default function App() {
                 }}
                 onCompareFolders={(paths) => setCompareFolderPaths(paths)}
                 onDeletePackInfo={handleDeletePackInfo}
+                bundleFolders={bundleFolders}
+                onCreateBundle={(folderPath) => { void handleCreateBundle(folderPath) }}
+                onDeleteBundle={(folderPath) => handleDeleteBundle(folderPath)}
               />
             </div>
             {!gridMaximized && <DragHandle onMouseDown={(e) => onDragStart('tree', e)} onCollapse={() => setTreeCollapsed((v) => !v)} collapsed={treeCollapsed} />}
@@ -1905,6 +2005,18 @@ export default function App() {
                 setPlayerFile(file)
                 setSelectedIds(new Set([file.filePath]))
               }}
+              defaultSearch={creatorFilter ?? undefined}
+              defaultGearFilter={gearTypeFilter ?? undefined}
+              defaultToneFilter={toneTypeFilter ?? undefined}
+              defaultPresetFilter={presetFilterOverride ?? undefined}
+              defaultFilterMode={filterModeOverride ?? undefined}
+              esrFilter={esrFilterOverride}
+              ratingFilter={ratingFilter}
+              onGearFilterClear={() => setGearTypeFilter(null)}
+              onToneFilterClear={() => setToneTypeFilter(null)}
+              onPresetFilterClear={() => setPresetFilterOverride(null)}
+              onFilterModeClear={() => setFilterModeOverride(null)}
+              onRatingFilterClear={() => setRatingFilter(null)}
             />
           </div>
           {!gridMaximized && <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} onCollapse={() => setListCollapsed((v) => !v)} collapsed={listCollapsed} />}
@@ -1920,6 +2032,78 @@ export default function App() {
             />
           ) : showSettings ? (
             <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} />
+          ) : showDashboard ? (
+            <NamDashboard
+              files={files}
+              activeCreator={creatorFilter ?? undefined}
+              onCreatorClick={(creator) => {
+                setCreatorFilter(creator)
+                setGearTypeFilter(null)
+                setToneTypeFilter(null)
+                setFilterModeOverride(null)
+                setLibrarian((prev) => ({ ...prev, selectedFolders: [] }))
+              }}
+              onClearCreatorFilter={() => setCreatorFilter(null)}
+              onGearTypeClick={(gearType) => {
+                setGearTypeFilter(gearType)
+                setCreatorFilter(null)
+                setToneTypeFilter(null)
+                setFilterModeOverride(null)
+                setLibrarian((prev) => ({ ...prev, selectedFolders: [] }))
+              }}
+              onToneTypeClick={(toneType) => {
+                setToneTypeFilter(toneType)
+                setCreatorFilter(null)
+                setGearTypeFilter(null)
+                setFilterModeOverride(null)
+                setLibrarian((prev) => ({ ...prev, selectedFolders: [] }))
+              }}
+              onCompleteClick={() => {
+                setFilterModeOverride('complete')
+                setGearTypeFilter(null)
+                setToneTypeFilter(null)
+                setCreatorFilter(null)
+                setLibrarian((prev) => ({ ...prev, selectedFolders: [] }))
+                setShowDashboard(false)
+              }}
+              onIncompleteClick={() => {
+                setFilterModeOverride('incomplete')
+                setGearTypeFilter(null)
+                setToneTypeFilter(null)
+                setCreatorFilter(null)
+                setLibrarian((prev) => ({ ...prev, selectedFolders: [] }))
+                setShowDashboard(false)
+              }}
+              onRatingClick={(rating) => {
+                setRatingFilter(rating)
+                setGearTypeFilter(null)
+                setToneTypeFilter(null)
+                setCreatorFilter(null)
+                setFilterModeOverride(null)
+                setLibrarian((prev) => ({ ...prev, selectedFolders: [] }))
+                setShowDashboard(false)
+              }}
+              activeRating={ratingFilter}
+              onRecentFileClick={(filePath) => {
+                const normalized = filePath.replace(/\\/g, '/')
+                const folderPath = normalized.split('/').slice(0, -1).join('/')
+                setGearTypeFilter(null)
+                setToneTypeFilter(null)
+                setCreatorFilter(null)
+                setFilterModeOverride(null)
+                setEsrFilterOverride(null)
+                setPresetFilterOverride(null)
+                setLibrarian((prev) => ({ ...prev, selectedFolders: [folderPath] }))
+                setSelectedIds(new Set([filePath]))
+                setShowDashboard(false)
+              }}
+            />
+          ) : historyOpen ? (
+            <SessionHistoryPanel
+              entries={sessionHistory}
+              onClear={() => setSessionHistory([])}
+              onClose={() => setHistoryOpen(false)}
+            />
           ) : batchFolder !== null ? (
             <BatchEditor
               folderName={batchFolder.name}
@@ -1990,6 +2174,22 @@ export default function App() {
           ) : selectedFiles.length === 0 && librarian.rootFolder !== null ? (() => {
             const activeFolderPath = ((librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null) ?? librarian.rootFolder)!
             const activeFolderName = activeFolderPath.split('/').pop() ?? activeFolderPath
+            const hasBundle = bundleFolders.has(activeFolderPath.replace(/\\/g, '/'))
+            if (hasBundle) {
+              return (
+                <BundleEditor
+                  key={activeFolderPath}
+                  folderPath={activeFolderPath}
+                  rootFolder={librarian.rootFolder!}
+                  dark={(() => { try { return localStorage.getItem('nam-pack-dark-export') === '1' } catch { return false } })()}
+                  logoLight={settings.packLogoLight}
+                  logoDark={settings.packLogoDark}
+                  defaultCapturedBy={settings.defaultModeledBy}
+                  onSaved={() => refreshBundleFolders()}
+                  onDeleted={() => handleDeleteBundle(activeFolderPath)}
+                />
+              )
+            }
             const hasImages = folderImages !== null && (folderImages.own.length > 0 || folderImages.inherited.some((g) => g.paths.length > 0))
             const showGallery = hasImages && settings.showFolderImages
             const hasPack = packInfoFolders.has(activeFolderPath)
@@ -1998,9 +2198,10 @@ export default function App() {
             const showGalleryTab = showGallery
             return (
               <div className="h-full flex flex-col">
-                {showGalleryTab && (showPackEditor || showCreatePrompt) && (
-                  <div className="flex border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
-                    {(['pack', 'gallery'] as const).map((tab) => (
+                <div className="flex border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+                  {(['overview', 'pack', 'gallery'] as const)
+                    .filter((tab) => tab !== 'gallery' || showGalleryTab)
+                    .map((tab) => (
                       <button
                         key={tab}
                         onClick={() => setFolderPanelTab(tab)}
@@ -2010,13 +2211,31 @@ export default function App() {
                             : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
                         }`}
                       >
-                        {tab === 'pack' ? 'Pack Info' : 'Gallery'}
+                        {tab === 'overview' ? 'Overview' : tab === 'pack' ? 'Pack Info' : 'Gallery'}
                       </button>
                     ))}
-                  </div>
-                )}
+                </div>
                 <div className="flex-1 overflow-hidden">
-                  {showPackEditor && (!showGalleryTab || folderPanelTab === 'pack') ? (
+                  {folderPanelTab === 'overview' ? (
+                    <FolderDashboard
+                      files={visibleFiles}
+                      folderName={activeFolderName}
+                      activeGear={gearTypeFilter}
+                      activeTone={toneTypeFilter}
+                      activePreset={presetFilterOverride}
+                      activeMissing={filterModeOverride === 'incomplete'}
+                      activeEsr={esrFilterOverride}
+                      activeRating={ratingFilter}
+                      onGearClick={(gear) => { setGearTypeFilter(gear); setToneTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setEsrFilterOverride(null); setRatingFilter(null) }}
+                      onToneClick={(tone) => { setToneTypeFilter(tone); setGearTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setEsrFilterOverride(null); setRatingFilter(null) }}
+                      onPresetClick={(preset) => { setPresetFilterOverride(preset); setGearTypeFilter(null); setToneTypeFilter(null); setFilterModeOverride(null); setEsrFilterOverride(null); setRatingFilter(null) }}
+                      onMissingClick={(on) => { setFilterModeOverride(on ? 'incomplete' : null); setGearTypeFilter(null); setToneTypeFilter(null); setPresetFilterOverride(null); setEsrFilterOverride(null); setRatingFilter(null) }}
+                      onEsrClick={(tier) => { setEsrFilterOverride(tier); setGearTypeFilter(null); setToneTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setRatingFilter(null) }}
+                      onRatingClick={(rating) => { setRatingFilter(rating); setGearTypeFilter(null); setToneTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setEsrFilterOverride(null) }}
+                    />
+                  ) : folderPanelTab === 'gallery' && showGalleryTab ? (
+                    <FolderGallery data={folderImages!} />
+                  ) : showPackEditor ? (
                     <PackInfoEditor
                       key={activeFolderPath}
                       folderPath={activeFolderPath}
@@ -2039,7 +2258,7 @@ export default function App() {
                         return paths
                       })()}
                     />
-                  ) : showCreatePrompt && (!showGalleryTab || folderPanelTab === 'pack') ? (
+                  ) : showCreatePrompt ? (
                     <div className="h-full flex flex-col items-center justify-center gap-4 px-8 text-center">
                       <svg className="w-10 h-10 text-gray-300 dark:text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -2079,8 +2298,6 @@ export default function App() {
                         </p>
                       )}
                     </div>
-                  ) : showGallery ? (
-                    <FolderGallery data={folderImages!} />
                   ) : null}
                 </div>
               </div>

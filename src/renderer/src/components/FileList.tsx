@@ -1,11 +1,12 @@
 import { useRef, useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
 import { NamFile, GEAR_TYPES, TONE_TYPES } from '../types/nam'
 import { gearChipClass, toneChipClass, getGearImageSrc } from '../assets/gear'
 import { detectPreset } from '../utils/detectPreset'
 import { BatchRenameModal } from './BatchRenameModal'
 
-type FilterMode = 'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited' | 'incomplete' | 'rated'
+type FilterMode = 'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited' | 'incomplete' | 'complete' | 'rated'
 
 // Completeness: 7 core shareable fields (output level and epochs are optional/technical)
 const COMPLETENESS_FIELDS: (keyof NamFile['metadata'])[] = [
@@ -53,6 +54,18 @@ interface FileListProps {
   onOpenEditor?: () => void
   solidPills?: boolean
   draggable?: boolean
+  defaultSearch?: string
+  defaultGearFilter?: string
+  defaultToneFilter?: string
+  defaultPresetFilter?: string
+  defaultFilterMode?: FilterMode
+  esrFilter?: string | null
+  ratingFilter?: number | null
+  onGearFilterClear?: () => void
+  onToneFilterClear?: () => void
+  onPresetFilterClear?: () => void
+  onFilterModeClear?: () => void
+  onRatingFilterClear?: () => void
 }
 
 const ALL_GRID_COLUMNS: { key: string; label: string; minWidth: number; defaultVisible: boolean }[] = [
@@ -97,9 +110,9 @@ const SORT_STORAGE_KEY = 'nam-lab-sort'
 function loadSort(): { key: string | null; dir: SortDir } {
   try {
     const s = localStorage.getItem(SORT_STORAGE_KEY)
-    return s ? JSON.parse(s) : { key: 'name', dir: 'asc' }
+    return s ? JSON.parse(s) : { key: 'date', dir: 'desc' }
   } catch {
-    return { key: 'name', dir: 'asc' }
+    return { key: 'date', dir: 'desc' }
   }
 }
 
@@ -275,13 +288,25 @@ export function FileList({
   viewMode,
   onViewModeChange,
   solidPills = false,
-  draggable = false
+  draggable = false,
+  defaultSearch = '',
+  defaultGearFilter,
+  defaultToneFilter,
+  defaultPresetFilter,
+  defaultFilterMode,
+  esrFilter,
+  ratingFilter,
+  onGearFilterClear,
+  onToneFilterClear,
+  onPresetFilterClear,
+  onFilterModeClear,
+  onRatingFilterClear,
 }: FileListProps) {
-  const [search, setSearch] = useState('')
+  const [search, setSearch] = useState(defaultSearch)
   const [nameSearch, setNameSearch] = useState('')
   const [filter, setFilter] = useState<FilterMode>('all')
-  const [gearFilter, setGearFilter] = useState('')
-  const [toneFilter, setToneFilter] = useState('')
+  const [gearFilter, setGearFilter] = useState(defaultGearFilter ?? '')
+  const [toneFilter, setToneFilter] = useState(defaultToneFilter ?? '')
   const [presetFilter, setPresetFilter] = useState('')
   const [mfrFilter, setMfrFilter] = useState('')
   const [columnFilters, setColumnFilters] = useState<Record<string, ColFilterState>>({})
@@ -328,6 +353,19 @@ export function FileList({
         }
       }
     }
+    if (esrFilter) {
+      const esrVal = (f.metadata.training as Record<string, unknown> | undefined)?.validation_esr
+      const esrNum = typeof esrVal === 'number' ? esrVal : null
+      if (esrFilter === 'good'   && !(esrNum !== null && esrNum < 0.01)) return false
+      if (esrFilter === 'ok'     && !(esrNum !== null && esrNum >= 0.01 && esrNum < 0.05)) return false
+      if (esrFilter === 'review' && !(esrNum !== null && esrNum >= 0.05)) return false
+      if (esrFilter === 'none'   && esrNum !== null) return false
+    }
+    if (ratingFilter !== null && ratingFilter !== undefined) {
+      const r = f.metadata.nl_rating ?? 0
+      if (ratingFilter === 0 && r !== 0) return false
+      if (ratingFilter > 0 && r !== ratingFilter) return false
+    }
     switch (filter) {
       case 'unnamed':    return !o.name
       case 'no-gear':    return !o.gear_type
@@ -335,24 +373,28 @@ export function FileList({
       case 'no-tone':    return !o.tone_type
       case 'edited':     return f.isDirty
       case 'incomplete': return COMPLETENESS_FIELDS.some((k) => m[k] == null || m[k] === '')
+      case 'complete':   return !COMPLETENESS_FIELDS.some((k) => m[k] == null || m[k] === '')
       case 'rated':      return (m.nl_rating ?? 0) > 0
       default:           return true
     }
   })
 
-  const sorted = sortKey
-    ? [...filtered].sort((a, b) => {
-        const av = getSortValue(a, sortKey)
-        const bv = getSortValue(b, sortKey)
-        let cmp = 0
-        if (typeof av === 'number' && typeof bv === 'number') {
-          cmp = av - bv
-        } else {
-          cmp = String(av).localeCompare(String(bv))
-        }
-        return sortDir === 'asc' ? cmp : -cmp
-      })
-    : filtered
+  const sorted = [...filtered].sort((a, b) => {
+    if (sortKey) {
+      const av = getSortValue(a, sortKey)
+      const bv = getSortValue(b, sortKey)
+      let cmp = 0
+      if (typeof av === 'number' && typeof bv === 'number') {
+        cmp = av - bv
+      } else {
+        cmp = String(av).localeCompare(String(bv))
+      }
+      const result = sortDir === 'asc' ? cmp : -cmp
+      if (result !== 0) return result
+    }
+    // Secondary (or sole) sort: name A→Z
+    return (a.metadata.name || a.fileName).localeCompare(b.metadata.name || b.fileName)
+  })
 
   useEffect(() => {
     if (!showExport) return
@@ -403,6 +445,28 @@ export function FileList({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctxMenu?.filePath])
+
+  useEffect(() => {
+    setSearch(defaultSearch ?? '')
+  }, [defaultSearch])
+
+  useEffect(() => {
+    setGearFilter(defaultGearFilter ?? '')
+  }, [defaultGearFilter])
+
+  useEffect(() => {
+    setToneFilter(defaultToneFilter ?? '')
+  }, [defaultToneFilter])
+
+  useEffect(() => {
+    setPresetFilter(defaultPresetFilter ?? '')
+    if (!defaultPresetFilter) onPresetFilterClear?.()
+  }, [defaultPresetFilter])
+
+  useEffect(() => {
+    if (defaultFilterMode) setFilter(defaultFilterMode)
+    else onFilterModeClear?.()
+  }, [defaultFilterMode])
 
   // When the filtered list changes (search/filter applied), trim selectedIds in App.tsx
   // so stale selections don't leak into editors or bulk actions.
@@ -645,6 +709,14 @@ export function FileList({
             {label}
           </button>
         ))}
+        {ratingFilter !== null && ratingFilter !== undefined && (
+          <button
+            onClick={() => onRatingFilterClear?.()}
+            className="text-xs px-2 py-0.5 rounded-full bg-amber-500 text-white hover:bg-amber-600 transition-colors"
+          >
+            {ratingFilter === 0 ? 'Unrated' : `${'★'.repeat(ratingFilter)}`} ×
+          </button>
+        )}
       </div>
 
       {/* Gear + Tone dropdowns — list mode only; grid mode uses per-column header filters */}
@@ -652,7 +724,7 @@ export function FileList({
         <div className="px-3 pb-2 flex gap-1.5 flex-shrink-0 flex-wrap">
           <select
             value={gearFilter}
-            onChange={(e) => setGearFilter(e.target.value)}
+            onChange={(e) => { setGearFilter(e.target.value); if (!e.target.value) onGearFilterClear?.() }}
             className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
               gearFilter
                 ? 'bg-orange-100 dark:bg-orange-900/30 border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-400'
@@ -664,7 +736,7 @@ export function FileList({
           </select>
           <select
             value={toneFilter}
-            onChange={(e) => setToneFilter(e.target.value)}
+            onChange={(e) => { setToneFilter(e.target.value); if (!e.target.value) onToneFilterClear?.() }}
             className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
               toneFilter
                 ? 'bg-indigo-100 dark:bg-indigo-900/40 border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-400'
@@ -1131,6 +1203,7 @@ function GridView({
   const [openFilterCol, setOpenFilterCol] = useState<string | null>(null)
   const [filterSearch, setFilterSearch] = useState('')
   const filterPopupRef = useRef<HTMLDivElement>(null)
+  const filterAnchorRef = useRef<{ top: number; left: number; width: number } | null>(null)
   const dragColRef = useRef<string | null>(null)
   const resizingRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null)
 
@@ -1257,23 +1330,38 @@ function GridView({
                 {/* Filter icon */}
                 <button
                   className={`absolute right-2.5 top-1/2 -translate-y-1/2 z-20 p-0.5 rounded transition-colors ${hasFilter ? 'text-indigo-400' : 'text-gray-400 dark:text-gray-600 hover:text-gray-600 dark:hover:text-gray-400'}`}
-                  onClick={(e) => { e.stopPropagation(); setOpenFilterCol(isFilterOpen ? null : col.key); setFilterSearch('') }}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (isFilterOpen) {
+                      setOpenFilterCol(null)
+                      setFilterSearch('')
+                    } else {
+                      const th = (e.currentTarget as HTMLElement).closest('th')
+                      if (th) {
+                        const r = th.getBoundingClientRect()
+                        filterAnchorRef.current = { top: r.bottom, left: r.left, width: r.width }
+                      }
+                      setOpenFilterCol(col.key)
+                      setFilterSearch('')
+                    }
+                  }}
                   title={hasFilter ? 'Filter active — click to edit' : 'Filter column'}
                 >
                   <svg className="w-3 h-3" fill={hasFilter ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
                   </svg>
                 </button>
-                {/* Filter popup */}
-                {isFilterOpen && (() => {
+                {/* Filter popup — rendered via portal so it never lives inside <th>, keeping drag events clean */}
+                {isFilterOpen && filterAnchorRef.current && createPortal((() => {
                   const state = columnFilters[col.key] ?? { text: '', selected: [] }
                   const allVals = getUniqueValues(col.key)
                   const shown = filterSearch ? allVals.filter((v) => v.toLowerCase().includes(filterSearch.toLowerCase())) : allVals
+                  const anchor = filterAnchorRef.current!
                   return (
                     <div
                       ref={filterPopupRef}
-                      className="absolute left-0 top-full mt-0.5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50 flex flex-col"
-                      style={{ minWidth: 200, maxHeight: 320, width: Math.max(colWidths[col.key], 200) }}
+                      className="fixed bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-[9999] flex flex-col"
+                      style={{ top: anchor.top + 2, left: anchor.left, minWidth: 200, maxHeight: 320, width: Math.max(anchor.width, 200) }}
                       onClick={(e) => e.stopPropagation()}
                     >
                       <div className="p-1.5 border-b border-gray-200 dark:border-gray-700 flex gap-1">
@@ -1335,7 +1423,7 @@ function GridView({
                       )}
                     </div>
                   )
-                })()}
+                })(), document.body)}
                 {/* Resize handle */}
                 <div
                   className="absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-indigo-400/40 z-30"

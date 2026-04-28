@@ -752,7 +752,7 @@ app.whenReady().then(() => {
       const cache = loadFileCache()
       const cached = cache[filePath]
       if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
-        return { success: true, ...(cached.data as object), filePath }
+        return { success: true, ...(cached.data as object), filePath, mtimeMs: stat.mtimeMs, birthtimeMs: stat.birthtimeMs }
       }
       const content = await fs.promises.readFile(filePath, 'utf-8')
       const data = JSON.parse(content)
@@ -775,7 +775,9 @@ app.whenReady().then(() => {
         version: data.version ?? '?',
         metadata: meta,
         architecture: data.architecture ?? '?',
-        config: data.config ?? null
+        config: data.config ?? null,
+        mtimeMs: stat.mtimeMs,
+        birthtimeMs: stat.birthtimeMs,
       }
       // Update cache entry — save lazily (written on app quit or folder scan)
       cache[filePath] = { mtimeMs: stat.mtimeMs, size: stat.size, data: { version: result.version, metadata: meta, architecture: result.architecture, config: result.config } }
@@ -1367,6 +1369,77 @@ app.whenReady().then(() => {
     } catch (e) {
       return { success: false, error: String(e) }
     }
+  })
+
+  // IPC: Read nam-bundle.json from a folder
+  ipcMain.handle('folder:readBundle', async (_event, folderPath: string) => {
+    try {
+      const raw = await fs.promises.readFile(join(folderPath, 'nam-bundle.json'), 'utf-8')
+      return { success: true, data: JSON.parse(raw) }
+    } catch {
+      return { success: true, data: null }
+    }
+  })
+
+  // IPC: Write nam-bundle.json to a folder
+  ipcMain.handle('folder:writeBundle', async (_event, folderPath: string, data: unknown) => {
+    try {
+      suppressWatcher()
+      await fs.promises.writeFile(join(folderPath, 'nam-bundle.json'), JSON.stringify(data, null, 2), 'utf-8')
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  })
+
+  // IPC: Delete nam-bundle.json from a folder
+  ipcMain.handle('folder:deleteBundle', async (_event, folderPath: string) => {
+    try {
+      suppressWatcher()
+      await fs.promises.unlink(join(folderPath, 'nam-bundle.json'))
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  })
+
+  // IPC: Walk the folder tree and return paths of all folders that have nam-bundle.json
+  ipcMain.handle('folder:scanBundlePaths', async (_event, rootPath: string) => {
+    const results: string[] = []
+    const walk = async (dir: string, depth: number) => {
+      if (depth > 8) return
+      try {
+        await fs.promises.access(join(dir, 'nam-bundle.json'))
+        results.push(dir.replace(/\\/g, '/'))
+      } catch { /* no bundle here */ }
+      try {
+        const entries = await fs.promises.readdir(dir, { withFileTypes: true })
+        await Promise.all(entries.filter((e) => e.isDirectory()).map((e) => walk(join(dir, e.name), depth + 1)))
+      } catch { /* skip unreadable dirs */ }
+    }
+    await walk(rootPath, 0)
+    return results
+  })
+
+  // IPC: Walk the folder tree and return pack folders with titles (for bundle Add Pack picker)
+  ipcMain.handle('folder:findBundlePackFolders', async (_event, rootPath: string) => {
+    const results: { folderPath: string; title: string }[] = []
+    const walk = async (dir: string, depth: number) => {
+      if (depth > 8) return
+      try {
+        const raw = await fs.promises.readFile(join(dir, 'nam-pack.json'), 'utf-8')
+        const data = JSON.parse(raw)
+        if (data && typeof data.title === 'string' && data.title.trim()) {
+          results.push({ folderPath: dir.replace(/\\/g, '/'), title: data.title.trim() })
+        }
+      } catch { /* no pack here */ }
+      try {
+        const entries = await fs.promises.readdir(dir, { withFileTypes: true })
+        await Promise.all(entries.filter((e) => e.isDirectory()).map((e) => walk(join(dir, e.name), depth + 1)))
+      } catch { /* skip unreadable dirs */ }
+    }
+    await walk(rootPath, 0)
+    return results
   })
 
   // IPC: Write HTML to a temp file and open in default browser for PDF save

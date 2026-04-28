@@ -33,7 +33,10 @@ NAM captures embed metadata (name, gear info, tone type, etc.) as JSON inside th
 ## Key Features
 
 - **Three-panel library** — Folder Tree | File List | Metadata Editor; all panels resizable and collapsible
+- **Library Overview dashboard** — gear type, tone type, creator, completeness, and rating breakdowns across your whole library; clickable stats filter the file list; recent files list for quick navigation
+- **Folder Overview dashboard** — same at folder level; shown in the Overview tab when a folder is selected
 - **List and Grid views** — sortable spreadsheet with configurable columns, per-column filters, drag-to-reorder, and double-click auto-size
+- **Capture rating** — 1–5 star rating (`nl_rating`) per capture; shown in list/grid; filterable; rating distribution in both dashboards
 - **Bulk editing** — batch editor, multi-select editor, and copy/paste metadata across files
 - **Batch rename** — suffix, prefix, find & replace, or template-based rename with live preview and conflict detection
 - **Duplicate detection** — find dupes by filename or capture name; choose a keeper and move or trash the rest

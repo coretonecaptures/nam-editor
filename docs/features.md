@@ -20,6 +20,32 @@ This document covers everything NAM Lab can do. For installation, see [install.m
 
 ---
 
+## Library Overview Dashboard
+
+Click the **≡** (dashboard) button in the toolbar (or enable **Show Library Overview on launch** in Settings → Startup) to open the Library Overview in the right panel.
+
+- **Gear type breakdown** — count and percentage bar for each gear type; click a bar to filter the file list
+- **Tone type breakdown** — same for tone type
+- **Creator breakdown** — capture count per Modeled By value; click to filter
+- **Completeness** — Complete vs Incomplete counts; click either to filter
+- **Rating distribution** — bar chart of ★ to ★★★★★ ratings plus Unrated; click a row to filter to that exact rating
+- **Recently Updated** — top 10 files by last-modified date; click to navigate to the file's folder and select it
+- **Recently Added** — top 10 files by file creation date; click to navigate
+- Clicking any dashboard stat clears all other active filters before applying the new one
+- Selecting any capture automatically closes the dashboard and shows its editor
+
+---
+
+## Folder Overview Dashboard
+
+Click a folder in the tree (no captures selected) → **Overview** tab in the right panel.
+
+- Gear type, tone type, detected preset, ESR distribution, completeness, and rating bars — all scoped to the selected folder
+- Click any bar to filter the file list to that value
+- Active filter bars are highlighted; click again to clear
+
+---
+
 ## Library Search & Filter
 
 - **Text search** in the Library header — searches folder names
@@ -103,6 +129,18 @@ Each file shows a colored dot:
 
 ---
 
+## Capture Rating
+
+Rate captures 1–5 stars using the **Rating** field in the Metadata Editor (under Capture Details).
+
+- Stored as `metadata.nam_lab.rating` (integer 1–5; 0 or absent = unrated)
+- Shown as ★ stars in the list view and as a **Rating** column in grid view
+- **Rated** filter chip in the toolbar shows only captures that have any rating set
+- **Rating filter chip** (amber) appears when a specific rating is active; click × to clear
+- Rating distribution bars in the Library Overview and Folder Overview dashboards are clickable to filter by exact rating or Unrated
+
+---
+
 ## Change Tracking & Highlighting
 
 - **Indigo border + "auto-filled"** — field was set by a settings rule at load time
@@ -143,6 +181,8 @@ Settings are stored locally and start blank. Each section can be enabled or disa
 
 **Startup**
 - Remember last opened folder / Open default folder on launch / Watch folder for new files
+- **Show Library Overview on launch** — opens the dashboard in the right panel automatically on startup (on by default)
+- **Default folder panel tab** — choose whether clicking a folder shows Overview, Pack Info, or Gallery first
 
 **Current Amp Info** *(toggleable)*
 - Default Manufacturer and Model — disable when browsing a shared library to avoid stamping your gear info on other people's captures

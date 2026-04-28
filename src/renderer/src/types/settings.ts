@@ -71,6 +71,12 @@ export interface AppSettings {
   // Pack Info export logos (base64 data URIs, empty = no logo)
   packLogoLight: string
   packLogoDark: string
+
+  // Default tab shown when a folder is selected in the tree
+  defaultFolderTab: 'overview' | 'pack' | 'gallery'
+
+  // Show Library Overview in the right panel on app launch
+  showDashboardOnLaunch: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -112,7 +118,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   packGearCatalog: [],
   folderNameColors: {},
   packLogoLight: '',
-  packLogoDark: ''
+  packLogoDark: '',
+  defaultFolderTab: 'overview',
+  showDashboardOnLaunch: true,
 }
 
 const STORAGE_KEY = 'nam-editor-settings'

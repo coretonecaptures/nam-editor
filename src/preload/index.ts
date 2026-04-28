@@ -65,6 +65,16 @@ const api = {
     ipcRenderer.invoke('app:openInNam', filePath, standalonePath),
   findPackFolders: (rootPath: string): Promise<string[]> =>
     ipcRenderer.invoke('folder:findPackFolders', rootPath),
+  readBundle: (folderPath: string): Promise<{ success: boolean; data: unknown }> =>
+    ipcRenderer.invoke('folder:readBundle', folderPath),
+  writeBundle: (folderPath: string, data: unknown): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('folder:writeBundle', folderPath, data),
+  deleteBundle: (folderPath: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('folder:deleteBundle', folderPath),
+  scanBundlePaths: (rootPath: string): Promise<string[]> =>
+    ipcRenderer.invoke('folder:scanBundlePaths', rootPath),
+  findBundlePackFolders: (rootPath: string): Promise<{ folderPath: string; title: string }[]> =>
+    ipcRenderer.invoke('folder:findBundlePackFolders', rootPath),
   findPackOwner: (folderPath: string, rootPath: string): Promise<string | null> =>
     ipcRenderer.invoke('folder:findPackOwner', folderPath, rootPath),
   readPackInfo: (folderPath: string): Promise<{ success: boolean; data: unknown }> =>
