@@ -6,7 +6,10 @@
       "Bash(/c/Users/Admin/nam-editor/node_modules/electron/dist/electron.exe --version)",
       "Bash(ls -la /c/Users/Admin/nam-editor/node_modules/electron/dist/*.exe)",
       "Bash(powershell -command \"\\(Get-Item ''C:\\\\Users\\\\Admin\\\\nam-editor\\\\node_modules\\\\electron\\\\dist\\\\electron.exe''\\).VersionInfo | Select-Object FileVersion, ProductName, ProductVersion\")",
-      "WebFetch(domain:registry.npmjs.org)"
+      "WebFetch(domain:registry.npmjs.org)",
+      "WebFetch(domain:tone3000.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)"
     ]
   }
 }

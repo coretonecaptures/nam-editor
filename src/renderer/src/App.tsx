@@ -11,6 +11,7 @@ import { BatchEditor, BatchApplyOptions } from './components/BatchEditor'
 import { MultiSelectEditor } from './components/MultiSelectEditor'
 import { StatusBar } from './components/StatusBar'
 import { SettingsPanel } from './components/SettingsPanel'
+import { ToneStore } from './components/ToneStore'
 import { FolderTree } from './components/FolderTree'
 import { DuplicatesModal } from './components/DuplicatesModal'
 import { ImportMetadataModal, ImportMatch } from './components/ImportMetadataModal'
@@ -103,6 +104,13 @@ declare global {
       deleteBundle: (folderPath: string) => Promise<{ success: boolean; error?: string }>
       scanBundlePaths: (rootPath: string) => Promise<string[]>
       findBundlePackFolders: (rootPath: string) => Promise<{ folderPath: string; title: string }[]>
+      tone3000Status: () => Promise<{ connected: boolean; username: string | null }>
+      tone3000Connect: () => Promise<{ ok: boolean; username?: string | null; error?: string }>
+      tone3000Disconnect: () => Promise<{ ok: boolean }>
+      tone3000Search: (params: { query?: string; page?: number; pageSize?: number; gears?: string[]; sizes?: string[]; sort?: string }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
+      tone3000GetTone: (toneId: number) => Promise<{ ok?: boolean; tone?: unknown; error?: string }>
+      tone3000GetModels: (toneId: number) => Promise<{ ok?: boolean; models?: unknown[]; error?: string }>
+      tone3000Download: (modelUrl: string, name: string) => Promise<{ ok?: boolean; localPath?: string; error?: string }>
       platform: string
       initialSettings: unknown
       saveSettingsToFile: (json: string) => void
@@ -254,6 +262,7 @@ export default function App() {
   // so the dashboard stays visible after the default folder loads.
   const suppressStartupAutoSelectRef = useRef(settings.showDashboardOnLaunch)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [showToneStore, setShowToneStore] = useState(false)
   const [sessionHistory, setSessionHistory] = useState<HistoryEntry[]>(() => loadHistory())
   const [creatorFilter, setCreatorFilter] = useState<string | null>(null)
   const [gearTypeFilter, setGearTypeFilter] = useState<string | null>(null)
@@ -1786,6 +1795,8 @@ export default function App() {
         onToggleDashboard={() => { setShowDashboard((v) => !v); setHistoryOpen(false) }}
         historyOpen={historyOpen}
         onHistoryToggle={() => { setHistoryOpen((v) => !v); setShowDashboard(false) }}
+        toneStoreActive={showToneStore}
+        onToggleToneStore={() => { setShowToneStore((v) => !v); setShowSettings(false); setBatchFolder(null) }}
       />
 
       <div className="flex flex-1 overflow-hidden relative">
@@ -2018,6 +2029,8 @@ export default function App() {
         <div ref={mainContentRef} tabIndex={-1} className={`flex-1 overflow-hidden flex flex-col focus:outline-none${gridMaximized ? ' hidden' : ''}`} style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           {showSettings ? (
             <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} />
+          ) : showToneStore ? (
+            <ToneStore onClose={() => setShowToneStore(false)} onDownloaded={(paths) => loadFiles(paths, 'append')} />
           ) : showDashboard ? (
             <NamDashboard
               files={files}
