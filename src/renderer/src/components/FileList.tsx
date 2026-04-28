@@ -59,10 +59,12 @@ interface FileListProps {
   defaultPresetFilter?: string
   defaultFilterMode?: FilterMode
   esrFilter?: string | null
+  ratingFilter?: number | null
   onGearFilterClear?: () => void
   onToneFilterClear?: () => void
   onPresetFilterClear?: () => void
   onFilterModeClear?: () => void
+  onRatingFilterClear?: () => void
 }
 
 const ALL_GRID_COLUMNS: { key: string; label: string; minWidth: number; defaultVisible: boolean }[] = [
@@ -291,10 +293,12 @@ export function FileList({
   defaultPresetFilter,
   defaultFilterMode,
   esrFilter,
+  ratingFilter,
   onGearFilterClear,
   onToneFilterClear,
   onPresetFilterClear,
   onFilterModeClear,
+  onRatingFilterClear,
 }: FileListProps) {
   const [search, setSearch] = useState(defaultSearch)
   const [nameSearch, setNameSearch] = useState('')
@@ -354,6 +358,11 @@ export function FileList({
       if (esrFilter === 'ok'     && !(esrNum !== null && esrNum >= 0.01 && esrNum < 0.05)) return false
       if (esrFilter === 'review' && !(esrNum !== null && esrNum >= 0.05)) return false
       if (esrFilter === 'none'   && esrNum !== null) return false
+    }
+    if (ratingFilter !== null && ratingFilter !== undefined) {
+      const r = f.metadata.nl_rating ?? 0
+      if (ratingFilter === 0 && r !== 0) return false
+      if (ratingFilter > 0 && r !== ratingFilter) return false
     }
     switch (filter) {
       case 'unnamed':    return !o.name
@@ -695,6 +704,14 @@ export function FileList({
             {label}
           </button>
         ))}
+        {ratingFilter !== null && ratingFilter !== undefined && (
+          <button
+            onClick={() => onRatingFilterClear?.()}
+            className="text-xs px-2 py-0.5 rounded-full bg-amber-500 text-white hover:bg-amber-600 transition-colors"
+          >
+            {ratingFilter === 0 ? 'Unrated' : `${'★'.repeat(ratingFilter)}`} ×
+          </button>
+        )}
       </div>
 
       {/* Gear + Tone dropdowns — list mode only; grid mode uses per-column header filters */}

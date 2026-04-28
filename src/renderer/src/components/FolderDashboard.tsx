@@ -11,11 +11,13 @@ interface Props {
   activePreset?: string | null
   activeMissing?: boolean
   activeEsr?: string | null
+  activeRating?: number | null
   onGearClick?: (gear: string | null) => void
   onToneClick?: (tone: string | null) => void
   onPresetClick?: (preset: string | null) => void
   onMissingClick?: (on: boolean) => void
   onEsrClick?: (tier: string | null) => void
+  onRatingClick?: (rating: number | null) => void
 }
 
 const CORE_FIELDS = [
@@ -135,8 +137,8 @@ function MiniBar({ label, count, maxCount, color, isActive, onClick }: { label: 
 }
 
 export function FolderDashboard({
-  files, activeGear, activeTone, activePreset, activeMissing, activeEsr,
-  onGearClick, onToneClick, onPresetClick, onMissingClick, onEsrClick,
+  files, activeGear, activeTone, activePreset, activeMissing, activeEsr, activeRating,
+  onGearClick, onToneClick, onPresetClick, onMissingClick, onEsrClick, onRatingClick,
 }: Props) {
   const stats = useMemo(() => {
     const total = files.length
@@ -184,11 +186,24 @@ export function FolderDashboard({
       .sort((a, b) => b[1] - a[1])
       .map(([key, count]) => ({ key, count }))
 
+    // Rating distribution
+    const ratingCounts: Record<number, number> = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0, 0: 0 }
+    for (const f of files) {
+      const r = f.metadata.nl_rating ?? 0
+      const key = (r >= 1 && r <= 5) ? r : 0
+      ratingCounts[key] = (ratingCounts[key] ?? 0) + 1
+    }
+    const ratingRows = ([5, 4, 3, 2, 1] as const)
+      .filter((r) => ratingCounts[r] > 0)
+      .map((r) => ({ rating: r, count: ratingCounts[r] }))
+    const unratedCount = ratingCounts[0]
+    const maxRating = Math.max(...ratingRows.map((r) => r.count), unratedCount, 1)
+
     const maxPreset = Math.max(...presets.map((p) => p.count), 1)
     const maxGear = Math.max(...gearRows.map((r) => r.count), 1)
     const maxTone = Math.max(...toneRows.map((r) => r.count), 1)
 
-    return { total, missing, presets, maxPreset, esrGood, esrOk, esrReview, esrNone, gearRows, maxGear, toneRows, maxTone }
+    return { total, missing, presets, maxPreset, esrGood, esrOk, esrReview, esrNone, gearRows, maxGear, toneRows, maxTone, ratingRows, unratedCount, maxRating }
   }, [files])
 
   if (files.length === 0) {
@@ -331,6 +346,36 @@ export function FolderDashboard({
           )}
         </div>
       </div>
+
+      {/* Rating */}
+      {(stats.ratingRows.length > 0 || stats.unratedCount > 0) && (
+        <div className="rounded-xl bg-gray-800/40 border border-gray-700/40 p-3">
+          <h3 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">Rating</h3>
+          <div className="flex flex-col gap-1">
+            {stats.ratingRows.map(({ rating, count }) => (
+              <MiniBar
+                key={rating}
+                label={'★'.repeat(rating)}
+                count={count}
+                maxCount={stats.maxRating}
+                color="#f59e0b"
+                isActive={activeRating === rating}
+                onClick={onRatingClick ? () => onRatingClick(activeRating === rating ? null : rating) : undefined}
+              />
+            ))}
+            {stats.unratedCount > 0 && (
+              <MiniBar
+                label="Unrated"
+                count={stats.unratedCount}
+                maxCount={stats.maxRating}
+                color="#6b7280"
+                isActive={activeRating === 0}
+                onClick={onRatingClick ? () => onRatingClick(activeRating === 0 ? null : 0) : undefined}
+              />
+            )}
+          </div>
+        </div>
+      )}
 
     </div>
   )

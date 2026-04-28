@@ -244,6 +244,7 @@ export default function App() {
   const [presetFilterOverride, setPresetFilterOverride] = useState<string | null>(null)
   const [filterModeOverride, setFilterModeOverride] = useState<'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited' | 'incomplete' | 'complete' | 'rated' | null>(null)
   const [esrFilterOverride, setEsrFilterOverride] = useState<string | null>(null)
+  const [ratingFilter, setRatingFilter] = useState<number | null>(null)
 
   // Reset folder panel tab and check for pack-owning ancestor when selected folder changes
   useEffect(() => {
@@ -1967,10 +1968,12 @@ export default function App() {
               defaultPresetFilter={presetFilterOverride ?? undefined}
               defaultFilterMode={filterModeOverride ?? undefined}
               esrFilter={esrFilterOverride}
+              ratingFilter={ratingFilter}
               onGearFilterClear={() => setGearTypeFilter(null)}
               onToneFilterClear={() => setToneTypeFilter(null)}
               onPresetFilterClear={() => setPresetFilterOverride(null)}
               onFilterModeClear={() => setFilterModeOverride(null)}
+              onRatingFilterClear={() => setRatingFilter(null)}
             />
           </div>
           {!gridMaximized && <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} onCollapse={() => setListCollapsed((v) => !v)} collapsed={listCollapsed} />}
@@ -2022,6 +2025,16 @@ export default function App() {
                 setLibrarian((prev) => ({ ...prev, selectedFolders: [] }))
                 setShowDashboard(false)
               }}
+              onRatingClick={(rating) => {
+                setRatingFilter(rating)
+                setGearTypeFilter(null)
+                setToneTypeFilter(null)
+                setCreatorFilter(null)
+                setFilterModeOverride(null)
+                setLibrarian((prev) => ({ ...prev, selectedFolders: [] }))
+                setShowDashboard(false)
+              }}
+              activeRating={ratingFilter}
               onRecentFileClick={(filePath) => {
                 const normalized = filePath.replace(/\\/g, '/')
                 const folderPath = normalized.split('/').slice(0, -1).join('/')
@@ -2163,11 +2176,13 @@ export default function App() {
                       activePreset={presetFilterOverride}
                       activeMissing={filterModeOverride === 'incomplete'}
                       activeEsr={esrFilterOverride}
-                      onGearClick={(gear) => { setGearTypeFilter(gear); setToneTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setEsrFilterOverride(null) }}
-                      onToneClick={(tone) => { setToneTypeFilter(tone); setGearTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setEsrFilterOverride(null) }}
-                      onPresetClick={(preset) => { setPresetFilterOverride(preset); setGearTypeFilter(null); setToneTypeFilter(null); setFilterModeOverride(null); setEsrFilterOverride(null) }}
-                      onMissingClick={(on) => { setFilterModeOverride(on ? 'incomplete' : null); setGearTypeFilter(null); setToneTypeFilter(null); setPresetFilterOverride(null); setEsrFilterOverride(null) }}
-                      onEsrClick={(tier) => { setEsrFilterOverride(tier); setGearTypeFilter(null); setToneTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null) }}
+                      activeRating={ratingFilter}
+                      onGearClick={(gear) => { setGearTypeFilter(gear); setToneTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setEsrFilterOverride(null); setRatingFilter(null) }}
+                      onToneClick={(tone) => { setToneTypeFilter(tone); setGearTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setEsrFilterOverride(null); setRatingFilter(null) }}
+                      onPresetClick={(preset) => { setPresetFilterOverride(preset); setGearTypeFilter(null); setToneTypeFilter(null); setFilterModeOverride(null); setEsrFilterOverride(null); setRatingFilter(null) }}
+                      onMissingClick={(on) => { setFilterModeOverride(on ? 'incomplete' : null); setGearTypeFilter(null); setToneTypeFilter(null); setPresetFilterOverride(null); setEsrFilterOverride(null); setRatingFilter(null) }}
+                      onEsrClick={(tier) => { setEsrFilterOverride(tier); setGearTypeFilter(null); setToneTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setRatingFilter(null) }}
+                      onRatingClick={(rating) => { setRatingFilter(rating); setGearTypeFilter(null); setToneTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setEsrFilterOverride(null) }}
                     />
                   ) : folderPanelTab === 'gallery' && showGalleryTab ? (
                     <FolderGallery data={folderImages!} />

@@ -56,6 +56,8 @@ interface Props {
   onCompleteClick?: () => void
   onIncompleteClick?: () => void
   onRecentFileClick?: (filePath: string) => void
+  activeRating?: number | null
+  onRatingClick?: (rating: number | null) => void
 }
 
 function countBy<K extends string>(
@@ -190,7 +192,7 @@ function formatDate(isoOrMs: string | number | undefined): string {
   return d.toLocaleDateString()
 }
 
-export function NamDashboard({ files, activeCreator, onCreatorClick, onClearCreatorFilter, onGearTypeClick, onToneTypeClick, onCompleteClick, onIncompleteClick, onRecentFileClick }: Props) {
+export function NamDashboard({ files, activeCreator, onCreatorClick, onClearCreatorFilter, onGearTypeClick, onToneTypeClick, onCompleteClick, onIncompleteClick, onRecentFileClick, activeRating, onRatingClick }: Props) {
   if (files.length === 0) {
     return (
       <div className="flex flex-col h-full items-center justify-center gap-3 text-center px-8">
@@ -217,6 +219,17 @@ export function NamDashboard({ files, activeCreator, onCreatorClick, onClearCrea
     else if (missing === 1) partial++
     else incomplete++
   }
+
+  // Rating distribution
+  const ratingCounts: Record<number, number> = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0, 0: 0 }
+  for (const f of files) {
+    const r = f.metadata.nl_rating ?? 0
+    const key = (r >= 1 && r <= 5) ? r : 0
+    ratingCounts[key] = (ratingCounts[key] ?? 0) + 1
+  }
+  const ratingRows = ([5, 4, 3, 2, 1] as const).filter((r) => ratingCounts[r] > 0)
+  const unratedCount = ratingCounts[0]
+  const maxRatingCount = Math.max(...ratingRows.map((r) => ratingCounts[r]), unratedCount, 1)
 
   const recentlyUpdated = [...files]
     .filter((f) => f.mtimeMs)
@@ -341,6 +354,47 @@ export function NamDashboard({ files, activeCreator, onCreatorClick, onClearCrea
           <h3 className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-1.5">Completeness (7 fields)</h3>
           <CompletenessBar complete={complete} partial={partial} incomplete={incomplete} />
         </div>
+
+        {/* Rating distribution */}
+        {(ratingRows.length > 0 || unratedCount > 0) && (
+          <div>
+            <h3 className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-1.5">
+              Rating
+              {onRatingClick && <span className="normal-case font-normal text-gray-300 dark:text-gray-600 ml-1">(click to filter)</span>}
+            </h3>
+            <div className="flex flex-col gap-1">
+              {ratingRows.map((r) => {
+                const pct = Math.max(2, Math.round((ratingCounts[r] / maxRatingCount) * 100))
+                const isActive = activeRating === r
+                return (
+                  <div
+                    key={r}
+                    className={`flex items-center gap-2 rounded px-1 py-0.5 ${onRatingClick ? 'cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800/60' : ''} ${isActive ? 'bg-gray-100 dark:bg-gray-800/60' : ''} transition-colors`}
+                    onClick={() => onRatingClick?.(isActive ? null : r)}
+                  >
+                    <span className="text-[11px] w-[52px] flex-shrink-0 text-right tracking-tight" style={{ color: isActive ? '#f59e0b' : '#d97706', opacity: isActive ? 1 : 0.75 }}>{'★'.repeat(r)}</span>
+                    <div className="flex-1 h-2 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
+                      <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: '#f59e0b', opacity: isActive ? 1 : 0.6 }} />
+                    </div>
+                    <span className="text-[10px] text-gray-500 w-5 text-right flex-shrink-0 tabular-nums">{ratingCounts[r]}</span>
+                  </div>
+                )
+              })}
+              {unratedCount > 0 && (
+                <div
+                  className={`flex items-center gap-2 rounded px-1 py-0.5 ${onRatingClick ? 'cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800/60' : ''} ${activeRating === 0 ? 'bg-gray-100 dark:bg-gray-800/60' : ''} transition-colors`}
+                  onClick={() => onRatingClick?.(activeRating === 0 ? null : 0)}
+                >
+                  <span className="text-[11px] w-[52px] flex-shrink-0 text-right text-gray-400 dark:text-gray-600">Unrated</span>
+                  <div className="flex-1 h-2 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
+                    <div className="h-full rounded-full transition-all bg-gray-400 dark:bg-gray-600" style={{ width: `${Math.max(2, Math.round((unratedCount / maxRatingCount) * 100))}%`, opacity: activeRating === 0 ? 1 : 0.5 }} />
+                  </div>
+                  <span className="text-[10px] text-gray-500 w-5 text-right flex-shrink-0 tabular-nums">{unratedCount}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Recent files — two columns */}
         {(recentlyUpdated.length > 0 || recentlyAdded.length > 0) && (
