@@ -2,6 +2,8 @@ import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net } from 'elect
 import { join, dirname, basename, extname, normalize as normalizePath } from 'path'
 import fs from 'fs'
 import os from 'os'
+import http from 'http'
+import crypto from 'crypto'
 
 const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
 
@@ -444,6 +446,51 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'local-file', privileges: { secure: true, bypassCSP: true, stream: true } }
 ])
 
+// ── tone3000 OAuth ────────────────────────────────────────────────────────────
+const T3K_BASE = 'https://www.tone3000.com'
+const T3K_CLIENT_ID = 't3k_pub_wcNVWGoy2Ry01i50EpXSNo9Jjr8oQr-c'
+
+interface Tone3kTokens {
+  accessToken: string
+  refreshToken: string
+  expiresAt: number
+  clientId: string
+}
+
+let tone3kTokens: Tone3kTokens | null = null
+
+async function loadTone3kTokens(): Promise<void> {
+  try {
+    const p = join(app.getPath('userData'), 'tone3000-tokens.json')
+    tone3kTokens = JSON.parse(await fs.promises.readFile(p, 'utf-8')) as Tone3kTokens
+  } catch { /* no saved tokens */ }
+}
+
+async function saveTone3kTokens(): Promise<void> {
+  if (!tone3kTokens) return
+  try {
+    const p = join(app.getPath('userData'), 'tone3000-tokens.json')
+    await fs.promises.writeFile(p, JSON.stringify(tone3kTokens), 'utf-8')
+  } catch { /* non-critical */ }
+}
+
+async function ensureValidToken(): Promise<boolean> {
+  if (!tone3kTokens) return false
+  if (Date.now() < tone3kTokens.expiresAt - 60_000) return true
+  try {
+    const res = await fetch(`${T3K_BASE}/api/v1/oauth/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: tone3kTokens.refreshToken, client_id: tone3kTokens.clientId })
+    })
+    if (!res.ok) { tone3kTokens = null; return false }
+    const d = await res.json() as { access_token: string; refresh_token?: string; expires_in: number }
+    tone3kTokens = { ...tone3kTokens, accessToken: d.access_token, refreshToken: d.refresh_token ?? tone3kTokens.refreshToken, expiresAt: Date.now() + d.expires_in * 1000 }
+    await saveTone3kTokens()
+    return true
+  } catch { return false }
+}
+
 app.whenReady().then(() => {
   // Serve local filesystem files under local-file:// scheme
   protocol.handle('local-file', (req) => {
@@ -453,6 +500,7 @@ app.whenReady().then(() => {
 
   log('app.whenReady fired')
   switchLogToUserData()
+  loadTone3kTokens()
   log(`log file moved to userData: ${logPath}`)
 
   app.setName('NAM Lab')
@@ -1238,6 +1286,142 @@ app.whenReady().then(() => {
     } catch (e) {
       return { error: String(e) }
     }
+  })
+
+  // ── tone3000 IPC handlers ───────────────────────────────────────────────────
+
+  ipcMain.handle('tone3000:status', async () => {
+    if (!tone3kTokens) return { connected: false, username: null }
+    const valid = await ensureValidToken()
+    if (!valid) return { connected: false, username: null }
+    try {
+      const res = await fetch(`${T3K_BASE}/api/v1/user`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+      if (!res.ok) return { connected: false, username: null }
+      const u = await res.json() as { username?: string }
+      return { connected: true, username: u.username ?? null }
+    } catch { return { connected: true, username: null } }
+  })
+
+  ipcMain.handle('tone3000:connect', (_event) => {
+    return new Promise<{ ok: boolean; username?: string | null; error?: string }>((resolve) => {
+      const codeVerifier = crypto.randomBytes(32).toString('base64url')
+      const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url')
+      const state = crypto.randomBytes(16).toString('hex')
+      let port = 0
+
+      const server = http.createServer(async (req, res) => {
+        const url = new URL(req.url ?? '/', `http://localhost`)
+        if (url.pathname !== '/callback') { res.end(); return }
+
+        const code = url.searchParams.get('code')
+        const returnedState = url.searchParams.get('state')
+
+        res.writeHead(200, { 'Content-Type': 'text/html' })
+        res.end('<html><body style="font-family:sans-serif;padding:40px;background:#111;color:#fff"><h2>Connected to tone3000!</h2><p>Return to NAM Lab — you can close this tab.</p></body></html>')
+        server.close()
+
+        if (returnedState !== state || !code) { resolve({ ok: false, error: 'Invalid OAuth callback' }); return }
+
+        try {
+          const tokenRes = await fetch(`${T3K_BASE}/api/v1/oauth/token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ grant_type: 'authorization_code', code, redirect_uri: `http://localhost:${port}/callback`, client_id: T3K_CLIENT_ID, code_verifier: codeVerifier })
+          })
+          if (!tokenRes.ok) { resolve({ ok: false, error: `Token exchange failed (${tokenRes.status})` }); return }
+          const tokens = await tokenRes.json() as { access_token: string; refresh_token: string; expires_in: number }
+          tone3kTokens = { accessToken: tokens.access_token, refreshToken: tokens.refresh_token, expiresAt: Date.now() + tokens.expires_in * 1000, clientId: T3K_CLIENT_ID }
+          await saveTone3kTokens()
+
+          let username: string | null = null
+          try {
+            const userRes = await fetch(`${T3K_BASE}/api/v1/user`, { headers: { Authorization: `Bearer ${tokens.access_token}`, 'User-Agent': 'NAM-Lab' } })
+            if (userRes.ok) { const u = await userRes.json() as { username?: string }; username = u.username ?? null }
+          } catch { /* username not critical */ }
+
+          resolve({ ok: true, username })
+        } catch (e) { resolve({ ok: false, error: String(e) }) }
+      })
+
+      server.listen(0, '127.0.0.1', () => {
+        const addr = server.address() as import('net').AddressInfo
+        port = addr.port
+        const params = new URLSearchParams({ response_type: 'code', client_id: T3K_CLIENT_ID, redirect_uri: `http://localhost:${port}/callback`, code_challenge: codeChallenge, code_challenge_method: 'S256', state })
+        shell.openExternal(`${T3K_BASE}/api/v1/oauth/authorize?${params}`)
+      })
+
+      setTimeout(() => { server.close(); resolve({ ok: false, error: 'Login timed out after 5 minutes' }) }, 300_000).unref()
+    })
+  })
+
+  ipcMain.handle('tone3000:disconnect', async () => {
+    tone3kTokens = null
+    try { await fs.promises.unlink(join(app.getPath('userData'), 'tone3000-tokens.json')) } catch { /* ok */ }
+    return { ok: true }
+  })
+
+  ipcMain.handle('tone3000:getTone', async (_event, toneId: number) => {
+    const valid = await ensureValidToken()
+    if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
+    try {
+      const res = await fetch(`${T3K_BASE}/api/v1/tones/${toneId}`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+      if (!res.ok) return { error: `API error ${res.status}` }
+      return { ok: true, tone: await res.json() }
+    } catch (e) { return { error: String(e) } }
+  })
+
+  ipcMain.handle('tone3000:getModels', async (_event, toneId: number) => {
+    const valid = await ensureValidToken()
+    if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
+    try {
+      const all: unknown[] = []
+      let page = 1
+      let total = Infinity
+      while (all.length < total && all.length < 500) {
+        const res = await fetch(`${T3K_BASE}/api/v1/models?tone_id=${toneId}&page=${page}&page_size=100`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+        if (!res.ok) return { error: `API error ${res.status}` }
+        const d = await res.json() as { data: unknown[]; total: number }
+        all.push(...(d.data ?? []))
+        total = d.total ?? 0
+        if (!d.data?.length) break
+        page++
+      }
+      return { ok: true, models: all }
+    } catch (e) { return { error: String(e) } }
+  })
+
+  ipcMain.handle('tone3000:download', async (_event, modelUrl: string, name: string) => {
+    const valid = await ensureValidToken()
+    if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
+    try {
+      const res = await fetch(modelUrl, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+      if (!res.ok) return { error: `Download failed (${res.status})` }
+      const buffer = Buffer.from(await res.arrayBuffer())
+      const safeName = name.replace(/[^\w.\- ]/g, '_').trim() || 'tone'
+      const fileName = safeName.toLowerCase().endsWith('.nam') ? safeName : `${safeName}.nam`
+      const dir = join(os.tmpdir(), 'nam-lab-downloads')
+      await fs.promises.mkdir(dir, { recursive: true })
+      const localPath = join(dir, fileName)
+      await fs.promises.writeFile(localPath, buffer)
+      return { ok: true, localPath: localPath.replace(/\\/g, '/') }
+    } catch (e) { return { error: String(e) } }
+  })
+
+  ipcMain.handle('tone3000:search', async (_event, params: { query?: string; page?: number; pageSize?: number; gears?: string[]; sizes?: string[]; sort?: string }) => {
+    const valid = await ensureValidToken()
+    if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
+    const sp = new URLSearchParams()
+    if (params.query) sp.set('query', params.query)
+    sp.set('page', String(params.page ?? 1))
+    sp.set('page_size', String(params.pageSize ?? 24))
+    if (params.sort) sp.set('sort', params.sort)
+    if (params.gears?.length) sp.set('gears', params.gears.join('_'))
+    if (params.sizes?.length) sp.set('sizes', params.sizes.join('_'))
+    try {
+      const res = await fetch(`${T3K_BASE}/api/v1/tones/search?${sp}`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+      if (!res.ok) return { error: `API error ${res.status}` }
+      return { ok: true, data: await res.json() }
+    } catch (e) { return { error: String(e) } }
   })
 
   app.on('activate', () => {
