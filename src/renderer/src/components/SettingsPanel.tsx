@@ -308,6 +308,33 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                 onChange={(v) => update('rememberLastFolder', v)}
               />
               <CheckboxField
+                label="Show Library Overview on launch"
+                description="Open the Library Overview panel automatically when the app starts. Turn off if you prefer to start with the capture editor."
+                checked={draft.showDashboardOnLaunch}
+                onChange={(v) => update('showDashboardOnLaunch', v)}
+              />
+              <div className="flex items-start gap-3">
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm text-gray-700 dark:text-gray-300 font-medium">Default folder panel tab</span>
+                  <p className="text-xs text-gray-500 dark:text-gray-500 mt-0.5">Which tab shows when you click a folder in the tree.</p>
+                </div>
+                <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-gray-700 flex-shrink-0">
+                  {([['overview', 'Overview'], ['pack', 'Pack Info'], ['gallery', 'Gallery']] as const).map(([v, label]) => (
+                    <button
+                      key={v}
+                      onClick={() => update('defaultFolderTab', v)}
+                      className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                        draft.defaultFolderTab === v
+                          ? 'bg-indigo-600 text-white'
+                          : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <CheckboxField
                 label="Watch folder for new files"
                 description="Automatically detect when new .nam files are added to the open folder and show a refresh prompt. Not supported on Linux."
                 checked={draft.watchFolder}

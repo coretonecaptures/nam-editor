@@ -226,7 +226,7 @@ export default function App() {
   })
 
   const [folderImages, setFolderImages] = useState<FolderImagesData | null>(null)
-  const [folderPanelTab, setFolderPanelTab] = useState<'overview' | 'pack' | 'gallery'>('pack')
+  const [folderPanelTab, setFolderPanelTab] = useState<'overview' | 'pack' | 'gallery'>(settings.defaultFolderTab)
   // Path of the ancestor that owns the pack info for the current folder (null = current folder may own one)
   const [packInfoAncestor, setPackInfoAncestor] = useState<string | null>(null)
   // Set of folder paths that have a valid nam-pack.json (non-empty title) — drives blue dot in tree
@@ -235,7 +235,7 @@ export default function App() {
   const [bundleFolders, setBundleFolders] = useState<Set<string>>(new Set())
   // Folder compare modal: array of paths to compare (null = closed)
   const [compareFolderPaths, setCompareFolderPaths] = useState<string[] | null>(null)
-  const [showDashboard, setShowDashboard] = useState(false)
+  const [showDashboard, setShowDashboard] = useState(settings.showDashboardOnLaunch)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [sessionHistory, setSessionHistory] = useState<HistoryEntry[]>([])
   const [creatorFilter, setCreatorFilter] = useState<string | null>(null)
@@ -252,7 +252,7 @@ export default function App() {
     const rf = librarian.rootFolder
     if (!sf || !rf || sf === rf) {
       setPackInfoAncestor(null)
-      setFolderPanelTab('pack')
+      setFolderPanelTab(settings.defaultFolderTab)
       return
     }
     let cancelled = false
@@ -261,8 +261,8 @@ export default function App() {
       if (cancelled) return
       setPackInfoAncestor(owner)
       const ownPack = packInfoFolders.has(sfNorm)
-      // Default to gallery when folder has no own pack but a parent pack exists; else pack
-      setFolderPanelTab(!ownPack && owner ? 'gallery' : 'pack')
+      // Default to gallery when folder has no own pack but a parent pack exists; else use user's default
+      setFolderPanelTab(!ownPack && owner ? 'gallery' : settings.defaultFolderTab)
     })
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
