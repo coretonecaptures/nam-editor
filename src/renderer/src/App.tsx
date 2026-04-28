@@ -406,7 +406,7 @@ export default function App() {
       setShowDashboard(false)
       setHistoryOpen(false)
     }
-  }, [selectedIds.size])
+  }, [selectedIds])
 
   const onDragStart = (panel: 'tree' | 'list', e: React.MouseEvent) => {
     e.preventDefault()
