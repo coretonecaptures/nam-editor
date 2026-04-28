@@ -491,12 +491,12 @@ export default function App() {
       const existing = new Set(prev.map((f) => f.filePath))
       return [...prev, ...loaded.filter((f) => !existing.has(f.filePath))]
     })
+    // Read and clear outside the updater — updaters can be called multiple times in Concurrent Mode
+    const shouldSuppressSelect = suppressStartupAutoSelectRef.current
+    suppressStartupAutoSelectRef.current = false
     setSelectedIds((prev) => {
       if (loaded.length === 0) return prev
-      if (suppressStartupAutoSelectRef.current) {
-        suppressStartupAutoSelectRef.current = false
-        return prev
-      }
+      if (shouldSuppressSelect) return prev
       if (mode === 'replace') return new Set([loaded[0].filePath])
       if (prev.size === 0) return new Set([loaded[0].filePath])
       return prev

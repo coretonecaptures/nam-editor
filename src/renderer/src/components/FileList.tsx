@@ -377,19 +377,22 @@ export function FileList({
     }
   })
 
-  const sorted = sortKey
-    ? [...filtered].sort((a, b) => {
-        const av = getSortValue(a, sortKey)
-        const bv = getSortValue(b, sortKey)
-        let cmp = 0
-        if (typeof av === 'number' && typeof bv === 'number') {
-          cmp = av - bv
-        } else {
-          cmp = String(av).localeCompare(String(bv))
-        }
-        return sortDir === 'asc' ? cmp : -cmp
-      })
-    : filtered
+  const sorted = [...filtered].sort((a, b) => {
+    if (sortKey) {
+      const av = getSortValue(a, sortKey)
+      const bv = getSortValue(b, sortKey)
+      let cmp = 0
+      if (typeof av === 'number' && typeof bv === 'number') {
+        cmp = av - bv
+      } else {
+        cmp = String(av).localeCompare(String(bv))
+      }
+      const result = sortDir === 'asc' ? cmp : -cmp
+      if (result !== 0) return result
+    }
+    // Secondary (or sole) sort: name A→Z
+    return (a.metadata.name || a.fileName).localeCompare(b.metadata.name || b.fileName)
+  })
 
   useEffect(() => {
     if (!showExport) return
