@@ -559,20 +559,24 @@ export default function App() {
       window.api.scanTree(folder, hiddenFolders)
     ])
     if (gen !== loadGenRef.current) return
-    if (!flatResult.success) {
-      setStatus({ message: `Error: ${flatResult.error}`, type: 'error' })
-      return
-    }
-    if (!flatResult.files || flatResult.files.length === 0) {
-      setStatus({ message: 'No .nam files found in that folder', type: 'info' })
-      return
-    }
     const normalizedFolder = folder.replace(/\\/g, '/')
+    // Always apply the fresh tree so deleted/added folders are reflected immediately,
+    // even if the scan returns an error or finds no .nam files.
     setLibrarian({
       rootFolder: normalizedFolder,
       folderTree: treeResult.success && treeResult.tree ? treeResult.tree : null,
       selectedFolders: []
     })
+    if (!flatResult.success) {
+      setStatus({ message: `Error: ${flatResult.error}`, type: 'error' })
+      return
+    }
+    if (!flatResult.files || flatResult.files.length === 0) {
+      setFiles([])
+      setSelectedIds(new Set())
+      setStatus({ message: 'No .nam files found in that folder', type: 'info' })
+      return
+    }
     setRecentFolders((prev) => {
       const next = [normalizedFolder, ...prev.filter((f) => f !== normalizedFolder)].slice(0, 10)
       localStorage.setItem('nam-lab-recent-folders', JSON.stringify(next))
