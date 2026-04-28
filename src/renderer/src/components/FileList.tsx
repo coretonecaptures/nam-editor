@@ -56,8 +56,13 @@ interface FileListProps {
   defaultSearch?: string
   defaultGearFilter?: string
   defaultToneFilter?: string
+  defaultPresetFilter?: string
+  defaultFilterMode?: FilterMode
+  esrFilter?: string | null
   onGearFilterClear?: () => void
   onToneFilterClear?: () => void
+  onPresetFilterClear?: () => void
+  onFilterModeClear?: () => void
 }
 
 const ALL_GRID_COLUMNS: { key: string; label: string; minWidth: number; defaultVisible: boolean }[] = [
@@ -283,8 +288,13 @@ export function FileList({
   defaultSearch = '',
   defaultGearFilter,
   defaultToneFilter,
+  defaultPresetFilter,
+  defaultFilterMode,
+  esrFilter,
   onGearFilterClear,
   onToneFilterClear,
+  onPresetFilterClear,
+  onFilterModeClear,
 }: FileListProps) {
   const [search, setSearch] = useState(defaultSearch)
   const [nameSearch, setNameSearch] = useState('')
@@ -336,6 +346,14 @@ export function FileList({
           if (!getCellValue(f, key).toLowerCase().includes(text.toLowerCase())) return false
         }
       }
+    }
+    if (esrFilter) {
+      const esrVal = (f.metadata.training as Record<string, unknown> | undefined)?.validation_esr
+      const esrNum = typeof esrVal === 'number' ? esrVal : null
+      if (esrFilter === 'good'   && !(esrNum !== null && esrNum < 0.01)) return false
+      if (esrFilter === 'ok'     && !(esrNum !== null && esrNum >= 0.01 && esrNum < 0.05)) return false
+      if (esrFilter === 'review' && !(esrNum !== null && esrNum >= 0.05)) return false
+      if (esrFilter === 'none'   && esrNum !== null) return false
     }
     switch (filter) {
       case 'unnamed':    return !o.name
@@ -424,6 +442,16 @@ export function FileList({
   useEffect(() => {
     setToneFilter(defaultToneFilter ?? '')
   }, [defaultToneFilter])
+
+  useEffect(() => {
+    setPresetFilter(defaultPresetFilter ?? '')
+    if (!defaultPresetFilter) onPresetFilterClear?.()
+  }, [defaultPresetFilter])
+
+  useEffect(() => {
+    if (defaultFilterMode) setFilter(defaultFilterMode)
+    else onFilterModeClear?.()
+  }, [defaultFilterMode])
 
   // When the filtered list changes (search/filter applied), trim selectedIds in App.tsx
   // so stale selections don't leak into editors or bulk actions.

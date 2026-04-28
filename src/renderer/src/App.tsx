@@ -241,6 +241,9 @@ export default function App() {
   const [creatorFilter, setCreatorFilter] = useState<string | null>(null)
   const [gearTypeFilter, setGearTypeFilter] = useState<string | null>(null)
   const [toneTypeFilter, setToneTypeFilter] = useState<string | null>(null)
+  const [presetFilterOverride, setPresetFilterOverride] = useState<string | null>(null)
+  const [filterModeOverride, setFilterModeOverride] = useState<'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited' | 'incomplete' | 'rated' | null>(null)
+  const [esrFilterOverride, setEsrFilterOverride] = useState<string | null>(null)
 
   // Reset folder panel tab and check for pack-owning ancestor when selected folder changes
   useEffect(() => {
@@ -1961,8 +1964,13 @@ export default function App() {
               defaultSearch={creatorFilter ?? undefined}
               defaultGearFilter={gearTypeFilter ?? undefined}
               defaultToneFilter={toneTypeFilter ?? undefined}
+              defaultPresetFilter={presetFilterOverride ?? undefined}
+              defaultFilterMode={filterModeOverride ?? undefined}
+              esrFilter={esrFilterOverride}
               onGearFilterClear={() => setGearTypeFilter(null)}
               onToneFilterClear={() => setToneTypeFilter(null)}
+              onPresetFilterClear={() => setPresetFilterOverride(null)}
+              onFilterModeClear={() => setFilterModeOverride(null)}
             />
           </div>
           {!gridMaximized && <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} onCollapse={() => setListCollapsed((v) => !v)} collapsed={listCollapsed} />}
@@ -2115,7 +2123,20 @@ export default function App() {
                 </div>
                 <div className="flex-1 overflow-hidden">
                   {folderPanelTab === 'overview' ? (
-                    <FolderDashboard files={visibleFiles} folderName={activeFolderName} />
+                    <FolderDashboard
+                      files={visibleFiles}
+                      folderName={activeFolderName}
+                      activeGear={gearTypeFilter}
+                      activeTone={toneTypeFilter}
+                      activePreset={presetFilterOverride}
+                      activeMissing={filterModeOverride === 'incomplete'}
+                      activeEsr={esrFilterOverride}
+                      onGearClick={(gear) => { setGearTypeFilter(gear); setToneTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setEsrFilterOverride(null) }}
+                      onToneClick={(tone) => { setToneTypeFilter(tone); setGearTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setEsrFilterOverride(null) }}
+                      onPresetClick={(preset) => { setPresetFilterOverride(preset); setGearTypeFilter(null); setToneTypeFilter(null); setFilterModeOverride(null); setEsrFilterOverride(null) }}
+                      onMissingClick={(on) => { setFilterModeOverride(on ? 'incomplete' : null); setGearTypeFilter(null); setToneTypeFilter(null); setPresetFilterOverride(null); setEsrFilterOverride(null) }}
+                      onEsrClick={(tier) => { setEsrFilterOverride(tier); setGearTypeFilter(null); setToneTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null) }}
+                    />
                   ) : folderPanelTab === 'gallery' && showGalleryTab ? (
                     <FolderGallery data={folderImages!} />
                   ) : showPackEditor ? (

@@ -6,6 +6,16 @@ import { getGearImageSrc } from '../assets/gear'
 interface Props {
   files: NamFile[]
   folderName: string
+  activeGear?: string | null
+  activeTone?: string | null
+  activePreset?: string | null
+  activeMissing?: boolean
+  activeEsr?: string | null
+  onGearClick?: (gear: string | null) => void
+  onToneClick?: (tone: string | null) => void
+  onPresetClick?: (preset: string | null) => void
+  onMissingClick?: (on: boolean) => void
+  onEsrClick?: (tier: string | null) => void
 }
 
 const CORE_FIELDS = [
@@ -71,28 +81,34 @@ function StatBox({ value, label, sub }: { value: number | string; label: string;
 }
 
 function BudgetRow({
-  icon, label, count, maxCount, color,
+  icon, label, count, maxCount, color, isActive, onClick,
 }: {
   icon?: React.ReactNode
   label: string
   count: number
   maxCount: number
   color: string
+  isActive?: boolean
+  onClick?: () => void
 }) {
   const pct = maxCount > 0 ? count / maxCount : 0
   return (
-    <div className="flex items-center gap-2 min-h-[26px]">
+    <div
+      className={`flex items-center gap-2 min-h-[26px] rounded-md transition-colors ${onClick ? 'cursor-pointer' : ''} ${isActive ? 'ring-1 ring-inset' : 'hover:bg-white/5'}`}
+      style={isActive ? { outline: `1px solid ${color}55`, outlineOffset: '-1px' } : undefined}
+      onClick={onClick}
+    >
       <div className="w-5 flex-shrink-0 flex items-center justify-center">
         {icon ?? <span style={{ color }} className="text-[9px] leading-none">●</span>}
       </div>
       <div className="flex-1 relative rounded overflow-hidden">
         <div
-          className="absolute inset-y-0 left-0 rounded"
-          style={{ width: `${Math.max(pct * 100, 6)}%`, backgroundColor: color + '2e' }}
+          className="absolute inset-y-0 left-0 rounded transition-all"
+          style={{ width: `${Math.max(pct * 100, 6)}%`, backgroundColor: isActive ? color + '55' : color + '2e' }}
         />
         <span
           className="relative block px-2 py-0.5 text-[11px] font-semibold truncate"
-          style={{ color }}
+          style={{ color, opacity: isActive ? 1 : 0.85 }}
         >
           {label}
         </span>
@@ -102,20 +118,26 @@ function BudgetRow({
   )
 }
 
-function MiniBar({ label, count, maxCount, color }: { label: string; count: number; maxCount: number; color: string }) {
+function MiniBar({ label, count, maxCount, color, isActive, onClick }: { label: string; count: number; maxCount: number; color: string; isActive?: boolean; onClick?: () => void }) {
   const pct = maxCount > 0 ? count / maxCount : 0
   return (
-    <div className="flex items-center gap-2 min-h-[20px]">
-      <span className="text-[10px] text-gray-400 w-16 text-right flex-shrink-0 truncate">{label}</span>
+    <div
+      className={`flex items-center gap-2 min-h-[22px] rounded px-1 transition-colors ${onClick ? 'cursor-pointer' : ''} ${isActive ? 'bg-white/8' : 'hover:bg-white/5'}`}
+      onClick={onClick}
+    >
+      <span className="text-[10px] w-16 text-right flex-shrink-0 truncate font-medium" style={{ color: isActive ? color : undefined, opacity: isActive ? 1 : 0.6 }}>{label}</span>
       <div className="flex-1 h-2 rounded-full bg-gray-700/50 overflow-hidden">
-        <div className="h-full rounded-full" style={{ width: `${Math.max(pct * 100, 2)}%`, backgroundColor: color }} />
+        <div className="h-full rounded-full transition-all" style={{ width: `${Math.max(pct * 100, 2)}%`, backgroundColor: color, opacity: isActive ? 1 : 0.7 }} />
       </div>
       <span className="text-[10px] text-gray-500 w-5 text-right flex-shrink-0 tabular-nums">{count}</span>
     </div>
   )
 }
 
-export function FolderDashboard({ files }: Props) {
+export function FolderDashboard({
+  files, activeGear, activeTone, activePreset, activeMissing, activeEsr,
+  onGearClick, onToneClick, onPresetClick, onMissingClick, onEsrClick,
+}: Props) {
   const stats = useMemo(() => {
     const total = files.length
     const missing = files.filter((f) =>
@@ -186,11 +208,14 @@ export function FolderDashboard({ files }: Props) {
       {/* Stat boxes */}
       <div className="flex gap-3">
         <StatBox value={stats.total} label="captures" />
-        <StatBox
-          value={stats.missing}
-          label="missing metadata"
-          sub={stats.missing === 0 ? 'all complete' : `${Math.round(stats.missing / stats.total * 100)}% incomplete`}
-        />
+        <div
+          className={`flex-1 rounded-xl border px-3 py-2.5 text-center transition-colors ${onMissingClick ? 'cursor-pointer hover:bg-gray-700/40' : ''} ${activeMissing ? 'bg-gray-700/60 border-gray-500/60' : 'bg-gray-800/60 border-gray-700/40'}`}
+          onClick={stats.missing > 0 && onMissingClick ? () => onMissingClick(!activeMissing) : undefined}
+        >
+          <div className={`text-2xl font-bold leading-none ${stats.missing === 0 ? 'text-green-400' : activeMissing ? 'text-amber-300' : 'text-amber-400'}`}>{stats.missing}</div>
+          <div className="text-[10px] text-gray-400 mt-1 leading-tight">missing metadata</div>
+          <div className="text-[9px] text-gray-600 mt-0.5">{stats.missing === 0 ? 'all complete' : `${Math.round(stats.missing / stats.total * 100)}% incomplete`}</div>
+        </div>
       </div>
 
       {/* Formats + ESR row */}
@@ -209,6 +234,8 @@ export function FolderDashboard({ files }: Props) {
                   count={count}
                   maxCount={stats.maxPreset}
                   color={PRESET_COLORS[key] ?? '#6b7280'}
+                  isActive={activePreset === key}
+                  onClick={onPresetClick ? () => onPresetClick(activePreset === key ? null : key) : undefined}
                 />
               ))}
             </div>
@@ -224,16 +251,24 @@ export function FolderDashboard({ files }: Props) {
             ) : (
               <>
                 {stats.esrGood > 0 && (
-                  <BudgetRow label="Excellent  < 0.01" count={stats.esrGood} maxCount={esrMaxCount} color="#22c55e" />
+                  <BudgetRow label="Excellent  < 0.01" count={stats.esrGood} maxCount={esrMaxCount} color="#22c55e"
+                    isActive={activeEsr === 'good'}
+                    onClick={onEsrClick ? () => onEsrClick(activeEsr === 'good' ? null : 'good') : undefined} />
                 )}
                 {stats.esrOk > 0 && (
-                  <BudgetRow label="OK  0.01–0.05" count={stats.esrOk} maxCount={esrMaxCount} color="#f59e0b" />
+                  <BudgetRow label="OK  0.01–0.05" count={stats.esrOk} maxCount={esrMaxCount} color="#f59e0b"
+                    isActive={activeEsr === 'ok'}
+                    onClick={onEsrClick ? () => onEsrClick(activeEsr === 'ok' ? null : 'ok') : undefined} />
                 )}
                 {stats.esrReview > 0 && (
-                  <BudgetRow label="Review  > 0.05" count={stats.esrReview} maxCount={esrMaxCount} color="#ef4444" />
+                  <BudgetRow label="Review  > 0.05" count={stats.esrReview} maxCount={esrMaxCount} color="#ef4444"
+                    isActive={activeEsr === 'review'}
+                    onClick={onEsrClick ? () => onEsrClick(activeEsr === 'review' ? null : 'review') : undefined} />
                 )}
                 {stats.esrNone > 0 && (
-                  <BudgetRow label="No data" count={stats.esrNone} maxCount={esrMaxCount} color="#4b5563" />
+                  <BudgetRow label="No data" count={stats.esrNone} maxCount={esrMaxCount} color="#4b5563"
+                    isActive={activeEsr === 'none'}
+                    onClick={onEsrClick ? () => onEsrClick(activeEsr === 'none' ? null : 'none') : undefined} />
                 )}
               </>
             )}
@@ -265,6 +300,8 @@ export function FolderDashboard({ files }: Props) {
                     count={count}
                     maxCount={stats.maxGear}
                     color={color}
+                    isActive={activeGear === key}
+                    onClick={onGearClick ? () => onGearClick(activeGear === key ? null : key) : undefined}
                   />
                 )
               })}
@@ -286,6 +323,8 @@ export function FolderDashboard({ files }: Props) {
                   count={count}
                   maxCount={stats.maxTone}
                   color={TONE_COLORS[key] ?? '#6b7280'}
+                  isActive={activeTone === key}
+                  onClick={onToneClick ? () => onToneClick(activeTone === key ? null : key) : undefined}
                 />
               ))}
             </div>
