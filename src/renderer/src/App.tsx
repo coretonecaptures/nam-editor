@@ -386,6 +386,13 @@ export default function App() {
     mainContentRef.current?.focus()
   }, [showSettings, batchFolder])
 
+  useEffect(() => {
+    if (selectedIds.size > 0) {
+      setShowDashboard(false)
+      setHistoryOpen(false)
+    }
+  }, [selectedIds.size])
+
   const onDragStart = (panel: 'tree' | 'list', e: React.MouseEvent) => {
     e.preventDefault()
     const startWidth = panel === 'tree' ? treeWidth : listWidth
