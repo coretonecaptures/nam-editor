@@ -20,6 +20,21 @@ This document covers everything NAM Lab can do. For installation, see [install.m
 
 ---
 
+## Tone3000 Integration
+
+- **Find New Tones** opens a built-in Tone3000 browser in the right panel
+- Sign in with your Tone3000 account through OAuth; NAM Lab remembers your local session tokens until you disconnect
+- **All tones** mode searches the public Tone3000 catalog with text query, gear filter, and sort order
+- **My files** mode uses Tone3000’s created-tones endpoint for the currently authenticated user
+- Click any result to open a detail view with description, tags, links, favorites, file variants, and batch download
+- Downloaded models are copied into a folder you choose and then can be loaded into NAM Lab immediately
+- Clicking a Tone3000 creator filters your local NAM Lab library by `modeled_by` without leaving the Tone3000 panel
+- The **Tone3000 username** field helps narrow results by creator username, but this may be incomplete because Tone3000 does not currently expose a direct tones-by-user endpoint
+- **Settings → Library → Tone3000 Username** stores an optional username that helps NAM Lab map Tone3000 creators to your local naming conventions
+- Right-click any local capture in the list or grid and choose **Find Similar Captures on Tone3000** to search Tone3000 using `Manufacturer + Model`
+
+---
+
 ## Library Overview Dashboard
 
 Click the **≡** (dashboard) button in the toolbar (or enable **Show Library Overview on launch** in Settings → Startup) to open the Library Overview in the right panel.
@@ -184,6 +199,9 @@ Settings are stored locally and start blank. Each section can be enabled or disa
 - **Show Library Overview on launch** — opens the dashboard in the right panel automatically on startup (on by default)
 - **Default folder panel tab** — choose whether clicking a folder shows Overview, Pack Info, or Gallery first
 
+**Library**
+- **Tone3000 Username** — optional username used to improve local creator matching and creator-focused Tone3000 searches
+
 **Current Amp Info** *(toggleable)*
 - Default Manufacturer and Model — disable when browsing a shared library to avoid stamping your gear info on other people's captures
 
@@ -231,6 +249,7 @@ Right-click one or more files → **Rename N selected…**:
 | Rename N selected… | Open batch rename dialog |
 | Copy metadata | Copy editable fields to in-memory clipboard (single file) |
 | Paste metadata (from X) | Write clipboard fields to all selected files |
+| Find Similar Captures on Tone3000 | Opens the Tone3000 browser and searches for `Manufacturer + Model` |
 | Remove NAM Lab Custom Metadata | Strip `nam_lab` block from disk |
 | Save N selected | Save selected files |
 | Batch edit N selected | Open batch editor for selection |

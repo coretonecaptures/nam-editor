@@ -90,6 +90,15 @@ const api = {
     ipcRenderer.on('app:openFiles', handler)
     return () => ipcRenderer.removeListener('app:openFiles', handler)
   },
+  tone3000Status: (): Promise<{ connected: boolean; username: string | null }> => ipcRenderer.invoke('tone3000:status'),
+  tone3000Connect: (): Promise<{ ok: boolean; username?: string | null; error?: string }> => ipcRenderer.invoke('tone3000:connect'),
+  tone3000Disconnect: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('tone3000:disconnect'),
+  tone3000Search: (params: { query?: string; page?: number; pageSize?: number; gears?: string[]; sizes?: string[]; sort?: string }): Promise<{ ok?: boolean; data?: unknown; error?: string }> => ipcRenderer.invoke('tone3000:search', params),
+  tone3000UsersSearch: (params: { query: string; page?: number; pageSize?: number; sort?: string }): Promise<{ ok?: boolean; data?: unknown; error?: string }> => ipcRenderer.invoke('tone3000:usersSearch', params),
+  tone3000Created: (params: { page?: number; pageSize?: number }): Promise<{ ok?: boolean; data?: unknown; error?: string }> => ipcRenderer.invoke('tone3000:created', params),
+  tone3000GetTone: (toneId: number): Promise<{ ok?: boolean; tone?: unknown; error?: string }> => ipcRenderer.invoke('tone3000:getTone', toneId),
+  tone3000GetModels: (toneId: number): Promise<{ ok?: boolean; models?: unknown[]; error?: string }> => ipcRenderer.invoke('tone3000:getModels', toneId),
+  tone3000Download: (modelUrl: string, name: string): Promise<{ ok?: boolean; localPath?: string; error?: string }> => ipcRenderer.invoke('tone3000:download', modelUrl, name),
   platform: process.platform,
   initialSettings,
   saveSettingsToFile: (json: string) => ipcRenderer.send('settings:save', json)

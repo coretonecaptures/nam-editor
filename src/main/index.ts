@@ -1,211 +1,11 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, protocol, session, net } from 'electron'
-import { createServer, type Server as HttpServer, type IncomingMessage, type ServerResponse } from 'http'
-import type { AddressInfo } from 'net'
+import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net, session } from 'electron'
 import { join, dirname, basename, extname, normalize as normalizePath } from 'path'
 import fs from 'fs'
 import os from 'os'
+import http from 'http'
+import crypto from 'crypto'
 
 const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
-const APP_SCHEME = 'app'
-const APP_HOST = '-'
-const APP_ORIGIN = `${APP_SCHEME}://${APP_HOST}`
-const ISOLATION_HEADERS = {
-  'Cross-Origin-Opener-Policy': 'same-origin',
-  'Cross-Origin-Embedder-Policy': 'require-corp'
-} as const
-let rendererServer: HttpServer | null = null
-let rendererOrigin = APP_ORIGIN
-
-function getRendererEntryUrl(): string {
-  return `${rendererOrigin}/index.html`
-}
-
-function getRendererDistRoot(): string {
-  return join(process.cwd(), 'out/renderer')
-}
-
-function getRendererAssetPath(safeSegments: string[]): string {
-  const distRoot = getRendererDistRoot()
-  return join(distRoot, ...safeSegments)
-}
-
-function contentTypeForFile(filePath: string): string {
-  switch (extname(filePath).toLowerCase()) {
-    case '.html': return 'text/html; charset=utf-8'
-    case '.js':
-    case '.mjs': return 'text/javascript; charset=utf-8'
-    case '.css': return 'text/css; charset=utf-8'
-    case '.json': return 'application/json; charset=utf-8'
-    case '.wasm': return 'application/wasm'
-    case '.svg': return 'image/svg+xml'
-    case '.png': return 'image/png'
-    case '.jpg':
-    case '.jpeg': return 'image/jpeg'
-    case '.gif': return 'image/gif'
-    case '.webp': return 'image/webp'
-    case '.ico': return 'image/x-icon'
-    case '.map': return 'application/json; charset=utf-8'
-    default: return 'application/octet-stream'
-  }
-}
-
-function responseHeadersFor(filePath: string, extra: Record<string, string> = {}): Record<string, string> {
-  return {
-    'Content-Type': contentTypeForFile(filePath),
-    'Cache-Control': isDev ? 'no-store' : 'public, max-age=31536000, immutable',
-    ...ISOLATION_HEADERS,
-    ...extra
-  }
-}
-
-function shouldForceIsolationHeaders(url: string): boolean {
-  return url.startsWith(`${APP_SCHEME}://`)
-}
-
-function applyIsolationHeaders(headers: Record<string, string>): Record<string, string> {
-  const nextHeaders: Record<string, string> = {}
-  for (const [key, value] of Object.entries(headers)) {
-    const lower = key.toLowerCase()
-    if (
-      lower === 'cross-origin-opener-policy'
-      || lower === 'cross-origin-embedder-policy'
-      || lower === 'cross-origin-resource-policy'
-    ) {
-      continue
-    }
-    nextHeaders[key] = value
-  }
-
-  return {
-    ...nextHeaders,
-    'Cross-Origin-Opener-Policy': 'same-origin',
-    'Cross-Origin-Embedder-Policy': 'require-corp',
-    'Cross-Origin-Resource-Policy': 'cross-origin'
-  }
-}
-
-async function proxyDevServerRequest(reqUrl: URL): Promise<Response> {
-  const devServerOrigin = process.env['ELECTRON_RENDERER_URL']!.replace(/\/$/, '')
-  return fetch(`${devServerOrigin}${reqUrl.pathname}${reqUrl.search}`)
-}
-
-async function serveRendererHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const reqUrl = new URL(req.url ?? '/', 'http://127.0.0.1')
-
-  const relativePath = decodeURIComponent(reqUrl.pathname === '/' ? '/index.html' : reqUrl.pathname)
-  const safeSegments = relativePath
-    .split('/')
-    .filter(Boolean)
-    .filter((segment) => segment !== '.' && segment !== '..')
-  const targetPath = isDev ? getRendererAssetPath(safeSegments) : join(__dirname, '../renderer', ...safeSegments)
-
-  try {
-    const body = await fs.promises.readFile(targetPath)
-    res.writeHead(200, applyIsolationHeaders({
-      'Content-Type': contentTypeForFile(targetPath),
-      'Cache-Control': 'public, max-age=31536000, immutable'
-    }))
-    res.end(body)
-  } catch {
-    const fallbackPath = join(__dirname, '../renderer/index.html')
-    try {
-      const body = await fs.promises.readFile(fallbackPath)
-      res.writeHead(200, applyIsolationHeaders({
-        'Content-Type': 'text/html; charset=utf-8',
-        'Cache-Control': 'no-store'
-      }))
-      res.end(body)
-    } catch {
-      res.writeHead(404, applyIsolationHeaders({ 'Content-Type': 'text/plain; charset=utf-8' }))
-      res.end('Not found')
-    }
-  }
-}
-
-async function ensureRendererServer(): Promise<void> {
-  if (rendererServer) return
-
-  rendererServer = createServer((req, res) => {
-    void serveRendererHttp(req, res)
-  })
-
-  await new Promise<void>((resolve, reject) => {
-    const server = rendererServer!
-    const onError = (error: Error) => {
-      server.off('listening', onListening)
-      reject(error)
-    }
-    const onListening = () => {
-      server.off('error', onError)
-      const address = server.address() as AddressInfo | null
-      if (!address) {
-        reject(new Error('Renderer server did not expose an address'))
-        return
-      }
-      rendererOrigin = `http://127.0.0.1:${address.port}`
-      resolve()
-    }
-    server.once('error', onError)
-    server.once('listening', onListening)
-    server.listen(0, '127.0.0.1')
-  })
-}
-
-async function handleAppProtocol(req: Request): Promise<Response> {
-  const url = new URL(req.url)
-  const relativePath = decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname)
-  const safeSegments = relativePath
-    .split('/')
-    .filter(Boolean)
-    .filter((segment) => segment !== '.' && segment !== '..')
-  const targetPath = join(__dirname, '../renderer', ...safeSegments)
-
-  try {
-    const body = await fs.promises.readFile(targetPath)
-    return new Response(body, {
-      headers: responseHeadersFor(targetPath, {
-        'Cross-Origin-Resource-Policy': 'same-origin'
-      })
-    })
-  } catch {
-    const fallbackPath = join(__dirname, '../renderer/index.html')
-    try {
-      const body = await fs.promises.readFile(fallbackPath)
-      return new Response(body, {
-        headers: responseHeadersFor(fallbackPath, {
-          'Cross-Origin-Resource-Policy': 'same-origin'
-        })
-      })
-    } catch {
-      return new Response('Not found', { status: 404 })
-    }
-  }
-}
-
-async function handleLocalFileProtocol(req: Request): Promise<Response> {
-  const url = new URL(req.url)
-  // On Windows, the drive letter ends up as the URL host component:
-  // local-file://F/path/to/file -> host="F", pathname="/path/to/file"
-  let filePath: string
-  if (process.platform === 'win32' && url.host.length === 1) {
-    filePath = url.host + ':' + decodeURIComponent(url.pathname)
-  } else {
-    filePath = decodeURIComponent(url.pathname)
-  }
-  try {
-    const body = await fs.promises.readFile(filePath)
-    return new Response(body, {
-      headers: {
-        'Content-Type': contentTypeForFile(filePath),
-        'Cache-Control': 'no-store',
-        'Cross-Origin-Resource-Policy': 'cross-origin',
-        'Access-Control-Allow-Origin': '*'
-      }
-    })
-  } catch {
-    return new Response('Not found', { status: 404 })
-  }
-}
 
 // Compares two semver strings (e.g. "0.5.5" > "0.5.4", "0.5.5" > "0.5.5-rc1")
 // Returns positive if a > b, negative if a < b, 0 if equal
@@ -349,7 +149,7 @@ function createWindow(): void {
       : { titleBarStyle: 'hiddenInset' }),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: true,
+      sandbox: false,
       contextIsolation: true,
       nodeIntegration: false
     },
@@ -391,7 +191,7 @@ function createWindow(): void {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
     mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
-    mainWindow.loadURL(`${APP_ORIGIN}/index.html`)
+    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
 
@@ -640,28 +440,60 @@ function getArgvFiles(): string[] {
   return process.argv.slice(isDev ? 2 : 1).filter((a) => !a.startsWith('--') && a.toLowerCase().endsWith('.nam'))
 }
 
-// Register custom schemes before app.ready.
-// - local-file://  serves filesystem images with CSP bypass
-// - app://         serves the production renderer with COOP/COEP for cross-origin isolation
+// Allow local-file:// to bypass CSP so image src="local-file:///..." works
+// in both dev (localhost) and production (file://) renderer contexts.
 protocol.registerSchemesAsPrivileged([
-  {
-    scheme: 'local-file',
-    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true }
-  },
-  {
-    scheme: APP_SCHEME,
-    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true }
-  },
+  { scheme: 'local-file', privileges: { secure: true, bypassCSP: true, stream: true } }
 ])
 
-app.whenReady().then(() => {
+// ── tone3000 OAuth ────────────────────────────────────────────────────────────
+const T3K_BASE = 'https://www.tone3000.com'
+const T3K_CLIENT_ID = 't3k_pub_wcNVWGoy2Ry01i50EpXSNo9Jjr8oQr-c'
+
+interface Tone3kTokens {
+  accessToken: string
+  refreshToken: string
+  expiresAt: number
+  clientId: string
+}
+
+let tone3kTokens: Tone3kTokens | null = null
+
+async function loadTone3kTokens(): Promise<void> {
+  try {
+    const p = join(app.getPath('userData'), 'tone3000-tokens.json')
+    tone3kTokens = JSON.parse(await fs.promises.readFile(p, 'utf-8')) as Tone3kTokens
+  } catch { /* no saved tokens */ }
+}
+
+async function saveTone3kTokens(): Promise<void> {
+  if (!tone3kTokens) return
+  try {
+    const p = join(app.getPath('userData'), 'tone3000-tokens.json')
+    await fs.promises.writeFile(p, JSON.stringify(tone3kTokens), 'utf-8')
+  } catch { /* non-critical */ }
+}
+
+async function ensureValidToken(): Promise<boolean> {
+  if (!tone3kTokens) return false
+  if (Date.now() < tone3kTokens.expiresAt - 60_000) return true
+  try {
+    const res = await fetch(`${T3K_BASE}/api/v1/oauth/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: tone3kTokens.refreshToken, client_id: tone3kTokens.clientId })
+    })
+    if (!res.ok) { tone3kTokens = null; return false }
+    const d = await res.json() as { access_token: string; refresh_token?: string; expires_in: number }
+    tone3kTokens = { ...tone3kTokens, accessToken: d.access_token, refreshToken: d.refresh_token ?? tone3kTokens.refreshToken, expiresAt: Date.now() + d.expires_in * 1000 }
+    await saveTone3kTokens()
+    return true
+  } catch { return false }
+}
+
+app.whenReady().then(async () => {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     const nextHeaders = details.responseHeaders ?? {}
-    if (!shouldForceIsolationHeaders(details.url)) {
-      callback({ responseHeaders: nextHeaders })
-      return
-    }
-
     callback({
       responseHeaders: {
         ...nextHeaders,
@@ -672,11 +504,15 @@ app.whenReady().then(() => {
     })
   })
 
-  protocol.handle('local-file', handleLocalFileProtocol)
-  protocol.handle(APP_SCHEME, handleAppProtocol)
+  // Serve local filesystem files under local-file:// scheme
+  protocol.handle('local-file', (req) => {
+    const fileUrl = 'file://' + req.url.slice('local-file://'.length)
+    return net.fetch(fileUrl)
+  })
 
   log('app.whenReady fired')
   switchLogToUserData()
+  await loadTone3kTokens()
   log(`log file moved to userData: ${logPath}`)
 
   app.setName('NAM Lab')
@@ -791,16 +627,6 @@ app.whenReady().then(() => {
 
   // IPC: Return the path to the parse error log file
   ipcMain.handle('log:getErrorLogPath', () => errorLogPath)
-  const rendererLogPath = join(app.getPath('userData'), 'renderer-errors.log')
-  ipcMain.handle('log:getRendererLogPath', () => rendererLogPath)
-  ipcMain.handle('log:appendRendererLog', (_event, line: string) => {
-    try {
-      fs.appendFileSync(rendererLogPath, `[${new Date().toISOString()}] ${line}\n`, 'utf-8')
-      return { success: true }
-    } catch (err) {
-      return { success: false, error: String(err) }
-    }
-  })
 
   // IPC: Write updated metadata back to file (preserves weights and all non-editable fields)
   // Only updates the fields the editor explicitly manages — never injects new keys.
@@ -1474,6 +1300,170 @@ app.whenReady().then(() => {
     }
   })
 
+  // ── tone3000 IPC handlers ───────────────────────────────────────────────────
+
+  ipcMain.handle('tone3000:status', async () => {
+    if (!tone3kTokens) return { connected: false, username: null }
+    const valid = await ensureValidToken()
+    if (!valid) return { connected: false, username: null }
+    try {
+      const res = await fetch(`${T3K_BASE}/api/v1/user`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+      if (!res.ok) return { connected: false, username: null }
+      const u = await res.json() as { username?: string }
+      return { connected: true, username: u.username ?? null }
+    } catch { return { connected: true, username: null } }
+  })
+
+  ipcMain.handle('tone3000:connect', (_event) => {
+    return new Promise<{ ok: boolean; username?: string | null; error?: string }>((resolve) => {
+      const codeVerifier = crypto.randomBytes(32).toString('base64url')
+      const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url')
+      const state = crypto.randomBytes(16).toString('hex')
+      let port = 0
+
+      const server = http.createServer(async (req, res) => {
+        const url = new URL(req.url ?? '/', `http://localhost`)
+        if (url.pathname !== '/callback') { res.end(); return }
+
+        const code = url.searchParams.get('code')
+        const returnedState = url.searchParams.get('state')
+
+        res.writeHead(200, { 'Content-Type': 'text/html' })
+        res.end('<html><body style="font-family:sans-serif;padding:40px;background:#111;color:#fff"><h2>Connected to tone3000!</h2><p>Return to NAM Lab — you can close this tab.</p></body></html>')
+        server.close()
+
+        if (returnedState !== state || !code) { resolve({ ok: false, error: 'Invalid OAuth callback' }); return }
+
+        try {
+          const tokenRes = await fetch(`${T3K_BASE}/api/v1/oauth/token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ grant_type: 'authorization_code', code, redirect_uri: `http://localhost:${port}/callback`, client_id: T3K_CLIENT_ID, code_verifier: codeVerifier })
+          })
+          if (!tokenRes.ok) { resolve({ ok: false, error: `Token exchange failed (${tokenRes.status})` }); return }
+          const tokens = await tokenRes.json() as { access_token: string; refresh_token: string; expires_in: number }
+          tone3kTokens = { accessToken: tokens.access_token, refreshToken: tokens.refresh_token, expiresAt: Date.now() + tokens.expires_in * 1000, clientId: T3K_CLIENT_ID }
+          await saveTone3kTokens()
+
+          let username: string | null = null
+          try {
+            const userRes = await fetch(`${T3K_BASE}/api/v1/user`, { headers: { Authorization: `Bearer ${tokens.access_token}`, 'User-Agent': 'NAM-Lab' } })
+            if (userRes.ok) { const u = await userRes.json() as { username?: string }; username = u.username ?? null }
+          } catch { /* username not critical */ }
+
+          resolve({ ok: true, username })
+        } catch (e) { resolve({ ok: false, error: String(e) }) }
+      })
+
+      server.listen(0, '127.0.0.1', () => {
+        const addr = server.address() as import('net').AddressInfo
+        port = addr.port
+        const params = new URLSearchParams({ response_type: 'code', client_id: T3K_CLIENT_ID, redirect_uri: `http://localhost:${port}/callback`, code_challenge: codeChallenge, code_challenge_method: 'S256', state })
+        shell.openExternal(`${T3K_BASE}/api/v1/oauth/authorize?${params}`)
+      })
+
+      setTimeout(() => { server.close(); resolve({ ok: false, error: 'Login timed out after 5 minutes' }) }, 300_000).unref()
+    })
+  })
+
+  ipcMain.handle('tone3000:disconnect', async () => {
+    tone3kTokens = null
+    try { await fs.promises.unlink(join(app.getPath('userData'), 'tone3000-tokens.json')) } catch { /* ok */ }
+    return { ok: true }
+  })
+
+  ipcMain.handle('tone3000:getTone', async (_event, toneId: number) => {
+    const valid = await ensureValidToken()
+    if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
+    try {
+      const res = await fetch(`${T3K_BASE}/api/v1/tones/${toneId}`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+      if (!res.ok) return { error: `API error ${res.status}` }
+      return { ok: true, tone: await res.json() }
+    } catch (e) { return { error: String(e) } }
+  })
+
+  ipcMain.handle('tone3000:getModels', async (_event, toneId: number) => {
+    const valid = await ensureValidToken()
+    if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
+    try {
+      const all: unknown[] = []
+      let page = 1
+      let total = Infinity
+      while (all.length < total && all.length < 500) {
+        const res = await fetch(`${T3K_BASE}/api/v1/models?tone_id=${toneId}&page=${page}&page_size=100`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+        if (!res.ok) return { error: `API error ${res.status}` }
+        const d = await res.json() as { data: unknown[]; total: number }
+        all.push(...(d.data ?? []))
+        total = d.total ?? 0
+        if (!d.data?.length) break
+        page++
+      }
+      return { ok: true, models: all }
+    } catch (e) { return { error: String(e) } }
+  })
+
+  ipcMain.handle('tone3000:download', async (_event, modelUrl: string, name: string) => {
+    const valid = await ensureValidToken()
+    if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
+    try {
+      const res = await fetch(modelUrl, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+      if (!res.ok) return { error: `Download failed (${res.status})` }
+      const buffer = Buffer.from(await res.arrayBuffer())
+      const safeName = name.replace(/[^\w.\- ]/g, '_').trim() || 'tone'
+      const fileName = safeName.toLowerCase().endsWith('.nam') ? safeName : `${safeName}.nam`
+      const dir = join(os.tmpdir(), 'nam-lab-downloads')
+      await fs.promises.mkdir(dir, { recursive: true })
+      const localPath = join(dir, fileName)
+      await fs.promises.writeFile(localPath, buffer)
+      return { ok: true, localPath: localPath.replace(/\\/g, '/') }
+    } catch (e) { return { error: String(e) } }
+  })
+
+  ipcMain.handle('tone3000:search', async (_event, params: { query?: string; page?: number; pageSize?: number; gears?: string[]; sizes?: string[]; sort?: string }) => {
+    const valid = await ensureValidToken()
+    if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
+    const sp = new URLSearchParams()
+    if (params.query) sp.set('query', params.query)
+    sp.set('page', String(params.page ?? 1))
+    sp.set('page_size', String(params.pageSize ?? 24))
+    if (params.sort) sp.set('sort', params.sort)
+    if (params.gears?.length) sp.set('gears', params.gears.join('_'))
+    if (params.sizes?.length) sp.set('sizes', params.sizes.join('_'))
+    try {
+      const res = await fetch(`${T3K_BASE}/api/v1/tones/search?${sp}`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+      if (!res.ok) return { error: `API error ${res.status}` }
+      return { ok: true, data: await res.json() }
+    } catch (e) { return { error: String(e) } }
+  })
+
+  ipcMain.handle('tone3000:usersSearch', async (_event, params: { query: string; page?: number; pageSize?: number; sort?: string }) => {
+    const valid = await ensureValidToken()
+    if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
+    const sp = new URLSearchParams()
+    sp.set('query', params.query)
+    sp.set('page', String(params.page ?? 1))
+    sp.set('page_size', String(params.pageSize ?? 10))
+    if (params.sort) sp.set('sort', params.sort)
+    try {
+      const res = await fetch(`${T3K_BASE}/api/v1/users?${sp}`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+      if (!res.ok) return { error: `API error ${res.status}` }
+      return { ok: true, data: await res.json() }
+    } catch (e) { return { error: String(e) } }
+  })
+
+  ipcMain.handle('tone3000:created', async (_event, params: { page?: number; pageSize?: number }) => {
+    const valid = await ensureValidToken()
+    if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
+    const sp = new URLSearchParams()
+    sp.set('page', String(params.page ?? 1))
+    sp.set('page_size', String(params.pageSize ?? 24))
+    try {
+      const res = await fetch(`${T3K_BASE}/api/v1/tones/created?${sp}`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+      if (!res.ok) return { error: `API error ${res.status}` }
+      return { ok: true, data: await res.json() }
+    } catch (e) { return { error: String(e) } }
+  })
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
@@ -1491,8 +1481,4 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
-})
-
-app.on('will-quit', () => {
-  try { rendererServer?.close() } catch { /* ignore */ }
 })

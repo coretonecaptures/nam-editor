@@ -409,6 +409,15 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                   </p>
                 </div>
               </SettingsField>
+              <SettingsField label="Tone3000 Username" hint="Optional username used to help match Tone3000 creators to your local modeled_by naming">
+                <input
+                  type="text"
+                  value={draft.tone3000Username}
+                  onChange={(e) => update('tone3000Username', e.target.value)}
+                  placeholder="e.g. amalgamaudio"
+                  className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors"
+                />
+              </SettingsField>
             </div>
           </div>
 

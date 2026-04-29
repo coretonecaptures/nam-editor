@@ -32,6 +32,7 @@ NAM captures embed metadata (name, gear info, tone type, etc.) as JSON inside th
 
 ## Key Features
 
+- **Tone3000 integration** — browse and download captures from Tone3000 inside NAM Lab, search by gear and sort order, open your own created tones, and jump from a local capture to similar Tone3000 results
 - **Three-panel library** — Folder Tree | File List | Metadata Editor; all panels resizable and collapsible
 - **Library Overview dashboard** — gear type, tone type, creator, completeness, and rating breakdowns across your whole library; clickable stats filter the file list; recent files list for quick navigation
 - **Folder Overview dashboard** — same at folder level; shown in the Overview tab when a folder is selected

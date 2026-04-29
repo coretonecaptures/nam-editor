@@ -11,6 +11,7 @@ import { BatchEditor, BatchApplyOptions } from './components/BatchEditor'
 import { MultiSelectEditor } from './components/MultiSelectEditor'
 import { StatusBar } from './components/StatusBar'
 import { SettingsPanel } from './components/SettingsPanel'
+import { ToneStore } from './components/ToneStore'
 import { FolderTree } from './components/FolderTree'
 import { DuplicatesModal } from './components/DuplicatesModal'
 import { ImportMetadataModal, ImportMatch } from './components/ImportMetadataModal'
@@ -106,6 +107,15 @@ declare global {
       deleteBundle: (folderPath: string) => Promise<{ success: boolean; error?: string }>
       scanBundlePaths: (rootPath: string) => Promise<string[]>
       findBundlePackFolders: (rootPath: string) => Promise<{ folderPath: string; title: string }[]>
+      tone3000Status: () => Promise<{ connected: boolean; username: string | null }>
+      tone3000Connect: () => Promise<{ ok: boolean; username?: string | null; error?: string }>
+      tone3000Disconnect: () => Promise<{ ok: boolean }>
+      tone3000Search: (params: { query?: string; page?: number; pageSize?: number; gears?: string[]; sizes?: string[]; sort?: string }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
+      tone3000UsersSearch: (params: { query: string; page?: number; pageSize?: number; sort?: string }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
+      tone3000Created: (params: { page?: number; pageSize?: number }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
+      tone3000GetTone: (toneId: number) => Promise<{ ok?: boolean; tone?: unknown; error?: string }>
+      tone3000GetModels: (toneId: number) => Promise<{ ok?: boolean; models?: unknown[]; error?: string }>
+      tone3000Download: (modelUrl: string, name: string) => Promise<{ ok?: boolean; localPath?: string; error?: string }>
       platform: string
       initialSettings: unknown
       saveSettingsToFile: (json: string) => void
@@ -189,6 +199,10 @@ function detectToneType(baseName: string): typeof TONE_TYPES[number] | null {
   return best ? best.tone : null
 }
 
+function normalizeCreatorName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '')
+}
+
 
 const EMPTY_LIBRARIAN: LibrarianState = {
   rootFolder: null,
@@ -258,6 +272,8 @@ export default function App() {
   // so the dashboard stays visible after the default folder loads.
   const suppressStartupAutoSelectRef = useRef(settings.showDashboardOnLaunch)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [showToneStore, setShowToneStore] = useState(false)
+  const [toneStoreSearchRequest, setToneStoreSearchRequest] = useState<{ key: number; query: string } | null>(null)
   const [sessionHistory, setSessionHistory] = useState<HistoryEntry[]>(() => loadHistory())
   const [creatorFilter, setCreatorFilter] = useState<string | null>(null)
   const [gearTypeFilter, setGearTypeFilter] = useState<string | null>(null)
@@ -1736,6 +1752,46 @@ export default function App() {
     }
   }
 
+  const handleFilterLocalCreator = (creator: string) => {
+    const target = normalizeCreatorName(creator)
+    const savedTone3000Username = normalizeCreatorName(settings.tone3000Username || '')
+    const localCreators = Array.from(new Set(
+      files.map((f) => f.metadata.modeled_by?.trim()).filter((v): v is string => !!v)
+    ))
+    const normalizedMatches = localCreators.filter((name) => normalizeCreatorName(name) === target)
+    const matchedCreator = normalizedMatches.length === 1
+      ? normalizedMatches[0]
+      : (savedTone3000Username && target === savedTone3000Username && settings.defaultModeledBy.trim()
+          ? settings.defaultModeledBy.trim()
+          : creator)
+
+    setCreatorFilter(matchedCreator)
+    setGearTypeFilter(null)
+    setToneTypeFilter(null)
+    setPresetFilterOverride(null)
+    setFilterModeOverride(null)
+    setEsrFilterOverride(null)
+    setRatingFilter(null)
+    setLibraryFilter(null)
+    setLibrarian((prev) => ({ ...prev, selectedFolders: [] }))
+    setSelectedIds(new Set())
+  }
+
+  const handleFindSimilarTone3000 = (filePath: string) => {
+    const file = files.find((f) => f.filePath === filePath)
+    if (!file) return
+    const query = [file.metadata.gear_make, file.metadata.gear_model].filter(Boolean).join(' ').trim()
+    if (!query) {
+      setStatus({ message: 'This capture needs Manufacturer and/or Model metadata before searching Tone3000', type: 'error' })
+      return
+    }
+    setToneStoreSearchRequest({ key: Date.now(), query })
+    setShowToneStore(true)
+    setShowSettings(false)
+    setBatchFolder(null)
+    setShowDashboard(false)
+  }
+
   // Filter files by selected folder and/or library search filter
   const visibleFiles = files.filter((f) => {
     const norm = f.filePath.replace(/\\/g, '/')
@@ -1790,6 +1846,8 @@ export default function App() {
         onToggleDashboard={() => { setShowDashboard((v) => !v); setHistoryOpen(false) }}
         historyOpen={historyOpen}
         onHistoryToggle={() => { setHistoryOpen((v) => !v); setShowDashboard(false) }}
+        toneStoreActive={showToneStore}
+        onToggleToneStore={() => { setShowToneStore((v) => !v); setShowSettings(false); setBatchFolder(null) }}
       />
 
       <div className="flex flex-1 overflow-hidden relative">
@@ -2005,6 +2063,7 @@ export default function App() {
                 setPlayerFile(file)
                 setSelectedIds(new Set([file.filePath]))
               }}
+              onFindSimilarTone3000={handleFindSimilarTone3000}
               defaultSearch={creatorFilter ?? undefined}
               defaultGearFilter={gearTypeFilter ?? undefined}
               defaultToneFilter={toneTypeFilter ?? undefined}
@@ -2032,6 +2091,14 @@ export default function App() {
             />
           ) : showSettings ? (
             <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} />
+          ) : showToneStore ? (
+            <ToneStore
+              onClose={() => setShowToneStore(false)}
+              onDownloaded={(paths) => loadFiles(paths, 'append')}
+              onFilterLocalCreator={handleFilterLocalCreator}
+              savedTone3000Username={settings.tone3000Username}
+              searchRequest={toneStoreSearchRequest}
+            />
           ) : showDashboard ? (
             <NamDashboard
               files={files}
