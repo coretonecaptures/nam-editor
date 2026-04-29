@@ -583,6 +583,12 @@ export function ToneStore({
             >✕</button>
           )}
         </div>
+        <p
+          className="text-xs text-amber-600 dark:text-amber-400"
+          title="Tone3000 does not currently expose a direct tones-by-user endpoint. NAM Lab filters search results by username, so this may not include every capture from that creator."
+        >
+          Username filtering may be incomplete due to current Tone3000 API limitations.
+        </p>
       </div>
 
       {/* Results */}
