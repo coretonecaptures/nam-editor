@@ -183,6 +183,11 @@ export function ToneStore({
         filtered = filtered.filter((tone) => [tone.title, tone.user?.username].filter(Boolean).join(' ').toLowerCase().includes(needle))
       }
       if (g) filtered = filtered.filter((tone) => tone.gear === g)
+      filtered = [...filtered].sort((a, b) => {
+        const aTime = a.created_at ? new Date(a.created_at).getTime() : 0
+        const bTime = b.created_at ? new Date(b.created_at).getTime() : 0
+        return bTime - aTime
+      })
     } else if (requestedUsername) {
       filtered = filtered.filter((tone) => normalizeUsername(tone.user?.username ?? '').includes(requestedUsername))
     }
@@ -310,12 +315,12 @@ export function ToneStore({
 
   const totalPages = Math.ceil(total / 24)
 
-  // â”€â”€ Loading â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Loading
   if (!statusChecked) {
-    return <div className="flex items-center justify-center h-full text-sm text-gray-500 dark:text-gray-400">Loadingâ€¦</div>
+    return <div className="flex items-center justify-center h-full text-sm text-gray-500 dark:text-gray-400">Loading...</div>
   }
 
-  // â”€â”€ Not connected â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Not connected
   if (!connected) {
     return (
       <div className="flex flex-col h-full overflow-y-auto p-6">
@@ -340,7 +345,7 @@ export function ToneStore({
           <button onClick={handleConnect} disabled={connecting}
             className="px-4 py-2 text-sm font-medium rounded-md bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-colors"
           >
-            {connecting ? 'Opening browserâ€¦' : 'Connect to tone3000'}
+            {connecting ? 'Opening browser...' : 'Connect to tone3000'}
           </button>
           {connecting && <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">Complete sign-in in your browser, then return here.</p>}
         </div>
@@ -348,7 +353,7 @@ export function ToneStore({
     )
   }
 
-  // â”€â”€ Detail view â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Detail view
   if (selectedTone) {
     const checkedCount = visibleModels.filter((m) => checkedIds.has(m.id)).length
 
@@ -381,18 +386,18 @@ export function ToneStore({
               >
                 @{(toneDetail ?? selectedTone).user?.username}
               </button>
-              <span>Â·</span>
+              <span>|</span>
               <span className="px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300">
                 {GEAR_LABELS[selectedTone.gear] ?? selectedTone.gear}
               </span>
               {!modelsLoading && models.length > 0 && (
-                <><span>Â·</span><span>{models.length} file{models.length !== 1 ? 's' : ''}</span></>
+                <><span>|</span><span>{models.length} file{models.length !== 1 ? 's' : ''}</span></>
               )}
               {toneDetail && toneDetail.favorites_count > 0 && (
-                <><span>Â·</span><span>â™¥ {toneDetail.favorites_count.toLocaleString()}</span></>
+                <><span>|</span><span>Favorites {toneDetail.favorites_count.toLocaleString()}</span></>
               )}
               {toneDetail?.created_at && (
-                <><span>Â·</span><span>{fmtDate(toneDetail.created_at)}</span></>
+                <><span>|</span><span>{fmtDate(toneDetail.created_at)}</span></>
               )}
             </div>
 
@@ -437,7 +442,7 @@ export function ToneStore({
 
           {/* Models list */}
           {modelsLoading && (
-            <div className="flex items-center justify-center py-10 text-sm text-gray-500 dark:text-gray-400">Loading filesâ€¦</div>
+            <div className="flex items-center justify-center py-10 text-sm text-gray-500 dark:text-gray-400">Loading files...</div>
           )}
           {modelsError && (
             <div className="px-4 py-4 text-sm text-red-500">{modelsError}</div>
@@ -499,13 +504,13 @@ export function ToneStore({
             {downloadError && <p className="text-xs text-red-500">{downloadError}</p>}
             {downloadDone && (
               <p className="text-xs text-green-500 dark:text-green-400">
-                âœ“ {downloadDone.msg} â†’ "{downloadDone.folderName}"
+                Saved: {downloadDone.msg}{' -> '}"{downloadDone.folderName}"
               </p>
             )}
             {downloadProgress ? (
               <div className="space-y-1">
                 <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-                  <span>Downloading {downloadProgress.current + 1} of {downloadProgress.total}â€¦</span>
+                  <span>Downloading {downloadProgress.current + 1} of {downloadProgress.total}...</span>
                   <span>{Math.round((downloadProgress.current / downloadProgress.total) * 100)}%</span>
                 </div>
                 <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
@@ -531,7 +536,7 @@ export function ToneStore({
     )
   }
 
-  // â”€â”€ Browse view â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Browse view
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
@@ -566,7 +571,7 @@ export function ToneStore({
         <div className="flex items-center gap-2">
           <input type="text" value={query} onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSearch(1, query, gear, sort, creatorUsername, scope)}
-            placeholder="Search tonesâ€¦"
+            placeholder="Search tones..."
             className="flex-1 px-3 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-violet-500"
           />
           <select value={gear} onChange={(e) => { const g = e.target.value; setGear(g); handleSearch(1, query, g, sort, creatorUsername, scope) }}
@@ -601,14 +606,14 @@ export function ToneStore({
             <button
               onClick={() => { setCreatorUsername(''); handleSearch(1, query, gear, sort, '', scope) }}
               className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 px-1"
-            >âœ•</button>
+            >x</button>
           )}
         </div>
       </div>
 
       {/* Results */}
       <div className="flex-1 overflow-y-auto p-3">
-        {searching && <div className="flex items-center justify-center py-12 text-sm text-gray-500 dark:text-gray-400">Searchingâ€¦</div>}
+        {searching && <div className="flex items-center justify-center py-12 text-sm text-gray-500 dark:text-gray-400">Searching...</div>}
         {!searching && searchError && <div className="text-sm text-red-500 text-center py-8">{searchError}</div>}
         {!searching && !searchError && results.length === 0 && <div className="text-sm text-gray-500 dark:text-gray-400 text-center py-12">No results</div>}
 
@@ -647,7 +652,7 @@ export function ToneStore({
                       )}
                     </div>
                     <div className="flex items-center justify-between text-xs text-gray-400 dark:text-gray-500">
-                      <span>â†“ {tone.downloads_count?.toLocaleString()}</span>
+                      <span>Downloads {tone.downloads_count?.toLocaleString()}</span>
                       {tone.created_at && <span>{fmtDate(tone.created_at)}</span>}
                     </div>
                     <button onClick={() => openDetail(tone)}
@@ -664,11 +669,11 @@ export function ToneStore({
               <div className="flex items-center justify-center gap-3 mt-4 pb-2">
                 <button onClick={() => handleSearch(page - 1, query, gear, sort, creatorUsername, scope)} disabled={page <= 1}
                   className="px-3 py-1 text-xs rounded-md bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >â† Prev</button>
+                >Prev</button>
                 <span className="text-xs text-gray-500 dark:text-gray-400">Page {page} of {totalPages}</span>
                 <button onClick={() => handleSearch(page + 1, query, gear, sort, creatorUsername, scope)} disabled={page >= totalPages}
                   className="px-3 py-1 text-xs rounded-md bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >Next â†’</button>
+                >Next</button>
               </div>
             )}
           </>

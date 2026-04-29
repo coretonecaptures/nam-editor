@@ -14,7 +14,7 @@ const COMPLETENESS_FIELDS: (keyof NamFile['metadata'])[] = [
 ]
 function getCompletenessColor(meta: NamFile['metadata']): string | null {
   const filled = COMPLETENESS_FIELDS.filter((k) => meta[k] != null && meta[k] !== '').length
-  if (filled === COMPLETENESS_FIELDS.length) return null // fully complete — no dot
+  if (filled === COMPLETENESS_FIELDS.length) return null // fully complete - no dot
   if (filled >= 6) return 'bg-amber-400'  // 1 missing
   return 'bg-red-500'                     // 2+ missing
 }
@@ -66,6 +66,9 @@ interface FileListProps {
   onPresetFilterClear?: () => void
   onFilterModeClear?: () => void
   onRatingFilterClear?: () => void
+  activeFolderPath?: string | null
+  directFilesOnly?: boolean
+  onDirectFilesOnlyChange?: (value: boolean) => void
 }
 
 const ALL_GRID_COLUMNS: { key: string; label: string; minWidth: number; defaultVisible: boolean }[] = [
@@ -305,6 +308,9 @@ export function FileList({
   onPresetFilterClear,
   onFilterModeClear,
   onRatingFilterClear,
+  activeFolderPath = null,
+  directFilesOnly = false,
+  onDirectFilesOnlyChange,
 }: FileListProps) {
   const [search, setSearch] = useState(defaultSearch)
   const [nameSearch, setNameSearch] = useState('')
@@ -400,7 +406,7 @@ export function FileList({
       const result = sortDir === 'asc' ? cmp : -cmp
       if (result !== 0) return result
     }
-    // Secondary (or sole) sort: name A→Z
+    // Secondary (or sole) sort: name A-Z
     return (a.metadata.name || a.fileName).localeCompare(b.metadata.name || b.fileName)
   })
 
@@ -483,14 +489,6 @@ export function FileList({
   }, [sorted])
 
 
-  if (files.length === 0) {
-    return (
-      <div className="flex-1 flex items-center justify-center p-4">
-        <p className="text-gray-400 dark:text-gray-600 text-xs text-center">No files loaded</p>
-      </div>
-    )
-  }
-
   // Only files that are both selected AND currently visible in the filtered list.
   // Prevents stale selectedIds (from pre-filter selections) affecting bulk actions.
   const selectedVisible = sorted.filter((f) => selectedIds.has(f.filePath)).map((f) => f.filePath)
@@ -505,8 +503,7 @@ export function FileList({
 
   const editedCount = files.filter((f) => f.isDirty).length
   const incompleteCount = files.filter((f) => COMPLETENESS_FIELDS.some((k) => f.metadata[k] == null || f.metadata[k] === '')).length
-  const filterOptions: { value: FilterMode; label: string }[] = [
-    { value: 'all',        label: 'All' },
+  const statusFilterOptions: { value: Exclude<FilterMode, 'all'>; label: string }[] = [
     { value: 'edited',     label: editedCount > 0 ? `Edited (${editedCount})` : 'Edited' },
     { value: 'incomplete', label: incompleteCount > 0 ? `Incomplete (${incompleteCount})` : 'Incomplete' },
     { value: 'unnamed',    label: 'Unnamed' },
@@ -562,7 +559,7 @@ export function FileList({
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search files…"
+            placeholder="Search files..."
             title="Searches: filename, capture name, manufacturer, model, modeled by"
             className="w-full pl-7 pr-7 py-1.5 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 transition-colors"
           />
@@ -702,32 +699,58 @@ export function FileList({
         </div>
       </div>
 
-      {/* Filter chips */}
-      <div className="px-3 pb-1 flex gap-1 flex-wrap flex-shrink-0">
-        {filterOptions.map(({ value, label }) => (
-          <button
-            key={value}
-            onClick={() => setFilter(value)}
-            className={`text-xs px-2 py-0.5 rounded-full transition-colors ${
-              filter === value
-                ? 'bg-indigo-600 text-white'
-                : 'bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
+      {/* Status filters */}
+      <div className="px-3 pb-1 flex gap-1.5 flex-wrap items-center flex-shrink-0">
+        <button
+          onClick={() => setFilter('all')}
+          className={`text-xs px-2 py-0.5 rounded-full transition-colors ${
+            filter === 'all'
+              ? 'bg-indigo-600 text-white'
+              : 'bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+          }`}
+        >
+          All
+        </button>
+        <select
+          value={filter === 'all' ? '' : filter}
+          onChange={(e) => setFilter((e.target.value || 'all') as FilterMode)}
+          className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
+            filter !== 'all'
+              ? 'bg-indigo-100 dark:bg-indigo-900/40 border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-400'
+              : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
+          }`}
+        >
+          <option value="">Status...</option>
+          {statusFilterOptions.map(({ value, label }) => (
+            <option key={value} value={value} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">
+              {label}
+            </option>
+          ))}
+        </select>
         {ratingFilter !== null && ratingFilter !== undefined && (
           <button
             onClick={() => onRatingFilterClear?.()}
             className="text-xs px-2 py-0.5 rounded-full bg-amber-500 text-white hover:bg-amber-600 transition-colors"
           >
-            {ratingFilter === 0 ? 'Unrated' : `${'★'.repeat(ratingFilter)}`} ×
+            {ratingFilter === 0 ? 'Unrated' : '*'.repeat(ratingFilter)} x
+          </button>
+        )}
+        {activeFolderPath && onDirectFilesOnlyChange && (
+          <button
+            onClick={() => onDirectFilesOnlyChange(!directFilesOnly)}
+            className={`text-xs py-0.5 px-2 rounded-full border transition-colors ${
+              directFilesOnly
+                ? 'bg-sky-100 dark:bg-sky-900/30 border-sky-300 dark:border-sky-700 text-sky-700 dark:text-sky-400'
+                : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
+            }`}
+            title={directFilesOnly ? 'Show files from subfolders too' : 'Show only files directly inside the selected folder'}
+          >
+            {directFilesOnly ? 'Include Subfolders' : 'This Folder Only'}
           </button>
         )}
       </div>
 
-      {/* Gear + Tone dropdowns — list mode only; grid mode uses per-column header filters */}
+      {/* Gear + Tone dropdowns - list mode only; grid mode uses per-column header filters */}
       {viewMode === 'list' && (
         <div className="px-3 pb-2 flex gap-1.5 flex-shrink-0 flex-wrap">
           <select
@@ -739,7 +762,7 @@ export function FileList({
                 : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
             }`}
           >
-            <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Gear type…</option>
+            <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Gear type...</option>
             {GEAR_TYPES.map((g) => <option key={g} value={g} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{g}</option>)}
           </select>
           <select
@@ -751,7 +774,7 @@ export function FileList({
                 : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
             }`}
           >
-            <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Tone type…</option>
+            <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Tone type...</option>
             {TONE_TYPES.map((t) => <option key={t} value={t} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{t}</option>)}
           </select>
           <select
@@ -763,11 +786,11 @@ export function FileList({
                 : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
             }`}
           >
-            <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Preset…</option>
+            <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Preset...</option>
             {['Standard', 'Complex', 'Lite', 'Feather', 'Nano', 'REVySTD', 'REVyHI', 'REVxSTD'].map((p) => (
               <option key={p} value={p} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{p}</option>
             ))}
-            <option value="__none__" className="bg-white dark:bg-gray-900 text-gray-500 dark:text-gray-500">— None detected —</option>
+            <option value="__none__" className="bg-white dark:bg-gray-900 text-gray-500 dark:text-gray-500">- None detected -</option>
           </select>
           {/* Manufacturer filter */}
           {(() => {
@@ -783,7 +806,7 @@ export function FileList({
                       : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
                   }`}
                 >
-                  <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Manufacturer…</option>
+                  <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Manufacturer...</option>
                   {mfrOptions.map((m) => <option key={m} value={m} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{m}</option>)}
                 </select>
                 {mfrFilter && (
@@ -806,7 +829,7 @@ export function FileList({
               type="text"
               value={nameSearch}
               onChange={(e) => setNameSearch(e.target.value)}
-              placeholder="Name contains…"
+              placeholder="Name contains..."
               title="Filters to files where the capture name contains this text"
               className={`text-xs py-0.5 pl-2.5 pr-6 rounded-full border transition-colors focus:outline-none focus:border-indigo-500 ${
                 nameSearch
@@ -842,7 +865,7 @@ export function FileList({
           {sorted.length === files.length
             ? `${files.length} file${files.length !== 1 ? 's' : ''}`
             : `${sorted.length} / ${files.length}`}
-          {selectedVisible.length > 0 && ` · ${selectedVisible.length} selected`}
+          {selectedVisible.length > 0 && ` | ${selectedVisible.length} selected`}
         </span>
         <div className="flex items-center gap-1">
           {viewMode === 'list' && (
@@ -857,13 +880,13 @@ export function FileList({
               }}
               className="text-xs py-0.5 px-1.5 rounded border bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400 appearance-none focus:outline-none mr-1"
             >
-              <option value="">Sort…</option>
+              <option value="">Sort...</option>
               <option value="date-desc">Date: newest</option>
               <option value="date-asc">Date: oldest</option>
-              <option value="name-asc">Name: A→Z</option>
-              <option value="name-desc">Name: Z→A</option>
-              <option value="gear_make-asc">Manufacturer: A→Z</option>
-              <option value="modeled_by-asc">Modeled By: A→Z</option>
+              <option value="name-asc">Name: A-Z</option>
+              <option value="name-desc">Name: Z-A</option>
+              <option value="gear_make-asc">Manufacturer: A-Z</option>
+              <option value="modeled_by-asc">Modeled By: A-Z</option>
             </select>
           )}
           {gridMaximized && selectedVisible.length >= 1 && onOpenEditor && (
@@ -875,7 +898,7 @@ export function FileList({
             </button>
           )}
           <button onClick={() => onSelectAll(sorted.map((f) => f.filePath))} className="text-xs text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 px-1 transition-colors">All</button>
-          <span className="text-gray-400 dark:text-gray-700">·</span>
+          <span className="text-gray-400 dark:text-gray-700">|</span>
           <button onClick={onDeselectAll} className="text-xs text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 px-1 transition-colors">None</button>
         </div>
       </div>
@@ -910,12 +933,14 @@ export function FileList({
           }}
         />
       ) : (
-        <div className="flex-1 overflow-y-auto">
-          {sorted.length === 0 ? (
-            <div className="flex items-center justify-center h-20">
-              <p className="text-gray-400 dark:text-gray-600 text-xs">No matches</p>
-            </div>
-          ) : (
+          <div className="flex-1 overflow-y-auto">
+            {sorted.length === 0 ? (
+              <div className="flex items-center justify-center h-20">
+                <p className="text-gray-400 dark:text-gray-600 text-xs">
+                  {directFilesOnly ? 'No files directly in this folder' : 'No matches'}
+                </p>
+              </div>
+            ) : (
             sorted.map((file, index) => (
               <FileItem
                 key={file.filePath}
@@ -1002,7 +1027,7 @@ export function FileList({
               <svg className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
-              Copy {selectedVisible.length > 1 ? `${selectedVisible.length} files` : 'file'} to folder…
+              Copy {selectedVisible.length > 1 ? `${selectedVisible.length} files` : 'file'} to folder...
             </button>
           )}
           {onMoveToFolder && (
@@ -1013,7 +1038,7 @@ export function FileList({
               <svg className="w-3.5 h-3.5 text-orange-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
               </svg>
-              Move {selectedVisible.length > 1 ? `${selectedVisible.length} files` : 'file'} to folder…
+              Move {selectedVisible.length > 1 ? `${selectedVisible.length} files` : 'file'} to folder...
             </button>
           )}
           {onApplyDefaults && (
@@ -1046,7 +1071,7 @@ export function FileList({
               <svg className="w-3.5 h-3.5 text-purple-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
               </svg>
-              Rename {selectedVisible.length} selected…
+              Rename {selectedVisible.length} selected...
             </button>
           )}
           {(onCopyMetadata || onPasteMetadata) && (
@@ -1137,12 +1162,12 @@ export function FileList({
             onClick={() => {
               if (namPlayerAvailable && onOpenInNam && ctxMenu) { onOpenInNam(ctxMenu.filePath); setCtxMenu(null) }
             }}
-            title={namPlayerAvailable ? 'Launch Neural Amp Modeler standalone — load the file manually once it opens' : 'Neural Amp Modeler not found — set path in Settings'}
+            title={namPlayerAvailable ? 'Launch Neural Amp Modeler standalone - load the file manually once it opens' : 'Neural Amp Modeler not found - set path in Settings'}
           >
             <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
             </svg>
-            Launch Neural Amp Modeler standalone…
+            Launch Neural Amp Modeler standalone...
           </button>
         </div>
       )}
@@ -1363,13 +1388,13 @@ function GridView({
                       setFilterSearch('')
                     }
                   }}
-                  title={hasFilter ? 'Filter active — click to edit' : 'Filter column'}
+                  title={hasFilter ? 'Filter active - click to edit' : 'Filter column'}
                 >
                   <svg className="w-3 h-3" fill={hasFilter ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
                   </svg>
                 </button>
-                {/* Filter popup — rendered via portal so it never lives inside <th>, keeping drag events clean */}
+                {/* Filter popup - rendered via portal so it never lives inside <th>, keeping drag events clean */}
                 {isFilterOpen && filterAnchorRef.current && createPortal((() => {
                   const state = columnFilters[col.key] ?? { text: '', selected: [] }
                   const allVals = getUniqueValues(col.key)
@@ -1388,7 +1413,7 @@ function GridView({
                           type="text"
                           value={filterSearch}
                           onChange={(e) => setFilterSearch(e.target.value)}
-                          placeholder="Search values…"
+                          placeholder="Search values..."
                           className="flex-1 text-xs px-2 py-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded focus:outline-none focus:border-indigo-500 text-gray-900 dark:text-gray-100"
                         />
                         {(state.text || state.selected.length > 0) && (
@@ -1406,7 +1431,7 @@ function GridView({
                               type="text"
                               value={state.text}
                               onChange={(e) => onColumnFilterChange(col.key, { ...state, text: e.target.value })}
-                              placeholder="Contains text…"
+                              placeholder="Contains text..."
                               className={`w-full text-xs px-2 py-1 rounded border focus:outline-none focus:border-indigo-500 ${state.text ? 'bg-indigo-50 dark:bg-indigo-900/30 border-indigo-300 dark:border-indigo-700 text-indigo-800 dark:text-indigo-200' : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300'}`}
                             />
                           </div>
@@ -1506,7 +1531,7 @@ function GridView({
                           <span className={`px-1.5 py-0.5 rounded text-xs ${gearChipClass(val, solidPills)}`}>{val}</span>
                         ) : col.key === 'name' ? (
                           <span className={`truncate block text-sm font-semibold ${val ? 'text-gray-900 dark:text-gray-100' : 'text-gray-400 dark:text-gray-600'}`}>
-                            {val || '—'}
+                            {val || '-'}
                           </span>
                         ) : col.key === 'nl_rating' ? (
                           <span className="flex gap-px">
@@ -1524,7 +1549,7 @@ function GridView({
                           }`}>{val}</span>
                         ) : (
                           <span className={`truncate block ${val ? 'text-gray-700 dark:text-gray-300' : 'text-gray-400 dark:text-gray-600'}`}>
-                            {val || '—'}
+                            {val || '-'}
                           </span>
                         )}
                       </td>

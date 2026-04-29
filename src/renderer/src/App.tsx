@@ -269,6 +269,7 @@ export default function App() {
   const suppressStartupAutoSelectRef = useRef(settings.showDashboardOnLaunch)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [showToneStore, setShowToneStore] = useState(false)
+  const [directFilesOnly, setDirectFilesOnly] = useState(false)
   const [toneStoreSearchRequest, setToneStoreSearchRequest] = useState<{ key: number; query: string } | null>(null)
   const [sessionHistory, setSessionHistory] = useState<HistoryEntry[]>(() => loadHistory())
   const [creatorFilter, setCreatorFilter] = useState<string | null>(null)
@@ -297,6 +298,10 @@ export default function App() {
     })
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [librarian.selectedFolders, librarian.rootFolder])
+
+  useEffect(() => {
+    setDirectFilesOnly(false)
   }, [librarian.selectedFolders, librarian.rootFolder])
 
   // Scan all pack-info folders when root folder changes (drives blue dot in tree)
@@ -675,6 +680,14 @@ export default function App() {
     await loadFolderByPath(librarian.rootFolder)
   }
 
+  const refreshFolderTree = useCallback(async () => {
+    if (!librarian.rootFolder) return
+    const treeResult = await window.api.scanTree(librarian.rootFolder, settings.hiddenFolders ?? '')
+    if (treeResult.success && treeResult.tree) {
+      setLibrarian((prev) => ({ ...prev, folderTree: treeResult.tree! }))
+    }
+  }, [librarian.rootFolder, settings.hiddenFolders])
+
   // OS drag/drop — use React synthetic onDrop on the root div (works in Electron;
   // native document-level listeners do NOT receive OS file drops in Electron 41+).
   // Guard against intra-app drags (application/x-nam-files) which are handled by FolderTree.
@@ -764,6 +777,10 @@ export default function App() {
     const currentVisible = files.filter((f) => {
       const norm = f.filePath.replace(/\\/g, '/')
       if (librarian.selectedFolders.length > 0 && !librarian.selectedFolders.some((sf) => norm.startsWith(sf + '/'))) return false
+      if (directFilesOnly && librarian.selectedFolders.length === 1) {
+        const parentFolder = norm.split('/').slice(0, -1).join('/')
+        if (parentFolder !== librarian.selectedFolders[0]) return false
+      }
       return true
     })
     const idx = currentVisible.findIndex((f) => f.filePath === filePath)
@@ -1271,6 +1288,7 @@ export default function App() {
 
     if (movedPaths.size > 0) {
       setFiles((prev) => prev.filter((f) => !movedPaths.has(f.filePath)))
+      await refreshFolderTree()
     }
     const skipped = conflictPaths.length - conflictPaths.filter((p) => movedPaths.has(p)).length
     if (failed > 0) {
@@ -1298,6 +1316,7 @@ export default function App() {
     const results = await window.api.copyFiles(paths, destFolder)
     const copied = results.filter((r) => r.success).length
     const failed = results.filter((r) => !r.success).length
+    if (copied > 0) await refreshFolderTree()
     if (failed > 0) {
       setStatus({ message: `Copied ${copied}, failed ${failed}`, type: 'error' })
     } else {
@@ -1792,6 +1811,10 @@ export default function App() {
   const visibleFiles = files.filter((f) => {
     const norm = f.filePath.replace(/\\/g, '/')
     if (librarian.selectedFolders.length > 0 && !librarian.selectedFolders.some((sf) => norm.startsWith(sf + '/'))) return false
+    if (directFilesOnly && librarian.selectedFolders.length === 1) {
+      const parentFolder = norm.split('/').slice(0, -1).join('/')
+      if (parentFolder !== librarian.selectedFolders[0]) return false
+    }
     if (libraryFilter && !libraryFilter.has(norm)) return false
     return true
   })
@@ -1828,7 +1851,7 @@ export default function App() {
         fileCount={files.length}
         isMac={window.api.platform === 'darwin'}
         showSettings={showSettings}
-        onToggleSettings={() => { setShowSettings((s) => !s); setBatchFolder(null); if (gridMaximized) setGridSlideOpen(true) }}
+        onToggleSettings={() => { setShowSettings((s) => !s); setBatchFolder(null); setShowToneStore(false); if (gridMaximized) setGridSlideOpen(true) }}
         unnamedCount={unnamedCount}
         onNameFromFilename={handleNameFromFilename}
         onCloseAll={handleCloseAll}
@@ -1839,9 +1862,9 @@ export default function App() {
         onFindDuplicates={files.length > 1 ? () => setShowDuplicates(true) : undefined}
         showDashboard={files.length > 0}
         dashboardActive={showDashboard}
-        onToggleDashboard={() => { setShowDashboard((v) => !v); setHistoryOpen(false) }}
+        onToggleDashboard={() => { setShowDashboard((v) => !v); setHistoryOpen(false); setShowSettings(false); setShowToneStore(false); setBatchFolder(null) }}
         historyOpen={historyOpen}
-        onHistoryToggle={() => { setHistoryOpen((v) => !v); setShowDashboard(false) }}
+        onHistoryToggle={() => { setHistoryOpen((v) => !v); setShowDashboard(false); setShowSettings(false); setShowToneStore(false); setBatchFolder(null) }}
         toneStoreActive={showToneStore}
         onToggleToneStore={() => { setShowToneStore((v) => !v); setShowSettings(false); setBatchFolder(null) }}
       />
@@ -2068,6 +2091,9 @@ export default function App() {
               onPresetFilterClear={() => setPresetFilterOverride(null)}
               onFilterModeClear={() => setFilterModeOverride(null)}
               onRatingFilterClear={() => setRatingFilter(null)}
+              activeFolderPath={librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null}
+              directFilesOnly={directFilesOnly}
+              onDirectFilesOnlyChange={setDirectFilesOnly}
             />
           </div>
           {!gridMaximized && <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} onCollapse={() => setListCollapsed((v) => !v)} collapsed={listCollapsed} />}
@@ -2247,7 +2273,7 @@ export default function App() {
             const showGallery = hasImages && settings.showFolderImages
             const hasPack = packInfoFolders.has(activeFolderPath)
             const showPackEditor = hasPack
-            const showCreatePrompt = !hasPack && packInfoAncestor !== null
+            const showCreatePrompt = !hasPack
             const showGalleryTab = showGallery
             return (
               <div className="h-full flex flex-col">

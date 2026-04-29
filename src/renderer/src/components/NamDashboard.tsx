@@ -399,28 +399,6 @@ export function NamDashboard({ files, activeCreator, onCreatorClick, onClearCrea
         {/* Recent files — two columns */}
         {(recentlyUpdated.length > 0 || recentlyAdded.length > 0) && (
           <div className="grid grid-cols-2 gap-3">
-            {recentlyUpdated.length > 0 && (
-              <div>
-                <h3 className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-1">Recently Updated</h3>
-                <div className="flex flex-col gap-0.5">
-                  {recentlyUpdated.map((f) => (
-                    <button
-                      key={f.filePath}
-                      className="text-left flex flex-col min-w-0 px-1.5 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800/60 transition-colors group"
-                      onClick={() => onRecentFileClick?.(f.filePath)}
-                      title={f.filePath}
-                    >
-                      <span className="text-[11px] text-gray-700 dark:text-gray-300 group-hover:text-gray-900 dark:group-hover:text-white truncate transition-colors">
-                        {f.metadata.name || f.fileName}
-                      </span>
-                      <span className="text-[10px] text-gray-400 dark:text-gray-600 truncate">
-                        {formatDate(f.mtimeMs)}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
             {recentlyAdded.length > 0 && (
               <div>
                 <h3 className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-1">Recently Added</h3>
@@ -437,6 +415,28 @@ export function NamDashboard({ files, activeCreator, onCreatorClick, onClearCrea
                       </span>
                       <span className="text-[10px] text-gray-400 dark:text-gray-600 truncate">
                         {formatDate(f.birthtimeMs)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {recentlyUpdated.length > 0 && (
+              <div>
+                <h3 className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-1">Recently Updated</h3>
+                <div className="flex flex-col gap-0.5">
+                  {recentlyUpdated.map((f) => (
+                    <button
+                      key={f.filePath}
+                      className="text-left flex flex-col min-w-0 px-1.5 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800/60 transition-colors group"
+                      onClick={() => onRecentFileClick?.(f.filePath)}
+                      title={f.filePath}
+                    >
+                      <span className="text-[11px] text-gray-700 dark:text-gray-300 group-hover:text-gray-900 dark:group-hover:text-white truncate transition-colors">
+                        {f.metadata.name || f.fileName}
+                      </span>
+                      <span className="text-[10px] text-gray-400 dark:text-gray-600 truncate">
+                        {formatDate(f.mtimeMs)}
                       </span>
                     </button>
                   ))}

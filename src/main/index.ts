@@ -72,7 +72,7 @@ process.on('unhandledRejection', (reason) => {
   log(`UNHANDLED REJECTION: ${String(reason)}`)
 })
 
-log(`NAM Lab starting â€” platform: ${process.platform}, arch: ${process.arch}, node: ${process.version}`)
+log(`NAM Lab starting - platform: ${process.platform}, arch: ${process.arch}, node: ${process.version}`)
 log(`Electron: ${process.versions.electron}, Chrome: ${process.versions.chrome}`)
 log(`Args: ${process.argv.join(' ')}`)
 log(`isDev: ${isDev}`)
@@ -105,7 +105,7 @@ function saveFileCache(): void {
 }
 
 // Persist window size and maximized state between launches
-// Path is computed lazily inside each function â€” app.getPath() must not be
+// Path is computed lazily inside each function - app.getPath() must not be
 // called at module load time (before app ready) or it throws on some macOS configs
 function winStatePath(): string {
   return join(app.getPath('userData'), 'window-state.json')
@@ -158,7 +158,7 @@ function createWindow(): void {
 
   log('BrowserWindow created')
   mainWindow.on('ready-to-show', () => {
-    log('ready-to-show fired â€” showing window')
+    log('ready-to-show fired - showing window')
     if (winState.maximized) mainWindow!.maximize()
     mainWindow!.show()
   })
@@ -181,7 +181,7 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
-  // Prevent Electron from navigating to dropped file URLs â€” without this,
+  // Prevent Electron from navigating to dropped file URLs - without this,
   // dropping a file onto the window replaces the app with the raw file contents.
   mainWindow.webContents.on('will-navigate', (event) => {
     event.preventDefault()
@@ -1337,7 +1337,7 @@ app.whenReady().then(async () => {
         const returnedState = url.searchParams.get('state')
 
         res.writeHead(200, { 'Content-Type': 'text/html' })
-        res.end('<html><body style="font-family:sans-serif;padding:40px;background:#111;color:#fff"><h2>Connected to tone3000!</h2><p>Return to NAM Lab â€” you can close this tab.</p></body></html>')
+        res.end('<html><body style="font-family:sans-serif;padding:40px;background:#111;color:#fff"><h2>Connected to tone3000!</h2><p>Return to NAM Lab - you can close this tab.</p></body></html>')
         server.close()
 
         if (returnedState !== state || !code) { resolve({ ok: false, error: 'Invalid OAuth callback' }); return }
