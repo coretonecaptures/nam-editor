@@ -40,21 +40,29 @@ interface SearchResponse {
   total: number
 }
 
+interface UserSearchResponse {
+  data: ToneUser[]
+}
+
+function normalizeUsername(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '')
+}
+
 const GEAR_OPTIONS = [
   { value: '', label: 'All Gear' },
-  { value: 'Amp', label: 'Amp' },
-  { value: 'FullRig', label: 'Full Rig' },
-  { value: 'Pedal', label: 'Pedal' },
-  { value: 'Outboard', label: 'Outboard' },
-  { value: 'Ir', label: 'IR' },
+  { value: 'amp', label: 'Amp' },
+  { value: 'full-rig', label: 'Full Rig' },
+  { value: 'pedal', label: 'Pedal' },
+  { value: 'outboard', label: 'Outboard' },
+  { value: 'ir', label: 'IR' },
 ]
-const GEAR_LABELS: Record<string, string> = { Amp: 'Amp', FullRig: 'Full Rig', Pedal: 'Pedal', Outboard: 'Outboard', Ir: 'IR' }
+const GEAR_LABELS: Record<string, string> = { amp: 'Amp', 'full-rig': 'Full Rig', pedal: 'Pedal', outboard: 'Outboard', ir: 'IR' }
 const SIZE_ORDER = ['Standard', 'Lite', 'Feather', 'Nano', 'Custom']
 const SORT_OPTIONS = [
-  { value: 'Newest', label: 'Newest' },
-  { value: 'Oldest', label: 'Oldest' },
-  { value: 'DownloadsAllTime', label: 'Most Downloaded' },
-  { value: 'Trending', label: 'Trending' },
+  { value: 'newest', label: 'Newest' },
+  { value: 'oldest', label: 'Oldest' },
+  { value: 'downloads-all-time', label: 'Most Downloaded' },
+  { value: 'trending', label: 'Trending' },
 ]
 
 function fmtDate(iso?: string): string {
@@ -63,7 +71,19 @@ function fmtDate(iso?: string): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-export function ToneStore({ onClose, onDownloaded }: { onClose: () => void; onDownloaded: (paths: string[]) => void }) {
+export function ToneStore({
+  onClose,
+  onDownloaded,
+  onFilterLocalCreator,
+  savedTone3000Username,
+  searchRequest,
+}: {
+  onClose: () => void
+  onDownloaded: (paths: string[]) => void
+  onFilterLocalCreator: (creator: string) => void
+  savedTone3000Username: string
+  searchRequest: { key: number; query: string } | null
+}) {
   // Auth state
   const [connected, setConnected] = useState(false)
   const [username, setUsername] = useState<string | null>(null)
@@ -73,18 +93,20 @@ export function ToneStore({ onClose, onDownloaded }: { onClose: () => void; onDo
 
   // Browse state
   const [query, setQuery] = useState('')
-  const [creator, setCreator] = useState('')
+  const [creatorUsername, setCreatorUsername] = useState('')
   const [gear, setGear] = useState('')
-  const [sort, setSort] = useState('Newest')
+  const [sort, setSort] = useState('trending')
+  const [scope, setScope] = useState<'all' | 'mine'>('all')
   const [results, setResults] = useState<ToneResult[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
   const queryRef = useRef(query)
-  const creatorRef = useRef(creator)
+  const creatorUsernameRef = useRef(creatorUsername)
   const gearRef = useRef(gear)
   const sortRef = useRef(sort)
+  const scopeRef = useRef(scope)
 
   // Detail / download state
   const [selectedTone, setSelectedTone] = useState<ToneResult | null>(null)
@@ -99,9 +121,10 @@ export function ToneStore({ onClose, onDownloaded }: { onClose: () => void; onDo
   const [downloadError, setDownloadError] = useState<string | null>(null)
 
   useEffect(() => { queryRef.current = query }, [query])
-  useEffect(() => { creatorRef.current = creator }, [creator])
+  useEffect(() => { creatorUsernameRef.current = creatorUsername }, [creatorUsername])
   useEffect(() => { gearRef.current = gear }, [gear])
   useEffect(() => { sortRef.current = sort }, [sort])
+  useEffect(() => { scopeRef.current = scope }, [scope])
 
   useEffect(() => {
     window.api.tone3000Status().then((s) => {
@@ -110,22 +133,68 @@ export function ToneStore({ onClose, onDownloaded }: { onClose: () => void; onDo
     })
   }, [])
 
-  const handleSearch = useCallback(async (p = 1, q = queryRef.current, g = gearRef.current, c = creatorRef.current, s = sortRef.current) => {
+  const resolveUsername = useCallback(async (value: string): Promise<string> => {
+    const trimmed = value.trim()
+    if (!trimmed) return ''
+    const result = await window.api.tone3000UsersSearch({ query: trimmed, page: 1, pageSize: 10, sort: 'tones' })
+    if (result.error) return trimmed
+    const data = result.data as UserSearchResponse
+    const target = normalizeUsername(trimmed)
+    const exact = (data.data ?? []).find((u) => normalizeUsername(u.username) === target)
+    return exact?.username ?? trimmed
+  }, [])
+
+  const handleSearch = useCallback(async (
+    p = 1,
+    q = queryRef.current,
+    g = gearRef.current,
+    s = sortRef.current,
+    user = creatorUsernameRef.current,
+    searchScope = scopeRef.current
+  ) => {
     setSearching(true)
     setSearchError(null)
-    const combined = [q, c].filter(Boolean).join(' ')
-    const result = await window.api.tone3000Search({ query: combined || undefined, page: p, pageSize: 24, gears: g ? [g] : undefined, sort: s })
+    const resolvedUsername = user.trim() ? await resolveUsername(user) : ''
+    const requestedUsername = normalizeUsername(resolvedUsername)
+    const authUsername = normalizeUsername(username ?? '')
+    const savedUsername = normalizeUsername(savedTone3000Username)
+    const useCreated = searchScope === 'mine'
+      || (!!requestedUsername && (requestedUsername === authUsername || (!!savedUsername && requestedUsername === savedUsername)))
+
+    const result = useCreated
+      ? await window.api.tone3000Created({ page: p, pageSize: 100 })
+      : await window.api.tone3000Search({ query: q || undefined, page: p, pageSize: 24, gears: g ? [g] : undefined, sort: s })
     setSearching(false)
     if (result.error) { setSearchError(result.error); return }
     const data = result.data as SearchResponse
-    setResults(data.data ?? [])
-    setTotal(data.total ?? 0)
+    let filtered = data.data ?? []
+    if (useCreated) {
+      if (q.trim()) {
+        const needle = q.toLowerCase()
+        filtered = filtered.filter((tone) => [tone.title, tone.user?.username].filter(Boolean).join(' ').toLowerCase().includes(needle))
+      }
+      if (g) filtered = filtered.filter((tone) => tone.gear === g)
+    } else if (requestedUsername) {
+      filtered = filtered.filter((tone) => normalizeUsername(tone.user?.username ?? '').includes(requestedUsername))
+    }
+    setResults(filtered)
+    setTotal((useCreated || requestedUsername) ? filtered.length : (data.total ?? 0))
     setPage(p)
-  }, [])
+  }, [resolveUsername, savedTone3000Username, username])
 
   useEffect(() => {
-    if (connected && statusChecked) handleSearch(1, '', '', '', 'Newest')
-  }, [connected, statusChecked])
+    if (!connected || !statusChecked) return
+    if (searchRequest) {
+      setQuery(searchRequest.query)
+      setCreatorUsername('')
+      setGear('')
+      setSort('trending')
+      setScope('all')
+      handleSearch(1, searchRequest.query, '', 'trending', '', 'all')
+      return
+    }
+    handleSearch(1, '', '', 'trending', '', 'all')
+  }, [connected, statusChecked, searchRequest, handleSearch])
 
   const handleConnect = async () => {
     setConnecting(true); setConnectError(null)
@@ -138,6 +207,11 @@ export function ToneStore({ onClose, onDownloaded }: { onClose: () => void; onDo
   const handleDisconnect = async () => {
     await window.api.tone3000Disconnect()
     setConnected(false); setUsername(null); setResults([]); setTotal(0); setSelectedTone(null)
+  }
+
+  const filterLocalCreator = (creator: string | undefined) => {
+    if (!creator) return
+    onFilterLocalCreator(creator)
   }
 
   const openDetail = async (tone: ToneResult) => {
@@ -288,7 +362,13 @@ export function ToneStore({ onClose, onDownloaded }: { onClose: () => void; onDo
           {/* Tone summary */}
           <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 space-y-2">
             <div className="flex items-center gap-2 flex-wrap text-xs text-gray-500 dark:text-gray-400">
-              <span>@{(toneDetail ?? selectedTone).user?.username}</span>
+              <button
+                onClick={() => filterLocalCreator((toneDetail ?? selectedTone).user?.username)}
+                className="hover:text-violet-500 transition-colors"
+                title="Filter local NAM Lab files by this creator"
+              >
+                @{(toneDetail ?? selectedTone).user?.username}
+              </button>
               <span>·</span>
               <span className="px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300">
                 {GEAR_LABELS[selectedTone.gear] ?? selectedTone.gear}
@@ -450,22 +530,37 @@ export function ToneStore({ onClose, onDownloaded }: { onClose: () => void; onDo
       {/* Search bar */}
       <div className="flex flex-col gap-1.5 px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => { setScope('all'); handleSearch(1, query, gear, sort, creatorUsername, 'all') }}
+            className={`px-2.5 py-1 text-xs rounded transition-colors ${scope === 'all' ? 'bg-violet-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-700'}`}
+          >
+            All tones
+          </button>
+          <button
+            onClick={() => { setScope('mine'); handleSearch(1, query, gear, sort, creatorUsername, 'mine') }}
+            className={`px-2.5 py-1 text-xs rounded transition-colors ${scope === 'mine' ? 'bg-violet-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-700'}`}
+          >
+            My files
+          </button>
+        </div>
+        <div className="flex items-center gap-2">
           <input type="text" value={query} onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSearch(1, query, gear, creator, sort)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSearch(1, query, gear, sort, creatorUsername, scope)}
             placeholder="Search tones…"
             className="flex-1 px-3 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-violet-500"
           />
-          <select value={gear} onChange={(e) => { const g = e.target.value; setGear(g); handleSearch(1, query, g, creator, sort) }}
+          <select value={gear} onChange={(e) => { const g = e.target.value; setGear(g); handleSearch(1, query, g, sort, creatorUsername, scope) }}
             className="px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
           >
             {GEAR_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
-          <select value={sort} onChange={(e) => { const s = e.target.value; setSort(s); handleSearch(1, query, gear, creator, s) }}
+          <select value={sort} onChange={(e) => { const s = e.target.value; setSort(s); handleSearch(1, query, gear, s, creatorUsername, scope) }}
+            disabled={scope === 'mine'}
             className="px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
           >
             {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
-          <button onClick={() => handleSearch(1, query, gear, creator, sort)} disabled={searching}
+          <button onClick={() => handleSearch(1, query, gear, sort, creatorUsername, scope)} disabled={searching}
             className="px-3 py-1.5 text-sm font-medium rounded-md bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white transition-colors"
           >Search</button>
         </div>
@@ -473,13 +568,17 @@ export function ToneStore({ onClose, onDownloaded }: { onClose: () => void; onDo
           <svg className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
           </svg>
-          <input type="text" value={creator} onChange={(e) => setCreator(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSearch(1, query, gear, creator)}
-            placeholder="Creator / @username"
+          <input
+            type="text"
+            value={creatorUsername}
+            onChange={(e) => setCreatorUsername(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSearch(1, query, gear, sort, creatorUsername, scope)}
+            placeholder={`Tone3000 username${savedTone3000Username ? ` (saved: ${savedTone3000Username})` : ''}`}
             className="flex-1 px-3 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-violet-500"
           />
-          {creator && (
-            <button onClick={() => { setCreator(''); handleSearch(1, query, gear, '', sort) }}
+          {creatorUsername && (
+            <button
+              onClick={() => { setCreatorUsername(''); handleSearch(1, query, gear, sort, '', scope) }}
               className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 px-1"
             >✕</button>
           )}
@@ -509,7 +608,13 @@ export function ToneStore({ onClose, onDownloaded }: { onClose: () => void; onDo
                   )}
                   <div className="p-2 flex flex-col gap-1 flex-1">
                     <div className="text-xs font-medium text-gray-900 dark:text-white truncate" title={tone.title}>{tone.title}</div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">@{tone.user?.username}</div>
+                    <button
+                      onClick={() => filterLocalCreator(tone.user?.username)}
+                      className="text-xs text-left text-gray-500 dark:text-gray-400 hover:text-violet-500 transition-colors"
+                      title="Filter local NAM Lab files by this creator"
+                    >
+                      @{tone.user?.username}
+                    </button>
                     <div className="flex items-center gap-1 flex-wrap">
                       <span className="text-xs px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300">
                         {GEAR_LABELS[tone.gear] ?? tone.gear}
@@ -536,11 +641,11 @@ export function ToneStore({ onClose, onDownloaded }: { onClose: () => void; onDo
 
             {totalPages > 1 && (
               <div className="flex items-center justify-center gap-3 mt-4 pb-2">
-                <button onClick={() => handleSearch(page - 1, query, gear, creator, sort)} disabled={page <= 1}
+                <button onClick={() => handleSearch(page - 1, query, gear, sort, creatorUsername, scope)} disabled={page <= 1}
                   className="px-3 py-1 text-xs rounded-md bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >← Prev</button>
                 <span className="text-xs text-gray-500 dark:text-gray-400">Page {page} of {totalPages}</span>
-                <button onClick={() => handleSearch(page + 1, query, gear, creator, sort)} disabled={page >= totalPages}
+                <button onClick={() => handleSearch(page + 1, query, gear, sort, creatorUsername, scope)} disabled={page >= totalPages}
                   className="px-3 py-1 text-xs rounded-md bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >Next →</button>
               </div>

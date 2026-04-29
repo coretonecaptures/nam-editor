@@ -77,6 +77,9 @@ export interface AppSettings {
 
   // Show Library Overview in the right panel on app launch
   showDashboardOnLaunch: boolean
+
+  // Optional Tone3000 username for creator matching / search helpers
+  tone3000Username: string
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -121,6 +124,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   packLogoDark: '',
   defaultFolderTab: 'overview',
   showDashboardOnLaunch: true,
+  tone3000Username: '',
 }
 
 const STORAGE_KEY = 'nam-editor-settings'

@@ -46,6 +46,7 @@ interface FileListProps {
   onClearNamLab?: (filePaths: string[]) => void
   namPlayerAvailable?: boolean
   onOpenInNam?: (filePath: string) => void
+  onFindSimilarTone3000?: (filePath: string) => void
   viewMode: ViewMode
   onViewModeChange: (mode: ViewMode) => void
   gridMaximized?: boolean
@@ -283,6 +284,7 @@ export function FileList({
   onClearNamLab,
   namPlayerAvailable,
   onOpenInNam,
+  onFindSimilarTone3000,
   viewMode,
   onViewModeChange,
   solidPills = false,
@@ -1065,6 +1067,17 @@ export function FileList({
                 Paste metadata
                 <span className="ml-1.5 text-xs text-gray-400 dark:text-gray-600">from {metadataClipboard.sourceName}</span>
               </span>
+            </button>
+          )}
+          {onFindSimilarTone3000 && (
+            <button
+              className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
+              onClick={() => { onFindSimilarTone3000(ctxMenu.filePath); setCtxMenu(null) }}
+            >
+              <svg className="w-3.5 h-3.5 text-violet-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              Find Similar Captures on Tone3000
             </button>
           )}
           {onClearNamLab && (

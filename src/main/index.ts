@@ -491,7 +491,7 @@ async function ensureValidToken(): Promise<boolean> {
   } catch { return false }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Serve local filesystem files under local-file:// scheme
   protocol.handle('local-file', (req) => {
     const fileUrl = 'file://' + req.url.slice('local-file://'.length)
@@ -500,7 +500,7 @@ app.whenReady().then(() => {
 
   log('app.whenReady fired')
   switchLogToUserData()
-  loadTone3kTokens()
+  await loadTone3kTokens()
   log(`log file moved to userData: ${logPath}`)
 
   app.setName('NAM Lab')
@@ -1419,6 +1419,34 @@ app.whenReady().then(() => {
     if (params.sizes?.length) sp.set('sizes', params.sizes.join('_'))
     try {
       const res = await fetch(`${T3K_BASE}/api/v1/tones/search?${sp}`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+      if (!res.ok) return { error: `API error ${res.status}` }
+      return { ok: true, data: await res.json() }
+    } catch (e) { return { error: String(e) } }
+  })
+
+  ipcMain.handle('tone3000:usersSearch', async (_event, params: { query: string; page?: number; pageSize?: number; sort?: string }) => {
+    const valid = await ensureValidToken()
+    if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
+    const sp = new URLSearchParams()
+    sp.set('query', params.query)
+    sp.set('page', String(params.page ?? 1))
+    sp.set('page_size', String(params.pageSize ?? 10))
+    if (params.sort) sp.set('sort', params.sort)
+    try {
+      const res = await fetch(`${T3K_BASE}/api/v1/users?${sp}`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+      if (!res.ok) return { error: `API error ${res.status}` }
+      return { ok: true, data: await res.json() }
+    } catch (e) { return { error: String(e) } }
+  })
+
+  ipcMain.handle('tone3000:created', async (_event, params: { page?: number; pageSize?: number }) => {
+    const valid = await ensureValidToken()
+    if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
+    const sp = new URLSearchParams()
+    sp.set('page', String(params.page ?? 1))
+    sp.set('page_size', String(params.pageSize ?? 24))
+    try {
+      const res = await fetch(`${T3K_BASE}/api/v1/tones/created?${sp}`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
       if (!res.ok) return { error: `API error ${res.status}` }
       return { ok: true, data: await res.json() }
     } catch (e) { return { error: String(e) } }
