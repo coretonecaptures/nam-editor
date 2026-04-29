@@ -134,6 +134,10 @@ function saveVisibleCols(cols: string[]): void {
   localStorage.setItem(GRID_COL_STORAGE_KEY, JSON.stringify(cols))
 }
 
+function normalizeLooseSearch(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '')
+}
+
 function getCellValue(file: NamFile, key: string): string {
   const m = file.metadata
   switch (key) {
@@ -330,7 +334,11 @@ export function FileList({
       const q = search.toLowerCase()
       const haystack = [f.fileName, m.name, m.gear_make, m.gear_model, m.modeled_by]
         .filter(Boolean).join(' ').toLowerCase()
-      if (!haystack.includes(q)) return false
+      if (!haystack.includes(q)) {
+        const normalizedQuery = normalizeLooseSearch(search)
+        const normalizedHaystack = normalizeLooseSearch(haystack)
+        if (!normalizedQuery || !normalizedHaystack.includes(normalizedQuery)) return false
+      }
     }
     if (viewMode === 'list') {
       if (gearFilter && m.gear_type !== gearFilter) return false
@@ -1612,12 +1620,6 @@ function FileItem({
         </div>
       </div>
 
-      {meta.date && (
-        <div className="flex-shrink-0 text-xs text-gray-400 dark:text-gray-600 mt-0.5 tabular-nums">
-          {`${meta.date.year}-${String(meta.date.month).padStart(2, '0')}-${String(meta.date.day).padStart(2, '0')}`}
-        </div>
-      )}
-
       {(meta.nl_rating ?? 0) > 0 && (
         <div className="flex-shrink-0 flex items-center gap-px mt-1.5">
           {[1,2,3,4,5].map((s) => (
@@ -1628,10 +1630,19 @@ function FileItem({
         </div>
       )}
 
-      {meta.gear_type && (() => {
-        const src = getGearImageSrc(meta.gear_type)
-        return src ? <img src={src} alt={meta.gear_type} className="flex-shrink-0 h-6 w-auto object-contain opacity-60" /> : null
-      })()}
+      {(meta.gear_type || meta.date) && (
+        <div className="flex-shrink-0 min-w-[64px] flex flex-col items-end justify-start gap-1">
+          {meta.gear_type && (() => {
+            const src = getGearImageSrc(meta.gear_type)
+            return src ? <img src={src} alt={meta.gear_type} className="h-8 w-auto object-contain opacity-60" /> : null
+          })()}
+          {meta.date && (
+            <div className="text-xs text-gray-400 dark:text-gray-600 tabular-nums text-right">
+              {`${meta.date.year}-${String(meta.date.month).padStart(2, '0')}-${String(meta.date.day).padStart(2, '0')}`}
+            </div>
+          )}
+        </div>
+      )}
 
       {onRemove && (
         <button

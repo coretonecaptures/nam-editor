@@ -71,6 +71,15 @@ function fmtDate(iso?: string): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+function showNativeTextContextMenu(event: React.MouseEvent<HTMLElement>) {
+  const selection = window.getSelection()?.toString().trim() ?? ''
+  const target = event.target as HTMLElement | null
+  const isEditable = !!target?.closest('input, textarea, [contenteditable="true"]')
+  if (!selection && !isEditable) return
+  event.preventDefault()
+  void window.api.showTextContextMenu({ hasSelection: !!selection, isEditable })
+}
+
 export function ToneStore({
   onClose,
   onDownloaded,
@@ -301,12 +310,12 @@ export function ToneStore({
 
   const totalPages = Math.ceil(total / 24)
 
-  // ── Loading ────────────────────────────────────────────────────────────────
+  // â”€â”€ Loading â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   if (!statusChecked) {
-    return <div className="flex items-center justify-center h-full text-sm text-gray-500 dark:text-gray-400">Loading…</div>
+    return <div className="flex items-center justify-center h-full text-sm text-gray-500 dark:text-gray-400">Loadingâ€¦</div>
   }
 
-  // ── Not connected ──────────────────────────────────────────────────────────
+  // â”€â”€ Not connected â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   if (!connected) {
     return (
       <div className="flex flex-col h-full overflow-y-auto p-6">
@@ -331,7 +340,7 @@ export function ToneStore({
           <button onClick={handleConnect} disabled={connecting}
             className="px-4 py-2 text-sm font-medium rounded-md bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-colors"
           >
-            {connecting ? 'Opening browser…' : 'Connect to tone3000'}
+            {connecting ? 'Opening browserâ€¦' : 'Connect to tone3000'}
           </button>
           {connecting && <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">Complete sign-in in your browser, then return here.</p>}
         </div>
@@ -339,7 +348,7 @@ export function ToneStore({
     )
   }
 
-  // ── Detail view ────────────────────────────────────────────────────────────
+  // â”€â”€ Detail view â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   if (selectedTone) {
     const checkedCount = visibleModels.filter((m) => checkedIds.has(m.id)).length
 
@@ -360,7 +369,10 @@ export function ToneStore({
 
         <div className="flex-1 overflow-y-auto">
           {/* Tone summary */}
-          <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 space-y-2">
+          <div
+            className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 space-y-2 select-text"
+            onContextMenu={showNativeTextContextMenu}
+          >
             <div className="flex items-center gap-2 flex-wrap text-xs text-gray-500 dark:text-gray-400">
               <button
                 onClick={() => filterLocalCreator((toneDetail ?? selectedTone).user?.username)}
@@ -369,18 +381,18 @@ export function ToneStore({
               >
                 @{(toneDetail ?? selectedTone).user?.username}
               </button>
-              <span>·</span>
+              <span>Â·</span>
               <span className="px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300">
                 {GEAR_LABELS[selectedTone.gear] ?? selectedTone.gear}
               </span>
               {!modelsLoading && models.length > 0 && (
-                <><span>·</span><span>{models.length} file{models.length !== 1 ? 's' : ''}</span></>
+                <><span>Â·</span><span>{models.length} file{models.length !== 1 ? 's' : ''}</span></>
               )}
               {toneDetail && toneDetail.favorites_count > 0 && (
-                <><span>·</span><span>♥ {toneDetail.favorites_count.toLocaleString()}</span></>
+                <><span>Â·</span><span>â™¥ {toneDetail.favorites_count.toLocaleString()}</span></>
               )}
               {toneDetail?.created_at && (
-                <><span>·</span><span>{fmtDate(toneDetail.created_at)}</span></>
+                <><span>Â·</span><span>{fmtDate(toneDetail.created_at)}</span></>
               )}
             </div>
 
@@ -401,15 +413,23 @@ export function ToneStore({
             )}
 
             {toneDetail?.description && (
-              <p className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-line leading-relaxed">{toneDetail.description}</p>
+              <p className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-line leading-relaxed select-text">{toneDetail.description}</p>
             )}
 
             {toneDetail?.links && toneDetail.links.length > 0 && (
               <div className="flex flex-col gap-0.5">
                 {toneDetail.links.map((link, i) => (
-                  <button key={i} onClick={() => window.api.openExternal(link)}
-                    className="text-xs text-violet-500 hover:underline text-left truncate"
-                  >{link}</button>
+                  <a
+                    key={i}
+                    href={link}
+                    onClick={(e) => {
+                      e.preventDefault()
+                      window.api.openExternal(link)
+                    }}
+                    className="text-xs text-violet-500 hover:underline text-left truncate select-text"
+                  >
+                    {link}
+                  </a>
                 ))}
               </div>
             )}
@@ -417,7 +437,7 @@ export function ToneStore({
 
           {/* Models list */}
           {modelsLoading && (
-            <div className="flex items-center justify-center py-10 text-sm text-gray-500 dark:text-gray-400">Loading files…</div>
+            <div className="flex items-center justify-center py-10 text-sm text-gray-500 dark:text-gray-400">Loading filesâ€¦</div>
           )}
           {modelsError && (
             <div className="px-4 py-4 text-sm text-red-500">{modelsError}</div>
@@ -479,13 +499,13 @@ export function ToneStore({
             {downloadError && <p className="text-xs text-red-500">{downloadError}</p>}
             {downloadDone && (
               <p className="text-xs text-green-500 dark:text-green-400">
-                ✓ {downloadDone.msg} → "{downloadDone.folderName}"
+                âœ“ {downloadDone.msg} â†’ "{downloadDone.folderName}"
               </p>
             )}
             {downloadProgress ? (
               <div className="space-y-1">
                 <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-                  <span>Downloading {downloadProgress.current + 1} of {downloadProgress.total}…</span>
+                  <span>Downloading {downloadProgress.current + 1} of {downloadProgress.total}â€¦</span>
                   <span>{Math.round((downloadProgress.current / downloadProgress.total) * 100)}%</span>
                 </div>
                 <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
@@ -502,7 +522,7 @@ export function ToneStore({
                 disabled={checkedCount === 0}
                 className="w-full py-2 text-sm font-medium rounded-md bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors"
               >
-                ↓ Download {checkedCount > 0 ? `${checkedCount} file${checkedCount !== 1 ? 's' : ''}` : '(none selected)'}
+                More Info / Download {checkedCount > 0 ? `${checkedCount} file${checkedCount !== 1 ? 's' : ''}` : '(none selected)'}
               </button>
             )}
           </div>
@@ -511,7 +531,7 @@ export function ToneStore({
     )
   }
 
-  // ── Browse view ────────────────────────────────────────────────────────────
+  // â”€â”€ Browse view â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
@@ -546,7 +566,7 @@ export function ToneStore({
         <div className="flex items-center gap-2">
           <input type="text" value={query} onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSearch(1, query, gear, sort, creatorUsername, scope)}
-            placeholder="Search tones…"
+            placeholder="Search tonesâ€¦"
             className="flex-1 px-3 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-violet-500"
           />
           <select value={gear} onChange={(e) => { const g = e.target.value; setGear(g); handleSearch(1, query, g, sort, creatorUsername, scope) }}
@@ -581,14 +601,14 @@ export function ToneStore({
             <button
               onClick={() => { setCreatorUsername(''); handleSearch(1, query, gear, sort, '', scope) }}
               className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 px-1"
-            >✕</button>
+            >âœ•</button>
           )}
         </div>
       </div>
 
       {/* Results */}
       <div className="flex-1 overflow-y-auto p-3">
-        {searching && <div className="flex items-center justify-center py-12 text-sm text-gray-500 dark:text-gray-400">Searching…</div>}
+        {searching && <div className="flex items-center justify-center py-12 text-sm text-gray-500 dark:text-gray-400">Searchingâ€¦</div>}
         {!searching && searchError && <div className="text-sm text-red-500 text-center py-8">{searchError}</div>}
         {!searching && !searchError && results.length === 0 && <div className="text-sm text-gray-500 dark:text-gray-400 text-center py-12">No results</div>}
 
@@ -627,13 +647,13 @@ export function ToneStore({
                       )}
                     </div>
                     <div className="flex items-center justify-between text-xs text-gray-400 dark:text-gray-500">
-                      <span>↓ {tone.downloads_count?.toLocaleString()}</span>
+                      <span>â†“ {tone.downloads_count?.toLocaleString()}</span>
                       {tone.created_at && <span>{fmtDate(tone.created_at)}</span>}
                     </div>
                     <button onClick={() => openDetail(tone)}
                       className="mt-1 w-full py-1 text-xs font-medium rounded bg-violet-600 hover:bg-violet-500 text-white transition-colors"
                     >
-                      ↓ Download
+                      More Info / Download
                     </button>
                   </div>
                 </div>
@@ -644,11 +664,11 @@ export function ToneStore({
               <div className="flex items-center justify-center gap-3 mt-4 pb-2">
                 <button onClick={() => handleSearch(page - 1, query, gear, sort, creatorUsername, scope)} disabled={page <= 1}
                   className="px-3 py-1 text-xs rounded-md bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >← Prev</button>
+                >â† Prev</button>
                 <span className="text-xs text-gray-500 dark:text-gray-400">Page {page} of {totalPages}</span>
                 <button onClick={() => handleSearch(page + 1, query, gear, sort, creatorUsername, scope)} disabled={page >= totalPages}
                   className="px-3 py-1 text-xs rounded-md bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >Next →</button>
+                >Next â†’</button>
               </div>
             )}
           </>

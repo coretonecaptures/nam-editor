@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net, Menu } from 'electron'
 import { join, dirname, basename, extname, normalize as normalizePath } from 'path'
 import fs from 'fs'
 import os from 'os'
@@ -72,7 +72,7 @@ process.on('unhandledRejection', (reason) => {
   log(`UNHANDLED REJECTION: ${String(reason)}`)
 })
 
-log(`NAM Lab starting — platform: ${process.platform}, arch: ${process.arch}, node: ${process.version}`)
+log(`NAM Lab starting â€” platform: ${process.platform}, arch: ${process.arch}, node: ${process.version}`)
 log(`Electron: ${process.versions.electron}, Chrome: ${process.versions.chrome}`)
 log(`Args: ${process.argv.join(' ')}`)
 log(`isDev: ${isDev}`)
@@ -105,7 +105,7 @@ function saveFileCache(): void {
 }
 
 // Persist window size and maximized state between launches
-// Path is computed lazily inside each function — app.getPath() must not be
+// Path is computed lazily inside each function â€” app.getPath() must not be
 // called at module load time (before app ready) or it throws on some macOS configs
 function winStatePath(): string {
   return join(app.getPath('userData'), 'window-state.json')
@@ -158,7 +158,7 @@ function createWindow(): void {
 
   log('BrowserWindow created')
   mainWindow.on('ready-to-show', () => {
-    log('ready-to-show fired — showing window')
+    log('ready-to-show fired â€” showing window')
     if (winState.maximized) mainWindow!.maximize()
     mainWindow!.show()
   })
@@ -181,7 +181,7 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
-  // Prevent Electron from navigating to dropped file URLs — without this,
+  // Prevent Electron from navigating to dropped file URLs â€” without this,
   // dropping a file onto the window replaces the app with the raw file contents.
   mainWindow.webContents.on('will-navigate', (event) => {
     event.preventDefault()
@@ -213,7 +213,7 @@ function patchMetadataFields(content: string, patches: Record<string, unknown>):
 
   for (const [key, value] of Object.entries(patches)) {
     const newVal = serializeJsonValue(value)
-    // Match "key"\s*:\s*<JSON-value> — handles null, strings, and numbers
+    // Match "key"\s*:\s*<JSON-value> â€” handles null, strings, and numbers
     const re = new RegExp(
       `("${escapeRe(key)}")(\\s*:\\s*)(null|"(?:[^"\\\\]|\\\\.)*"|-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)`
     )
@@ -221,7 +221,7 @@ function patchMetadataFields(content: string, patches: Record<string, unknown>):
       // Replace only the value; keep the key token and spacing intact
       inner = inner.replace(re, (_m, k, sep) => k + sep + newVal)
     } else if (value !== null && value !== undefined) {
-      // Field doesn't exist yet — insert it, matching the file's indentation style
+      // Field doesn't exist yet â€” insert it, matching the file's indentation style
       const indentMatch = /\n([ \t]+)"/.exec(inner)
       const indent = indentMatch ? indentMatch[1] : '    '
       const trimmed = inner.trimEnd()
@@ -327,7 +327,7 @@ function patchNamLabField(content: string, field: string, value: unknown): strin
     }
   }
 
-  // No nam_lab block — inject it directly into the metadata block
+  // No nam_lab block â€” inject it directly into the metadata block
   if (value === null || value === undefined) return content
   const metaKeyMatch = /"metadata"\s*:\s*\{/.exec(content)
   if (!metaKeyMatch) return content
@@ -377,7 +377,7 @@ function patchNamBotField(content: string, field: string, value: unknown): strin
     }
   }
 
-  // No nam_bot block — find training block and inject nam_bot into it
+  // No nam_bot block â€” find training block and inject nam_bot into it
   if (value === null || value === undefined) return content
   const trainingRe = /"training"\s*:\s*\{/
   const trainingMatch = trainingRe.exec(content)
@@ -397,7 +397,7 @@ function patchNamBotField(content: string, field: string, value: unknown): strin
     }
   }
 
-  // No training block at all — inject training.nam_bot into the metadata block
+  // No training block at all â€” inject training.nam_bot into the metadata block
   const metaKeyMatch = /"metadata"\s*:\s*\{/.exec(content)
   if (!metaKeyMatch) return content
   const openBrace = metaKeyMatch.index + metaKeyMatch[0].length - 1
@@ -446,7 +446,7 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'local-file', privileges: { secure: true, bypassCSP: true, stream: true } }
 ])
 
-// ── tone3000 OAuth ────────────────────────────────────────────────────────────
+// â”€â”€ tone3000 OAuth â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const T3K_BASE = 'https://www.tone3000.com'
 const T3K_CLIENT_ID = 't3k_pub_wcNVWGoy2Ry01i50EpXSNo9Jjr8oQr-c'
 
@@ -603,7 +603,7 @@ app.whenReady().then(async () => {
         mtimeMs: stat.mtimeMs,
         birthtimeMs: stat.birthtimeMs,
       }
-      // Update cache entry — save lazily (written on app quit or folder scan)
+      // Update cache entry â€” save lazily (written on app quit or folder scan)
       cache[filePath] = { mtimeMs: stat.mtimeMs, size: stat.size, data: { version: result.version, metadata: meta, architecture: result.architecture, config: result.config } }
       return result
     } catch (err) {
@@ -617,7 +617,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('log:getErrorLogPath', () => errorLogPath)
 
   // IPC: Write updated metadata back to file (preserves weights and all non-editable fields)
-  // Only updates the fields the editor explicitly manages — never injects new keys.
+  // Only updates the fields the editor explicitly manages â€” never injects new keys.
   // Uses surgical text replacement so only the changed value bytes are modified;
   // all formatting, spacing, and field order in the original file are preserved exactly.
   const EDITABLE_FIELDS = [
@@ -631,7 +631,7 @@ app.whenReady().then(async () => {
       const orig = data.metadata ?? {}
       const incoming = metadata as Record<string, unknown>
 
-      // Numeric metadata fields — must always be written as JSON numbers, never strings
+      // Numeric metadata fields â€” must always be written as JSON numbers, never strings
       const NUMERIC_META_FIELDS = new Set(['input_level_dbu', 'output_level_dbu'])
 
       // Build patch map: only fields that exist on disk or are being set to a real value
@@ -647,17 +647,17 @@ app.whenReady().then(async () => {
         }
       }
 
-      // Apply surgical patches — only the value bytes for each field are changed
+      // Apply surgical patches â€” only the value bytes for each field are changed
       let patched = patchMetadataFields(content, patches)
 
-      // Handle nb_trained_epochs — stored at metadata.training.nam_bot.trained_epochs
+      // Handle nb_trained_epochs â€” stored at metadata.training.nam_bot.trained_epochs
       const origEpochs = orig.training?.nam_bot?.trained_epochs ?? null
       const newEpochs = incoming.nb_trained_epochs != null ? Number(incoming.nb_trained_epochs) : null
       if (newEpochs !== origEpochs) {
         patched = patchNamBotField(patched, 'trained_epochs', newEpochs)
       }
 
-      // Handle NAM Lab extended fields — stored at metadata.nam_lab.*
+      // Handle NAM Lab extended fields â€” stored at metadata.nam_lab.*
       const origNl = (orig.nam_lab ?? {}) as Record<string, unknown>
       const nlKeys = ['mics','cabinet','cabinet_config','amp_channel','boost_pedal','amp_settings','pedal_settings','amp_switches','comments','rating'] as const
       for (const k of nlKeys) {
@@ -671,7 +671,7 @@ app.whenReady().then(async () => {
 
       // Validate output is well-formed JSON before touching disk
       try { JSON.parse(patched) } catch (ve) {
-        return { success: false, error: `Patch produced invalid JSON — file not written. ${String(ve)}` }
+        return { success: false, error: `Patch produced invalid JSON â€” file not written. ${String(ve)}` }
       }
       suppressWatcher()
       fs.writeFileSync(filePath, patched, 'utf-8')
@@ -705,7 +705,7 @@ app.whenReady().then(async () => {
       const files: string[] = []
       await Promise.race([
         scan(folderPath, files),
-        new Promise<never>((_, reject) => { const t = setTimeout(() => reject(new Error('Scan timed out after 5 minutes — check network share connectivity')), TIMEOUT_MS); t.unref() })
+        new Promise<never>((_, reject) => { const t = setTimeout(() => reject(new Error('Scan timed out after 5 minutes â€” check network share connectivity')), TIMEOUT_MS); t.unref() })
       ])
       // Prune cache entries for files no longer in this folder
       const fileSet = new Set(files)
@@ -753,7 +753,7 @@ app.whenReady().then(async () => {
     } catch (err) {
       return { success: false, error: String(err), files: [] }
     }
-    // Read all files concurrently (20 at a time) — in-process, no IPC per file
+    // Read all files concurrently (20 at a time) â€” in-process, no IPC per file
     const CONCURRENCY = 20
     const results: unknown[] = []
     for (let i = 0; i < paths.length; i += CONCURRENCY) {
@@ -833,7 +833,7 @@ app.whenReady().then(async () => {
     try {
       const tree = await Promise.race([
         buildTree(folderPath),
-        new Promise<never>((_, reject) => { const t = setTimeout(() => reject(new Error('Scan timed out after 5 minutes — check network share connectivity')), TIMEOUT_MS); t.unref() })
+        new Promise<never>((_, reject) => { const t = setTimeout(() => reject(new Error('Scan timed out after 5 minutes â€” check network share connectivity')), TIMEOUT_MS); t.unref() })
       ])
       return { success: true, tree }
     } catch (err) {
@@ -927,8 +927,8 @@ app.whenReady().then(async () => {
   })
 
   // IPC: Restore keyboard focus after native dialogs or component unmounts.
-  // On Windows: blur→focus cycle resets Chromium's stale internal focus state.
-  // On macOS: blur() causes a visible window flash — webContents.focus() alone is enough.
+  // On Windows: blurâ†’focus cycle resets Chromium's stale internal focus state.
+  // On macOS: blur() causes a visible window flash â€” webContents.focus() alone is enough.
   ipcMain.handle('window:refocus', () => {
     if (!mainWindow || mainWindow.isDestroyed()) return
     if (process.platform === 'win32') {
@@ -1049,6 +1049,26 @@ app.whenReady().then(async () => {
     shell.openExternal(url)
   })
 
+  ipcMain.handle('app:showTextContextMenu', async (_event, params: { hasSelection: boolean; isEditable: boolean }) => {
+    if (!mainWindow) return
+    const { hasSelection, isEditable } = params
+    if (!hasSelection && !isEditable) return
+
+    const template: Electron.MenuItemConstructorOptions[] = []
+    if (hasSelection) template.push({ role: 'copy', label: 'Copy' })
+    if (isEditable) {
+      if (template.length > 0) template.push({ type: 'separator' })
+      template.push(
+        { role: 'cut', label: 'Cut' },
+        { role: 'paste', label: 'Paste' }
+      )
+    }
+    if (template.length > 0) template.push({ type: 'separator' })
+    template.push({ role: 'selectAll', label: 'Select All' })
+
+    Menu.buildFromTemplate(template).popup({ window: mainWindow })
+  })
+
   // IPC: Detect whether a non-NAM-Lab default handler is registered for .nam files
   ipcMain.handle('app:detectNamPlayer', async () => {
     try {
@@ -1062,7 +1082,7 @@ app.whenReady().then(async () => {
         const ftypeLower = ftype.replace(/\\/g, '/').toLowerCase()
         return ftypeLower.includes('.exe') && !ftypeLower.includes(ourExe)
       }
-      // macOS / Linux: no reliable shell-only method — rely on manual path setting
+      // macOS / Linux: no reliable shell-only method â€” rely on manual path setting
       return false
     } catch {
       return false
@@ -1288,7 +1308,7 @@ app.whenReady().then(async () => {
     }
   })
 
-  // ── tone3000 IPC handlers ───────────────────────────────────────────────────
+  // â”€â”€ tone3000 IPC handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   ipcMain.handle('tone3000:status', async () => {
     if (!tone3kTokens) return { connected: false, username: null }
@@ -1317,7 +1337,7 @@ app.whenReady().then(async () => {
         const returnedState = url.searchParams.get('state')
 
         res.writeHead(200, { 'Content-Type': 'text/html' })
-        res.end('<html><body style="font-family:sans-serif;padding:40px;background:#111;color:#fff"><h2>Connected to tone3000!</h2><p>Return to NAM Lab — you can close this tab.</p></body></html>')
+        res.end('<html><body style="font-family:sans-serif;padding:40px;background:#111;color:#fff"><h2>Connected to tone3000!</h2><p>Return to NAM Lab â€” you can close this tab.</p></body></html>')
         server.close()
 
         if (returnedState !== state || !code) { resolve({ ok: false, error: 'Invalid OAuth callback' }); return }
