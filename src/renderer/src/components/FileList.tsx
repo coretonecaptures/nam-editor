@@ -743,9 +743,9 @@ export function FileList({
                 ? 'bg-sky-100 dark:bg-sky-900/30 border-sky-300 dark:border-sky-700 text-sky-700 dark:text-sky-400'
                 : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
             }`}
-            title={directFilesOnly ? 'Show files from subfolders too' : 'Show only files directly inside the selected folder'}
+            title={directFilesOnly ? 'Currently showing only files directly inside the selected folder. Click to include subfolders too.' : 'Currently including files from subfolders. Click to show only files directly inside the selected folder.'}
           >
-            {directFilesOnly ? 'Include Subfolders' : 'This Folder Only'}
+            {directFilesOnly ? 'Showing: This Folder Only' : 'Showing: Including Subfolders'}
           </button>
         )}
       </div>

@@ -1,6 +1,16 @@
 import { useState } from 'react'
 import { AppSettings } from '../types/settings'
 
+const PACK_DARK_ACCENT_PRESETS = [
+  '#f97316',
+  '#f59e0b',
+  '#2dd4bf',
+  '#60a5fa',
+  '#f87171',
+  '#4ade80',
+  '#a78bfa',
+]
+
 type UpdateState =
   | { status: 'idle' }
   | { status: 'checking' }
@@ -496,6 +506,34 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
             <p className="text-xs text-gray-500 dark:text-gray-500 mb-4">
               Optional logo shown in the top-right corner of exported Pack Info sheets. Set one for each export theme. Recommended max size ~200 KB.
             </p>
+            <div className="mb-4">
+              <p className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">Dark mode accent color</p>
+              <div className="flex items-center gap-2 flex-wrap">
+                {PACK_DARK_ACCENT_PRESETS.map((hex) => (
+                  <button
+                    key={hex}
+                    onClick={() => update('packExportDarkAccent', hex)}
+                    className={`w-6 h-6 rounded border-2 transition-colors ${
+                      draft.packExportDarkAccent.toLowerCase() === hex.toLowerCase()
+                        ? 'border-white ring-2 ring-indigo-500'
+                        : 'border-gray-300 dark:border-gray-700'
+                    }`}
+                    style={{ backgroundColor: hex }}
+                    title={hex}
+                  />
+                ))}
+                <input
+                  type="color"
+                  value={draft.packExportDarkAccent}
+                  onChange={(e) => update('packExportDarkAccent', e.target.value)}
+                  className="h-8 w-10 rounded border border-gray-300 dark:border-gray-700 bg-transparent p-0 cursor-pointer"
+                  title="Custom accent color"
+                />
+                <code className="text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
+                  {draft.packExportDarkAccent}
+                </code>
+              </div>
+            </div>
             <div className="space-y-4">
               {(['Light mode logo', 'Dark mode logo'] as const).map((label, idx) => {
                 const key = idx === 0 ? 'packLogoLight' : 'packLogoDark'

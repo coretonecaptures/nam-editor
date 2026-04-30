@@ -71,6 +71,14 @@ function fmtDate(iso?: string): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+function buildTone3000ToneUrl(tone: Pick<ToneResult, 'id' | 'title'> | Pick<ToneDetail, 'id' | 'title'>): string {
+  const slug = tone.title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return `https://www.tone3000.com/tones/${slug}-${tone.id}`
+}
+
 function showNativeTextContextMenu(event: React.MouseEvent<HTMLElement>) {
   const selection = window.getSelection()?.toString().trim() ?? ''
   const target = event.target as HTMLElement | null
@@ -356,6 +364,7 @@ export function ToneStore({
   // Detail view
   if (selectedTone) {
     const checkedCount = visibleModels.filter((m) => checkedIds.has(m.id)).length
+    const detailImage = toneDetail?.images?.[0] ?? selectedTone.images?.[0] ?? null
 
     return (
       <div className="flex flex-col h-full overflow-hidden">
@@ -378,6 +387,13 @@ export function ToneStore({
             className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 space-y-2 select-text"
             onContextMenu={showNativeTextContextMenu}
           >
+            {detailImage && (
+              <img
+                src={detailImage}
+                alt={selectedTone.title}
+                className="w-full h-44 object-cover rounded-lg border border-gray-200 dark:border-gray-700"
+              />
+            )}
             <div className="flex items-center gap-2 flex-wrap text-xs text-gray-500 dark:text-gray-400">
               <button
                 onClick={() => filterLocalCreator((toneDetail ?? selectedTone).user?.username)}
@@ -420,6 +436,15 @@ export function ToneStore({
             {toneDetail?.description && (
               <p className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-line leading-relaxed select-text">{toneDetail.description}</p>
             )}
+
+            <div>
+              <button
+                onClick={() => window.api.openExternal(buildTone3000ToneUrl(toneDetail ?? selectedTone))}
+                className="text-xs text-violet-500 hover:underline"
+              >
+                Open on Tone3000
+              </button>
+            </div>
 
             {toneDetail?.links && toneDetail.links.length > 0 && (
               <div className="flex flex-col gap-0.5">
@@ -568,12 +593,35 @@ export function ToneStore({
             My files
           </button>
         </div>
-        <div className="flex items-center gap-2">
-          <input type="text" value={query} onChange={(e) => setQuery(e.target.value)}
+        <div className="flex items-center gap-2 flex-wrap">
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSearch(1, query, gear, sort, creatorUsername, scope)}
             placeholder="Search tones..."
-            className="flex-1 px-3 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-violet-500"
+            className="min-w-[220px] flex-[1.3] px-3 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-violet-500"
           />
+          <div className="relative min-w-[220px] flex-1">
+            <svg className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+            </svg>
+            <input
+              type="text"
+              value={creatorUsername}
+              onChange={(e) => setCreatorUsername(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch(1, query, gear, sort, creatorUsername, scope)}
+              placeholder={`Tone3000 username${savedTone3000Username ? ` (saved: ${savedTone3000Username})` : ''}`}
+              title="Tone3000 does not currently expose a direct tones-by-user endpoint. NAM Lab filters search results by username, so this may not include every capture from that creator."
+              className="w-full px-3 py-1.5 pl-8 pr-8 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-violet-500"
+            />
+            {creatorUsername && (
+              <button
+                onClick={() => { setCreatorUsername(''); handleSearch(1, query, gear, sort, '', scope) }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 px-1"
+              >x</button>
+            )}
+          </div>
           <select value={gear} onChange={(e) => { const g = e.target.value; setGear(g); handleSearch(1, query, g, sort, creatorUsername, scope) }}
             className="px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
           >
@@ -588,26 +636,6 @@ export function ToneStore({
           <button onClick={() => handleSearch(1, query, gear, sort, creatorUsername, scope)} disabled={searching}
             className="px-3 py-1.5 text-sm font-medium rounded-md bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white transition-colors"
           >Search</button>
-        </div>
-        <div className="flex items-center gap-2">
-          <svg className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-          </svg>
-          <input
-            type="text"
-            value={creatorUsername}
-            onChange={(e) => setCreatorUsername(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSearch(1, query, gear, sort, creatorUsername, scope)}
-            placeholder={`Tone3000 username${savedTone3000Username ? ` (saved: ${savedTone3000Username})` : ''}`}
-            title="Tone3000 does not currently expose a direct tones-by-user endpoint. NAM Lab filters search results by username, so this may not include every capture from that creator."
-            className="flex-1 px-3 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-violet-500"
-          />
-          {creatorUsername && (
-            <button
-              onClick={() => { setCreatorUsername(''); handleSearch(1, query, gear, sort, '', scope) }}
-              className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 px-1"
-            >x</button>
-          )}
         </div>
       </div>
 

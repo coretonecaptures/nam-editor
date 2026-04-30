@@ -53,6 +53,7 @@ interface Props {
   onPackSaved?: (folderPath: string, hasData: boolean) => void
   logoLight?: string
   logoDark?: string
+  darkAccentColor?: string
   allFolderPaths?: string[]
 }
 
@@ -301,7 +302,19 @@ function RowEditor<T extends Record<string, string>>({
   )
 }
 
-export function PackInfoEditor({ folderPath, folderName, captures, defaultCapturedBy = '', catalog = [], onCatalogChange, onPackSaved, logoLight, logoDark, allFolderPaths = [] }: Props) {
+export function PackInfoEditor({
+  folderPath,
+  folderName,
+  captures,
+  defaultCapturedBy = '',
+  catalog = [],
+  onCatalogChange,
+  onPackSaved,
+  logoLight,
+  logoDark,
+  darkAccentColor = '#f97316',
+  allFolderPaths = [],
+}: Props) {
   const [pack, setPack] = useState<PackInfo>(EMPTY_PACK)
   const savedPackRef = useRef<PackInfo>(EMPTY_PACK)
   const [saved, setSaved] = useState(true)
@@ -425,7 +438,7 @@ export function PackInfoEditor({ folderPath, folderName, captures, defaultCaptur
     setExporting(true)
     if (!saved) await handleSave()
     const logo = darkExport ? (logoDark || undefined) : (logoLight || undefined)
-    const html = generatePackHtml(pack, folderPath, folderName, captures, darkExport, logo)
+    const html = generatePackHtml(pack, folderPath, folderName, captures, darkExport, logo, darkAccentColor)
     const res = await window.api.exportPackSheet(html)
     setExporting(false)
     if (!res.success) setStatus('Export failed')

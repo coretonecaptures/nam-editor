@@ -23,6 +23,7 @@ interface Props {
   dark: boolean
   logoLight?: string
   logoDark?: string
+  darkAccentColor?: string
   defaultCapturedBy?: string
   onSaved: () => void
   onDeleted: () => void
@@ -49,7 +50,16 @@ function absPath(rel: string, rootFolder: string): string {
   return rel.startsWith('/') ? rel : `${r}/${rel}`
 }
 
-export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark, onSaved, onDeleted }: Props) {
+export function BundleEditor({
+  folderPath,
+  rootFolder,
+  dark,
+  logoLight,
+  logoDark,
+  darkAccentColor = '#f97316',
+  onSaved,
+  onDeleted,
+}: Props) {
   const [bundle, setBundle] = useState<BundleData>(EMPTY_BUNDLE)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -164,7 +174,7 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
       const files: NamFile[] = (Array.isArray(filesRaw) ? filesRaw : []) as NamFile[]
       const folderName = absFolder.replace(/\\/g, '/').split('/').pop() ?? absFolder
       const logo = dark ? (logoDark || undefined) : (logoLight || undefined)
-      const html = generatePackHtml(pack, absFolder, folderName, files, dark, logo)
+      const html = generatePackHtml(pack, absFolder, folderName, files, dark, logo, darkAccentColor)
       await window.api.exportPackSheet(html)
     } finally {
       setExportingPack(null)
@@ -184,8 +194,8 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
         bodyBg: '#0d0d0d', bodyColor: '#e8e8e8',
         headerBg: '#000000', headerSub: '#888888',
         descColor: '#c0c0c0',
-        sectionBorder: '#2a2a2a', sectionTitleColor: '#f97316',
-        thBg: '#1a1a1a', thColor: '#f97316', thBorder: '#2a2a2a',
+        sectionBorder: '#2a2a2a', sectionTitleColor: darkAccentColor,
+        thBg: '#1a1a1a', thColor: darkAccentColor, thBorder: '#2a2a2a',
         tdBorder: '#1e1e1e', tdEvenBg: '#141414',
         footerBorder: '#2a2a2a', footerColor: '#555',
       } : {

@@ -71,6 +71,7 @@ export interface AppSettings {
   // Pack Info export logos (base64 data URIs, empty = no logo)
   packLogoLight: string
   packLogoDark: string
+  packExportDarkAccent: string
 
   // Default tab shown when a folder is selected in the tree
   defaultFolderTab: 'overview' | 'pack' | 'gallery'
@@ -122,6 +123,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   folderNameColors: {},
   packLogoLight: '',
   packLogoDark: '',
+  packExportDarkAccent: '#f97316',
   defaultFolderTab: 'overview',
   showDashboardOnLaunch: true,
   tone3000Username: '',

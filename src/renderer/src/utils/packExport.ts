@@ -73,7 +73,15 @@ export function parseDescription(raw: string, dark: boolean): string {
   return out.join('\n')
 }
 
-export function generatePackHtml(info: PackInfo, folderPath: string, folderName: string, allCaptures: NamFile[], dark: boolean, logo?: string): string {
+export function generatePackHtml(
+  info: PackInfo,
+  folderPath: string,
+  folderName: string,
+  allCaptures: NamFile[],
+  dark: boolean,
+  logo?: string,
+  darkAccentColor = '#f97316'
+): string {
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const normBase = folderPath.replace(/\\/g, '/') + '/'
   const captures = allCaptures.filter((f) => {
@@ -133,10 +141,10 @@ export function generatePackHtml(info: PackInfo, folderPath: string, folderName:
     bodyBg: '#0d0d0d', bodyColor: '#e8e8e8',
     headerBg: '#000000', headerSub: '#888888',
     descColor: '#c0c0c0',
-    sectionBorder: '#2a2a2a', sectionTitleColor: '#f97316',
-    thBg: '#1a1a1a', thColor: '#f97316', thBorder: '#2a2a2a',
+    sectionBorder: '#2a2a2a', sectionTitleColor: darkAccentColor,
+    thBg: '#1a1a1a', thColor: darkAccentColor, thBorder: '#2a2a2a',
     tdBorder: '#1e1e1e', tdEvenBg: '#141414',
-    kvLabelColor: '#f97316',
+    kvLabelColor: darkAccentColor,
     footerBorder: '#2a2a2a', footerColor: '#555',
   } : {
     bodyBg: '#ffffff', bodyColor: '#1e2235',

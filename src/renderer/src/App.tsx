@@ -2263,6 +2263,7 @@ export default function App() {
                   dark={(() => { try { return localStorage.getItem('nam-pack-dark-export') === '1' } catch { return false } })()}
                   logoLight={settings.packLogoLight}
                   logoDark={settings.packLogoDark}
+                  darkAccentColor={settings.packExportDarkAccent}
                   defaultCapturedBy={settings.defaultModeledBy}
                   onSaved={() => refreshBundleFolders()}
                   onDeleted={() => handleDeleteBundle(activeFolderPath)}
@@ -2326,6 +2327,7 @@ export default function App() {
                       onPackSaved={handlePackSaved}
                       logoLight={settings.packLogoLight}
                       logoDark={settings.packLogoDark}
+                      darkAccentColor={settings.packExportDarkAccent}
                       allFolderPaths={(() => {
                         const paths: string[] = []
                         const walk = (node: typeof librarian.folderTree) => {
