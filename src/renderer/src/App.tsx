@@ -19,7 +19,7 @@ import { TrainingCoverageModal } from './components/TrainingCoverageModal'
 import { FolderCompareModal } from './components/FolderCompareModal'
 import { FolderGallery, FolderImagesData } from './components/FolderGallery'
 import { FolderDashboard } from './components/FolderDashboard'
-import { PackInfoEditor } from './components/PackInfoEditor'
+import { PackInfoEditor, type PackInfo, type PackChecklistItem } from './components/PackInfoEditor'
 import { BundleEditor } from './components/BundleEditor'
 import { NamDashboard } from './components/NamDashboard'
 import { SessionHistoryPanel } from './components/SessionHistoryPanel'
@@ -30,6 +30,41 @@ export interface HistoryEntry {
   timestamp: Date
   operation: string
   summary: string
+}
+
+interface ChecklistSummary {
+  total: number
+  completed: number
+  percent: number
+  targetDate: string
+  liveDate: string
+  isOverdue: boolean
+  releasedLate: boolean
+  releasedOnTime: boolean
+}
+
+function summarizeChecklist(packData: unknown): ChecklistSummary | null {
+  if (!packData || typeof packData !== 'object') return null
+  const pack = packData as Partial<PackInfo> & { checklistItems?: Partial<PackChecklistItem>[] }
+  const items = Array.isArray(pack.checklistItems) ? pack.checklistItems : []
+  if (items.length === 0) return null
+  const completed = items.filter((item) => item?.completed === true).length
+  const total = items.length
+  const percent = total > 0 ? Math.round((completed / total) * 100) : 0
+  const targetDate = typeof pack.targetDate === 'string' ? pack.targetDate : ''
+  const liveDate = typeof pack.liveDate === 'string' ? pack.liveDate : ''
+  const today = new Date().toISOString().slice(0, 10)
+  const isReleased = !!liveDate
+  return {
+    total,
+    completed,
+    percent,
+    targetDate,
+    liveDate,
+    isOverdue: !isReleased && !!targetDate && targetDate < today,
+    releasedLate: !!liveDate && !!targetDate && liveDate > targetDate,
+    releasedOnTime: !!liveDate && !!targetDate && liveDate <= targetDate,
+  }
 }
 
 const HISTORY_STORAGE_KEY = 'nam-lab-history'
@@ -239,6 +274,7 @@ export default function App() {
   const [treeScrollTarget, setTreeScrollTarget] = useState<string | null>(null)
   const treeScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [folderChanged, setFolderChanged] = useState(false)
+  const [activeFolderChecklistSummary, setActiveFolderChecklistSummary] = useState<ChecklistSummary | null>(null)
   const [showDuplicates, setShowDuplicates] = useState(false)
   const [metadataClipboard, setMetadataClipboard] = useState<{ sourceName: string; metadata: Partial<NamFile['metadata']> } | null>(null)
   const [importModal, setImportModal] = useState<{ folderName: string; exactMatches: ImportMatch[]; prefixMatches: ImportMatch[]; unmatchedNames: string[] } | null>(null)
@@ -254,7 +290,7 @@ export default function App() {
   })
 
   const [folderImages, setFolderImages] = useState<FolderImagesData | null>(null)
-  const [folderPanelTab, setFolderPanelTab] = useState<'overview' | 'pack' | 'gallery'>(settings.defaultFolderTab)
+  const [folderPanelTab, setFolderPanelTab] = useState<'overview' | 'pack' | 'checklist' | 'gallery'>(settings.defaultFolderTab)
   // Path of the ancestor that owns the pack info for the current folder (null = current folder may own one)
   const [packInfoAncestor, setPackInfoAncestor] = useState<string | null>(null)
   // Set of folder paths that have a valid nam-pack.json (non-empty title) — drives blue dot in tree
@@ -303,6 +339,22 @@ export default function App() {
   useEffect(() => {
     setDirectFilesOnly(false)
   }, [librarian.selectedFolders, librarian.rootFolder])
+
+  useEffect(() => {
+    const activeFolderPath = ((librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null) ?? librarian.rootFolder)
+    if (!activeFolderPath || !packInfoFolders.has(activeFolderPath)) {
+      setActiveFolderChecklistSummary(null)
+      return
+    }
+    let cancelled = false
+    window.api.readPackInfo(activeFolderPath).then((res) => {
+      if (cancelled) return
+      setActiveFolderChecklistSummary(res.success ? summarizeChecklist(res.data) : null)
+    }).catch(() => {
+      if (!cancelled) setActiveFolderChecklistSummary(null)
+    })
+    return () => { cancelled = true }
+  }, [librarian.selectedFolders, librarian.rootFolder, packInfoFolders])
 
   // Scan all pack-info folders when root folder changes (drives blue dot in tree)
   useEffect(() => {
@@ -2273,15 +2325,14 @@ export default function App() {
             const hasImages = folderImages !== null && (folderImages.own.length > 0 || folderImages.inherited.some((g) => g.paths.length > 0))
             const showGallery = hasImages && settings.showFolderImages
             const hasPack = packInfoFolders.has(activeFolderPath)
-            const showPackEditor = hasPack
             const showCreatePrompt = !hasPack
             const showGalleryTab = showGallery
+            const availableTabs = (['overview', 'pack', 'checklist', 'gallery'] as const)
+              .filter((tab) => (tab !== 'gallery' || showGalleryTab) && ((tab !== 'pack' && tab !== 'checklist') || hasPack))
             return (
               <div className="h-full flex flex-col">
                 <div className="flex border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
-                  {(['overview', 'pack', 'gallery'] as const)
-                    .filter((tab) => tab !== 'gallery' || showGalleryTab)
-                    .map((tab) => (
+                  {availableTabs.map((tab) => (
                       <button
                         key={tab}
                         onClick={() => setFolderPanelTab(tab)}
@@ -2291,7 +2342,13 @@ export default function App() {
                             : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
                         }`}
                       >
-                        {tab === 'overview' ? 'Overview' : tab === 'pack' ? 'Pack Info' : 'Gallery'}
+                        {tab === 'overview'
+                          ? 'Overview'
+                          : tab === 'pack'
+                            ? 'Pack Info'
+                            : tab === 'checklist'
+                              ? 'Checklist'
+                              : 'Gallery'}
                       </button>
                     ))}
                 </div>
@@ -2300,6 +2357,7 @@ export default function App() {
                     <FolderDashboard
                       files={visibleFiles}
                       folderName={activeFolderName}
+                      checklistSummary={activeFolderChecklistSummary}
                       activeGear={gearTypeFilter}
                       activeTone={toneTypeFilter}
                       activePreset={presetFilterOverride}
@@ -2315,19 +2373,23 @@ export default function App() {
                     />
                   ) : folderPanelTab === 'gallery' && showGalleryTab ? (
                     <FolderGallery data={folderImages!} />
-                  ) : showPackEditor ? (
+                  ) : hasPack ? (
                     <PackInfoEditor
-                      key={activeFolderPath}
+                      key={`${activeFolderPath}:${folderPanelTab}`}
                       folderPath={activeFolderPath}
                       folderName={activeFolderName}
                       captures={visibleFiles}
                       defaultCapturedBy={settings.defaultModeledBy}
                       catalog={settings.packGearCatalog}
                       onCatalogChange={(catalog) => handleSaveSettings({ ...settings, packGearCatalog: catalog })}
+                      checklistTemplate={settings.packChecklistTemplate}
+                      onChecklistTemplateChange={(items) => handleSaveSettings({ ...settings, packChecklistTemplate: items })}
                       onPackSaved={handlePackSaved}
                       logoLight={settings.packLogoLight}
                       logoDark={settings.packLogoDark}
                       darkAccentColor={settings.packExportDarkAccent}
+                      parentPackPath={packInfoAncestor}
+                      mode={folderPanelTab === 'checklist' ? 'checklist' : 'info'}
                       allFolderPaths={(() => {
                         const paths: string[] = []
                         const walk = (node: typeof librarian.folderTree) => {
@@ -2350,12 +2412,26 @@ export default function App() {
                       </div>
                       <button
                         onClick={async () => {
-                          let initial: Record<string, unknown> = {}
+                          const checklistItems = settings.packChecklistTemplate.map((item, index) => ({
+                            id: `check-${Date.now()}-${index}`,
+                            label: item.label,
+                            completed: false,
+                            completedDate: '',
+                            notes: '',
+                          }))
+                          let initial: Record<string, unknown> = {
+                            checklistItems,
+                            checklistNotes: '',
+                            targetDate: '',
+                            liveDate: '',
+                            versionInfo: '',
+                          }
                           if (packInfoAncestor) {
                             const parentRes = await window.api.readPackInfo(packInfoAncestor)
                             if (parentRes.success && parentRes.data) {
                               const p = parentRes.data as Record<string, unknown>
                               initial = {
+                                ...initial,
                                 title: p.title ?? '',
                                 subtitle: p.subtitle ?? '',
                                 description: p.description ?? '',
@@ -2363,6 +2439,7 @@ export default function App() {
                                 pedals: p.pedals ?? [],
                                 glossary: p.glossary ?? [],
                                 footer: p.footer ?? '',
+                                recommendedInputGain: p.recommendedInputGain ?? '',
                               }
                             }
                           }

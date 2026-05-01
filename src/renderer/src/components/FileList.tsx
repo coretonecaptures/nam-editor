@@ -1242,13 +1242,16 @@ function GridView({
   onContextMenu: (e: React.MouseEvent, filePath: string) => void
 }) {
   const [colWidths, setColWidths] = useState<Record<string, number>>(DEFAULT_COL_WIDTHS)
-  const [dragOverCol, setDragOverCol] = useState<string | null>(null)
+  const [columnDrag, setColumnDrag] = useState<{ from: string; over: string | null; side: 'before' | 'after'; x: number } | null>(null)
   const [openFilterCol, setOpenFilterCol] = useState<string | null>(null)
   const [filterSearch, setFilterSearch] = useState('')
   const filterPopupRef = useRef<HTMLDivElement>(null)
   const filterAnchorRef = useRef<{ top: number; left: number; width: number } | null>(null)
-  const dragColRef = useRef<string | null>(null)
   const resizingRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null)
+  const headerRefs = useRef<Record<string, HTMLTableCellElement | null>>({})
+  const dragIntentRef = useRef<{ key: string; startX: number; startY: number } | null>(null)
+  const suppressSortClickRef = useRef(false)
+  const columnDragRef = useRef<typeof columnDrag>(null)
 
   // Order-preserving: visibleCols drives display order
   const activeColumns = visibleCols.map((k) => ALL_GRID_COLUMNS.find((c) => c.key === k)).filter((c): c is typeof ALL_GRID_COLUMNS[0] => c != null)
@@ -1314,6 +1317,73 @@ function GridView({
     return [...vals].sort()
   }
 
+  useEffect(() => {
+    columnDragRef.current = columnDrag
+  }, [columnDrag])
+
+  const getDropTarget = (clientX: number): { over: string; side: 'before' | 'after' } | null => {
+    const movable = activeColumns.filter((c) => c.key !== 'name')
+    for (const col of movable) {
+      const el = headerRefs.current[col.key]
+      if (!el) continue
+      const rect = el.getBoundingClientRect()
+      if (clientX >= rect.left && clientX <= rect.right) {
+        return { over: col.key, side: clientX < rect.left + rect.width / 2 ? 'before' : 'after' }
+      }
+    }
+    return null
+  }
+
+  const handleColumnPointerDown = (e: React.MouseEvent, key: string) => {
+    if (key === 'name' || e.button !== 0) return
+    dragIntentRef.current = { key, startX: e.clientX, startY: e.clientY }
+    suppressSortClickRef.current = false
+
+    const onMove = (ev: MouseEvent) => {
+      const intent = dragIntentRef.current
+      if (!intent) return
+      const dx = ev.clientX - intent.startX
+      const dy = ev.clientY - intent.startY
+      if (!columnDrag && Math.abs(dx) + Math.abs(dy) < 6) return
+
+      const drop = getDropTarget(ev.clientX)
+      if (!columnDrag) suppressSortClickRef.current = true
+      setColumnDrag((prev) => ({
+        from: intent.key,
+        over: drop?.over ?? prev?.over ?? null,
+        side: drop?.side ?? prev?.side ?? 'after',
+        x: ev.clientX,
+      }))
+      document.body.style.cursor = 'grabbing'
+    }
+
+    const onUp = () => {
+      const activeDrag = columnDragRef.current
+      const latestIntent = dragIntentRef.current
+      dragIntentRef.current = null
+      document.body.style.cursor = ''
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+
+      if (activeDrag && activeDrag.over && activeDrag.over !== activeDrag.from) {
+        const next = visibleCols.filter((col) => col !== activeDrag.from)
+        const targetIdx = next.indexOf(activeDrag.over)
+        if (targetIdx >= 0) {
+          const insertIdx = activeDrag.side === 'after' ? targetIdx + 1 : targetIdx
+          next.splice(insertIdx, 0, activeDrag.from)
+          onVisibleColsChange(next)
+        }
+      }
+
+      if (latestIntent && !activeDrag) suppressSortClickRef.current = false
+      setColumnDrag(null)
+      window.setTimeout(() => { suppressSortClickRef.current = false }, 0)
+    }
+
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
   return (
     <div className="flex-1 overflow-auto relative">
       <table className="border-collapse text-xs" style={{ tableLayout: 'fixed', width: activeColumns.reduce((s, c) => s + colWidths[c.key], 24) }}>
@@ -1323,44 +1393,24 @@ function GridView({
             {activeColumns.map((col) => {
               const hasFilter = !!(columnFilters[col.key]?.text || columnFilters[col.key]?.selected?.length)
               const isFilterOpen = openFilterCol === col.key
-              const isDragOver = dragOverCol === col.key
+              const isDragTarget = columnDrag?.over === col.key
+              const dragMarkerSide = isDragTarget ? columnDrag?.side : null
+              const isDraggedColumn = columnDrag?.from === col.key
               return (
               <th
                 key={col.key}
-                className={`relative text-left font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-r border-gray-200 dark:border-gray-700 select-none transition-colors ${isDragOver ? 'bg-indigo-100 dark:bg-indigo-900/40' : ''}`}
+                ref={(el) => { headerRefs.current[col.key] = el }}
+                className={`relative text-left font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-r border-gray-200 dark:border-gray-700 select-none transition-colors ${isDragTarget ? 'bg-indigo-100 dark:bg-indigo-900/40' : ''} ${isDraggedColumn ? 'opacity-60' : ''}`}
                 style={{ width: colWidths[col.key] }}
-                draggable={col.key !== 'name'}
-                onDragStart={(e) => {
-                  if (col.key === 'name') { e.preventDefault(); return }
-                  dragColRef.current = col.key
-                  e.dataTransfer.effectAllowed = 'move'
-                  e.dataTransfer.setData('text/plain', col.key)
-                }}
-                onDragOver={(e) => {
-                  e.preventDefault()
-                  if (col.key !== 'name') setDragOverCol(col.key)
-                }}
-                onDragLeave={() => setDragOverCol(null)}
-                onDrop={(e) => {
-                  e.preventDefault()
-                  const from = e.dataTransfer.getData('text/plain')
-                  setDragOverCol(null)
-                  dragColRef.current = null
-                  if (!from || from === col.key) return
-                  const newOrder = [...visibleCols]
-                  const fromIdx = newOrder.indexOf(from)
-                  const toIdx = newOrder.indexOf(col.key)
-                  if (fromIdx < 0 || toIdx < 0) return
-                  newOrder.splice(fromIdx, 1)
-                  newOrder.splice(toIdx, 0, from)
-                  onVisibleColsChange(newOrder)
-                }}
-                onDragEnd={() => { dragColRef.current = null; setDragOverCol(null) }}
               >
                 <div
                   className={`flex items-center gap-1 px-3 py-2 whitespace-nowrap overflow-hidden hover:text-gray-800 dark:hover:text-gray-200 ${col.key !== 'name' ? 'cursor-grab' : 'cursor-pointer'}`}
                   style={{ paddingRight: 28 }}
-                  onClick={() => onSortClick(col.key)}
+                  onMouseDown={(e) => handleColumnPointerDown(e, col.key)}
+                  onClick={() => {
+                    if (suppressSortClickRef.current) return
+                    onSortClick(col.key)
+                  }}
                 >
                   <span className="truncate">{col.label}</span>
                   {sortKey === col.key && (
@@ -1370,6 +1420,11 @@ function GridView({
                     </svg>
                   )}
                 </div>
+                {dragMarkerSide && col.key !== 'name' && (
+                  <div
+                    className={`absolute top-1 bottom-1 w-1 rounded-full bg-indigo-500 z-40 ${dragMarkerSide === 'before' ? 'left-0 -translate-x-1/2' : 'right-0 translate-x-1/2'}`}
+                  />
+                )}
                 {/* Filter icon */}
                 <button
                   className={`absolute right-2.5 top-1/2 -translate-y-1/2 z-20 p-0.5 rounded transition-colors ${hasFilter ? 'text-indigo-400' : 'text-gray-400 dark:text-gray-600 hover:text-gray-600 dark:hover:text-gray-400'}`}

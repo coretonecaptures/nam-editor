@@ -28,6 +28,8 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
   const [draft, setDraft] = useState<AppSettings>({ ...settings })
   const [saved, setSaved] = useState(false)
   const [updateState, setUpdateState] = useState<UpdateState>({ status: 'idle' })
+  const [checklistTemplateOpen, setChecklistTemplateOpen] = useState(false)
+  const [packCatalogOpen, setPackCatalogOpen] = useState(false)
 
   const handleCheckForUpdates = async () => {
     setUpdateState({ status: 'checking' })
@@ -441,6 +443,14 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
             <p className="text-xs text-gray-500 dark:text-gray-500 mb-4">
               Your personal gear library. Items saved here appear in the "From catalog" picker when editing a Pack Info sheet, so you never retype your standard rig.
             </p>
+            <button
+              onClick={() => setPackCatalogOpen((v) => !v)}
+              className="mb-3 inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+            >
+              <span>{packCatalogOpen ? 'Hide catalog items' : 'Edit catalog items'}</span>
+              <span className="text-[10px] text-gray-400">{draft.packGearCatalog.length}</span>
+            </button>
+            {packCatalogOpen && (
             <div className="space-y-5">
               {(['equipment', 'pedals', 'glossary'] as const).map((cat) => {
                 const items = draft.packGearCatalog.filter((i) => i.category === cat)
@@ -494,6 +504,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                 )
               })}
             </div>
+            )}
           </div>
 
           {/* Pack Export Logos */}
@@ -586,6 +597,92 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                 )
               })}
             </div>
+          </div>
+
+          {/* Pack Checklist Template */}
+          <div>
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-sm">✓</span>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Pack Checklist Template</h3>
+              <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
+            </div>
+            <p className="text-xs text-gray-500 dark:text-gray-500 mb-4">
+              Default release steps used when a new Pack Checklist is created for a folder with Pack Info. Keep this collapsed if you rarely change it.
+            </p>
+            <button
+              onClick={() => setChecklistTemplateOpen((v) => !v)}
+              className="mb-3 inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+            >
+              <span>{checklistTemplateOpen ? 'Hide template steps' : 'Edit template steps'}</span>
+              <span className="text-[10px] text-gray-400">{draft.packChecklistTemplate.length}</span>
+            </button>
+            {checklistTemplateOpen && (
+              <div className="space-y-1.5 rounded-lg border border-gray-200 dark:border-gray-800 p-3 bg-gray-50/60 dark:bg-gray-900/30">
+                {draft.packChecklistTemplate.map((item, i) => (
+                  <div key={item.id} className="flex items-center gap-1.5">
+                    <div className="flex flex-col flex-shrink-0">
+                      <button
+                        onClick={() => {
+                          if (i === 0) return
+                          const next = [...draft.packChecklistTemplate]
+                          ;[next[i - 1], next[i]] = [next[i], next[i - 1]]
+                          update('packChecklistTemplate', next)
+                        }}
+                        disabled={i === 0}
+                        className="text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 disabled:opacity-20 disabled:pointer-events-none transition-colors leading-none"
+                        title="Move up"
+                      >
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 15l7-7 7 7" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (i === draft.packChecklistTemplate.length - 1) return
+                          const next = [...draft.packChecklistTemplate]
+                          ;[next[i], next[i + 1]] = [next[i + 1], next[i]]
+                          update('packChecklistTemplate', next)
+                        }}
+                        disabled={i === draft.packChecklistTemplate.length - 1}
+                        className="text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 disabled:opacity-20 disabled:pointer-events-none transition-colors leading-none"
+                        title="Move down"
+                      >
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      value={item.label}
+                      onChange={(e) => {
+                        const next = draft.packChecklistTemplate.map((step, idx) =>
+                          idx === i ? { ...step, label: e.target.value } : step
+                        )
+                        update('packChecklistTemplate', next)
+                      }}
+                      placeholder="Checklist step"
+                      className="flex-1 px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                    />
+                    <button
+                      onClick={() => update('packChecklistTemplate', draft.packChecklistTemplate.filter((_, idx) => idx !== i))}
+                      className="text-gray-400 hover:text-red-500 transition-colors flex-shrink-0"
+                      title="Remove"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+                <button
+                  onClick={() => update('packChecklistTemplate', [...draft.packChecklistTemplate, { id: `step-${Date.now()}`, label: '' }])}
+                  className="pt-1 text-xs text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300 font-medium transition-colors"
+                >
+                  + Add checklist step
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Current Amp Info */}

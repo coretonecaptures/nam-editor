@@ -6,6 +6,16 @@ import { getGearImageSrc } from '../assets/gear'
 interface Props {
   files: NamFile[]
   folderName: string
+  checklistSummary?: {
+    total: number
+    completed: number
+    percent: number
+    targetDate: string
+    liveDate: string
+    isOverdue: boolean
+    releasedLate: boolean
+    releasedOnTime: boolean
+  } | null
   activeGear?: string | null
   activeTone?: string | null
   activePreset?: string | null
@@ -137,7 +147,7 @@ function MiniBar({ label, count, maxCount, color, isActive, onClick }: { label: 
 }
 
 export function FolderDashboard({
-  files, activeGear, activeTone, activePreset, activeMissing, activeEsr, activeRating,
+  files, checklistSummary, activeGear, activeTone, activePreset, activeMissing, activeEsr, activeRating,
   onGearClick, onToneClick, onPresetClick, onMissingClick, onEsrClick, onRatingClick,
 }: Props) {
   const stats = useMemo(() => {
@@ -372,6 +382,55 @@ export function FolderDashboard({
                 isActive={activeRating === 0}
                 onClick={onRatingClick ? () => onRatingClick(activeRating === 0 ? null : 0) : undefined}
               />
+            )}
+          </div>
+        </div>
+      )}
+
+      {checklistSummary && checklistSummary.total > 0 && (
+        <div className="rounded-xl bg-gray-800/40 border border-gray-700/40 p-3">
+          <div className="flex items-start justify-between gap-3 mb-2">
+            <div>
+              <h3 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Checklist Progress</h3>
+              <p className="text-[11px] text-gray-400 mt-1">
+                {checklistSummary.completed} of {checklistSummary.total} steps complete
+              </p>
+            </div>
+            <div className="text-right">
+              <div className="text-lg font-bold text-white leading-none">{checklistSummary.percent}%</div>
+              <div className="text-[10px] text-gray-500 mt-1">
+                {checklistSummary.liveDate
+                  ? 'Released'
+                  : checklistSummary.isOverdue
+                    ? 'Overdue'
+                    : checklistSummary.targetDate
+                      ? 'Scheduled'
+                      : 'No target'}
+              </div>
+            </div>
+          </div>
+          <div className="w-full h-2 rounded-full bg-gray-700/50 overflow-hidden">
+            <div className="h-full rounded-full bg-teal-500 transition-all" style={{ width: `${checklistSummary.percent}%` }} />
+          </div>
+          <div className="flex items-center gap-2 flex-wrap mt-2">
+            {checklistSummary.targetDate && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-700/70 text-gray-300">
+                Target {checklistSummary.targetDate}
+              </span>
+            )}
+            {checklistSummary.liveDate && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-700/70 text-gray-300">
+                Live {checklistSummary.liveDate}
+              </span>
+            )}
+            {checklistSummary.releasedOnTime && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-teal-900/30 text-teal-300">Released on time</span>
+            )}
+            {checklistSummary.releasedLate && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-900/30 text-amber-300">Released late</span>
+            )}
+            {checklistSummary.isOverdue && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-900/30 text-red-300">Target date passed</span>
             )}
           </div>
         </div>

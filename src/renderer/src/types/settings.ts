@@ -4,6 +4,38 @@ export interface FolderOverride {
   modeledBy?: string
 }
 
+export interface PackChecklistTemplateItem {
+  id: string
+  label: string
+}
+
+const DEFAULT_PACK_CHECKLIST_TEMPLATE: PackChecklistTemplateItem[] = [
+  { id: 'all-captures-completed', label: 'All captures completed' },
+  { id: 'test-all-captures-in-nam-player', label: 'Test all captures in NAM Player; remove weak/duplicate profiles' },
+  { id: 'training-completed', label: 'Training completed (REVxSTD + required formats)' },
+  { id: 'hyperaccurate-completed', label: 'HyperAccurate completed or marked N/A' },
+  { id: 'import-into-nam-lab', label: 'Import into NAM Lab and update metadata (Excel + details)' },
+  { id: 'review-esr-ratings', label: 'Review ESR ratings; retrain/recapture if needed' },
+  { id: 'decide-release-format', label: 'Decide release format (Bundle vs DI / CAB / Bundle)' },
+  { id: 'pack-info-sheets-completed', label: 'Pack info sheet(s) completed (incl. glossary + write-ups)' },
+  { id: 'images-finalized', label: 'Images finalized' },
+  { id: 'confirm-no-duplicates', label: 'Confirm no duplicates in pack' },
+  { id: 'verify-final-folder-structure', label: 'Verify final folder structure' },
+  { id: 'export-final-assets', label: 'Export final assets (captures, README, pack info, images)' },
+  { id: 'shopify-product-page-completed', label: 'Shopify product page completed (description + pricing)' },
+  { id: 'upload-to-shopify', label: 'Upload to Shopify and publish (attachments included)' },
+  { id: 'email-campaign-sent', label: 'Email campaign sent (Shopify)' },
+  { id: 'blog-post-published', label: 'Blog post published' },
+  { id: 'forum-facebook-post-live', label: 'Forum / Facebook group post live' },
+  { id: 'social-media-posts', label: 'Social media posts (Facebook, Instagram)' },
+  { id: 'upload-samples-to-tone3000', label: 'Upload samples to Tone3000 (with metadata)' },
+  { id: 'pack-released', label: 'Pack released' },
+]
+
+function cloneChecklistTemplate(items: PackChecklistTemplateItem[]): PackChecklistTemplateItem[] {
+  return items.map((item) => ({ ...item }))
+}
+
 export interface AppSettings {
   // Current Amp Info
   enableAmpInfo: boolean
@@ -64,6 +96,7 @@ export interface AppSettings {
 
   // Pack Info: global gear catalog reused across packs
   packGearCatalog: { category: 'equipment' | 'pedals' | 'glossary'; label: string; value: string }[]
+  packChecklistTemplate: PackChecklistTemplateItem[]
 
   // Folder tree colorization: maps folder name → hex color
   folderNameColors: Record<string, string>
@@ -120,6 +153,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   namStandalonePath: '',
   importPrefixSuffixes: 'DI',
   packGearCatalog: [],
+  packChecklistTemplate: cloneChecklistTemplate(DEFAULT_PACK_CHECKLIST_TEMPLATE),
   folderNameColors: {},
   packLogoLight: '',
   packLogoDark: '',

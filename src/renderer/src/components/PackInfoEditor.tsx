@@ -4,6 +4,15 @@ import { AppSettings } from '../types/settings'
 import { PACK_CAPTURE_COLUMNS, DEFAULT_EXPORT_COLUMNS, generatePackHtml } from '../utils/packExport'
 
 export type CatalogItem = AppSettings['packGearCatalog'][number]
+export type ChecklistTemplateItem = AppSettings['packChecklistTemplate'][number]
+
+export interface PackChecklistItem {
+  id: string
+  label: string
+  completed: boolean
+  completedDate: string
+  notes: string
+}
 
 export interface PackInfo {
   title: string
@@ -19,7 +28,9 @@ export interface PackInfo {
   exportExcludedCaptures: string[]
   exportColumns: string[]
   recommendedInputGain: string
-  notes: string
+  checklistItems: PackChecklistItem[]
+  checklistNotes: string
+  targetDate: string
   liveDate: string
   versionInfo: string
 }
@@ -38,9 +49,43 @@ const EMPTY_PACK: PackInfo = {
   exportExcludedCaptures: [],
   exportColumns: DEFAULT_EXPORT_COLUMNS,
   recommendedInputGain: '',
-  notes: '',
+  checklistItems: [],
+  checklistNotes: '',
+  targetDate: '',
   liveDate: '',
   versionInfo: '',
+}
+
+function createChecklistId(): string {
+  return `check-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function createChecklistItemsFromTemplate(items: ChecklistTemplateItem[]): PackChecklistItem[] {
+  return items.map((item) => ({
+    id: createChecklistId(),
+    label: item.label,
+    completed: false,
+    completedDate: '',
+    notes: '',
+  }))
+}
+
+function normalizeChecklistItem(value: Partial<PackChecklistItem>): PackChecklistItem {
+  return {
+    id: value.id ?? createChecklistId(),
+    label: value.label ?? '',
+    completed: value.completed === true,
+    completedDate: value.completedDate ?? '',
+    notes: value.notes ?? '',
+  }
+}
+
+function normalizeChecklistLabel(value: string): string {
+  return value.trim().toLowerCase()
 }
 
 interface Props {
@@ -50,11 +95,15 @@ interface Props {
   defaultCapturedBy?: string
   catalog?: CatalogItem[]
   onCatalogChange?: (catalog: CatalogItem[]) => void
+  checklistTemplate?: ChecklistTemplateItem[]
+  onChecklistTemplateChange?: (items: ChecklistTemplateItem[]) => void
   onPackSaved?: (folderPath: string, hasData: boolean) => void
   logoLight?: string
   logoDark?: string
   darkAccentColor?: string
   allFolderPaths?: string[]
+  parentPackPath?: string | null
+  mode?: 'info' | 'checklist'
 }
 
 function CopyFolderPicker({
@@ -99,7 +148,7 @@ function CopyFolderPicker({
       className="absolute z-50 top-full right-0 mt-1 w-72 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl overflow-hidden"
     >
       <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 text-xs font-semibold text-gray-600 dark:text-gray-300">
-        Copy pack info to…
+        Copy pack info toâ€¦
       </div>
       <div className="px-2 py-1.5 border-b border-gray-200 dark:border-gray-700">
         <input
@@ -107,7 +156,7 @@ function CopyFolderPicker({
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Filter folders…"
+          placeholder="Filter foldersâ€¦"
           className="w-full px-2 py-1 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-gray-800 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:border-teal-500"
         />
       </div>
@@ -254,7 +303,7 @@ function RowEditor<T extends Record<string, string>>({
               onClick={() => setShowPicker((v) => !v)}
               className="text-xs text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300 font-medium transition-colors"
             >
-              From catalog ({catalogItems.length})…
+              From catalog ({catalogItems.length})â€¦
             </button>
             {showPicker && (
               <div className="absolute left-0 top-5 z-30 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg min-w-[200px] max-w-[280px]">
@@ -309,11 +358,15 @@ export function PackInfoEditor({
   defaultCapturedBy = '',
   catalog = [],
   onCatalogChange,
+  checklistTemplate = [],
+  onChecklistTemplateChange,
   onPackSaved,
   logoLight,
   logoDark,
   darkAccentColor = '#f97316',
   allFolderPaths = [],
+  parentPackPath = null,
+  mode = 'info',
 }: Props) {
   const [pack, setPack] = useState<PackInfo>(EMPTY_PACK)
   const savedPackRef = useRef<PackInfo>(EMPTY_PACK)
@@ -329,6 +382,7 @@ export function PackInfoEditor({
   })
   const [copyPickerOpen, setCopyPickerOpen] = useState(false)
   const [copyStatus, setCopyStatus] = useState<string | null>(null)
+  const [parentChecklistItems, setParentChecklistItems] = useState<PackChecklistItem[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -351,12 +405,16 @@ export function PackInfoEditor({
               exportExcludedCaptures: d.exportExcludedCaptures ?? [],
               exportColumns: d.exportColumns ?? DEFAULT_EXPORT_COLUMNS,
               recommendedInputGain: d.recommendedInputGain ?? '',
-              notes: d.notes ?? '',
+              checklistItems: Array.isArray(d.checklistItems)
+                ? d.checklistItems.map((item) => normalizeChecklistItem(item))
+                : createChecklistItemsFromTemplate(checklistTemplate),
+              checklistNotes: d.checklistNotes ?? d.notes ?? '',
+              targetDate: d.targetDate ?? '',
               liveDate: d.liveDate ?? '',
               versionInfo: d.versionInfo ?? '',
             }
           })()
-        : { ...EMPTY_PACK, capturedBy: defaultCapturedBy }
+        : { ...EMPTY_PACK, capturedBy: defaultCapturedBy, checklistItems: createChecklistItemsFromTemplate(checklistTemplate) }
       setPack(loaded)
       savedPackRef.current = loaded
       setSaved(true)
@@ -364,11 +422,92 @@ export function PackInfoEditor({
     return () => { cancelled = true }
   }, [folderPath])
 
+  useEffect(() => {
+    if (!parentPackPath) {
+      setParentChecklistItems([])
+      return
+    }
+    let cancelled = false
+    window.api.readPackInfo(parentPackPath).then((res) => {
+      if (cancelled) return
+      const data = res.success && res.data ? (res.data as Partial<PackInfo>) : null
+      const items = Array.isArray(data?.checklistItems)
+        ? data.checklistItems.map((item) => normalizeChecklistItem(item))
+        : []
+      setParentChecklistItems(items)
+    }).catch(() => {
+      if (!cancelled) setParentChecklistItems([])
+    })
+    return () => { cancelled = true }
+  }, [parentPackPath])
+
   const update = useCallback(<K extends keyof PackInfo>(key: K, val: PackInfo[K]) => {
     setPack((prev) => ({ ...prev, [key]: val }))
     setSaved(false)
     setStatus(null)
   }, [])
+
+  const updateChecklistItems = useCallback((items: PackChecklistItem[]) => {
+    setPack((prev) => ({ ...prev, checklistItems: items }))
+    setSaved(false)
+    setStatus(null)
+  }, [])
+
+  const setChecklistItemCompleted = useCallback((id: string, completed: boolean) => {
+    updateChecklistItems(pack.checklistItems.map((item) =>
+      item.id === id
+        ? {
+            ...item,
+            completed,
+            completedDate: completed ? (item.completedDate || todayIso()) : '',
+          }
+        : item
+    ))
+  }, [pack.checklistItems, updateChecklistItems])
+
+  const addChecklistItem = useCallback(() => {
+    updateChecklistItems([...pack.checklistItems, {
+      id: createChecklistId(),
+      label: '',
+      completed: false,
+      completedDate: '',
+      notes: '',
+    }])
+  }, [pack.checklistItems, updateChecklistItems])
+
+  const addChecklistItemToTemplate = useCallback((item: PackChecklistItem) => {
+    const label = item.label.trim()
+    if (!label || !onChecklistTemplateChange) return
+    if (checklistTemplate.some((step) => step.label.trim().toLowerCase() === label.toLowerCase())) return
+    onChecklistTemplateChange([...checklistTemplate, { id: `step-${Date.now()}`, label }])
+  }, [checklistTemplate, onChecklistTemplateChange])
+
+  const syncChecklistItemFromParent = useCallback((item: PackChecklistItem) => {
+    const label = normalizeChecklistLabel(item.label)
+    if (!label) {
+      setStatus('Checklist item needs a name before it can sync')
+      return
+    }
+    const parentItem = parentChecklistItems.find((candidate) => normalizeChecklistLabel(candidate.label) === label)
+    if (!parentItem) {
+      setStatus('Parent Pack does not contain this checklist item.')
+      return
+    }
+    updateChecklistItems(
+      pack.checklistItems.map((step) =>
+        step.id === item.id
+          ? {
+              ...step,
+              completed: parentItem.completed,
+              completedDate: parentItem.completedDate,
+              notes: parentItem.notes,
+            }
+          : step
+      )
+    )
+    setStatus(`Synced "${item.label}" from Parent Pack`)
+    setTimeout(() => setStatus(null), 2000)
+  }, [pack.checklistItems, parentChecklistItems, updateChecklistItems])
 
   const addToCatalog = useCallback((category: CatalogItem['category'], label: string, value: string) => {
     if (!label.trim() || !onCatalogChange) return
@@ -430,7 +569,7 @@ export function PackInfoEditor({
       setTimeout(() => setStatus(null), 2000)
       onPackSaved?.(folderPath.replace(/\\/g, '/'), !!pack.title.trim())
     } else {
-      setStatus('Save failed')
+      setStatus(`Save failed: ${res.error ?? 'unknown error'}`)
     }
   }
 
@@ -441,21 +580,21 @@ export function PackInfoEditor({
     const html = generatePackHtml(pack, folderPath, folderName, captures, darkExport, logo, darkAccentColor)
     const res = await window.api.exportPackSheet(html)
     setExporting(false)
-    if (!res.success) setStatus('Export failed')
+    if (!res.success) setStatus(`Export failed: ${res.error ?? 'unknown error'}`)
   }
 
   const handleCopyTo = async (targetPath: string) => {
     setCopyPickerOpen(false)
     const res = await window.api.writePackInfo(targetPath, pack)
-    if (res.success) {
-      const targetName = targetPath.replace(/\\/g, '/').split('/').pop() ?? targetPath
-      onPackSaved?.(targetPath.replace(/\\/g, '/'), !!pack.title.trim())
-      setCopyStatus(`Copied to "${targetName}"`)
-      setTimeout(() => setCopyStatus(null), 3000)
-    } else {
-      setCopyStatus('Copy failed')
-      setTimeout(() => setCopyStatus(null), 3000)
-    }
+      if (res.success) {
+        const targetName = targetPath.replace(/\\/g, '/').split('/').pop() ?? targetPath
+        onPackSaved?.(targetPath.replace(/\\/g, '/'), !!pack.title.trim())
+        setCopyStatus(`Copied to "${targetName}"`)
+        setTimeout(() => setCopyStatus(null), 3000)
+      } else {
+        setCopyStatus(`Copy failed: ${res.error ?? 'unknown error'}`)
+        setTimeout(() => setCopyStatus(null), 3000)
+      }
   }
 
   const isChanged = (key: keyof PackInfo) =>
@@ -469,38 +608,51 @@ export function PackInfoEditor({
   const sectionChanged = (key: keyof PackInfo) =>
     isChanged(key) ? 'ring-1 ring-amber-500/40 rounded' : ''
   const labelCls = 'text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 block'
+  const checklistCompletedCount = pack.checklistItems.filter((item) => item.completed).length
+  const checklistTotalCount = pack.checklistItems.length
+  const checklistPercent = checklistTotalCount > 0 ? Math.round((checklistCompletedCount / checklistTotalCount) * 100) : 0
+  const today = todayIso()
+  const isReleased = !!pack.liveDate
+  const isOverdue = !isReleased && !!pack.targetDate && pack.targetDate < today
+  const releasedLate = !!pack.liveDate && !!pack.targetDate && pack.liveDate > pack.targetDate
+  const releasedOnTime = !!pack.liveDate && !!pack.targetDate && pack.liveDate <= pack.targetDate
+  const isPositiveStatus = !!status && (/^saved$/i.test(status) || /^synced\b/i.test(status))
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      {/* Header */}
-      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
-        <div>
-          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Pack Info</h3>
-          <p className="text-xs text-gray-500 dark:text-gray-400">{folderName}</p>
-        </div>
-        <div className="flex items-center gap-2 relative">
+        {/* Header */}
+        <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">{mode === 'checklist' ? 'Pack Checklist' : 'Pack Info'}</h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400">{folderName}</p>
+          </div>
+          <div className="flex items-center gap-2 relative">
           {(status || copyStatus) && (
-            <span className={`text-xs ${copyStatus ? 'text-teal-600 dark:text-teal-400' : status === 'Saved' ? 'text-teal-600 dark:text-teal-400' : 'text-red-500'}`}>
+            <span className={`text-xs ${copyStatus ? 'text-teal-600 dark:text-teal-400' : isPositiveStatus ? 'text-teal-600 dark:text-teal-400' : 'text-red-500'}`}>
               {copyStatus ?? status}
             </span>
           )}
-          <label className="flex items-center gap-1.5 cursor-pointer select-none" title="Dark mode export">
-            <span className="text-xs text-gray-500 dark:text-gray-400">Dark</span>
-            <div
-              onClick={() => toggleDarkExport(!darkExport)}
-              className={`relative w-7 h-4 rounded-full transition-colors ${darkExport ? 'bg-orange-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-            >
-              <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${darkExport ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-            </div>
-          </label>
-          <button
-            onClick={handleExport}
-            disabled={exporting}
-            className="text-xs px-2.5 py-1 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
-          >
-            Export PDF…
-          </button>
-          {/* Copy to… — deferred: NAM Lab's nested folder structure makes target
+            {mode === 'info' && (
+              <>
+                <label className="flex items-center gap-1.5 cursor-pointer select-none" title="Dark mode export">
+                  <span className="text-xs text-gray-500 dark:text-gray-400">Dark</span>
+                  <div
+                    onClick={() => toggleDarkExport(!darkExport)}
+                    className={`relative w-7 h-4 rounded-full transition-colors ${darkExport ? 'bg-orange-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                  >
+                    <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${darkExport ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+                  </div>
+                </label>
+                <button
+                  onClick={handleExport}
+                  disabled={exporting}
+                  className="text-xs px-2.5 py-1 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+                >
+                  Export PDFâ€¦
+                </button>
+              </>
+            )}
+          {/* Copy toâ€¦ â€” deferred: NAM Lab's nested folder structure makes target
               selection non-trivial; capture-lab has flat folders so its picker
               worked out of the box. Needs UX design before enabling. */}
           {false && allFolderPaths.length > 1 && (
@@ -512,7 +664,7 @@ export function PackInfoEditor({
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
-              Copy to…
+              Copy toâ€¦
             </button>
           )}
           <button
@@ -535,6 +687,138 @@ export function PackInfoEditor({
 
       {/* Form */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-1">
+        {mode === 'checklist' ? (
+          <>
+            <div className="space-y-3 pb-3">
+              <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-3 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Progress</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      {checklistCompletedCount} of {checklistTotalCount} steps complete
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-lg font-semibold text-gray-800 dark:text-gray-100">{checklistPercent}%</p>
+                    <p className="text-[10px] text-gray-400 dark:text-gray-500">
+                      {isReleased ? 'Released' : isOverdue ? 'Overdue' : pack.targetDate ? 'Scheduled' : 'No target date'}
+                    </p>
+                  </div>
+                </div>
+                <div className="w-full h-2 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+                  <div className="h-full bg-teal-500 transition-all" style={{ width: `${checklistPercent}%` }} />
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {releasedOnTime && <span className="text-[10px] px-2 py-0.5 rounded-full bg-teal-100 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300">Released on time</span>}
+                  {releasedLate && <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300">Released late</span>}
+                  {isOverdue && <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300">Target date passed</span>}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <div>
+                  <label className={labelCls}>Target Date</label>
+                  <input type="date" value={pack.targetDate} onChange={(e) => update('targetDate', e.target.value)} className={inputCls('targetDate')} />
+                </div>
+                <div>
+                  <label className={labelCls}>Live Date</label>
+                  <input type="date" value={pack.liveDate} onChange={(e) => update('liveDate', e.target.value)} className={inputCls('liveDate')} />
+                </div>
+                <div>
+                  <label className={labelCls}>Version</label>
+                  <input type="text" value={pack.versionInfo} onChange={(e) => update('versionInfo', e.target.value)} placeholder="v1.0" className={inputCls('versionInfo')} />
+                </div>
+              </div>
+            </div>
+
+            <SectionHeader label="Checklist" hint="Track the release steps needed to ship this pack" />
+            <div className="space-y-2 pb-4">
+              {pack.checklistItems.length === 0 ? (
+                <div className="rounded border border-dashed border-gray-300 dark:border-gray-700 px-3 py-3 text-xs text-gray-400 dark:text-gray-500">
+                  No checklist steps yet.
+                </div>
+              ) : (
+                pack.checklistItems.map((item, index) => {
+                  const inTemplate = checklistTemplate.some((step) => step.label.trim().toLowerCase() === item.label.trim().toLowerCase())
+                  return (
+                    <div key={item.id} className="rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/40 p-3 space-y-2">
+                      <div className="flex items-start gap-2">
+                        <input type="checkbox" checked={item.completed} onChange={(e) => setChecklistItemCompleted(item.id, e.target.checked)} className="mt-0.5 w-4 h-4 rounded accent-teal-600" />
+                        <div className="flex-1 space-y-2">
+                          <input
+                            type="text"
+                            value={item.label}
+                            onChange={(e) => updateChecklistItems(pack.checklistItems.map((step) => step.id === item.id ? { ...step, label: e.target.value } : step))}
+                            placeholder="Checklist step"
+                            className="w-full px-2 py-1.5 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500"
+                          />
+                          <div className="grid grid-cols-1 md:grid-cols-[160px_1fr] gap-2">
+                            <input
+                              type="date"
+                              value={item.completedDate}
+                              onChange={(e) => updateChecklistItems(pack.checklistItems.map((step) => step.id === item.id ? { ...step, completedDate: e.target.value, completed: e.target.value ? true : step.completed } : step))}
+                              className="px-2 py-1.5 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500"
+                            />
+                            <input
+                              type="text"
+                              value={item.notes}
+                              onChange={(e) => updateChecklistItems(pack.checklistItems.map((step) => step.id === item.id ? { ...step, notes: e.target.value } : step))}
+                              placeholder="Optional note"
+                              className="px-2 py-1.5 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-center gap-0.5 flex-shrink-0">
+                          <button onClick={() => { if (index === 0) return; const next = [...pack.checklistItems]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; updateChecklistItems(next) }} disabled={index === 0} className="text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 disabled:opacity-20 disabled:pointer-events-none transition-colors leading-none" title="Move up">
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 15l7-7 7 7" /></svg>
+                          </button>
+                          <button onClick={() => { if (index === pack.checklistItems.length - 1) return; const next = [...pack.checklistItems]; [next[index], next[index + 1]] = [next[index + 1], next[index]]; updateChecklistItems(next) }} disabled={index === pack.checklistItems.length - 1} className="text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 disabled:opacity-20 disabled:pointer-events-none transition-colors leading-none" title="Move down">
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" /></svg>
+                          </button>
+                          {parentPackPath && (
+                            <button
+                              onClick={() => syncChecklistItemFromParent(item)}
+                              className="mt-1 text-[10px] px-1.5 py-0.5 rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-300 hover:border-teal-500 hover:text-teal-600 dark:hover:text-teal-300 transition-colors"
+                              title="Sync this row with Parent Pack"
+                            >
+                              Sync
+                            </button>
+                          )}
+                          {!inTemplate && item.label.trim() && (
+                            <button onClick={() => addChecklistItemToTemplate(item)} className="mt-1 text-[10px] text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300" title="Add this step to the global checklist template">
+                              Template
+                            </button>
+                          )}
+                          <button onClick={() => updateChecklistItems(pack.checklistItems.filter((step) => step.id !== item.id))} className="mt-1 text-gray-400 hover:text-red-500 transition-colors" title="Remove step">
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+              <div className="flex items-center gap-3 flex-wrap">
+                <button onClick={addChecklistItem} className="text-xs text-teal-600 dark:text-teal-400 hover:text-teal-700 dark:hover:text-teal-300 font-medium transition-colors">+ Add step</button>
+                {checklistTemplate.length > 0 && (
+                  <button onClick={() => updateChecklistItems(createChecklistItemsFromTemplate(checklistTemplate))} className="text-xs text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300 font-medium transition-colors">Reset from template</button>
+                )}
+              </div>
+            </div>
+
+            <SectionHeader label="Release Notes" hint="Internal notes, release notes, and handoff details" />
+            <div className="pb-4">
+              <textarea
+                value={pack.checklistNotes}
+                onChange={(e) => update('checklistNotes', e.target.value)}
+                placeholder="Release notes, blockers, known issues, launch reminders..."
+                rows={6}
+                className={`${inputCls('checklistNotes')} resize-y min-h-[110px]`}
+              />
+            </div>
+          </>
+        ) : (
+          <>
 
         {/* Identity */}
         <div className="space-y-2 pb-1">
@@ -572,7 +856,7 @@ export function PackInfoEditor({
           <label className={labelCls}>Description</label>
           <textarea
             value={pack.description}
-            placeholder="Describe the amp, the tones, how it was captured…"
+            placeholder="Describe the amp, the tones, how it was capturedâ€¦"
             onChange={(e) => update('description', e.target.value)}
             rows={7}
             className={`${inputCls('description')} resize-y leading-relaxed min-h-[80px] font-mono text-xs`}
@@ -586,12 +870,12 @@ export function PackInfoEditor({
             {' '}<code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">- bullet</code>
             {' '}<code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">---</code>
             {' '}Color: <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">[orange]text[/orange]</code>
-            {' — '}available: orange, teal, red, blue, green, dim, white
+            {' â€” '}available: orange, teal, red, blue, green, dim, white
           </div>
         </div>
 
         {/* Captures */}
-        <SectionHeader label="Captures" hint={`${captures.length} loaded from files — check/uncheck to include in export`} />
+        <SectionHeader label="Captures" hint={`${captures.length} loaded from files â€” check/uncheck to include in export`} />
         {/* Subfolder filter + column chooser row */}
         <div className="mb-2 flex items-center gap-2">
         {subfolders.length > 0 && (
@@ -735,7 +1019,7 @@ export function PackInfoEditor({
                     </div>
                   )
                 })}
-                {/* Inactive columns — click to add at end */}
+                {/* Inactive columns â€” click to add at end */}
                 {PACK_CAPTURE_COLUMNS.filter((c) => !pack.exportColumns.includes(c.id)).map((col) => {
                   const atMax = pack.exportColumns.length >= 6
                   return (
@@ -804,7 +1088,7 @@ export function PackInfoEditor({
                                   update('exportExcludedCaptures', next)
                                 }}
                                 className="w-3 h-3 rounded accent-teal-600 cursor-pointer"
-                                title={excluded ? 'Excluded from export — click to include' : 'Included in export — click to exclude'}
+                                title={excluded ? 'Excluded from export â€” click to include' : 'Included in export â€” click to exclude'}
                               />
                             </td>
                             <td className="px-2 py-0.5 text-gray-800 dark:text-gray-200 truncate">{key}</td>
@@ -824,7 +1108,7 @@ export function PackInfoEditor({
                     <span className="font-medium text-gray-700 dark:text-gray-300">{subfoldVisible.length}</span>
                     {' captures in export'}
                     {captures.length !== subfoldVisible.length && (
-                      <span className="text-gray-400 dark:text-gray-600"> · {captures.length - subfoldVisible.length} hidden by folder filter</span>
+                      <span className="text-gray-400 dark:text-gray-600"> Â· {captures.length - subfoldVisible.length} hidden by folder filter</span>
                     )}
                   </span>
                   {pack.exportExcludedCaptures.length > 0 && (
@@ -842,7 +1126,7 @@ export function PackInfoEditor({
         </div>
 
         {/* Equipment */}
-        <SectionHeader label="Equipment" hint="Amp · Cabinet · Mic(s) · Preamp · Interface" />
+        <SectionHeader label="Equipment" hint="Amp Â· Cabinet Â· Mic(s) Â· Preamp Â· Interface" />
         <div className={sectionChanged('equipment')}>
           <RowEditor
             rows={pack.equipment}
@@ -856,7 +1140,7 @@ export function PackInfoEditor({
         </div>
 
         {/* Pedals */}
-        <SectionHeader label="Pedals" hint="Boost · Drive · EQ · Effects in chain" />
+        <SectionHeader label="Pedals" hint="Boost Â· Drive Â· EQ Â· Effects in chain" />
         <div className={sectionChanged('pedals')}>
           <RowEditor
             rows={pack.pedals}
@@ -869,8 +1153,8 @@ export function PackInfoEditor({
           />
         </div>
 
-        {/* Switches — no catalog (per-amp) */}
-        <SectionHeader label="Switches & Modes" hint="Channel modes · Tone stack · Voice switches" />
+        {/* Switches â€” no catalog (per-amp) */}
+        <SectionHeader label="Switches & Modes" hint="Channel modes Â· Tone stack Â· Voice switches" />
         <div className={sectionChanged('switches')}>
           <RowEditor
             rows={pack.switches}
@@ -890,70 +1174,39 @@ export function PackInfoEditor({
             onChange={(rows) => update('glossary', rows)}
             keys={['term', 'description']}
             addLabel="Add entry"
-            placeholders={['DI', 'Direct Inject — no cabinet']}
+            placeholders={['DI', 'Direct Inject â€” no cabinet']}
             catalogItems={catalogFor('glossary')}
             onSaveToCatalog={(label, value) => addToCatalog('glossary', label, value)}
           />
         </div>
 
-        {/* Pack Status & Notes */}
-        <SectionHeader label="Pack Status" hint="Version, release date, and notes" />
+        {/* Release Prep */}
+        <SectionHeader label="Release Prep" hint="Customer-facing input guidance that stays with Pack Info" />
         <div className="pb-4 space-y-2">
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className={labelCls}>Live Date</label>
-              <input
-                type="date"
-                value={pack.liveDate}
-                onChange={(e) => update('liveDate', e.target.value)}
-                className={inputCls('liveDate')}
-              />
-            </div>
-            <div>
-              <label className={labelCls}>Version</label>
-              <input
-                type="text"
-                value={pack.versionInfo}
-                onChange={(e) => update('versionInfo', e.target.value)}
-                placeholder="v1.0"
-                className={inputCls('versionInfo')}
-              />
-            </div>
-          </div>
           <div>
             <label className={labelCls}>Recommended Input Gain</label>
             <input
               type="text"
               value={pack.recommendedInputGain}
               onChange={(e) => update('recommendedInputGain', e.target.value)}
-              placeholder="e.g. –18 dBu, unity, …"
+              placeholder="e.g. -18 dBu, unity, +12.5 dBu"
               className={inputCls('recommendedInputGain')}
-            />
-          </div>
-          <div>
-            <label className={labelCls}>Notes / Comments</label>
-            <textarea
-              value={pack.notes}
-              onChange={(e) => update('notes', e.target.value)}
-              placeholder="Internal notes, change log, known issues…"
-              rows={4}
-              className={`${inputCls('notes')} resize-y min-h-[80px]`}
             />
           </div>
         </div>
 
         {/* Footer */}
-        <SectionHeader label="Footer" hint="Contact info, copyright, links…" />
+        <SectionHeader label="Footer" hint="Contact info, copyright, linksâ€¦" />
         <div className="pb-4">
           <textarea
             value={pack.footer}
-            placeholder="© 2025 Core Tone Captures · cortonecaptures.com"
+            placeholder="Â© 2025 Core Tone Captures Â· cortonecaptures.com"
             onChange={(e) => update('footer', e.target.value)}
             rows={2}
             className={`${inputCls('footer')} resize-none font-mono text-xs`}
           />
           <p className="mt-1 px-1 text-[10px] text-gray-400 dark:text-gray-500">
-            Supports same formatting as description — <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">**bold**</code>, <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">[orange]color[/orange]</code>, etc.
+            Supports same formatting as description â€” <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">**bold**</code>, <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">[orange]color[/orange]</code>, etc.
           </p>
         </div>
 
@@ -964,6 +1217,8 @@ export function PackInfoEditor({
             For dark mode exports, set margins to <span className="font-semibold not-italic">None</span> and enable <span className="font-semibold not-italic">Background Graphics</span> in the print dialog to preserve background colours.
           </p>
         </div>
+          </>
+        )}
       </div>
     </div>
   )
