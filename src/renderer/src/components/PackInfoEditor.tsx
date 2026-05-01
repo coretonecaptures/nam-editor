@@ -731,6 +731,17 @@ export function PackInfoEditor({
               </div>
             </div>
 
+            <SectionHeader label="Release Notes" hint="Internal notes, release notes, and handoff details" />
+            <div className="pb-4">
+              <textarea
+                value={pack.checklistNotes}
+                onChange={(e) => update('checklistNotes', e.target.value)}
+                placeholder="Release notes, blockers, known issues, launch reminders..."
+                rows={6}
+                className={`${inputCls('checklistNotes')} resize-y min-h-[110px]`}
+              />
+            </div>
+
             <SectionHeader label="Checklist" hint="Track the release steps needed to ship this pack" />
             <div className="space-y-2 pb-4">
               {pack.checklistItems.length === 0 ? (
@@ -801,20 +812,17 @@ export function PackInfoEditor({
               <div className="flex items-center gap-3 flex-wrap">
                 <button onClick={addChecklistItem} className="text-xs text-teal-600 dark:text-teal-400 hover:text-teal-700 dark:hover:text-teal-300 font-medium transition-colors">+ Add step</button>
                 {checklistTemplate.length > 0 && (
-                  <button onClick={() => updateChecklistItems(createChecklistItemsFromTemplate(checklistTemplate))} className="text-xs text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300 font-medium transition-colors">Reset from template</button>
+                  <button
+                    onClick={() => {
+                      if (!window.confirm('Do you really want to clear all current checklist rows and reset them from the template?')) return
+                      updateChecklistItems(createChecklistItemsFromTemplate(checklistTemplate))
+                    }}
+                    className="text-xs text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300 font-medium transition-colors"
+                  >
+                    Reset from template
+                  </button>
                 )}
               </div>
-            </div>
-
-            <SectionHeader label="Release Notes" hint="Internal notes, release notes, and handoff details" />
-            <div className="pb-4">
-              <textarea
-                value={pack.checklistNotes}
-                onChange={(e) => update('checklistNotes', e.target.value)}
-                placeholder="Release notes, blockers, known issues, launch reminders..."
-                rows={6}
-                className={`${inputCls('checklistNotes')} resize-y min-h-[110px]`}
-              />
             </div>
           </>
         ) : (

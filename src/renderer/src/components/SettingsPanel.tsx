@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { AppSettings } from '../types/settings'
+import { AppSettings, DEFAULT_PACK_CHECKLIST_TEMPLATE, cloneChecklistTemplate } from '../types/settings'
 
 const PACK_DARK_ACCENT_PRESETS = [
   '#f97316',
@@ -609,13 +609,22 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
             <p className="text-xs text-gray-500 dark:text-gray-500 mb-4">
               Default release steps used when a new Pack Checklist is created for a folder with Pack Info. Keep this collapsed if you rarely change it.
             </p>
-            <button
-              onClick={() => setChecklistTemplateOpen((v) => !v)}
-              className="mb-3 inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-            >
-              <span>{checklistTemplateOpen ? 'Hide template steps' : 'Edit template steps'}</span>
-              <span className="text-[10px] text-gray-400">{draft.packChecklistTemplate.length}</span>
-            </button>
+            <div className="mb-3 flex items-center gap-2 flex-wrap">
+              <button
+                onClick={() => setChecklistTemplateOpen((v) => !v)}
+                className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+              >
+                <span>{checklistTemplateOpen ? 'Hide template steps' : 'Edit template steps'}</span>
+                <span className="text-[10px] text-gray-400">{draft.packChecklistTemplate.length}</span>
+              </button>
+              <button
+                onClick={() => update('packChecklistTemplate', cloneChecklistTemplate(DEFAULT_PACK_CHECKLIST_TEMPLATE))}
+                className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors"
+                title="Replace the checklist template with the current NAM Lab defaults"
+              >
+                Reset to current defaults
+              </button>
+            </div>
             {checklistTemplateOpen && (
               <div className="space-y-1.5 rounded-lg border border-gray-200 dark:border-gray-800 p-3 bg-gray-50/60 dark:bg-gray-900/30">
                 {draft.packChecklistTemplate.map((item, i) => (

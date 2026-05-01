@@ -19,6 +19,7 @@ import { TrainingCoverageModal } from './components/TrainingCoverageModal'
 import { FolderCompareModal } from './components/FolderCompareModal'
 import { FolderGallery, FolderImagesData } from './components/FolderGallery'
 import { FolderDashboard } from './components/FolderDashboard'
+import { FolderReadmePanel } from './components/FolderReadmePanel'
 import { PackInfoEditor, type PackInfo, type PackChecklistItem } from './components/PackInfoEditor'
 import { BundleEditor } from './components/BundleEditor'
 import { NamDashboard } from './components/NamDashboard'
@@ -43,6 +44,14 @@ interface ChecklistSummary {
   releasedOnTime: boolean
 }
 
+interface DashboardChecklistEntry {
+  folderPath: string
+  folderLabel: string
+  status: string
+  progressLabel: string
+  percent: number
+}
+
 function summarizeChecklist(packData: unknown): ChecklistSummary | null {
   if (!packData || typeof packData !== 'object') return null
   const pack = packData as Partial<PackInfo> & { checklistItems?: Partial<PackChecklistItem>[] }
@@ -65,6 +74,15 @@ function summarizeChecklist(packData: unknown): ChecklistSummary | null {
     releasedLate: !!liveDate && !!targetDate && liveDate > targetDate,
     releasedOnTime: !!liveDate && !!targetDate && liveDate <= targetDate,
   }
+}
+
+function formatChecklistStatus(summary: ChecklistSummary): string {
+  if (summary.liveDate) {
+    return summary.releasedLate ? 'Released late' : summary.releasedOnTime ? 'Released on time' : 'Released'
+  }
+  if (summary.isOverdue) return 'Overdue'
+  if (summary.targetDate) return `Target ${summary.targetDate}`
+  return 'In progress'
 }
 
 const HISTORY_STORAGE_KEY = 'nam-lab-history'
@@ -133,6 +151,8 @@ declare global {
       readPackInfo: (folderPath: string) => Promise<{ success: boolean; data: unknown }>
       writePackInfo: (folderPath: string, data: unknown) => Promise<{ success: boolean; error?: string }>
       deletePackInfo: (folderPath: string) => Promise<{ success: boolean; error?: string }>
+      readReadme: (folderPath: string) => Promise<{ success: boolean; exists: boolean; fileName: string; content: string; error?: string }>
+      writeReadme: (folderPath: string, fileName: string, content: string) => Promise<{ success: boolean; fileName?: string; error?: string }>
       exportPackSheet: (html: string) => Promise<{ success: boolean; error?: string }>
       readBundle: (folderPath: string) => Promise<{ success: boolean; data: unknown }>
       writeBundle: (folderPath: string, data: unknown) => Promise<{ success: boolean; error?: string }>
@@ -275,6 +295,7 @@ export default function App() {
   const treeScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [folderChanged, setFolderChanged] = useState(false)
   const [activeFolderChecklistSummary, setActiveFolderChecklistSummary] = useState<ChecklistSummary | null>(null)
+  const [dashboardChecklistEntries, setDashboardChecklistEntries] = useState<DashboardChecklistEntry[]>([])
   const [showDuplicates, setShowDuplicates] = useState(false)
   const [metadataClipboard, setMetadataClipboard] = useState<{ sourceName: string; metadata: Partial<NamFile['metadata']> } | null>(null)
   const [importModal, setImportModal] = useState<{ folderName: string; exactMatches: ImportMatch[]; prefixMatches: ImportMatch[]; unmatchedNames: string[] } | null>(null)
@@ -290,7 +311,7 @@ export default function App() {
   })
 
   const [folderImages, setFolderImages] = useState<FolderImagesData | null>(null)
-  const [folderPanelTab, setFolderPanelTab] = useState<'overview' | 'pack' | 'checklist' | 'gallery'>(settings.defaultFolderTab)
+  const [folderPanelTab, setFolderPanelTab] = useState<'overview' | 'pack' | 'checklist' | 'gallery' | 'readme'>(settings.defaultFolderTab)
   // Path of the ancestor that owns the pack info for the current folder (null = current folder may own one)
   const [packInfoAncestor, setPackInfoAncestor] = useState<string | null>(null)
   // Set of folder paths that have a valid nam-pack.json (non-empty title) — drives blue dot in tree
@@ -355,6 +376,42 @@ export default function App() {
     })
     return () => { cancelled = true }
   }, [librarian.selectedFolders, librarian.rootFolder, packInfoFolders])
+
+  useEffect(() => {
+    const rootPath = librarian.rootFolder
+    if (!rootPath || packInfoFolders.size === 0) {
+      setDashboardChecklistEntries([])
+      return
+    }
+    let cancelled = false
+    Promise.all(
+      [...packInfoFolders].map(async (folderPath) => {
+        const res = await window.api.readPackInfo(folderPath)
+        const summary = res.success ? summarizeChecklist(res.data) : null
+        if (!summary || summary.completed >= summary.total) return null
+        const normalizedRoot = rootPath.replace(/\\/g, '/')
+        const normalizedFolder = folderPath.replace(/\\/g, '/')
+        const relative = normalizedFolder === normalizedRoot
+          ? normalizedFolder.split('/').pop() ?? normalizedFolder
+          : normalizedFolder.startsWith(normalizedRoot + '/')
+            ? `${normalizedRoot.split('/').pop() ?? normalizedRoot}\\${normalizedFolder.slice(normalizedRoot.length + 1).replace(/\//g, '\\')}`
+            : normalizedFolder.replace(/\//g, '\\')
+        return {
+          folderPath,
+          folderLabel: relative,
+          status: formatChecklistStatus(summary),
+          progressLabel: `${summary.completed}/${summary.total} complete`,
+          percent: summary.percent,
+        } satisfies DashboardChecklistEntry
+      })
+    ).then((entries) => {
+      if (cancelled) return
+      setDashboardChecklistEntries(entries.filter((entry): entry is DashboardChecklistEntry => entry !== null).sort((a, b) => a.folderLabel.localeCompare(b.folderLabel)))
+    }).catch(() => {
+      if (!cancelled) setDashboardChecklistEntries([])
+    })
+    return () => { cancelled = true }
+  }, [librarian.rootFolder, packInfoFolders])
 
   // Scan all pack-info folders when root folder changes (drives blue dot in tree)
   useEffect(() => {
@@ -1939,7 +1996,14 @@ export default function App() {
                     return { ...prev, selectedFolders: isIn ? prev.selectedFolders.filter((f) => f !== path) : [...prev.selectedFolders, path] }
                   })
                   setCreatorFilter(null)
-                  if (!ctrl) setSelectedIds(new Set())
+                  if (!ctrl) {
+                    setSelectedIds(new Set())
+                    setShowDashboard(false)
+                    setHistoryOpen(false)
+                    setShowSettings(false)
+                    setShowToneStore(false)
+                    setBatchFolder(null)
+                  }
                 }}
                 onSaveFolder={async (path) => {
                   const targets = path === null
@@ -2166,6 +2230,7 @@ export default function App() {
           ) : showDashboard ? (
             <NamDashboard
               files={files}
+              packChecklistRollup={dashboardChecklistEntries}
               activeCreator={creatorFilter ?? undefined}
               onCreatorClick={(creator) => {
                 setCreatorFilter(creator)
@@ -2327,7 +2392,7 @@ export default function App() {
             const hasPack = packInfoFolders.has(activeFolderPath)
             const showCreatePrompt = !hasPack
             const showGalleryTab = showGallery
-            const availableTabs = (['overview', 'pack', 'checklist', 'gallery'] as const)
+            const availableTabs = (['overview', 'pack', 'checklist', 'gallery', 'readme'] as const)
               .filter((tab) => (tab !== 'gallery' || showGalleryTab) && ((tab !== 'pack' && tab !== 'checklist') || hasPack))
             return (
               <div className="h-full flex flex-col">
@@ -2348,7 +2413,9 @@ export default function App() {
                             ? 'Pack Info'
                             : tab === 'checklist'
                               ? 'Checklist'
-                              : 'Gallery'}
+                              : tab === 'gallery'
+                                ? 'Gallery'
+                                : 'Read Me'}
                       </button>
                     ))}
                 </div>
@@ -2370,6 +2437,12 @@ export default function App() {
                       onMissingClick={(on) => { setFilterModeOverride(on ? 'incomplete' : null); setGearTypeFilter(null); setToneTypeFilter(null); setPresetFilterOverride(null); setEsrFilterOverride(null); setRatingFilter(null) }}
                       onEsrClick={(tier) => { setEsrFilterOverride(tier); setGearTypeFilter(null); setToneTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setRatingFilter(null) }}
                       onRatingClick={(rating) => { setRatingFilter(rating); setGearTypeFilter(null); setToneTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setEsrFilterOverride(null) }}
+                    />
+                  ) : folderPanelTab === 'readme' ? (
+                    <FolderReadmePanel
+                      key={activeFolderPath}
+                      folderPath={activeFolderPath}
+                      folderName={activeFolderName}
                     />
                   ) : folderPanelTab === 'gallery' && showGalleryTab ? (
                     <FolderGallery data={folderImages!} />

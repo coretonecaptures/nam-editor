@@ -9,7 +9,7 @@ export interface PackChecklistTemplateItem {
   label: string
 }
 
-const DEFAULT_PACK_CHECKLIST_TEMPLATE: PackChecklistTemplateItem[] = [
+export const DEFAULT_PACK_CHECKLIST_TEMPLATE: PackChecklistTemplateItem[] = [
   { id: 'all-captures-completed', label: 'All captures completed' },
   { id: 'test-all-captures-in-nam-player', label: 'Test all captures in NAM Player; remove weak/duplicate profiles' },
   { id: 'training-completed', label: 'Training completed (REVxSTD + required formats)' },
@@ -32,7 +32,7 @@ const DEFAULT_PACK_CHECKLIST_TEMPLATE: PackChecklistTemplateItem[] = [
   { id: 'pack-released', label: 'Pack released' },
 ]
 
-function cloneChecklistTemplate(items: PackChecklistTemplateItem[]): PackChecklistTemplateItem[] {
+export function cloneChecklistTemplate(items: PackChecklistTemplateItem[]): PackChecklistTemplateItem[] {
   return items.map((item) => ({ ...item }))
 }
 

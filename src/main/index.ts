@@ -1205,6 +1205,33 @@ app.whenReady().then(async () => {
     }
   })
 
+  // IPC: Read README.txt (case-insensitive) from a folder
+  ipcMain.handle('folder:readReadme', async (_event, folderPath: string) => {
+    try {
+      const entries = await fs.promises.readdir(folderPath, { withFileTypes: true })
+      const candidates = entries.filter((entry) => entry.isFile() && /\.txt$/i.test(entry.name) && /readme/i.test(entry.name))
+      const match = candidates.find((entry) => /^readme\.txt$/i.test(entry.name)) ?? candidates[0]
+      if (!match) return { success: true, exists: false, fileName: 'README.txt', content: '' }
+      const fullPath = join(folderPath, match.name)
+      const content = await fs.promises.readFile(fullPath, 'utf-8')
+      return { success: true, exists: true, fileName: match.name, content }
+    } catch (e) {
+      return { success: false, error: String(e), exists: false, fileName: 'README.txt', content: '' }
+    }
+  })
+
+  // IPC: Write README.txt to a folder
+  ipcMain.handle('folder:writeReadme', async (_event, folderPath: string, fileName: string, content: string) => {
+    try {
+      const safeName = /^readme\.txt$/i.test(fileName) ? fileName : 'README.txt'
+      suppressWatcher()
+      await fs.promises.writeFile(join(folderPath, safeName), content, 'utf-8')
+      return { success: true, fileName: safeName }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  })
+
   // IPC: Read nam-bundle.json from a folder
   ipcMain.handle('folder:readBundle', async (_event, folderPath: string) => {
     try {

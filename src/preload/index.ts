@@ -80,6 +80,10 @@ const api = {
     ipcRenderer.invoke('folder:writePackInfo', folderPath, data),
   deletePackInfo: (folderPath: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('folder:deletePackInfo', folderPath),
+  readReadme: (folderPath: string): Promise<{ success: boolean; exists: boolean; fileName: string; content: string; error?: string }> =>
+    ipcRenderer.invoke('folder:readReadme', folderPath),
+  writeReadme: (folderPath: string, fileName: string, content: string): Promise<{ success: boolean; fileName?: string; error?: string }> =>
+    ipcRenderer.invoke('folder:writeReadme', folderPath, fileName, content),
   exportPackSheet: (html: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('app:exportPackSheet', html),
   onOpenFiles: (cb: (paths: string[]) => void): (() => void) => {
