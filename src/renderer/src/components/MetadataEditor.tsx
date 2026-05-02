@@ -9,6 +9,7 @@ import { ComboInput } from './ComboInput'
 
 interface MetadataEditorProps {
   file: NamFile
+  coverImagePath?: string | null
   onChange: (metadata: NamMetadata) => void
   onSave: () => void
   onRevert: () => void
@@ -21,6 +22,10 @@ interface MetadataEditorProps {
   gearMakeSuggestions?: string[]
   gearModelSuggestions?: string[]
   showNamLabFields?: boolean
+}
+
+function toFileUrl(p: string): string {
+  return p.startsWith('/') ? `local-file://${p}` : `local-file:///${p}`
 }
 
 type NlKey = 'nl_mics' | 'nl_amp_channel' | 'nl_cabinet' | 'nl_cabinet_config' |
@@ -58,7 +63,7 @@ function buildRenamePreview(template: string, meta: NamMetadata, fileName: strin
   return result || fileName
 }
 
-export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFinder, onReapplyDefaults, hasActiveDefaults, renameTemplate, onRenameFile, onSaveAndAdvance, gearMakeSuggestions = [], gearModelSuggestions = [], showNamLabFields = true }: MetadataEditorProps) {
+export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, onRevert, onRevealInFinder, onReapplyDefaults, hasActiveDefaults, renameTemplate, onRenameFile, onSaveAndAdvance, gearMakeSuggestions = [], gearModelSuggestions = [], showNamLabFields = true }: MetadataEditorProps) {
   const m = file.metadata
   const orig = file.originalMetadata
   const [nlShowAll, setNlShowAll] = useState(false)
@@ -228,6 +233,18 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
       {/* Editor body */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-5" onScroll={(e) => { sharedScrollTop = (e.currentTarget as HTMLDivElement).scrollTop }}>
         <div className="max-w-2xl space-y-6">
+          {coverImagePath && (
+            <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-900">
+              <div className="aspect-[3/1] w-full">
+                <img
+                  src={toFileUrl(coverImagePath)}
+                  alt="Amp cover"
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                />
+              </div>
+            </div>
+          )}
 
           {/* Identity section */}
           <Section title="Identity" icon={

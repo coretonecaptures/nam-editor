@@ -28,6 +28,7 @@ This document covers everything NAM Lab can do. For installation, see [install.m
 - **My files** mode uses Tone3000’s created-tones endpoint for the currently authenticated user
 - Click any result to open a detail view with description, tags, links, favorites, file variants, and batch download
 - Downloaded models are copied into a folder you choose and then can be loaded into NAM Lab immediately
+- If the tone has a preview image and the destination folder does not already contain `ampcover.*`, NAM Lab also saves that Tone3000 image into the folder as `ampcover.<format>`
 - Clicking a Tone3000 creator filters your local NAM Lab library by `modeled_by` without leaving the Tone3000 panel
 - The **Tone3000 username** field helps narrow results by creator username, but this may be incomplete because Tone3000 does not currently expose a direct tones-by-user endpoint
 - **Settings → Library → Tone3000 Username** stores an optional username that helps NAM Lab map Tone3000 creators to your local naming conventions
@@ -58,6 +59,53 @@ Click a folder in the tree (no captures selected) → **Overview** tab in the ri
 - Gear type, tone type, detected preset, ESR distribution, completeness, and rating bars — all scoped to the selected folder
 - Click any bar to filter the file list to that value
 - Active filter bars are highlighted; click again to clear
+- **Checklist progress** appears below the Rating section when the folder has a pack checklist
+- **Active Pack Checklists** in the main Library Overview roll up started-but-not-complete pack checklists across the library with folder path, status, and progress
+
+---
+
+## Pack Checklist
+
+- Folder tabs now include **Checklist** when the current folder has Pack Info
+- Checklist data is stored with the pack in `nam-pack.json`
+- Each checklist row supports:
+  - checkbox completion
+  - auto-filled completion date when checked
+  - editable completion date
+  - optional note
+  - reordering and delete
+- **Release Notes** live above the checklist items and replace the old Pack Status notes area
+- **Target Date** and **Live Date** are tracked in Checklist and drive the status badges:
+  - In progress
+  - Target `YYYY-MM-DD`
+  - Overdue
+  - Released
+  - Released on time
+  - Released late
+- **Progress meter** shows completed vs total items and percent complete
+- **Parent Pack row sync** adds a per-row **Sync** action when the current pack has a Parent Pack; it copies shared checklist progress fields from the matching parent row without replacing the row label
+- **Settings → Pack Checklist Template** stores the global default checklist template for future packs
+
+---
+
+## Read Me Tab
+
+- Folder tabs now include **Read Me**
+- Reads plain-text `.txt` files in the current folder whose filename contains `README`
+- Prefers the exact convention `README.txt` when multiple matches exist
+- Opens in read-only mode first; click **Edit Read Me** before changing text
+- If no readme exists yet, NAM Lab lets you create one and saves a plain-text `README.txt`
+- Uses the native right-click text context menu for copy, paste, and select-all
+
+---
+
+## Metadata Cover Images
+
+- Single-capture metadata view can show a folder cover image above the editor
+- Looks for `ampcover.*` in the selected capture's folder and then walks upward through parent folders until the current NAM Lab root folder
+- Supported formats: `.png`, `.jpg`, `.jpeg`, `.webp`, `.gif`, `.avif`
+- Cover images use a fixed wide banner with `cover` fit so they do not stretch or distort
+- `ampcover.*` files are intentionally ignored by the Gallery view so they act as metadata covers, not gallery entries
 
 ---
 

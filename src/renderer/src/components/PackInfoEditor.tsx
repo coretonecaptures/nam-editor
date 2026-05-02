@@ -88,6 +88,21 @@ function normalizeChecklistLabel(value: string): string {
   return value.trim().toLowerCase()
 }
 
+function repairMojibake(value: string): string {
+  if (!/[ÃÂâ]/.test(value)) return value
+  try {
+    const bytes = Uint8Array.from(Array.from(value, (char) => char.charCodeAt(0) & 0xff))
+    const repaired = new TextDecoder('utf-8', { fatal: false }).decode(bytes)
+    return repaired && repaired.includes('\uFFFD') ? value : repaired
+  } catch {
+    return value
+  }
+}
+
+function normalizeText(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? repairMojibake(value) : fallback
+}
+
 interface Props {
   folderPath: string
   folderName: string
@@ -148,7 +163,7 @@ function CopyFolderPicker({
       className="absolute z-50 top-full right-0 mt-1 w-72 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl overflow-hidden"
     >
       <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 text-xs font-semibold text-gray-600 dark:text-gray-300">
-        Copy pack info toâ€¦
+        Copy pack info to...
       </div>
       <div className="px-2 py-1.5 border-b border-gray-200 dark:border-gray-700">
         <input
@@ -156,7 +171,7 @@ function CopyFolderPicker({
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Filter foldersâ€¦"
+          placeholder="Filter folders..."
           className="w-full px-2 py-1 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-gray-800 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:border-teal-500"
         />
       </div>
@@ -303,7 +318,7 @@ function RowEditor<T extends Record<string, string>>({
               onClick={() => setShowPicker((v) => !v)}
               className="text-xs text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300 font-medium transition-colors"
             >
-              From catalog ({catalogItems.length})â€¦
+              From catalog ({catalogItems.length})...
             </button>
             {showPicker && (
               <div className="absolute left-0 top-5 z-30 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg min-w-[200px] max-w-[280px]">
@@ -378,7 +393,12 @@ export function PackInfoEditor({
   const [colsOpen, setColsOpen] = useState(false)
   const colsRef = useRef<HTMLDivElement>(null)
   const [darkExport, setDarkExport] = useState(() => {
-    try { return localStorage.getItem('nam-pack-dark-export') === '1' } catch { return false }
+    try {
+      const stored = localStorage.getItem('nam-pack-dark-export')
+      return stored === null ? true : stored === '1'
+    } catch {
+      return true
+    }
   })
   const [copyPickerOpen, setCopyPickerOpen] = useState(false)
   const [copyStatus, setCopyStatus] = useState<string | null>(null)
@@ -392,15 +412,35 @@ export function PackInfoEditor({
         ? (() => {
             const d = res.data as Partial<PackInfo>
             return {
-              title: d.title ?? '',
-              subtitle: d.subtitle ?? '',
-              capturedBy: d.capturedBy ?? defaultCapturedBy,
-              description: d.description ?? '',
-              equipment: d.equipment ?? [],
-              pedals: d.pedals ?? [],
-              switches: d.switches ?? [],
-              glossary: d.glossary ?? [],
-              footer: d.footer ?? '',
+              title: normalizeText(d.title),
+              subtitle: normalizeText(d.subtitle),
+              capturedBy: normalizeText(d.capturedBy, defaultCapturedBy),
+              description: normalizeText(d.description),
+              equipment: Array.isArray(d.equipment)
+                ? d.equipment.map((item) => ({
+                    label: normalizeText(item?.label),
+                    value: normalizeText(item?.value),
+                  }))
+                : [],
+              pedals: Array.isArray(d.pedals)
+                ? d.pedals.map((item) => ({
+                    label: normalizeText(item?.label),
+                    value: normalizeText(item?.value),
+                  }))
+                : [],
+              switches: Array.isArray(d.switches)
+                ? d.switches.map((item) => ({
+                    label: normalizeText(item?.label),
+                    value: normalizeText(item?.value),
+                  }))
+                : [],
+              glossary: Array.isArray(d.glossary)
+                ? d.glossary.map((item) => ({
+                    term: normalizeText(item?.term),
+                    description: normalizeText(item?.description),
+                  }))
+                : [],
+              footer: normalizeText(d.footer),
               exportExcludedSubfolders: d.exportExcludedSubfolders ?? [],
               exportExcludedCaptures: d.exportExcludedCaptures ?? [],
               exportColumns: d.exportColumns ?? DEFAULT_EXPORT_COLUMNS,
@@ -408,10 +448,10 @@ export function PackInfoEditor({
               checklistItems: Array.isArray(d.checklistItems)
                 ? d.checklistItems.map((item) => normalizeChecklistItem(item))
                 : createChecklistItemsFromTemplate(checklistTemplate),
-              checklistNotes: d.checklistNotes ?? d.notes ?? '',
+              checklistNotes: normalizeText(d.checklistNotes ?? d.notes),
               targetDate: d.targetDate ?? '',
               liveDate: d.liveDate ?? '',
-              versionInfo: d.versionInfo ?? '',
+              versionInfo: normalizeText(d.versionInfo),
             }
           })()
         : { ...EMPTY_PACK, capturedBy: defaultCapturedBy, checklistItems: createChecklistItemsFromTemplate(checklistTemplate) }
@@ -648,11 +688,11 @@ export function PackInfoEditor({
                   disabled={exporting}
                   className="text-xs px-2.5 py-1 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
                 >
-                  Export PDFâ€¦
+                  Export PDF...
                 </button>
               </>
             )}
-          {/* Copy toâ€¦ â€” deferred: NAM Lab's nested folder structure makes target
+          {/* Copy to... deferred: NAM Lab's nested folder structure makes target
               selection non-trivial; capture-lab has flat folders so its picker
               worked out of the box. Needs UX design before enabling. */}
           {false && allFolderPaths.length > 1 && (
@@ -664,7 +704,7 @@ export function PackInfoEditor({
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
-              Copy toâ€¦
+              Copy to...
             </button>
           )}
           <button
@@ -864,7 +904,7 @@ export function PackInfoEditor({
           <label className={labelCls}>Description</label>
           <textarea
             value={pack.description}
-            placeholder="Describe the amp, the tones, how it was capturedâ€¦"
+            placeholder="Describe the amp, the tones, how it was captured..."
             onChange={(e) => update('description', e.target.value)}
             rows={7}
             className={`${inputCls('description')} resize-y leading-relaxed min-h-[80px] font-mono text-xs`}
@@ -878,12 +918,12 @@ export function PackInfoEditor({
             {' '}<code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">- bullet</code>
             {' '}<code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">---</code>
             {' '}Color: <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">[orange]text[/orange]</code>
-            {' â€” '}available: orange, teal, red, blue, green, dim, white
+            {' - '}available: orange, teal, red, blue, green, dim, white
           </div>
         </div>
 
         {/* Captures */}
-        <SectionHeader label="Captures" hint={`${captures.length} loaded from files â€” check/uncheck to include in export`} />
+        <SectionHeader label="Captures" hint={`${captures.length} loaded from files - check/uncheck to include in export`} />
         {/* Subfolder filter + column chooser row */}
         <div className="mb-2 flex items-center gap-2">
         {subfolders.length > 0 && (
@@ -1027,7 +1067,7 @@ export function PackInfoEditor({
                     </div>
                   )
                 })}
-                {/* Inactive columns â€” click to add at end */}
+                {/* Inactive columns - click to add at end */}
                 {PACK_CAPTURE_COLUMNS.filter((c) => !pack.exportColumns.includes(c.id)).map((col) => {
                   const atMax = pack.exportColumns.length >= 6
                   return (
@@ -1096,7 +1136,7 @@ export function PackInfoEditor({
                                   update('exportExcludedCaptures', next)
                                 }}
                                 className="w-3 h-3 rounded accent-teal-600 cursor-pointer"
-                                title={excluded ? 'Excluded from export â€” click to include' : 'Included in export â€” click to exclude'}
+                                title={excluded ? 'Excluded from export - click to include' : 'Included in export - click to exclude'}
                               />
                             </td>
                             <td className="px-2 py-0.5 text-gray-800 dark:text-gray-200 truncate">{key}</td>
@@ -1116,7 +1156,7 @@ export function PackInfoEditor({
                     <span className="font-medium text-gray-700 dark:text-gray-300">{subfoldVisible.length}</span>
                     {' captures in export'}
                     {captures.length !== subfoldVisible.length && (
-                      <span className="text-gray-400 dark:text-gray-600"> Â· {captures.length - subfoldVisible.length} hidden by folder filter</span>
+                      <span className="text-gray-400 dark:text-gray-600"> | {captures.length - subfoldVisible.length} hidden by folder filter</span>
                     )}
                   </span>
                   {pack.exportExcludedCaptures.length > 0 && (
@@ -1134,7 +1174,7 @@ export function PackInfoEditor({
         </div>
 
         {/* Equipment */}
-        <SectionHeader label="Equipment" hint="Amp Â· Cabinet Â· Mic(s) Â· Preamp Â· Interface" />
+        <SectionHeader label="Equipment" hint="Amp | Cabinet | Mic(s) | Preamp | Interface" />
         <div className={sectionChanged('equipment')}>
           <RowEditor
             rows={pack.equipment}
@@ -1148,7 +1188,7 @@ export function PackInfoEditor({
         </div>
 
         {/* Pedals */}
-        <SectionHeader label="Pedals" hint="Boost Â· Drive Â· EQ Â· Effects in chain" />
+        <SectionHeader label="Pedals" hint="Boost | Drive | EQ | Effects in chain" />
         <div className={sectionChanged('pedals')}>
           <RowEditor
             rows={pack.pedals}
@@ -1161,8 +1201,8 @@ export function PackInfoEditor({
           />
         </div>
 
-        {/* Switches â€” no catalog (per-amp) */}
-        <SectionHeader label="Switches & Modes" hint="Channel modes Â· Tone stack Â· Voice switches" />
+        {/* Switches - no catalog (per-amp) */}
+        <SectionHeader label="Switches & Modes" hint="Channel modes | Tone stack | Voice switches" />
         <div className={sectionChanged('switches')}>
           <RowEditor
             rows={pack.switches}
@@ -1182,7 +1222,7 @@ export function PackInfoEditor({
             onChange={(rows) => update('glossary', rows)}
             keys={['term', 'description']}
             addLabel="Add entry"
-            placeholders={['DI', 'Direct Inject â€” no cabinet']}
+            placeholders={['DI', 'Direct Inject - no cabinet']}
             catalogItems={catalogFor('glossary')}
             onSaveToCatalog={(label, value) => addToCatalog('glossary', label, value)}
           />
@@ -1204,17 +1244,17 @@ export function PackInfoEditor({
         </div>
 
         {/* Footer */}
-        <SectionHeader label="Footer" hint="Contact info, copyright, linksâ€¦" />
+        <SectionHeader label="Footer" hint="Contact info, copyright, links..." />
         <div className="pb-4">
           <textarea
             value={pack.footer}
-            placeholder="Â© 2025 Core Tone Captures Â· cortonecaptures.com"
+            placeholder="Copyright 2025 Core Tone Captures | cortonecaptures.com"
             onChange={(e) => update('footer', e.target.value)}
             rows={2}
             className={`${inputCls('footer')} resize-none font-mono text-xs`}
           />
           <p className="mt-1 px-1 text-[10px] text-gray-400 dark:text-gray-500">
-            Supports same formatting as description â€” <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">**bold**</code>, <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">[orange]color[/orange]</code>, etc.
+            Supports same formatting as description - <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">**bold**</code>, <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">[orange]color[/orange]</code>, etc.
           </p>
         </div>
 

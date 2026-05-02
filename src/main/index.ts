@@ -788,7 +788,7 @@ app.whenReady().then(async () => {
   // IPC: Scan a folder for image files (non-recursive)
   ipcMain.handle('folder:scanImages', async (_event, folderPath: string) => {
     try {
-      const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif'])
+      const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif'])
       const entries = await fs.promises.readdir(folderPath, { withFileTypes: true })
       const images = entries
         .filter((e) => e.isFile() && IMAGE_EXTS.has(extname(e.name).toLowerCase()))
@@ -1452,6 +1452,54 @@ app.whenReady().then(async () => {
       await fs.promises.writeFile(localPath, buffer)
       return { ok: true, localPath: localPath.replace(/\\/g, '/') }
     } catch (e) { return { error: String(e) } }
+  })
+
+  ipcMain.handle('tone3000:saveCoverImage', async (_event, imageUrl: string, destDir: string) => {
+    const valid = await ensureValidToken()
+    if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
+    try {
+      const coverPattern = /^ampcover\.(png|jpe?g|webp|gif|avif)$/i
+      try {
+        const entries = await fs.promises.readdir(destDir, { withFileTypes: true })
+        const existing = entries.find((entry) => entry.isFile() && coverPattern.test(entry.name))
+        if (existing) {
+          return { ok: true, skipped: true, destPath: join(destDir, existing.name).replace(/\\/g, '/') }
+        }
+      } catch {
+        /* fall through and try saving ampcover.png */
+      }
+
+      const res = await fetch(imageUrl, {
+        headers: {
+          Authorization: `Bearer ${tone3kTokens.accessToken}`,
+          'User-Agent': 'NAM-Lab'
+        }
+      })
+      if (!res.ok) return { error: `Image download failed (${res.status})` }
+
+      const contentType = (res.headers.get('content-type') ?? '').toLowerCase()
+      const extFromType =
+        contentType.includes('image/jpeg') ? '.jpg' :
+        contentType.includes('image/png') ? '.png' :
+        contentType.includes('image/webp') ? '.webp' :
+        contentType.includes('image/gif') ? '.gif' :
+        contentType.includes('image/avif') ? '.avif' :
+        ''
+      const cleanUrl = imageUrl.split('?')[0]
+      const extFromUrl = extname(cleanUrl).toLowerCase()
+      const allowedExts = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif'])
+      const chosenExt =
+        extFromType ||
+        (allowedExts.has(extFromUrl) ? (extFromUrl === '.jpeg' ? '.jpg' : extFromUrl) : '') ||
+        '.png'
+
+      const destPath = join(destDir, `ampcover${chosenExt}`)
+      const buffer = Buffer.from(await res.arrayBuffer())
+      await fs.promises.writeFile(destPath, buffer)
+      return { ok: true, skipped: false, destPath: destPath.replace(/\\/g, '/') }
+    } catch (e) {
+      return { error: String(e) }
+    }
   })
 
   ipcMain.handle('tone3000:search', async (_event, params: { query?: string; page?: number; pageSize?: number; gears?: string[]; sizes?: string[]; sort?: string }) => {

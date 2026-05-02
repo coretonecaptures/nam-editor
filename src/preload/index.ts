@@ -100,6 +100,8 @@ const api = {
   tone3000GetTone: (toneId: number): Promise<{ ok?: boolean; tone?: unknown; error?: string }> => ipcRenderer.invoke('tone3000:getTone', toneId),
   tone3000GetModels: (toneId: number): Promise<{ ok?: boolean; models?: unknown[]; error?: string }> => ipcRenderer.invoke('tone3000:getModels', toneId),
   tone3000Download: (modelUrl: string, name: string): Promise<{ ok?: boolean; localPath?: string; error?: string }> => ipcRenderer.invoke('tone3000:download', modelUrl, name),
+  tone3000SaveCoverImage: (imageUrl: string, destDir: string): Promise<{ ok?: boolean; skipped?: boolean; destPath?: string; error?: string }> =>
+    ipcRenderer.invoke('tone3000:saveCoverImage', imageUrl, destDir),
   showTextContextMenu: (params: { hasSelection: boolean; isEditable: boolean }): Promise<void> =>
     ipcRenderer.invoke('app:showTextContextMenu', params),
   platform: process.platform,

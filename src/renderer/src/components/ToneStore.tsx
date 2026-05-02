@@ -314,9 +314,15 @@ export function ToneStore({
     }
 
     setDownloadProgress(null)
+    const detailImage = toneDetail?.images?.[0] ?? selectedTone.images?.[0] ?? null
+    let coverSaved = false
+    if (detailImage) {
+      const coverResult = await window.api.tone3000SaveCoverImage(detailImage, destDir)
+      if (!coverResult.error && !coverResult.skipped) coverSaved = true
+    }
     const msg = skipped > 0
-      ? `${downloaded.length} saved, ${skipped} skipped (already existed)`
-      : `${downloaded.length} file${downloaded.length !== 1 ? 's' : ''} saved`
+      ? `${downloaded.length} saved, ${skipped} skipped (already existed)${coverSaved ? ', ampcover image added' : ''}`
+      : `${downloaded.length} file${downloaded.length !== 1 ? 's' : ''} saved${coverSaved ? ', ampcover image added' : ''}`
     setDownloadDone({ count: downloaded.length, folderName, msg })
     if (downloaded.length > 0) onDownloaded(downloaded)
   }

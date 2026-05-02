@@ -32,10 +32,11 @@ NAM captures embed metadata (name, gear info, tone type, etc.) as JSON inside th
 
 ## Key Features
 
-- **Tone3000 integration** - browse and download captures from Tone3000 inside NAM Lab, search by gear and sort order, open your own created tones, jump from a local capture to similar Tone3000 results, and open the public Tone3000 page from the detail view
+- **Tone3000 integration** - browse and download captures from Tone3000 inside NAM Lab, search by gear and sort order, open your own created tones, jump from a local capture to similar Tone3000 results, open the public Tone3000 page from the detail view, and optionally save the Tone3000 preview image as an `ampcover` image for the folder
 - **Three-panel library** - Folder Tree | File List | Metadata Editor; all panels resizable and collapsible
 - **Library Overview dashboard** - gear type, tone type, creator, completeness, and rating breakdowns across your whole library; clickable stats filter the file list; recent files list for quick navigation
 - **Folder Overview dashboard** - same at folder level; shown in the Overview tab when a folder is selected
+- **Pack checklist workflow** - per-pack release checklist with progress, target/live dates, release notes, dashboard rollups, and parent-pack row sync
 - **List and Grid views** - sortable spreadsheet with configurable columns, per-column filters, drag-to-reorder, and double-click auto-size
 - **Capture rating** - 1-5 star rating (`nl_rating`) per capture; shown in list/grid; filterable; rating distribution in both dashboards
 - **Bulk editing** - batch editor, multi-select editor, and copy/paste metadata across files
@@ -43,6 +44,8 @@ NAM captures embed metadata (name, gear info, tone type, etc.) as JSON inside th
 - **Duplicate detection** - find dupes by filename or capture name; choose a keeper and move or trash the rest
 - **Smart defaults** - auto-fill empty fields at load time (modeled by, levels, amp info); each rule section independently togglable
 - **Pack Info editor** - documentation sheet per amp pack with rich text description, equipment table, captures table, PDF export, and customizable dark-mode accent color
+- **Read Me tab** - open, edit, and save folder README text files directly inside NAM Lab
+- **Metadata cover image** - show `ampcover.*` images above the metadata editor without stretching, while keeping those cover images out of the gallery view
 - **Folder image gallery** - browse rig photos stored alongside `.nam` files; images cascade from parent folders
 - **Export** - CSV or Excel from any view; visible or all columns; respects active filters
 - **Spreadsheet import** - generate a pre-filled `.xlsx` template, edit in Excel, import back

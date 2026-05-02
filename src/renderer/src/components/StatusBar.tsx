@@ -5,7 +5,7 @@ interface StatusBarProps {
 }
 
 export function StatusBar({ message, type, logPath }: StatusBarProps) {
-  const isLoading = type === 'info' && /loading|scanning/i.test(message)
+  const isLoading = type === 'info' && /loading|scanning|saving/i.test(message)
 
   const dotClass = type === 'success' ? 'bg-green-500'
     : type === 'error' ? 'bg-red-400'
