@@ -64,6 +64,10 @@ function switchLogToUserData(): void {
   } catch { /* keep writing to tmpdir if this fails */ }
 }
 
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 // Catch uncaught exceptions before anything else
 process.on('uncaughtException', (err) => {
   log(`UNCAUGHT EXCEPTION: ${err.message}\n${err.stack ?? ''}`)
@@ -1441,8 +1445,25 @@ app.whenReady().then(async () => {
     const valid = await ensureValidToken()
     if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
     try {
-      const res = await fetch(modelUrl, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
-      if (!res.ok) return { error: `Download failed (${res.status})` }
+      let lastStatus: number | null = null
+      let res: Response | null = null
+      for (let attempt = 0; attempt < 4; attempt++) {
+        res = await fetch(modelUrl, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+        if (res.ok) break
+        lastStatus = res.status
+        if (res.status !== 429 || attempt === 3) break
+
+        const retryAfterHeader = res.headers.get('retry-after')
+        const retryAfterSeconds = retryAfterHeader ? Number.parseFloat(retryAfterHeader) : NaN
+        const retryDelayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+          ? Math.round(retryAfterSeconds * 1000)
+          : 1000 * Math.pow(2, attempt)
+        await wait(retryDelayMs)
+      }
+      if (!res || !res.ok) {
+        if (lastStatus === 429) return { error: 'Download rate-limited by Tone3000 (429). Please try a smaller batch or retry in a moment.' }
+        return { error: `Download failed (${lastStatus ?? 'unknown'})` }
+      }
       const buffer = Buffer.from(await res.arrayBuffer())
       const safeName = name.replace(/[^\w.\- ]/g, '_').trim() || 'tone'
       const fileName = safeName.toLowerCase().endsWith('.nam') ? safeName : `${safeName}.nam`

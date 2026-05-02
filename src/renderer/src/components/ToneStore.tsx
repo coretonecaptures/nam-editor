@@ -88,6 +88,10 @@ function showNativeTextContextMenu(event: React.MouseEvent<HTMLElement>) {
   void window.api.showTextContextMenu({ hasSelection: !!selection, isEditable })
 }
 
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 export function ToneStore({
   onClose,
   onDownloaded,
@@ -287,30 +291,82 @@ export function ToneStore({
     setDownloadError(null)
     setDownloadDone(null)
 
+    const downloadModelWithRetry = async (model: ToneModel): Promise<{ localPath?: string; error?: string; retryable403?: boolean; refreshedModel?: ToneModel }> => {
+      const initial = await window.api.tone3000Download(model.model_url, model.name)
+      if (!initial.error || !/\(403\)/.test(initial.error)) return initial
+
+      await wait(1500)
+      const refreshedModels = await window.api.tone3000GetModels(selectedTone.id)
+      if (refreshedModels.error || !refreshedModels.models) return { ...initial, retryable403: true }
+      const refreshed = (refreshedModels.models as ToneModel[]).find((entry) => entry.id === model.id)
+      if (!refreshed) return { ...initial, retryable403: true }
+      const retried = await window.api.tone3000Download(refreshed.model_url, refreshed.name)
+      if (retried.error && /\(403\)/.test(retried.error)) {
+        return { ...retried, retryable403: true, refreshedModel: refreshed }
+      }
+      return { ...retried, refreshedModel: refreshed }
+    }
+
     const downloaded: string[] = []
     let skipped = 0
-    for (let i = 0; i < toDownload.length; i++) {
-      const model = toDownload[i]
-      setDownloadProgress({ current: i, total: toDownload.length, folderName })
+    let nextIndex = 0
+    let resumePass = 0
 
-      const dlResult = await window.api.tone3000Download(model.model_url, model.name)
-      if (dlResult.error || !dlResult.localPath) {
-        setDownloadError(`Failed on "${model.name}": ${dlResult.error ?? 'unknown error'}`)
-        setDownloadProgress(null)
-        return
+    while (nextIndex < toDownload.length) {
+      let restartFrom403 = false
+
+      for (let i = nextIndex; i < toDownload.length; i++) {
+        const model = toDownload[i]
+        setDownloadProgress({ current: i, total: toDownload.length, folderName })
+
+        const dlResult = await downloadModelWithRetry(model)
+        if (dlResult.refreshedModel) {
+          toDownload[i] = dlResult.refreshedModel
+        }
+        if (dlResult.retryable403) {
+          resumePass++
+          if (resumePass > 8) {
+            setDownloadError(`Tone3000 kept returning 403 near "${model.name}". Please retry this batch in a moment.`)
+            setDownloadProgress(null)
+            return
+          }
+          nextIndex = i
+          restartFrom403 = true
+          break
+        }
+        if (dlResult.error || !dlResult.localPath) {
+          setDownloadError(`Failed on "${model.name}": ${dlResult.error ?? 'unknown error'}`)
+          setDownloadProgress(null)
+          return
+        }
+
+        const copyResults = await window.api.copyFiles([dlResult.localPath], destDir)
+        const copied = copyResults[0]
+        if (copied.success && copied.destPath) {
+          downloaded.push(copied.destPath)
+        } else if (copied.error === 'exists') {
+          skipped++
+        } else {
+          setDownloadError(`Failed on "${model.name}": ${copied.error ?? 'copy failed'}`)
+          setDownloadProgress(null)
+          return
+        }
+
+        nextIndex = i + 1
+        resumePass = 0
+
+        if (i < toDownload.length - 1) {
+          await wait(350)
+        }
       }
 
-      const copyResults = await window.api.copyFiles([dlResult.localPath], destDir)
-      const copied = copyResults[0]
-      if (copied.success && copied.destPath) {
-        downloaded.push(copied.destPath)
-      } else if (copied.error === 'exists') {
-        skipped++
-      } else {
-        setDownloadError(`Failed on "${model.name}": ${copied.error ?? 'copy failed'}`)
-        setDownloadProgress(null)
-        return
+      if (!restartFrom403) {
+        break
       }
+
+      const backoffMs = Math.min(5000 * resumePass, 30000)
+      setDownloadProgress({ current: nextIndex, total: toDownload.length, folderName })
+      await wait(backoffMs)
     }
 
     setDownloadProgress(null)

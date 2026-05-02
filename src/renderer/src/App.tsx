@@ -228,7 +228,7 @@ function applyDefaults(meta: NamFile['metadata'], baseName: string, settings: Ap
   return m
 }
 
-// Keywords that map to each tone type â€” order within each array doesn't matter,
+// Keywords that map to each tone type Ã¢â‚¬â€ order within each array doesn't matter,
 // detection picks the keyword that appears latest in the filename (rightmost wins)
 const TONE_KEYWORDS: Record<typeof TONE_TYPES[number], string[]> = {
   'clean':      ['clean'],
@@ -319,9 +319,9 @@ export default function App() {
   const [folderPanelTab, setFolderPanelTab] = useState<'overview' | 'pack' | 'checklist' | 'gallery' | 'readme'>(settings.defaultFolderTab)
   // Path of the ancestor that owns the pack info for the current folder (null = current folder may own one)
   const [packInfoAncestor, setPackInfoAncestor] = useState<string | null>(null)
-  // Set of folder paths that have a valid nam-pack.json (non-empty title) â€” drives blue dot in tree
+  // Set of folder paths that have a valid nam-pack.json (non-empty title) Ã¢â‚¬â€ drives blue dot in tree
   const [packInfoFolders, setPackInfoFolders] = useState<Set<string>>(new Set())
-  // Set of folder paths that have a nam-bundle.json â€” drives chain-link icon in tree
+  // Set of folder paths that have a nam-bundle.json Ã¢â‚¬â€ drives chain-link icon in tree
   const [bundleFolders, setBundleFolders] = useState<Set<string>>(new Set())
   // Folder compare modal: array of paths to compare (null = closed)
   const [compareFolderPaths, setCompareFolderPaths] = useState<string[] | null>(null)
@@ -498,7 +498,7 @@ export default function App() {
           if (lastSlash <= 0) break
           const parent = current.substring(0, lastSlash)
           if (!parent.startsWith(normRoot) || parent.length < normRoot.length) break
-          if (parent === normRoot) break  // stop before root â€” root images only show at root
+          if (parent === normRoot) break  // stop before root Ã¢â‚¬â€ root images only show at root
           const parentResult = await window.api.scanImages(parent)
           if (cancelled) return
           const parentPaths = parentResult.success
@@ -548,7 +548,7 @@ export default function App() {
 
   // Electron on Windows loses keyboard focus when the focused DOM element is removed
   // (e.g. BatchEditor unmounts) or after native confirm dialogs close. Chromium's
-  // internal focus state gets stale. Fix: DOM focus as first attempt, then a blurâ†’focus
+  // internal focus state gets stale. Fix: DOM focus as first attempt, then a blurÃ¢â€ â€™focus
   // cycle in main process which resets OS-level keyboard routing (same as Alt+Tab).
   useEffect(() => {
     mainContentRef.current?.focus()
@@ -581,7 +581,7 @@ export default function App() {
     }
     const onUp = () => {
       draggingRef.current = null
-      // Persist layout â€” save per-mode list width
+      // Persist layout Ã¢â‚¬â€ save per-mode list width
       saveLayout({
         treeWidth: latestTree,
         listWidthList: listViewMode === 'list' ? latestList : loadLayout().listWidthList,
@@ -611,7 +611,7 @@ export default function App() {
     else setStatus({ message: `Failed to delete pack info: ${res.error}`, type: 'error' })
   }
 
-  // Called by PackInfoEditor after saving â€” updates the blue-dot set in the tree
+  // Called by PackInfoEditor after saving Ã¢â‚¬â€ updates the blue-dot set in the tree
   const handlePackSaved = (folderPath: string, hasData: boolean) => {
     setPackInfoFolders((prev) => {
       const next = new Set(prev)
@@ -621,7 +621,7 @@ export default function App() {
     })
   }
 
-  // Auto-load default folder on startup (moved below loadFolderByPath â€” see combined startup effect)
+  // Auto-load default folder on startup (moved below loadFolderByPath Ã¢â‚¬â€ see combined startup effect)
 
   // mode='replace': clear existing, load fresh (open folder/files)
   // Shared: turn raw IPC read results into NamFile[] and update state
@@ -656,7 +656,7 @@ export default function App() {
       const existing = new Set(prev.map((f) => f.filePath))
       return [...prev, ...loaded.filter((f) => !existing.has(f.filePath))]
     })
-    // Read and clear outside the updater â€” updaters can be called multiple times in Concurrent Mode
+    // Read and clear outside the updater Ã¢â‚¬â€ updaters can be called multiple times in Concurrent Mode
     const shouldSuppressSelect = suppressStartupAutoSelectRef.current
     suppressStartupAutoSelectRef.current = false
     setSelectedIds((prev) => {
@@ -668,7 +668,7 @@ export default function App() {
     })
     if (errors > 0) {
       const logPath = await window.api.getErrorLogPath()
-      setStatus({ message: `Loaded ${loaded.length} file(s) â€” ${errors} could not be parsed (skipped)`, type: 'error', logPath })
+      setStatus({ message: `Loaded ${loaded.length} file(s) Ã¢â‚¬â€ ${errors} could not be parsed (skipped)`, type: 'error', logPath })
     } else {
       setStatus({ message: `Loaded ${loaded.length} file(s)`, type: 'success' })
     }
@@ -685,7 +685,7 @@ export default function App() {
       const batchResults = await Promise.all(batch.map((p) => window.api.readFile(p)))
       results.push(...batchResults)
       if (paths.length > CONCURRENCY) {
-        setStatus({ message: `Loading filesâ€¦ ${Math.min(i + CONCURRENCY, paths.length)} / ${paths.length}`, type: 'info' })
+        setStatus({ message: `Loading filesÃ¢â‚¬Â¦ ${Math.min(i + CONCURRENCY, paths.length)} / ${paths.length}`, type: 'info' })
       }
     }
     if (genToken !== undefined && genToken !== loadGenRef.current) return
@@ -740,7 +740,7 @@ export default function App() {
     setWatcherKey((k) => k + 1)
   }, [loadFiles, settings])
 
-  // Subscribe to app:openFiles â€” for files opened while app is already running
+  // Subscribe to app:openFiles Ã¢â‚¬â€ for files opened while app is already running
   useEffect(() => {
     const unsub = window.api.onOpenFiles((paths) => loadFiles(paths, 'append'))
     return unsub
@@ -756,15 +756,15 @@ export default function App() {
   useEffect(() => {
     window.api.getPendingFiles().then((paths) => {
       if (paths.length > 0) {
-        // File was opened via double-click / file association â€” load just those files
+        // File was opened via double-click / file association Ã¢â‚¬â€ load just those files
         loadFiles(paths, 'replace')
       } else if (settings.enableDefaultFolder && settings.defaultFolder) {
-        // No pending files â€” restore last folder as normal
+        // No pending files Ã¢â‚¬â€ restore last folder as normal
         loadFolderByPath(settings.defaultFolder)
       }
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // intentionally empty â€” runs once on mount after React is ready
+  }, []) // intentionally empty Ã¢â‚¬â€ runs once on mount after React is ready
 
   // Returns false if user cancels, true if safe to proceed
   const confirmDiscardChanges = (): boolean => {
@@ -783,7 +783,7 @@ export default function App() {
     setShowSettings(false)
     setLibrarian(EMPTY_LIBRARIAN)
     setStatus({ message: 'Open .nam files or a folder to get started', type: 'info' })
-    // Don't reopen on next launch â€” user explicitly closed
+    // Don't reopen on next launch Ã¢â‚¬â€ user explicitly closed
     setSettings((prev) => {
       const updated = { ...prev, enableDefaultFolder: false }
       saveSettings(updated)
@@ -820,7 +820,7 @@ export default function App() {
     }
   }, [librarian.rootFolder, settings.hiddenFolders])
 
-  // OS drag/drop â€” use React synthetic onDrop on the root div (works in Electron;
+  // OS drag/drop Ã¢â‚¬â€ use React synthetic onDrop on the root div (works in Electron;
   // native document-level listeners do NOT receive OS file drops in Electron 41+).
   // Guard against intra-app drags (application/x-nam-files) which are handled by FolderTree.
   const handleOsDrop = async (e: React.DragEvent) => {
@@ -905,7 +905,7 @@ export default function App() {
 
   const handleSaveAndAdvance = async (filePath: string) => {
     await handleSave(filePath)
-    // Use same visibility logic as visibleFiles (folder filter only â€” no FileList internal filters)
+    // Use same visibility logic as visibleFiles (folder filter only Ã¢â‚¬â€ no FileList internal filters)
     const currentVisible = files.filter((f) => {
       const norm = f.filePath.replace(/\\/g, '/')
       if (librarian.selectedFolders.length > 0 && !librarian.selectedFolders.some((sf) => norm.startsWith(sf + '/'))) return false
@@ -942,11 +942,11 @@ export default function App() {
     {
       const autoFillCount = dirty.filter((f) => f.autoFilledFields.length > 0).length
       const autoFillNote = autoFillCount > 0
-        ? `\n\nâš ï¸ ${autoFillCount} file${autoFillCount !== 1 ? 's have' : ' has'} auto-filled fields (from Settings defaults) that will also be written.`
+        ? `\n\nÃ¢Å¡Â Ã¯Â¸Â ${autoFillCount} file${autoFillCount !== 1 ? 's have' : ' has'} auto-filled fields (from Settings defaults) that will also be written.`
         : ''
       if (!settings.skipSaveAllConfirmation) {
         const confirmed = window.confirm(
-          `âš ï¸ Save ALL changes across every loaded folder?\n\nThis will write ${dirty.length} file${dirty.length !== 1 ? 's' : ''} to disk â€” including files in all subfolders. This cannot be undone.${autoFillNote}\n\n(This warning can be toggled off in Settings â†’ Behavior)`
+          `Ã¢Å¡Â Ã¯Â¸Â Save ALL changes across every loaded folder?\n\nThis will write ${dirty.length} file${dirty.length !== 1 ? 's' : ''} to disk Ã¢â‚¬â€ including files in all subfolders. This cannot be undone.${autoFillNote}\n\n(This warning can be toggled off in Settings -> Behavior)`
         )
         if (!confirmed) return
       }
@@ -1127,7 +1127,7 @@ export default function App() {
 
     if (moved.length === 0) return
 
-    // Update files state â€” repath moved files, clear dirty flag
+    // Update files state Ã¢â‚¬â€ repath moved files, clear dirty flag
     const movedMap = new Map(moved.map((m) => [m.oldPath, m.newPath]))
     setFiles((prev) =>
       prev.map((f) => {
@@ -1395,7 +1395,7 @@ export default function App() {
     const conflictPaths: string[] = []
     let failed = 0
 
-    // First pass â€” move non-conflicting files
+    // First pass Ã¢â‚¬â€ move non-conflicting files
     for (const p of paths) {
       const result = await window.api.moveFile(p, destFolder)
       if (result.success) movedPaths.add(p)
@@ -1426,7 +1426,7 @@ export default function App() {
     if (failed > 0) {
       setStatus({ message: `Moved ${movedPaths.size}, failed ${failed}`, type: 'error' })
     } else if (skipped > 0) {
-      setStatus({ message: `Moved ${movedPaths.size} file${movedPaths.size !== 1 ? 's' : ''} to ${destName} â€” ${skipped} skipped (already exist)`, type: 'info' })
+      setStatus({ message: `Moved ${movedPaths.size} file${movedPaths.size !== 1 ? 's' : ''} to ${destName} Ã¢â‚¬â€ ${skipped} skipped (already exist)`, type: 'info' })
     } else {
       setStatus({ message: `Moved ${movedPaths.size} file${movedPaths.size !== 1 ? 's' : ''} to ${destName}`, type: 'success' })
     }
@@ -1471,7 +1471,7 @@ export default function App() {
     setStatus({ message: `Applied defaults to ${paths.length} file${paths.length !== 1 ? 's' : ''}`, type: 'success' })
   }
 
-  // Fields that make sense to copy â€” editable metadata only, no read-only stats
+  // Fields that make sense to copy Ã¢â‚¬â€ editable metadata only, no read-only stats
   const COPYABLE_FIELDS: (keyof NamFile['metadata'])[] = [
     'modeled_by', 'gear_type', 'gear_make', 'gear_model', 'tone_type',
     'input_level_dbu', 'output_level_dbu', 'nb_trained_epochs',
@@ -1526,7 +1526,7 @@ export default function App() {
     else doExportXLSX(targets, ALL_GRID_COLUMNS, filename)
   }
 
-  // Column definition for import/export template â€” editable fields only, in user-preferred order
+  // Column definition for import/export template Ã¢â‚¬â€ editable fields only, in user-preferred order
   const IMPORT_COLUMNS: { header: string; field: keyof NamFile['metadata'] | null }[] = [
     { header: 'Capture Name',       field: 'name' },
     { header: 'Modeled By',         field: 'modeled_by' },
@@ -1544,7 +1544,7 @@ export default function App() {
     { header: 'Reamp Send (dBu)',   field: 'input_level_dbu' },
     { header: 'Reamp Return (dBu)', field: 'output_level_dbu' },
     { header: 'Trained Epochs',     field: 'nb_trained_epochs' },
-    { header: 'NAM-BOT Preset',     field: null }, // read-only â€” shown in template, skipped on import
+    { header: 'NAM-BOT Preset',     field: null }, // read-only Ã¢â‚¬â€ shown in template, skipped on import
     { header: 'Mic(s)',             field: 'nl_mics' },
     { header: 'Comments',           field: 'nl_comments' },
   ]
@@ -1596,7 +1596,7 @@ export default function App() {
       return
     }
 
-    // Build lookup: name (lowercase) â†’ NamFile[], scoped to folderPath.
+    // Build lookup: name (lowercase) Ã¢â€ â€™ NamFile[], scoped to folderPath.
     // Stores arrays to handle multiple files sharing the same capture name (different subfolders).
     const scopedFiles = folderPath === null
       ? files
@@ -1611,12 +1611,12 @@ export default function App() {
       }
     }
 
-    // Fields skipped for prefix (variant-specific) matches â€” nl_ cabinet/mic fields vary
+    // Fields skipped for prefix (variant-specific) matches Ã¢â‚¬â€ nl_ cabinet/mic fields vary
     // per variant. gear_type is handled separately with cab-upgrade logic below.
-    // tone_type is NOT skipped â€” it's the same across DI/cab variants of the same session.
+    // tone_type is NOT skipped Ã¢â‚¬â€ it's the same across DI/cab variants of the same session.
     const PREFIX_SKIP: Set<keyof NamFile['metadata']> = new Set(['nl_cabinet', 'nl_cabinet_config', 'nl_mics'])
 
-    // For prefix matches only: ampâ†’amp_cab, pedal_ampâ†’amp_pedal_cab. All other gear_types skipped.
+    // For prefix matches only: ampÃ¢â€ â€™amp_cab, pedal_ampÃ¢â€ â€™amp_pedal_cab. All other gear_types skipped.
     const CAB_UPGRADE: Record<string, string> = { amp: 'amp_cab', pedal_amp: 'amp_pedal_cab' }
 
     // Defined early so Pass 1 can use it to detect DI files by their own name suffix.
@@ -1638,7 +1638,7 @@ export default function App() {
         if (strVal === '') continue
         if (col.field === 'gear_type') {
           if (isPrefix) {
-            // Prefix match: upgrade ampâ†’amp_cab / pedal_ampâ†’amp_pedal_cab; skip everything else
+            // Prefix match: upgrade ampÃ¢â€ â€™amp_cab / pedal_ampÃ¢â€ â€™amp_pedal_cab; skip everything else
             const upgraded = CAB_UPGRADE[strVal]
             if (upgraded) (incoming as Record<string, unknown>)[col.field] = upgraded
             continue
@@ -1653,7 +1653,7 @@ export default function App() {
       return incoming
     }
 
-    // Pass 1: exact matches â€” all files sharing a name get claimed; track which have explicit gear_type
+    // Pass 1: exact matches Ã¢â‚¬â€ all files sharing a name get claimed; track which have explicit gear_type
     const exactMatches: ImportMatch[] = []
     const exactMatchedPaths = new Set<string>()
     const exactGearTypePaths = new Set<string>()  // files where exact row explicitly set gear_type
@@ -1663,12 +1663,12 @@ export default function App() {
       const matchedFiles = nameToFiles.get(captureName.toLowerCase())
       if (!matchedFiles || matchedFiles.length === 0) continue
       for (const file of matchedFiles) {
-        // Always mark exact-matched â€” prevents prefix from a different row overriding it
+        // Always mark exact-matched Ã¢â‚¬â€ prevents prefix from a different row overriding it
         exactMatchedPaths.add(file.filePath)
         const incoming = buildIncoming(row)
         // Block Pass 3 cab upgrade if:
         //   (a) gear_type is already a cab-inclusive type (amp_cab / amp_pedal_cab), OR
-        //   (b) this file's own name ends with a configured DI suffix â€” it IS the DI capture,
+        //   (b) this file's own name ends with a configured DI suffix Ã¢â‚¬â€ it IS the DI capture,
         //       not a cab variant, so it must keep its gear_type unchanged.
         // Non-DI files with amp/pedal_amp are left unprotected so Pass 3 can upgrade them.
         const fileWords = (file.metadata.name || file.fileName || '').trim().split(/\s+/)
@@ -1684,7 +1684,7 @@ export default function App() {
       }
     }
 
-    // Pass 1.5: full-name prefix matches â€” file name starts with "{rowName} "
+    // Pass 1.5: full-name prefix matches Ã¢â‚¬â€ file name starts with "{rowName} "
     // Treated as direct matches (all fields, no cab upgrade). Covers variants like
     // "FMAN100V2 BE HG C45 DI HYPER" when the row is "FMAN100V2 BE HG C45 DI".
     const fullPrefixMatchedRowNames = new Set<string>()
@@ -1706,7 +1706,7 @@ export default function App() {
       }
     }
 
-    // Pass 2: prefix matches â€” only for files WITHOUT an exact match row.
+    // Pass 2: prefix matches Ã¢â‚¬â€ only for files WITHOUT an exact match row.
     // Sort by prefix length descending so the most specific (longest) DI row wins
     // when multiple DI rows share a common base prefix.
     const prefixMatches: ImportMatch[] = []
@@ -1739,7 +1739,7 @@ export default function App() {
     // Pass 3: supplement gear_type for exact-matched files whose Excel row had no gear_type.
     // These files are blocked from prefix matching above, but should still inherit
     // the CAB_UPGRADE gear_type from a matching DI row (e.g. "BE100 Mars" has its own row
-    // with tone_type set but no gear_type â†’ "BE100 DI" row contributes amp_cab).
+    // with tone_type set but no gear_type Ã¢â€ â€™ "BE100 DI" row contributes amp_cab).
     const pathToFile = new Map(scopedFiles.map(f => [f.filePath, f]))
     const exactMatchByPath = new Map(exactMatches.map(m => [m.file.filePath, m]))
     // Sort DI rows longest-prefix-first so the most specific row wins when multiple
@@ -1829,7 +1829,7 @@ export default function App() {
     }
     let msg = `Imported metadata for ${updated} capture${updated !== 1 ? 's' : ''}`
     if (failed > 0) msg += `, ${failed} failed`
-    if (unmatched > 0) msg += ` Â· ${unmatched} unmatched`
+    if (unmatched > 0) msg += ` Ã‚Â· ${unmatched} unmatched`
     setStatus({ message: msg, type: failed > 0 ? 'error' : 'success' })
   }
 
@@ -2041,7 +2041,7 @@ export default function App() {
       />
 
       <div className="flex flex-1 overflow-hidden relative">
-        {/* Folder tree â€” only shown when a folder is open */}
+        {/* Folder tree Ã¢â‚¬â€ only shown when a folder is open */}
         {hasTree && (
           <>
             <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: (treeCollapsed || gridMaximized) ? 0 : treeWidth, overflow: 'hidden' }}>
@@ -2083,10 +2083,10 @@ export default function App() {
                     : files.filter((f) => f.isDirty && f.filePath.replace(/\\/g, '/').startsWith(path + '/'))
                   if (targets.length === 0) return
                   if (!settings.skipSaveAllConfirmation) {
-                    const confirmed = window.confirm(`Save changes to ${targets.length} file${targets.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.\n\n(This warning can be toggled off in Settings â†’ Behavior)`)
+                    const confirmed = window.confirm(`Save changes to ${targets.length} file${targets.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.\n\n(This warning can be toggled off in Settings -> Behavior)`)
                     if (!confirmed) return
                   }
-                  setStatus({ message: `Saving  file(s)...`, type: `info` })
+                  setStatus({ message: `Saving ${targets.length} file(s)...`, type: 'info' })
                   const savedPaths = new Set<string>()
                   let failed = 0
                   for (const f of targets) {
@@ -2161,7 +2161,7 @@ export default function App() {
           </>
         )}
 
-        {/* File list â€” only shown when files are loaded */}
+        {/* File list Ã¢â‚¬â€ only shown when files are loaded */}
         {files.length > 0 && <>
           <div className={gridMaximized ? 'flex-1 flex flex-col overflow-hidden' : 'flex-shrink-0 flex flex-col overflow-hidden'} style={gridMaximized ? undefined : { width: listCollapsed ? 0 : listWidth }}>
             <FileList
@@ -2228,7 +2228,7 @@ export default function App() {
                   return
                 }
                 if (!settings.skipSaveAllConfirmation) {
-                  const confirmed = window.confirm(`Save changes to ${targets.length} file${targets.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.\n\n(This warning can be toggled off in Settings â†’ Behavior)`)
+                  const confirmed = window.confirm(`Save changes to ${targets.length} file${targets.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.\n\n(This warning can be toggled off in Settings -> Behavior)`)
                   if (!confirmed) return
                 }
                 setStatus({ message: `Saving ${targets.length} file(s)...`, type: 'info' })
@@ -2616,12 +2616,12 @@ export default function App() {
           )}
         </div>
 
-        {/* Slide-in editor overlay â€” maximized grid mode */}
+        {/* Slide-in editor overlay Ã¢â‚¬â€ maximized grid mode */}
         {gridMaximized && (selectedFiles.length >= 1 || batchFolder !== null || showSettings) && (
           <div className={`absolute top-0 right-0 bottom-0 w-[460px] z-40 flex flex-col bg-white dark:bg-gray-950 border-l border-gray-200 dark:border-gray-700 shadow-2xl transition-transform duration-200 ${gridSlideOpen ? 'translate-x-0' : 'translate-x-full'}`}>
             <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
               <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                {showSettings ? 'Settings' : batchFolder !== null ? `Batch Edit â€” ${batchFolder.name}` : selectedFiles.length > 1 ? `Edit ${selectedFiles.length} captures` : 'Edit Capture'}
+                {showSettings ? 'Settings' : batchFolder !== null ? `Batch Edit Ã¢â‚¬â€ ${batchFolder.name}` : selectedFiles.length > 1 ? `Edit ${selectedFiles.length} captures` : 'Edit Capture'}
               </span>
               <button onClick={() => { setGridSlideOpen(false); if (batchFolder !== null) setBatchFolder(null); if (showSettings) setShowSettings(false) }} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
@@ -2708,7 +2708,7 @@ export default function App() {
             onClick={() => setFolderChanged(false)}
             className="text-xs text-amber-600/60 dark:text-amber-500/60 hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
           >
-            âœ•
+            x
           </button>
         </div>
       )}
