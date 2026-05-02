@@ -1442,8 +1442,8 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('tone3000:download', async (_event, modelUrl: string, name: string) => {
-    const valid = await ensureValidToken()
-    if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
+      const valid = await ensureValidToken()
+      if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
     try {
       let lastStatus: number | null = null
       let res: Response | null = null
@@ -1470,25 +1470,38 @@ app.whenReady().then(async () => {
       const dir = join(os.tmpdir(), 'nam-lab-downloads')
       await fs.promises.mkdir(dir, { recursive: true })
       const localPath = join(dir, fileName)
-      await fs.promises.writeFile(localPath, buffer)
-      return { ok: true, localPath: localPath.replace(/\\/g, '/') }
-    } catch (e) { return { error: String(e) } }
-  })
+        await fs.promises.writeFile(localPath, buffer)
+        return { ok: true, localPath: localPath.replace(/\\/g, '/') }
+      } catch (e) { return { error: String(e) } }
+    })
+
+  ipcMain.handle('tone3000:fileExists', async (_event, destDir: string, name: string) => {
+      try {
+        const safeName = name.replace(/[^\w.\- ]/g, '_').trim() || 'tone'
+        const fileName = safeName.toLowerCase().endsWith('.nam') ? safeName : `${safeName}.nam`
+        const destPath = join(destDir, fileName)
+        await fs.promises.access(destPath)
+        return { exists: true, destPath: destPath.replace(/\\/g, '/') }
+      } catch {
+        return { exists: false }
+      }
+    })
 
   ipcMain.handle('tone3000:saveCoverImage', async (_event, imageUrl: string, destDir: string) => {
-    const valid = await ensureValidToken()
-    if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
-    try {
-      const coverPattern = /^ampcover\.(png|jpe?g|webp|gif|avif)$/i
+      const valid = await ensureValidToken()
+      if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
       try {
-        const entries = await fs.promises.readdir(destDir, { withFileTypes: true })
-        const existing = entries.find((entry) => entry.isFile() && coverPattern.test(entry.name))
-        if (existing) {
-          return { ok: true, skipped: true, destPath: join(destDir, existing.name).replace(/\\/g, '/') }
+        const coverPattern = /^ampcover\.(png|jpe?g|webp|gif|avif)$/i
+        let existingCoverPath: string | null = null
+        try {
+          const entries = await fs.promises.readdir(destDir, { withFileTypes: true })
+          const existing = entries.find((entry) => entry.isFile() && coverPattern.test(entry.name))
+          if (existing) {
+            existingCoverPath = join(destDir, existing.name)
+          }
+        } catch {
+          /* fall through and try saving ampcover.png */
         }
-      } catch {
-        /* fall through and try saving ampcover.png */
-      }
 
       const res = await fetch(imageUrl, {
         headers: {
@@ -1506,22 +1519,52 @@ app.whenReady().then(async () => {
         contentType.includes('image/gif') ? '.gif' :
         contentType.includes('image/avif') ? '.avif' :
         ''
-      const cleanUrl = imageUrl.split('?')[0]
-      const extFromUrl = extname(cleanUrl).toLowerCase()
-      const allowedExts = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif'])
-      const chosenExt =
-        extFromType ||
-        (allowedExts.has(extFromUrl) ? (extFromUrl === '.jpeg' ? '.jpg' : extFromUrl) : '') ||
-        '.png'
+        const cleanUrl = imageUrl.split('?')[0]
+        const extFromUrl = extname(cleanUrl).toLowerCase()
+        const allowedExts = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif'])
+        const chosenExt =
+          extFromType ||
+          (allowedExts.has(extFromUrl) ? (extFromUrl === '.jpeg' ? '.jpg' : extFromUrl) : '') ||
+          '.png'
 
-      const destPath = join(destDir, `ampcover${chosenExt}`)
-      const buffer = Buffer.from(await res.arrayBuffer())
-      await fs.promises.writeFile(destPath, buffer)
-      return { ok: true, skipped: false, destPath: destPath.replace(/\\/g, '/') }
-    } catch (e) {
-      return { error: String(e) }
-    }
-  })
+        const buffer = Buffer.from(await res.arrayBuffer())
+        let coverSkipped = false
+        const destPath = existingCoverPath ?? join(destDir, `ampcover${chosenExt}`)
+        if (!existingCoverPath) {
+          await fs.promises.writeFile(destPath, buffer)
+        } else {
+          coverSkipped = true
+        }
+
+        const rawBaseName = basename(cleanUrl)
+        const rawNameHasAllowedExt = allowedExts.has(extname(rawBaseName).toLowerCase())
+        const sanitizedRawName = rawBaseName.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim()
+        const preferredSourceName = sanitizedRawName && rawNameHasAllowedExt && !/^ampcover\./i.test(sanitizedRawName)
+          ? sanitizedRawName
+          : `tone3000${chosenExt}`
+        const normalizedSourceName = preferredSourceName.toLowerCase().endsWith('.jpeg')
+          ? preferredSourceName.slice(0, -5) + '.jpg'
+          : preferredSourceName
+        const sourcePath = join(destDir, normalizedSourceName)
+        let sourceSkipped = false
+        try {
+          await fs.promises.access(sourcePath)
+          sourceSkipped = true
+        } catch {
+          await fs.promises.writeFile(sourcePath, buffer)
+        }
+
+        return {
+          ok: true,
+          skipped: coverSkipped,
+          destPath: destPath.replace(/\\/g, '/'),
+          sourcePath: sourcePath.replace(/\\/g, '/'),
+          sourceSkipped,
+        }
+      } catch (e) {
+        return { error: String(e) }
+      }
+    })
 
   ipcMain.handle('tone3000:search', async (_event, params: { query?: string; page?: number; pageSize?: number; gears?: string[]; sizes?: string[]; sort?: string }) => {
     const valid = await ensureValidToken()

@@ -27,7 +27,7 @@ interface ToneDetail {
   models_count: number
   created_at?: string
 }
-interface ToneModel {
+export interface ToneModel {
   id: number
   name: string
   size: string
@@ -42,6 +42,26 @@ interface SearchResponse {
 
 interface UserSearchResponse {
   data: ToneUser[]
+}
+
+export interface ToneStoreDownloadQueueJob {
+  toneId: number
+  toneTitle: string
+  destDir: string
+  folderName: string
+  items: ToneModel[]
+  nextIndex: number
+  downloadedPaths: string[]
+  skipped: number
+  resumePass: number
+  status: 'running' | 'cooldown' | 'done' | 'error'
+  message: string
+  coverImageUrl: string | null
+  packInfoSeed: {
+    title: string
+    capturedBy: string
+    description: string
+  } | null
 }
 
 function normalizeUsername(value: string): string {
@@ -64,6 +84,7 @@ const SORT_OPTIONS = [
   { value: 'downloads-all-time', label: 'Most Downloaded' },
   { value: 'trending', label: 'Trending' },
 ]
+const LAST_TONE3000_QUERY_KEY = 'nam-lab-tone3000-last-query'
 
 function fmtDate(iso?: string): string {
   if (!iso) return ''
@@ -88,22 +109,24 @@ function showNativeTextContextMenu(event: React.MouseEvent<HTMLElement>) {
   void window.api.showTextContextMenu({ hasSelection: !!selection, isEditable })
 }
 
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
 export function ToneStore({
   onClose,
   onDownloaded,
   onFilterLocalCreator,
   savedTone3000Username,
   searchRequest,
+  queueJob,
+  onStartQueue,
+  onCancelQueue,
 }: {
   onClose: () => void
   onDownloaded: (paths: string[]) => void
   onFilterLocalCreator: (creator: string) => void
   savedTone3000Username: string
   searchRequest: { key: number; query: string } | null
+  queueJob: ToneStoreDownloadQueueJob | null
+  onStartQueue: (job: ToneStoreDownloadQueueJob) => void
+  onCancelQueue: () => void
 }) {
   // Auth state
   const [connected, setConnected] = useState(false)
@@ -113,7 +136,13 @@ export function ToneStore({
   const [statusChecked, setStatusChecked] = useState(false)
 
   // Browse state
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(() => {
+    try {
+      return localStorage.getItem(LAST_TONE3000_QUERY_KEY) ?? ''
+    } catch {
+      return ''
+    }
+  })
   const [creatorUsername, setCreatorUsername] = useState('')
   const [gear, setGear] = useState('')
   const [sort, setSort] = useState('trending')
@@ -137,15 +166,22 @@ export function ToneStore({
   const [modelsError, setModelsError] = useState<string | null>(null)
   const [checkedIds, setCheckedIds] = useState<Set<number>>(new Set())
   const [sizeFilter, setSizeFilter] = useState<string>('')
-  const [downloadProgress, setDownloadProgress] = useState<{ current: number; total: number; folderName: string } | null>(null)
   const [downloadDone, setDownloadDone] = useState<{ count: number; folderName: string; msg: string } | null>(null)
   const [downloadError, setDownloadError] = useState<string | null>(null)
 
   useEffect(() => { queryRef.current = query }, [query])
+  useEffect(() => {
+    try {
+      localStorage.setItem(LAST_TONE3000_QUERY_KEY, query)
+    } catch {
+      /* ignore localStorage failures */
+    }
+  }, [query])
   useEffect(() => { creatorUsernameRef.current = creatorUsername }, [creatorUsername])
   useEffect(() => { gearRef.current = gear }, [gear])
   useEffect(() => { sortRef.current = sort }, [sort])
   useEffect(() => { scopeRef.current = scope }, [scope])
+  const queueLocked = queueJob !== null && (queueJob.status === 'running' || queueJob.status === 'cooldown')
 
   useEffect(() => {
     window.api.tone3000Status().then((s) => {
@@ -219,7 +255,7 @@ export function ToneStore({
       handleSearch(1, searchRequest.query, '', 'trending', '', 'all')
       return
     }
-    handleSearch(1, '', '', 'trending', '', 'all')
+    handleSearch(1, queryRef.current, '', 'trending', '', 'all')
   }, [connected, statusChecked, searchRequest, handleSearch])
 
   const handleConnect = async () => {
@@ -231,6 +267,7 @@ export function ToneStore({
   }
 
   const handleDisconnect = async () => {
+    if (queueLocked) return
     await window.api.tone3000Disconnect()
     setConnected(false); setUsername(null); setResults([]); setTotal(0); setSelectedTone(null)
   }
@@ -241,6 +278,7 @@ export function ToneStore({
   }
 
   const openDetail = async (tone: ToneResult) => {
+    if (queueLocked) return
     setSelectedTone(tone)
     setToneDetail(null)
     setModels([])
@@ -248,7 +286,6 @@ export function ToneStore({
     setModelsLoading(true)
     setCheckedIds(new Set())
     setSizeFilter('')
-    setDownloadProgress(null)
     setDownloadDone(null)
     setDownloadError(null)
 
@@ -283,107 +320,60 @@ export function ToneStore({
     const toDownload = visibleModels.filter((m) => checkedIds.has(m.id))
     if (!toDownload.length) return
 
+    if (toDownload.length > 50) {
+      const ok = window.confirm(
+        `This Tone3000 pack has ${toDownload.length} files.\n\n` +
+        'Due to Tone3000 API and download limitations, large packs download in the background and can take a while. ' +
+        'Find Tones browsing will stay locked until the queue finishes or you cancel it.\n\n' +
+        'Do you want to start this background download?'
+      )
+      if (!ok) return
+    }
+
     const destDir = await window.api.openFolder()
     if (!destDir) return
 
     const folderName = destDir.replace(/\\/g, '/').split('/').pop() ?? destDir
-    setDownloadProgress({ current: 0, total: toDownload.length, folderName })
     setDownloadError(null)
     setDownloadDone(null)
-
-    const downloadModelWithRetry = async (model: ToneModel): Promise<{ localPath?: string; error?: string; retryable403?: boolean; refreshedModel?: ToneModel }> => {
-      const initial = await window.api.tone3000Download(model.model_url, model.name)
-      if (!initial.error || !/\(403\)/.test(initial.error)) return initial
-
-      await wait(1500)
-      const refreshedModels = await window.api.tone3000GetModels(selectedTone.id)
-      if (refreshedModels.error || !refreshedModels.models) return { ...initial, retryable403: true }
-      const refreshed = (refreshedModels.models as ToneModel[]).find((entry) => entry.id === model.id)
-      if (!refreshed) return { ...initial, retryable403: true }
-      const retried = await window.api.tone3000Download(refreshed.model_url, refreshed.name)
-      if (retried.error && /\(403\)/.test(retried.error)) {
-        return { ...retried, retryable403: true, refreshedModel: refreshed }
-      }
-      return { ...retried, refreshedModel: refreshed }
-    }
-
-    const downloaded: string[] = []
-    let skipped = 0
-    let nextIndex = 0
-    let resumePass = 0
-
-    while (nextIndex < toDownload.length) {
-      let restartFrom403 = false
-
-      for (let i = nextIndex; i < toDownload.length; i++) {
-        const model = toDownload[i]
-        setDownloadProgress({ current: i, total: toDownload.length, folderName })
-
-        const dlResult = await downloadModelWithRetry(model)
-        if (dlResult.refreshedModel) {
-          toDownload[i] = dlResult.refreshedModel
-        }
-        if (dlResult.retryable403) {
-          resumePass++
-          if (resumePass > 8) {
-            setDownloadError(`Tone3000 kept returning 403 near "${model.name}". Please retry this batch in a moment.`)
-            setDownloadProgress(null)
-            return
-          }
-          nextIndex = i
-          restartFrom403 = true
-          break
-        }
-        if (dlResult.error || !dlResult.localPath) {
-          setDownloadError(`Failed on "${model.name}": ${dlResult.error ?? 'unknown error'}`)
-          setDownloadProgress(null)
-          return
-        }
-
-        const copyResults = await window.api.copyFiles([dlResult.localPath], destDir)
-        const copied = copyResults[0]
-        if (copied.success && copied.destPath) {
-          downloaded.push(copied.destPath)
-        } else if (copied.error === 'exists') {
-          skipped++
-        } else {
-          setDownloadError(`Failed on "${model.name}": ${copied.error ?? 'copy failed'}`)
-          setDownloadProgress(null)
-          return
-        }
-
-        nextIndex = i + 1
-        resumePass = 0
-
-        if (i < toDownload.length - 1) {
-          await wait(350)
-        }
-      }
-
-      if (!restartFrom403) {
-        break
-      }
-
-      const backoffMs = Math.min(5000 * resumePass, 30000)
-      setDownloadProgress({ current: nextIndex, total: toDownload.length, folderName })
-      await wait(backoffMs)
-    }
-
-    setDownloadProgress(null)
     const detailImage = toneDetail?.images?.[0] ?? selectedTone.images?.[0] ?? null
-    let coverSaved = false
-    if (detailImage) {
-      const coverResult = await window.api.tone3000SaveCoverImage(detailImage, destDir)
-      if (!coverResult.error && !coverResult.skipped) coverSaved = true
-    }
-    const msg = skipped > 0
-      ? `${downloaded.length} saved, ${skipped} skipped (already existed)${coverSaved ? ', ampcover image added' : ''}`
-      : `${downloaded.length} file${downloaded.length !== 1 ? 's' : ''} saved${coverSaved ? ', ampcover image added' : ''}`
-    setDownloadDone({ count: downloaded.length, folderName, msg })
-    if (downloaded.length > 0) onDownloaded(downloaded)
+    onStartQueue({
+      toneId: selectedTone.id,
+      toneTitle: selectedTone.title,
+      destDir,
+      folderName,
+      items: toDownload,
+      nextIndex: 0,
+      downloadedPaths: [],
+      skipped: 0,
+      resumePass: 0,
+      status: 'running',
+      message: toDownload.length > 50
+        ? `Starting background Tone3000 download queue for ${toDownload.length} files...`
+        : `Starting Tone3000 download for ${toDownload.length} files...`,
+      coverImageUrl: detailImage,
+      packInfoSeed: {
+        title: toneDetail?.title ?? selectedTone.title,
+        capturedBy: toneDetail?.user?.username ?? selectedTone.user?.username ?? '',
+        description: [
+          toneDetail?.description?.trim() || '',
+          '',
+          `Imported from Tone3000`,
+          `Creator: @${toneDetail?.user?.username ?? selectedTone.user?.username ?? 'unknown'}`,
+          `Source: ${buildTone3000ToneUrl(toneDetail ?? selectedTone)}`,
+        ].filter((line, index, arr) => line || (index > 0 && arr[index - 1] && arr[index + 1])).join('\n'),
+      },
+    })
   }
 
   const totalPages = Math.ceil(total / 24)
+
+  const queueProgress = queueJob && (queueJob.status === 'running' || queueJob.status === 'cooldown')
+    ? { current: queueJob.nextIndex, total: queueJob.items.length, folderName: queueJob.folderName }
+    : null
+  const queuePercent = queueProgress
+    ? Math.round((queueProgress.current / Math.max(queueProgress.total, 1)) * 100)
+    : 0
 
   // Loading
   if (!statusChecked) {
@@ -432,7 +422,7 @@ export function ToneStore({
       <div className="flex flex-col h-full overflow-hidden">
         {/* Header */}
         <div className="flex items-center gap-2 px-4 py-2.5 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
-          <button onClick={() => setSelectedTone(null)} className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">
+          <button onClick={() => { if (!queueLocked) setSelectedTone(null) }} disabled={queueLocked} className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
             Back
           </button>
@@ -566,7 +556,7 @@ export function ToneStore({
               <div className="divide-y divide-gray-100 dark:divide-gray-800">
                 {visibleModels.map((model) => (
                   <label key={model.id} className="flex items-center gap-3 px-4 py-2 hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer">
-                    <input type="checkbox" checked={checkedIds.has(model.id)}
+                    <input type="checkbox" checked={checkedIds.has(model.id)} disabled={queueLocked}
                       onChange={(e) => {
                         setCheckedIds((prev) => {
                           const next = new Set(prev)
@@ -594,24 +584,33 @@ export function ToneStore({
                 Saved: {downloadDone.msg}{' -> '}"{downloadDone.folderName}"
               </p>
             )}
-            {downloadProgress ? (
+            {queueProgress ? (
               <div className="space-y-1">
-                <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-                  <span>Downloading {downloadProgress.current + 1} of {downloadProgress.total}...</span>
-                  <span>{Math.round((downloadProgress.current / downloadProgress.total) * 100)}%</span>
-                </div>
+                  <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                    <span>{queueJob?.status === 'cooldown' ? 'Waiting for Tone3000 access to resume...' : `Downloading ${queueProgress.current + 1} of ${queueProgress.total}...`}</span>
+                    <span>{Math.round((queueProgress.current / Math.max(queueProgress.total, 1)) * 100)}%</span>
+                  </div>
                 <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
                   <div
                     className="bg-violet-600 h-1.5 rounded-full transition-all"
-                    style={{ width: `${(downloadProgress.current / downloadProgress.total) * 100}%` }}
+                    style={{ width: `${(queueProgress.current / Math.max(queueProgress.total, 1)) * 100}%` }}
                   />
                 </div>
-                <p className="text-xs text-gray-400 dark:text-gray-500">Saving to "{downloadProgress.folderName}"</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500">{queueJob?.message ?? `Saving to "${queueProgress.folderName}"`}</p>
+                <p className="text-xs text-amber-500 dark:text-amber-400">Tone3000 browsing is locked while this queue runs.</p>
+                <div className="flex justify-end">
+                  <button
+                    onClick={onCancelQueue}
+                    className="text-xs px-2 py-1 rounded bg-red-500/15 hover:bg-red-500/25 text-red-500 dark:text-red-400 transition-colors"
+                  >
+                    Give Up
+                  </button>
+                </div>
               </div>
             ) : (
               <button
                 onClick={handleBatchDownload}
-                disabled={checkedCount === 0}
+                disabled={checkedCount === 0 || queueLocked}
                 className="w-full py-2 text-sm font-medium rounded-md bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors"
               >
                 More Info / Download {checkedCount > 0 ? `${checkedCount} file${checkedCount !== 1 ? 's' : ''}` : '(none selected)'}
@@ -633,7 +632,7 @@ export function ToneStore({
         </svg>
         <span className="text-sm font-semibold text-gray-900 dark:text-white flex-1">Find New Tones</span>
         {username && <span className="text-xs text-gray-500 dark:text-gray-400">@{username}</span>}
-        <button onClick={handleDisconnect} className="text-xs text-gray-400 hover:text-red-400 transition-colors ml-2">Disconnect</button>
+        <button onClick={handleDisconnect} disabled={queueLocked} className="text-xs text-gray-400 hover:text-red-400 transition-colors ml-2 disabled:opacity-40 disabled:cursor-not-allowed">Disconnect</button>
         <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors ml-1">
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
@@ -656,14 +655,23 @@ export function ToneStore({
           </button>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSearch(1, query, gear, sort, creatorUsername, scope)}
-            placeholder="Search tones..."
-            className="min-w-[220px] flex-[1.3] px-3 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-violet-500"
-          />
+          <div className="relative min-w-[220px] flex-[1.3]">
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && !queueLocked && handleSearch(1, query, gear, sort, creatorUsername, scope)}
+              placeholder="Search tones..."
+              disabled={queueLocked}
+              className="w-full px-3 py-1.5 pr-8 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-violet-500"
+            />
+            {query && (
+              <button
+                onClick={() => { if (!queueLocked) { setQuery(''); handleSearch(1, '', gear, sort, creatorUsername, scope) } }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 px-1"
+              >x</button>
+            )}
+          </div>
           <div className="relative min-w-[220px] flex-1">
             <svg className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
@@ -672,33 +680,70 @@ export function ToneStore({
               type="text"
               value={creatorUsername}
               onChange={(e) => setCreatorUsername(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSearch(1, query, gear, sort, creatorUsername, scope)}
+              onKeyDown={(e) => e.key === 'Enter' && !queueLocked && handleSearch(1, query, gear, sort, creatorUsername, scope)}
               placeholder={`Tone3000 username${savedTone3000Username ? ` (saved: ${savedTone3000Username})` : ''}`}
               title="Tone3000 does not currently expose a direct tones-by-user endpoint. NAM Lab filters search results by username, so this may not include every capture from that creator."
+              disabled={queueLocked}
               className="w-full px-3 py-1.5 pl-8 pr-8 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-violet-500"
             />
             {creatorUsername && (
               <button
-                onClick={() => { setCreatorUsername(''); handleSearch(1, query, gear, sort, '', scope) }}
+                onClick={() => { if (!queueLocked) { setCreatorUsername(''); handleSearch(1, query, gear, sort, '', scope) } }}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 px-1"
               >x</button>
             )}
           </div>
-          <select value={gear} onChange={(e) => { const g = e.target.value; setGear(g); handleSearch(1, query, g, sort, creatorUsername, scope) }}
+          <select value={gear} onChange={(e) => { const g = e.target.value; setGear(g); if (!queueLocked) handleSearch(1, query, g, sort, creatorUsername, scope) }}
+            disabled={queueLocked}
             className="px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
           >
             {GEAR_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
-          <select value={sort} onChange={(e) => { const s = e.target.value; setSort(s); handleSearch(1, query, gear, s, creatorUsername, scope) }}
-            disabled={scope === 'mine'}
+          <select value={sort} onChange={(e) => { const s = e.target.value; setSort(s); if (!queueLocked) handleSearch(1, query, gear, s, creatorUsername, scope) }}
+            disabled={scope === 'mine' || queueLocked}
             className="px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
           >
             {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
-          <button onClick={() => handleSearch(1, query, gear, sort, creatorUsername, scope)} disabled={searching}
+          <button onClick={() => handleSearch(1, query, gear, sort, creatorUsername, scope)} disabled={searching || queueLocked}
             className="px-3 py-1.5 text-sm font-medium rounded-md bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white transition-colors"
           >Search</button>
         </div>
+        {queueLocked && (
+          <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 space-y-2">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-amber-500 dark:text-amber-400">
+                  Tone3000 background download queue in progress
+                </p>
+                <p className="text-xs text-amber-500/90 dark:text-amber-300/90">
+                  Due to Tone3000 API and download limitations, Find Tones browsing is locked until this queue finishes or you cancel it.
+                </p>
+              </div>
+              <button
+                onClick={onCancelQueue}
+                className="shrink-0 text-xs px-2 py-1 rounded bg-red-500/15 hover:bg-red-500/25 text-red-500 dark:text-red-400 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+            {queueProgress && (
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-300">
+                  <span>{queueJob?.status === 'cooldown' ? 'Waiting for Tone3000 access to resume...' : `Downloading ${queueProgress.current + 1} of ${queueProgress.total}...`}</span>
+                  <span>{queuePercent}%</span>
+                </div>
+                <div className="w-full bg-gray-200/60 dark:bg-gray-700 rounded-full h-1.5">
+                  <div
+                    className="bg-amber-400 h-1.5 rounded-full transition-all"
+                    style={{ width: `${queuePercent}%` }}
+                  />
+                </div>
+                <p className="text-xs text-gray-600 dark:text-gray-300">{queueJob?.message ?? `Saving to "${queueProgress.folderName}"`}</p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Results */}
@@ -712,7 +757,7 @@ export function ToneStore({
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">{total.toLocaleString()} tones found</p>
             <div className="grid grid-cols-2 gap-3">
               {results.map((tone) => (
-                <div key={tone.id} className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden flex flex-col">
+                <div key={tone.id} className={`rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden flex flex-col ${queueLocked ? 'opacity-60' : ''}`}>
                   {tone.images?.[0] ? (
                     <img src={tone.images[0]} alt={tone.title} className="w-full h-24 object-cover" loading="lazy" />
                   ) : (
@@ -726,6 +771,7 @@ export function ToneStore({
                     <div className="text-xs font-medium text-gray-900 dark:text-white truncate" title={tone.title}>{tone.title}</div>
                     <button
                       onClick={() => filterLocalCreator(tone.user?.username)}
+                      disabled={queueLocked}
                       className="text-xs text-left text-gray-500 dark:text-gray-400 hover:text-violet-500 transition-colors"
                       title="Filter local NAM Lab files by this creator"
                     >
@@ -745,8 +791,8 @@ export function ToneStore({
                       <span>Downloads {tone.downloads_count?.toLocaleString()}</span>
                       {tone.created_at && <span>{fmtDate(tone.created_at)}</span>}
                     </div>
-                    <button onClick={() => openDetail(tone)}
-                      className="mt-1 w-full py-1 text-xs font-medium rounded bg-violet-600 hover:bg-violet-500 text-white transition-colors"
+                    <button onClick={() => openDetail(tone)} disabled={queueLocked}
+                      className="mt-1 w-full py-1 text-xs font-medium rounded bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors"
                     >
                       More Info / Download
                     </button>

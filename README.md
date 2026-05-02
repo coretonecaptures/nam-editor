@@ -32,7 +32,7 @@ NAM captures embed metadata (name, gear info, tone type, etc.) as JSON inside th
 
 ## Key Features
 
-- **Tone3000 integration** - browse and download captures from Tone3000 inside NAM Lab, search by gear and sort order, open your own created tones, jump from a local capture to similar Tone3000 results, open the public Tone3000 page from the detail view, and optionally save the Tone3000 preview image as an `ampcover` image for the folder
+- **Tone3000 integration** - browse and download captures from Tone3000 inside NAM Lab, search by gear and sort order, remember your last search term, open your own created tones, jump from a local capture to similar Tone3000 results, open the public Tone3000 page from the detail view, run large downloads through a background queue, auto-seed Pack Info for new Tone3000 folders, and save both an `ampcover` image and the original Tone3000 image into the folder
 - **Three-panel library** - Folder Tree | File List | Metadata Editor; all panels resizable and collapsible
 - **Library Overview dashboard** - gear type, tone type, creator, completeness, and rating breakdowns across your whole library; clickable stats filter the file list; recent files list for quick navigation
 - **Folder Overview dashboard** - same at folder level; shown in the Overview tab when a folder is selected
@@ -46,6 +46,7 @@ NAM captures embed metadata (name, gear info, tone type, etc.) as JSON inside th
 - **Pack Info editor** - documentation sheet per amp pack with rich text description, equipment table, captures table, PDF export, and customizable dark-mode accent color
 - **Read Me tab** - open, edit, and save folder README text files directly inside NAM Lab
 - **Metadata cover image** - show `ampcover.*` images above the metadata editor without stretching, while keeping those cover images out of the gallery view
+- **Native text menus** - right-click selected text in Tone3000 details, Read Me, and Metadata fields for normal copy/paste/select-all behavior
 - **Folder image gallery** - browse rig photos stored alongside `.nam` files; images cascade from parent folders
 - **Export** - CSV or Excel from any view; visible or all columns; respects active filters
 - **Spreadsheet import** - generate a pre-filled `.xlsx` template, edit in Excel, import back

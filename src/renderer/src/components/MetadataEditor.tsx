@@ -1,4 +1,4 @@
-import { useState, useRef, useLayoutEffect } from 'react'
+import { useState, useRef, useLayoutEffect, type MouseEvent } from 'react'
 
 // Survives component remounts (caused by key={filePath} in App.tsx)
 let sharedScrollTop = 0
@@ -26,6 +26,15 @@ interface MetadataEditorProps {
 
 function toFileUrl(p: string): string {
   return p.startsWith('/') ? `local-file://${p}` : `local-file:///${p}`
+}
+
+function showNativeTextContextMenu(event: MouseEvent<HTMLElement>) {
+  const selection = window.getSelection()?.toString().trim() ?? ''
+  const target = event.target as HTMLElement | null
+  const isEditable = !!target?.closest('input, textarea, [contenteditable="true"]')
+  if (!selection && !isEditable) return
+  event.preventDefault()
+  void window.api.showTextContextMenu({ hasSelection: !!selection, isEditable })
 }
 
 type NlKey = 'nl_mics' | 'nl_amp_channel' | 'nl_cabinet' | 'nl_cabinet_config' |
@@ -118,7 +127,7 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
     : ''
 
   return (
-    <div className="flex flex-col h-full overflow-hidden" onKeyDown={handleKeyDown}>
+    <div className="flex flex-col h-full overflow-hidden" onKeyDown={handleKeyDown} onContextMenu={showNativeTextContextMenu}>
       {/* File header */}
       <div className="flex items-start justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 flex-shrink-0 flex-wrap gap-3">
         <div className="flex items-center gap-4 min-w-0">

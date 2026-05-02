@@ -11,7 +11,7 @@ import { BatchEditor, BatchApplyOptions } from './components/BatchEditor'
 import { MultiSelectEditor } from './components/MultiSelectEditor'
 import { StatusBar } from './components/StatusBar'
 import { SettingsPanel } from './components/SettingsPanel'
-import { ToneStore } from './components/ToneStore'
+import { ToneStore, type ToneModel, type ToneStoreDownloadQueueJob } from './components/ToneStore'
 import { FolderTree } from './components/FolderTree'
 import { DuplicatesModal } from './components/DuplicatesModal'
 import { ImportMetadataModal, ImportMatch } from './components/ImportMetadataModal'
@@ -50,6 +50,10 @@ interface DashboardChecklistEntry {
   status: string
   progressLabel: string
   percent: number
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function summarizeChecklist(packData: unknown): ChecklistSummary | null {
@@ -170,6 +174,7 @@ declare global {
       tone3000GetTone: (toneId: number) => Promise<{ ok?: boolean; tone?: unknown; error?: string }>
       tone3000GetModels: (toneId: number) => Promise<{ ok?: boolean; models?: unknown[]; error?: string }>
       tone3000Download: (modelUrl: string, name: string) => Promise<{ ok?: boolean; localPath?: string; error?: string }>
+      tone3000FileExists: (destDir: string, name: string) => Promise<{ exists: boolean; destPath?: string }>
       tone3000SaveCoverImage: (imageUrl: string, destDir: string) => Promise<{ ok?: boolean; skipped?: boolean; destPath?: string; error?: string }>
       platform: string
       initialSettings: unknown
@@ -331,6 +336,11 @@ export default function App() {
   const suppressStartupAutoSelectRef = useRef(settings.showDashboardOnLaunch)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [showToneStore, setShowToneStore] = useState(false)
+  const [toneStoreQueueJob, setToneStoreQueueJob] = useState<ToneStoreDownloadQueueJob | null>(null)
+  const toneStoreQueueRunningRef = useRef(false)
+  const toneStoreQueueAbortRef = useRef(0)
+  const loadFilesRef = useRef<null | ((paths: string[], mode: 'replace' | 'append', genToken?: number) => Promise<void>)>(null)
+  const refreshFolderTreeRef = useRef<null | (() => Promise<void>)>(null)
   const [directFilesOnly, setDirectFilesOnly] = useState(false)
   const [toneStoreSearchRequest, setToneStoreSearchRequest] = useState<{ key: number; query: string } | null>(null)
   const [sessionHistory, setSessionHistory] = useState<HistoryEntry[]>(() => loadHistory())
@@ -341,6 +351,189 @@ export default function App() {
   const [filterModeOverride, setFilterModeOverride] = useState<'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited' | 'incomplete' | 'complete' | 'rated' | null>(null)
   const [esrFilterOverride, setEsrFilterOverride] = useState<string | null>(null)
   const [ratingFilter, setRatingFilter] = useState<number | null>(null)
+
+  const runToneStoreQueueStep = useCallback(async (
+    toneId: number,
+    model: ToneModel
+  ): Promise<{ localPath?: string; error?: string; retryable403?: boolean; refreshedModel?: ToneModel }> => {
+    const initial = await window.api.tone3000Download(model.model_url, model.name)
+    if (!initial.error || !/\(403\)/.test(initial.error)) return initial
+
+    await wait(1500)
+    const refreshedModels = await window.api.tone3000GetModels(toneId)
+    if (refreshedModels.error || !refreshedModels.models) return { ...initial, retryable403: true }
+    const refreshed = (refreshedModels.models as ToneModel[]).find((entry) => entry.id === model.id)
+    if (!refreshed) return { ...initial, retryable403: true }
+    const retried = await window.api.tone3000Download(refreshed.model_url, refreshed.name)
+    if (retried.error && /\(403\)/.test(retried.error)) {
+      return { ...retried, retryable403: true, refreshedModel: refreshed }
+    }
+    return { ...retried, refreshedModel: refreshed }
+  }, [])
+
+  useEffect(() => {
+    if (!toneStoreQueueJob || toneStoreQueueJob.status !== 'cooldown') return
+    const backoffMs = Math.min(5000 * Math.max(toneStoreQueueJob.resumePass, 1), 30000)
+    const timer = window.setTimeout(() => {
+      setToneStoreQueueJob((prev) => prev && prev.status === 'cooldown'
+        ? { ...prev, status: 'running', message: `Resuming at file ${prev.nextIndex + 1} of ${prev.items.length}...` }
+        : prev)
+    }, backoffMs)
+    return () => window.clearTimeout(timer)
+  }, [toneStoreQueueJob])
+
+  useEffect(() => {
+    if (!toneStoreQueueJob) return
+    if (toneStoreQueueJob.status === 'error') {
+      setStatus({ message: toneStoreQueueJob.message, type: 'error' })
+    }
+  }, [toneStoreQueueJob])
+
+  useEffect(() => {
+    if (!toneStoreQueueJob || toneStoreQueueJob.status !== 'running' || toneStoreQueueRunningRef.current) return
+    toneStoreQueueRunningRef.current = true
+
+    const runQueue = async () => {
+      const abortToken = toneStoreQueueAbortRef.current
+      const items = [...toneStoreQueueJob.items]
+      const downloadedPaths = [...toneStoreQueueJob.downloadedPaths]
+      let skipped = toneStoreQueueJob.skipped
+
+      for (let i = toneStoreQueueJob.nextIndex; i < items.length; i++) {
+        if (toneStoreQueueAbortRef.current !== abortToken) return
+        const model = items[i]
+
+        const existingDest = await window.api.tone3000FileExists(toneStoreQueueJob.destDir, model.name)
+        if (toneStoreQueueAbortRef.current !== abortToken) return
+        if (existingDest.exists) {
+          skipped++
+          setToneStoreQueueJob((prev) => prev ? {
+            ...prev,
+            items,
+            downloadedPaths: [...downloadedPaths],
+            skipped,
+            nextIndex: i + 1,
+            resumePass: 0,
+            message: `Skipping existing file ${i + 1} of ${items.length}...`
+          } : prev)
+          continue
+        }
+
+        setToneStoreQueueJob((prev) => prev ? { ...prev, nextIndex: i, message: `Downloading ${i + 1} of ${items.length}...` } : prev)
+
+        const dlResult = await runToneStoreQueueStep(toneStoreQueueJob.toneId, model)
+        if (toneStoreQueueAbortRef.current !== abortToken) return
+        if (dlResult.refreshedModel) items[i] = dlResult.refreshedModel
+
+        if (dlResult.retryable403) {
+          const nextPass = toneStoreQueueJob.resumePass + 1
+          if (nextPass > 10) {
+            const errorMessage = `Tone3000 kept returning 403 near "${model.name}". Please retry this batch in a moment.`
+            setToneStoreQueueJob((prev) => prev ? { ...prev, items, nextIndex: i, resumePass: nextPass, status: 'error', message: errorMessage } : prev)
+            return
+          }
+          setToneStoreQueueJob((prev) => prev ? {
+            ...prev,
+            items,
+            nextIndex: i,
+            resumePass: nextPass,
+            status: 'cooldown',
+            message: `Tone3000 paused downloads near "${model.name}". Waiting for Tone3000 access to resume before retry ${nextPass} of 10...`
+          } : prev)
+          return
+        }
+
+        if (dlResult.error || !dlResult.localPath) {
+          const errorMessage = `Failed on "${model.name}": ${dlResult.error ?? 'unknown error'}`
+          setToneStoreQueueJob((prev) => prev ? { ...prev, items, nextIndex: i, status: 'error', message: errorMessage } : prev)
+          return
+        }
+
+        const copyResults = await window.api.copyFiles([dlResult.localPath], toneStoreQueueJob.destDir)
+        if (toneStoreQueueAbortRef.current !== abortToken) return
+        const copied = copyResults[0]
+        if (copied.success && copied.destPath) {
+          downloadedPaths.push(copied.destPath)
+        } else if (copied.error === 'exists') {
+          skipped++
+        } else {
+          const errorMessage = `Failed on "${model.name}": ${copied.error ?? 'copy failed'}`
+          setToneStoreQueueJob((prev) => prev ? { ...prev, items, nextIndex: i, skipped, status: 'error', message: errorMessage } : prev)
+          return
+        }
+
+        setToneStoreQueueJob((prev) => prev ? {
+          ...prev,
+          items,
+          downloadedPaths: [...downloadedPaths],
+          skipped,
+          nextIndex: i + 1,
+          resumePass: 0,
+          message: `Downloading ${Math.min(i + 2, items.length)} of ${items.length}...`
+        } : prev)
+        if (i < items.length - 1) {
+          await wait(350)
+          if (toneStoreQueueAbortRef.current !== abortToken) return
+        }
+      }
+
+      let coverSaved = false
+      if (toneStoreQueueJob.coverImageUrl) {
+        const coverResult = await window.api.tone3000SaveCoverImage(toneStoreQueueJob.coverImageUrl, toneStoreQueueJob.destDir)
+        if (toneStoreQueueAbortRef.current !== abortToken) return
+        if (!coverResult.error && !coverResult.skipped) coverSaved = true
+      }
+
+      if (toneStoreQueueJob.packInfoSeed) {
+        const existingPack = await window.api.readPackInfo(toneStoreQueueJob.destDir)
+        if (toneStoreQueueAbortRef.current !== abortToken) return
+        if (existingPack.success && !existingPack.data) {
+          const writeResult = await window.api.writePackInfo(toneStoreQueueJob.destDir, {
+            title: toneStoreQueueJob.packInfoSeed.title,
+            subtitle: '',
+            capturedBy: toneStoreQueueJob.packInfoSeed.capturedBy,
+            description: toneStoreQueueJob.packInfoSeed.description,
+            equipment: [],
+            pedals: [],
+            switches: [],
+            glossary: [],
+            footer: '',
+            exportExcludedSubfolders: [],
+            exportExcludedCaptures: [],
+            exportColumns: ['name', 'maker', 'model', 'tone', 'input', 'output'],
+            recommendedInputGain: '',
+            checklistItems: [],
+            checklistNotes: '',
+            targetDate: '',
+            liveDate: '',
+            versionInfo: '',
+          })
+          if (toneStoreQueueAbortRef.current !== abortToken) return
+          if (writeResult.success && toneStoreQueueJob.packInfoSeed.title.trim()) {
+            const normalizedDest = toneStoreQueueJob.destDir.replace(/\\/g, '/')
+            setPackInfoFolders((prev) => {
+              const next = new Set(prev)
+              next.add(normalizedDest)
+              return next
+            })
+          }
+        }
+      }
+
+      const selectedCount = items.length
+      const msg = skipped > 0
+        ? `${selectedCount} model${selectedCount !== 1 ? 's' : ''} selected, ${downloadedPaths.length} saved, ${skipped} skipped (already existed or duplicate filenames)${coverSaved ? ', ampcover image added' : ''}`
+        : `${selectedCount} model${selectedCount !== 1 ? 's' : ''} selected, ${downloadedPaths.length} saved${coverSaved ? ', ampcover image added' : ''}`
+      setToneStoreQueueJob((prev) => prev ? { ...prev, items, downloadedPaths, skipped, nextIndex: items.length, status: 'done', message: msg } : prev)
+      setStatus({ message: `Tone3000 download complete: ${msg}`, type: 'success' })
+      if (downloadedPaths.length > 0) await loadFilesRef.current?.(downloadedPaths, 'append')
+      await refreshFolderTreeRef.current?.()
+    }
+
+    void runQueue().finally(() => {
+      toneStoreQueueRunningRef.current = false
+    })
+  }, [runToneStoreQueueStep, toneStoreQueueJob])
 
   // Reset folder panel tab and check for pack-owning ancestor when selected folder changes
   useEffect(() => {
@@ -692,6 +885,28 @@ export default function App() {
     await applyParsedResults(results, mode)
   }, [applyParsedResults]) // no longer depends on files or selectedIds
 
+  useEffect(() => {
+    loadFilesRef.current = loadFiles
+  }, [loadFiles])
+
+  const handleStartToneStoreQueue = useCallback((job: ToneStoreDownloadQueueJob) => {
+    setToneStoreQueueJob(job)
+    setStatus({
+      message: `Tone3000 background download started: ${job.items.length} file${job.items.length !== 1 ? 's' : ''}`,
+      type: 'info'
+    })
+  }, [])
+
+  const handleCancelToneStoreQueue = useCallback(() => {
+    toneStoreQueueAbortRef.current += 1
+    toneStoreQueueRunningRef.current = false
+    setToneStoreQueueJob(null)
+    setStatus({
+      message: 'Tone3000 download queue cancelled',
+      type: 'info'
+    })
+  }, [])
+
   // Shared logic for opening a folder by path (used by Open Folder and Refresh)
   const loadFolderByPath = useCallback(async (folder: string) => {
     const gen = ++loadGenRef.current
@@ -770,8 +985,21 @@ export default function App() {
   const confirmDiscardChanges = (): boolean => {
     const dirty = files.filter((f) => f.isDirty)
     if (dirty.length === 0) return true
+    const manuallyDirty = dirty.filter((f) => {
+      const keys = new Set<keyof NamFile['metadata']>([
+        ...(Object.keys(f.metadata) as (keyof NamFile['metadata'])[]),
+        ...(Object.keys(f.originalMetadata) as (keyof NamFile['metadata'])[])
+      ])
+      for (const key of keys) {
+        const current = f.metadata[key] ?? null
+        const original = f.originalMetadata[key] ?? null
+        if (current !== original && !f.autoFilledFields.includes(key)) return true
+      }
+      return false
+    })
+    if (manuallyDirty.length === 0) return true
     return window.confirm(
-      `You have unsaved changes in ${dirty.length} file${dirty.length !== 1 ? 's' : ''}.\n\nDiscard changes and continue?`
+      `You have manual unsaved changes in ${manuallyDirty.length} file${manuallyDirty.length !== 1 ? 's' : ''}.\n\nDiscard changes and continue?`
     )
   }
 
@@ -820,6 +1048,10 @@ export default function App() {
     }
   }, [librarian.rootFolder, settings.hiddenFolders])
 
+  useEffect(() => {
+    refreshFolderTreeRef.current = refreshFolderTree
+  }, [refreshFolderTree])
+
   // OS drag/drop Ã¢â‚¬â€ use React synthetic onDrop on the root div (works in Electron;
   // native document-level listeners do NOT receive OS file drops in Electron 41+).
   // Guard against intra-app drags (application/x-nam-files) which are handled by FolderTree.
@@ -853,8 +1085,7 @@ export default function App() {
     if (folders.length === 0 && namFiles.length === 0) return
 
     if (folders.length > 0) {
-      const dirty = files.filter((f) => f.isDirty)
-      if (dirty.length > 0 && !window.confirm(`You have unsaved changes in ${dirty.length} file${dirty.length !== 1 ? 's' : ''}.\n\nDiscard changes and continue?`)) return
+      if (!confirmDiscardChanges()) return
       await loadFolderByPath(folders[0])
     } else {
       await loadFiles(namFiles, files.length === 0 ? 'replace' : 'append')
@@ -2022,7 +2253,12 @@ export default function App() {
         fileCount={files.length}
         isMac={window.api.platform === 'darwin'}
         showSettings={showSettings}
-        onToggleSettings={() => { setShowSettings((s) => !s); setBatchFolder(null); setShowToneStore(false); if (gridMaximized) setGridSlideOpen(true) }}
+        onToggleSettings={() => {
+          setShowSettings((s) => !s)
+          setBatchFolder(null)
+          setShowToneStore(false)
+          if (gridMaximized) setGridSlideOpen(true)
+        }}
         unnamedCount={unnamedCount}
         onNameFromFilename={handleNameFromFilename}
         onCloseAll={handleCloseAll}
@@ -2033,11 +2269,27 @@ export default function App() {
         onFindDuplicates={files.length > 1 ? () => setShowDuplicates(true) : undefined}
         showDashboard={files.length > 0}
         dashboardActive={showDashboard}
-        onToggleDashboard={() => { setShowDashboard((v) => !v); setHistoryOpen(false); setShowSettings(false); setShowToneStore(false); setBatchFolder(null) }}
+        onToggleDashboard={() => {
+          setShowDashboard((v) => !v)
+          setHistoryOpen(false)
+          setShowSettings(false)
+          setShowToneStore(false)
+          setBatchFolder(null)
+        }}
         historyOpen={historyOpen}
-        onHistoryToggle={() => { setHistoryOpen((v) => !v); setShowDashboard(false); setShowSettings(false); setShowToneStore(false); setBatchFolder(null) }}
+        onHistoryToggle={() => {
+          setHistoryOpen((v) => !v)
+          setShowDashboard(false)
+          setShowSettings(false)
+          setShowToneStore(false)
+          setBatchFolder(null)
+        }}
         toneStoreActive={showToneStore}
-        onToggleToneStore={() => { setShowToneStore((v) => !v); setShowSettings(false); setBatchFolder(null) }}
+        onToggleToneStore={() => {
+          setShowToneStore((v) => !v)
+          setShowSettings(false)
+          setBatchFolder(null)
+        }}
       />
 
       <div className="flex flex-1 overflow-hidden relative">
@@ -2300,7 +2552,10 @@ export default function App() {
               onFilterLocalCreator={handleFilterLocalCreator}
               savedTone3000Username={settings.tone3000Username}
               searchRequest={toneStoreSearchRequest}
-            />
+              queueJob={toneStoreQueueJob}
+              onStartQueue={handleStartToneStoreQueue}
+              onCancelQueue={handleCancelToneStoreQueue}
+              />
           ) : showDashboard ? (
             <NamDashboard
               files={files}
