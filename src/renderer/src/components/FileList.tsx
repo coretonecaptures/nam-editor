@@ -1242,7 +1242,7 @@ function GridView({
   onContextMenu: (e: React.MouseEvent, filePath: string) => void
 }) {
   const [colWidths, setColWidths] = useState<Record<string, number>>(DEFAULT_COL_WIDTHS)
-  const [columnDrag, setColumnDrag] = useState<{ from: string; over: string | null; side: 'before' | 'after'; x: number } | null>(null)
+  const [columnDrag, setColumnDrag] = useState<{ from: string; over: string | null; side: 'before' | 'after' } | null>(null)
   const [openFilterCol, setOpenFilterCol] = useState<string | null>(null)
   const [filterSearch, setFilterSearch] = useState('')
   const filterPopupRef = useRef<HTMLDivElement>(null)
@@ -1250,7 +1250,6 @@ function GridView({
   const resizingRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null)
   const headerRefs = useRef<Record<string, HTMLTableCellElement | null>>({})
   const dragIntentRef = useRef<{ key: string; startX: number; startY: number } | null>(null)
-  const suppressSortClickRef = useRef(false)
   const columnDragRef = useRef<typeof columnDrag>(null)
 
   // Order-preserving: visibleCols drives display order
@@ -1334,32 +1333,29 @@ function GridView({
     return null
   }
 
-  const handleColumnPointerDown = (e: React.MouseEvent, key: string) => {
-    if (key === 'name' || e.button !== 0) return
-    dragIntentRef.current = { key, startX: e.clientX, startY: e.clientY }
-    suppressSortClickRef.current = false
+  const handleColumnGripMouseDown = (event: React.MouseEvent, key: string) => {
+    if (key === 'name' || event.button !== 0 || resizingRef.current) return
+    event.preventDefault()
+    event.stopPropagation()
+    dragIntentRef.current = { key, startX: event.clientX, startY: event.clientY }
+    document.body.style.cursor = 'grabbing'
 
-    const onMove = (ev: MouseEvent) => {
+    const onMove = (moveEvent: MouseEvent) => {
       const intent = dragIntentRef.current
       if (!intent) return
-      const dx = ev.clientX - intent.startX
-      const dy = ev.clientY - intent.startY
-      if (!columnDrag && Math.abs(dx) + Math.abs(dy) < 6) return
-
-      const drop = getDropTarget(ev.clientX)
-      if (!columnDrag) suppressSortClickRef.current = true
-      setColumnDrag((prev) => ({
+      const dx = moveEvent.clientX - intent.startX
+      const dy = moveEvent.clientY - intent.startY
+      if (!columnDragRef.current && Math.abs(dx) + Math.abs(dy) < 4) return
+      const drop = getDropTarget(moveEvent.clientX)
+      setColumnDrag({
         from: intent.key,
-        over: drop?.over ?? prev?.over ?? null,
-        side: drop?.side ?? prev?.side ?? 'after',
-        x: ev.clientX,
-      }))
-      document.body.style.cursor = 'grabbing'
+        over: drop?.over ?? null,
+        side: drop?.side ?? 'after',
+      })
     }
 
     const onUp = () => {
       const activeDrag = columnDragRef.current
-      const latestIntent = dragIntentRef.current
       dragIntentRef.current = null
       document.body.style.cursor = ''
       window.removeEventListener('mousemove', onMove)
@@ -1375,9 +1371,7 @@ function GridView({
         }
       }
 
-      if (latestIntent && !activeDrag) suppressSortClickRef.current = false
       setColumnDrag(null)
-      window.setTimeout(() => { suppressSortClickRef.current = false }, 0)
     }
 
     window.addEventListener('mousemove', onMove)
@@ -1393,22 +1387,36 @@ function GridView({
             {activeColumns.map((col) => {
               const hasFilter = !!(columnFilters[col.key]?.text || columnFilters[col.key]?.selected?.length)
               const isFilterOpen = openFilterCol === col.key
-              const isDragTarget = columnDrag?.over === col.key
-              const dragMarkerSide = isDragTarget ? columnDrag?.side : null
+              const dragMarkerSide = columnDrag?.over === col.key ? columnDrag.side : null
               const isDraggedColumn = columnDrag?.from === col.key
               return (
               <th
                 key={col.key}
                 ref={(el) => { headerRefs.current[col.key] = el }}
-                className={`relative text-left font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-r border-gray-200 dark:border-gray-700 select-none transition-colors ${isDragTarget ? 'bg-indigo-100 dark:bg-indigo-900/40' : ''} ${isDraggedColumn ? 'opacity-60' : ''}`}
+                className={`relative text-left font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-r border-gray-200 dark:border-gray-700 select-none transition-colors ${columnDrag?.over === col.key ? 'bg-indigo-100 dark:bg-indigo-900/40' : ''} ${isDraggedColumn ? 'opacity-60' : ''}`}
                 style={{ width: colWidths[col.key] }}
+                onDragStart={(e) => e.preventDefault()}
               >
+                {col.key !== 'name' && (
+                  <button
+                    type="button"
+                    draggable={false}
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation() }}
+                    onMouseDown={(e) => handleColumnGripMouseDown(e, col.key)}
+                    onDragStart={(e) => e.preventDefault()}
+                    title={`Drag to reorder ${col.label}`}
+                    className="absolute left-0 top-0 z-20 flex h-full w-6 items-center justify-center border-r border-gray-200/70 dark:border-gray-700/70 bg-gray-50/70 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-900/30 dark:hover:text-indigo-300 cursor-grab active:cursor-grabbing"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" draggable={false}>
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01" />
+                    </svg>
+                  </button>
+                )}
                 <div
-                  className={`flex items-center gap-1 px-3 py-2 whitespace-nowrap overflow-hidden hover:text-gray-800 dark:hover:text-gray-200 ${col.key !== 'name' ? 'cursor-grab' : 'cursor-pointer'}`}
+                  className={`flex items-center gap-1 px-3 py-2 whitespace-nowrap overflow-hidden hover:text-gray-800 dark:hover:text-gray-200 ${col.key !== 'name' ? 'pl-8 cursor-pointer' : 'cursor-pointer'}`}
                   style={{ paddingRight: 28 }}
-                  onMouseDown={(e) => handleColumnPointerDown(e, col.key)}
+                  onDragStart={(e) => e.preventDefault()}
                   onClick={() => {
-                    if (suppressSortClickRef.current) return
                     onSortClick(col.key)
                   }}
                 >

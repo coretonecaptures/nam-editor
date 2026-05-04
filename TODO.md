@@ -38,3 +38,5 @@
 - Tighten checklist row layout so a row can fit on one line: move up/down | checkbox | step name | note | right-aligned date | delete | sync
 - Add drag-and-drop reordering to the checklist
 - Pack metadata cover image: add adjustable framing / zoom window for `ampcover.*`
+- Capture Lab follow-up: port the NAM Lab `Read Me` and Checklist concepts into Capture Lab using central pack-record storage instead of filesystem sidecars.
+  See `C:\Users\Admin\capture-lab\docs\capture-lab-pack-workflow-plan.md`.
