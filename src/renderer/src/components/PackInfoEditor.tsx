@@ -1,4 +1,19 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import {
+  closestCenter,
+  DndContext,
+  type DragEndEvent,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core'
+import {
+  arrayMove,
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { NamFile } from '../types/nam'
 import { AppSettings } from '../types/settings'
 import { PACK_CAPTURE_COLUMNS, DEFAULT_EXPORT_COLUMNS, generatePackHtml } from '../utils/packExport'
@@ -204,6 +219,122 @@ function SectionHeader({ label, hint }: { label: string; hint?: string }) {
       <span className="text-xs font-bold text-gray-600 dark:text-gray-300 uppercase tracking-widest">{label}</span>
       {hint && <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{hint}</span>}
       <div className="mt-1.5 w-8 h-0.5 bg-teal-500 rounded-full" />
+    </div>
+  )
+}
+
+function SortableChecklistRow({
+  item,
+  index,
+  totalCount,
+  inTemplate,
+  rowChanged,
+  parentPackPath,
+  onToggleCompleted,
+  onLabelChange,
+  onDateChange,
+  onNotesChange,
+  onSync,
+  onAddToTemplate,
+  onRemove,
+}: {
+  item: PackChecklistItem
+  index: number
+  totalCount: number
+  inTemplate: boolean
+  rowChanged: boolean
+  parentPackPath?: string | null
+  onToggleCompleted: (completed: boolean) => void
+  onLabelChange: (value: string) => void
+  onDateChange: (value: string) => void
+  onNotesChange: (value: string) => void
+  onSync: () => void
+  onAddToTemplate: () => void
+  onRemove: () => void
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: item.id })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  }
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`rounded p-2.5 transition-colors ${
+        rowChanged
+          ? 'border border-amber-400/80 dark:border-amber-500/70 bg-amber-50/70 dark:bg-amber-900/10 shadow-[0_0_0_1px_rgba(251,191,36,0.18)]'
+          : 'border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/40'
+      } ${isDragging ? 'opacity-80 shadow-xl ring-1 ring-teal-400/50 z-10' : ''}`}
+    >
+      <div className="flex items-center gap-2">
+        <button
+          ref={setActivatorNodeRef}
+          type="button"
+          {...attributes}
+          {...listeners}
+          className="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded border border-gray-200 bg-gray-50 text-gray-400 transition-colors hover:border-teal-400 hover:text-teal-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-500 dark:hover:border-teal-500 dark:hover:text-teal-300 cursor-grab active:cursor-grabbing"
+          title="Drag to reorder"
+        >
+          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
+          </svg>
+        </button>
+        <input type="checkbox" checked={item.completed} onChange={(e) => onToggleCompleted(e.target.checked)} className="w-4 h-4 rounded accent-teal-600 flex-shrink-0" />
+        <div className="min-w-0 flex-[1.4]">
+          <input
+            type="text"
+            value={item.label}
+            onChange={(e) => onLabelChange(e.target.value)}
+            placeholder="Checklist step"
+            className="w-full px-2 py-1.5 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500"
+          />
+        </div>
+        <div className="min-w-0 flex-1">
+          <input
+            type="text"
+            value={item.notes}
+            onChange={(e) => onNotesChange(e.target.value)}
+            placeholder="Note"
+            className="w-full px-2 py-1.5 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500"
+          />
+        </div>
+        <input
+          type="date"
+          value={item.completedDate}
+          onChange={(e) => onDateChange(e.target.value)}
+          className="w-[136px] flex-shrink-0 px-2 py-1.5 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500"
+        />
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {parentPackPath && (
+            <button
+              onClick={onSync}
+              className="text-[10px] px-1.5 py-0.5 rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-300 hover:border-teal-500 hover:text-teal-600 dark:hover:text-teal-300 transition-colors"
+              title="Sync this row with Parent Pack"
+            >
+              Sync
+            </button>
+          )}
+          {!inTemplate && item.label.trim() && (
+            <button onClick={onAddToTemplate} className="text-[10px] text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300" title="Add this step to the global checklist template">
+              Template
+            </button>
+          )}
+          <button onClick={onRemove} className="text-gray-400 hover:text-red-500 transition-colors" title="Remove step">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -652,6 +783,19 @@ export function PackInfoEditor({
     if (!savedItem) return true
     return JSON.stringify(item) !== JSON.stringify(savedItem)
   }
+  const checklistSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 6 },
+    })
+  )
+  const handleChecklistDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIndex = pack.checklistItems.findIndex((item) => item.id === active.id)
+    const newIndex = pack.checklistItems.findIndex((item) => item.id === over.id)
+    if (oldIndex < 0 || newIndex < 0) return
+    updateChecklistItems(arrayMove(pack.checklistItems, oldIndex, newIndex))
+  }, [pack.checklistItems, updateChecklistItems])
   const labelCls = 'text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 block'
   const checklistCompletedCount = pack.checklistItems.filter((item) => item.completed).length
   const checklistTotalCount = pack.checklistItems.length
@@ -794,73 +938,32 @@ export function PackInfoEditor({
                   No checklist steps yet.
                 </div>
               ) : (
-                pack.checklistItems.map((item, index) => {
-                  const inTemplate = checklistTemplate.some((step) => step.label.trim().toLowerCase() === item.label.trim().toLowerCase())
-                  const rowChanged = checklistItemChanged(item)
-                  return (
-                    <div
-                      key={item.id}
-                      className={`rounded p-3 space-y-2 transition-colors ${
-                        rowChanged
-                          ? 'border border-amber-400/80 dark:border-amber-500/70 bg-amber-50/70 dark:bg-amber-900/10 shadow-[0_0_0_1px_rgba(251,191,36,0.18)]'
-                          : 'border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/40'
-                      }`}
-                    >
-                      <div className="flex items-start gap-2">
-                        <input type="checkbox" checked={item.completed} onChange={(e) => setChecklistItemCompleted(item.id, e.target.checked)} className="mt-0.5 w-4 h-4 rounded accent-teal-600" />
-                        <div className="flex-1 space-y-2">
-                          <input
-                            type="text"
-                            value={item.label}
-                            onChange={(e) => updateChecklistItems(pack.checklistItems.map((step) => step.id === item.id ? { ...step, label: e.target.value } : step))}
-                            placeholder="Checklist step"
-                            className="w-full px-2 py-1.5 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500"
-                          />
-                          <div className="grid grid-cols-1 md:grid-cols-[160px_1fr] gap-2">
-                            <input
-                              type="date"
-                              value={item.completedDate}
-                              onChange={(e) => updateChecklistItems(pack.checklistItems.map((step) => step.id === item.id ? { ...step, completedDate: e.target.value, completed: e.target.value ? true : step.completed } : step))}
-                              className="px-2 py-1.5 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500"
-                            />
-                            <input
-                              type="text"
-                              value={item.notes}
-                              onChange={(e) => updateChecklistItems(pack.checklistItems.map((step) => step.id === item.id ? { ...step, notes: e.target.value } : step))}
-                              placeholder="Optional note"
-                              className="px-2 py-1.5 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500"
-                            />
-                          </div>
-                        </div>
-                        <div className="flex flex-col items-center gap-0.5 flex-shrink-0">
-                          <button onClick={() => { if (index === 0) return; const next = [...pack.checklistItems]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; updateChecklistItems(next) }} disabled={index === 0} className="text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 disabled:opacity-20 disabled:pointer-events-none transition-colors leading-none" title="Move up">
-                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 15l7-7 7 7" /></svg>
-                          </button>
-                          <button onClick={() => { if (index === pack.checklistItems.length - 1) return; const next = [...pack.checklistItems]; [next[index], next[index + 1]] = [next[index + 1], next[index]]; updateChecklistItems(next) }} disabled={index === pack.checklistItems.length - 1} className="text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 disabled:opacity-20 disabled:pointer-events-none transition-colors leading-none" title="Move down">
-                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" /></svg>
-                          </button>
-                          {parentPackPath && (
-                            <button
-                              onClick={() => syncChecklistItemFromParent(item)}
-                              className="mt-1 text-[10px] px-1.5 py-0.5 rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-300 hover:border-teal-500 hover:text-teal-600 dark:hover:text-teal-300 transition-colors"
-                              title="Sync this row with Parent Pack"
-                            >
-                              Sync
-                            </button>
-                          )}
-                          {!inTemplate && item.label.trim() && (
-                            <button onClick={() => addChecklistItemToTemplate(item)} className="mt-1 text-[10px] text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300" title="Add this step to the global checklist template">
-                              Template
-                            </button>
-                          )}
-                          <button onClick={() => updateChecklistItems(pack.checklistItems.filter((step) => step.id !== item.id))} className="mt-1 text-gray-400 hover:text-red-500 transition-colors" title="Remove step">
-                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })
+                <DndContext sensors={checklistSensors} collisionDetection={closestCenter} onDragEnd={handleChecklistDragEnd}>
+                  <SortableContext items={pack.checklistItems.map((item) => item.id)} strategy={verticalListSortingStrategy}>
+                    {pack.checklistItems.map((item, index) => {
+                      const inTemplate = checklistTemplate.some((step) => step.label.trim().toLowerCase() === item.label.trim().toLowerCase())
+                      const rowChanged = checklistItemChanged(item)
+                      return (
+                        <SortableChecklistRow
+                          key={item.id}
+                          item={item}
+                          index={index}
+                          totalCount={pack.checklistItems.length}
+                          inTemplate={inTemplate}
+                          rowChanged={rowChanged}
+                          parentPackPath={parentPackPath}
+                          onToggleCompleted={(completed) => setChecklistItemCompleted(item.id, completed)}
+                          onLabelChange={(value) => updateChecklistItems(pack.checklistItems.map((step) => step.id === item.id ? { ...step, label: value } : step))}
+                          onDateChange={(value) => updateChecklistItems(pack.checklistItems.map((step) => step.id === item.id ? { ...step, completedDate: value, completed: value ? true : step.completed } : step))}
+                          onNotesChange={(value) => updateChecklistItems(pack.checklistItems.map((step) => step.id === item.id ? { ...step, notes: value } : step))}
+                          onSync={() => syncChecklistItemFromParent(item)}
+                          onAddToTemplate={() => addChecklistItemToTemplate(item)}
+                          onRemove={() => updateChecklistItems(pack.checklistItems.filter((step) => step.id !== item.id))}
+                        />
+                      )
+                    })}
+                  </SortableContext>
+                </DndContext>
               )}
               <div className="flex items-center gap-3 flex-wrap">
                 <button onClick={addChecklistItem} className="text-xs text-teal-600 dark:text-teal-400 hover:text-teal-700 dark:hover:text-teal-300 font-medium transition-colors">+ Add step</button>
