@@ -647,6 +647,11 @@ export function PackInfoEditor({
       : `${baseInputCls} border-gray-200 dark:border-gray-700 focus:border-teal-500`
   const sectionChanged = (key: keyof PackInfo) =>
     isChanged(key) ? 'ring-1 ring-amber-500/40 rounded' : ''
+  const checklistItemChanged = (item: PackChecklistItem) => {
+    const savedItem = savedPackRef.current.checklistItems.find((candidate) => candidate.id === item.id)
+    if (!savedItem) return true
+    return JSON.stringify(item) !== JSON.stringify(savedItem)
+  }
   const labelCls = 'text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 block'
   const checklistCompletedCount = pack.checklistItems.filter((item) => item.completed).length
   const checklistTotalCount = pack.checklistItems.length
@@ -791,8 +796,16 @@ export function PackInfoEditor({
               ) : (
                 pack.checklistItems.map((item, index) => {
                   const inTemplate = checklistTemplate.some((step) => step.label.trim().toLowerCase() === item.label.trim().toLowerCase())
+                  const rowChanged = checklistItemChanged(item)
                   return (
-                    <div key={item.id} className="rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/40 p-3 space-y-2">
+                    <div
+                      key={item.id}
+                      className={`rounded p-3 space-y-2 transition-colors ${
+                        rowChanged
+                          ? 'border border-amber-400/80 dark:border-amber-500/70 bg-amber-50/70 dark:bg-amber-900/10 shadow-[0_0_0_1px_rgba(251,191,36,0.18)]'
+                          : 'border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/40'
+                      }`}
+                    >
                       <div className="flex items-start gap-2">
                         <input type="checkbox" checked={item.completed} onChange={(e) => setChecklistItemCompleted(item.id, e.target.checked)} className="mt-0.5 w-4 h-4 rounded accent-teal-600" />
                         <div className="flex-1 space-y-2">
