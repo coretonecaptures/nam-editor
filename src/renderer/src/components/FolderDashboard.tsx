@@ -16,12 +16,18 @@ interface Props {
     releasedLate: boolean
     releasedOnTime: boolean
   } | null
+  hasPackInfo?: boolean
+  hasReadme?: boolean
+  hasCoverImage?: boolean
+  galleryCount?: number
+  activeDuplicate?: boolean
   activeGear?: string | null
   activeTone?: string | null
   activePreset?: string | null
   activeMissing?: boolean
   activeEsr?: string | null
   activeRating?: number | null
+  onDuplicateClick?: (on: boolean) => void
   onGearClick?: (gear: string | null) => void
   onToneClick?: (tone: string | null) => void
   onPresetClick?: (preset: string | null) => void
@@ -147,14 +153,33 @@ function MiniBar({ label, count, maxCount, color, isActive, onClick }: { label: 
 }
 
 export function FolderDashboard({
-  files, checklistSummary, activeGear, activeTone, activePreset, activeMissing, activeEsr, activeRating,
-  onGearClick, onToneClick, onPresetClick, onMissingClick, onEsrClick, onRatingClick,
+  files, checklistSummary, hasPackInfo, hasReadme, hasCoverImage, galleryCount = 0, activeDuplicate, activeGear, activeTone, activePreset, activeMissing, activeEsr, activeRating,
+  onDuplicateClick, onGearClick, onToneClick, onPresetClick, onMissingClick, onEsrClick, onRatingClick,
 }: Props) {
   const stats = useMemo(() => {
     const total = files.length
     const missing = files.filter((f) =>
       CORE_FIELDS.some((field) => !f.metadata[field] && f.metadata[field] !== 0)
     ).length
+    const totalSizeBytes = files.reduce((sum, file) => sum + (file.sizeBytes ?? 0), 0)
+    const newestUpdateMs = files.reduce((max, file) => Math.max(max, file.mtimeMs ?? 0), 0)
+    const recentThreshold = Date.now() - (7 * 24 * 60 * 60 * 1000)
+    const recentUpdatedCount = files.filter((file) => (file.mtimeMs ?? 0) >= recentThreshold).length
+
+    const duplicateNameCounts = new Map<string, number>()
+    for (const f of files) {
+      const key = f.fileName.trim().toLowerCase()
+      if (!key) continue
+      duplicateNameCounts.set(key, (duplicateNameCounts.get(key) ?? 0) + 1)
+    }
+    let duplicateGroups = 0
+    let duplicateFiles = 0
+    for (const count of duplicateNameCounts.values()) {
+      if (count >= 2) {
+        duplicateGroups += 1
+        duplicateFiles += count
+      }
+    }
 
     // Preset distribution
     const presetMap = new Map<string, number>()
@@ -213,7 +238,10 @@ export function FolderDashboard({
     const maxGear = Math.max(...gearRows.map((r) => r.count), 1)
     const maxTone = Math.max(...toneRows.map((r) => r.count), 1)
 
-    return { total, missing, presets, maxPreset, esrGood, esrOk, esrReview, esrNone, gearRows, maxGear, toneRows, maxTone, ratingRows, unratedCount, maxRating }
+    return {
+      total, missing, totalSizeBytes, newestUpdateMs, recentUpdatedCount, duplicateGroups, duplicateFiles,
+      presets, maxPreset, esrGood, esrOk, esrReview, esrNone, gearRows, maxGear, toneRows, maxTone, ratingRows, unratedCount, maxRating
+    }
   }, [files])
 
   if (files.length === 0) {
@@ -234,12 +262,62 @@ export function FolderDashboard({
       <div className="flex gap-3">
         <StatBox value={stats.total} label="captures" />
         <div
-          className={`flex-1 rounded-xl border px-3 py-2.5 text-center transition-colors ${onMissingClick ? 'cursor-pointer hover:bg-gray-700/40' : ''} ${activeMissing ? 'bg-gray-700/60 border-gray-500/60' : 'bg-gray-800/60 border-gray-700/40'}`}
-          onClick={stats.missing > 0 && onMissingClick ? () => onMissingClick(!activeMissing) : undefined}
+          className={`flex-1 rounded-xl border px-3 py-2.5 text-center transition-colors ${stats.duplicateFiles > 0 && onDuplicateClick ? 'cursor-pointer hover:bg-gray-700/40' : ''} ${activeDuplicate ? 'bg-gray-700/60 border-gray-500/60' : 'bg-gray-800/60 border-gray-700/40'}`}
+          onClick={stats.duplicateFiles > 0 && onDuplicateClick ? () => onDuplicateClick(!activeDuplicate) : undefined}
         >
-          <div className={`text-2xl font-bold leading-none ${stats.missing === 0 ? 'text-green-400' : activeMissing ? 'text-amber-300' : 'text-amber-400'}`}>{stats.missing}</div>
-          <div className="text-[10px] text-gray-400 mt-1 leading-tight">missing metadata</div>
-          <div className="text-[9px] text-gray-600 mt-0.5">{stats.missing === 0 ? 'all complete' : `${Math.round(stats.missing / stats.total * 100)}% incomplete`}</div>
+          <div className={`text-2xl font-bold leading-none ${stats.duplicateFiles === 0 ? 'text-green-400' : activeDuplicate ? 'text-amber-300' : 'text-amber-400'}`}>{stats.duplicateFiles}</div>
+          <div className="text-[10px] text-gray-400 mt-1 leading-tight">duplicates</div>
+          <div className="text-[9px] text-gray-600 mt-0.5">{stats.duplicateFiles === 0 ? 'no collisions' : `${stats.duplicateGroups} duplicate group${stats.duplicateGroups === 1 ? '' : 's'}`}</div>
+        </div>
+        {stats.missing > 0 && (
+          <div
+            className={`flex-1 rounded-xl border px-3 py-2.5 text-center transition-colors ${onMissingClick ? 'cursor-pointer hover:bg-gray-700/40' : ''} ${activeMissing ? 'bg-gray-700/60 border-gray-500/60' : 'bg-gray-800/60 border-gray-700/40'}`}
+            onClick={onMissingClick ? () => onMissingClick(!activeMissing) : undefined}
+          >
+            <div className={`text-2xl font-bold leading-none ${activeMissing ? 'text-amber-300' : 'text-amber-400'}`}>{stats.missing}</div>
+            <div className="text-[10px] text-gray-400 mt-1 leading-tight">missing metadata</div>
+            <div className="text-[9px] text-gray-600 mt-0.5">{`${Math.round(stats.missing / stats.total * 100)}% incomplete`}</div>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
+        <div className="rounded-xl bg-gray-800/40 border border-gray-700/40 p-3">
+          <h3 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">Pack Readiness</h3>
+          <div className="flex flex-wrap gap-2">
+            <span className={`text-[10px] px-2 py-0.5 rounded-full ${hasPackInfo ? 'bg-teal-900/30 text-teal-300' : 'bg-gray-700/70 text-gray-300'}`}>Pack Info {hasPackInfo ? 'ready' : 'missing'}</span>
+            <span className={`text-[10px] px-2 py-0.5 rounded-full ${hasReadme ? 'bg-teal-900/30 text-teal-300' : 'bg-gray-700/70 text-gray-300'}`}>Read Me {hasReadme ? 'ready' : 'missing'}</span>
+            <span className={`text-[10px] px-2 py-0.5 rounded-full ${hasCoverImage ? 'bg-teal-900/30 text-teal-300' : 'bg-gray-700/70 text-gray-300'}`}>Cover {hasCoverImage ? 'ready' : 'missing'}</span>
+            <span className={`text-[10px] px-2 py-0.5 rounded-full ${galleryCount > 0 ? 'bg-teal-900/30 text-teal-300' : 'bg-gray-700/70 text-gray-300'}`}>Gallery {galleryCount > 0 ? `${galleryCount} image${galleryCount === 1 ? '' : 's'}` : 'empty'}</span>
+          </div>
+        </div>
+
+        <div className="rounded-xl bg-gray-800/40 border border-gray-700/40 p-3">
+          <h3 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">Size</h3>
+          <div className="space-y-1.5 text-[11px]">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-gray-400">Total pack size</span>
+              <span className="text-gray-200 font-medium">{formatBytes(stats.totalSizeBytes)}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-gray-400">Average per capture</span>
+              <span className="text-gray-200 font-medium">{formatBytes(stats.total > 0 ? stats.totalSizeBytes / stats.total : 0)}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl bg-gray-800/40 border border-gray-700/40 p-3">
+          <h3 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">Recent Updates</h3>
+          <div className="space-y-1.5 text-[11px]">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-gray-400">Updated in last 7 days</span>
+              <span className="text-gray-200 font-medium">{stats.recentUpdatedCount}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-gray-400">Latest file update</span>
+              <span className="text-gray-200 font-medium">{formatDateTime(stats.newestUpdateMs) ?? 'Unknown'}</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -438,4 +516,21 @@ export function FolderDashboard({
 
     </div>
   )
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let value = bytes
+  let unitIndex = 0
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex += 1
+  }
+  return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`
+}
+
+function formatDateTime(ms?: number): string | null {
+  if (!ms) return null
+  return new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
 }

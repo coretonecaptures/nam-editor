@@ -52,6 +52,13 @@ interface DashboardChecklistEntry {
   percent: number
 }
 
+interface FolderReadinessSummary {
+  hasReadme: boolean
+  galleryCount: number
+  hasCoverImage: boolean
+  recentUpdatedCount: number
+}
+
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -125,6 +132,8 @@ declare global {
         architecture?: string
         config?: unknown
         mtimeMs?: number
+        birthtimeMs?: number
+        sizeBytes?: number
       }>
       writeMetadata: (filePath: string, metadata: unknown) => Promise<{ success: boolean; error?: string }>
       moveFile: (sourcePath: string, destDir: string, force?: boolean) => Promise<{ success: boolean; error?: string; destPath?: string }>
@@ -321,6 +330,7 @@ export default function App() {
   })
 
   const [folderImages, setFolderImages] = useState<FolderImagesData | null>(null)
+  const [activeFolderReadiness, setActiveFolderReadiness] = useState<FolderReadinessSummary | null>(null)
   const [folderPanelTab, setFolderPanelTab] = useState<'overview' | 'pack' | 'checklist' | 'gallery' | 'readme'>(settings.defaultFolderTab)
   // Path of the ancestor that owns the pack info for the current folder (null = current folder may own one)
   const [packInfoAncestor, setPackInfoAncestor] = useState<string | null>(null)
@@ -348,7 +358,7 @@ export default function App() {
   const [gearTypeFilter, setGearTypeFilter] = useState<string | null>(null)
   const [toneTypeFilter, setToneTypeFilter] = useState<string | null>(null)
   const [presetFilterOverride, setPresetFilterOverride] = useState<string | null>(null)
-  const [filterModeOverride, setFilterModeOverride] = useState<'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited' | 'incomplete' | 'complete' | 'rated' | null>(null)
+  const [filterModeOverride, setFilterModeOverride] = useState<'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited' | 'incomplete' | 'complete' | 'rated' | 'duplicates' | null>(null)
   const [esrFilterOverride, setEsrFilterOverride] = useState<string | null>(null)
   const [ratingFilter, setRatingFilter] = useState<number | null>(null)
 
@@ -713,6 +723,45 @@ export default function App() {
     return () => { cancelled = true }
   }, [librarian.selectedFolders, librarian.rootFolder, settings.showFolderImages])
 
+  useEffect(() => {
+    const targetFolder = (librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null) ?? librarian.rootFolder
+    if (!targetFolder) {
+      setActiveFolderReadiness(null)
+      return
+    }
+    let cancelled = false
+    Promise.all([
+      window.api.readReadme(targetFolder),
+      window.api.scanImages(targetFolder),
+    ]).then(([readmeRes, imagesRes]) => {
+      if (cancelled) return
+      const imagePaths = imagesRes.success ? imagesRes.images : []
+      const galleryCount = imagePaths.filter((imagePath) => {
+        const fileName = imagePath.replace(/\\/g, '/').split('/').pop() ?? ''
+        return !AMPCOVER_PATTERN.test(fileName)
+      }).length
+      const hasCoverImage = imagePaths.some((imagePath) => {
+        const fileName = imagePath.replace(/\\/g, '/').split('/').pop() ?? ''
+        return AMPCOVER_PATTERN.test(fileName)
+      })
+      const folderFiles = files.filter((file) => {
+        const normalized = file.filePath.replace(/\\/g, '/')
+        return normalized.startsWith(targetFolder.replace(/\\/g, '/') + '/')
+      })
+      const recentThreshold = Date.now() - (7 * 24 * 60 * 60 * 1000)
+      const recentUpdatedCount = folderFiles.filter((file) => (file.mtimeMs ?? 0) >= recentThreshold).length
+      setActiveFolderReadiness({
+        hasReadme: !!readmeRes.success && !!readmeRes.exists,
+        galleryCount,
+        hasCoverImage,
+        recentUpdatedCount,
+      })
+    }).catch(() => {
+      if (!cancelled) setActiveFolderReadiness(null)
+    })
+    return () => { cancelled = true }
+  }, [files, librarian.selectedFolders, librarian.rootFolder])
+
   // Apply dark/light class to <html> whenever theme setting changes
   useEffect(() => {
     if (settings.theme === 'dark') {
@@ -819,7 +868,7 @@ export default function App() {
   // mode='replace': clear existing, load fresh (open folder/files)
   // Shared: turn raw IPC read results into NamFile[] and update state
   const applyParsedResults = useCallback(async (
-    results: { success: boolean; filePath?: string; metadata?: NamFile['metadata']; version?: string; architecture?: string; config?: unknown; error?: string; mtimeMs?: number; birthtimeMs?: number }[],
+    results: { success: boolean; filePath?: string; metadata?: NamFile['metadata']; version?: string; architecture?: string; config?: unknown; error?: string; mtimeMs?: number; birthtimeMs?: number; sizeBytes?: number }[],
     mode: 'replace' | 'append'
   ) => {
     const loaded: NamFile[] = []
@@ -839,7 +888,7 @@ export default function App() {
         const autoFilledFields = (Object.keys(meta) as (keyof NamFile['metadata'])[]).filter(
           (k) => meta[k] != null && (workingMeta[k] == null || workingMeta[k] === '')
         )
-        loaded.push({ filePath: r.filePath, fileName: baseName, version: r.version ?? '?', metadata: meta, originalMetadata: rawMeta, autoFilledFields, architecture: r.architecture ?? '?', config: r.config, isDirty: wasChanged, mtimeMs: r.mtimeMs, birthtimeMs: r.birthtimeMs })
+        loaded.push({ filePath: r.filePath, fileName: baseName, version: r.version ?? '?', metadata: meta, originalMetadata: rawMeta, autoFilledFields, architecture: r.architecture ?? '?', config: r.config, isDirty: wasChanged, mtimeMs: r.mtimeMs, birthtimeMs: r.birthtimeMs, sizeBytes: r.sizeBytes })
       } else {
         errors++
       }
@@ -1122,9 +1171,10 @@ export default function App() {
     if (!file) return
     const result = await window.api.writeMetadata(filePath, file.metadata)
     if (result.success) {
+      const savedAt = Date.now()
       setFiles((prev) => prev.map((f) =>
         f.filePath === filePath
-          ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [] }
+          ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [], mtimeMs: savedAt }
           : f
       ))
       addHistoryEntry({ operation: 'save', summary: `Saved ${file.fileName}` })
@@ -1253,6 +1303,7 @@ export default function App() {
 
     const savedPaths = new Set<string>()
     let failed = 0
+    const savedAt = Date.now()
     for (const p of prepared) {
       const result = await window.api.writeMetadata(p.filePath, p.toWrite)
       if (result.success) savedPaths.add(p.filePath)
@@ -1267,7 +1318,7 @@ export default function App() {
       const p = resultMap.get(f.filePath)!
       // Remove batch-saved fields from autoFilledFields always
       const autoFilledFields = f.autoFilledFields.filter((k) => !savedBatchKeys.has(k))
-      return { ...f, metadata: p.newMeta, originalMetadata: p.newOriginal, isDirty: p.newIsDirty, autoFilledFields }
+      return { ...f, metadata: p.newMeta, originalMetadata: p.newOriginal, isDirty: p.newIsDirty, autoFilledFields, mtimeMs: savedAt }
     }))
 
     if (failed > 0) {
@@ -1307,6 +1358,7 @@ export default function App() {
 
     const savedPaths = new Set<string>()
     let failed = 0
+    const savedAt = Date.now()
     for (const p of prepared) {
       const result = await window.api.writeMetadata(p.filePath, p.toWrite)
       if (result.success) savedPaths.add(p.filePath)
@@ -1317,7 +1369,7 @@ export default function App() {
     setFiles((prev) => prev.map((f) => {
       if (!savedPaths.has(f.filePath)) return f
       const p = resultMap.get(f.filePath)!
-      return { ...f, metadata: p.newMeta, originalMetadata: p.newOriginal, isDirty: p.newIsDirty, autoFilledFields: p.newIsDirty ? f.autoFilledFields : [] }
+      return { ...f, metadata: p.newMeta, originalMetadata: p.newOriginal, isDirty: p.newIsDirty, autoFilledFields: p.newIsDirty ? f.autoFilledFields : [], mtimeMs: savedAt }
     }))
 
     if (failed > 0) {
@@ -2341,6 +2393,7 @@ export default function App() {
                   setStatus({ message: `Saving ${targets.length} file(s)...`, type: 'info' })
                   const savedPaths = new Set<string>()
                   let failed = 0
+                  const savedAt = Date.now()
                   for (const f of targets) {
                     const result = await window.api.writeMetadata(f.filePath, f.metadata)
                     if (result.success) savedPaths.add(f.filePath)
@@ -2348,7 +2401,7 @@ export default function App() {
                   }
                   setFiles((prev) => prev.map((f) =>
                     savedPaths.has(f.filePath)
-                      ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [] }
+                      ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [], mtimeMs: savedAt }
                       : f
                   ))
                   if (failed > 0) {
@@ -2755,16 +2808,38 @@ export default function App() {
                       files={visibleFiles}
                       folderName={activeFolderName}
                       checklistSummary={activeFolderChecklistSummary}
+                      hasPackInfo={hasPack}
+                      hasReadme={activeFolderReadiness?.hasReadme ?? false}
+                      hasCoverImage={activeFolderReadiness?.hasCoverImage ?? false}
+                      galleryCount={activeFolderReadiness?.galleryCount ?? 0}
+                      activeDuplicate={filterModeOverride === 'duplicates'}
                       activeGear={gearTypeFilter}
                       activeTone={toneTypeFilter}
                       activePreset={presetFilterOverride}
                       activeMissing={filterModeOverride === 'incomplete'}
                       activeEsr={esrFilterOverride}
                       activeRating={ratingFilter}
+                      onDuplicateClick={(on) => {
+                        setFilterModeOverride(on ? 'duplicates' : null)
+                        setGearTypeFilter(null)
+                        setToneTypeFilter(null)
+                        setPresetFilterOverride(null)
+                        setEsrFilterOverride(null)
+                        setRatingFilter(null)
+                        setStatus({ message: on ? 'Showing duplicate captures in the list' : 'Duplicate filter cleared', type: 'info' })
+                      }}
                       onGearClick={(gear) => { setGearTypeFilter(gear); setToneTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setEsrFilterOverride(null); setRatingFilter(null) }}
                       onToneClick={(tone) => { setToneTypeFilter(tone); setGearTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setEsrFilterOverride(null); setRatingFilter(null) }}
                       onPresetClick={(preset) => { setPresetFilterOverride(preset); setGearTypeFilter(null); setToneTypeFilter(null); setFilterModeOverride(null); setEsrFilterOverride(null); setRatingFilter(null) }}
-                      onMissingClick={(on) => { setFilterModeOverride(on ? 'incomplete' : null); setGearTypeFilter(null); setToneTypeFilter(null); setPresetFilterOverride(null); setEsrFilterOverride(null); setRatingFilter(null) }}
+                      onMissingClick={(on) => {
+                        setFilterModeOverride(on ? 'incomplete' : null)
+                        setGearTypeFilter(null)
+                        setToneTypeFilter(null)
+                        setPresetFilterOverride(null)
+                        setEsrFilterOverride(null)
+                        setRatingFilter(null)
+                        setStatus({ message: on ? 'Showing captures with missing metadata in the list' : 'Missing metadata filter cleared', type: 'info' })
+                      }}
                       onEsrClick={(tier) => { setEsrFilterOverride(tier); setGearTypeFilter(null); setToneTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setRatingFilter(null) }}
                       onRatingClick={(rating) => { setRatingFilter(rating); setGearTypeFilter(null); setToneTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setEsrFilterOverride(null) }}
                     />

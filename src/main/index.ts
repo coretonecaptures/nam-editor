@@ -580,7 +580,7 @@ app.whenReady().then(async () => {
       const cache = loadFileCache()
       const cached = cache[filePath]
       if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
-        return { success: true, ...(cached.data as object), filePath, mtimeMs: stat.mtimeMs, birthtimeMs: stat.birthtimeMs }
+        return { success: true, ...(cached.data as object), filePath, mtimeMs: stat.mtimeMs, birthtimeMs: stat.birthtimeMs, sizeBytes: stat.size }
       }
       const content = await fs.promises.readFile(filePath, 'utf-8')
       const data = JSON.parse(content)
@@ -606,6 +606,7 @@ app.whenReady().then(async () => {
         config: data.config ?? null,
         mtimeMs: stat.mtimeMs,
         birthtimeMs: stat.birthtimeMs,
+        sizeBytes: stat.size,
       }
       // Update cache entry â€” save lazily (written on app quit or folder scan)
       cache[filePath] = { mtimeMs: stat.mtimeMs, size: stat.size, data: { version: result.version, metadata: meta, architecture: result.architecture, config: result.config } }

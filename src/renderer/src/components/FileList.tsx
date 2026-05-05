@@ -6,7 +6,7 @@ import { gearChipClass, toneChipClass, getGearImageSrc } from '../assets/gear'
 import { detectPreset } from '../utils/detectPreset'
 import { BatchRenameModal } from './BatchRenameModal'
 
-type FilterMode = 'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited' | 'incomplete' | 'complete' | 'rated'
+type FilterMode = 'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited' | 'incomplete' | 'complete' | 'rated' | 'duplicates'
 
 // Completeness: 7 core shareable fields (output level and epochs are optional/technical)
 const COMPLETENESS_FIELDS: (keyof NamFile['metadata'])[] = [
@@ -331,6 +331,16 @@ export function FileList({
   const [showBatchRename, setShowBatchRename] = useState(false)
   const exportRef = useRef<HTMLDivElement>(null)
   const chooserRef = useRef<HTMLDivElement>(null)
+  const duplicateFileKeys = new Set(
+    [...files.reduce((map, file) => {
+      const key = file.fileName.trim().toLowerCase()
+      if (!key) return map
+      map.set(key, (map.get(key) ?? 0) + 1)
+      return map
+    }, new Map<string, number>()).entries()]
+      .filter(([, count]) => count >= 2)
+      .map(([key]) => key)
+  )
 
   // Compute filtered + sorted here (before hooks) so the trim useEffect can reference sorted.
   const filtered = files.filter((f) => {
@@ -386,6 +396,7 @@ export function FileList({
       case 'no-maker':   return !o.gear_make && !o.gear_model
       case 'no-tone':    return !o.tone_type
       case 'edited':     return f.isDirty
+      case 'duplicates': return duplicateFileKeys.has(f.fileName.trim().toLowerCase())
       case 'incomplete': return COMPLETENESS_FIELDS.some((k) => m[k] == null || m[k] === '')
       case 'complete':   return !COMPLETENESS_FIELDS.some((k) => m[k] == null || m[k] === '')
       case 'rated':      return (m.nl_rating ?? 0) > 0
@@ -503,9 +514,11 @@ export function FileList({
 
   const editedCount = files.filter((f) => f.isDirty).length
   const incompleteCount = files.filter((f) => COMPLETENESS_FIELDS.some((k) => f.metadata[k] == null || f.metadata[k] === '')).length
+  const duplicateCount = files.filter((f) => duplicateFileKeys.has(f.fileName.trim().toLowerCase())).length
   const statusFilterOptions: { value: Exclude<FilterMode, 'all'>; label: string }[] = [
     { value: 'edited',     label: editedCount > 0 ? `Edited (${editedCount})` : 'Edited' },
     { value: 'incomplete', label: incompleteCount > 0 ? `Incomplete (${incompleteCount})` : 'Incomplete' },
+    { value: 'duplicates', label: duplicateCount > 0 ? `Duplicates (${duplicateCount})` : 'Duplicates' },
     { value: 'unnamed',    label: 'Unnamed' },
     { value: 'no-gear',    label: 'No Type' },
     { value: 'no-maker',   label: 'No Maker' },

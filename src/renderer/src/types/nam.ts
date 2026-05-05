@@ -47,6 +47,7 @@ export interface NamFile {
   isDirty: boolean
   mtimeMs?: number
   birthtimeMs?: number
+  sizeBytes?: number
   loadError?: string
 }
 
