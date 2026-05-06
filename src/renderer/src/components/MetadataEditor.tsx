@@ -72,6 +72,18 @@ function buildRenamePreview(template: string, meta: NamMetadata, fileName: strin
   return result || fileName
 }
 
+function formatBytes(bytes?: number): string | null {
+  if (!bytes || !Number.isFinite(bytes)) return null
+  const units = ['B', 'KB', 'MB', 'GB']
+  let value = bytes
+  let unitIndex = 0
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex += 1
+  }
+  return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`
+}
+
 export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, onRevert, onRevealInFinder, onReapplyDefaults, hasActiveDefaults, renameTemplate, onRenameFile, onSaveAndAdvance, gearMakeSuggestions = [], gearModelSuggestions = [], showNamLabFields = true }: MetadataEditorProps) {
   const m = file.metadata
   const orig = file.originalMetadata
@@ -123,7 +135,7 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
   }
 
   const dateStr = m.date
-    ? `${m.date.year}-${String(m.date.month).padStart(2, '0')}-${String(m.date.day).padStart(2, '0')}`
+    ? `${m.date.year}-${String(m.date.month).padStart(2, '0')}-${String(m.date.day).padStart(2, '0')} ${String(m.date.hour ?? 0).padStart(2, '0')}:${String(m.date.minute ?? 0).padStart(2, '0')}:${String(m.date.second ?? 0).padStart(2, '0')}`
     : ''
 
   return (
@@ -447,11 +459,14 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
                 return <StatCard label="Calibrated Latency" value={`${cal.recommended} samples`} />
               })()}
               {(() => {
-                const nb = ((m.training as Record<string, unknown> | undefined)?.nam_bot as Record<string, unknown> | undefined)
+                const nb = (((m as Record<string, unknown>).nam_bot as Record<string, unknown> | undefined)
+                  ?? ((m.training as Record<string, unknown> | undefined)?.nam_bot as Record<string, unknown> | undefined))
                 if (nb?.preset_name != null) return <StatCard label="NAM-BOT Preset" value={String(nb.preset_name)} />
+                if (m.nb_preset_name != null) return <StatCard label="NAM-BOT Preset" value={String(m.nb_preset_name)} />
                 return null
               })()}
               {dateStr && <StatCard label="Captured On" value={dateStr} />}
+              {file.sizeBytes != null && <StatCard label="File Size" value={formatBytes(file.sizeBytes) ?? '0 B'} />}
             </div>
           </Section>
 

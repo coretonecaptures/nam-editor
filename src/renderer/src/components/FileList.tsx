@@ -44,6 +44,7 @@ interface FileListProps {
   onCopyMetadata?: (filePath: string) => void
   onPasteMetadata?: (filePaths: string[]) => void
   onClearNamLab?: (filePaths: string[]) => void
+  onCleanOutdatedNamBot?: (filePaths: string[]) => void
   namPlayerAvailable?: boolean
   onOpenInNam?: (filePath: string) => void
   onFindSimilarTone3000?: (filePath: string) => void
@@ -208,7 +209,14 @@ export { getCellValue, buildExportRows, doExportCSV, doExportXLSX }
 function getSortValue(file: NamFile, key: string): string | number {
   if (key === 'date') {
     const d = file.metadata.date
-    return d ? d.year * 10000 + d.month * 100 + d.day : 0
+    return d
+      ? (d.year * 10000000000)
+        + (d.month * 100000000)
+        + (d.day * 1000000)
+        + ((d.hour ?? 0) * 10000)
+        + ((d.minute ?? 0) * 100)
+        + (d.second ?? 0)
+      : 0
   }
   if (key === 'loudness') return file.metadata.loudness ?? -Infinity
   if (key === 'gain') return file.metadata.gain ?? -Infinity
@@ -289,6 +297,7 @@ export function FileList({
   onCopyMetadata,
   onPasteMetadata,
   onClearNamLab,
+  onCleanOutdatedNamBot,
   namPlayerAvailable,
   onOpenInNam,
   onFindSimilarTone3000,
@@ -1135,6 +1144,17 @@ export function FileList({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
               </svg>
               Remove NAM Lab Custom Metadata
+            </button>
+          )}
+          {onCleanOutdatedNamBot && (
+            <button
+              className="w-full text-left px-3 py-2 text-sm text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors flex items-center gap-2"
+              onClick={() => { onCleanOutdatedNamBot(selectedVisible); setCtxMenu(null) }}
+            >
+              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M4.93 19h14.14c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.2 16c-.77 1.33.19 3 1.73 3z" />
+              </svg>
+              Clean Outdated Metadata
             </button>
           )}
           {(onSaveSelected || onBatchEditSelected) && (

@@ -51,6 +51,8 @@ const api = {
     ipcRenderer.invoke('file:copy', filePaths, destDir),
   clearNamLab: (filePaths: string[]): Promise<{ filePath: string; success: boolean; error?: string }[]> =>
     ipcRenderer.invoke('file:clearNamLab', filePaths),
+  cleanOutdatedNamBot: (filePaths: string[]): Promise<{ filePath: string; success: boolean; error?: string; changed?: boolean }[]> =>
+    ipcRenderer.invoke('file:cleanOutdatedNamBot', filePaths),
   getPendingFiles: (): Promise<string[]> => ipcRenderer.invoke('app:getPendingFiles'),
   checkForUpdates: (includeRc: boolean): Promise<{ hasUpdate?: boolean; latestVersion?: string; releaseUrl?: string; error?: string }> =>
     ipcRenderer.invoke('app:checkForUpdates', includeRc),

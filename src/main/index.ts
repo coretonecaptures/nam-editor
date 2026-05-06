@@ -273,6 +273,35 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+function getPreferredNamBot(meta: Record<string, unknown>): Record<string, unknown> | undefined {
+  const topLevel = meta.nam_bot
+  if (topLevel && typeof topLevel === 'object' && !Array.isArray(topLevel)) {
+    return topLevel as Record<string, unknown>
+  }
+  const training = meta.training
+  if (training && typeof training === 'object' && !Array.isArray(training)) {
+    const legacy = (training as Record<string, unknown>).nam_bot
+    if (legacy && typeof legacy === 'object' && !Array.isArray(legacy)) {
+      return legacy as Record<string, unknown>
+    }
+  }
+  return undefined
+}
+
+function liftUiMetadata(meta: Record<string, unknown>): Record<string, unknown> {
+  const nb = getPreferredNamBot(meta)
+  if (nb?.trained_epochs != null) meta.nb_trained_epochs = nb.trained_epochs
+  if (nb?.preset_name != null) meta.nb_preset_name = nb.preset_name
+  const nl = meta.nam_lab as Record<string, unknown> | undefined
+  if (nl) {
+    const nlKeys = ['mics','cabinet','cabinet_config','amp_channel','boost_pedal','amp_settings','pedal_settings','amp_switches','comments','rating'] as const
+    for (const k of nlKeys) {
+      if (nl[k] != null) meta[`nl_${k}`] = nl[k]
+    }
+  }
+  return meta
+}
+
 // Surgically remove the entire "nam_lab": {...} block from metadata.
 // Handles leading comma (block in middle/end) and trailing comma (block at start).
 function removeNamLabBlock(content: string): string {
@@ -349,8 +378,8 @@ function patchNamLabField(content: string, field: string, value: unknown): strin
   return content.slice(0, openBrace + 1) + inner + content.slice(closeBrace)
 }
 
-// Patch a field inside metadata.training.nam_bot, creating the structure if needed.
-function patchNamBotField(content: string, field: string, value: unknown): string {
+// Patch a field inside metadata.training.nam_bot, creating the legacy structure if needed.
+function patchLegacyNamBotField(content: string, field: string, value: unknown): string {
   const newVal = serializeJsonValue(value)
 
   // Try to find an existing nam_bot block inside training and update the field
@@ -416,6 +445,80 @@ function patchNamBotField(content: string, field: string, value: unknown): strin
   const trainingBlock = `\n${indent}"training": {\n${indent}  "nam_bot": {\n${indent}    "${field}": ${newVal}\n${indent}  }\n${indent}}`
   inner = trimmed + (needsComma ? ',' : '') + trainingBlock + trailing
   return content.slice(0, openBrace + 1) + inner + content.slice(closeBrace)
+}
+
+// Patch a field inside metadata.nam_bot, creating the structure if needed.
+function patchTopLevelNamBotField(content: string, field: string, value: unknown): string {
+  const newVal = serializeJsonValue(value)
+  const fieldRe = new RegExp(
+    `("${escapeRe(field)}")(\\s*:\\s*)(null|"(?:[^"\\\\]|\\\\.)*"|-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)`
+  )
+
+  const namBotRe = /"nam_bot"\s*:\s*\{/
+  const metaKeyMatch = /"metadata"\s*:\s*\{/.exec(content)
+  if (!metaKeyMatch) return content
+  const metaOpenBrace = metaKeyMatch.index + metaKeyMatch[0].length - 1
+  const metaCloseBrace = findMatchingBrace(content, metaOpenBrace)
+  if (metaCloseBrace === -1) return content
+
+  const metaSection = content.slice(metaOpenBrace, metaCloseBrace + 1)
+  const namBotMatch = namBotRe.exec(metaSection)
+  if (namBotMatch) {
+    const openBrace = metaOpenBrace + namBotMatch.index + namBotMatch[0].length - 1
+    const closeBrace = findMatchingBrace(content, openBrace)
+    if (closeBrace !== -1) {
+      let inner = content.slice(openBrace + 1, closeBrace)
+      if (fieldRe.test(inner)) {
+        inner = inner.replace(fieldRe, (_m, k, sep) => k + sep + newVal)
+        return content.slice(0, openBrace + 1) + inner + content.slice(closeBrace)
+      } else if (value !== null && value !== undefined) {
+        const indentMatch = /\n([ \t]+)"/.exec(inner)
+        const indent = indentMatch ? indentMatch[1] : '    '
+        const trimmed = inner.trimEnd()
+        const needsComma = trimmed.length > 0 && !trimmed.endsWith(',')
+        const trailing = inner.slice(trimmed.length)
+        inner = trimmed + (needsComma ? ',' : '') + `\n${indent}"${field}": ${newVal}` + trailing
+        return content.slice(0, openBrace + 1) + inner + content.slice(closeBrace)
+      }
+      return content
+    }
+  }
+
+  if (value === null || value === undefined) return content
+  let inner = content.slice(metaOpenBrace + 1, metaCloseBrace)
+  const indentMatch = /\n([ \t]+)"/.exec(inner)
+  const indent = indentMatch ? indentMatch[1] : '    '
+  const trimmed = inner.trimEnd()
+  const needsComma = trimmed.length > 0 && !trimmed.endsWith(',')
+  const trailing = inner.slice(trimmed.length)
+  const namBotBlock = `\n${indent}"nam_bot": {\n${indent}  "${field}": ${newVal}\n${indent}}`
+  inner = trimmed + (needsComma ? ',' : '') + namBotBlock + trailing
+  return content.slice(0, metaOpenBrace + 1) + inner + content.slice(metaCloseBrace)
+}
+
+function migrateLegacyNamBotMetadata(content: string): { content: string; changed: boolean } {
+  const data = JSON.parse(content) as Record<string, unknown>
+  const metaRaw = data.metadata
+  if (!metaRaw || typeof metaRaw !== 'object' || Array.isArray(metaRaw)) return { content, changed: false }
+  const meta = metaRaw as Record<string, unknown>
+  const trainingRaw = meta.training
+  if (!trainingRaw || typeof trainingRaw !== 'object' || Array.isArray(trainingRaw)) return { content, changed: false }
+  const training = trainingRaw as Record<string, unknown>
+  const legacyRaw = training.nam_bot
+  if (!legacyRaw || typeof legacyRaw !== 'object' || Array.isArray(legacyRaw)) return { content, changed: false }
+  const legacy = legacyRaw as Record<string, unknown>
+  const topLevelRaw = meta.nam_bot
+  const topLevel = topLevelRaw && typeof topLevelRaw === 'object' && !Array.isArray(topLevelRaw)
+    ? topLevelRaw as Record<string, unknown>
+    : {}
+
+  meta.nam_bot = { ...legacy, ...topLevel }
+  delete training.nam_bot
+  if (Object.keys(training).length === 0) {
+    delete meta.training
+  }
+
+  return { content: JSON.stringify(data), changed: true }
 }
 
 // ---- File association / open-with handling ----
@@ -580,23 +683,15 @@ app.whenReady().then(async () => {
       const cache = loadFileCache()
       const cached = cache[filePath]
       if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
-        return { success: true, ...(cached.data as object), filePath, mtimeMs: stat.mtimeMs, birthtimeMs: stat.birthtimeMs, sizeBytes: stat.size }
+        const cachedData = { ...(cached.data as Record<string, unknown>) }
+        const cachedMeta = cachedData.metadata && typeof cachedData.metadata === 'object'
+          ? liftUiMetadata({ ...(cachedData.metadata as Record<string, unknown>) })
+          : cachedData.metadata
+        return { success: true, ...cachedData, metadata: cachedMeta, filePath, mtimeMs: stat.mtimeMs, birthtimeMs: stat.birthtimeMs, sizeBytes: stat.size }
       }
       const content = await fs.promises.readFile(filePath, 'utf-8')
       const data = JSON.parse(content)
-      const meta = data.metadata ?? {}
-      // Lift nested NAM-BOT fields up to flat metadata for the UI
-      const nb = meta.training?.nam_bot
-      if (nb?.trained_epochs != null) meta.nb_trained_epochs = nb.trained_epochs
-      if (nb?.preset_name != null) meta.nb_preset_name = nb.preset_name
-      // Lift NAM Lab extended fields (metadata.nam_lab.*) up to flat nl_ keys
-      const nl = meta.nam_lab
-      if (nl) {
-        const nlKeys = ['mics','cabinet','cabinet_config','amp_channel','boost_pedal','amp_settings','pedal_settings','amp_switches','comments','rating'] as const
-        for (const k of nlKeys) {
-          if (nl[k] != null) (meta as Record<string, unknown>)[`nl_${k}`] = nl[k]
-        }
-      }
+      const meta = liftUiMetadata(data.metadata ?? {})
       const result = {
         success: true,
         filePath,
@@ -656,10 +751,14 @@ app.whenReady().then(async () => {
       let patched = patchMetadataFields(content, patches)
 
       // Handle nb_trained_epochs â€” stored at metadata.training.nam_bot.trained_epochs
-      const origEpochs = orig.training?.nam_bot?.trained_epochs ?? null
+      const currentNamBot = getPreferredNamBot(orig)
+      const hasTopLevelNamBot = !!(orig.nam_bot && typeof orig.nam_bot === 'object')
+      const hasLegacyNamBot = !!(orig.training && typeof orig.training === 'object' && (orig.training as Record<string, unknown>).nam_bot)
+      const origEpochs = currentNamBot?.trained_epochs ?? null
       const newEpochs = incoming.nb_trained_epochs != null ? Number(incoming.nb_trained_epochs) : null
       if (newEpochs !== origEpochs) {
-        patched = patchNamBotField(patched, 'trained_epochs', newEpochs)
+        if (hasTopLevelNamBot || !hasLegacyNamBot) patched = patchTopLevelNamBotField(patched, 'trained_epochs', newEpochs)
+        else patched = patchLegacyNamBotField(patched, 'trained_epochs', newEpochs)
       }
 
       // Handle NAM Lab extended fields â€” stored at metadata.nam_lab.*
@@ -767,17 +866,7 @@ app.whenReady().then(async () => {
         try {
           const content = fs.readFileSync(filePath, 'utf-8')
           const data = JSON.parse(content)
-          const meta = data.metadata ?? {}
-          const nb = meta.training?.nam_bot
-          if (nb?.trained_epochs != null) meta.nb_trained_epochs = nb.trained_epochs
-          if (nb?.preset_name != null) meta.nb_preset_name = nb.preset_name
-          const nl = meta.nam_lab
-          if (nl) {
-            const nlKeys = ['mics','cabinet','cabinet_config','amp_channel','boost_pedal','amp_settings','pedal_settings','amp_switches','comments','rating'] as const
-            for (const k of nlKeys) {
-              if (nl[k] != null) (meta as Record<string, unknown>)[`nl_${k}`] = nl[k]
-            }
-          }
+          const meta = liftUiMetadata(data.metadata ?? {})
           return { success: true, filePath, version: data.version ?? '?', metadata: meta, architecture: data.architecture ?? '?', config: data.config ?? null }
         } catch (err) {
           const line = `[${new Date().toISOString()}] ${filePath}\n  ${String(err)}\n`
@@ -905,6 +994,25 @@ app.whenReady().then(async () => {
         const patched = removeNamLabBlock(content)
         if (patched !== content) { suppressWatcher(); fs.writeFileSync(filePath, patched, 'utf8') }
         results.push({ filePath, success: true })
+      } catch (err) {
+        results.push({ filePath, success: false, error: String(err) })
+      }
+    }
+    return results
+  })
+
+  ipcMain.handle('file:cleanOutdatedNamBot', async (_event, filePaths: string[]) => {
+    const results: { filePath: string; success: boolean; error?: string; changed?: boolean }[] = []
+    for (const filePath of filePaths) {
+      try {
+        const content = fs.readFileSync(filePath, 'utf8')
+        const migrated = migrateLegacyNamBotMetadata(content)
+        if (migrated.changed) {
+          suppressWatcher()
+          fs.writeFileSync(filePath, migrated.content, 'utf8')
+          delete loadFileCache()[filePath]
+        }
+        results.push({ filePath, success: true, changed: migrated.changed })
       } catch (err) {
         results.push({ filePath, success: false, error: String(err) })
       }

@@ -63,6 +63,29 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function migrateLegacyNamBotInMemory(meta: NamFile['metadata']): NamFile['metadata'] {
+  const training = meta.training as Record<string, unknown> | undefined
+  const legacy = training?.nam_bot as Record<string, unknown> | undefined
+  if (!legacy) return meta
+
+  const topLevel = (meta as Record<string, unknown>).nam_bot
+  const nextTopLevel = topLevel && typeof topLevel === 'object' && !Array.isArray(topLevel)
+    ? { ...legacy, ...(topLevel as Record<string, unknown>) }
+    : { ...legacy }
+
+  const nextMeta = {
+    ...meta,
+    nam_bot: nextTopLevel,
+    nb_trained_epochs: (nextTopLevel.trained_epochs as number | undefined) ?? meta.nb_trained_epochs ?? null,
+    nb_preset_name: (nextTopLevel.preset_name as string | undefined) ?? meta.nb_preset_name ?? null,
+  } as NamFile['metadata'] & { nam_bot?: Record<string, unknown> }
+  const nextTraining = { ...(training ?? {}) }
+  delete nextTraining.nam_bot
+  if (Object.keys(nextTraining).length === 0) delete nextMeta.training
+  else nextMeta.training = nextTraining
+  return nextMeta
+}
+
 function summarizeChecklist(packData: unknown): ChecklistSummary | null {
   if (!packData || typeof packData !== 'object') return null
   const pack = packData as Partial<PackInfo> & { checklistItems?: Partial<PackChecklistItem>[] }
@@ -153,6 +176,7 @@ declare global {
       trashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; error?: string }[]>
       copyFiles: (filePaths: string[], destDir: string) => Promise<{ filePath: string; success: boolean; destPath?: string; error?: string }[]>
       clearNamLab: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; error?: string }[]>
+      cleanOutdatedNamBot: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; error?: string; changed?: boolean }[]>
       getPendingFiles: () => Promise<string[]>
       onOpenFiles: (cb: (paths: string[]) => void) => () => void
       checkForUpdates: (includeRc: boolean) => Promise<{ hasUpdate?: boolean; latestVersion?: string; releaseUrl?: string; error?: string }>
@@ -1668,6 +1692,33 @@ export default function App() {
     }
   }
 
+  const handleCleanOutdatedNamBot = async (paths: string[]) => {
+    const confirmed = window.confirm(
+      `Clean outdated NAM-BOT metadata in ${paths.length} file${paths.length !== 1 ? 's' : ''}?\n\nNAM-BOT moved its custom fields from metadata.training.nam_bot to metadata.nam_bot for better compatibility.\n\nThis will rewrite older exports to the new format. This cannot currently be undone.`
+    )
+    if (!confirmed) return
+    const results = await window.api.cleanOutdatedNamBot(paths)
+    const cleaned = results.filter((r) => r.success).map((r) => r.filePath)
+    const changed = results.filter((r) => r.success && r.changed).map((r) => r.filePath)
+    const failed = results.filter((r) => !r.success).length
+    if (cleaned.length > 0) {
+      const changedSet = new Set(changed)
+      setFiles((prev) => prev.map((f) => {
+        if (!changedSet.has(f.filePath)) return f
+        const newMeta = migrateLegacyNamBotInMemory(f.metadata)
+        const newOrig = migrateLegacyNamBotInMemory(f.originalMetadata)
+        return { ...f, metadata: newMeta, originalMetadata: newOrig, isDirty: false, mtimeMs: Date.now() }
+      }))
+    }
+    if (failed > 0) {
+      setStatus({ message: `Cleaned ${changed.length} file${changed.length !== 1 ? 's' : ''}, failed ${failed}`, type: 'error' })
+    } else if (changed.length > 0) {
+      setStatus({ message: `Updated ${changed.length} file${changed.length !== 1 ? 's' : ''} to the current NAM-BOT metadata format`, type: 'success' })
+    } else {
+      setStatus({ message: 'No outdated NAM-BOT metadata found in the selected file(s)', type: 'info' })
+    }
+  }
+
   const handleMoveToFolder = async (paths: string[]) => {
     const lastMove = localStorage.getItem('nam-lab-last-folder-move') ?? undefined
     const destFolder = await window.api.openFolder(lastMove)
@@ -2568,6 +2619,7 @@ export default function App() {
               onCopyMetadata={handleCopyMetadata}
               onPasteMetadata={handlePasteMetadata}
               onClearNamLab={handleClearNamLab}
+              onCleanOutdatedNamBot={handleCleanOutdatedNamBot}
               namPlayerAvailable={namPlayerDetected || !!settings.namStandalonePath}
               onOpenInNam={async (filePath) => {
                 const result = await window.api.openInNam(filePath, settings.namStandalonePath)
