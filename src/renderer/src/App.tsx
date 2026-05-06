@@ -934,7 +934,7 @@ export default function App() {
     })
     if (errors > 0) {
       const logPath = await window.api.getErrorLogPath()
-      setStatus({ message: `Loaded ${loaded.length} file(s) Ã¢â‚¬â€ ${errors} could not be parsed (skipped)`, type: 'error', logPath })
+      setStatus({ message: `Loaded ${loaded.length} file(s) - ${errors} could not be parsed (skipped)`, type: 'error', logPath })
     } else {
       setStatus({ message: `Loaded ${loaded.length} file(s)`, type: 'success' })
     }
@@ -951,7 +951,7 @@ export default function App() {
       const batchResults = await Promise.all(batch.map((p) => window.api.readFile(p)))
       results.push(...batchResults)
       if (paths.length > CONCURRENCY) {
-        setStatus({ message: `Loading filesÃ¢â‚¬Â¦ ${Math.min(i + CONCURRENCY, paths.length)} / ${paths.length}`, type: 'info' })
+        setStatus({ message: `Loading files... ${Math.min(i + CONCURRENCY, paths.length)} / ${paths.length}`, type: 'info' })
       }
     }
     if (genToken !== undefined && genToken !== loadGenRef.current) return
@@ -1247,11 +1247,11 @@ export default function App() {
     {
       const autoFillCount = dirty.filter((f) => f.autoFilledFields.length > 0).length
       const autoFillNote = autoFillCount > 0
-        ? `\n\nÃ¢Å¡Â Ã¯Â¸Â ${autoFillCount} file${autoFillCount !== 1 ? 's have' : ' has'} auto-filled fields (from Settings defaults) that will also be written.`
+        ? `\n\nWarning: ${autoFillCount} file${autoFillCount !== 1 ? 's have' : ' has'} auto-filled fields (from Settings defaults) that will also be written.`
         : ''
       if (!settings.skipSaveAllConfirmation) {
         const confirmed = window.confirm(
-          `Ã¢Å¡Â Ã¯Â¸Â Save ALL changes across every loaded folder?\n\nThis will write ${dirty.length} file${dirty.length !== 1 ? 's' : ''} to disk Ã¢â‚¬â€ including files in all subfolders. This cannot be undone.${autoFillNote}\n\n(This warning can be toggled off in Settings -> Behavior)`
+          `Warning: Save ALL changes across every loaded folder?\n\nThis will write ${dirty.length} file${dirty.length !== 1 ? 's' : ''} to disk - including files in all subfolders. This cannot be undone.${autoFillNote}\n\n(This warning can be toggled off in Settings -> Behavior)`
         )
         if (!confirmed) return
       }
@@ -1760,7 +1760,7 @@ export default function App() {
     if (failed > 0) {
       setStatus({ message: `Moved ${movedPaths.size}, failed ${failed}`, type: 'error' })
     } else if (skipped > 0) {
-      setStatus({ message: `Moved ${movedPaths.size} file${movedPaths.size !== 1 ? 's' : ''} to ${destName} Ã¢â‚¬â€ ${skipped} skipped (already exist)`, type: 'info' })
+      setStatus({ message: `Moved ${movedPaths.size} file${movedPaths.size !== 1 ? 's' : ''} to ${destName} - ${skipped} skipped (already exist)`, type: 'info' })
     } else {
       setStatus({ message: `Moved ${movedPaths.size} file${movedPaths.size !== 1 ? 's' : ''} to ${destName}`, type: 'success' })
     }
@@ -2163,7 +2163,7 @@ export default function App() {
     }
     let msg = `Imported metadata for ${updated} capture${updated !== 1 ? 's' : ''}`
     if (failed > 0) msg += `, ${failed} failed`
-    if (unmatched > 0) msg += ` Ã‚Â· ${unmatched} unmatched`
+    if (unmatched > 0) msg += ` - ${unmatched} unmatched`
     setStatus({ message: msg, type: failed > 0 ? 'error' : 'success' })
   }
 
@@ -3003,7 +3003,7 @@ export default function App() {
           <div className={`absolute top-0 right-0 bottom-0 w-[460px] z-40 flex flex-col bg-white dark:bg-gray-950 border-l border-gray-200 dark:border-gray-700 shadow-2xl transition-transform duration-200 ${gridSlideOpen ? 'translate-x-0' : 'translate-x-full'}`}>
             <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
               <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                {showSettings ? 'Settings' : batchFolder !== null ? `Batch Edit Ã¢â‚¬â€ ${batchFolder.name}` : selectedFiles.length > 1 ? `Edit ${selectedFiles.length} captures` : 'Edit Capture'}
+                {showSettings ? 'Settings' : batchFolder !== null ? `Batch Edit - ${batchFolder.name}` : selectedFiles.length > 1 ? `Edit ${selectedFiles.length} captures` : 'Edit Capture'}
               </span>
               <button onClick={() => { setGridSlideOpen(false); if (batchFolder !== null) setBatchFolder(null); if (showSettings) setShowSettings(false) }} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
