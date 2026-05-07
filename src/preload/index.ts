@@ -38,6 +38,18 @@ const api = {
     ipcRenderer.on('folder:changed', handler)
     return () => ipcRenderer.removeListener('folder:changed', handler)
   },
+  setFolderWatchRules: (rules: { sourceFolder: string; destFolder: string; enabled: boolean }[]): Promise<void> =>
+    ipcRenderer.invoke('folderWatch:setRules', rules),
+  onFolderWatchCopied: (cb: (event: { sourcePath: string; destPath: string; sourceFolder: string; destFolder: string }) => void): (() => void) => {
+    const handler = (_event: unknown, payload: { sourcePath: string; destPath: string; sourceFolder: string; destFolder: string }) => cb(payload)
+    ipcRenderer.on('folderWatch:copied', handler)
+    return () => ipcRenderer.removeListener('folderWatch:copied', handler)
+  },
+  onFolderWatchError: (cb: (event: { sourceFolder: string; destFolder: string; message: string }) => void): (() => void) => {
+    const handler = (_event: unknown, payload: { sourceFolder: string; destFolder: string; message: string }) => cb(payload)
+    ipcRenderer.on('folderWatch:error', handler)
+    return () => ipcRenderer.removeListener('folderWatch:error', handler)
+  },
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   createFolder: (parentPath: string, name: string): Promise<{ success: boolean; newPath?: string; error?: string }> =>
     ipcRenderer.invoke('folder:create', parentPath, name),

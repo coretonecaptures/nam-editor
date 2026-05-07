@@ -38,9 +38,18 @@ let mainWindow: BrowserWindow | null = null
 
 // Folder watcher for auto-refresh feature
 let folderWatcher: import('fs').FSWatcher | null = null
+let folderWatchRules: FolderWatchRule[] = []
+const folderWatchers = new Map<string, import('fs').FSWatcher>()
+const folderWatchInFlight = new Set<string>()
 // Suppress folder:changed events for 3s after any local write to avoid false-positive banners
 let watcherSuppressUntil = 0
 function suppressWatcher() { watcherSuppressUntil = Date.now() + 3000 }
+
+interface FolderWatchRule {
+  sourceFolder: string
+  destFolder: string
+  enabled: boolean
+}
 
 // ---- Startup logger ----
 // Writes to os.tmpdir() immediately (safe before app ready), then moves to
@@ -66,6 +75,120 @@ function switchLogToUserData(): void {
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function waitForStableFile(filePath: string, attempts = 10, delayMs = 700): Promise<boolean> {
+  let lastSize = -1
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const stat = await fs.promises.stat(filePath)
+      if (stat.size > 0 && stat.size === lastSize) return true
+      lastSize = stat.size
+    } catch {
+      // keep waiting until file appears and settles
+    }
+    await wait(delayMs)
+  }
+  return false
+}
+
+function closeFolderWatchers(): void {
+  for (const watcher of folderWatchers.values()) {
+    try { watcher.close() } catch { /* ignore */ }
+  }
+  folderWatchers.clear()
+}
+
+function isNestedPath(parentPath: string, childPath: string): boolean {
+  const parent = normalizePath(parentPath).replace(/[\\/]+$/, '').toLowerCase()
+  const child = normalizePath(childPath).replace(/[\\/]+$/, '').toLowerCase()
+  return child === parent || child.startsWith(parent + '\\') || child.startsWith(parent + '/')
+}
+
+async function copyWatchedFile(rule: FolderWatchRule, filePath: string): Promise<void> {
+  const normalizedSource = normalizePath(filePath)
+  const key = `${rule.destFolder}::${normalizedSource}`
+  if (folderWatchInFlight.has(key)) return
+  folderWatchInFlight.add(key)
+  try {
+    const stable = await waitForStableFile(normalizedSource)
+    if (!stable) {
+      mainWindow?.webContents.send('folderWatch:error', {
+        sourceFolder: rule.sourceFolder.replace(/\\/g, '/'),
+        destFolder: rule.destFolder.replace(/\\/g, '/'),
+        message: `Timed out waiting for ${basename(normalizedSource)} to finish writing`
+      })
+      return
+    }
+    const fileName = basename(normalizedSource)
+    const destPath = join(rule.destFolder, fileName)
+    if (fs.existsSync(destPath)) return
+    suppressWatcher()
+    await fs.promises.copyFile(normalizedSource, destPath)
+    mainWindow?.webContents.send('folderWatch:copied', {
+      sourcePath: normalizedSource.replace(/\\/g, '/'),
+      destPath: destPath.replace(/\\/g, '/'),
+      sourceFolder: rule.sourceFolder.replace(/\\/g, '/'),
+      destFolder: rule.destFolder.replace(/\\/g, '/')
+    })
+  } catch (err) {
+    mainWindow?.webContents.send('folderWatch:error', {
+      sourceFolder: rule.sourceFolder.replace(/\\/g, '/'),
+      destFolder: rule.destFolder.replace(/\\/g, '/'),
+      message: String(err)
+    })
+  } finally {
+    folderWatchInFlight.delete(key)
+  }
+}
+
+async function syncExistingWatchedFiles(rule: FolderWatchRule): Promise<void> {
+  try {
+    const entries = await fs.promises.readdir(rule.sourceFolder, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.nam')) continue
+      await copyWatchedFile(rule, join(rule.sourceFolder, entry.name))
+    }
+  } catch (err) {
+    mainWindow?.webContents.send('folderWatch:error', {
+      sourceFolder: rule.sourceFolder.replace(/\\/g, '/'),
+      destFolder: rule.destFolder.replace(/\\/g, '/'),
+      message: `Initial sync failed: ${String(err)}`
+    })
+  }
+}
+
+function resetFolderWatchRules(rules: FolderWatchRule[]): void {
+  folderWatchRules = rules
+  closeFolderWatchers()
+
+  for (const rule of folderWatchRules) {
+    if (!rule.enabled) continue
+    const sourceFolder = normalizePath(rule.sourceFolder)
+    const destFolder = normalizePath(rule.destFolder)
+    if (!sourceFolder || !destFolder) continue
+    if (sourceFolder.toLowerCase() === destFolder.toLowerCase()) continue
+    if (isNestedPath(sourceFolder, destFolder) || isNestedPath(destFolder, sourceFolder)) {
+      log(`folderWatch skipped nested rule source="${sourceFolder}" dest="${destFolder}"`)
+      continue
+    }
+    try {
+      let debounceTimer: ReturnType<typeof setTimeout> | null = null
+      const watcher = fs.watch(sourceFolder, { recursive: false }, (_eventType, filename) => {
+        const name = filename?.toLowerCase() ?? ''
+        if (!name.endsWith('.nam') || name.endsWith('.json')) return
+        if (debounceTimer) clearTimeout(debounceTimer)
+        debounceTimer = setTimeout(() => {
+          const fullPath = join(sourceFolder, filename!)
+          void copyWatchedFile({ ...rule, sourceFolder, destFolder }, fullPath)
+        }, 1200)
+      })
+      folderWatchers.set(`${sourceFolder}=>${destFolder}`, watcher)
+      void syncExistingWatchedFiles({ ...rule, sourceFolder, destFolder })
+    } catch (err) {
+      log(`folderWatch rule error source="${sourceFolder}" dest="${destFolder}": ${String(err)}`)
+    }
+  }
 }
 
 // Catch uncaught exceptions before anything else
@@ -1093,6 +1216,10 @@ app.whenReady().then(async () => {
     } catch (err) {
       log(`folder:watch error: ${String(err)}`)
     }
+  })
+
+  ipcMain.handle('folderWatch:setRules', async (_event, rules: FolderWatchRule[]) => {
+    resetFolderWatchRules(Array.isArray(rules) ? rules : [])
   })
 
   // IPC: Create a subfolder

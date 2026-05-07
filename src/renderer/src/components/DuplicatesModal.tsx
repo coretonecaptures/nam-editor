@@ -11,6 +11,7 @@ interface DuplicateGroup {
 interface DuplicatesModalProps {
   files: NamFile[]
   rootFolder: string | null
+  scopeLabel?: string | null
   onClose: () => void
   onMoveDuplicates: (moves: { filePath: string; destName: string }[]) => Promise<void>
   onTrashDuplicates: (filePaths: string[]) => Promise<void>
@@ -82,7 +83,7 @@ function buildDestName(filePath: string, allDupePaths: string[]): string {
   return `${base} (from ${folder})${ext}`
 }
 
-export function DuplicatesModal({ files, rootFolder, onClose, onMoveDuplicates, onTrashDuplicates }: DuplicatesModalProps) {
+export function DuplicatesModal({ files, rootFolder, scopeLabel, onClose, onMoveDuplicates, onTrashDuplicates }: DuplicatesModalProps) {
   const [mode, setMode] = useState<DetectionMode>('filename')
   const [groups, setGroups] = useState<DuplicateGroup[]>(() =>
     buildGroups(files, 'filename').map((g) => ({ ...g, status: null }))
@@ -164,6 +165,11 @@ export function DuplicatesModal({ files, rootFolder, onClose, onMoveDuplicates, 
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
           <div>
             <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Find Duplicates</h2>
+            {scopeLabel && (
+              <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-1">
+                Scope: {scopeLabel}
+              </p>
+            )}
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
               {totalGroups === 0
                 ? 'No duplicates found'

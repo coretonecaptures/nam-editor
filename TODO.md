@@ -20,11 +20,13 @@
 - Append to comments (batch)
 - Unify list-view filter clear buttons
 - Capture file size stats
+- High priority: when moving duplicates, let the user choose the destination folder at move time instead of always using the root `_Duplicates` folder
 
 ## Import and performance
 
 - Blank xlsx import template with lookup dropdowns
 - Large collection / network share load performance: add mtime cache
+- Speed up the list sort/filter toolbar by memoizing expensive `FileList` derived work (`filtered`, `sorted`, duplicate counts, preset detection, and related summary counts)
 
 ## Grid and UI
 

@@ -34,6 +34,7 @@ interface FolderTreeProps {
   onImportMetadata?: (folderPath: string | null) => void
   onSelectAllInFolder?: (folderPath: string | null) => void
   onCoverageReport?: (folderPath: string) => void
+  onFindDuplicates?: (folderPath: string) => void
   scrollToFolder?: string | null
   packInfoFolders?: Set<string>
   folderNameColors?: Record<string, string>
@@ -43,6 +44,9 @@ interface FolderTreeProps {
   bundleFolders?: Set<string>
   onCreateBundle?: (folderPath: string) => void
   onDeleteBundle?: (folderPath: string) => void
+  watchSourceByDest?: Record<string, string>
+  onSetWatchSource?: (folderPath: string) => void
+  onClearWatchSource?: (folderPath: string) => void
 }
 
 function matchesFilter(
@@ -70,8 +74,9 @@ export function FolderTree({
   tree, files, selectedFolders, onSelect, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, onFilterChange, onDropFiles,
   onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata,
-  onSelectAllInFolder, onCoverageReport, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor,
+  onSelectAllInFolder, onCoverageReport, onFindDuplicates, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor,
   onCompareFolders, onDeletePackInfo, bundleFolders, onCreateBundle, onDeleteBundle
+  , watchSourceByDest, onSetWatchSource, onClearWatchSource
 }: FolderTreeProps) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [expandSeq, setExpandSeq] = useState(0)
@@ -262,6 +267,7 @@ export function FolderTree({
           onImportMetadata={onImportMetadata ? () => onImportMetadata(null) : undefined}
           onSelectAll={onSelectAllInFolder ? () => onSelectAllInFolder(null) : undefined}
           onCoverageReport={onCoverageReport ? () => onCoverageReport(tree.path) : undefined}
+          onFindDuplicates={onFindDuplicates ? () => onFindDuplicates(tree.path) : undefined}
         />
 
         {tree.children.map((child) => (
@@ -286,6 +292,7 @@ export function FolderTree({
             onImportMetadata={onImportMetadata}
             onSelectAllInFolder={onSelectAllInFolder}
             onCoverageReport={onCoverageReport}
+            onFindDuplicates={onFindDuplicates}
             expandSeq={expandSeq}
             collapseSeq={collapseSeq}
             scrollToFolder={scrollToFolder}
@@ -297,6 +304,9 @@ export function FolderTree({
             bundleFolders={bundleFolders}
             onCreateBundle={onCreateBundle}
             onDeleteBundle={onDeleteBundle}
+            watchSourceByDest={watchSourceByDest}
+            onSetWatchSource={onSetWatchSource}
+            onClearWatchSource={onClearWatchSource}
           />
         ))}
       </div>
@@ -308,8 +318,9 @@ function TreeNode({
   node, selectedFolders, onSelect, depth, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, matchingPaths, onDropFiles,
   onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata,
-  onSelectAllInFolder, onCoverageReport, expandSeq, collapseSeq, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor,
+  onSelectAllInFolder, onCoverageReport, onFindDuplicates, expandSeq, collapseSeq, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor,
   onCompareFolders, onDeletePackInfo, bundleFolders, onCreateBundle, onDeleteBundle
+  , watchSourceByDest, onSetWatchSource, onClearWatchSource
 }: {
   node: FolderNode
   selectedFolders: string[]
@@ -330,6 +341,7 @@ function TreeNode({
   onImportMetadata?: (folderPath: string | null) => void
   onSelectAllInFolder?: (folderPath: string | null) => void
   onCoverageReport?: (folderPath: string) => void
+  onFindDuplicates?: (folderPath: string) => void
   expandSeq?: number
   collapseSeq?: number
   scrollToFolder?: string | null
@@ -341,6 +353,9 @@ function TreeNode({
   bundleFolders?: Set<string>
   onCreateBundle?: (folderPath: string) => void
   onDeleteBundle?: (folderPath: string) => void
+  watchSourceByDest?: Record<string, string>
+  onSetWatchSource?: (folderPath: string) => void
+  onClearWatchSource?: (folderPath: string) => void
 }) {
   const [expanded, setExpanded] = useState(true)
 
@@ -406,6 +421,7 @@ function TreeNode({
         onImportMetadata={onImportMetadata ? () => onImportMetadata(node.path) : undefined}
         onSelectAll={onSelectAllInFolder ? () => onSelectAllInFolder(node.path) : undefined}
         onCoverageReport={onCoverageReport ? () => onCoverageReport(node.path) : undefined}
+        onFindDuplicates={onFindDuplicates ? () => onFindDuplicates(node.path) : undefined}
         isDraggableFolder
         hasPackInfo={packInfoFolders?.has(node.path.replace(/\\/g, '/')) ?? false}
         hasBundle={bundleFolders?.has(node.path.replace(/\\/g, '/')) ?? false}
@@ -416,6 +432,9 @@ function TreeNode({
         onDeletePackInfo={onDeletePackInfo && packInfoFolders?.has(node.path.replace(/\\/g, '/')) ? () => onDeletePackInfo(node.path) : undefined}
         onCreateBundle={onCreateBundle && !(bundleFolders?.has(node.path.replace(/\\/g, '/'))) ? () => onCreateBundle(node.path) : undefined}
         onDeleteBundle={onDeleteBundle && bundleFolders?.has(node.path.replace(/\\/g, '/')) ? () => onDeleteBundle(node.path) : undefined}
+        watchSource={watchSourceByDest?.[node.path.replace(/\\/g, '/')] ?? null}
+        onSetWatchSource={onSetWatchSource ? () => onSetWatchSource(node.path) : undefined}
+        onClearWatchSource={onClearWatchSource && watchSourceByDest?.[node.path.replace(/\\/g, '/')] ? () => onClearWatchSource(node.path) : undefined}
       />
 
       {expanded && hasChildren && (
@@ -442,6 +461,7 @@ function TreeNode({
               onImportMetadata={onImportMetadata}
               onSelectAllInFolder={onSelectAllInFolder}
               onCoverageReport={onCoverageReport}
+              onFindDuplicates={onFindDuplicates}
               expandSeq={expandSeq}
               collapseSeq={collapseSeq}
               scrollToFolder={scrollToFolder}
@@ -453,6 +473,9 @@ function TreeNode({
               bundleFolders={bundleFolders}
               onCreateBundle={onCreateBundle}
               onDeleteBundle={onDeleteBundle}
+              watchSourceByDest={watchSourceByDest}
+              onSetWatchSource={onSetWatchSource}
+              onClearWatchSource={onClearWatchSource}
             />
           ))}
         </div>
@@ -466,7 +489,8 @@ interface ContextMenuState { x: number; y: number }
 function FolderRow({
   label, folderPath, isRoot, isSelected, totalCount, dirtyCount, depth,
   hasChildren, expanded, onToggleExpand, onClick, onSave, onRevert,
-  onBatchEdit, onReveal, isFiltered, isHighlighted, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSelectAll, onCoverageReport, isDraggableFolder, hasPackInfo, hasBundle, folderColor, onSetFolderColor, isMultiSelect, onCompareFolders, onDeletePackInfo, onCreateBundle, onDeleteBundle
+  onBatchEdit, onReveal, isFiltered, isHighlighted, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSelectAll, onCoverageReport, onFindDuplicates, isDraggableFolder, hasPackInfo, hasBundle, folderColor, onSetFolderColor, isMultiSelect, onCompareFolders, onDeletePackInfo, onCreateBundle, onDeleteBundle
+  , watchSource, onSetWatchSource, onClearWatchSource
 }: {
   label: string
   folderPath: string
@@ -494,6 +518,7 @@ function FolderRow({
   onImportMetadata?: () => void
   onSelectAll?: () => void
   onCoverageReport?: () => void
+  onFindDuplicates?: () => void
   isDraggableFolder?: boolean
   hasPackInfo?: boolean
   hasBundle?: boolean
@@ -504,6 +529,9 @@ function FolderRow({
   onDeletePackInfo?: () => void
   onCreateBundle?: () => void
   onDeleteBundle?: () => void
+  watchSource?: string | null
+  onSetWatchSource?: () => void
+  onClearWatchSource?: () => void
 }) {
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -587,6 +615,7 @@ function FolderRow({
 
   const acceptsDrop = (types: readonly string[]) =>
     types.includes('application/x-nam-files') || types.includes('application/x-nam-folder')
+  const watchSourceName = watchSource ? watchSource.replace(/\\/g, '/').split('/').pop() ?? watchSource : null
 
   return (
     <div className="relative group" data-folder-path={folderPath}>
@@ -859,6 +888,43 @@ function FolderRow({
               >
                 Training version report…
               </button>
+            </>
+          )}
+          {onFindDuplicates && (
+            <>
+              <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
+              <button
+                className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
+                onClick={() => { setMenu(null); onFindDuplicates() }}
+              >
+                Find duplicates…
+              </button>
+            </>
+          )}
+          {(onSetWatchSource || onClearWatchSource) && (
+            <>
+              <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
+              {watchSourceName && (
+                <div className="px-3 py-1 text-[10px] text-amber-600 dark:text-amber-400 truncate">
+                  Watching source: {watchSourceName}
+                </div>
+              )}
+              {onSetWatchSource && (
+                <button
+                  className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
+                  onClick={() => { setMenu(null); onSetWatchSource() }}
+                >
+                  {watchSource ? 'Change watch source…' : 'Set watch source…'}
+                </button>
+              )}
+              {onClearWatchSource && (
+                <button
+                  className="w-full text-left px-3 py-1.5 text-red-600 dark:text-red-400 hover:bg-red-600/20 transition-colors"
+                  onClick={() => { setMenu(null); onClearWatchSource() }}
+                >
+                  Stop watching source
+                </button>
+              )}
             </>
           )}
           {onDeletePackInfo && (

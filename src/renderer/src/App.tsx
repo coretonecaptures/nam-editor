@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import beakerTransparent from './assets/images/beaker.only.transparent.png'
 import { NamFile, NamMetadata, TONE_TYPES, GEAR_TYPES } from './types/nam'
-import { AppSettings, loadSettings, saveSettings } from './types/settings'
+import { AppSettings, FolderWatchRule, loadSettings, saveSettings } from './types/settings'
 import { loadLayout, saveLayout } from './types/layout'
 import { LibrarianState } from './types/librarian'
 import { FileList, ALL_GRID_COLUMNS, doExportCSV, doExportXLSX } from './components/FileList'
@@ -119,6 +119,12 @@ function formatChecklistStatus(summary: ChecklistSummary): string {
   return 'In progress'
 }
 
+function formatPathLabel(path: string): string {
+  const normalized = path.replace(/\\/g, '/')
+  const parts = normalized.split('/').filter(Boolean)
+  return parts.length <= 3 ? normalized : `.../${parts.slice(-3).join('/')}`
+}
+
 const AMPCOVER_PATTERN = /^ampcover\.(png|jpe?g|webp|gif|avif)$/i
 
 const HISTORY_STORAGE_KEY = 'nam-lab-history'
@@ -170,6 +176,9 @@ declare global {
       renameFile: (oldPath: string, newBaseName: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       watchFolder: (path: string | null) => Promise<void>
       onFolderChanged: (cb: () => void) => () => void
+      setFolderWatchRules: (rules: FolderWatchRule[]) => Promise<void>
+      onFolderWatchCopied: (cb: (event: { sourcePath: string; destPath: string; sourceFolder: string; destFolder: string }) => void) => () => void
+      onFolderWatchError: (cb: (event: { sourceFolder: string; destFolder: string; message: string }) => void) => () => void
       createFolder: (parentPath: string, name: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       renameFolder: (folderPath: string, newName: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       moveFolder: (sourcePath: string, destParentPath: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
@@ -340,6 +349,7 @@ export default function App() {
   const [dashboardChecklistEntries, setDashboardChecklistEntries] = useState<DashboardChecklistEntry[]>([])
   const [metadataCoverPath, setMetadataCoverPath] = useState<string | null>(null)
   const [showDuplicates, setShowDuplicates] = useState(false)
+  const [duplicatesScopeFolder, setDuplicatesScopeFolder] = useState<string | null>(null)
   const [metadataClipboard, setMetadataClipboard] = useState<{ sourceName: string; metadata: Partial<NamFile['metadata']> } | null>(null)
   const [importModal, setImportModal] = useState<{ folderName: string; exactMatches: ImportMatch[]; prefixMatches: ImportMatch[]; unmatchedNames: string[] } | null>(null)
   const [coverageReport, setCoverageReport] = useState<{ folderPath: string } | null>(null)
@@ -811,6 +821,36 @@ export default function App() {
     return unsub
   }, [])
 
+  useEffect(() => {
+    void window.api.setFolderWatchRules(settings.folderWatchRules)
+  }, [settings.folderWatchRules])
+
+  useEffect(() => {
+    const unsubCopied = window.api.onFolderWatchCopied(async ({ destPath, destFolder, sourceFolder }) => {
+      const normalizedDestPath = destPath.replace(/\\/g, '/')
+      const normalizedDestFolder = destFolder.replace(/\\/g, '/')
+      const normalizedRoot = librarian.rootFolder?.replace(/\\/g, '/')
+      if (normalizedRoot && (normalizedDestFolder === normalizedRoot || normalizedDestFolder.startsWith(normalizedRoot + '/'))) {
+        await loadFilesRef.current?.([normalizedDestPath], 'append')
+        await refreshFolderTreeRef.current?.()
+      }
+      setStatus({
+        message: `Watch copied ${normalizedDestPath.split('/').pop()} from ${formatPathLabel(sourceFolder)} to ${formatPathLabel(normalizedDestFolder)}`,
+        type: 'success'
+      })
+    })
+    const unsubError = window.api.onFolderWatchError(({ destFolder, message }) => {
+      setStatus({
+        message: `Folder watch for ${formatPathLabel(destFolder)} failed: ${message}`,
+        type: 'error'
+      })
+    })
+    return () => {
+      unsubCopied()
+      unsubError()
+    }
+  }, [librarian.rootFolder])
+
 
   // Electron on Windows loses keyboard focus when the focused DOM element is removed
   // (e.g. BatchEditor unmounts) or after native confirm dialogs close. Chromium's
@@ -869,6 +909,48 @@ export default function App() {
       setListWidth(updated.defaultView === 'grid' ? loadLayout().listWidthGrid : loadLayout().listWidthList)
     }
   }
+
+  const updateFolderWatchRules = useCallback((updater: (rules: FolderWatchRule[]) => FolderWatchRule[]) => {
+    setSettings((prev) => {
+      const next = { ...prev, folderWatchRules: updater(prev.folderWatchRules) }
+      saveSettings(next)
+      return next
+    })
+  }, [])
+
+  const handleSetWatchSource = useCallback(async (destFolder: string) => {
+    const existing = settings.folderWatchRules.find((rule) => rule.destFolder === destFolder && rule.enabled)
+    const picked = await window.api.openFolder(existing?.sourceFolder ?? destFolder)
+    if (!picked) return
+    const normalizedSource = picked.replace(/\\/g, '/')
+    const normalizedDest = destFolder.replace(/\\/g, '/')
+    if (normalizedSource === normalizedDest) {
+      setStatus({ message: 'Watch source cannot be the same as the destination folder', type: 'error' })
+      return
+    }
+    if (normalizedDest.startsWith(normalizedSource + '/') || normalizedSource.startsWith(normalizedDest + '/')) {
+      setStatus({ message: 'Watch source and destination cannot be nested inside each other', type: 'error' })
+      return
+    }
+    updateFolderWatchRules((rules) => {
+      const next = rules.filter((rule) => rule.destFolder !== normalizedDest)
+      next.push({ sourceFolder: normalizedSource, destFolder: normalizedDest, enabled: true })
+      return next
+    })
+    setStatus({
+      message: `Watching ${formatPathLabel(normalizedSource)} for new .nam files into ${formatPathLabel(normalizedDest)}`,
+      type: 'success'
+    })
+  }, [settings.folderWatchRules, updateFolderWatchRules])
+
+  const handleClearWatchSource = useCallback((destFolder: string) => {
+    const normalizedDest = destFolder.replace(/\\/g, '/')
+    updateFolderWatchRules((rules) => rules.filter((rule) => rule.destFolder !== normalizedDest))
+    setStatus({
+      message: `Stopped watching source for ${normalizedDest.split('/').pop()}`,
+      type: 'info'
+    })
+  }, [updateFolderWatchRules])
 
   const handleDeletePackInfo = async (folderPath: string) => {
     if (!window.confirm(`Delete the Pack Info file for "${folderPath.split('/').pop()}"?\n\nThis cannot be undone.`)) return
@@ -2233,6 +2315,11 @@ export default function App() {
     }
   }
 
+  const handleFindDuplicatesInFolder = useCallback((folderPath: string) => {
+    setDuplicatesScopeFolder(folderPath.replace(/\\/g, '/'))
+    setShowDuplicates(true)
+  }, [])
+
   const handleFilterLocalCreator = (creator: string) => {
     const target = normalizeCreatorName(creator)
     const savedTone3000Username = normalizeCreatorName(settings.tone3000Username || '')
@@ -2331,6 +2418,17 @@ export default function App() {
   const unnamedCount = files.filter((f) => !f.metadata.name).length
   const hasTree = librarian.folderTree !== null
   const dirtyPaths = new Set(files.filter((f) => f.isDirty).map((f) => f.filePath.replace(/\\/g, '/')))
+  const folderWatchSourceByDest = Object.fromEntries(
+    settings.folderWatchRules
+      .filter((rule) => rule.enabled)
+      .map((rule) => [rule.destFolder.replace(/\\/g, '/'), rule.sourceFolder.replace(/\\/g, '/')])
+  ) as Record<string, string>
+  const duplicateModalFiles = duplicatesScopeFolder
+    ? files.filter((f) => {
+        const normalized = f.filePath.replace(/\\/g, '/')
+        return normalized.startsWith(duplicatesScopeFolder + '/')
+      })
+    : files
 
   const GEAR_MAKE_SEED = ['Marshall', 'Fender', 'Mesa Boogie', 'Bogner', 'Friedman', 'Dumble', 'Vox', 'Orange', 'Peavey', 'EVH', 'Carr', 'Two-Rock', 'Matchless', 'Bad Cat', 'Soldano', 'Dr. Z', 'Diezel', 'Morgan', 'Egnater', 'Suhr', 'Koch', 'Victory', 'Laney', 'Hiwatt', 'Engl', 'Rivera', 'Tone King', 'Divided by 13', 'Cornford', 'Komet', 'PRS', 'Kemper']
   const gearMakeSuggestions = Array.from(new Set([
@@ -2369,7 +2467,7 @@ export default function App() {
         onRefresh={handleRefresh}
         recentFolders={recentFolders}
         onOpenRecentFolder={(path) => loadFolderByPath(path)}
-        onFindDuplicates={files.length > 1 ? () => setShowDuplicates(true) : undefined}
+        onFindDuplicates={files.length > 1 ? () => { setDuplicatesScopeFolder(null); setShowDuplicates(true) } : undefined}
         showDashboard={files.length > 0}
         dashboardActive={showDashboard}
         onToggleDashboard={() => {
@@ -2511,6 +2609,10 @@ export default function App() {
                 bundleFolders={bundleFolders}
                 onCreateBundle={(folderPath) => { void handleCreateBundle(folderPath) }}
                 onDeleteBundle={(folderPath) => handleDeleteBundle(folderPath)}
+                watchSourceByDest={folderWatchSourceByDest}
+                onSetWatchSource={(folderPath) => { void handleSetWatchSource(folderPath) }}
+                onClearWatchSource={handleClearWatchSource}
+                onFindDuplicates={handleFindDuplicatesInFolder}
               />
             </div>
             {!gridMaximized && <DragHandle onMouseDown={(e) => onDragStart('tree', e)} onCollapse={() => setTreeCollapsed((v) => !v)} collapsed={treeCollapsed} />}
@@ -3098,9 +3200,10 @@ export default function App() {
 
       {showDuplicates && (
         <DuplicatesModal
-          files={files}
+          files={duplicateModalFiles}
           rootFolder={librarian.rootFolder}
-          onClose={() => setShowDuplicates(false)}
+          scopeLabel={duplicatesScopeFolder ? `Selected folder and children: ${duplicatesScopeFolder.split('/').slice(-3).join('/')}` : null}
+          onClose={() => { setShowDuplicates(false); setDuplicatesScopeFolder(null) }}
           onMoveDuplicates={handleMoveDuplicates}
           onTrashDuplicates={handleTrashDuplicates}
         />
