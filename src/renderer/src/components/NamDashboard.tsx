@@ -308,30 +308,6 @@ export function NamDashboard({
           />
         </div>
 
-        {packChecklistRollup && packChecklistRollup.length > 0 && (
-          <div>
-            <h3 className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-1.5">
-              Active Pack Checklists
-            </h3>
-            <div className="flex flex-col gap-1.5">
-              {packChecklistRollup.map((entry) => (
-                <div key={entry.folderLabel} className="rounded-lg bg-gray-100 dark:bg-gray-800/60 px-3 py-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-[11px] font-medium text-gray-700 dark:text-gray-200 truncate">{entry.folderLabel}</span>
-                    <span className="text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0">{entry.status}</span>
-                  </div>
-                  <div className="mt-1.5 flex items-center gap-2">
-                    <div className="flex-1 h-1.5 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
-                      <div className="h-full rounded-full bg-teal-500 transition-all" style={{ width: `${entry.percent}%` }} />
-                    </div>
-                    <span className="text-[10px] text-gray-500 dark:text-gray-400 flex-shrink-0">{entry.progressLabel}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* Gear & Tone Type section */}
         {(gearCounts.length > 0 || toneCounts.length > 0) && (
           <div className="flex flex-col gap-2">
@@ -486,6 +462,30 @@ export function NamDashboard({
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {packChecklistRollup && packChecklistRollup.length > 0 && (
+          <div>
+            <h3 className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-1.5">
+              Active Pack Checklists
+            </h3>
+            <div className="flex flex-col gap-1.5">
+              {packChecklistRollup.map((entry) => (
+                <div key={entry.folderLabel} className="rounded-lg bg-gray-100 dark:bg-gray-800/60 px-3 py-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[11px] font-medium text-gray-700 dark:text-gray-200 truncate">{entry.folderLabel}</span>
+                    <span className="text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0">{entry.status}</span>
+                  </div>
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <div className="flex-1 h-1.5 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+                      <div className="h-full rounded-full bg-teal-500 transition-all" style={{ width: `${entry.percent}%` }} />
+                    </div>
+                    <span className="text-[10px] text-gray-500 dark:text-gray-400 flex-shrink-0">{entry.progressLabel}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>
