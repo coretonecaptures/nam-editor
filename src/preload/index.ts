@@ -30,6 +30,8 @@ const api = {
   getStartupLogPath: (): Promise<string> => ipcRenderer.invoke('log:getStartupLogPath'),
   refocusWindow: () => ipcRenderer.invoke('window:refocus'),
   statPath: (p: string): Promise<{ isDirectory: boolean }> => ipcRenderer.invoke('path:stat', p),
+  getDeleteBehavior: (filePaths: string[]): Promise<{ permanentOnly: boolean; reason?: string }> =>
+    ipcRenderer.invoke('path:getDeleteBehavior', filePaths),
   renameFile: (oldPath: string, newBaseName: string): Promise<{ success: boolean; newPath?: string; error?: string }> =>
     ipcRenderer.invoke('file:rename', oldPath, newBaseName),
   watchFolder: (path: string | null): Promise<void> => ipcRenderer.invoke('folder:watch', path),
@@ -57,7 +59,7 @@ const api = {
     ipcRenderer.invoke('folder:rename', folderPath, newName),
   moveFolder: (sourcePath: string, destParentPath: string): Promise<{ success: boolean; newPath?: string; error?: string }> =>
     ipcRenderer.invoke('folder:move', sourcePath, destParentPath),
-  trashFiles: (filePaths: string[]): Promise<{ filePath: string; success: boolean; error?: string }[]> =>
+  trashFiles: (filePaths: string[]): Promise<{ filePath: string; success: boolean; error?: string; deleteMode?: 'trash' | 'delete' }[]> =>
     ipcRenderer.invoke('file:trash', filePaths),
   copyFiles: (filePaths: string[], destDir: string): Promise<{ filePath: string; success: boolean; destPath?: string; error?: string }[]> =>
     ipcRenderer.invoke('file:copy', filePaths, destDir),

@@ -15,6 +15,7 @@ interface DuplicatesModalProps {
   onClose: () => void
   onMoveDuplicates: (moves: { filePath: string; destName: string }[]) => Promise<void>
   onTrashDuplicates: (filePaths: string[]) => Promise<void>
+  getDeleteBehavior: (filePaths: string[]) => Promise<{ permanentOnly: boolean; reason?: string }>
 }
 
 type DetectionMode = 'filename' | 'metaname'
@@ -83,7 +84,7 @@ function buildDestName(filePath: string, allDupePaths: string[]): string {
   return `${base} (from ${folder})${ext}`
 }
 
-export function DuplicatesModal({ files, rootFolder, scopeLabel, onClose, onMoveDuplicates, onTrashDuplicates }: DuplicatesModalProps) {
+export function DuplicatesModal({ files, rootFolder, scopeLabel, onClose, onMoveDuplicates, onTrashDuplicates, getDeleteBehavior }: DuplicatesModalProps) {
   const [mode, setMode] = useState<DetectionMode>('filename')
   const [groups, setGroups] = useState<DuplicateGroup[]>(() =>
     buildGroups(files, 'filename').map((g) => ({ ...g, status: null }))
@@ -121,8 +122,13 @@ export function DuplicatesModal({ files, rootFolder, scopeLabel, onClose, onMove
     const group = groups[gi]
     const dupeFiles = group.files.filter((_, i) => i !== group.keepIndex).map((f) => f.filePath)
     const names = dupeFiles.map((p) => p.replace(/\\/g, '/').split('/').pop()).join('\n')
+    const deleteBehavior = await getDeleteBehavior(dupeFiles)
+    const actionLabel = deleteBehavior.permanentOnly ? 'Delete' : 'Trash'
+    const tailMessage = deleteBehavior.permanentOnly
+      ? 'These files are on a shared or network-backed drive, so Recycle Bin is not available.'
+      : 'Files will be moved to the OS trash.'
     const confirmed = window.confirm(
-      `Trash ${dupeFiles.length} file${dupeFiles.length !== 1 ? 's' : ''} from this group?\n\n${names}\n\nFiles will be moved to the OS trash.`
+      `${actionLabel} ${dupeFiles.length} file${dupeFiles.length !== 1 ? 's' : ''} from this group?\n\n${names}\n\n${tailMessage}`
     )
     if (!confirmed) return
     setWorking(gi)
@@ -144,8 +150,13 @@ export function DuplicatesModal({ files, rootFolder, scopeLabel, onClose, onMove
   const handleAllTrash = async () => {
     if (pendingGroups.length === 0) return
     const n = pendingDupeFiles.length
+    const deleteBehavior = await getDeleteBehavior(pendingDupeFiles.map((f) => f.filePath))
+    const actionLabel = deleteBehavior.permanentOnly ? 'Delete' : 'Trash'
+    const tailMessage = deleteBehavior.permanentOnly
+      ? 'These files are on a shared or network-backed drive, so Recycle Bin is not available.'
+      : 'Files will be moved to the OS trash.'
     const confirmed = window.confirm(
-      `Trash all ${n} non-kept duplicate file${n !== 1 ? 's' : ''} (${pendingGroups.length} group${pendingGroups.length !== 1 ? 's' : ''})?\n\nFiles will be moved to the OS trash.`
+      `${actionLabel} all ${n} non-kept duplicate file${n !== 1 ? 's' : ''} (${pendingGroups.length} group${pendingGroups.length !== 1 ? 's' : ''})?\n\n${tailMessage}`
     )
     if (!confirmed) return
     setWorking(-1)

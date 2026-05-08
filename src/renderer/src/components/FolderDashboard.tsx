@@ -20,6 +20,7 @@ interface Props {
   hasReadme?: boolean
   hasCoverImage?: boolean
   galleryCount?: number
+  watchSource?: string | null
   activeDuplicate?: boolean
   activeGear?: string | null
   activeTone?: string | null
@@ -34,6 +35,8 @@ interface Props {
   onMissingClick?: (on: boolean) => void
   onEsrClick?: (tier: string | null) => void
   onRatingClick?: (rating: number | null) => void
+  onRemoveWatch?: () => void
+  onOpenWatchSource?: (path: string) => void
 }
 
 const CORE_FIELDS = [
@@ -153,8 +156,8 @@ function MiniBar({ label, count, maxCount, color, isActive, onClick }: { label: 
 }
 
 export function FolderDashboard({
-  files, checklistSummary, hasPackInfo, hasReadme, hasCoverImage, galleryCount = 0, activeDuplicate, activeGear, activeTone, activePreset, activeMissing, activeEsr, activeRating,
-  onDuplicateClick, onGearClick, onToneClick, onPresetClick, onMissingClick, onEsrClick, onRatingClick,
+  files, checklistSummary, hasPackInfo, hasReadme, hasCoverImage, galleryCount = 0, watchSource, activeDuplicate, activeGear, activeTone, activePreset, activeMissing, activeEsr, activeRating,
+  onDuplicateClick, onGearClick, onToneClick, onPresetClick, onMissingClick, onEsrClick, onRatingClick, onRemoveWatch, onOpenWatchSource,
 }: Props) {
   const stats = useMemo(() => {
     const total = files.length
@@ -244,14 +247,6 @@ export function FolderDashboard({
     }
   }, [files])
 
-  if (files.length === 0) {
-    return (
-      <div className="h-full flex items-center justify-center text-gray-500 text-sm">
-        No captures in this folder
-      </div>
-    )
-  }
-
   const esrCovered = stats.esrGood + stats.esrOk + stats.esrReview
   const esrMaxCount = Math.max(stats.esrGood, stats.esrOk, stats.esrReview, stats.esrNone, 1)
 
@@ -290,6 +285,43 @@ export function FolderDashboard({
             <span className={`text-[10px] px-2 py-0.5 rounded-full ${hasCoverImage ? 'bg-teal-900/30 text-teal-300' : 'bg-gray-700/70 text-gray-300'}`}>Cover {hasCoverImage ? 'ready' : 'missing'}</span>
             <span className={`text-[10px] px-2 py-0.5 rounded-full ${galleryCount > 0 ? 'bg-teal-900/30 text-teal-300' : 'bg-gray-700/70 text-gray-300'}`}>Gallery {galleryCount > 0 ? `${galleryCount} image${galleryCount === 1 ? '' : 's'}` : 'empty'}</span>
           </div>
+        </div>
+
+        <div className="rounded-xl bg-gray-800/40 border border-gray-700/40 p-3">
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <h3 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Folder Watch</h3>
+            {watchSource && onRemoveWatch && (
+              <button
+                onClick={onRemoveWatch}
+                className="text-[10px] px-2 py-0.5 rounded border border-red-500/30 text-red-300 hover:bg-red-500/10 transition-colors"
+                title="Remove watch source from this folder"
+              >
+                Remove Watch
+              </button>
+            )}
+          </div>
+          {watchSource ? (
+            <div className="space-y-1.5 text-[11px]">
+              <div className="text-gray-400">This folder watches:</div>
+              <button
+                onClick={() => onOpenWatchSource?.(watchSource)}
+                className="w-full text-left rounded-lg bg-gray-900/50 border border-gray-700/50 px-2.5 py-2 text-gray-200 break-all hover:border-indigo-500/50 hover:bg-gray-900/70 transition-colors"
+                title="Open watch source in Explorer/Finder"
+              >
+                {watchSource}
+              </button>
+              <div className="text-[10px] text-gray-500">
+                New top-level <code>.nam</code> files copied from that source will appear here automatically.
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-1.5 text-[11px]">
+              <div className="text-gray-400">No watch source configured for this folder.</div>
+              <div className="text-[10px] text-gray-500">
+                Right-click this folder in the tree and choose <span className="text-gray-400">Set watch source...</span> to pull new training files in automatically.
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="rounded-xl bg-gray-800/40 border border-gray-700/40 p-3">

@@ -172,6 +172,7 @@ declare global {
       getStartupLogPath: () => Promise<string>
       refocusWindow: () => Promise<void>
       statPath: (p: string) => Promise<{ isDirectory: boolean }>
+      getDeleteBehavior: (filePaths: string[]) => Promise<{ permanentOnly: boolean; reason?: string }>
       getPathForFile: (file: File) => string
       renameFile: (oldPath: string, newBaseName: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       watchFolder: (path: string | null) => Promise<void>
@@ -182,7 +183,7 @@ declare global {
       createFolder: (parentPath: string, name: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       renameFolder: (folderPath: string, newName: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       moveFolder: (sourcePath: string, destParentPath: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
-      trashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; error?: string }[]>
+      trashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; error?: string; deleteMode?: 'trash' | 'delete' }[]>
       copyFiles: (filePaths: string[], destDir: string) => Promise<{ filePath: string; success: boolean; destPath?: string; error?: string }[]>
       clearNamLab: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; error?: string }[]>
       cleanOutdatedNamBot: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; error?: string; changed?: boolean }[]>
@@ -319,6 +320,8 @@ export default function App() {
     message: 'Open .nam files or a folder to get started',
     type: 'info'
   })
+  const statusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const folderWatchBatchTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const [batchFolder, setBatchFolder] = useState<{ path: string | null; name: string; filePaths?: string[] } | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
@@ -383,7 +386,7 @@ export default function App() {
   const [toneStoreQueueJob, setToneStoreQueueJob] = useState<ToneStoreDownloadQueueJob | null>(null)
   const toneStoreQueueRunningRef = useRef(false)
   const toneStoreQueueAbortRef = useRef(0)
-  const loadFilesRef = useRef<null | ((paths: string[], mode: 'replace' | 'append', genToken?: number) => Promise<void>)>(null)
+  const loadFilesRef = useRef<null | ((paths: string[], mode: 'replace' | 'append' | 'append-passive', genToken?: number) => Promise<void>)>(null)
   const refreshFolderTreeRef = useRef<null | (() => Promise<void>)>(null)
   const [directFilesOnly, setDirectFilesOnly] = useState(false)
   const [toneStoreSearchRequest, setToneStoreSearchRequest] = useState<{ key: number; query: string } | null>(null)
@@ -821,23 +824,80 @@ export default function App() {
     return unsub
   }, [])
 
+  function showTransientStatus(next: { message: string; type: 'info' | 'success' | 'error'; logPath?: string }, ms = 5000) {
+    if (statusTimeoutRef.current) {
+      clearTimeout(statusTimeoutRef.current)
+      statusTimeoutRef.current = null
+    }
+    setStatus(next)
+    statusTimeoutRef.current = setTimeout(() => {
+      setStatus((prev) => (
+        prev.message === next.message && prev.type === next.type && prev.logPath === next.logPath
+          ? { message: '', type: 'info' }
+          : prev
+      ))
+      statusTimeoutRef.current = null
+    }, ms)
+  }
+
   useEffect(() => {
     void window.api.setFolderWatchRules(settings.folderWatchRules)
   }, [settings.folderWatchRules])
 
   useEffect(() => {
+    const pendingBatches = new Map<string, {
+      count: number
+      sourceFolder: string
+      destFolder: string
+      lastFileName: string
+    }>()
+
+    const pushWatchHistoryEntry = (summary: string) => {
+      setSessionHistory((current) => {
+        const next: HistoryEntry = {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          timestamp: new Date(),
+          operation: 'watch-copy',
+          summary,
+        }
+        return [next, ...current].slice(0, HISTORY_MAX)
+      })
+    }
+
     const unsubCopied = window.api.onFolderWatchCopied(async ({ destPath, destFolder, sourceFolder }) => {
       const normalizedDestPath = destPath.replace(/\\/g, '/')
       const normalizedDestFolder = destFolder.replace(/\\/g, '/')
       const normalizedRoot = librarian.rootFolder?.replace(/\\/g, '/')
       if (normalizedRoot && (normalizedDestFolder === normalizedRoot || normalizedDestFolder.startsWith(normalizedRoot + '/'))) {
-        await loadFilesRef.current?.([normalizedDestPath], 'append')
+        await loadFilesRef.current?.([normalizedDestPath], 'append-passive')
         await refreshFolderTreeRef.current?.()
       }
-      setStatus({
-        message: `Watch copied ${normalizedDestPath.split('/').pop()} from ${formatPathLabel(sourceFolder)} to ${formatPathLabel(normalizedDestFolder)}`,
-        type: 'success'
-      })
+      const batchKey = `${sourceFolder}=>${normalizedDestFolder}`
+      const fileName = normalizedDestPath.split('/').pop() ?? 'file'
+      const batch = pendingBatches.get(batchKey) ?? {
+        count: 0,
+        sourceFolder,
+        destFolder: normalizedDestFolder,
+        lastFileName: fileName,
+      }
+      batch.count += 1
+      batch.lastFileName = fileName
+      pendingBatches.set(batchKey, batch)
+
+      const existingTimer = folderWatchBatchTimersRef.current.get(batchKey)
+      if (existingTimer) clearTimeout(existingTimer)
+      const timer = setTimeout(() => {
+        folderWatchBatchTimersRef.current.delete(batchKey)
+        const current = pendingBatches.get(batchKey)
+        if (!current) return
+        pendingBatches.delete(batchKey)
+        const summary = current.count === 1
+          ? `Watch copied ${current.lastFileName} from ${formatPathLabel(current.sourceFolder)} to ${formatPathLabel(current.destFolder)}`
+          : `Watch copied ${current.count} files from ${formatPathLabel(current.sourceFolder)} to ${formatPathLabel(current.destFolder)}`
+        showTransientStatus({ message: summary, type: 'success' })
+        pushWatchHistoryEntry(summary)
+      }, 1500)
+      folderWatchBatchTimersRef.current.set(batchKey, timer)
     })
     const unsubError = window.api.onFolderWatchError(({ destFolder, message }) => {
       setStatus({
@@ -846,10 +906,12 @@ export default function App() {
       })
     })
     return () => {
+      for (const timer of folderWatchBatchTimersRef.current.values()) clearTimeout(timer)
+      folderWatchBatchTimersRef.current.clear()
       unsubCopied()
       unsubError()
     }
-  }, [librarian.rootFolder])
+  }, [librarian.rootFolder, showTransientStatus])
 
 
   // Electron on Windows loses keyboard focus when the focused DOM element is removed
@@ -937,20 +999,20 @@ export default function App() {
       next.push({ sourceFolder: normalizedSource, destFolder: normalizedDest, enabled: true })
       return next
     })
-    setStatus({
+    showTransientStatus({
       message: `Watching ${formatPathLabel(normalizedSource)} for new .nam files into ${formatPathLabel(normalizedDest)}`,
       type: 'success'
     })
-  }, [settings.folderWatchRules, updateFolderWatchRules])
+  }, [settings.folderWatchRules, showTransientStatus, updateFolderWatchRules])
 
   const handleClearWatchSource = useCallback((destFolder: string) => {
     const normalizedDest = destFolder.replace(/\\/g, '/')
     updateFolderWatchRules((rules) => rules.filter((rule) => rule.destFolder !== normalizedDest))
-    setStatus({
+    showTransientStatus({
       message: `Stopped watching source for ${normalizedDest.split('/').pop()}`,
       type: 'info'
     })
-  }, [updateFolderWatchRules])
+  }, [showTransientStatus, updateFolderWatchRules])
 
   const handleDeletePackInfo = async (folderPath: string) => {
     if (!window.confirm(`Delete the Pack Info file for "${folderPath.split('/').pop()}"?\n\nThis cannot be undone.`)) return
@@ -975,7 +1037,7 @@ export default function App() {
   // Shared: turn raw IPC read results into NamFile[] and update state
   const applyParsedResults = useCallback(async (
     results: { success: boolean; filePath?: string; metadata?: NamFile['metadata']; version?: string; architecture?: string; config?: unknown; error?: string; mtimeMs?: number; birthtimeMs?: number; sizeBytes?: number }[],
-    mode: 'replace' | 'append'
+    mode: 'replace' | 'append' | 'append-passive'
   ) => {
     const loaded: NamFile[] = []
     let errors = 0
@@ -1011,6 +1073,7 @@ export default function App() {
       if (loaded.length === 0) return prev
       if (shouldSuppressSelect) return prev
       if (mode === 'replace') return new Set([loaded[0].filePath])
+      if (mode === 'append-passive') return prev
       if (prev.size === 0) return new Set([loaded[0].filePath])
       return prev
     })
@@ -1023,7 +1086,7 @@ export default function App() {
   }, [settings])
 
   // mode='append': dedup against current files (drag & drop)
-  const loadFiles = useCallback(async (paths: string[], mode: 'replace' | 'append' = 'append', genToken?: number) => {
+  const loadFiles = useCallback(async (paths: string[], mode: 'replace' | 'append' | 'append-passive' = 'append', genToken?: number) => {
     setStatus({ message: `Loading ${paths.length} file(s)...`, type: 'info' })
     const CONCURRENCY = 50
     const results: Awaited<ReturnType<typeof window.api.readFile>>[] = []
@@ -1719,13 +1782,19 @@ export default function App() {
       const parts = p.replace(/\\/g, '/').split('/')
       return parts.length >= 2 ? parts.slice(-2).join('/') : parts[parts.length - 1]
     }).join('\n')
+    const deleteBehavior = await window.api.getDeleteBehavior(paths)
+    const actionLabel = deleteBehavior.permanentOnly ? 'Delete' : 'Move'
+    const tailMessage = deleteBehavior.permanentOnly
+      ? 'These files are on a shared or network-backed drive, so Recycle Bin is not available.'
+      : 'This can be recovered from the trash.'
     const confirmed = window.confirm(
-      `Move ${paths.length} file${paths.length !== 1 ? 's' : ''} to trash?\n\n${fileNames}\n\nThis can be recovered from the trash.`
+      `${actionLabel} ${paths.length} file${paths.length !== 1 ? 's' : ''}?\n\n${fileNames}\n\n${tailMessage}`
     )
     if (!confirmed) return
     const results = await window.api.trashFiles(paths)
     const trashed = results.filter((r) => r.success).map((r) => r.filePath)
     const failed = results.filter((r) => !r.success).length
+    const permanentlyDeleted = results.filter((r) => r.success && r.deleteMode === 'delete').length
     if (trashed.length > 0) {
       const trashedSet = new Set(trashed)
       setFiles((prev) => prev.filter((f) => !trashedSet.has(f.filePath)))
@@ -1739,6 +1808,11 @@ export default function App() {
       const errors = results.filter((r) => !r.success).map((r) => r.error).filter(Boolean)
       const detail = errors.length > 0 ? `: ${errors[0]}` : ''
       setStatus({ message: `Trashed ${trashed.length}, failed ${failed}${detail}`, type: 'error' })
+    } else if (permanentlyDeleted > 0) {
+      setStatus({
+        message: `Deleted ${trashed.length} file${trashed.length !== 1 ? 's' : ''} permanently (${permanentlyDeleted} could not be moved to trash)`,
+        type: 'info'
+      })
     } else {
       setStatus({ message: `Moved ${trashed.length} file${trashed.length !== 1 ? 's' : ''} to trash`, type: 'success' })
     }
@@ -2298,6 +2372,7 @@ export default function App() {
     // Confirmation is handled inside DuplicatesModal per-group; just execute
     const results = await window.api.trashFiles(filePaths)
     const trashed = results.filter((r) => r.success).map((r) => r.filePath)
+    const permanentlyDeleted = results.filter((r) => r.success && r.deleteMode === 'delete').length
     if (trashed.length > 0) {
       const trashedSet = new Set(trashed)
       setFiles((prev) => prev.filter((f) => !trashedSet.has(f.filePath)))
@@ -2310,6 +2385,11 @@ export default function App() {
     const failed = filePaths.length - trashed.length
     if (failed > 0) {
       setStatus({ message: `Trashed ${trashed.length}, failed ${failed}`, type: 'error' })
+    } else if (permanentlyDeleted > 0) {
+      setStatus({
+        message: `Deleted ${trashed.length} duplicate${trashed.length !== 1 ? 's' : ''} permanently (${permanentlyDeleted} could not be moved to trash)`,
+        type: 'info'
+      })
     } else {
       setStatus({ message: `Trashed ${trashed.length} duplicate${trashed.length !== 1 ? 's' : ''}`, type: 'success' })
     }
@@ -2907,6 +2987,7 @@ export default function App() {
           ) : selectedFiles.length === 0 && librarian.rootFolder !== null ? (() => {
             const activeFolderPath = ((librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null) ?? librarian.rootFolder)!
             const activeFolderName = activeFolderPath.split('/').pop() ?? activeFolderPath
+            const activeFolderWatchSource = folderWatchSourceByDest[activeFolderPath] ?? null
             const hasBundle = bundleFolders.has(activeFolderPath.replace(/\\/g, '/'))
             if (hasBundle) {
               return (
@@ -2966,6 +3047,7 @@ export default function App() {
                       hasReadme={activeFolderReadiness?.hasReadme ?? false}
                       hasCoverImage={activeFolderReadiness?.hasCoverImage ?? false}
                       galleryCount={activeFolderReadiness?.galleryCount ?? 0}
+                      watchSource={activeFolderWatchSource}
                       activeDuplicate={filterModeOverride === 'duplicates'}
                       activeGear={gearTypeFilter}
                       activeTone={toneTypeFilter}
@@ -2973,6 +3055,8 @@ export default function App() {
                       activeMissing={filterModeOverride === 'incomplete'}
                       activeEsr={esrFilterOverride}
                       activeRating={ratingFilter}
+                      onRemoveWatch={activeFolderPath && activeFolderWatchSource ? () => handleClearWatchSource(activeFolderPath) : undefined}
+                      onOpenWatchSource={(path) => { void window.api.revealFile(path) }}
                       onDuplicateClick={(on) => {
                         setFilterModeOverride(on ? 'duplicates' : null)
                         setGearTypeFilter(null)
@@ -3206,6 +3290,7 @@ export default function App() {
           onClose={() => { setShowDuplicates(false); setDuplicatesScopeFolder(null) }}
           onMoveDuplicates={handleMoveDuplicates}
           onTrashDuplicates={handleTrashDuplicates}
+          getDeleteBehavior={(filePaths) => window.api.getDeleteBehavior(filePaths)}
         />
       )}
 

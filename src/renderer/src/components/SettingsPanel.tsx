@@ -30,6 +30,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
   const [updateState, setUpdateState] = useState<UpdateState>({ status: 'idle' })
   const [checklistTemplateOpen, setChecklistTemplateOpen] = useState(false)
   const [packCatalogOpen, setPackCatalogOpen] = useState(false)
+  const [folderWatchesOpen, setFolderWatchesOpen] = useState(false)
 
   const handleCheckForUpdates = async () => {
     setUpdateState({ status: 'checking' })
@@ -61,6 +62,12 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
     onSave(draft)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
+  }
+
+  const formatWatchPath = (path: string) => {
+    const normalized = path.replace(/\\/g, '/')
+    const parts = normalized.split('/').filter(Boolean)
+    return parts.length <= 4 ? normalized : `.../${parts.slice(-4).join('/')}`
   }
 
   return (
@@ -724,6 +731,57 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
             </SettingsField>
           </Section>
 
+          <div>
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-sm">Watch</span>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Folder Watches</h3>
+              <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
+            </div>
+            <p className="text-xs text-gray-500 dark:text-gray-500 mb-4">
+              Destination folders in NAM Lab can watch a source folder and automatically copy in new top-level <code>.nam</code> files.
+            </p>
+            <div className="mb-3 flex items-center gap-2 flex-wrap">
+              <button
+                onClick={() => setFolderWatchesOpen((v) => !v)}
+                className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+              >
+                <span>{folderWatchesOpen ? 'Hide folder watches' : 'Show folder watches'}</span>
+                <span className="text-[10px] text-gray-400">{draft.folderWatchRules.filter((rule) => rule.enabled).length}</span>
+              </button>
+            </div>
+            {folderWatchesOpen && (
+              <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-3 bg-gray-50/60 dark:bg-gray-900/30">
+                {draft.folderWatchRules.filter((rule) => rule.enabled).length === 0 ? (
+                  <p className="text-xs text-gray-500 dark:text-gray-500">No folder watches configured yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {draft.folderWatchRules.filter((rule) => rule.enabled).map((rule) => (
+                      <div key={`${rule.destFolder}=>${rule.sourceFolder}`} className="flex items-start gap-3 rounded border border-gray-200 dark:border-gray-800 bg-white/70 dark:bg-gray-950/30 px-3 py-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[11px] font-medium text-gray-700 dark:text-gray-300 break-all">
+                            Into: <span className="text-gray-900 dark:text-gray-100">{formatWatchPath(rule.destFolder)}</span>
+                          </div>
+                          <div className="text-[11px] text-gray-500 dark:text-gray-500 mt-0.5 break-all">
+                            From: {formatWatchPath(rule.sourceFolder)}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => update('folderWatchRules', draft.folderWatchRules.filter((item) => item !== rule))}
+                          className="text-gray-400 hover:text-red-500 transition-colors flex-shrink-0"
+                          title="Remove watch"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
         </div>
       </div>
 
@@ -869,9 +927,11 @@ function Section({
       <p className={`text-xs mb-4 transition-colors ${enabled ? 'text-gray-500 dark:text-gray-500' : 'text-gray-400 dark:text-gray-600'}`}>
         {description}
       </p>
-      <div className={`space-y-4 transition-opacity ${enabled ? 'opacity-100' : 'opacity-40'}`}>
-        {children}
-      </div>
+      {enabled && (
+        <div className="space-y-4 transition-opacity opacity-100">
+          {children}
+        </div>
+      )}
     </div>
   )
 }

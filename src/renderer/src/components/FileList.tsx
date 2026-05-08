@@ -1692,6 +1692,9 @@ function FileItem({
   ]
   const missingFields = TRACKED.filter((f) => !meta[f.key])
   const missing = missingFields.length
+  const creatorChipClass = solidPills
+    ? 'bg-sky-500/20 text-sky-200 border border-sky-400/30'
+    : 'bg-sky-50 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800/60'
 
   return (
     <div
@@ -1724,6 +1727,14 @@ function FileItem({
           <div className="text-xs text-gray-500 dark:text-gray-500 truncate mt-0.5">{subtitle}</div>
         )}
         <div className="flex items-center gap-1.5 mt-1">
+          {meta.modeled_by && (
+            <span
+              className={`text-xs px-1.5 py-0.5 rounded ${creatorChipClass}`}
+              title={`Creator: ${meta.modeled_by}`}
+            >
+              {meta.modeled_by}
+            </span>
+          )}
           {meta.gear_type && (
             <span className={`text-xs px-1.5 py-0.5 rounded ${gearChipClass(meta.gear_type, solidPills)}`}>{meta.gear_type}</span>
           )}

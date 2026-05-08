@@ -99,6 +99,73 @@ function closeFolderWatchers(): void {
   folderWatchers.clear()
 }
 
+const deleteBehaviorCache = new Map<string, boolean>()
+
+async function getDeleteBehavior(filePaths: string[]): Promise<{ permanentOnly: boolean; reason?: string }> {
+  if (filePaths.length === 0) return { permanentOnly: false }
+
+  if (process.platform !== 'win32') return { permanentOnly: false }
+
+  const firstPath = filePaths[0]
+  const normalized = firstPath.replace(/\//g, '\\')
+  if (normalized.startsWith('\\\\')) {
+    return { permanentOnly: true, reason: 'network-share' }
+  }
+
+  const root = normalizePath(normalized).slice(0, 3).toUpperCase()
+  if (!/^[A-Z]:\\$/.test(root)) return { permanentOnly: false }
+  if (deleteBehaviorCache.has(root)) {
+    return deleteBehaviorCache.get(root)
+      ? { permanentOnly: true, reason: 'mapped-network-drive' }
+      : { permanentOnly: false }
+  }
+
+  try {
+    const { execSync } = await import('child_process')
+    const command = `$drive = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='${root.slice(0, 2)}'"; if ($drive) { Write-Output $drive.DriveType }`
+    const output = execSync(`powershell -NoProfile -Command "${command}"`, {
+      encoding: 'utf8',
+      timeout: 3000,
+      windowsHide: true,
+    }).trim()
+    const driveType = parseInt(output, 10)
+    const isNetwork = driveType === 4
+    deleteBehaviorCache.set(root, isNetwork)
+    return isNetwork
+      ? { permanentOnly: true, reason: 'mapped-network-drive' }
+      : { permanentOnly: false }
+  } catch {
+    deleteBehaviorCache.set(root, false)
+    return { permanentOnly: false }
+  }
+}
+
+async function trashWithRetry(filePath: string, attempts = 4, delayMs = 350): Promise<void> {
+  let lastError: unknown
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      await shell.trashItem(process.platform === 'win32' ? filePath.replace(/\//g, '\\') : filePath)
+      return
+    } catch (err) {
+      lastError = err
+      if (attempt < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs))
+      }
+    }
+  }
+  throw lastError
+}
+
+async function deleteWithFallback(filePath: string): Promise<'trash' | 'delete'> {
+  try {
+    await trashWithRetry(filePath)
+    return 'trash'
+  } catch {
+    await fs.promises.unlink(filePath)
+    return 'delete'
+  }
+}
+
 function isNestedPath(parentPath: string, childPath: string): boolean {
   const parent = normalizePath(parentPath).replace(/[\\/]+$/, '').toLowerCase()
   const child = normalizePath(childPath).replace(/[\\/]+$/, '').toLowerCase()
@@ -173,15 +240,19 @@ function resetFolderWatchRules(rules: FolderWatchRule[]): void {
       continue
     }
     try {
-      let debounceTimer: ReturnType<typeof setTimeout> | null = null
+      const pendingTimers = new Map<string, ReturnType<typeof setTimeout>>()
       const watcher = fs.watch(sourceFolder, { recursive: false }, (_eventType, filename) => {
-        const name = filename?.toLowerCase() ?? ''
-        if (!name.endsWith('.nam') || name.endsWith('.json')) return
-        if (debounceTimer) clearTimeout(debounceTimer)
-        debounceTimer = setTimeout(() => {
-          const fullPath = join(sourceFolder, filename!)
+        const nextFilename = String(filename ?? '').trim()
+        const lowerName = nextFilename.toLowerCase()
+        if (!lowerName.endsWith('.nam') || lowerName.endsWith('.json')) return
+        const existingTimer = pendingTimers.get(lowerName)
+        if (existingTimer) clearTimeout(existingTimer)
+        const timer = setTimeout(() => {
+          pendingTimers.delete(lowerName)
+          const fullPath = join(sourceFolder, nextFilename)
           void copyWatchedFile({ ...rule, sourceFolder, destFolder }, fullPath)
         }, 1200)
+        pendingTimers.set(lowerName, timer)
       })
       folderWatchers.set(`${sourceFolder}=>${destFolder}`, watcher)
       void syncExistingWatchedFiles({ ...rule, sourceFolder, destFolder })
@@ -1076,11 +1147,12 @@ app.whenReady().then(async () => {
 
   // IPC: Move file(s) to the OS trash (recoverable)
   ipcMain.handle('file:trash', async (_event, filePaths: string[]) => {
-    const results: { filePath: string; success: boolean; error?: string }[] = []
+    const results: { filePath: string; success: boolean; error?: string; deleteMode?: 'trash' | 'delete' }[] = []
     for (const filePath of filePaths) {
       try {
-        await shell.trashItem(process.platform === 'win32' ? filePath.replace(/\//g, '\\') : filePath)
-        results.push({ filePath, success: true })
+        suppressWatcher()
+        const deleteMode = await deleteWithFallback(filePath)
+        results.push({ filePath, success: true, deleteMode })
       } catch (err) {
         results.push({ filePath, success: false, error: String(err) })
       }
@@ -1150,6 +1222,10 @@ app.whenReady().then(async () => {
     } catch {
       return { isDirectory: false }
     }
+  })
+
+  ipcMain.handle('path:getDeleteBehavior', async (_event, filePaths: string[]) => {
+    return getDeleteBehavior(Array.isArray(filePaths) ? filePaths : [])
   })
 
   // IPC: Reveal a file in Finder / Explorer
