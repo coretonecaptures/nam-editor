@@ -195,12 +195,16 @@ export function generatePackHtml(
     body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
     .header, thead th, tbody tr:nth-child(even) { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .header { padding: 20px 52px 17px; break-inside: avoid; page-break-inside: avoid; }
-    .content { padding: 18px 52px 24px; }
-    .capture-section-page { break-before: page; page-break-before: always; padding-top: 12mm; }
-    .keep-together { break-inside: avoid; page-break-inside: avoid; padding-top: 10mm; }
+    .content {
+      padding: 12mm 52px 24px;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+    }
+    .capture-section-page { margin-top: 8mm; }
+    .keep-together { break-inside: avoid; page-break-inside: avoid; }
     .keep-together table, .keep-together tbody, .keep-together tr { break-inside: avoid; page-break-inside: avoid; }
     .section-title { break-after: avoid; page-break-after: avoid; }
-    thead th { border-top: 9mm solid ${t.bodyBg}; }
+    thead th { border-top: 4mm solid ${t.bodyBg}; }
     tfoot { display: table-footer-group; }
     tfoot td { height: 10mm; padding: 0; border: 0; background: ${t.bodyBg}; }
     .footer { break-inside: avoid; page-break-inside: avoid; margin-top: 10mm; padding-top: 6mm; padding-bottom: 12mm; }
