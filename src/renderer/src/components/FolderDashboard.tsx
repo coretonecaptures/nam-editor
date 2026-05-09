@@ -21,6 +21,14 @@ interface Props {
   hasCoverImage?: boolean
   galleryCount?: number
   watchSource?: string | null
+  deliverySummary?: {
+    totalRows: number
+    lastImportedAt: string
+    tonexIncluded: number
+    namIncluded: number
+    proxyIncluded: number
+    qcIncluded: number
+  } | null
   activeDuplicate?: boolean
   activeGear?: string | null
   activeTone?: string | null
@@ -156,7 +164,7 @@ function MiniBar({ label, count, maxCount, color, isActive, onClick }: { label: 
 }
 
 export function FolderDashboard({
-  files, checklistSummary, hasPackInfo, hasReadme, hasCoverImage, galleryCount = 0, watchSource, activeDuplicate, activeGear, activeTone, activePreset, activeMissing, activeEsr, activeRating,
+  files, checklistSummary, hasPackInfo, hasReadme, hasCoverImage, galleryCount = 0, watchSource, deliverySummary, activeDuplicate, activeGear, activeTone, activePreset, activeMissing, activeEsr, activeRating,
   onDuplicateClick, onGearClick, onToneClick, onPresetClick, onMissingClick, onEsrClick, onRatingClick, onRemoveWatch, onOpenWatchSource,
 }: Props) {
   const stats = useMemo(() => {
@@ -542,6 +550,37 @@ export function FolderDashboard({
             {checklistSummary.isOverdue && (
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-900/30 text-red-300">Target date passed</span>
             )}
+          </div>
+        </div>
+      )}
+
+      {deliverySummary && (
+        <div className="rounded-xl bg-gray-800/40 border border-gray-700/40 p-3">
+          <div className="flex items-start justify-between gap-3 mb-3">
+            <div>
+              <h3 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Delivery Targets</h3>
+              <p className="text-[11px] text-gray-400 mt-1">
+                {deliverySummary.totalRows} matrix row{deliverySummary.totalRows !== 1 ? 's' : ''} stored
+              </p>
+            </div>
+            {deliverySummary.lastImportedAt && (
+              <div className="text-[10px] text-gray-500 text-right">
+                Imported {new Date(deliverySummary.lastImportedAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+              </div>
+            )}
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            {[
+              ['ToneX', deliverySummary.tonexIncluded],
+              ['NAM', deliverySummary.namIncluded],
+              ['Proxy', deliverySummary.proxyIncluded],
+              ['QC', deliverySummary.qcIncluded],
+            ].map(([label, count]) => (
+              <div key={String(label)} className="rounded-lg bg-gray-900/40 border border-gray-700/40 px-3 py-2">
+                <div className="text-lg font-semibold text-white leading-none">{count}</div>
+                <div className="text-[10px] text-gray-400 mt-1">{label} included</div>
+              </div>
+            ))}
           </div>
         </div>
       )}

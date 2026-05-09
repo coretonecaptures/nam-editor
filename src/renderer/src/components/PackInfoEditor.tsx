@@ -29,6 +29,55 @@ export interface PackChecklistItem {
   notes: string
 }
 
+export interface DeliveryMatrixRow {
+  id: string
+  captureName: string
+  includeToneX: boolean
+  includeNam: boolean
+  includeProxy: boolean
+  includeQc: boolean
+  altProxyName: string
+  altQcName: string
+  modeledBy: string
+  manufacturer: string
+  model: string
+  gearType: string
+  toneType: string
+  ampChannel: string
+  ampSettings: string
+  ampSwitches: string
+  boostPedals: string
+  pedalSettings: string
+  cabinet: string
+  cabConfig: string
+  reampSendDbu: string
+  reampReturnDbu: string
+  trainedEpochs: string
+  namBotPreset: string
+  mics: string
+  comments: string
+}
+
+export interface DeliveryTargetInfo {
+  label: string
+  title: string
+  subtitle: string
+  description: string
+}
+
+export interface DeliveryMatrixData {
+  sourceWorkbookPath: string
+  lastImportedAt: string
+  rows: DeliveryMatrixRow[]
+}
+
+export interface DeliveryTargetsData {
+  tonex: DeliveryTargetInfo
+  nam: DeliveryTargetInfo
+  proxy: DeliveryTargetInfo
+  qc: DeliveryTargetInfo
+}
+
 export interface PackInfo {
   title: string
   subtitle: string
@@ -48,6 +97,28 @@ export interface PackInfo {
   targetDate: string
   liveDate: string
   versionInfo: string
+  deliveryMatrix: DeliveryMatrixData
+  deliveryTargets: DeliveryTargetsData
+}
+
+export const EMPTY_DELIVERY_TARGET: DeliveryTargetInfo = {
+  label: '',
+  title: '',
+  subtitle: '',
+  description: '',
+}
+
+export const EMPTY_DELIVERY_MATRIX: DeliveryMatrixData = {
+  sourceWorkbookPath: '',
+  lastImportedAt: '',
+  rows: [],
+}
+
+export const DEFAULT_DELIVERY_TARGETS: DeliveryTargetsData = {
+  tonex: { ...EMPTY_DELIVERY_TARGET, label: 'ToneX' },
+  nam: { ...EMPTY_DELIVERY_TARGET, label: 'NAM' },
+  proxy: { ...EMPTY_DELIVERY_TARGET, label: 'Proxy' },
+  qc: { ...EMPTY_DELIVERY_TARGET, label: 'QC' },
 }
 
 const EMPTY_PACK: PackInfo = {
@@ -69,6 +140,8 @@ const EMPTY_PACK: PackInfo = {
   targetDate: '',
   liveDate: '',
   versionInfo: '',
+  deliveryMatrix: EMPTY_DELIVERY_MATRIX,
+  deliveryTargets: DEFAULT_DELIVERY_TARGETS,
 }
 
 function createChecklistId(): string {
@@ -101,6 +174,71 @@ function normalizeChecklistItem(value: Partial<PackChecklistItem>): PackChecklis
 
 function normalizeChecklistLabel(value: string): string {
   return value.trim().toLowerCase()
+}
+
+export function createDeliveryRowId(): string {
+  return `delivery-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+export function normalizeDeliveryTargetInfo(value: unknown, fallbackLabel: string): DeliveryTargetInfo {
+  const source = value && typeof value === 'object' ? (value as Partial<DeliveryTargetInfo>) : {}
+  return {
+    label: normalizeText(source.label, fallbackLabel) || fallbackLabel,
+    title: normalizeText(source.title),
+    subtitle: normalizeText(source.subtitle),
+    description: normalizeText(source.description),
+  }
+}
+
+export function normalizeDeliveryMatrixRow(value: unknown): DeliveryMatrixRow {
+  const row = value && typeof value === 'object' ? (value as Partial<DeliveryMatrixRow>) : {}
+  return {
+    id: typeof row.id === 'string' && row.id ? row.id : createDeliveryRowId(),
+    captureName: normalizeText(row.captureName),
+    includeToneX: row.includeToneX === true,
+    includeNam: row.includeNam === true,
+    includeProxy: row.includeProxy === true,
+    includeQc: row.includeQc === true,
+    altProxyName: normalizeText(row.altProxyName),
+    altQcName: normalizeText(row.altQcName),
+    modeledBy: normalizeText(row.modeledBy),
+    manufacturer: normalizeText(row.manufacturer),
+    model: normalizeText(row.model),
+    gearType: normalizeText(row.gearType),
+    toneType: normalizeText(row.toneType),
+    ampChannel: normalizeText(row.ampChannel),
+    ampSettings: normalizeText(row.ampSettings),
+    ampSwitches: normalizeText(row.ampSwitches),
+    boostPedals: normalizeText(row.boostPedals),
+    pedalSettings: normalizeText(row.pedalSettings),
+    cabinet: normalizeText(row.cabinet),
+    cabConfig: normalizeText(row.cabConfig),
+    reampSendDbu: normalizeText(row.reampSendDbu),
+    reampReturnDbu: normalizeText(row.reampReturnDbu),
+    trainedEpochs: normalizeText(row.trainedEpochs),
+    namBotPreset: normalizeText(row.namBotPreset),
+    mics: normalizeText(row.mics),
+    comments: normalizeText(row.comments),
+  }
+}
+
+export function normalizeDeliveryMatrixData(value: unknown): DeliveryMatrixData {
+  const source = value && typeof value === 'object' ? (value as Partial<DeliveryMatrixData>) : {}
+  return {
+    sourceWorkbookPath: normalizeText(source.sourceWorkbookPath),
+    lastImportedAt: normalizeText(source.lastImportedAt),
+    rows: Array.isArray(source.rows) ? source.rows.map((row) => normalizeDeliveryMatrixRow(row)) : [],
+  }
+}
+
+export function normalizeDeliveryTargetsData(value: unknown): DeliveryTargetsData {
+  const source = value && typeof value === 'object' ? (value as Partial<DeliveryTargetsData>) : {}
+  return {
+    tonex: normalizeDeliveryTargetInfo(source.tonex, 'ToneX'),
+    nam: normalizeDeliveryTargetInfo(source.nam, 'NAM'),
+    proxy: normalizeDeliveryTargetInfo(source.proxy, 'Proxy'),
+    qc: normalizeDeliveryTargetInfo(source.qc, 'QC'),
+  }
 }
 
 function repairMojibake(value: string): string {
@@ -583,9 +721,17 @@ export function PackInfoEditor({
               targetDate: d.targetDate ?? '',
               liveDate: d.liveDate ?? '',
               versionInfo: normalizeText(d.versionInfo),
+              deliveryMatrix: normalizeDeliveryMatrixData(d.deliveryMatrix),
+              deliveryTargets: normalizeDeliveryTargetsData(d.deliveryTargets),
             }
           })()
-        : { ...EMPTY_PACK, capturedBy: defaultCapturedBy, checklistItems: createChecklistItemsFromTemplate(checklistTemplate) }
+        : {
+            ...EMPTY_PACK,
+            capturedBy: defaultCapturedBy,
+            checklistItems: createChecklistItemsFromTemplate(checklistTemplate),
+            deliveryMatrix: normalizeDeliveryMatrixData(null),
+            deliveryTargets: normalizeDeliveryTargetsData(null),
+          }
       setPack(loaded)
       savedPackRef.current = loaded
       setSaved(true)
