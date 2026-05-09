@@ -20,7 +20,8 @@ import { FolderCompareModal } from './components/FolderCompareModal'
 import { FolderGallery, FolderImagesData } from './components/FolderGallery'
 import { FolderDashboard } from './components/FolderDashboard'
 import { FolderReadmePanel } from './components/FolderReadmePanel'
-import { PackInfoEditor, type PackInfo, type PackChecklistItem } from './components/PackInfoEditor'
+import { PackInfoEditor, type DeliveryMatrixData, type PackInfo, type PackChecklistItem } from './components/PackInfoEditor'
+import { PackTargetsEditor } from './components/PackTargetsEditor'
 import { BundleEditor } from './components/BundleEditor'
 import { NamDashboard } from './components/NamDashboard'
 import { SessionHistoryPanel } from './components/SessionHistoryPanel'
@@ -50,6 +51,15 @@ interface DashboardChecklistEntry {
   status: string
   progressLabel: string
   percent: number
+}
+
+interface DeliveryMatrixSummary {
+  totalRows: number
+  lastImportedAt: string
+  tonexIncluded: number
+  namIncluded: number
+  proxyIncluded: number
+  qcIncluded: number
 }
 
 interface FolderReadinessSummary {
@@ -117,6 +127,21 @@ function formatChecklistStatus(summary: ChecklistSummary): string {
   if (summary.isOverdue) return 'Overdue'
   if (summary.targetDate) return `Target ${summary.targetDate}`
   return 'In progress'
+}
+
+function summarizeDeliveryMatrix(packData: unknown): DeliveryMatrixSummary | null {
+  if (!packData || typeof packData !== 'object') return null
+  const matrix = (packData as { deliveryMatrix?: Partial<DeliveryMatrixData> }).deliveryMatrix
+  if (!matrix || !Array.isArray(matrix.rows) || matrix.rows.length === 0) return null
+  const rows = matrix.rows
+  return {
+    totalRows: rows.length,
+    lastImportedAt: typeof matrix.lastImportedAt === 'string' ? matrix.lastImportedAt : '',
+    tonexIncluded: rows.filter((row) => row?.includeToneX === true).length,
+    namIncluded: rows.filter((row) => row?.includeNam === true).length,
+    proxyIncluded: rows.filter((row) => row?.includeProxy === true).length,
+    qcIncluded: rows.filter((row) => row?.includeQc === true).length,
+  }
 }
 
 function formatPathLabel(path: string): string {
@@ -349,6 +374,7 @@ export default function App() {
   const treeScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [folderChanged, setFolderChanged] = useState(false)
   const [activeFolderChecklistSummary, setActiveFolderChecklistSummary] = useState<ChecklistSummary | null>(null)
+  const [activeFolderDeliverySummary, setActiveFolderDeliverySummary] = useState<DeliveryMatrixSummary | null>(null)
   const [dashboardChecklistEntries, setDashboardChecklistEntries] = useState<DashboardChecklistEntry[]>([])
   const [metadataCoverPath, setMetadataCoverPath] = useState<string | null>(null)
   const [showDuplicates, setShowDuplicates] = useState(false)
@@ -368,7 +394,7 @@ export default function App() {
 
   const [folderImages, setFolderImages] = useState<FolderImagesData | null>(null)
   const [activeFolderReadiness, setActiveFolderReadiness] = useState<FolderReadinessSummary | null>(null)
-  const [folderPanelTab, setFolderPanelTab] = useState<'overview' | 'pack' | 'checklist' | 'gallery' | 'readme'>(settings.defaultFolderTab)
+  const [folderPanelTab, setFolderPanelTab] = useState<'overview' | 'pack' | 'checklist' | 'gallery' | 'readme' | 'targets'>(settings.defaultFolderTab)
   // Path of the ancestor that owns the pack info for the current folder (null = current folder may own one)
   const [packInfoAncestor, setPackInfoAncestor] = useState<string | null>(null)
   // Set of folder paths that have a valid nam-pack.json (non-empty title) Ã¢â‚¬â€ drives blue dot in tree
@@ -625,8 +651,24 @@ export default function App() {
 
   useEffect(() => {
     const activeFolderPath = ((librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null) ?? librarian.rootFolder)
+    if (!activeFolderPath || !packInfoFolders.has(activeFolderPath)) {
+      setActiveFolderDeliverySummary(null)
+      return
+    }
+    let cancelled = false
+    window.api.readPackInfo(activeFolderPath).then((res) => {
+      if (cancelled) return
+      setActiveFolderDeliverySummary(res.success ? summarizeDeliveryMatrix(res.data) : null)
+    }).catch(() => {
+      if (!cancelled) setActiveFolderDeliverySummary(null)
+    })
+    return () => { cancelled = true }
+  }, [librarian.selectedFolders, librarian.rootFolder, packInfoFolders])
+
+  useEffect(() => {
+    const activeFolderPath = ((librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null) ?? librarian.rootFolder)
     if (!activeFolderPath) return
-    if (!packInfoFolders.has(activeFolderPath) && folderPanelTab === 'checklist') {
+    if (!packInfoFolders.has(activeFolderPath) && (folderPanelTab === 'checklist' || folderPanelTab === 'targets')) {
       setFolderPanelTab('pack')
     }
   }, [folderPanelTab, librarian.selectedFolders, librarian.rootFolder, packInfoFolders])
@@ -2039,12 +2081,28 @@ export default function App() {
     { header: 'Comments',           field: 'nl_comments' },
   ]
 
+  const TARGET_MATRIX_TEMPLATE_HEADERS = [
+    'ToneX',
+    'NAM',
+    'Proxy',
+    'QC',
+    'Alt Proxy Name',
+    'Alt QC Name',
+  ] as const
+
   const handleGenerateTemplate = (folderPath: string | null) => {
     const targets = folderPath === null
       ? files
       : files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(folderPath.replace(/\\/g, '/') + '/') || f.filePath.replace(/\\/g, '/') === folderPath.replace(/\\/g, '/'))
     const rows = targets.map((f) => {
-      const row: Record<string, unknown> = {}
+      const row: Record<string, unknown> = {
+        ToneX: '',
+        NAM: 'X',
+        Proxy: '',
+        QC: '',
+        'Alt Proxy Name': '',
+        'Alt QC Name': '',
+      }
       for (const col of IMPORT_COLUMNS) {
         if (col.field === null) {
           // NAM-BOT Preset is read-only
@@ -2056,7 +2114,7 @@ export default function App() {
       }
       return row
     })
-    const ws = XLSX.utils.json_to_sheet(rows, { header: IMPORT_COLUMNS.map((c) => c.header) })
+    const ws = XLSX.utils.json_to_sheet(rows, { header: [...TARGET_MATRIX_TEMPLATE_HEADERS, ...IMPORT_COLUMNS.map((c) => c.header)] })
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Import Template')
     const folderName = folderPath ? folderPath.replace(/\\/g, '/').split('/').pop() : (librarian.rootFolder ? librarian.rootFolder.replace(/\\/g, '/').split('/').pop() : 'library')
@@ -3010,8 +3068,8 @@ export default function App() {
             const hasPack = packInfoFolders.has(activeFolderPath)
             const showCreatePrompt = !hasPack
             const showGalleryTab = showGallery
-            const availableTabs = (['overview', 'pack', 'checklist', 'gallery', 'readme'] as const)
-              .filter((tab) => (tab !== 'gallery' || showGalleryTab) && (tab !== 'checklist' || hasPack))
+            const availableTabs = (['overview', 'pack', 'checklist', 'gallery', 'readme', 'targets'] as const)
+              .filter((tab) => (tab !== 'gallery' || showGalleryTab) && (tab !== 'checklist' || hasPack) && (tab !== 'targets' || hasPack))
             return (
               <div className="h-full flex flex-col">
                 <div className="flex border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
@@ -3033,7 +3091,9 @@ export default function App() {
                               ? 'Checklist'
                               : tab === 'gallery'
                                 ? 'Gallery'
-                                : 'Read Me'}
+                                : tab === 'targets'
+                                  ? 'Targets'
+                                  : 'Read Me'}
                       </button>
                     ))}
                 </div>
@@ -3047,6 +3107,7 @@ export default function App() {
                       hasReadme={activeFolderReadiness?.hasReadme ?? false}
                       hasCoverImage={activeFolderReadiness?.hasCoverImage ?? false}
                       galleryCount={activeFolderReadiness?.galleryCount ?? 0}
+                      deliverySummary={activeFolderDeliverySummary}
                       watchSource={activeFolderWatchSource}
                       activeDuplicate={filterModeOverride === 'duplicates'}
                       activeGear={gearTypeFilter}
@@ -3086,6 +3147,16 @@ export default function App() {
                       key={activeFolderPath}
                       folderPath={activeFolderPath}
                       folderName={activeFolderName}
+                    />
+                  ) : folderPanelTab === 'targets' ? (
+                    <PackTargetsEditor
+                      key={activeFolderPath}
+                      folderPath={activeFolderPath}
+                      folderName={activeFolderName}
+                      onPackSaved={handlePackSaved}
+                      logoLight={settings.packLogoLight}
+                      logoDark={settings.packLogoDark}
+                      darkAccentColor={settings.packExportDarkAccent}
                     />
                   ) : folderPanelTab === 'gallery' && showGalleryTab ? (
                     <FolderGallery data={folderImages!} />
