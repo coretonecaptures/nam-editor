@@ -110,6 +110,26 @@ export { ALL_GRID_COLUMNS }
 const DEFAULT_VISIBLE_COLS = ALL_GRID_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key)
 const GRID_COL_STORAGE_KEY = 'nam-lab-grid-columns'
 const SORT_STORAGE_KEY = 'nam-lab-sort'
+const DETECTED_PRESET_COLORS: Record<string, string> = {
+  Complex: '#a855f7',
+  Standard: '#3b82f6',
+  Lite: '#22c55e',
+  Feather: '#f59e0b',
+  Nano: '#f97316',
+  REVySTD: '#06b6d4',
+  REVyHI: '#0ea5e9',
+  REVxSTD: '#8b5cf6',
+  Unknown: '#6b7280',
+}
+
+function detectedPresetChipStyle(preset: string): React.CSSProperties {
+  const color = DETECTED_PRESET_COLORS[preset] ?? DETECTED_PRESET_COLORS.Unknown
+  return {
+    color,
+    borderColor: color,
+    boxShadow: `0 0 0 1px ${color}33 inset, 0 0 10px ${color}22`,
+  }
+}
 
 function loadSort(): { key: string | null; dir: SortDir } {
   try {
@@ -1682,6 +1702,8 @@ function FileItem({
 }) {
   const meta = file.metadata
   const subtitle = [meta.gear_make, meta.gear_model].filter(Boolean).join(' ') || meta.tone_type || file.architecture || ''
+  const detectedPreset = detectPreset(file.config) ?? meta.nb_preset_name ?? null
+  const epochCount = typeof meta.nb_trained_epochs === 'number' ? meta.nb_trained_epochs : null
   const TRACKED: { key: keyof typeof meta; label: string }[] = [
     { key: 'name', label: 'Name' },
     { key: 'gear_type', label: 'Gear Type' },
@@ -1719,14 +1741,16 @@ function FileItem({
         }
       </div>
 
-      <div className="flex-1 min-w-0">
-        <div className={`text-sm font-semibold truncate ${file.isDirty ? 'text-amber-500 dark:text-amber-400' : 'text-gray-900 dark:text-gray-100'}`} title={file.fileName}>
-          {meta.name || file.fileName}
+      <div className="flex-1 min-w-0 flex flex-col justify-between py-0 pr-2">
+        <div>
+          <div className={`text-sm leading-tight font-semibold truncate ${file.isDirty ? 'text-amber-500 dark:text-amber-400' : 'text-gray-900 dark:text-gray-100'}`} title={file.fileName}>
+            {meta.name || file.fileName}
+          </div>
+          {subtitle && (
+            <div className="text-xs text-gray-500 dark:text-gray-500 truncate mt-0.5">{subtitle}</div>
+          )}
         </div>
-        {subtitle && (
-          <div className="text-xs text-gray-500 dark:text-gray-500 truncate mt-0.5">{subtitle}</div>
-        )}
-        <div className="flex items-center gap-1.5 mt-1">
+        <div className="flex items-center gap-1.5 mt-1.5">
           {meta.modeled_by && (
             <span
               className={`text-xs px-1.5 py-0.5 rounded ${creatorChipClass}`}
@@ -1762,15 +1786,38 @@ function FileItem({
         </div>
       )}
 
-      {(meta.gear_type || meta.date) && (
-        <div className="flex-shrink-0 min-w-[64px] flex flex-col items-end justify-start gap-1">
-          {meta.gear_type && (() => {
-            const src = getGearImageSrc(meta.gear_type)
-            return src ? <img src={src} alt={meta.gear_type} className="h-8 w-auto object-contain opacity-60" /> : null
-          })()}
-          {meta.date && (
-            <div className="text-xs text-gray-400 dark:text-gray-600 tabular-nums text-right">
-              {`${meta.date.year}-${String(meta.date.month).padStart(2, '0')}-${String(meta.date.day).padStart(2, '0')}`}
+      {(meta.gear_type || meta.date || detectedPreset || epochCount != null) && (
+        <div className="flex-shrink-0 min-w-[96px] self-stretch flex flex-col items-end justify-between py-0">
+            <div className="flex flex-col items-end gap-0.5">
+            {meta.gear_type && (() => {
+              const src = getGearImageSrc(meta.gear_type)
+              return src ? <img src={src} alt={meta.gear_type} className="h-7 w-auto object-contain opacity-60" /> : null
+            })()}
+            {meta.date && (
+              <div className="text-xs text-gray-400 dark:text-gray-600 tabular-nums text-right">
+                {`${meta.date.year}-${String(meta.date.month).padStart(2, '0')}-${String(meta.date.day).padStart(2, '0')}`}
+              </div>
+            )}
+          </div>
+          {(detectedPreset || epochCount != null) && (
+            <div className="flex items-center justify-end gap-1.5 text-right mt-1">
+                {detectedPreset && (
+                  <span
+                    className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-[2px] rounded border bg-transparent"
+                    style={detectedPresetChipStyle(detectedPreset)}
+                    title={`Detected preset: ${detectedPreset}`}
+                  >
+                    {detectedPreset}
+                  </span>
+                )}
+                {epochCount != null && (
+                  <span
+                    className="text-[11px] text-gray-400 dark:text-gray-500 tabular-nums leading-none"
+                    title="Trained epochs"
+                  >
+                    {epochCount}
+                </span>
+              )}
             </div>
           )}
         </div>

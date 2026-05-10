@@ -15,6 +15,13 @@ export interface FolderWatchRule {
   enabled: boolean
 }
 
+export interface FolderWatchImportEntry {
+  sourcePath: string
+  sizeBytes: number
+  mtimeMs: number
+  importedAt: string
+}
+
 export const DEFAULT_PACK_CHECKLIST_TEMPLATE: PackChecklistTemplateItem[] = [
   { id: 'all-captures-completed', label: 'All captures completed' },
   { id: 'test-all-captures-in-nam-player', label: 'Test all captures in NAM Player; remove weak/duplicate profiles' },
@@ -82,6 +89,7 @@ export interface AppSettings {
   // Watch folder
   watchFolder: boolean
   folderWatchRules: FolderWatchRule[]
+  folderWatchImports: Record<string, FolderWatchImportEntry[]>
 
   // Hidden folders (comma-separated folder names to exclude from scans)
   hiddenFolders: string
@@ -154,6 +162,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   renameTemplate: '{name}',
   watchFolder: false,
   folderWatchRules: [],
+  folderWatchImports: {},
   hiddenFolders: 'lightning_logs,version_0,checkpoints',
   showNamLabFields: true,
   showFolderImages: true,

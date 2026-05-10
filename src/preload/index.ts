@@ -40,10 +40,25 @@ const api = {
     ipcRenderer.on('folder:changed', handler)
     return () => ipcRenderer.removeListener('folder:changed', handler)
   },
-  setFolderWatchRules: (rules: { sourceFolder: string; destFolder: string; enabled: boolean }[]): Promise<void> =>
-    ipcRenderer.invoke('folderWatch:setRules', rules),
-  onFolderWatchCopied: (cb: (event: { sourcePath: string; destPath: string; sourceFolder: string; destFolder: string }) => void): (() => void) => {
-    const handler = (_event: unknown, payload: { sourcePath: string; destPath: string; sourceFolder: string; destFolder: string }) => cb(payload)
+  setFolderWatchState: (payload: {
+    rules: { sourceFolder: string; destFolder: string; enabled: boolean }[]
+    imports: Record<string, { sourcePath: string; sizeBytes: number; mtimeMs: number; importedAt: string }[]>
+  }): Promise<void> =>
+    ipcRenderer.invoke('folderWatch:setState', payload),
+  onFolderWatchCopied: (cb: (event: {
+    sourcePath: string
+    destPath: string
+    sourceFolder: string
+    destFolder: string
+    importEntry: { sourcePath: string; sizeBytes: number; mtimeMs: number; importedAt: string }
+  }) => void): (() => void) => {
+    const handler = (_event: unknown, payload: {
+      sourcePath: string
+      destPath: string
+      sourceFolder: string
+      destFolder: string
+      importEntry: { sourcePath: string; sizeBytes: number; mtimeMs: number; importedAt: string }
+    }) => cb(payload)
     ipcRenderer.on('folderWatch:copied', handler)
     return () => ipcRenderer.removeListener('folderWatch:copied', handler)
   },

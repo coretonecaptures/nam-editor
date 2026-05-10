@@ -51,6 +51,15 @@ interface FolderWatchRule {
   enabled: boolean
 }
 
+interface FolderWatchImportEntry {
+  sourcePath: string
+  sizeBytes: number
+  mtimeMs: number
+  importedAt: string
+}
+
+let folderWatchImports = new Map<string, FolderWatchImportEntry[]>()
+
 // ---- Startup logger ----
 // Writes to os.tmpdir() immediately (safe before app ready), then moves to
 // userData once the app is initialized. This lets us capture crashes that
@@ -97,6 +106,30 @@ function closeFolderWatchers(): void {
     try { watcher.close() } catch { /* ignore */ }
   }
   folderWatchers.clear()
+}
+
+function makeFolderWatchKey(sourceFolder: string, destFolder: string): string {
+  return `${normalizePath(sourceFolder)}=>${normalizePath(destFolder)}`
+}
+
+function getFolderWatchImports(rule: FolderWatchRule): FolderWatchImportEntry[] {
+  return folderWatchImports.get(makeFolderWatchKey(rule.sourceFolder, rule.destFolder)) ?? []
+}
+
+function hasImportedWatchedFile(rule: FolderWatchRule, sourcePath: string, sizeBytes: number, mtimeMs: number): boolean {
+  return getFolderWatchImports(rule).some((entry) =>
+    normalizePath(entry.sourcePath) === normalizePath(sourcePath) &&
+    entry.sizeBytes === sizeBytes &&
+    entry.mtimeMs === mtimeMs
+  )
+}
+
+function rememberImportedWatchedFile(rule: FolderWatchRule, entry: FolderWatchImportEntry): void {
+  const key = makeFolderWatchKey(rule.sourceFolder, rule.destFolder)
+  const next = getFolderWatchImports(rule)
+    .filter((existing) => normalizePath(existing.sourcePath) !== normalizePath(entry.sourcePath))
+  next.push(entry)
+  folderWatchImports.set(key, next)
 }
 
 const deleteBehaviorCache = new Map<string, boolean>()
@@ -187,16 +220,27 @@ async function copyWatchedFile(rule: FolderWatchRule, filePath: string): Promise
       })
       return
     }
+    const stat = await fs.promises.stat(normalizedSource)
+    if (!stat.isFile()) return
+    if (hasImportedWatchedFile(rule, normalizedSource, stat.size, stat.mtimeMs)) return
     const fileName = basename(normalizedSource)
     const destPath = join(rule.destFolder, fileName)
     if (fs.existsSync(destPath)) return
     suppressWatcher()
     await fs.promises.copyFile(normalizedSource, destPath)
+    const importEntry: FolderWatchImportEntry = {
+      sourcePath: normalizedSource.replace(/\\/g, '/'),
+      sizeBytes: stat.size,
+      mtimeMs: stat.mtimeMs,
+      importedAt: new Date().toISOString(),
+    }
+    rememberImportedWatchedFile(rule, importEntry)
     mainWindow?.webContents.send('folderWatch:copied', {
       sourcePath: normalizedSource.replace(/\\/g, '/'),
       destPath: destPath.replace(/\\/g, '/'),
       sourceFolder: rule.sourceFolder.replace(/\\/g, '/'),
-      destFolder: rule.destFolder.replace(/\\/g, '/')
+      destFolder: rule.destFolder.replace(/\\/g, '/'),
+      importEntry,
     })
   } catch (err) {
     mainWindow?.webContents.send('folderWatch:error', {
@@ -1294,8 +1338,28 @@ app.whenReady().then(async () => {
     }
   })
 
-  ipcMain.handle('folderWatch:setRules', async (_event, rules: FolderWatchRule[]) => {
-    resetFolderWatchRules(Array.isArray(rules) ? rules : [])
+  ipcMain.handle('folderWatch:setState', async (_event, payload: {
+    rules?: FolderWatchRule[]
+    imports?: Record<string, FolderWatchImportEntry[]>
+  }) => {
+    const nextImports = new Map<string, FolderWatchImportEntry[]>()
+    for (const [key, entries] of Object.entries(payload?.imports ?? {})) {
+      nextImports.set(
+        key,
+        Array.isArray(entries)
+          ? entries
+              .map((entry) => ({
+                sourcePath: normalizePath(String(entry?.sourcePath ?? '')),
+                sizeBytes: Number(entry?.sizeBytes ?? 0),
+                mtimeMs: Number(entry?.mtimeMs ?? 0),
+                importedAt: String(entry?.importedAt ?? ''),
+              }))
+              .filter((entry) => entry.sourcePath && entry.sizeBytes >= 0 && entry.mtimeMs > 0)
+          : []
+      )
+    }
+    folderWatchImports = nextImports
+    resetFolderWatchRules(Array.isArray(payload?.rules) ? payload.rules : [])
   })
 
   // IPC: Create a subfolder

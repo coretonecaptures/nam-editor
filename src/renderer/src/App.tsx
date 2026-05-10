@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import beakerTransparent from './assets/images/beaker.only.transparent.png'
 import { NamFile, NamMetadata, TONE_TYPES, GEAR_TYPES } from './types/nam'
-import { AppSettings, FolderWatchRule, loadSettings, saveSettings } from './types/settings'
+import { AppSettings, FolderWatchImportEntry, FolderWatchRule, loadSettings, saveSettings } from './types/settings'
 import { loadLayout, saveLayout } from './types/layout'
 import { LibrarianState } from './types/librarian'
 import { FileList, ALL_GRID_COLUMNS, doExportCSV, doExportXLSX } from './components/FileList'
@@ -150,6 +150,10 @@ function formatPathLabel(path: string): string {
   return parts.length <= 3 ? normalized : `.../${parts.slice(-3).join('/')}`
 }
 
+function makeFolderWatchKey(sourceFolder: string, destFolder: string): string {
+  return `${sourceFolder.replace(/\\/g, '/')}=>${destFolder.replace(/\\/g, '/')}`
+}
+
 const AMPCOVER_PATTERN = /^ampcover\.(png|jpe?g|webp|gif|avif)$/i
 
 const HISTORY_STORAGE_KEY = 'nam-lab-history'
@@ -202,8 +206,8 @@ declare global {
       renameFile: (oldPath: string, newBaseName: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       watchFolder: (path: string | null) => Promise<void>
       onFolderChanged: (cb: () => void) => () => void
-      setFolderWatchRules: (rules: FolderWatchRule[]) => Promise<void>
-      onFolderWatchCopied: (cb: (event: { sourcePath: string; destPath: string; sourceFolder: string; destFolder: string }) => void) => () => void
+      setFolderWatchState: (payload: { rules: FolderWatchRule[]; imports: Record<string, FolderWatchImportEntry[]> }) => Promise<void>
+      onFolderWatchCopied: (cb: (event: { sourcePath: string; destPath: string; sourceFolder: string; destFolder: string; importEntry: FolderWatchImportEntry }) => void) => () => void
       onFolderWatchError: (cb: (event: { sourceFolder: string; destFolder: string; message: string }) => void) => () => void
       createFolder: (parentPath: string, name: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       renameFolder: (folderPath: string, newName: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
@@ -883,8 +887,11 @@ export default function App() {
   }
 
   useEffect(() => {
-    void window.api.setFolderWatchRules(settings.folderWatchRules)
-  }, [settings.folderWatchRules])
+    void window.api.setFolderWatchState({
+      rules: settings.folderWatchRules,
+      imports: settings.folderWatchImports,
+    })
+  }, [settings.folderWatchImports, settings.folderWatchRules])
 
   useEffect(() => {
     const pendingBatches = new Map<string, {
@@ -906,10 +913,26 @@ export default function App() {
       })
     }
 
-    const unsubCopied = window.api.onFolderWatchCopied(async ({ destPath, destFolder, sourceFolder }) => {
+    const unsubCopied = window.api.onFolderWatchCopied(async ({ destPath, destFolder, sourceFolder, importEntry }) => {
       const normalizedDestPath = destPath.replace(/\\/g, '/')
       const normalizedDestFolder = destFolder.replace(/\\/g, '/')
       const normalizedRoot = librarian.rootFolder?.replace(/\\/g, '/')
+      const watchKey = makeFolderWatchKey(sourceFolder, destFolder)
+      setSettings((prev) => {
+        const existingEntries = prev.folderWatchImports[watchKey] ?? []
+        const nextEntries = existingEntries
+          .filter((entry) => entry.sourcePath !== importEntry.sourcePath)
+          .concat(importEntry)
+        const next = {
+          ...prev,
+          folderWatchImports: {
+            ...prev.folderWatchImports,
+            [watchKey]: nextEntries,
+          },
+        }
+        saveSettings(next)
+        return next
+      })
       if (normalizedRoot && (normalizedDestFolder === normalizedRoot || normalizedDestFolder.startsWith(normalizedRoot + '/'))) {
         await loadFilesRef.current?.([normalizedDestPath], 'append-passive')
         await refreshFolderTreeRef.current?.()
@@ -1016,7 +1039,12 @@ export default function App() {
 
   const updateFolderWatchRules = useCallback((updater: (rules: FolderWatchRule[]) => FolderWatchRule[]) => {
     setSettings((prev) => {
-      const next = { ...prev, folderWatchRules: updater(prev.folderWatchRules) }
+      const nextRules = updater(prev.folderWatchRules)
+      const validKeys = new Set(nextRules.map((rule) => makeFolderWatchKey(rule.sourceFolder, rule.destFolder)))
+      const nextImports = Object.fromEntries(
+        Object.entries(prev.folderWatchImports).filter(([key]) => validKeys.has(key))
+      ) as AppSettings['folderWatchImports']
+      const next = { ...prev, folderWatchRules: nextRules, folderWatchImports: nextImports }
       saveSettings(next)
       return next
     })
@@ -2086,24 +2114,32 @@ export default function App() {
     'NAM',
     'Proxy',
     'QC',
+    'Capture Name',
     'Alt Proxy Name',
     'Alt QC Name',
   ] as const
+
+  const uniqueTemplateValues = (values: Array<string | null | undefined>): string[] =>
+    [...new Set(values.map((value) => String(value ?? '').trim()).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
 
   const handleGenerateTemplate = (folderPath: string | null) => {
     const targets = folderPath === null
       ? files
       : files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(folderPath.replace(/\\/g, '/') + '/') || f.filePath.replace(/\\/g, '/') === folderPath.replace(/\\/g, '/'))
+    const templateHeaders = [...TARGET_MATRIX_TEMPLATE_HEADERS, ...IMPORT_COLUMNS.map((c) => c.header).filter((header) => header !== 'Capture Name')]
     const rows = targets.map((f) => {
       const row: Record<string, unknown> = {
         ToneX: '',
         NAM: 'X',
         Proxy: '',
         QC: '',
+        'Capture Name': f.metadata.name ?? '',
         'Alt Proxy Name': '',
         'Alt QC Name': '',
       }
       for (const col of IMPORT_COLUMNS) {
+        if (col.header === 'Capture Name') continue
         if (col.field === null) {
           // NAM-BOT Preset is read-only
           row[col.header] = f.metadata.nb_preset_name ?? ''
@@ -2114,9 +2150,31 @@ export default function App() {
       }
       return row
     })
-    const ws = XLSX.utils.json_to_sheet(rows, { header: [...TARGET_MATRIX_TEMPLATE_HEADERS, ...IMPORT_COLUMNS.map((c) => c.header)] })
+    const ws = XLSX.utils.json_to_sheet(rows, { header: templateHeaders })
     const wb = XLSX.utils.book_new()
+    ws['!cols'] = templateHeaders.map((header) => ({ wch: Math.max(header.length + 2, 16) }))
     XLSX.utils.book_append_sheet(wb, ws, 'Import Template')
+
+    const lookupColumns: Record<string, string[]> = {
+      'Include Marker': ['X'],
+      'Modeled By': uniqueTemplateValues(targets.map((f) => f.metadata.modeled_by)),
+      Manufacturer: uniqueTemplateValues(targets.map((f) => f.metadata.gear_make)),
+      Model: uniqueTemplateValues(targets.map((f) => f.metadata.gear_model)),
+      'Gear Type': [...GEAR_TYPES],
+      'Tone Type': [...TONE_TYPES],
+    }
+    const lookupHeaders = Object.keys(lookupColumns)
+    const lookupRowCount = Math.max(...lookupHeaders.map((header) => lookupColumns[header].length), 1)
+    const lookupData = [
+      lookupHeaders,
+      ...Array.from({ length: lookupRowCount }, (_, rowIndex) =>
+        lookupHeaders.map((header) => lookupColumns[header][rowIndex] ?? '')
+      ),
+    ]
+    const lookupWs = XLSX.utils.aoa_to_sheet(lookupData)
+    lookupWs['!cols'] = lookupHeaders.map((header) => ({ wch: Math.max(header.length + 2, 18) }))
+    XLSX.utils.book_append_sheet(wb, lookupWs, 'Lookup Values')
+
     const folderName = folderPath ? folderPath.replace(/\\/g, '/').split('/').pop() : (librarian.rootFolder ? librarian.rootFolder.replace(/\\/g, '/').split('/').pop() : 'library')
     const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
@@ -2124,7 +2182,7 @@ export default function App() {
     const a = document.createElement('a')
     a.href = url; a.download = `nam-import-template-${folderName}.xlsx`; a.click()
     URL.revokeObjectURL(url)
-    setStatus({ message: `Template generated with ${rows.length} capture${rows.length !== 1 ? 's' : ''}`, type: 'success' })
+    setStatus({ message: `Template generated with ${rows.length} capture${rows.length !== 1 ? 's' : ''} and a Lookup Values sheet`, type: 'success' })
   }
 
   const handleImportMetadata = async (folderPath: string | null) => {

@@ -19,7 +19,6 @@
 - OS `Open folder in NAM Lab`
 - Append to comments (batch)
 - Unify list-view filter clear buttons
-- Capture file size stats
 - High priority: when moving duplicates, let the user choose the destination folder at move time instead of always using the root `_Duplicates` folder
 
 ## Import and performance
@@ -30,15 +29,14 @@
 
 ## Grid and UI
 
-- Drag-to-reorder grid columns
-- Surface pack release status / on-time vs late summary in a dashboard view
 ## Checklist and release workflow
 
-- Checklist does not make it obvious that changes need to be saved
 - Checklist row sync button is tiny and too far away
 - Add a `Sync All` action for checklist rows
-- Tighten checklist row layout so a row can fit on one line: move up/down | checkbox | step name | note | right-aligned date | delete | sync
-- Add drag-and-drop reordering to the checklist
 - Pack metadata cover image: add adjustable framing / zoom window for `ampcover.*`
-- Capture Lab follow-up: port the NAM Lab `Read Me` and Checklist concepts into Capture Lab using central pack-record storage instead of filesystem sidecars.
-  See `C:\Users\Admin\capture-lab\docs\capture-lab-pack-workflow-plan.md`.
+- Add target-specific checklists for Delivery Targets (`ToneX`, `Proxy`, `QC`) so release steps can differ per platform while still allowing shared/base checklist content where useful. First pass: keep the current base checklist, add optional per-target checklist overrides, and surface target checklist status in the `Targets` tab before deciding whether it also belongs in the main dashboard.
+
+## Folder watch
+
+- Add a manual `Resync from watch source` action for a watch rule
+- Add a manual `Forget imported history` action for a watch rule
