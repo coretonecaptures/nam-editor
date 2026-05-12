@@ -1,5 +1,19 @@
 import { useState } from 'react'
-import { AppSettings, DEFAULT_PACK_CHECKLIST_TEMPLATE, cloneChecklistTemplate } from '../types/settings'
+import {
+  AppSettings,
+  DEFAULT_PACK_CHECKLIST_TEMPLATE,
+  METADATA_SUGGEST_FIELD_OPTIONS,
+  MetadataSuggestRule,
+  MetadataSuggestMatchIn,
+  cloneChecklistTemplate,
+} from '../types/settings'
+import { MetadataSuggestRuleLibraryModal } from './MetadataSuggestRuleLibraryModal'
+import {
+  cloneMetadataSuggestRule,
+  isMetadataSuggestRuleLibraryCandidate,
+  isMetadataSuggestRuleComplete,
+  metadataSuggestRuleSignature,
+} from '../utils/metadataSuggestRuleLibrary'
 
 const PACK_DARK_ACCENT_PRESETS = [
   '#f97316',
@@ -30,6 +44,8 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
   const [updateState, setUpdateState] = useState<UpdateState>({ status: 'idle' })
   const [checklistTemplateOpen, setChecklistTemplateOpen] = useState(false)
   const [packCatalogOpen, setPackCatalogOpen] = useState(false)
+  const [metadataSuggestOpen, setMetadataSuggestOpen] = useState(false)
+  const [showRuleLibraryPicker, setShowRuleLibraryPicker] = useState(false)
   const [folderWatchesOpen, setFolderWatchesOpen] = useState(false)
 
   const handleCheckForUpdates = async () => {
@@ -59,7 +75,16 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
   }
 
   const handleSave = () => {
-    onSave(draft)
+    const existing = new Set(draft.metadataSuggestRuleLibrary.map(metadataSuggestRuleSignature))
+    const additions = draft.metadataSuggestRules
+      .filter(isMetadataSuggestRuleLibraryCandidate)
+      .filter((rule) => !existing.has(metadataSuggestRuleSignature(rule)))
+      .map((rule) => cloneMetadataSuggestRule(rule, 'library'))
+    const mergedDraft = additions.length > 0
+      ? { ...draft, metadataSuggestRuleLibrary: [...draft.metadataSuggestRuleLibrary, ...additions] }
+      : draft
+    onSave(mergedDraft)
+    setDraft(mergedDraft)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
@@ -68,6 +93,22 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
     const normalized = path.replace(/\\/g, '/')
     const parts = normalized.split('/').filter(Boolean)
     return parts.length <= 4 ? normalized : `.../${parts.slice(-4).join('/')}`
+  }
+
+  const appendLibraryRulesToGlobal = (selectedRules: MetadataSuggestRule[]) => {
+    if (selectedRules.length === 0) return
+    update('metadataSuggestRules', [
+      ...draft.metadataSuggestRules,
+      ...selectedRules.map((rule) => cloneMetadataSuggestRule(rule, 'global-lib')),
+    ])
+    setShowRuleLibraryPicker(false)
+  }
+
+  const deleteRuleLibraryEntry = (ruleId: string) => {
+    update(
+      'metadataSuggestRuleLibrary',
+      draft.metadataSuggestRuleLibrary.filter((rule) => rule.id !== ruleId)
+    )
   }
 
   return (
@@ -730,6 +771,178 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
               />
             </SettingsField>
           </Section>
+
+          <div>
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-sm">Tags</span>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Metadata Suggestions</h3>
+              <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
+            </div>
+            <p className="text-xs text-gray-500 dark:text-gray-500 mb-4">
+              Folder right-click -&gt; <strong>Suggest metadata…</strong> previews token-based suggestions for blank fields only. Built-in hints currently cover tone type detection from filename and DI/direct naming -&gt; amp gear type. Add your own global rules below for things like maker/model/cabinet naming. Folder-scoped rules can be edited from the folder tree and will override matching global token meanings inside that subtree.
+            </p>
+            <div className="mb-3 flex items-center gap-2 flex-wrap">
+              <button
+                onClick={() => setMetadataSuggestOpen((v) => !v)}
+                className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                >
+                  <span>{metadataSuggestOpen ? 'Hide suggestion rules' : 'Edit suggestion rules'}</span>
+                  <span className="text-[10px] text-gray-400">{draft.metadataSuggestRules.filter((rule) => rule.enabled).length}</span>
+                </button>
+              <button
+                onClick={() => setShowRuleLibraryPicker(true)}
+                className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/30 transition-colors"
+              >
+                Add from library…
+                <span className="text-[10px] text-violet-500/80">{draft.metadataSuggestRuleLibrary.length}</span>
+              </button>
+            </div>
+            {metadataSuggestOpen && (
+              <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-3 bg-gray-50/60 dark:bg-gray-900/30 space-y-2">
+                {draft.metadataSuggestRules.length === 0 ? (
+                  <p className="text-xs text-gray-500 dark:text-gray-500">No custom rules yet. Add one below to teach NAM Lab your naming shorthand.</p>
+                ) : (
+                  draft.metadataSuggestRules.map((rule, index) => (
+                    <div key={rule.id} className={`rounded border p-2 ${rule.overwriteExisting ? 'border-amber-300/70 dark:border-amber-700/70 bg-amber-50/40 dark:bg-amber-900/10' : 'border-gray-200 dark:border-gray-800 bg-white/70 dark:bg-gray-950/30'}`}>
+                      <div className="grid grid-cols-1 md:grid-cols-[auto_minmax(0,1.05fr)_minmax(0,0.95fr)_minmax(0,1fr)_minmax(0,0.9fr)_auto_auto_auto] gap-2 items-center">
+                        <label className="inline-flex items-center justify-center text-xs text-gray-600 dark:text-gray-400">
+                          <input
+                            type="checkbox"
+                            checked={rule.enabled}
+                            onChange={(e) => {
+                              const next = draft.metadataSuggestRules.map((item, itemIndex) =>
+                                itemIndex === index ? { ...item, enabled: e.target.checked } : item
+                              )
+                              update('metadataSuggestRules', next)
+                            }}
+                            className="accent-indigo-600"
+                            title="Rule enabled"
+                          />
+                        </label>
+                        <input
+                          value={rule.token}
+                          placeholder="Token, e.g. Mesa (blank = scope-wide default)"
+                          onChange={(e) => {
+                            const next = draft.metadataSuggestRules.map((item, itemIndex) =>
+                              itemIndex === index ? { ...item, token: e.target.value } : item
+                            )
+                            update('metadataSuggestRules', next)
+                          }}
+                          className="px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                        />
+                        <select
+                          value={rule.field}
+                          onChange={(e) => {
+                            const next = draft.metadataSuggestRules.map((item, itemIndex) =>
+                              itemIndex === index ? { ...item, field: e.target.value as typeof rule.field } : item
+                            )
+                            update('metadataSuggestRules', next)
+                          }}
+                          className="px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                        >
+                          {METADATA_SUGGEST_FIELD_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                        <input
+                          value={rule.value}
+                          placeholder="Suggested value"
+                          onChange={(e) => {
+                            const next = draft.metadataSuggestRules.map((item, itemIndex) =>
+                              itemIndex === index ? { ...item, value: e.target.value } : item
+                            )
+                            update('metadataSuggestRules', next)
+                          }}
+                          className="px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                        />
+                        <select
+                          value={rule.matchIn}
+                          onChange={(e) => {
+                            const next = draft.metadataSuggestRules.map((item, itemIndex) =>
+                              itemIndex === index ? { ...item, matchIn: e.target.value as MetadataSuggestMatchIn } : item
+                            )
+                            update('metadataSuggestRules', next)
+                          }}
+                          className="px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                        >
+                          <option value="either">Filename or folder</option>
+                          <option value="filename">Filename only</option>
+                          <option value="folder">Folder only</option>
+                        </select>
+                        <label className="inline-flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-300 font-medium whitespace-nowrap justify-self-start">
+                          <input
+                            type="checkbox"
+                            checked={rule.overwriteExisting}
+                            onChange={(e) => {
+                              const next = draft.metadataSuggestRules.map((item, itemIndex) =>
+                                itemIndex === index ? { ...item, overwriteExisting: e.target.checked } : item
+                              )
+                              update('metadataSuggestRules', next)
+                            }}
+                            className="accent-amber-600"
+                          />
+                          Overwrite
+                        </label>
+                        <button
+                          onClick={() => update('metadataSuggestRules', [
+                            ...draft.metadataSuggestRules.slice(0, index + 1),
+                            cloneMetadataSuggestRule(rule, 'rule-clone'),
+                            ...draft.metadataSuggestRules.slice(index + 1),
+                          ])}
+                          className="text-gray-400 hover:text-violet-500 transition-colors justify-self-center"
+                          title="Clone rule"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h8a2 2 0 012 2v8m-2 0H8a2 2 0 01-2-2V7m2-2h8a2 2 0 012 2v8" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => update('metadataSuggestRules', draft.metadataSuggestRules.filter((item) => item.id !== rule.id))}
+                          className="text-gray-400 hover:text-red-500 transition-colors justify-self-center"
+                          title="Remove rule"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+                <button
+                  onClick={() => update('metadataSuggestRules', [
+                    ...draft.metadataSuggestRules,
+                    {
+                      id: `rule-${Date.now()}`,
+                      token: '',
+                      field: 'gear_make',
+                      value: '',
+                      matchIn: 'either',
+                      enabled: true,
+                      overwriteExisting: false,
+                    },
+                  ])}
+                  className="pt-1 text-xs text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300 font-medium transition-colors"
+                >
+                  + Add suggestion rule
+                </button>
+                <p className="text-[11px] text-gray-500 dark:text-gray-500 pt-1">
+                  Tip: repeat the same token across multiple rows if one detection should fill multiple fields. Leave the token blank to make a scope-wide default rule. Overwrite rows are highlighted and saved into the rule library automatically when you save settings.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {showRuleLibraryPicker && (
+            <MetadataSuggestRuleLibraryModal
+              title="Rule Library"
+              confirmLabel="Add selected to global rules"
+              rules={draft.metadataSuggestRuleLibrary}
+              onConfirm={appendLibraryRulesToGlobal}
+              onDeleteRule={deleteRuleLibraryEntry}
+              onClose={() => setShowRuleLibraryPicker(false)}
+            />
+          )}
 
           <div>
             <div className="flex items-center gap-2 mb-4">

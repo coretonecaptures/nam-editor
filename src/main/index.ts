@@ -1975,17 +1975,30 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('tone3000:created', async (_event, params: { page?: number; pageSize?: number }) => {
-    const valid = await ensureValidToken()
-    if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
-    const sp = new URLSearchParams()
-    sp.set('page', String(params.page ?? 1))
-    sp.set('page_size', String(params.pageSize ?? 24))
-    try {
-      const res = await fetch(`${T3K_BASE}/api/v1/tones/created?${sp}`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
-      if (!res.ok) return { error: `API error ${res.status}` }
-      return { ok: true, data: await res.json() }
-    } catch (e) { return { error: String(e) } }
-  })
+      const valid = await ensureValidToken()
+      if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
+      const sp = new URLSearchParams()
+      sp.set('page', String(params.page ?? 1))
+      sp.set('page_size', String(params.pageSize ?? 24))
+      try {
+        const res = await fetch(`${T3K_BASE}/api/v1/tones/created?${sp}`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+        if (!res.ok) return { error: `API error ${res.status}` }
+        return { ok: true, data: await res.json() }
+      } catch (e) { return { error: String(e) } }
+    })
+
+  ipcMain.handle('tone3000:favorited', async (_event, params: { page?: number; pageSize?: number }) => {
+      const valid = await ensureValidToken()
+      if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
+      const sp = new URLSearchParams()
+      sp.set('page', String(params.page ?? 1))
+      sp.set('page_size', String(params.pageSize ?? 24))
+      try {
+        const res = await fetch(`${T3K_BASE}/api/v1/tones/favorited?${sp}`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+        if (!res.ok) return { error: `API error ${res.status}` }
+        return { ok: true, data: await res.json() }
+      } catch (e) { return { error: String(e) } }
+    })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

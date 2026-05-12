@@ -22,6 +22,44 @@ export interface FolderWatchImportEntry {
   importedAt: string
 }
 
+export const METADATA_SUGGEST_FIELD_OPTIONS = [
+  { value: 'modeled_by', label: 'Modeled By' },
+  { value: 'gear_type', label: 'Gear Type' },
+  { value: 'gear_make', label: 'Manufacturer' },
+  { value: 'gear_model', label: 'Model' },
+  { value: 'tone_type', label: 'Tone Type' },
+  { value: 'input_level_dbu', label: 'Input (dBu)' },
+  { value: 'output_level_dbu', label: 'Output (dBu)' },
+  { value: 'nb_trained_epochs', label: 'Trained Epochs' },
+  { value: 'nl_mics', label: 'Microphone(s)' },
+  { value: 'nl_cabinet', label: 'Cabinet' },
+  { value: 'nl_cabinet_config', label: 'Cabinet Config' },
+  { value: 'nl_amp_channel', label: 'Amp Channel' },
+  { value: 'nl_amp_settings', label: 'Amp Settings' },
+  { value: 'nl_boost_pedal', label: 'Boost Pedal(s)' },
+  { value: 'nl_pedal_settings', label: 'Pedal Settings' },
+  { value: 'nl_amp_switches', label: 'Amp Switches' },
+  { value: 'nl_comments', label: 'Comments' },
+] as const
+
+export type MetadataSuggestField = typeof METADATA_SUGGEST_FIELD_OPTIONS[number]['value']
+export type MetadataSuggestMatchIn = 'filename' | 'folder' | 'either'
+
+export interface MetadataSuggestRule {
+  id: string
+  token: string
+  field: MetadataSuggestField
+  value: string
+  matchIn: MetadataSuggestMatchIn
+  enabled: boolean
+  overwriteExisting: boolean
+}
+
+export interface MetadataSuggestScopedRuleSet {
+  scopePath: string
+  rules: MetadataSuggestRule[]
+}
+
 export const DEFAULT_PACK_CHECKLIST_TEMPLATE: PackChecklistTemplateItem[] = [
   { id: 'all-captures-completed', label: 'All captures completed' },
   { id: 'test-all-captures-in-nam-player', label: 'Test all captures in NAM Player; remove weak/duplicate profiles' },
@@ -129,6 +167,11 @@ export interface AppSettings {
 
   // Optional Tone3000 username for creator matching / search helpers
   tone3000Username: string
+
+  // Metadata suggestions: token-based rules used by Suggest Metadata preview/apply flow
+  metadataSuggestRules: MetadataSuggestRule[]
+  metadataSuggestScopedRules: MetadataSuggestScopedRuleSet[]
+  metadataSuggestRuleLibrary: MetadataSuggestRule[]
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -178,6 +221,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultFolderTab: 'overview',
   showDashboardOnLaunch: true,
   tone3000Username: '',
+  metadataSuggestRules: [],
+  metadataSuggestScopedRules: [],
+  metadataSuggestRuleLibrary: [],
 }
 
 const STORAGE_KEY = 'nam-editor-settings'

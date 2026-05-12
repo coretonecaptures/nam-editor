@@ -32,6 +32,8 @@ interface FolderTreeProps {
   onExportFolder?: (folderPath: string | null, format: 'csv' | 'xlsx') => void
   onGenerateTemplate?: (folderPath: string | null) => void
   onImportMetadata?: (folderPath: string | null) => void
+  onSuggestMetadata?: (folderPath: string | null) => void
+  onEditSuggestRules?: (folderPath: string) => void
   onSelectAllInFolder?: (folderPath: string | null) => void
   onCoverageReport?: (folderPath: string) => void
   onFindDuplicates?: (folderPath: string) => void
@@ -47,6 +49,7 @@ interface FolderTreeProps {
   watchSourceByDest?: Record<string, string>
   onSetWatchSource?: (folderPath: string) => void
   onClearWatchSource?: (folderPath: string) => void
+  foldersWithSuggestRules?: Set<string>
 }
 
 function matchesFilter(
@@ -73,10 +76,10 @@ function matchesFilter(
 export function FolderTree({
   tree, files, selectedFolders, onSelect, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, onFilterChange, onDropFiles,
-  onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata,
+  onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSuggestMetadata, onEditSuggestRules,
   onSelectAllInFolder, onCoverageReport, onFindDuplicates, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor,
   onCompareFolders, onDeletePackInfo, bundleFolders, onCreateBundle, onDeleteBundle
-  , watchSourceByDest, onSetWatchSource, onClearWatchSource
+  , watchSourceByDest, onSetWatchSource, onClearWatchSource, foldersWithSuggestRules
 }: FolderTreeProps) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [expandSeq, setExpandSeq] = useState(0)
@@ -265,9 +268,11 @@ export function FolderTree({
           onExportFolder={onExportFolder ? (fmt) => onExportFolder(null, fmt) : undefined}
           onGenerateTemplate={onGenerateTemplate ? () => onGenerateTemplate(null) : undefined}
           onImportMetadata={onImportMetadata ? () => onImportMetadata(null) : undefined}
+          onSuggestMetadata={onSuggestMetadata ? () => onSuggestMetadata(null) : undefined}
           onSelectAll={onSelectAllInFolder ? () => onSelectAllInFolder(null) : undefined}
           onCoverageReport={onCoverageReport ? () => onCoverageReport(tree.path) : undefined}
           onFindDuplicates={onFindDuplicates ? () => onFindDuplicates(tree.path) : undefined}
+          hasSuggestRules={foldersWithSuggestRules?.has(tree.path.replace(/\\/g, '/')) ?? false}
         />
 
         {tree.children.map((child) => (
@@ -290,6 +295,8 @@ export function FolderTree({
             onExportFolder={onExportFolder}
             onGenerateTemplate={onGenerateTemplate}
             onImportMetadata={onImportMetadata}
+            onSuggestMetadata={onSuggestMetadata}
+            onEditSuggestRules={onEditSuggestRules}
             onSelectAllInFolder={onSelectAllInFolder}
             onCoverageReport={onCoverageReport}
             onFindDuplicates={onFindDuplicates}
@@ -307,6 +314,7 @@ export function FolderTree({
             watchSourceByDest={watchSourceByDest}
             onSetWatchSource={onSetWatchSource}
             onClearWatchSource={onClearWatchSource}
+            foldersWithSuggestRules={foldersWithSuggestRules}
           />
         ))}
       </div>
@@ -317,10 +325,10 @@ export function FolderTree({
 function TreeNode({
   node, selectedFolders, onSelect, depth, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, matchingPaths, onDropFiles,
-  onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata,
+  onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSuggestMetadata, onEditSuggestRules,
   onSelectAllInFolder, onCoverageReport, onFindDuplicates, expandSeq, collapseSeq, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor,
   onCompareFolders, onDeletePackInfo, bundleFolders, onCreateBundle, onDeleteBundle
-  , watchSourceByDest, onSetWatchSource, onClearWatchSource
+  , watchSourceByDest, onSetWatchSource, onClearWatchSource, foldersWithSuggestRules
 }: {
   node: FolderNode
   selectedFolders: string[]
@@ -339,6 +347,8 @@ function TreeNode({
   onExportFolder?: (folderPath: string, format: 'csv' | 'xlsx') => void
   onGenerateTemplate?: (folderPath: string | null) => void
   onImportMetadata?: (folderPath: string | null) => void
+  onSuggestMetadata?: (folderPath: string | null) => void
+  onEditSuggestRules?: (folderPath: string) => void
   onSelectAllInFolder?: (folderPath: string | null) => void
   onCoverageReport?: (folderPath: string) => void
   onFindDuplicates?: (folderPath: string) => void
@@ -356,6 +366,7 @@ function TreeNode({
   watchSourceByDest?: Record<string, string>
   onSetWatchSource?: (folderPath: string) => void
   onClearWatchSource?: (folderPath: string) => void
+  foldersWithSuggestRules?: Set<string>
 }) {
   const [expanded, setExpanded] = useState(true)
 
@@ -419,11 +430,14 @@ function TreeNode({
         onExportFolder={onExportFolder ? (fmt) => onExportFolder(node.path, fmt) : undefined}
         onGenerateTemplate={onGenerateTemplate ? () => onGenerateTemplate(node.path) : undefined}
         onImportMetadata={onImportMetadata ? () => onImportMetadata(node.path) : undefined}
+        onSuggestMetadata={onSuggestMetadata ? () => onSuggestMetadata(node.path) : undefined}
+        onEditSuggestRules={onEditSuggestRules ? () => onEditSuggestRules(node.path) : undefined}
         onSelectAll={onSelectAllInFolder ? () => onSelectAllInFolder(node.path) : undefined}
         onCoverageReport={onCoverageReport ? () => onCoverageReport(node.path) : undefined}
         onFindDuplicates={onFindDuplicates ? () => onFindDuplicates(node.path) : undefined}
         isDraggableFolder
         hasPackInfo={packInfoFolders?.has(node.path.replace(/\\/g, '/')) ?? false}
+        hasSuggestRules={foldersWithSuggestRules?.has(node.path.replace(/\\/g, '/')) ?? false}
         hasBundle={bundleFolders?.has(node.path.replace(/\\/g, '/')) ?? false}
         folderColor={folderNameColors?.[node.name] ?? null}
         onSetFolderColor={onSetFolderColor ? (color) => onSetFolderColor(node.name, color) : undefined}
@@ -459,6 +473,8 @@ function TreeNode({
               onExportFolder={onExportFolder}
               onGenerateTemplate={onGenerateTemplate}
               onImportMetadata={onImportMetadata}
+              onSuggestMetadata={onSuggestMetadata}
+              onEditSuggestRules={onEditSuggestRules}
               onSelectAllInFolder={onSelectAllInFolder}
               onCoverageReport={onCoverageReport}
               onFindDuplicates={onFindDuplicates}
@@ -476,6 +492,7 @@ function TreeNode({
               watchSourceByDest={watchSourceByDest}
               onSetWatchSource={onSetWatchSource}
               onClearWatchSource={onClearWatchSource}
+              foldersWithSuggestRules={foldersWithSuggestRules}
             />
           ))}
         </div>
@@ -489,7 +506,7 @@ interface ContextMenuState { x: number; y: number }
 function FolderRow({
   label, folderPath, isRoot, isSelected, totalCount, dirtyCount, depth,
   hasChildren, expanded, onToggleExpand, onClick, onSave, onRevert,
-  onBatchEdit, onReveal, isFiltered, isHighlighted, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSelectAll, onCoverageReport, onFindDuplicates, isDraggableFolder, hasPackInfo, hasBundle, folderColor, onSetFolderColor, isMultiSelect, onCompareFolders, onDeletePackInfo, onCreateBundle, onDeleteBundle
+  onBatchEdit, onReveal, isFiltered, isHighlighted, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSuggestMetadata, onEditSuggestRules, onSelectAll, onCoverageReport, onFindDuplicates, isDraggableFolder, hasPackInfo, hasSuggestRules = false, hasBundle, folderColor, onSetFolderColor, isMultiSelect, onCompareFolders, onDeletePackInfo, onCreateBundle, onDeleteBundle
   , watchSource, onSetWatchSource, onClearWatchSource
 }: {
   label: string
@@ -516,11 +533,14 @@ function FolderRow({
   onExportFolder?: (format: 'csv' | 'xlsx') => void
   onGenerateTemplate?: () => void
   onImportMetadata?: () => void
+  onSuggestMetadata?: () => void
+  onEditSuggestRules?: () => void
   onSelectAll?: () => void
   onCoverageReport?: () => void
   onFindDuplicates?: () => void
   isDraggableFolder?: boolean
   hasPackInfo?: boolean
+  hasSuggestRules?: boolean
   hasBundle?: boolean
   folderColor?: string | null
   onSetFolderColor?: (color: string | null) => void
@@ -732,6 +752,9 @@ function FolderRow({
         {hasPackInfo && (
           <span className="w-1.5 h-1.5 rounded-full bg-blue-500 flex-shrink-0" title="Pack Info" />
         )}
+        {hasSuggestRules && (
+          <span className="w-1.5 h-1.5 rounded-full border border-violet-400/80 bg-violet-400/20 flex-shrink-0" title="Folder suggestion rules" />
+        )}
         {hasBundle && (
           <svg className="w-3 h-3 text-amber-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <title>Multi-Amp Bundle</title>
@@ -858,7 +881,7 @@ function FolderRow({
               </button>
             </>
           )}
-          {(onGenerateTemplate || onImportMetadata) && (
+          {(onGenerateTemplate || onImportMetadata || onSuggestMetadata || onEditSuggestRules) && (
             <>
               <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
               {onGenerateTemplate && (
@@ -875,6 +898,22 @@ function FolderRow({
                   onClick={() => { setMenu(null); onImportMetadata() }}
                 >
                   Import metadata from spreadsheet…
+                </button>
+              )}
+              {onSuggestMetadata && (
+                <button
+                  className="w-full text-left px-3 py-1.5 text-violet-700 dark:text-violet-400 hover:bg-indigo-600/40 transition-colors"
+                  onClick={() => { setMenu(null); onSuggestMetadata() }}
+                >
+                  Suggest metadata…
+                </button>
+              )}
+              {onEditSuggestRules && (
+                <button
+                  className="w-full text-left px-3 py-1.5 text-violet-700 dark:text-violet-400 hover:bg-indigo-600/40 transition-colors"
+                  onClick={() => { setMenu(null); onEditSuggestRules() }}
+                >
+                  Edit folder suggestion rules…
                 </button>
               )}
             </>

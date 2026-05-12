@@ -33,6 +33,7 @@ interface FileListProps {
   onTrimSelection: (visiblePaths: string[]) => void
   onRemove?: (id: string) => void
   onBatchEditSelected?: (paths: string[]) => void
+  onSuggestMetadataSelected?: (paths: string[]) => void
   onSaveSelected?: (paths: string[]) => void
   onBatchRename?: (renames: { filePath: string; newBaseName: string }[], renameFiles: boolean) => void
   onTrashSelected?: (paths: string[]) => Promise<void>
@@ -303,6 +304,7 @@ export function FileList({
   onTrimSelection,
   onRemove = undefined,
   onBatchEditSelected,
+  onSuggestMetadataSelected,
   onSaveSelected,
   onBatchRename,
   onTrashSelected,
@@ -1177,7 +1179,7 @@ export function FileList({
               Clean Outdated Metadata
             </button>
           )}
-          {(onSaveSelected || onBatchEditSelected) && (
+          {(onSaveSelected || onBatchEditSelected || onSuggestMetadataSelected) && (
             <div className="border-t border-gray-200 dark:border-gray-700 my-1" />
           )}
           {onSaveSelected && (
@@ -1206,6 +1208,20 @@ export function FileList({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
               </svg>
               Batch edit {selectedVisible.length} selected
+            </button>
+          )}
+          {onSuggestMetadataSelected && (
+            <button
+              className="w-full text-left px-3 py-2 text-sm text-violet-700 dark:text-violet-400 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
+              onClick={() => {
+                onSuggestMetadataSelected(selectedVisible)
+                setCtxMenu(null)
+              }}
+            >
+              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h7m-7 4h5M5 5h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2z" />
+              </svg>
+              Suggest metadata for {selectedVisible.length} selected
             </button>
           )}
           <div className="border-t border-gray-200 dark:border-gray-700 my-1" />
@@ -1304,9 +1320,44 @@ function GridView({
   const headerRefs = useRef<Record<string, HTMLTableCellElement | null>>({})
   const dragIntentRef = useRef<{ key: string; startX: number; startY: number } | null>(null)
   const columnDragRef = useRef<typeof columnDrag>(null)
+  const topScrollRef = useRef<HTMLDivElement>(null)
+  const bottomScrollRef = useRef<HTMLDivElement>(null)
+  const syncScrollRef = useRef<'top' | 'bottom' | null>(null)
 
   // Order-preserving: visibleCols drives display order
   const activeColumns = visibleCols.map((k) => ALL_GRID_COLUMNS.find((c) => c.key === k)).filter((c): c is typeof ALL_GRID_COLUMNS[0] => c != null)
+  const tableWidth = activeColumns.reduce((s, c) => s + colWidths[c.key], 24)
+
+  useEffect(() => {
+    const topEl = topScrollRef.current
+    const bottomEl = bottomScrollRef.current
+    if (!topEl || !bottomEl) return
+
+    const onTopScroll = () => {
+      if (syncScrollRef.current === 'bottom') {
+        syncScrollRef.current = null
+        return
+      }
+      syncScrollRef.current = 'top'
+      bottomEl.scrollLeft = topEl.scrollLeft
+    }
+
+    const onBottomScroll = () => {
+      if (syncScrollRef.current === 'top') {
+        syncScrollRef.current = null
+        return
+      }
+      syncScrollRef.current = 'bottom'
+      topEl.scrollLeft = bottomEl.scrollLeft
+    }
+
+    topEl.addEventListener('scroll', onTopScroll, { passive: true })
+    bottomEl.addEventListener('scroll', onBottomScroll, { passive: true })
+    return () => {
+      topEl.removeEventListener('scroll', onTopScroll)
+      bottomEl.removeEventListener('scroll', onBottomScroll)
+    }
+  }, [])
 
   useEffect(() => {
     if (!openFilterCol) return
@@ -1431,12 +1482,19 @@ function GridView({
     window.addEventListener('mouseup', onUp)
   }
 
-  return (
-    <div className="flex-1 overflow-auto relative">
-      <table className="border-collapse text-xs" style={{ tableLayout: 'fixed', width: activeColumns.reduce((s, c) => s + colWidths[c.key], 24) }}>
-        <thead className="sticky top-0 z-10">
-          <tr className="bg-gray-100 dark:bg-gray-900 border-b-2 border-gray-300 dark:border-gray-700">
-            <th className="border-r border-gray-200 dark:border-gray-700" style={{ width: 24 }} />
+    return (
+      <div className="flex-1 min-h-0 flex flex-col relative">
+        <div
+          ref={topScrollRef}
+          className="h-4 overflow-x-auto overflow-y-hidden border-b border-gray-200 dark:border-gray-800 bg-gray-50/40 dark:bg-gray-900/30"
+        >
+          <div style={{ width: tableWidth, height: 1 }} />
+        </div>
+        <div ref={bottomScrollRef} className="flex-1 overflow-auto relative">
+        <table className="border-collapse text-xs" style={{ tableLayout: 'fixed', width: tableWidth }}>
+          <thead className="sticky top-0 z-10">
+            <tr className="bg-gray-100 dark:bg-gray-900 border-b-2 border-gray-300 dark:border-gray-700">
+              <th className="border-r border-gray-200 dark:border-gray-700" style={{ width: 24 }} />
             {activeColumns.map((col) => {
               const hasFilter = !!(columnFilters[col.key]?.text || columnFilters[col.key]?.selected?.length)
               const isFilterOpen = openFilterCol === col.key
@@ -1675,11 +1733,12 @@ function GridView({
               )
             })
           )}
-        </tbody>
-      </table>
-    </div>
-  )
-}
+          </tbody>
+        </table>
+        </div>
+      </div>
+    )
+  }
 
 // ---- List item ----
 

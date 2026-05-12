@@ -146,7 +146,7 @@ export function ToneStore({
   const [creatorUsername, setCreatorUsername] = useState('')
   const [gear, setGear] = useState('')
   const [sort, setSort] = useState('trending')
-  const [scope, setScope] = useState<'all' | 'mine'>('all')
+  const [scope, setScope] = useState<'all' | 'mine' | 'favorites'>('all')
   const [results, setResults] = useState<ToneResult[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -217,15 +217,18 @@ export function ToneStore({
     const savedUsername = normalizeUsername(savedTone3000Username)
     const useCreated = searchScope === 'mine'
       || (!!requestedUsername && (requestedUsername === authUsername || (!!savedUsername && requestedUsername === savedUsername)))
+    const useFavorited = searchScope === 'favorites'
 
     const result = useCreated
       ? await window.api.tone3000Created({ page: p, pageSize: 100 })
+      : useFavorited
+        ? await window.api.tone3000Favorited({ page: p, pageSize: 100 })
       : await window.api.tone3000Search({ query: q || undefined, page: p, pageSize: 24, gears: g ? [g] : undefined, sort: s })
     setSearching(false)
     if (result.error) { setSearchError(result.error); return }
     const data = result.data as SearchResponse
     let filtered = data.data ?? []
-    if (useCreated) {
+    if (useCreated || useFavorited) {
       if (q.trim()) {
         const needle = q.toLowerCase()
         filtered = filtered.filter((tone) => [tone.title, tone.user?.username].filter(Boolean).join(' ').toLowerCase().includes(needle))
@@ -240,7 +243,7 @@ export function ToneStore({
       filtered = filtered.filter((tone) => normalizeUsername(tone.user?.username ?? '').includes(requestedUsername))
     }
     setResults(filtered)
-    setTotal((useCreated || requestedUsername) ? filtered.length : (data.total ?? 0))
+    setTotal((useCreated || useFavorited || requestedUsername) ? filtered.length : (data.total ?? 0))
     setPage(p)
   }, [resolveUsername, savedTone3000Username, username])
 
@@ -641,19 +644,25 @@ export function ToneStore({
       {/* Search bar */}
       <div className="flex flex-col gap-1.5 px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => { setScope('all'); handleSearch(1, query, gear, sort, creatorUsername, 'all') }}
-            className={`px-2.5 py-1 text-xs rounded transition-colors ${scope === 'all' ? 'bg-violet-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-700'}`}
-          >
-            All tones
-          </button>
-          <button
-            onClick={() => { setScope('mine'); handleSearch(1, query, gear, sort, creatorUsername, 'mine') }}
-            className={`px-2.5 py-1 text-xs rounded transition-colors ${scope === 'mine' ? 'bg-violet-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-700'}`}
-          >
-            My files
-          </button>
-        </div>
+            <button
+              onClick={() => { setScope('all'); handleSearch(1, query, gear, sort, creatorUsername, 'all') }}
+              className={`px-2.5 py-1 text-xs rounded transition-colors ${scope === 'all' ? 'bg-violet-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-700'}`}
+            >
+              All tones
+            </button>
+            <button
+              onClick={() => { setScope('mine'); handleSearch(1, query, gear, sort, creatorUsername, 'mine') }}
+              className={`px-2.5 py-1 text-xs rounded transition-colors ${scope === 'mine' ? 'bg-violet-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-700'}`}
+            >
+              My files
+            </button>
+            <button
+              onClick={() => { setScope('favorites'); handleSearch(1, query, gear, sort, creatorUsername, 'favorites') }}
+              className={`px-2.5 py-1 text-xs rounded transition-colors ${scope === 'favorites' ? 'bg-violet-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-700'}`}
+            >
+              Favorites
+            </button>
+          </div>
         <div className="flex items-center gap-2 flex-wrap">
           <div className="relative min-w-[220px] flex-[1.3]">
             <input
@@ -700,7 +709,7 @@ export function ToneStore({
             {GEAR_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
           <select value={sort} onChange={(e) => { const s = e.target.value; setSort(s); if (!queueLocked) handleSearch(1, query, gear, s, creatorUsername, scope) }}
-            disabled={scope === 'mine' || queueLocked}
+            disabled={scope === 'mine' || scope === 'favorites' || queueLocked}
             className="px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
           >
             {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -754,7 +763,11 @@ export function ToneStore({
 
         {!searching && results.length > 0 && (
           <>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">{total.toLocaleString()} tones found</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+              {scope === 'favorites'
+                ? `${total.toLocaleString()} favorite tone${total !== 1 ? 's' : ''}`
+                : `${total.toLocaleString()} tones found`}
+            </p>
             <div className="grid grid-cols-2 gap-3">
               {results.map((tone) => (
                 <div key={tone.id} className={`rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden flex flex-col ${queueLocked ? 'opacity-60' : ''}`}>

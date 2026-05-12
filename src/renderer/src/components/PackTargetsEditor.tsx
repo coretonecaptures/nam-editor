@@ -39,6 +39,27 @@ const SEARCH_FIELDS: Array<keyof DeliveryMatrixRow> = [
   'comments',
 ]
 
+const MATRIX_TEXT_FIELDS: Array<{ key: keyof DeliveryMatrixRow; label: string; minWidth: string }> = [
+  { key: 'modeledBy', label: 'Modeled By', minWidth: '180px' },
+  { key: 'manufacturer', label: 'Manufacturer', minWidth: '160px' },
+  { key: 'model', label: 'Model', minWidth: '160px' },
+  { key: 'gearType', label: 'Gear Type', minWidth: '120px' },
+  { key: 'toneType', label: 'Tone Type', minWidth: '120px' },
+  { key: 'ampChannel', label: 'Amp Channel', minWidth: '120px' },
+  { key: 'ampSettings', label: 'Amp Settings', minWidth: '220px' },
+  { key: 'ampSwitches', label: 'Amp Switches', minWidth: '180px' },
+  { key: 'boostPedals', label: 'Boost Pedal(s)', minWidth: '180px' },
+  { key: 'pedalSettings', label: 'Pedal Settings', minWidth: '220px' },
+  { key: 'cabinet', label: 'Cabinet', minWidth: '160px' },
+  { key: 'cabConfig', label: 'Cab Config', minWidth: '160px' },
+  { key: 'reampSendDbu', label: 'Reamp Send (dBu)', minWidth: '140px' },
+  { key: 'reampReturnDbu', label: 'Reamp Return (dBu)', minWidth: '140px' },
+  { key: 'trainedEpochs', label: 'Trained Epochs', minWidth: '120px' },
+  { key: 'namBotPreset', label: 'NAM-BOT Preset', minWidth: '160px' },
+  { key: 'mics', label: 'Mic(s)', minWidth: '180px' },
+  { key: 'comments', label: 'Comments', minWidth: '240px' },
+]
+
 const HEADER_MAP: Record<string, keyof DeliveryMatrixRow> = {
   'Capture Name': 'captureName',
   'Alt Proxy Name': 'altProxyName',
@@ -203,6 +224,7 @@ export function PackTargetsEditor({ folderPath, folderName, onPackSaved, logoLig
   const [selectedTarget, setSelectedTarget] = useState<TargetKey>('proxy')
   const [search, setSearch] = useState('')
   const [showAlternateOnly, setShowAlternateOnly] = useState(false)
+  const [nameSortDir, setNameSortDir] = useState<'asc' | 'desc'>('asc')
   const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
@@ -223,6 +245,17 @@ export function PackTargetsEditor({ folderPath, folderName, onPackSaved, logoLig
       return updater(prev)
     })
     setStatus(null)
+  }, [])
+
+  const showNativeTextContextMenu = useCallback((event: React.MouseEvent<HTMLElement>) => {
+    const selection = window.getSelection()?.toString().trim()
+    const activeEl = document.activeElement as HTMLElement | null
+    const target = event.target as HTMLElement | null
+    const editableTarget = target?.closest('input, textarea, [contenteditable="true"]') as HTMLElement | null
+    const isEditable = !!editableTarget || !!activeEl?.closest?.('input, textarea, [contenteditable="true"]')
+    if (!selection && !isEditable) return
+    event.preventDefault()
+    void window.api.showTextContextMenu({ hasSelection: !!selection, isEditable })
   }, [])
 
   const handleImport = useCallback(async () => {
@@ -275,7 +308,11 @@ export function PackTargetsEditor({ folderPath, folderName, onPackSaved, logoLig
 
   const handleExport = useCallback(async () => {
     if (!pack) return
-    const exportRows = pack.deliveryMatrix.rows.filter((row) => targetIncludes(row, selectedTarget))
+    const exportRows = [...pack.deliveryMatrix.rows.filter((row) => targetIncludes(row, selectedTarget))]
+      .sort((a, b) => {
+        const cmp = a.captureName.localeCompare(b.captureName, undefined, { sensitivity: 'base', numeric: true })
+        return nameSortDir === 'asc' ? cmp : -cmp
+      })
     if (exportRows.length === 0) {
       setStatus(`No ${TARGET_LABELS[selectedTarget]} rows to export`)
       return
@@ -312,13 +349,16 @@ export function PackTargetsEditor({ folderPath, folderName, onPackSaved, logoLig
     setExporting(false)
     if (result.success) setStatus(`Exported ${TARGET_LABELS[selectedTarget]} PDF`)
     else setStatus(`Export failed: ${result.error ?? 'unknown error'}`)
-  }, [darkAccentColor, folderName, folderPath, logoDark, logoLight, pack, selectedTarget])
+  }, [darkAccentColor, folderName, folderPath, logoDark, logoLight, nameSortDir, pack, selectedTarget])
 
   const rows = pack?.deliveryMatrix.rows ?? []
-  const targetRows = useMemo(
-    () => rows.filter((row) => targetIncludes(row, selectedTarget)),
-    [rows, selectedTarget]
-  )
+  const targetRows = useMemo(() => {
+    const included = rows.filter((row) => targetIncludes(row, selectedTarget))
+    return [...included].sort((a, b) => {
+      const cmp = a.captureName.localeCompare(b.captureName, undefined, { sensitivity: 'base', numeric: true })
+      return nameSortDir === 'asc' ? cmp : -cmp
+    })
+  }, [nameSortDir, rows, selectedTarget])
   const filteredRows = useMemo(() => {
     const term = search.trim().toLowerCase()
     return targetRows.filter((row) => {
@@ -333,8 +373,9 @@ export function PackTargetsEditor({ folderPath, folderName, onPackSaved, logoLig
   const summary = useMemo(() => ({
     totalRows: rows.length,
     targetRows: targetRows.length,
+    visibleRows: filteredRows.length,
     alternateRows: targetRows.filter((row) => !!targetAltName(row, selectedTarget).trim()).length,
-  }), [rows.length, selectedTarget, targetRows])
+  }), [filteredRows.length, rows.length, selectedTarget, targetRows])
 
   const targetMeta = pack?.deliveryTargets[selectedTarget]
   const exportColumns = useMemo(
@@ -348,7 +389,7 @@ export function PackTargetsEditor({ folderPath, folderName, onPackSaved, logoLig
   }
 
   return (
-    <div className="h-full flex flex-col overflow-hidden">
+    <div className="h-full flex flex-col overflow-hidden" onContextMenu={showNativeTextContextMenu}>
       <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
         <div>
           <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Delivery Targets</h3>
@@ -385,13 +426,14 @@ export function PackTargetsEditor({ folderPath, folderName, onPackSaved, logoLig
           ))}
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {[
-            ['Matrix Rows', summary.totalRows],
-            [`${TARGET_LABELS[selectedTarget]} Rows`, summary.targetRows],
-            ['Alt Names', summary.alternateRows],
-            ['Export Columns', exportColumns.length],
-          ].map(([label, value]) => (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            {[
+              ['Matrix Rows', summary.totalRows],
+              [`${TARGET_LABELS[selectedTarget]} Rows`, summary.targetRows],
+              ['Visible Rows', summary.visibleRows],
+              ['Alt Names', summary.alternateRows],
+              ['Export Columns', exportColumns.length],
+            ].map(([label, value]) => (
             <div key={String(label)} className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-3 py-2.5">
               <div className="text-lg font-semibold text-gray-800 dark:text-gray-100">{value}</div>
               <div className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">{label}</div>
@@ -539,6 +581,13 @@ export function PackTargetsEditor({ folderPath, folderName, onPackSaved, logoLig
               </button>
             )}
             <button
+              onClick={() => setNameSortDir((dir) => dir === 'asc' ? 'desc' : 'asc')}
+              className="px-2.5 py-1 rounded text-xs bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+              title="Sort target rows by Capture Name"
+            >
+              Name {nameSortDir === 'asc' ? 'A-Z' : 'Z-A'}
+            </button>
+            <button
               onClick={() => updatePack((current) => ({
                 ...current,
                 deliveryMatrix: {
@@ -571,12 +620,15 @@ export function PackTargetsEditor({ folderPath, folderName, onPackSaved, logoLig
                         <th className="sticky top-0 bg-gray-50 dark:bg-gray-900 px-2 py-2 border-b border-gray-200 dark:border-gray-700 font-semibold text-gray-500 dark:text-gray-400 min-w-[240px]">Effective Name</th>
                       </>
                     )}
-                    <th className="sticky top-0 bg-gray-50 dark:bg-gray-900 px-2 py-2 border-b border-gray-200 dark:border-gray-700 font-semibold text-gray-500 dark:text-gray-400 min-w-[180px]">Modeled By</th>
-                    <th className="sticky top-0 bg-gray-50 dark:bg-gray-900 px-2 py-2 border-b border-gray-200 dark:border-gray-700 font-semibold text-gray-500 dark:text-gray-400 min-w-[160px]">Manufacturer</th>
-                    <th className="sticky top-0 bg-gray-50 dark:bg-gray-900 px-2 py-2 border-b border-gray-200 dark:border-gray-700 font-semibold text-gray-500 dark:text-gray-400 min-w-[160px]">Model</th>
-                    <th className="sticky top-0 bg-gray-50 dark:bg-gray-900 px-2 py-2 border-b border-gray-200 dark:border-gray-700 font-semibold text-gray-500 dark:text-gray-400 min-w-[120px]">Gear Type</th>
-                    <th className="sticky top-0 bg-gray-50 dark:bg-gray-900 px-2 py-2 border-b border-gray-200 dark:border-gray-700 font-semibold text-gray-500 dark:text-gray-400 min-w-[120px]">Tone Type</th>
-                    <th className="sticky top-0 bg-gray-50 dark:bg-gray-900 px-2 py-2 border-b border-gray-200 dark:border-gray-700 font-semibold text-gray-500 dark:text-gray-400 min-w-[220px]">Comments</th>
+                    {MATRIX_TEXT_FIELDS.map((field) => (
+                      <th
+                        key={field.key}
+                        className="sticky top-0 bg-gray-50 dark:bg-gray-900 px-2 py-2 border-b border-gray-200 dark:border-gray-700 font-semibold text-gray-500 dark:text-gray-400"
+                        style={{ minWidth: field.minWidth }}
+                      >
+                        {field.label}
+                      </th>
+                    ))}
                     <th className="sticky top-0 bg-gray-50 dark:bg-gray-900 px-2 py-2 border-b border-gray-200 dark:border-gray-700" />
                   </tr>
                 </thead>
@@ -634,20 +686,19 @@ export function PackTargetsEditor({ folderPath, folderName, onPackSaved, logoLig
                           </td>
                         </>
                       )}
-                      {(['modeledBy', 'manufacturer', 'model', 'gearType', 'toneType', 'comments'] as const).map((field) => (
-                        <td key={field} className="px-2 py-2 border-b border-gray-100 dark:border-gray-800">
+                      {MATRIX_TEXT_FIELDS.map((fieldDef) => (
+                        <td key={fieldDef.key} className="px-2 py-2 border-b border-gray-100 dark:border-gray-800">
                           <input
-                            value={String(row[field] ?? '')}
+                            value={String(row[fieldDef.key] ?? '')}
                             onChange={(e) => updatePack((current) => ({
                               ...current,
                               deliveryMatrix: {
                                 ...current.deliveryMatrix,
-                                rows: current.deliveryMatrix.rows.map((candidate) => candidate.id === row.id ? { ...candidate, [field]: e.target.value } : candidate),
+                                rows: current.deliveryMatrix.rows.map((candidate) => candidate.id === row.id ? { ...candidate, [fieldDef.key]: e.target.value } : candidate),
                               },
                             }))}
-                            className={`w-full text-xs px-2 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500 ${
-                              field === 'comments' ? 'min-w-[220px]' : field === 'modeledBy' ? 'min-w-[180px]' : field === 'manufacturer' || field === 'model' ? 'min-w-[160px]' : 'min-w-[120px]'
-                            }`}
+                            className="w-full text-xs px-2 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500"
+                            style={{ minWidth: fieldDef.minWidth }}
                           />
                         </td>
                       ))}

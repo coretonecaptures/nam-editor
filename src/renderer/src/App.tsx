@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import beakerTransparent from './assets/images/beaker.only.transparent.png'
 import { NamFile, NamMetadata, TONE_TYPES, GEAR_TYPES } from './types/nam'
-import { AppSettings, FolderWatchImportEntry, FolderWatchRule, loadSettings, saveSettings } from './types/settings'
+import { AppSettings, FolderWatchImportEntry, FolderWatchRule, MetadataSuggestRule, loadSettings, saveSettings } from './types/settings'
 import { loadLayout, saveLayout } from './types/layout'
 import { LibrarianState } from './types/librarian'
 import { FileList, ALL_GRID_COLUMNS, doExportCSV, doExportXLSX } from './components/FileList'
@@ -15,6 +15,7 @@ import { ToneStore, type ToneModel, type ToneStoreDownloadQueueJob } from './com
 import { FolderTree } from './components/FolderTree'
 import { DuplicatesModal } from './components/DuplicatesModal'
 import { ImportMetadataModal, ImportMatch } from './components/ImportMetadataModal'
+import { SuggestMetadataModal } from './components/SuggestMetadataModal'
 import { TrainingCoverageModal } from './components/TrainingCoverageModal'
 import { FolderCompareModal } from './components/FolderCompareModal'
 import { FolderGallery, FolderImagesData } from './components/FolderGallery'
@@ -22,10 +23,13 @@ import { FolderDashboard } from './components/FolderDashboard'
 import { FolderReadmePanel } from './components/FolderReadmePanel'
 import { PackInfoEditor, type DeliveryMatrixData, type PackInfo, type PackChecklistItem } from './components/PackInfoEditor'
 import { PackTargetsEditor } from './components/PackTargetsEditor'
+import { FolderSuggestRulesModal } from './components/FolderSuggestRulesModal'
 import { BundleEditor } from './components/BundleEditor'
 import { NamDashboard } from './components/NamDashboard'
 import { SessionHistoryPanel } from './components/SessionHistoryPanel'
 import * as XLSX from 'xlsx'
+import { buildMetadataSuggestionMatches, MetadataSuggestionMatch } from './utils/metadataSuggest'
+import { cloneMetadataSuggestRule, isMetadataSuggestRuleComplete, isMetadataSuggestRuleLibraryCandidate, metadataSuggestRuleSignature } from './utils/metadataSuggestRuleLibrary'
 
 export interface HistoryEntry {
   id: string
@@ -150,6 +154,13 @@ function formatPathLabel(path: string): string {
   return parts.length <= 3 ? normalized : `.../${parts.slice(-3).join('/')}`
 }
 
+function folderDisplayName(path: string | null): string {
+  if (!path) return 'All loaded files'
+  const normalized = path.replace(/\\/g, '/')
+  const parts = normalized.split('/').filter(Boolean)
+  return parts[parts.length - 1] || normalized
+}
+
 function makeFolderWatchKey(sourceFolder: string, destFolder: string): string {
   return `${sourceFolder.replace(/\\/g, '/')}=>${destFolder.replace(/\\/g, '/')}`
 }
@@ -240,10 +251,11 @@ declare global {
       tone3000Status: () => Promise<{ connected: boolean; username: string | null }>
       tone3000Connect: () => Promise<{ ok: boolean; username?: string | null; error?: string }>
       tone3000Disconnect: () => Promise<{ ok: boolean }>
-      tone3000Search: (params: { query?: string; page?: number; pageSize?: number; gears?: string[]; sizes?: string[]; sort?: string }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
-      tone3000UsersSearch: (params: { query: string; page?: number; pageSize?: number; sort?: string }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
-      tone3000Created: (params: { page?: number; pageSize?: number }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
-      tone3000GetTone: (toneId: number) => Promise<{ ok?: boolean; tone?: unknown; error?: string }>
+        tone3000Search: (params: { query?: string; page?: number; pageSize?: number; gears?: string[]; sizes?: string[]; sort?: string }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
+        tone3000UsersSearch: (params: { query: string; page?: number; pageSize?: number; sort?: string }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
+        tone3000Created: (params: { page?: number; pageSize?: number }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
+        tone3000Favorited: (params: { page?: number; pageSize?: number }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
+        tone3000GetTone: (toneId: number) => Promise<{ ok?: boolean; tone?: unknown; error?: string }>
       tone3000GetModels: (toneId: number) => Promise<{ ok?: boolean; models?: unknown[]; error?: string }>
       tone3000Download: (modelUrl: string, name: string) => Promise<{ ok?: boolean; localPath?: string; error?: string }>
       tone3000FileExists: (destDir: string, name: string) => Promise<{ exists: boolean; destPath?: string }>
@@ -385,6 +397,8 @@ export default function App() {
   const [duplicatesScopeFolder, setDuplicatesScopeFolder] = useState<string | null>(null)
   const [metadataClipboard, setMetadataClipboard] = useState<{ sourceName: string; metadata: Partial<NamFile['metadata']> } | null>(null)
   const [importModal, setImportModal] = useState<{ folderName: string; exactMatches: ImportMatch[]; prefixMatches: ImportMatch[]; unmatchedNames: string[] } | null>(null)
+  const [suggestMetadataModal, setSuggestMetadataModal] = useState<{ folderName: string; matches: MetadataSuggestionMatch[] } | null>(null)
+  const [suggestRulesEditorPath, setSuggestRulesEditorPath] = useState<string | null>(null)
   const [coverageReport, setCoverageReport] = useState<{ folderPath: string } | null>(null)
   const [watcherKey, setWatcherKey] = useState(0)
   const [recentFolders, setRecentFolders] = useState<string[]>(() => {
@@ -991,6 +1005,7 @@ export default function App() {
     if (selectedIds.size > 0) {
       setShowDashboard(false)
       setHistoryOpen(false)
+      setShowToneStore(false)
     }
   }, [selectedIds])
 
@@ -1036,6 +1051,15 @@ export default function App() {
       setListWidth(updated.defaultView === 'grid' ? loadLayout().listWidthGrid : loadLayout().listWidthList)
     }
   }
+
+  const mergeRulesIntoLibrary = useCallback((existingLibrary: MetadataSuggestRule[], sourceRules: MetadataSuggestRule[]) => {
+    const existing = new Set(existingLibrary.map(metadataSuggestRuleSignature))
+    const additions = sourceRules
+      .filter(isMetadataSuggestRuleLibraryCandidate)
+      .filter((rule) => !existing.has(metadataSuggestRuleSignature(rule)))
+      .map((rule) => cloneMetadataSuggestRule(rule, 'library'))
+    return additions.length > 0 ? [...existingLibrary, ...additions] : existingLibrary
+  }, [])
 
   const updateFolderWatchRules = useCallback((updater: (rules: FolderWatchRule[]) => FolderWatchRule[]) => {
     setSettings((prev) => {
@@ -2439,6 +2463,129 @@ export default function App() {
     setStatus({ message: msg, type: failed > 0 ? 'error' : 'success' })
   }
 
+  const handleSuggestMetadata = (folderPath: string | null) => {
+    const normalizedFolder = folderPath ? folderPath.replace(/\\/g, '/') : null
+    const scopedFiles = normalizedFolder === null
+      ? files
+      : files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(normalizedFolder + '/'))
+
+    openSuggestMetadataModal(scopedFiles, folderDisplayName(folderPath))
+  }
+
+  const handleSuggestMetadataForSelection = (paths: string[]) => {
+    const pathSet = new Set(paths)
+    const scopedFiles = files.filter((file) => pathSet.has(file.filePath))
+    const label = paths.length === 1 ? '1 selected capture' : `${paths.length} selected captures`
+    openSuggestMetadataModal(scopedFiles, label)
+  }
+
+  const handleOpenSuggestRulesEditor = (folderPath: string) => {
+    setSuggestRulesEditorPath(folderPath.replace(/\\/g, '/'))
+  }
+
+  const handleSaveScopedSuggestRules = (folderPath: string, rules: MetadataSuggestRule[]) => {
+    const normalizedPath = folderPath.replace(/\\/g, '/')
+    const cleanedRules = rules.filter((rule) => rule.value.trim())
+    const nextSets = settings.metadataSuggestScopedRules.filter((set) => set.scopePath.replace(/\\/g, '/') !== normalizedPath)
+    if (cleanedRules.length > 0) {
+      nextSets.push({ scopePath: normalizedPath, rules: cleanedRules })
+    }
+    handleSaveSettings({
+      ...settings,
+      metadataSuggestScopedRules: nextSets,
+      metadataSuggestRuleLibrary: mergeRulesIntoLibrary(settings.metadataSuggestRuleLibrary, cleanedRules),
+    })
+    setSuggestRulesEditorPath(null)
+    setStatus({
+      message: cleanedRules.length > 0
+        ? `Saved ${cleanedRules.length} folder suggestion rule${cleanedRules.length !== 1 ? 's' : ''}`
+        : 'Removed folder suggestion rules',
+      type: 'success',
+    })
+  }
+
+  const handleSaveScopedSuggestRulesAndStayOpen = (folderPath: string, rules: MetadataSuggestRule[]) => {
+    const normalizedPath = folderPath.replace(/\\/g, '/')
+    const cleanedRules = rules.filter((rule) => rule.value.trim())
+    const nextSets = settings.metadataSuggestScopedRules.filter((set) => set.scopePath.replace(/\\/g, '/') !== normalizedPath)
+    if (cleanedRules.length > 0) {
+      nextSets.push({ scopePath: normalizedPath, rules: cleanedRules })
+    }
+    handleSaveSettings({
+      ...settings,
+      metadataSuggestScopedRules: nextSets,
+      metadataSuggestRuleLibrary: mergeRulesIntoLibrary(settings.metadataSuggestRuleLibrary, cleanedRules),
+    })
+    setStatus({
+      message: cleanedRules.length > 0
+        ? `Saved ${cleanedRules.length} folder suggestion rule${cleanedRules.length !== 1 ? 's' : ''}`
+        : 'Removed folder suggestion rules',
+      type: 'success',
+    })
+  }
+
+  const openSuggestMetadataModal = (scopedFiles: NamFile[], folderName: string) => {
+    const scopeLabel = folderName
+
+    if (scopedFiles.length === 0) {
+      const message = `No files available in ${scopeLabel} to analyze`
+      setStatus({ message, type: 'info' })
+      window.alert(message)
+      return
+    }
+
+    const matches = buildMetadataSuggestionMatches(scopedFiles, settings.metadataSuggestRules, settings.metadataSuggestScopedRules)
+    if (matches.length === 0) {
+      const message = `No metadata suggestions found for blank fields in ${scopeLabel}. Try adding a rule in Settings -> Metadata Suggestions, or test on files missing tone type / gear type.`
+      setStatus({ message, type: 'info' })
+      window.alert(message)
+      return
+    }
+
+    setSuggestMetadataModal({
+      folderName: scopeLabel,
+      matches,
+    })
+  }
+
+  const handleSuggestMetadataConfirm = async (matches: MetadataSuggestionMatch[]) => {
+    setSuggestMetadataModal(null)
+    let updated = 0
+    let failed = 0
+    const successMap = new Map<string, NamFile['metadata']>()
+
+    for (const match of matches) {
+      const incoming = Object.fromEntries(match.suggestions.map((suggestion) => [suggestion.field, suggestion.value])) as Partial<NamFile['metadata']>
+      if (Object.keys(incoming).length === 0) continue
+      const newMeta = { ...match.file.metadata, ...incoming }
+      const result = await window.api.writeMetadata(match.file.filePath, incoming)
+      if (result.success) {
+        updated++
+        successMap.set(match.file.filePath, newMeta)
+      } else {
+        failed++
+      }
+    }
+
+    if (successMap.size > 0) {
+      setFiles((prev) => prev.map((file) => {
+        const newMeta = successMap.get(file.filePath)
+        return newMeta ? { ...file, metadata: newMeta, originalMetadata: newMeta, isDirty: false, autoFilledFields: [] } : file
+      }))
+    }
+
+    if (updated > 0) {
+      addHistoryEntry({
+        operation: 'suggest-metadata',
+        summary: `Applied metadata suggestions to ${updated} file${updated !== 1 ? 's' : ''}`,
+      })
+    }
+
+    let message = `Applied metadata suggestions to ${updated} file${updated !== 1 ? 's' : ''}`
+    if (failed > 0) message += `, ${failed} failed`
+    setStatus({ message, type: failed > 0 ? 'error' : 'success' })
+  }
+
   const handleMoveDuplicates = async (moves: { filePath: string; destName: string }[]) => {
     if (!librarian.rootFolder) return
     // Create _Duplicates folder (ignore error if already exists)
@@ -2569,6 +2716,7 @@ export default function App() {
   })
 
   const selectedFiles = visibleFiles.filter((f) => selectedIds.has(f.filePath))
+  const showToneStorePanel = showToneStore && !showSettings && !showDashboard && !historyOpen && batchFolder === null
   useEffect(() => {
     if (selectedFiles.length !== 1) {
       setMetadataCoverPath(null)
@@ -2681,12 +2829,12 @@ export default function App() {
           setShowToneStore(false)
           setBatchFolder(null)
         }}
-        toneStoreActive={showToneStore}
-        onToggleToneStore={() => {
-          setShowToneStore((v) => !v)
-          setShowSettings(false)
-          setBatchFolder(null)
-        }}
+          toneStoreActive={showToneStorePanel}
+          onToggleToneStore={() => {
+            setShowToneStore((v) => !v)
+            setShowSettings(false)
+            setBatchFolder(null)
+          }}
       />
 
       <div className="flex flex-1 overflow-hidden relative">
@@ -2699,6 +2847,7 @@ export default function App() {
                 files={files}
                 selectedFolders={librarian.selectedFolders}
                 dirtyPaths={dirtyPaths}
+                foldersWithSuggestRules={new Set(settings.metadataSuggestScopedRules.map((set) => set.scopePath.replace(/\\/g, '/')))}
                 onFilterChange={(matching) => setLibraryFilter(matching)}
                 onSelect={(path, ctrl) => {
                   if (!ctrl) {
@@ -2789,6 +2938,8 @@ export default function App() {
                 onExportFolder={handleExportFolder}
                 onGenerateTemplate={handleGenerateTemplate}
                 onImportMetadata={handleImportMetadata}
+                onSuggestMetadata={handleSuggestMetadata}
+                onEditSuggestRules={handleOpenSuggestRulesEditor}
                 onSelectAllInFolder={handleSelectAllInFolder}
                 onCoverageReport={(folderPath) => setCoverageReport({ folderPath })}
                 scrollToFolder={treeScrollTarget}
@@ -2874,6 +3025,7 @@ export default function App() {
                 })
                 if (gridMaximized) setGridSlideOpen(true)
               }}
+              onSuggestMetadataSelected={handleSuggestMetadataForSelection}
               onSaveSelected={async (paths) => {
                 const pathSet = new Set(paths)
                 const targets = files.filter((f) => pathSet.has(f.filePath) && f.isDirty)
@@ -2948,10 +3100,10 @@ export default function App() {
         <div ref={mainContentRef} tabIndex={-1} className={`flex-1 overflow-hidden flex flex-col focus:outline-none${gridMaximized ? ' hidden' : ''}`} style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           {showSettings ? (
             <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} />
-          ) : showToneStore ? (
-            <ToneStore
-              onClose={() => setShowToneStore(false)}
-              onDownloaded={(paths) => loadFiles(paths, 'append')}
+            ) : showToneStorePanel ? (
+              <ToneStore
+                onClose={() => setShowToneStore(false)}
+                onDownloaded={(paths) => loadFiles(paths, 'append')}
               onFilterLocalCreator={handleFilterLocalCreator}
               savedTone3000Username={settings.tone3000Username}
               searchRequest={toneStoreSearchRequest}
@@ -3431,6 +3583,30 @@ export default function App() {
           unmatchedNames={importModal.unmatchedNames}
           onConfirm={handleImportConfirm}
           onClose={() => setImportModal(null)}
+        />
+      )}
+
+      {suggestMetadataModal && (
+        <SuggestMetadataModal
+          folderName={suggestMetadataModal.folderName}
+          matches={suggestMetadataModal.matches}
+          onConfirm={handleSuggestMetadataConfirm}
+          onClose={() => setSuggestMetadataModal(null)}
+        />
+      )}
+
+      {suggestRulesEditorPath && (
+        <FolderSuggestRulesModal
+          folderPath={suggestRulesEditorPath}
+          globalRules={settings.metadataSuggestRules}
+          ruleLibrary={settings.metadataSuggestRuleLibrary}
+          initialRules={
+            settings.metadataSuggestScopedRules.find((set) => set.scopePath.replace(/\\/g, '/') === suggestRulesEditorPath)?.rules ?? []
+          }
+          onSaveRuleLibrary={(rules) => handleSaveSettings({ ...settings, metadataSuggestRuleLibrary: rules })}
+          onSave={(rules) => handleSaveScopedSuggestRules(suggestRulesEditorPath, rules)}
+          onSaveAndStayOpen={(rules) => handleSaveScopedSuggestRulesAndStayOpen(suggestRulesEditorPath, rules)}
+          onClose={() => setSuggestRulesEditorPath(null)}
         />
       )}
 
