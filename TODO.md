@@ -54,5 +54,5 @@
 - Phase II: add per-rule overwrite behavior for metadata suggestions. First pass: `blank only` vs `overwrite existing`. Safer follow-up: optional guard values so a rule only overwrites known junk placeholders (for example `tz-make` / `tz-model`) instead of any non-empty value.
 - Phase II / discussion: support wildcard or regex-style suggestion rules for patterned metadata tokens (for example values like `G5.5`, `G1.2`, `G8`) where one rule should recognize a family of setting strings instead of requiring a separate exact-token rule for every variant.
 - Discussion: explore reverse-template / pattern-based rules that extract metadata from naming structures (for example something in the spirit of `{tone_type} {creator} {cabinet}`) without requiring users to understand regex.
-- Add a workflow to consolidate loose `.nam` files from Downloads or scattered folders into a chosen working folder.
+- Design a safe explicit-source workflow to collect `.nam` files from user-chosen intake folders into a working folder, without trying to automatically infer which existing folders are "loose" versus valid staging/archive/release locations.
 - Investigate a safe "build logical folder structure from existing metadata" helper: preview-only first, because auto-restructuring by amp / cab / combo / settings could be powerful but dangerous if metadata is incomplete or wrong.
