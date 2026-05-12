@@ -1,3 +1,5 @@
+import { GEAR_TYPES, TONE_TYPES } from './nam'
+
 export interface FolderOverride {
   manufacturer?: string
   model?: string
@@ -44,6 +46,11 @@ export const METADATA_SUGGEST_FIELD_OPTIONS = [
 
 export type MetadataSuggestField = typeof METADATA_SUGGEST_FIELD_OPTIONS[number]['value']
 export type MetadataSuggestMatchIn = 'filename' | 'folder' | 'either'
+
+export const METADATA_SUGGEST_LOOKUP_VALUES: Partial<Record<MetadataSuggestField, readonly string[]>> = {
+  gear_type: GEAR_TYPES,
+  tone_type: TONE_TYPES,
+}
 
 export interface MetadataSuggestRule {
   id: string

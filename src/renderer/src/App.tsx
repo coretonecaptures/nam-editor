@@ -3599,6 +3599,7 @@ export default function App() {
         <FolderSuggestRulesModal
           folderPath={suggestRulesEditorPath}
           globalRules={settings.metadataSuggestRules}
+          scopedRuleSets={settings.metadataSuggestScopedRules}
           ruleLibrary={settings.metadataSuggestRuleLibrary}
           initialRules={
             settings.metadataSuggestScopedRules.find((set) => set.scopePath.replace(/\\/g, '/') === suggestRulesEditorPath)?.rules ?? []

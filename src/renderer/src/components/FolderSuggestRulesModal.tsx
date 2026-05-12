@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react'
 import {
   METADATA_SUGGEST_FIELD_OPTIONS,
+  METADATA_SUGGEST_LOOKUP_VALUES,
   MetadataSuggestMatchIn,
   MetadataSuggestRule,
+  MetadataSuggestScopedRuleSet,
 } from '../types/settings'
 import { MetadataSuggestRuleLibraryModal } from './MetadataSuggestRuleLibraryModal'
 import {
@@ -15,6 +17,7 @@ import {
 interface FolderSuggestRulesModalProps {
   folderPath: string
   globalRules: MetadataSuggestRule[]
+  scopedRuleSets: MetadataSuggestScopedRuleSet[]
   initialRules: MetadataSuggestRule[]
   ruleLibrary: MetadataSuggestRule[]
   onSaveRuleLibrary: (rules: MetadataSuggestRule[]) => void
@@ -32,6 +35,7 @@ function formatPath(path: string): string {
 export function FolderSuggestRulesModal({
   folderPath,
   globalRules,
+  scopedRuleSets,
   initialRules,
   ruleLibrary,
   onSaveRuleLibrary,
@@ -41,8 +45,13 @@ export function FolderSuggestRulesModal({
 }: FolderSuggestRulesModalProps) {
   const [draftRules, setDraftRules] = useState<MetadataSuggestRule[]>(initialRules)
   const [showRuleLibraryPicker, setShowRuleLibraryPicker] = useState(false)
+  const [showScopedPicker, setShowScopedPicker] = useState(false)
 
   const enabledCount = useMemo(() => draftRules.filter((rule) => rule.enabled).length, [draftRules])
+  const availableScopedSources = useMemo(
+    () => scopedRuleSets.filter((set) => set.scopePath.replace(/\\/g, '/') !== folderPath.replace(/\\/g, '/')),
+    [scopedRuleSets, folderPath]
+  )
 
   const addRule = () => {
     setDraftRules((prev) => [
@@ -82,6 +91,23 @@ export function FolderSuggestRulesModal({
     setShowRuleLibraryPicker(false)
   }
 
+  const replaceFromScopedSource = (scopePath: string) => {
+    const source = scopedRuleSets.find((set) => set.scopePath.replace(/\\/g, '/') === scopePath.replace(/\\/g, '/'))
+    if (!source) return
+    setDraftRules(source.rules.map((rule) => cloneMetadataSuggestRule(rule, 'scoped-copy')))
+    setShowScopedPicker(false)
+  }
+
+  const appendFromScopedSource = (scopePath: string) => {
+    const source = scopedRuleSets.find((set) => set.scopePath.replace(/\\/g, '/') === scopePath.replace(/\\/g, '/'))
+    if (!source) return
+    setDraftRules((prev) => [
+      ...prev,
+      ...source.rules.map((rule) => cloneMetadataSuggestRule(rule, 'scoped-copy')),
+    ])
+    setShowScopedPicker(false)
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
       <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-full max-w-4xl mx-4 flex flex-col max-h-[85vh]">
@@ -113,6 +139,17 @@ export function FolderSuggestRulesModal({
               className="px-3 py-1.5 rounded border border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-900/20 text-xs text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/30 transition-colors"
             >
               Add from library…
+            </button>
+            <button
+              onClick={() => setShowScopedPicker(true)}
+              disabled={availableScopedSources.length === 0}
+              className={`px-3 py-1.5 rounded border text-xs transition-colors ${
+                availableScopedSources.length === 0
+                  ? 'border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-600 cursor-default'
+                  : 'border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/30'
+              }`}
+            >
+              Copy from folder…
             </button>
             <button
               onClick={addRule}
@@ -162,7 +199,13 @@ export function FolderSuggestRulesModal({
                       value={rule.field}
                       onChange={(e) => {
                         const next = draftRules.map((item, itemIndex) =>
-                          itemIndex === index ? { ...item, field: e.target.value as typeof rule.field } : item
+                          itemIndex === index ? {
+                            ...item,
+                            field: e.target.value as typeof rule.field,
+                            value: METADATA_SUGGEST_LOOKUP_VALUES[e.target.value as typeof rule.field]?.includes(item.value)
+                              ? item.value
+                              : ''
+                          } : item
                         )
                         setDraftRules(next)
                       }}
@@ -172,17 +215,35 @@ export function FolderSuggestRulesModal({
                         <option key={option.value} value={option.value}>{option.label}</option>
                       ))}
                     </select>
-                    <input
-                      value={rule.value}
-                      placeholder="Suggested value"
-                      onChange={(e) => {
-                        const next = draftRules.map((item, itemIndex) =>
-                          itemIndex === index ? { ...item, value: e.target.value } : item
-                        )
-                        setDraftRules(next)
-                      }}
-                      className="px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                    />
+                    {METADATA_SUGGEST_LOOKUP_VALUES[rule.field] ? (
+                      <select
+                        value={rule.value}
+                        onChange={(e) => {
+                          const next = draftRules.map((item, itemIndex) =>
+                            itemIndex === index ? { ...item, value: e.target.value } : item
+                          )
+                          setDraftRules(next)
+                        }}
+                        className="px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                      >
+                        <option value="">Pick value…</option>
+                        {METADATA_SUGGEST_LOOKUP_VALUES[rule.field]!.map((option) => (
+                          <option key={option} value={option}>{option}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        value={rule.value}
+                        placeholder="Suggested value"
+                        onChange={(e) => {
+                          const next = draftRules.map((item, itemIndex) =>
+                            itemIndex === index ? { ...item, value: e.target.value } : item
+                          )
+                          setDraftRules(next)
+                        }}
+                        className="px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                      />
+                    )}
                     <select
                       value={rule.matchIn}
                       onChange={(e) => {
@@ -290,6 +351,106 @@ export function FolderSuggestRulesModal({
             onClose={() => setShowRuleLibraryPicker(false)}
           />
         )}
+        {showScopedPicker && (
+          <ScopedRuleSetPickerModal
+            currentFolderPath={folderPath}
+            ruleSets={availableScopedSources}
+            onAppend={appendFromScopedSource}
+            onReplace={replaceFromScopedSource}
+            onClose={() => setShowScopedPicker(false)}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ScopedRuleSetPickerModal({
+  currentFolderPath,
+  ruleSets,
+  onAppend,
+  onReplace,
+  onClose,
+}: {
+  currentFolderPath: string
+  ruleSets: MetadataSuggestScopedRuleSet[]
+  onAppend: (scopePath: string) => void
+  onReplace: (scopePath: string) => void
+  onClose: () => void
+}) {
+  const [selectedPath, setSelectedPath] = useState<string>(ruleSets[0]?.scopePath ?? '')
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60">
+      <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col max-h-[80vh]">
+        <div className="px-5 pt-5 pb-3 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+          <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">Copy Rules from Another Folder</h3>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+            Import scoped rules from another folder into {formatPath(currentFolderPath)}.
+          </p>
+        </div>
+        <div className="px-5 py-4 flex-1 overflow-y-auto space-y-2">
+          {ruleSets.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-gray-300 dark:border-gray-700 px-4 py-6 text-center text-sm text-gray-500 dark:text-gray-500">
+              No other folder-scoped rule sets exist yet.
+            </div>
+          ) : (
+            ruleSets.map((set) => (
+              <label
+                key={set.scopePath}
+                className={`flex items-start gap-3 rounded-lg border px-3 py-3 cursor-pointer transition-colors ${
+                  selectedPath === set.scopePath
+                    ? 'border-indigo-400 bg-indigo-50 dark:bg-indigo-900/20'
+                    : 'border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="scoped-rule-source"
+                  checked={selectedPath === set.scopePath}
+                  onChange={() => setSelectedPath(set.scopePath)}
+                  className="mt-0.5 accent-indigo-600"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm text-gray-900 dark:text-gray-100 truncate">{formatPath(set.scopePath)}</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                    {set.rules.length} rule{set.rules.length !== 1 ? 's' : ''}
+                  </div>
+                </div>
+              </label>
+            ))
+          )}
+        </div>
+        <div className="px-5 py-4 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2 flex-shrink-0">
+          <button
+            onClick={onClose}
+            className="px-4 py-1.5 text-sm rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => selectedPath && onAppend(selectedPath)}
+            disabled={!selectedPath}
+            className={`px-4 py-1.5 text-sm rounded-lg transition-colors ${
+              selectedPath
+                ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-900/40'
+                : 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-600 cursor-default'
+            }`}
+          >
+            Append rules
+          </button>
+          <button
+            onClick={() => selectedPath && onReplace(selectedPath)}
+            disabled={!selectedPath}
+            className={`px-4 py-1.5 text-sm rounded-lg transition-colors ${
+              selectedPath
+                ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+                : 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-600 cursor-default'
+            }`}
+          >
+            Replace current rules
+          </button>
+        </div>
       </div>
     </div>
   )

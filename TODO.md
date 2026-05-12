@@ -21,6 +21,7 @@
 - Append to comments (batch)
 - Unify list-view filter clear buttons
 - High priority: when moving duplicates, let the user choose the destination folder at move time instead of always using the root `_Duplicates` folder
+- Add exact content-based duplicate detection alongside filename and metadata-name duplicate checks.
 
 ## Import and performance
 
@@ -52,5 +53,6 @@
 - Phase II: for lookup-backed suggestion fields like `Gear Type` and `Tone Type`, replace free-text "Suggested value" entry with real dropdowns / validated pickers so users do not have to know the stored internal value names.
 - Phase II: add per-rule overwrite behavior for metadata suggestions. First pass: `blank only` vs `overwrite existing`. Safer follow-up: optional guard values so a rule only overwrites known junk placeholders (for example `tz-make` / `tz-model`) instead of any non-empty value.
 - Phase II / discussion: support wildcard or regex-style suggestion rules for patterned metadata tokens (for example values like `G5.5`, `G1.2`, `G8`) where one rule should recognize a family of setting strings instead of requiring a separate exact-token rule for every variant.
+- Discussion: explore reverse-template / pattern-based rules that extract metadata from naming structures (for example something in the spirit of `{tone_type} {creator} {cabinet}`) without requiring users to understand regex.
 - Add a workflow to consolidate loose `.nam` files from Downloads or scattered folders into a chosen working folder.
 - Investigate a safe "build logical folder structure from existing metadata" helper: preview-only first, because auto-restructuring by amp / cab / combo / settings could be powerful but dangerous if metadata is incomplete or wrong.

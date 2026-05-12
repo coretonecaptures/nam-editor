@@ -3,6 +3,7 @@ import {
   AppSettings,
   DEFAULT_PACK_CHECKLIST_TEMPLATE,
   METADATA_SUGGEST_FIELD_OPTIONS,
+  METADATA_SUGGEST_LOOKUP_VALUES,
   MetadataSuggestRule,
   MetadataSuggestMatchIn,
   cloneChecklistTemplate,
@@ -834,7 +835,13 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                           value={rule.field}
                           onChange={(e) => {
                             const next = draft.metadataSuggestRules.map((item, itemIndex) =>
-                              itemIndex === index ? { ...item, field: e.target.value as typeof rule.field } : item
+                              itemIndex === index ? {
+                                ...item,
+                                field: e.target.value as typeof rule.field,
+                                value: METADATA_SUGGEST_LOOKUP_VALUES[e.target.value as typeof rule.field]?.includes(item.value)
+                                  ? item.value
+                                  : ''
+                              } : item
                             )
                             update('metadataSuggestRules', next)
                           }}
@@ -844,17 +851,35 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                             <option key={option.value} value={option.value}>{option.label}</option>
                           ))}
                         </select>
-                        <input
-                          value={rule.value}
-                          placeholder="Suggested value"
-                          onChange={(e) => {
-                            const next = draft.metadataSuggestRules.map((item, itemIndex) =>
-                              itemIndex === index ? { ...item, value: e.target.value } : item
-                            )
-                            update('metadataSuggestRules', next)
-                          }}
-                          className="px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                        />
+                        {METADATA_SUGGEST_LOOKUP_VALUES[rule.field] ? (
+                          <select
+                            value={rule.value}
+                            onChange={(e) => {
+                              const next = draft.metadataSuggestRules.map((item, itemIndex) =>
+                                itemIndex === index ? { ...item, value: e.target.value } : item
+                              )
+                              update('metadataSuggestRules', next)
+                            }}
+                            className="px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                          >
+                            <option value="">Pick value…</option>
+                            {METADATA_SUGGEST_LOOKUP_VALUES[rule.field]!.map((option) => (
+                              <option key={option} value={option}>{option}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            value={rule.value}
+                            placeholder="Suggested value"
+                            onChange={(e) => {
+                              const next = draft.metadataSuggestRules.map((item, itemIndex) =>
+                                itemIndex === index ? { ...item, value: e.target.value } : item
+                              )
+                              update('metadataSuggestRules', next)
+                            }}
+                            className="px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                          />
+                        )}
                         <select
                           value={rule.matchIn}
                           onChange={(e) => {
