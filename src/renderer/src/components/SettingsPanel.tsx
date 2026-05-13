@@ -10,6 +10,7 @@ import {
   cloneChecklistTemplate,
 } from '../types/settings'
 import { MetadataSuggestRuleLibraryModal } from './MetadataSuggestRuleLibraryModal'
+import { FilenameRecipeBuilderModal } from './FilenameRecipeBuilderModal'
 import {
   cloneMetadataSuggestRule,
   isMetadataSuggestRuleLibraryCandidate,
@@ -56,6 +57,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
   const [packCatalogOpen, setPackCatalogOpen] = useState(false)
   const [metadataSuggestOpen, setMetadataSuggestOpen] = useState(false)
   const [showRuleLibraryPicker, setShowRuleLibraryPicker] = useState(false)
+  const [showRecipeBuilder, setShowRecipeBuilder] = useState(false)
   const [folderWatchesOpen, setFolderWatchesOpen] = useState(false)
 
   const handleCheckForUpdates = async () => {
@@ -119,6 +121,15 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
       'metadataSuggestRuleLibrary',
       draft.metadataSuggestRuleLibrary.filter((rule) => rule.id !== ruleId)
     )
+  }
+
+  const appendRecipeRulesToGlobal = (selectedRules: MetadataSuggestRule[]) => {
+    if (selectedRules.length === 0) return
+    update('metadataSuggestRules', [
+      ...draft.metadataSuggestRules,
+      ...selectedRules,
+    ])
+    setShowRecipeBuilder(false)
   }
 
   return (
@@ -806,6 +817,12 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                 Add from library…
                 <span className="text-[10px] text-violet-500/80">{draft.metadataSuggestRuleLibrary.length}</span>
               </button>
+              <button
+                onClick={() => setShowRecipeBuilder(true)}
+                className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors"
+              >
+                Build from example…
+              </button>
             </div>
             {metadataSuggestOpen && (
               <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-3 bg-gray-50/60 dark:bg-gray-900/30 space-y-2">
@@ -814,7 +831,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                 ) : (
                   draft.metadataSuggestRules.map((rule, index) => (
                     <div key={rule.id} className={`rounded border p-2 ${rule.overwriteExisting ? 'border-amber-300/70 dark:border-amber-700/70 bg-amber-50/40 dark:bg-amber-900/10' : 'border-gray-200 dark:border-gray-800 bg-white/70 dark:bg-gray-950/30'}`}>
-                      <div className="grid grid-cols-1 md:grid-cols-[auto_minmax(0,1fr)_minmax(0,0.95fr)_minmax(0,1fr)_minmax(0,0.95fr)_minmax(0,0.95fr)_auto_auto_auto] gap-2 items-center">
+                      <div className="grid grid-cols-1 md:grid-cols-[auto_minmax(0,1fr)_84px_minmax(0,0.95fr)_minmax(0,1fr)_minmax(0,0.95fr)_minmax(0,0.95fr)_auto_auto_auto] gap-2 items-center">
                         <label className="inline-flex items-center justify-center text-xs text-gray-600 dark:text-gray-400">
                           <input
                             type="checkbox"
@@ -839,6 +856,21 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                             update('metadataSuggestRules', next)
                           }}
                           className="px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                        />
+                        <input
+                          type="number"
+                          min={1}
+                          value={rule.segmentIndex ?? ''}
+                          placeholder="#"
+                          onChange={(e) => {
+                            const raw = e.target.value.trim()
+                            const next = draft.metadataSuggestRules.map((item, itemIndex) =>
+                              itemIndex === index ? { ...item, segmentIndex: raw === '' ? null : Math.max(1, Math.floor(Number(raw) || 1)) } : item
+                            )
+                            update('metadataSuggestRules', next)
+                          }}
+                          className="px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                          title="Optional filename segment number, starting at 1"
                         />
                         <select
                           value={rule.field}
@@ -979,6 +1011,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                     {
                       id: `rule-${Date.now()}`,
                       token: '',
+                      segmentIndex: null,
                       field: 'gear_make',
                       value: '',
                       matchIn: 'either',
@@ -993,7 +1026,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                   + Add suggestion rule
                 </button>
                 <p className="text-[11px] text-gray-500 dark:text-gray-500 pt-1">
-                  Tip: repeat the same token across multiple rows if one detection should fill multiple fields. Leave the token blank to make a scope-wide default rule. Use <code>Prefix + value</code> with templates like <code>{'{match}'}</code> or <code>Gain {'{value}'}</code> for settings strings such as <code>G5.5</code>. Overwrite rows are highlighted and saved into the rule library automatically when you save settings.
+                  Tip: repeat the same token across multiple rows if one detection should fill multiple fields. Leave the token blank to make a scope-wide default rule. Use <code>Segment #</code> to target a specific filename slot such as <code>JCM800 Lo P6 B8 M4 T7 G10</code>. Use <code>Prefix + value</code> with templates like <code>{'{match}'}</code> or <code>Gain {'{value}'}</code> for settings strings such as <code>G5.5</code>. Repeated rules can build up <code>Amp Settings</code> into a combined value.
                 </p>
               </div>
             )}
@@ -1007,6 +1040,14 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
               onConfirm={appendLibraryRulesToGlobal}
               onDeleteRule={deleteRuleLibraryEntry}
               onClose={() => setShowRuleLibraryPicker(false)}
+            />
+          )}
+          {showRecipeBuilder && (
+            <FilenameRecipeBuilderModal
+              title="Build Global Rules From Example Filename"
+              initialExample=""
+              onConfirm={appendRecipeRulesToGlobal}
+              onClose={() => setShowRecipeBuilder(false)}
             />
           )}
 

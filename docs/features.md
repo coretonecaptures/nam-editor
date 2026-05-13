@@ -222,12 +222,183 @@ NAM Lab can find duplicates by:
 
 - filename
 - capture name
+- exact file content (full `.nam` file hash)
 
 You can run duplicate scans from:
 - the main toolbar
 - folder-scoped right-click actions in the tree
 
 Actions include keeping one file and moving or deleting the rest.
+
+Content mode is exact-match only:
+- it hashes the full `.nam` file
+- matching files are byte-for-byte identical, including metadata and model data
+- this is different from filename or meta-name grouping
+
+---
+
+## Metadata Suggestions
+
+NAM Lab includes a preview-first metadata suggestion system for filling or repairing metadata across many captures.
+
+It supports:
+- global rules
+- folder-scoped rules
+- blank-token scope defaults
+- reusable rule library
+- overwrite rules
+- guarded overwrites for junk placeholders
+- filename segment targeting
+- "Build from example..." helpers
+
+### Rule types
+
+Rules can match:
+- exact token
+- contains
+- starts with
+- ends with
+- prefix + value
+
+Rules can look in:
+- filename only
+- folder only
+- filename or folder
+
+Rules can target a specific filename segment:
+- `1` = first space-separated segment
+- `2` = second
+- blank = match anywhere in the full filename
+
+### Overwrite behavior
+
+Rules normally suggest values only for blank fields.
+
+If `Overwrite` is enabled, a rule can also replace existing values.
+
+For safer cleanup, overwrite rules can be guarded so they only apply when the current value matches known junk placeholders such as:
+- `tz-make`
+- `tz-model`
+- `Unknown`
+- `N/A`
+
+### Rule library
+
+Complete non-blank-token rules can be saved into a reusable library and copied into:
+- global rules
+- folder rules
+
+Blank-token scope defaults are intentionally not stored in the library.
+
+### Build from example
+
+The example builder is designed for consistent naming styles.
+
+Example:
+- `JCM800 Lo P6 B8 M4 T7 G10`
+
+You can map that into:
+- make / model
+- amp switches
+- amp settings
+
+`Prefix + value` rules support templates such as:
+- `Gain {value}`
+- `Bass {value}`
+- `Volume {value}`
+
+So a segment like `V8` can become:
+- `Volume 8`
+
+This works best when a creator or pack uses the same filename structure across many captures.
+
+### Clearing suggestions
+
+If NAM Lab auto-filled values at load time and you want to see the raw on-disk metadata again:
+- use `Clear suggestions` on a capture
+- or `Clear Suggestions` globally in the toolbar
+
+This only clears app-added auto-fill values in the current session. It does not write to disk by itself.
+
+---
+
+## Library Cleanup / Build Library
+
+NAM Lab includes a preview-first cleanup and rebuild workflow for reorganizing libraries without manually dragging folders around.
+
+### Entry points
+
+There are two main ways to use it:
+
+- **Library Tools -> Clean Up / Build Library...**
+  - broad intake / collection flow
+  - best for messy or disjointed source roots
+
+- **Right-click folder -> Clean this folder...**
+  - scoped subtree cleanup
+  - best for recategorizing a creator folder, amp folder, or `Needs Review`
+
+### Structure options
+
+Current structure presets include:
+- `Flat`
+- `Creator`
+- `Creator > Amp`
+- `Creator > Amp > DI/CAB`
+- `Creator > Amp > DI/CAB > Preset Type`
+
+Cleanup builds as much path as it can from the metadata available instead of failing the whole file when one deeper level is missing.
+
+Examples:
+- creator known -> move into creator folder
+- creator + amp known -> move into creator / amp
+- creator + amp + DI/CAB known -> move deeper
+- missing deeper data -> route to `Needs Review` at the deepest confident level
+
+### Preview states
+
+Cleanup preview separates rows into:
+- `Ready`
+- `Needs Review`
+- `No Change`
+
+`No Change` means the file already matches the selected structure.
+
+`Needs Review` means NAM Lab cannot confidently place that file all the way into the requested structure with the metadata currently available.
+
+The `Needs Review` subset can be exported to:
+- CSV
+- XLSX
+
+### Folder mode anchor behavior
+
+When you use **Clean this folder...**, NAM Lab treats the selected folder as an anchor.
+
+That means:
+- if the current folder already represents part of the desired path
+- cleanup does not rebuild that same prefix inside it again
+
+This is what makes "clean this creator/amp folder in place" work without generating duplicated parent folders.
+
+### Important destination-root rule
+
+If you are repairing a bad placeholder subtree like:
+- `amalgamaudio/tz-make tz-model/di`
+
+and you fixed the metadata so the files now belong under:
+- `amalgamaudio/gibson g200/di`
+
+set **Destination Library Root** to the parent branch you want to keep, such as:
+- `amalgamaudio`
+
+Do not leave the destination on the placeholder folder, or cleanup will keep rebuilding under that old branch because it is acting as the active anchor.
+
+### Copy vs Move
+
+- `Copy` is the safer default for broad cleanup runs
+- `Move` is often the right choice for folder-scoped recategorize flows
+
+Use `Copy` first whenever you are testing a new structure or naming repair strategy.
 
 ---
 

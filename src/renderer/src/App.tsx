@@ -3393,6 +3393,9 @@ export default function App() {
   const gearModelSuggestions = Array.from(new Set(
     files.map((f) => f.metadata.gear_model).filter((v): v is string => !!v)
   )).sort()
+  const suggestRulesEditorExample = suggestRulesEditorPath
+    ? (files.find((file) => file.filePath.replace(/\\/g, '/').startsWith(suggestRulesEditorPath + '/'))?.fileName ?? '')
+    : ''
 
   return (
     <div
@@ -4262,6 +4265,7 @@ export default function App() {
       {suggestRulesEditorPath && (
         <FolderSuggestRulesModal
           folderPath={suggestRulesEditorPath}
+          initialExample={suggestRulesEditorExample}
           globalRules={settings.metadataSuggestRules}
           scopedRuleSets={settings.metadataSuggestScopedRules}
           ruleLibrary={settings.metadataSuggestRuleLibrary}

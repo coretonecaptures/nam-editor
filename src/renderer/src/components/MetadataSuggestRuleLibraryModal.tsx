@@ -94,6 +94,11 @@ export function MetadataSuggestRuleLibraryModal({
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-800 dark:text-gray-200">
                         <span className="font-semibold text-violet-600 dark:text-violet-400">{rule.token || '(blank token)'}</span>
+                        {rule.segmentIndex != null && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-300/70 dark:border-indigo-700/60 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 font-semibold uppercase tracking-wide">
+                            Segment {rule.segmentIndex}
+                          </span>
+                        )}
                         <span className="text-gray-400 dark:text-gray-500">-&gt;</span>
                         <span>{FIELD_LABELS.get(rule.field) ?? rule.field}</span>
                         <span className="text-gray-400 dark:text-gray-500">=</span>

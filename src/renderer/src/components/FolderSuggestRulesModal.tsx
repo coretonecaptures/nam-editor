@@ -8,6 +8,7 @@ import {
   MetadataSuggestScopedRuleSet,
 } from '../types/settings'
 import { MetadataSuggestRuleLibraryModal } from './MetadataSuggestRuleLibraryModal'
+import { FilenameRecipeBuilderModal } from './FilenameRecipeBuilderModal'
 import {
   cloneMetadataSuggestRule,
   isMetadataSuggestRuleLibraryCandidate,
@@ -17,6 +18,7 @@ import {
 
 interface FolderSuggestRulesModalProps {
   folderPath: string
+  initialExample?: string
   globalRules: MetadataSuggestRule[]
   scopedRuleSets: MetadataSuggestScopedRuleSet[]
   initialRules: MetadataSuggestRule[]
@@ -43,6 +45,7 @@ const METADATA_SUGGEST_MATCH_TYPE_OPTIONS: Array<{ value: MetadataSuggestMatchTy
 
 export function FolderSuggestRulesModal({
   folderPath,
+  initialExample = '',
   globalRules,
   scopedRuleSets,
   initialRules,
@@ -54,6 +57,7 @@ export function FolderSuggestRulesModal({
 }: FolderSuggestRulesModalProps) {
   const [draftRules, setDraftRules] = useState<MetadataSuggestRule[]>(initialRules)
   const [showRuleLibraryPicker, setShowRuleLibraryPicker] = useState(false)
+  const [showRecipeBuilder, setShowRecipeBuilder] = useState(false)
   const [showScopedPicker, setShowScopedPicker] = useState(false)
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
   const dragStateRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null)
@@ -101,6 +105,7 @@ export function FolderSuggestRulesModal({
       {
         id: `scoped-rule-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         token: '',
+        segmentIndex: null,
         field: 'gear_make',
         value: '',
         matchIn: 'either',
@@ -133,6 +138,15 @@ export function FolderSuggestRulesModal({
       ...selectedRules.map((rule) => cloneMetadataSuggestRule(rule, 'scoped-lib')),
     ])
     setShowRuleLibraryPicker(false)
+  }
+
+  const addFromExample = (selectedRules: MetadataSuggestRule[]) => {
+    if (selectedRules.length === 0) return
+    setDraftRules((prev) => [
+      ...prev,
+      ...selectedRules,
+    ])
+    setShowRecipeBuilder(false)
   }
 
   const replaceFromScopedSource = (scopePath: string) => {
@@ -191,6 +205,12 @@ export function FolderSuggestRulesModal({
               Add from library…
             </button>
             <button
+              onClick={() => setShowRecipeBuilder(true)}
+              className="px-3 py-1.5 rounded border border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-900/20 text-xs text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors"
+            >
+              Build from example…
+            </button>
+            <button
               onClick={() => setShowScopedPicker(true)}
               disabled={availableScopedSources.length === 0}
               className={`px-3 py-1.5 rounded border text-xs transition-colors ${
@@ -219,7 +239,7 @@ export function FolderSuggestRulesModal({
             ) : (
               draftRules.map((rule, index) => (
                 <div key={rule.id} className={`rounded border p-2 ${rule.overwriteExisting ? 'border-amber-300/70 dark:border-amber-700/70 bg-amber-50/40 dark:bg-amber-900/10' : 'border-gray-200 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-900/30'}`}>
-                  <div className="grid grid-cols-1 md:grid-cols-[auto_minmax(0,1fr)_minmax(0,0.95fr)_minmax(0,1fr)_minmax(0,0.95fr)_minmax(0,0.95fr)_auto_auto_auto] gap-2 items-center">
+                  <div className="grid grid-cols-1 md:grid-cols-[auto_minmax(0,1fr)_96px_minmax(0,0.95fr)_minmax(0,1fr)_minmax(0,0.95fr)_minmax(0,0.95fr)_auto_auto_auto] gap-2 items-center">
                     <label className="inline-flex items-center justify-center text-xs text-gray-600 dark:text-gray-400">
                       <input
                         type="checkbox"
@@ -245,6 +265,29 @@ export function FolderSuggestRulesModal({
                       }}
                       className="px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
                     />
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="number"
+                        min={1}
+                        value={rule.segmentIndex ?? ''}
+                        placeholder="#"
+                        onChange={(e) => {
+                          const raw = e.target.value.trim()
+                          const next = draftRules.map((item, itemIndex) =>
+                            itemIndex === index ? { ...item, segmentIndex: raw === '' ? null : Math.max(1, Math.floor(Number(raw) || 1)) } : item
+                          )
+                          setDraftRules(next)
+                        }}
+                        className="w-full px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                        title="Segment number: 1 means the first space-separated part of the filename, 2 means the second, and so on. Leave blank to match anywhere in the full filename."
+                      />
+                      <span
+                        className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 dark:border-gray-600 text-[10px] font-semibold text-gray-500 dark:text-gray-400 cursor-help"
+                        title="Segment number: 1 means the first space-separated part of the filename, 2 means the second, and so on. Leave blank to match anywhere in the full filename."
+                      >
+                        ?
+                      </span>
+                    </div>
                     <select
                       value={rule.field}
                       onChange={(e) => {
@@ -265,20 +308,33 @@ export function FolderSuggestRulesModal({
                         <option key={option.value} value={option.value}>{option.label}</option>
                       ))}
                     </select>
-                    <select
-                      value={rule.matchType}
-                      onChange={(e) => {
-                        const next = draftRules.map((item, itemIndex) =>
-                          itemIndex === index ? { ...item, matchType: e.target.value as MetadataSuggestMatchType } : item
-                        )
-                        setDraftRules(next)
-                      }}
-                      className="px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                    >
-                      {METADATA_SUGGEST_MATCH_TYPE_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
-                      ))}
-                    </select>
+                    <div className="flex items-center gap-1">
+                      <select
+                        value={rule.matchType}
+                        onChange={(e) => {
+                          const next = draftRules.map((item, itemIndex) =>
+                            itemIndex === index ? { ...item, matchType: e.target.value as MetadataSuggestMatchType } : item
+                          )
+                          setDraftRules(next)
+                        }}
+                        className="w-full px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                        title={rule.matchType === 'prefix_value'
+                          ? 'Prefix + value: match the letter part and reuse the rest with templates like Gain {value} or {match}. Example: G10 + Gain {value} becomes Gain 10.'
+                          : undefined}
+                      >
+                        {METADATA_SUGGEST_MATCH_TYPE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                      {rule.matchType === 'prefix_value' ? (
+                        <span
+                          className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-indigo-300 dark:border-indigo-700 text-[10px] font-semibold text-indigo-600 dark:text-indigo-300 cursor-help"
+                          title="Prefix + value: match the letter part and reuse the rest with templates like Gain {value} or {match}. Example: G10 + Gain {value} becomes Gain 10."
+                        >
+                          ?
+                        </span>
+                      ) : null}
+                    </div>
                     {METADATA_SUGGEST_LOOKUP_VALUES[rule.field] ? (
                       <select
                         value={rule.value}
@@ -405,6 +461,7 @@ export function FolderSuggestRulesModal({
                 {
                   id: `scoped-rule-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
                   token: '',
+                  segmentIndex: null,
                   field: 'gear_make',
                   value: '',
                   matchIn: 'either' as const,
@@ -431,6 +488,14 @@ export function FolderSuggestRulesModal({
             onConfirm={addFromLibrary}
             onDeleteRule={(ruleId) => onSaveRuleLibrary(ruleLibrary.filter((rule) => rule.id !== ruleId))}
             onClose={() => setShowRuleLibraryPicker(false)}
+          />
+        )}
+        {showRecipeBuilder && (
+          <FilenameRecipeBuilderModal
+            title="Build Folder Rules From Example Filename"
+            initialExample={initialExample}
+            onConfirm={addFromExample}
+            onClose={() => setShowRecipeBuilder(false)}
           />
         )}
         {showScopedPicker && (

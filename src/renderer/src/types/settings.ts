@@ -56,6 +56,7 @@ export const METADATA_SUGGEST_LOOKUP_VALUES: Partial<Record<MetadataSuggestField
 export interface MetadataSuggestRule {
   id: string
   token: string
+  segmentIndex: number | null
   field: MetadataSuggestField
   value: string
   matchIn: MetadataSuggestMatchIn
@@ -246,6 +247,9 @@ function normalizeMetadataSuggestRule(rule: Partial<MetadataSuggestRule> | null 
   return {
     id: rule?.id || `rule-${Date.now()}-${index}`,
     token: rule?.token ?? '',
+    segmentIndex: typeof rule?.segmentIndex === 'number' && Number.isFinite(rule.segmentIndex) && rule.segmentIndex > 0
+      ? Math.floor(rule.segmentIndex)
+      : null,
     field: (rule?.field ?? 'gear_make') as MetadataSuggestField,
     value: rule?.value ?? '',
     matchIn: (rule?.matchIn ?? 'either') as MetadataSuggestMatchIn,

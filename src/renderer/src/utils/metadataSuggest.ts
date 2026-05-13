@@ -55,6 +55,13 @@ function extractTokens(text: string): Set<string> {
   return new Set(matches)
 }
 
+function extractFilenameSegments(text: string): string[] {
+  return text
+    .split(/\s+/)
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+}
+
 function compact(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '')
 }
@@ -171,10 +178,12 @@ export function buildMetadataSuggestionMatches(
     const normalizedPath = normalizePath(file.filePath)
     const folderPath = normalizedPath.split('/').slice(0, -1).join('/')
     const folderLabel = folderPath.split('/').slice(-3).join(' / ')
+    const fileSegments = extractFilenameSegments(baseName)
     const fileTokens = extractTokens(baseName)
     const folderTokens = extractTokens(folderPath)
     const suggestions: MetadataSuggestion[] = []
     const claimed = new Set<MetadataSuggestField>()
+    const APPENDABLE_FIELDS = new Set<MetadataSuggestField>(['nl_amp_settings', 'nl_amp_switches', 'nl_comments'])
 
     const applicableScopedSets = scopedRuleSets
       .filter((set) => {
@@ -204,7 +213,6 @@ export function buildMetadataSuggestionMatches(
       overwriteExisting = false,
       overwriteOnlyValues = ''
     ) => {
-      if (claimed.has(field)) return
       const currentValue = file.metadata[field]
       if (!overwriteExisting && !isBlankValue(currentValue)) return
       if (!value.trim()) return
@@ -217,6 +225,22 @@ export function buildMetadataSuggestionMatches(
         return
       }
       if (!isValidRuleValue(field, value)) return
+      const existing = suggestions.find((suggestion) => suggestion.field === field)
+      if (existing) {
+        if (!APPENDABLE_FIELDS.has(field) || existing.overwriteExisting || overwriteExisting) return
+        const nextParts = new Set(
+          String(existing.value)
+            .split(/\s*,\s*/)
+            .map((part) => part.trim())
+            .filter(Boolean)
+        )
+        if (!nextParts.has(value.trim())) {
+          nextParts.add(value.trim())
+          existing.value = Array.from(nextParts).join(', ')
+          existing.reason = `${existing.reason}; ${reason}`
+        }
+        return
+      }
       claimed.add(field)
       suggestions.push({
         id: buildSuggestionId(file.filePath, field),
@@ -234,10 +258,13 @@ export function buildMetadataSuggestionMatches(
     for (const rule of orderedRules) {
       if (!rule.enabled) continue
       const token = rule.token.trim()
+      const segmentText = rule.segmentIndex != null ? fileSegments[rule.segmentIndex - 1] ?? '' : ''
+      const segmentTokens = rule.segmentIndex != null ? extractTokens(segmentText) : fileTokens
 
       const isBlankTokenRule = token.length === 0
 
-      const filenameMatch = isBlankTokenRule ? { matched: false } : matchByType(baseName, fileTokens, token, rule.matchType)
+      const filenameTarget = rule.segmentIndex != null ? segmentText : baseName
+      const filenameMatch = isBlankTokenRule ? { matched: false } : matchByType(filenameTarget, segmentTokens, token, rule.matchType)
       const folderMatch = isBlankTokenRule ? { matched: false } : matchByType(folderPath, folderTokens, token, rule.matchType)
       const matchFilename = filenameMatch.matched
       const matchFolder = folderMatch.matched
@@ -265,6 +292,8 @@ export function buildMetadataSuggestionMatches(
 
       const source = isBlankTokenRule
         ? 'scope-wide default rule'
+        : rule.segmentIndex != null
+          ? `filename segment ${rule.segmentIndex}`
         : rule.matchIn === 'filename'
           ? 'filename'
           : rule.matchIn === 'folder'

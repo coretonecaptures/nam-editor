@@ -31,6 +31,8 @@
 
 ## Grid and UI
 
+- In Batch Rename, add a quick helper / hotkey for common cleanup like replacing underscores with spaces, so users do not have to repeatedly type `_` -> ` ` by hand.
+
 ## Checklist and release workflow
 
 - Checklist row sync button is tiny and too far away

@@ -11,6 +11,7 @@ export function isMetadataSuggestRuleLibraryCandidate(rule: MetadataSuggestRule)
 export function metadataSuggestRuleSignature(rule: MetadataSuggestRule): string {
   return [
     rule.token.trim().toLowerCase(),
+    rule.segmentIndex == null ? '' : String(rule.segmentIndex),
     rule.field,
     rule.value.trim(),
     rule.matchIn,
