@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   METADATA_SUGGEST_FIELD_OPTIONS,
   METADATA_SUGGEST_LOOKUP_VALUES,
@@ -55,12 +55,45 @@ export function FolderSuggestRulesModal({
   const [draftRules, setDraftRules] = useState<MetadataSuggestRule[]>(initialRules)
   const [showRuleLibraryPicker, setShowRuleLibraryPicker] = useState(false)
   const [showScopedPicker, setShowScopedPicker] = useState(false)
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
+  const dragStateRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null)
 
   const enabledCount = useMemo(() => draftRules.filter((rule) => rule.enabled).length, [draftRules])
   const availableScopedSources = useMemo(
     () => scopedRuleSets.filter((set) => set.scopePath.replace(/\\/g, '/') !== folderPath.replace(/\\/g, '/')),
     [scopedRuleSets, folderPath]
   )
+
+  useEffect(() => {
+    const handleMouseMove = (event: MouseEvent) => {
+      const dragState = dragStateRef.current
+      if (!dragState) return
+      setDragOffset({
+        x: dragState.originX + (event.clientX - dragState.startX),
+        y: dragState.originY + (event.clientY - dragState.startY),
+      })
+    }
+
+    const handleMouseUp = () => {
+      dragStateRef.current = null
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [])
+
+  const beginDrag = (event: React.MouseEvent<HTMLDivElement>) => {
+    dragStateRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: dragOffset.x,
+      originY: dragOffset.y,
+    }
+  }
 
   const addRule = () => {
     setDraftRules((prev) => [
@@ -121,8 +154,14 @@ export function FolderSuggestRulesModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-full max-w-4xl mx-4 flex flex-col max-h-[85vh]">
-        <div className="px-5 pt-5 pb-3 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+      <div
+        className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-full max-w-4xl mx-4 flex flex-col max-h-[85vh] fixed left-1/2 top-1/2"
+        style={{ transform: `translate(calc(-50% + ${dragOffset.x}px), calc(-50% + ${dragOffset.y}px))` }}
+      >
+        <div
+          className="px-5 pt-5 pb-3 border-b border-gray-200 dark:border-gray-700 flex-shrink-0 cursor-move select-none"
+          onMouseDown={beginDrag}
+        >
           <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Folder Suggestion Rules</h2>
           <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Scope: {formatPath(folderPath)}</p>
         </div>

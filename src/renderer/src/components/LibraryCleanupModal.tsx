@@ -21,6 +21,7 @@ export interface LibraryCleanupPreviewRow {
   destinationPath: string
   note: string | null
   needsReview: boolean
+  actionable: boolean
 }
 
 interface Props {
@@ -43,6 +44,7 @@ interface Props {
   onRememberUncheckedChange: (value: boolean) => void
   onPreview: () => void
   onRun: () => void
+  onExportNeedsReview: (format: 'csv' | 'xlsx') => void
   onResetSavedIgnores: () => void
 }
 
@@ -92,13 +94,17 @@ export function LibraryCleanupModal({
   onRememberUncheckedChange,
   onPreview,
   onRun,
+  onExportNeedsReview,
   onResetSavedIgnores,
 }: Props) {
   const [previewFilter, setPreviewFilter] = useState<'all' | 'ready' | 'needs-review'>('all')
+  const isRunning = !!busyLabel && busyLabel.toLowerCase().startsWith('running')
+  const isBuildingPreview = !!busyLabel && !isRunning
   const canPreview = !!sourceRoot && !!destinationRoot && !busyLabel
-  const canRun = !!previewRows && previewRows.length > 0 && !busyLabel
+  const previewUnchanged = previewRows?.filter((row) => !row.needsReview && !row.actionable).length ?? 0
+  const previewReady = previewRows?.filter((row) => !row.needsReview && row.actionable).length ?? 0
+  const canRun = !!previewRows && previewRows.some((row) => row.actionable) && !busyLabel
   const previewNeedsReview = previewRows?.filter((row) => row.needsReview).length ?? 0
-  const previewReady = previewRows ? previewRows.length - previewNeedsReview : 0
 
   useEffect(() => {
     setPreviewFilter('all')
@@ -116,7 +122,7 @@ export function LibraryCleanupModal({
 
   const filteredPreviewRows = useMemo(() => {
     if (!previewRows) return null
-    if (previewFilter === 'ready') return previewRows.filter((row) => !row.needsReview)
+    if (previewFilter === 'ready') return previewRows.filter((row) => !row.needsReview && row.actionable)
     if (previewFilter === 'needs-review') return previewRows.filter((row) => row.needsReview)
     return previewRows
   }, [previewRows, previewFilter])
@@ -133,7 +139,11 @@ export function LibraryCleanupModal({
   }, [filteredPreviewRows])
 
   const filteredReadyRows = useMemo(() => {
-    return (filteredPreviewRows ?? []).filter((row) => !row.needsReview)
+    return (filteredPreviewRows ?? []).filter((row) => !row.needsReview && row.actionable)
+  }, [filteredPreviewRows])
+
+  const filteredUnchangedRows = useMemo(() => {
+    return (filteredPreviewRows ?? []).filter((row) => !row.needsReview && !row.actionable)
   }, [filteredPreviewRows])
 
   const showGroupedNeedsReview = previewFilter !== 'ready' && groupedNeedsReviewRows.length > 0
@@ -150,7 +160,7 @@ export function LibraryCleanupModal({
       </thead>
       <tbody>
         {rows.map((row) => (
-          <tr key={`${row.sourcePath}=>${row.destinationPath}`} className={`border-b border-gray-100 dark:border-gray-800 ${row.needsReview ? 'bg-amber-50/40 dark:bg-amber-900/10' : ''}`}>
+          <tr key={`${row.sourcePath}=>${row.destinationPath}`} className={`border-b border-gray-100 dark:border-gray-800 ${row.needsReview ? 'bg-amber-50/40 dark:bg-amber-900/10' : !row.actionable ? 'bg-gray-50/60 dark:bg-gray-800/20' : ''}`}>
             <td className="px-3 py-2 align-top">
               <div className="font-medium text-gray-800 dark:text-gray-100 break-all">{baseName(row.sourcePath)}</div>
             </td>
@@ -161,8 +171,8 @@ export function LibraryCleanupModal({
               <div className="text-gray-600 dark:text-gray-300 break-all">{row.destinationPath}</div>
             </td>
             <td className="px-3 py-2 align-top">
-              <div className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${row.needsReview ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200' : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200'}`}>
-                {row.needsReview ? 'Needs Review' : 'Ready'}
+              <div className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${row.needsReview ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200' : row.actionable ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200' : 'bg-gray-200 text-gray-700 dark:bg-gray-800 dark:text-gray-300'}`}>
+                {row.needsReview ? 'Needs Review' : row.actionable ? 'Ready' : 'No Change'}
               </div>
               {row.note && (
                 <div className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">{row.note}</div>
@@ -299,23 +309,57 @@ export function LibraryCleanupModal({
               <div>
                 <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Preview</div>
                 <div className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                  {previewRows ? `${previewRows.length} file${previewRows.length !== 1 ? 's' : ''} in this run` : 'Build a preview before running'}
+                  {previewRows ? `${previewRows.length} file${previewRows.length !== 1 ? 's' : ''} in this preview` : 'Build a preview before running'}
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                {!!previewRows && previewNeedsReview > 0 && (
+                  <>
+                    <button
+                      onClick={() => onExportNeedsReview('csv')}
+                      disabled={!!busyLabel}
+                      className={`px-3 py-1.5 rounded text-sm transition-colors ${busyLabel ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-600 cursor-default' : 'bg-amber-100 dark:bg-amber-900/20 text-amber-800 dark:text-amber-200 hover:bg-amber-200 dark:hover:bg-amber-900/30'}`}
+                    >
+                      Export Needs Review CSV
+                    </button>
+                    <button
+                      onClick={() => onExportNeedsReview('xlsx')}
+                      disabled={!!busyLabel}
+                      className={`px-3 py-1.5 rounded text-sm transition-colors ${busyLabel ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-600 cursor-default' : 'bg-amber-100 dark:bg-amber-900/20 text-amber-800 dark:text-amber-200 hover:bg-amber-200 dark:hover:bg-amber-900/30'}`}
+                    >
+                      Export Needs Review XLSX
+                    </button>
+                  </>
+                )}
                 <button
                   onClick={onPreview}
                   disabled={!canPreview}
                   className={`px-3 py-1.5 rounded text-sm transition-colors ${canPreview ? 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600' : 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-600 cursor-default'}`}
                 >
-                  Build Preview
+                  <span className="inline-flex items-center gap-2">
+                    {isBuildingPreview && (
+                      <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                        <circle cx="12" cy="12" r="9" className="opacity-25" stroke="currentColor" strokeWidth="3" />
+                        <path d="M21 12a9 9 0 00-9-9" className="opacity-90" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                      </svg>
+                    )}
+                    {isBuildingPreview ? 'Building...' : 'Build Preview'}
+                  </span>
                 </button>
                 <button
                   onClick={onRun}
                   disabled={!canRun}
                   className={`px-3 py-1.5 rounded text-sm transition-colors ${canRun ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-600 cursor-default'}`}
                 >
-                  Run Cleanup
+                  <span className="inline-flex items-center gap-2">
+                    {isRunning && (
+                      <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                        <circle cx="12" cy="12" r="9" className="opacity-25" stroke="currentColor" strokeWidth="3" />
+                        <path d="M21 12a9 9 0 00-9-9" className="opacity-90" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                      </svg>
+                    )}
+                    {isRunning ? 'Running...' : 'Run Cleanup'}
+                  </span>
                 </button>
               </div>
             </div>
@@ -326,7 +370,7 @@ export function LibraryCleanupModal({
             )}
             {!!previewRows && (
               <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 space-y-3">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                   <div className="rounded border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-3 py-2">
                     <div className="text-[11px] uppercase tracking-wider text-gray-500 dark:text-gray-400">Total</div>
                     <div className="mt-1 text-lg font-semibold text-gray-900 dark:text-gray-100">{previewRows.length}</div>
@@ -338,6 +382,10 @@ export function LibraryCleanupModal({
                   <div className="rounded border border-amber-200 dark:border-amber-900/60 bg-amber-50/60 dark:bg-amber-900/10 px-3 py-2">
                     <div className="text-[11px] uppercase tracking-wider text-amber-700 dark:text-amber-300">Needs Review</div>
                     <div className="mt-1 text-lg font-semibold text-amber-800 dark:text-amber-200">{previewNeedsReview}</div>
+                  </div>
+                  <div className="rounded border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-3 py-2">
+                    <div className="text-[11px] uppercase tracking-wider text-gray-500 dark:text-gray-400">No Change</div>
+                    <div className="mt-1 text-lg font-semibold text-gray-900 dark:text-gray-100">{previewUnchanged}</div>
                   </div>
                 </div>
 
@@ -402,6 +450,20 @@ export function LibraryCleanupModal({
                     </div>
                   )}
 
+                  {filteredUnchangedRows.length > 0 && previewFilter !== 'ready' && (
+                    <div className="rounded border border-gray-200 dark:border-gray-800 overflow-hidden bg-white dark:bg-gray-900">
+                      <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-800/40 flex items-center justify-between gap-3">
+                        <div className="text-xs font-semibold uppercase tracking-wider text-gray-700 dark:text-gray-300">
+                          Already Matches Selected Structure
+                        </div>
+                        <div className="text-[11px] text-gray-500 dark:text-gray-400">
+                          {filteredUnchangedRows.length} file{filteredUnchangedRows.length !== 1 ? 's' : ''}
+                        </div>
+                      </div>
+                      {renderPreviewTable(filteredUnchangedRows)}
+                    </div>
+                  )}
+
                   {showGroupedNeedsReview && groupedNeedsReviewRows.map(([reason, rows]) => (
                     <div key={reason} className="rounded border border-amber-200 dark:border-amber-900/60 overflow-hidden bg-white dark:bg-gray-900">
                       <div className="px-3 py-2 border-b border-amber-200 dark:border-amber-900/60 bg-amber-50/60 dark:bg-amber-900/10 flex items-center justify-between gap-3">
@@ -430,7 +492,8 @@ export function LibraryCleanupModal({
         <div className="px-5 py-4 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2 flex-shrink-0">
           <button
             onClick={onClose}
-            className="px-4 py-1.5 text-sm rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+            disabled={!!busyLabel}
+            className={`px-4 py-1.5 text-sm rounded-lg transition-colors ${busyLabel ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-600 cursor-default' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'}`}
           >
             Close
           </button>

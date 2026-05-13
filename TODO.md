@@ -21,7 +21,6 @@
 - Append to comments (batch)
 - Unify list-view filter clear buttons
 - High priority: when moving duplicates, let the user choose the destination folder at move time instead of always using the root `_Duplicates` folder
-- Add exact content-based duplicate detection alongside filename and metadata-name duplicate checks.
 
 ## Import and performance
 
@@ -46,13 +45,9 @@
 
 ## Metadata suggestions and organization
 
-- Expand metadata suggestions beyond global rules: support scoped suggestion sets that can be attached/applied at a selected folder or parent-folder level (for example, fixing many packs from one creator without affecting the whole library).
-- Phase II: allow copying/applying suggestion rules from another folder scope, so similar creators/packs can inherit a scoped ruleset without rebuilding it by hand.
-- Phase II: build a reusable rule library. Any unique rule created should be saveable into the library, then when starting work on a new folder the user can multi-select rules from that library and apply/copy them into the folder scope.
-- Phase II: allow valid scoped rules with a blank token for folder-wide defaults, so a folder scope can set values like `Modeled By` for everything underneath even when no filename/folder token match is needed.
-- Phase II: for lookup-backed suggestion fields like `Gear Type` and `Tone Type`, replace free-text "Suggested value" entry with real dropdowns / validated pickers so users do not have to know the stored internal value names.
-- Phase II: add per-rule overwrite behavior for metadata suggestions. First pass: `blank only` vs `overwrite existing`. Safer follow-up: optional guard values so a rule only overwrites known junk placeholders (for example `tz-make` / `tz-model`) instead of any non-empty value.
-- Phase II / discussion: support wildcard or regex-style suggestion rules for patterned metadata tokens (for example values like `G5.5`, `G1.2`, `G8`) where one rule should recognize a family of setting strings instead of requiring a separate exact-token rule for every variant.
+- Refine overwrite guards for metadata suggestion rules with a friendlier UI than a raw comma-separated text field (for example chips, multi-pick placeholders, or explicit junk-value presets).
+- Expand friendly pattern-rule support beyond the first-pass `Prefix + value` matcher for settings strings like `G5.5`, `G1.2`, `G8`.
+- Phase II / discussion: support broader wildcard or regex-style suggestion rules for patterned metadata tokens where one rule should recognize a family of values without requiring a separate exact-token rule for every variant.
 - Discussion: explore reverse-template / pattern-based rules that extract metadata from naming structures (for example something in the spirit of `{tone_type} {creator} {cabinet}`) without requiring users to understand regex.
 - Design a safe explicit-source workflow to collect `.nam` files from user-chosen intake folders into a working folder, without trying to automatically infer which existing folders are "loose" versus valid staging/archive/release locations.
 - Investigate a safe "build logical folder structure from existing metadata" helper: preview-only first, because auto-restructuring by amp / cab / combo / settings could be powerful but dangerous if metadata is incomplete or wrong.

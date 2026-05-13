@@ -5,12 +5,14 @@ interface ToolbarProps {
   onOpenFolder: () => void
   onSaveAll: () => void
   dirtyCount: number
+  autoFilledCount: number
   fileCount: number
   unnamedCount: number
   isMac: boolean
   showSettings: boolean
   onToggleSettings: () => void
   onNameFromFilename: () => void
+  onClearSuggestionsAll?: () => void
   onCloseAll: () => void
   rootFolder: string | null
   onRefresh: () => void
@@ -32,12 +34,14 @@ export function Toolbar({
   onOpenFolder,
   onSaveAll,
   dirtyCount,
+  autoFilledCount,
   fileCount,
   unnamedCount,
   isMac,
   showSettings,
   onToggleSettings,
   onNameFromFilename,
+  onClearSuggestionsAll,
   onCloseAll,
   rootFolder,
   onRefresh,
@@ -198,7 +202,7 @@ export function Toolbar({
                   onClick={() => { setShowLibraryTools(false); onFindDuplicates() }}
                   className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
                 >
-                  Find Duplicates…
+                  Find Duplicates...
                 </button>
               )}
               {onOpenLibraryCleanup && (
@@ -206,7 +210,7 @@ export function Toolbar({
                   onClick={() => { setShowLibraryTools(false); onOpenLibraryCleanup() }}
                   className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
                 >
-                  Clean Up / Build Library…
+                  Clean Up / Build Library...
                 </button>
               )}
             </div>
@@ -247,6 +251,20 @@ export function Toolbar({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
             </svg>
             Name from File ({unnamedCount})
+          </button>
+        </>
+      )}
+
+      {autoFilledCount > 0 && onClearSuggestionsAll && (
+        <>
+          <div className="w-px h-5 bg-gray-300 dark:bg-gray-700" />
+          <button
+            onClick={onClearSuggestionsAll}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+            title={`Clear auto-filled suggestion/default values from ${autoFilledCount} loaded file${autoFilledCount !== 1 ? 's' : ''}`}
+          >
+            Clear Suggestions ({autoFilledCount})
           </button>
         </>
       )}

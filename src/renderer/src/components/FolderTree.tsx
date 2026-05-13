@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { NamFile, GEAR_TYPES, TONE_TYPES } from '../types/nam'
 import { FolderNode } from '../types/librarian'
 
-// Folder color palette — excludes blue-500 (#3b82f6) which is reserved for pack-owning folders
+// Folder color palette Ã¢â‚¬â€ excludes blue-500 (#3b82f6) which is reserved for pack-owning folders
 export const FOLDER_COLOR_PALETTE: { name: string; hex: string }[] = [
   { name: 'Teal',   hex: '#14b8a6' },
   { name: 'Amber',  hex: '#f59e0b' },
@@ -201,7 +201,7 @@ export function FolderTree({
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Name, make, model…"
+              placeholder="Name, make, model..."
               className="w-full pl-6 pr-6 py-1.5 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 transition-colors"
             />
             {query && (
@@ -244,7 +244,7 @@ export function FolderTree({
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
           </svg>
           <span className="text-xs text-sky-400 font-semibold tracking-wider uppercase">Filtered</span>
-          <span className="text-xs text-sky-600">— {matchingPaths?.size ?? 0} match{matchingPaths?.size !== 1 ? 'es' : ''}</span>
+          <span className="text-xs text-sky-600">- {matchingPaths?.size ?? 0} match{matchingPaths?.size !== 1 ? 'es' : ''}</span>
         </div>
       )}
 
@@ -818,7 +818,7 @@ function FolderRow({
                   className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
                   onClick={() => { setMenu(null); onCompareFolders() }}
                 >
-                  Compare selected folders…
+                  Compare selected folders...
                 </button>
               )}
               {onExportFolder && (
@@ -848,7 +848,7 @@ function FolderRow({
                   className="w-full text-left px-3 py-1.5 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-600/40 transition-colors"
                   onClick={() => { setMenu(null); onCleanThisFolder() }}
                 >
-                  Clean this folder…
+                  Clean this folder...
                 </button>
               )}
               <button
@@ -870,7 +870,7 @@ function FolderRow({
                 className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
                 onClick={() => { setMenu(null); onBatchEdit() }}
               >
-                Batch edit…
+                Batch edit...
               </button>
               {onSelectAll && (
                 <button
@@ -885,7 +885,7 @@ function FolderRow({
                   className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
                   onClick={() => { setMenu(null); setIsCreating(true) }}
                 >
-                  New subfolder…
+                  New subfolder...
                 </button>
               )}
               {!isRoot && onRenameFolder && (
@@ -893,7 +893,7 @@ function FolderRow({
                   className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
                   onClick={() => { setMenu(null); setIsRenaming(true) }}
                 >
-                  Rename folder…
+                  Rename folder...
                 </button>
               )}
               {!isRoot && onDeleteEmptyFolder && (
@@ -902,7 +902,7 @@ function FolderRow({
                   disabled={!canDeleteEmptyFolder}
                   onClick={() => { setMenu(null); void onDeleteEmptyFolder() }}
                 >
-                  Delete empty folderâ€¦
+                  Delete empty folder...
                 </button>
               )}
               <button
@@ -921,7 +921,7 @@ function FolderRow({
                       className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
                       onClick={() => { setMenu(null); onGenerateTemplate() }}
                     >
-                      Generate import template…
+                      Generate import template...
                     </button>
                   )}
                   {onImportMetadata && (
@@ -929,7 +929,7 @@ function FolderRow({
                       className="w-full text-left px-3 py-1.5 text-teal-700 dark:text-teal-400 hover:bg-indigo-600/40 transition-colors"
                       onClick={() => { setMenu(null); onImportMetadata() }}
                     >
-                      Import metadata from spreadsheet…
+                      Import metadata from spreadsheet...
                     </button>
                   )}
                   {onSuggestMetadata && (
@@ -937,7 +937,7 @@ function FolderRow({
                       className="w-full text-left px-3 py-1.5 text-violet-700 dark:text-violet-400 hover:bg-indigo-600/40 transition-colors"
                       onClick={() => { setMenu(null); onSuggestMetadata() }}
                     >
-                      Suggest metadata…
+                      Suggest metadata...
                     </button>
                   )}
                   {onEditSuggestRules && (
@@ -945,7 +945,7 @@ function FolderRow({
                       className="w-full text-left px-3 py-1.5 text-violet-700 dark:text-violet-400 hover:bg-indigo-600/40 transition-colors"
                       onClick={() => { setMenu(null); onEditSuggestRules() }}
                     >
-                      Edit folder suggestion rules…
+                      Edit folder suggestion rules...
                     </button>
                   )}
                   {onCopySuggestRules && (
@@ -976,7 +976,7 @@ function FolderRow({
                       className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
                       onClick={() => { setMenu(null); onFindDuplicates() }}
                     >
-                      Find duplicates…
+                      Find duplicates...
                     </button>
                   )}
                   {onCoverageReport && (
@@ -984,7 +984,7 @@ function FolderRow({
                       className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
                       onClick={() => { setMenu(null); onCoverageReport() }}
                     >
-                      Training version report…
+                      Training version report...
                     </button>
                   )}
                   {watchSourceName && (
@@ -997,7 +997,7 @@ function FolderRow({
                       className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
                       onClick={() => { setMenu(null); onSetWatchSource() }}
                     >
-                      {watchSource ? 'Change watch source…' : 'Set watch source…'}
+                      {watchSource ? 'Change watch source...' : 'Set watch source...'}
                     </button>
                   )}
                   {onClearWatchSource && (
@@ -1036,7 +1036,7 @@ function FolderRow({
                       className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
                       onClick={() => { setMenu(null); onCreateBundle?.() }}
                     >
-                      Create Multi-Amp Bundle…
+                      Create Multi-Amp Bundle...
                     </button>
                   )}
                   {onDeleteBundle && (
@@ -1044,7 +1044,7 @@ function FolderRow({
                       className="w-full text-left px-3 py-1.5 text-red-600 dark:text-red-400 hover:bg-red-600/20 transition-colors"
                       onClick={() => { setMenu(null); onDeleteBundle?.() }}
                     >
-                      Remove Multi-Amp Bundle…
+                      Remove Multi-Amp Bundle...
                     </button>
                   )}
                   {onDeletePackInfo && (
@@ -1052,7 +1052,7 @@ function FolderRow({
                       className="w-full text-left px-3 py-1.5 text-red-600 dark:text-red-400 hover:bg-red-600/20 transition-colors"
                       onClick={() => { setMenu(null); onDeletePackInfo() }}
                     >
-                      Remove Pack Info…
+                      Remove Pack Info...
                     </button>
                   )}
                   {!isRoot && onSetFolderColor && (
@@ -1070,7 +1070,7 @@ function FolderRow({
                         className="w-2.5 h-2.5 rounded-full border border-gray-400 flex-shrink-0"
                         style={folderColor ? { background: folderColor, borderColor: folderColor } : undefined}
                       />
-                      Set folder color…
+                      Set folder color...
                     </button>
                   )}
                 </>
@@ -1112,7 +1112,7 @@ function FolderRow({
               onClick={() => { onSetFolderColor(null); setColorPickerPos(null) }}
               className="w-full text-[10px] text-gray-500 dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400 text-center transition-colors"
             >
-              ✕ Remove color
+              X Remove color
             </button>
           )}
         </div>

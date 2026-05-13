@@ -1043,17 +1043,18 @@ app.whenReady().then(async () => {
       // Numeric metadata fields â€” must always be written as JSON numbers, never strings
       const NUMERIC_META_FIELDS = new Set(['input_level_dbu', 'output_level_dbu'])
 
-      // Build patch map: only fields that exist on disk or are being set to a real value
+      // Build patch map: only touch fields the renderer explicitly sent.
+      // This preserves unrelated metadata when a workflow performs a surgical write
+      // (for example metadata suggestions that only send the selected suggestion fields).
       const patches: Record<string, unknown> = {}
       for (const key of EDITABLE_FIELDS) {
-        if (Object.prototype.hasOwnProperty.call(orig, key) || incoming[key] != null) {
-          let val: unknown = incoming[key] ?? null
-          // Coerce string numbers to actual numbers for numeric fields
-          if (val != null && NUMERIC_META_FIELDS.has(key) && typeof val === 'string') {
-            val = parseFloat(val as string)
-          }
-          patches[key] = val
+        if (!Object.prototype.hasOwnProperty.call(incoming, key)) continue
+        let val: unknown = incoming[key] ?? null
+        // Coerce string numbers to actual numbers for numeric fields
+        if (val != null && NUMERIC_META_FIELDS.has(key) && typeof val === 'string') {
+          val = parseFloat(val as string)
         }
+        patches[key] = val
       }
 
       // Apply surgical patches â€” only the value bytes for each field are changed
@@ -1064,10 +1065,12 @@ app.whenReady().then(async () => {
       const hasTopLevelNamBot = !!(orig.nam_bot && typeof orig.nam_bot === 'object')
       const hasLegacyNamBot = !!(orig.training && typeof orig.training === 'object' && (orig.training as Record<string, unknown>).nam_bot)
       const origEpochs = currentNamBot?.trained_epochs ?? null
-      const newEpochs = incoming.nb_trained_epochs != null ? Number(incoming.nb_trained_epochs) : null
-      if (newEpochs !== origEpochs) {
-        if (hasTopLevelNamBot || !hasLegacyNamBot) patched = patchTopLevelNamBotField(patched, 'trained_epochs', newEpochs)
-        else patched = patchLegacyNamBotField(patched, 'trained_epochs', newEpochs)
+      if (Object.prototype.hasOwnProperty.call(incoming, 'nb_trained_epochs')) {
+        const newEpochs = incoming.nb_trained_epochs != null ? Number(incoming.nb_trained_epochs) : null
+        if (newEpochs !== origEpochs) {
+          if (hasTopLevelNamBot || !hasLegacyNamBot) patched = patchTopLevelNamBotField(patched, 'trained_epochs', newEpochs)
+          else patched = patchLegacyNamBotField(patched, 'trained_epochs', newEpochs)
+        }
       }
 
       // Handle NAM Lab extended fields â€” stored at metadata.nam_lab.*
@@ -1075,6 +1078,7 @@ app.whenReady().then(async () => {
       const nlKeys = ['mics','cabinet','cabinet_config','amp_channel','boost_pedal','amp_settings','pedal_settings','amp_switches','comments','rating'] as const
       for (const k of nlKeys) {
         const rendererKey = `nl_${k}`
+        if (!Object.prototype.hasOwnProperty.call(incoming, rendererKey)) continue
         const origVal = origNl[k] ?? null
         const newVal = incoming[rendererKey] != null ? incoming[rendererKey] : null
         if (origVal !== newVal || (origVal == null && newVal != null)) {

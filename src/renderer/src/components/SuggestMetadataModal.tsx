@@ -105,9 +105,17 @@ export function SuggestMetadataModal({ folderName, matches, onConfirm, onClose }
                               </span>
                             )}
                           </div>
-                          {suggestion.overwriteExisting && suggestion.currentValue !== undefined && (
+                          {suggestion.overwriteExisting && (
                             <div className="text-[11px] text-amber-700 dark:text-amber-300 mt-1">
-                              Replacing current value: <span className="font-medium">{suggestion.currentValue}</span>
+                              {suggestion.currentValue !== undefined ? (
+                                <>
+                                  Replacing current value: <span className="font-medium">{suggestion.currentValue}</span>
+                                </>
+                              ) : (
+                                <>
+                                  Current value is <span className="font-medium">(blank)</span>
+                                </>
+                              )}
                             </div>
                           )}
                           <div className="text-[11px] text-gray-500 dark:text-gray-500 mt-1">{suggestion.reason}</div>

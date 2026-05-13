@@ -15,6 +15,7 @@ interface MetadataEditorProps {
   onRevert: () => void
   onRevealInFinder: () => void
   onReapplyDefaults?: () => void
+  onClearSuggestions?: () => void
   hasActiveDefaults?: boolean
   renameTemplate?: string
   onRenameFile?: (filePath: string, newBaseName: string) => Promise<void>
@@ -84,7 +85,7 @@ function formatBytes(bytes?: number): string | null {
   return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`
 }
 
-export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, onRevert, onRevealInFinder, onReapplyDefaults, hasActiveDefaults, renameTemplate, onRenameFile, onSaveAndAdvance, gearMakeSuggestions = [], gearModelSuggestions = [], showNamLabFields = true }: MetadataEditorProps) {
+export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, onRevert, onRevealInFinder, onReapplyDefaults, onClearSuggestions, hasActiveDefaults, renameTemplate, onRenameFile, onSaveAndAdvance, gearMakeSuggestions = [], gearModelSuggestions = [], showNamLabFields = true }: MetadataEditorProps) {
   const m = file.metadata
   const orig = file.originalMetadata
   const [nlShowAll, setNlShowAll] = useState(false)
@@ -225,6 +226,15 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
               title="Re-apply auto-fill rules from Settings to empty fields"
             >
               ↺ Defaults
+            </button>
+          )}
+          {file.autoFilledFields.length > 0 && onClearSuggestions && (
+            <button
+              onClick={onClearSuggestions}
+              className="flex items-center gap-1 px-2 py-2 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap"
+              title="Clear auto-filled suggestion/default values for this file and restore the on-disk values for those fields"
+            >
+              Clear suggestions
             </button>
           )}
           <button

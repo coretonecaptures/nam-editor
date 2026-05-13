@@ -1504,6 +1504,31 @@ export default function App() {
     )
   }
 
+  const clearAutoFilledFieldsFromMeta = (file: NamFile) => {
+    if (file.autoFilledFields.length === 0) return file
+    const metadata = { ...file.metadata }
+    for (const key of file.autoFilledFields) {
+      metadata[key] = file.originalMetadata[key] ?? null
+    }
+    const isDirty = JSON.stringify(metadata) !== JSON.stringify(file.originalMetadata)
+    return { ...file, metadata, isDirty, autoFilledFields: [] }
+  }
+
+  const handleClearSuggestionsForFile = (filePath: string) => {
+    setFiles((prev) => prev.map((file) => file.filePath === filePath ? clearAutoFilledFieldsFromMeta(file) : file))
+    setStatus({ message: 'Cleared auto-filled suggestions for the selected file', type: 'success' })
+  }
+
+  const handleClearSuggestionsAll = () => {
+    const affected = files.filter((file) => file.autoFilledFields.length > 0).length
+    if (affected === 0) {
+      setStatus({ message: 'No auto-filled suggestions to clear', type: 'info' })
+      return
+    }
+    setFiles((prev) => prev.map((file) => clearAutoFilledFieldsFromMeta(file)))
+    setStatus({ message: `Cleared auto-filled suggestions on ${affected} file${affected !== 1 ? 's' : ''}`, type: 'success' })
+  }
+
   const handleSave = async (filePath: string) => {
     const file = files.find((f) => f.filePath === filePath)
     if (!file) return
@@ -2931,16 +2956,50 @@ export default function App() {
 
     const previewRows = validFiles.map((file) => {
       const classified = classifyLibraryCleanupFile(file)
+      const destinationPath = `${classified.destinationDir}/${classified.destinationBaseName}`.replace(/\\/g, '/')
+      const sourcePath = classified.sourcePath.replace(/\\/g, '/')
+      const actionable = sourcePath !== destinationPath
       return {
-        sourcePath: classified.sourcePath,
-        destinationPath: `${classified.destinationDir}/${classified.destinationBaseName}`,
-        note: classified.note,
+        sourcePath,
+        destinationPath,
+        note: actionable ? classified.note : (classified.note ?? 'Already matches selected structure'),
         needsReview: classified.needsReview,
+        actionable,
       } satisfies LibraryCleanupPreviewRow
     })
     setLibraryCleanupBusyLabel(null)
     setLibraryCleanupPreviewRows(previewRows)
     setStatus({ message: `Library cleanup preview built for ${previewRows.length} file${previewRows.length !== 1 ? 's' : ''}`, type: 'success' })
+  }
+
+  const handleExportLibraryCleanupNeedsReview = (format: 'csv' | 'xlsx') => {
+    const needsReviewRows = (libraryCleanupPreviewRows ?? []).filter((row) => row.needsReview)
+    if (needsReviewRows.length === 0) {
+      setStatus({ message: 'No Needs Review rows available to export', type: 'info' })
+      return
+    }
+
+    const rows = needsReviewRows.map((row) => ({
+      Capture: row.sourcePath.replace(/\\/g, '/').split('/').pop() ?? row.sourcePath,
+      SourceFolder: row.sourcePath.replace(/\\/g, '/').split('/').slice(0, -1).join('/'),
+      SourcePath: row.sourcePath,
+      DestinationPath: row.destinationPath,
+      Reason: row.note ?? 'Needs review',
+      Status: 'Needs Review',
+    }))
+
+    const worksheet = XLSX.utils.json_to_sheet(rows, {
+      header: ['Capture', 'SourceFolder', 'SourcePath', 'DestinationPath', 'Reason', 'Status'],
+    })
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Needs Review')
+    const rootLabel = folderDisplayName(libraryCleanupSourceRoot ?? librarian.rootFolder ?? 'library')
+    const fileName = `needs-review-${rootLabel || 'library'}.${format}`
+    XLSX.writeFile(workbook, fileName, { bookType: format })
+    setStatus({
+      message: `Exported ${needsReviewRows.length} Needs Review row${needsReviewRows.length !== 1 ? 's' : ''} to ${fileName}`,
+      type: 'success',
+    })
   }
 
   const ensureCleanupDestinationDir = async (destinationDir: string) => {
@@ -2976,6 +3035,11 @@ export default function App() {
 
   const handleRunLibraryCleanup = async () => {
     if (!libraryCleanupPreviewRows || libraryCleanupPreviewRows.length === 0 || !libraryCleanupDestinationRoot) return
+    const actionableRows = libraryCleanupPreviewRows.filter((row) => row.actionable)
+    if (actionableRows.length === 0) {
+      setStatus({ message: 'Nothing to do - the selected files already match the current cleanup structure', type: 'info' })
+      return
+    }
     if (libraryCleanupActionMode === 'move') {
       const confirmed = window.confirm('WARNING: Move will relocate the source files and cannot be undone by NAM Lab.\n\nContinue?')
       if (!confirmed) return
@@ -2998,7 +3062,7 @@ export default function App() {
     let skipped = 0
     let autoSuffixed = 0
     const usedDestinations = new Set<string>()
-    for (const row of libraryCleanupPreviewRows) {
+    for (const row of actionableRows) {
       const normalizedDest = row.destinationPath.replace(/\\/g, '/')
       const destDir = normalizedDest.split('/').slice(0, -1).join('/')
       await ensureCleanupDestinationDir(destDir)
@@ -3093,16 +3157,15 @@ export default function App() {
     setSuggestMetadataModal(null)
     let updated = 0
     let failed = 0
-    const successMap = new Map<string, NamFile['metadata']>()
+    const successMap = new Map<string, { writtenFields: Partial<NamFile['metadata']> }>()
 
     for (const match of matches) {
       const incoming = Object.fromEntries(match.suggestions.map((suggestion) => [suggestion.field, suggestion.value])) as Partial<NamFile['metadata']>
       if (Object.keys(incoming).length === 0) continue
-      const newMeta = { ...match.file.metadata, ...incoming }
       const result = await window.api.writeMetadata(match.file.filePath, incoming)
       if (result.success) {
         updated++
-        successMap.set(match.file.filePath, newMeta)
+        successMap.set(match.file.filePath, { writtenFields: incoming })
       } else {
         failed++
       }
@@ -3110,8 +3173,14 @@ export default function App() {
 
     if (successMap.size > 0) {
       setFiles((prev) => prev.map((file) => {
-        const newMeta = successMap.get(file.filePath)
-        return newMeta ? { ...file, metadata: newMeta, originalMetadata: newMeta, isDirty: false, autoFilledFields: [] } : file
+        const saved = successMap.get(file.filePath)
+        if (!saved) return file
+        const metadata = { ...file.metadata, ...saved.writtenFields }
+        const originalMetadata = { ...file.originalMetadata, ...saved.writtenFields }
+        const savedKeys = new Set(Object.keys(saved.writtenFields) as (keyof NamFile['metadata'])[])
+        const autoFilledFields = file.autoFilledFields.filter((k) => !savedKeys.has(k))
+        const isDirty = JSON.stringify(metadata) !== JSON.stringify(originalMetadata)
+        return { ...file, metadata, originalMetadata, isDirty, autoFilledFields }
       }))
     }
 
@@ -3300,6 +3369,7 @@ export default function App() {
   // Close slide panel if selection is empty (and no batch edit active)
   if (gridSlideOpen && selectedFiles.length === 0 && batchFolder === null) setGridSlideOpen(false)
   const dirtyCount = files.filter((f) => f.isDirty).length
+  const autoFilledCount = files.filter((f) => f.autoFilledFields.length > 0).length
   const unnamedCount = files.filter((f) => !f.metadata.name).length
   const hasTree = librarian.folderTree !== null
   const dirtyPaths = new Set(files.filter((f) => f.isDirty).map((f) => f.filePath.replace(/\\/g, '/')))
@@ -3336,6 +3406,7 @@ export default function App() {
         onOpenFolder={handleOpenFolder}
         onSaveAll={handleSaveAll}
         dirtyCount={dirtyCount}
+        autoFilledCount={autoFilledCount}
         fileCount={files.length}
         isMac={window.api.platform === 'darwin'}
         showSettings={showSettings}
@@ -3347,6 +3418,7 @@ export default function App() {
         }}
         unnamedCount={unnamedCount}
         onNameFromFilename={handleNameFromFilename}
+        onClearSuggestionsAll={handleClearSuggestionsAll}
         onCloseAll={handleCloseAll}
         rootFolder={librarian.rootFolder}
         onRefresh={handleRefresh}
@@ -3791,6 +3863,7 @@ export default function App() {
                     : x
                 ))
               }}
+              onClearSuggestions={() => handleClearSuggestionsForFile(selectedFiles[0].filePath)}
             />
           ) : selectedFiles.length > 1 ? (
             <MultiSelectEditor
@@ -4177,6 +4250,7 @@ export default function App() {
           onRememberUncheckedChange={setLibraryCleanupRememberUnchecked}
           onPreview={handlePreviewLibraryCleanup}
             onRun={handleRunLibraryCleanup}
+            onExportNeedsReview={handleExportLibraryCleanupNeedsReview}
             onResetSavedIgnores={() => {
               handleSaveSettings({ ...settings, libraryCleanupIgnoredPaths: [] })
               setLibraryCleanupFolderEntries((prev) => prev.map((entry) => ({ ...entry, savedIgnore: false, checked: true })))
