@@ -46,6 +46,7 @@ export const METADATA_SUGGEST_FIELD_OPTIONS = [
 
 export type MetadataSuggestField = typeof METADATA_SUGGEST_FIELD_OPTIONS[number]['value']
 export type MetadataSuggestMatchIn = 'filename' | 'folder' | 'either'
+export type MetadataSuggestMatchType = 'exact' | 'contains' | 'starts_with' | 'ends_with' | 'prefix_value'
 
 export const METADATA_SUGGEST_LOOKUP_VALUES: Partial<Record<MetadataSuggestField, readonly string[]>> = {
   gear_type: GEAR_TYPES,
@@ -58,8 +59,10 @@ export interface MetadataSuggestRule {
   field: MetadataSuggestField
   value: string
   matchIn: MetadataSuggestMatchIn
+  matchType: MetadataSuggestMatchType
   enabled: boolean
   overwriteExisting: boolean
+  overwriteOnlyValues: string
 }
 
 export interface MetadataSuggestScopedRuleSet {
@@ -179,6 +182,9 @@ export interface AppSettings {
   metadataSuggestRules: MetadataSuggestRule[]
   metadataSuggestScopedRules: MetadataSuggestScopedRuleSet[]
   metadataSuggestRuleLibrary: MetadataSuggestRule[]
+
+  // Library cleanup: exact source folder paths to always exclude on this computer
+  libraryCleanupIgnoredPaths: string[]
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -231,27 +237,63 @@ export const DEFAULT_SETTINGS: AppSettings = {
   metadataSuggestRules: [],
   metadataSuggestScopedRules: [],
   metadataSuggestRuleLibrary: [],
+  libraryCleanupIgnoredPaths: [],
 }
 
 const STORAGE_KEY = 'nam-editor-settings'
+
+function normalizeMetadataSuggestRule(rule: Partial<MetadataSuggestRule> | null | undefined, index = 0): MetadataSuggestRule {
+  return {
+    id: rule?.id || `rule-${Date.now()}-${index}`,
+    token: rule?.token ?? '',
+    field: (rule?.field ?? 'gear_make') as MetadataSuggestField,
+    value: rule?.value ?? '',
+    matchIn: (rule?.matchIn ?? 'either') as MetadataSuggestMatchIn,
+    matchType: (rule?.matchType ?? 'exact') as MetadataSuggestMatchType,
+    enabled: rule?.enabled ?? true,
+    overwriteExisting: rule?.overwriteExisting ?? false,
+    overwriteOnlyValues: rule?.overwriteOnlyValues ?? '',
+  }
+}
+
+function normalizeSettingsMetadataRules(settings: AppSettings): AppSettings {
+  return {
+    ...settings,
+    metadataSuggestRules: (settings.metadataSuggestRules ?? []).map((rule, index) => normalizeMetadataSuggestRule(rule, index)),
+    metadataSuggestScopedRules: (settings.metadataSuggestScopedRules ?? []).map((set, setIndex) => ({
+      scopePath: set.scopePath,
+      rules: (set.rules ?? []).map((rule, ruleIndex) => normalizeMetadataSuggestRule(rule, setIndex * 1000 + ruleIndex)),
+    })),
+    metadataSuggestRuleLibrary: (settings.metadataSuggestRuleLibrary ?? []).map((rule, index) => normalizeMetadataSuggestRule(rule, index)),
+  }
+}
 
 export function loadSettings(): AppSettings {
   try {
     // Primary: settings.json in userData (survives app updates/reinstalls)
     const api = (window as Window & { api?: { initialSettings?: unknown; saveSettingsToFile?: (json: string) => void } }).api
     if (api?.initialSettings) {
-      return { ...DEFAULT_SETTINGS, ...(api.initialSettings as Partial<AppSettings>) }
+      const merged = { ...DEFAULT_SETTINGS, ...(api.initialSettings as Partial<AppSettings>) }
+      const legacyIgnoredByDestination = (api.initialSettings as Partial<AppSettings>)?.libraryCleanupIgnoredPathsByDestination
+      if ((!merged.libraryCleanupIgnoredPaths || merged.libraryCleanupIgnoredPaths.length === 0) && legacyIgnoredByDestination) {
+        merged.libraryCleanupIgnoredPaths = Array.from(new Set(Object.values(legacyIgnoredByDestination).flat()))
+      }
+      return normalizeSettingsMetadataRules(merged)
     }
     // Migration: first launch after this change — read from localStorage and persist to file
     const stored = localStorage.getItem(STORAGE_KEY)
     if (stored) {
-      const parsed = { ...DEFAULT_SETTINGS, ...JSON.parse(stored) }
+      const raw = JSON.parse(stored) as Partial<AppSettings> & { libraryCleanupIgnoredPathsByDestination?: Record<string, string[]> }
+      const parsed = { ...DEFAULT_SETTINGS, ...raw }
+      if ((!parsed.libraryCleanupIgnoredPaths || parsed.libraryCleanupIgnoredPaths.length === 0) && raw.libraryCleanupIgnoredPathsByDestination) {
+        parsed.libraryCleanupIgnoredPaths = Array.from(new Set(Object.values(raw.libraryCleanupIgnoredPathsByDestination).flat()))
+      }
       api?.saveSettingsToFile?.(JSON.stringify(parsed))
-      return parsed
+      return normalizeSettingsMetadataRules(parsed)
     }
-    return DEFAULT_SETTINGS
+    return normalizeSettingsMetadataRules(DEFAULT_SETTINGS)
   } catch {
-    return DEFAULT_SETTINGS
+    return normalizeSettingsMetadataRules(DEFAULT_SETTINGS)
   }
 }
 

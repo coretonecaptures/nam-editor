@@ -34,9 +34,13 @@ interface FolderTreeProps {
   onImportMetadata?: (folderPath: string | null) => void
   onSuggestMetadata?: (folderPath: string | null) => void
   onEditSuggestRules?: (folderPath: string) => void
+  onCopySuggestRules?: (folderPath: string) => void
+  onPasteSuggestRules?: (folderPath: string) => void
   onSelectAllInFolder?: (folderPath: string | null) => void
   onCoverageReport?: (folderPath: string) => void
   onFindDuplicates?: (folderPath: string) => void
+  onCleanThisFolder?: (folderPath: string) => void
+  onDeleteEmptyFolder?: (folderPath: string) => Promise<{ success: boolean; error?: string }>
   scrollToFolder?: string | null
   packInfoFolders?: Set<string>
   folderNameColors?: Record<string, string>
@@ -77,7 +81,8 @@ export function FolderTree({
   tree, files, selectedFolders, onSelect, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, onFilterChange, onDropFiles,
   onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSuggestMetadata, onEditSuggestRules,
-  onSelectAllInFolder, onCoverageReport, onFindDuplicates, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor,
+  onCopySuggestRules, onPasteSuggestRules,
+  onSelectAllInFolder, onCoverageReport, onFindDuplicates, onCleanThisFolder, onDeleteEmptyFolder, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor,
   onCompareFolders, onDeletePackInfo, bundleFolders, onCreateBundle, onDeleteBundle
   , watchSourceByDest, onSetWatchSource, onClearWatchSource, foldersWithSuggestRules
 }: FolderTreeProps) {
@@ -272,6 +277,8 @@ export function FolderTree({
           onSelectAll={onSelectAllInFolder ? () => onSelectAllInFolder(null) : undefined}
           onCoverageReport={onCoverageReport ? () => onCoverageReport(tree.path) : undefined}
           onFindDuplicates={onFindDuplicates ? () => onFindDuplicates(tree.path) : undefined}
+          onCleanThisFolder={onCleanThisFolder ? () => onCleanThisFolder(tree.path) : undefined}
+          onDeleteEmptyFolder={onDeleteEmptyFolder ? () => onDeleteEmptyFolder(tree.path) : undefined}
           hasSuggestRules={foldersWithSuggestRules?.has(tree.path.replace(/\\/g, '/')) ?? false}
         />
 
@@ -297,9 +304,13 @@ export function FolderTree({
             onImportMetadata={onImportMetadata}
             onSuggestMetadata={onSuggestMetadata}
             onEditSuggestRules={onEditSuggestRules}
+            onCopySuggestRules={onCopySuggestRules}
+            onPasteSuggestRules={onPasteSuggestRules}
             onSelectAllInFolder={onSelectAllInFolder}
             onCoverageReport={onCoverageReport}
             onFindDuplicates={onFindDuplicates}
+            onCleanThisFolder={onCleanThisFolder}
+            onDeleteEmptyFolder={onDeleteEmptyFolder}
             expandSeq={expandSeq}
             collapseSeq={collapseSeq}
             scrollToFolder={scrollToFolder}
@@ -326,8 +337,10 @@ function TreeNode({
   node, selectedFolders, onSelect, depth, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, matchingPaths, onDropFiles,
   onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSuggestMetadata, onEditSuggestRules,
-  onSelectAllInFolder, onCoverageReport, onFindDuplicates, expandSeq, collapseSeq, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor,
+  onCopySuggestRules, onPasteSuggestRules,
+  onSelectAllInFolder, onCoverageReport, onFindDuplicates, onCleanThisFolder, expandSeq, collapseSeq, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor,
   onCompareFolders, onDeletePackInfo, bundleFolders, onCreateBundle, onDeleteBundle
+  , onDeleteEmptyFolder
   , watchSourceByDest, onSetWatchSource, onClearWatchSource, foldersWithSuggestRules
 }: {
   node: FolderNode
@@ -349,9 +362,13 @@ function TreeNode({
   onImportMetadata?: (folderPath: string | null) => void
   onSuggestMetadata?: (folderPath: string | null) => void
   onEditSuggestRules?: (folderPath: string) => void
+  onCopySuggestRules?: (folderPath: string) => void
+  onPasteSuggestRules?: (folderPath: string) => void
   onSelectAllInFolder?: (folderPath: string | null) => void
   onCoverageReport?: (folderPath: string) => void
   onFindDuplicates?: (folderPath: string) => void
+  onCleanThisFolder?: (folderPath: string) => void
+  onDeleteEmptyFolder?: (folderPath: string) => Promise<{ success: boolean; error?: string }>
   expandSeq?: number
   collapseSeq?: number
   scrollToFolder?: string | null
@@ -432,9 +449,13 @@ function TreeNode({
         onImportMetadata={onImportMetadata ? () => onImportMetadata(node.path) : undefined}
         onSuggestMetadata={onSuggestMetadata ? () => onSuggestMetadata(node.path) : undefined}
         onEditSuggestRules={onEditSuggestRules ? () => onEditSuggestRules(node.path) : undefined}
+        onCopySuggestRules={onCopySuggestRules ? () => onCopySuggestRules(node.path) : undefined}
+        onPasteSuggestRules={onPasteSuggestRules ? () => onPasteSuggestRules(node.path) : undefined}
         onSelectAll={onSelectAllInFolder ? () => onSelectAllInFolder(node.path) : undefined}
         onCoverageReport={onCoverageReport ? () => onCoverageReport(node.path) : undefined}
         onFindDuplicates={onFindDuplicates ? () => onFindDuplicates(node.path) : undefined}
+        onCleanThisFolder={onCleanThisFolder ? () => onCleanThisFolder(node.path) : undefined}
+        onDeleteEmptyFolder={onDeleteEmptyFolder ? () => onDeleteEmptyFolder(node.path) : undefined}
         isDraggableFolder
         hasPackInfo={packInfoFolders?.has(node.path.replace(/\\/g, '/')) ?? false}
         hasSuggestRules={foldersWithSuggestRules?.has(node.path.replace(/\\/g, '/')) ?? false}
@@ -475,9 +496,13 @@ function TreeNode({
               onImportMetadata={onImportMetadata}
               onSuggestMetadata={onSuggestMetadata}
               onEditSuggestRules={onEditSuggestRules}
+              onCopySuggestRules={onCopySuggestRules}
+              onPasteSuggestRules={onPasteSuggestRules}
               onSelectAllInFolder={onSelectAllInFolder}
               onCoverageReport={onCoverageReport}
               onFindDuplicates={onFindDuplicates}
+              onCleanThisFolder={onCleanThisFolder}
+              onDeleteEmptyFolder={onDeleteEmptyFolder}
               expandSeq={expandSeq}
               collapseSeq={collapseSeq}
               scrollToFolder={scrollToFolder}
@@ -506,8 +531,8 @@ interface ContextMenuState { x: number; y: number }
 function FolderRow({
   label, folderPath, isRoot, isSelected, totalCount, dirtyCount, depth,
   hasChildren, expanded, onToggleExpand, onClick, onSave, onRevert,
-  onBatchEdit, onReveal, isFiltered, isHighlighted, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSuggestMetadata, onEditSuggestRules, onSelectAll, onCoverageReport, onFindDuplicates, isDraggableFolder, hasPackInfo, hasSuggestRules = false, hasBundle, folderColor, onSetFolderColor, isMultiSelect, onCompareFolders, onDeletePackInfo, onCreateBundle, onDeleteBundle
-  , watchSource, onSetWatchSource, onClearWatchSource
+  onBatchEdit, onReveal, isFiltered, isHighlighted, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSuggestMetadata, onEditSuggestRules, onCopySuggestRules, onPasteSuggestRules, onSelectAll, onCoverageReport, onFindDuplicates, isDraggableFolder, hasPackInfo, hasSuggestRules = false, hasBundle, folderColor, onSetFolderColor, isMultiSelect, onCompareFolders, onDeletePackInfo, onCreateBundle, onDeleteBundle
+  , watchSource, onSetWatchSource, onClearWatchSource, onCleanThisFolder, onDeleteEmptyFolder
 }: {
   label: string
   folderPath: string
@@ -535,9 +560,13 @@ function FolderRow({
   onImportMetadata?: () => void
   onSuggestMetadata?: () => void
   onEditSuggestRules?: () => void
+  onCopySuggestRules?: () => void
+  onPasteSuggestRules?: () => void
   onSelectAll?: () => void
   onCoverageReport?: () => void
   onFindDuplicates?: () => void
+  onCleanThisFolder?: () => void
+  onDeleteEmptyFolder?: () => Promise<{ success: boolean; error?: string }>
   isDraggableFolder?: boolean
   hasPackInfo?: boolean
   hasSuggestRules?: boolean
@@ -636,6 +665,7 @@ function FolderRow({
   const acceptsDrop = (types: readonly string[]) =>
     types.includes('application/x-nam-files') || types.includes('application/x-nam-folder')
   const watchSourceName = watchSource ? watchSource.replace(/\\/g, '/').split('/').pop() ?? watchSource : null
+  const canDeleteEmptyFolder = !isRoot && !hasChildren && totalCount === 0
 
   return (
     <div className="relative group" data-folder-path={folderPath}>
@@ -812,215 +842,239 @@ function FolderRow({
           ) : (
             /* Full menu for single folder */
             <>
-          <button
-            className={`w-full text-left px-3 py-1.5 transition-colors ${dirtyCount > 0 ? 'text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40' : 'text-gray-400 dark:text-gray-600 cursor-default'}`}
-            disabled={dirtyCount === 0}
-            onClick={() => { setMenu(null); onSave() }}
-          >
-            Save all in folder
-            {dirtyCount > 0 && <span className="ml-2 text-amber-500">{dirtyCount}</span>}
-          </button>
-          <button
-            className={`w-full text-left px-3 py-1.5 transition-colors ${dirtyCount > 0 ? 'text-gray-800 dark:text-gray-200 hover:bg-red-900/40' : 'text-gray-400 dark:text-gray-600 cursor-default'}`}
-            disabled={dirtyCount === 0}
-            onClick={() => { setMenu(null); onRevert() }}
-          >
-            Revert all in folder
-          </button>
-          <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
-          <button
-            className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
-            onClick={() => { setMenu(null); onBatchEdit() }}
-          >
-            Batch edit…
-          </button>
-          {onSelectAll && (
-            <button
-              className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
-              onClick={() => { setMenu(null); onSelectAll() }}
-            >
-              Select all in folder
-            </button>
-          )}
-          {onCreateFolder && (
-            <button
-              className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
-              onClick={() => { setMenu(null); setIsCreating(true) }}
-            >
-              New subfolder…
-            </button>
-          )}
-          {!isRoot && onRenameFolder && (
-            <button
-              className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
-              onClick={() => { setMenu(null); setIsRenaming(true) }}
-            >
-              Rename folder…
-            </button>
-          )}
-          <button
-            className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
-            onClick={() => { setMenu(null); onReveal() }}
-          >
-            Reveal in Explorer
-          </button>
-          {onExportFolder && (
-            <>
-              <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
+              <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Folder</div>
+              {onCleanThisFolder && (
+                <button
+                  className="w-full text-left px-3 py-1.5 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-600/40 transition-colors"
+                  onClick={() => { setMenu(null); onCleanThisFolder() }}
+                >
+                  Clean this folder…
+                </button>
+              )}
               <button
-                className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
-                onClick={() => { setMenu(null); onExportFolder('csv') }}
+                className={`w-full text-left px-3 py-1.5 transition-colors ${dirtyCount > 0 ? 'text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40' : 'text-gray-400 dark:text-gray-600 cursor-default'}`}
+                disabled={dirtyCount === 0}
+                onClick={() => { setMenu(null); onSave() }}
               >
-                Export folder as CSV
+                Save all in folder
+                {dirtyCount > 0 && <span className="ml-2 text-amber-500">{dirtyCount}</span>}
+              </button>
+              <button
+                className={`w-full text-left px-3 py-1.5 transition-colors ${dirtyCount > 0 ? 'text-gray-800 dark:text-gray-200 hover:bg-red-900/40' : 'text-gray-400 dark:text-gray-600 cursor-default'}`}
+                disabled={dirtyCount === 0}
+                onClick={() => { setMenu(null); onRevert() }}
+              >
+                Revert all in folder
               </button>
               <button
                 className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
-                onClick={() => { setMenu(null); onExportFolder('xlsx') }}
+                onClick={() => { setMenu(null); onBatchEdit() }}
               >
-                Export folder as Excel
+                Batch edit…
               </button>
-            </>
-          )}
-          {(onGenerateTemplate || onImportMetadata || onSuggestMetadata || onEditSuggestRules) && (
-            <>
-              <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
-              {onGenerateTemplate && (
+              {onSelectAll && (
                 <button
                   className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
-                  onClick={() => { setMenu(null); onGenerateTemplate() }}
+                  onClick={() => { setMenu(null); onSelectAll() }}
                 >
-                  Generate import template…
+                  Select all in folder
                 </button>
               )}
-              {onImportMetadata && (
-                <button
-                  className="w-full text-left px-3 py-1.5 text-teal-700 dark:text-teal-400 hover:bg-indigo-600/40 transition-colors"
-                  onClick={() => { setMenu(null); onImportMetadata() }}
-                >
-                  Import metadata from spreadsheet…
-                </button>
-              )}
-              {onSuggestMetadata && (
-                <button
-                  className="w-full text-left px-3 py-1.5 text-violet-700 dark:text-violet-400 hover:bg-indigo-600/40 transition-colors"
-                  onClick={() => { setMenu(null); onSuggestMetadata() }}
-                >
-                  Suggest metadata…
-                </button>
-              )}
-              {onEditSuggestRules && (
-                <button
-                  className="w-full text-left px-3 py-1.5 text-violet-700 dark:text-violet-400 hover:bg-indigo-600/40 transition-colors"
-                  onClick={() => { setMenu(null); onEditSuggestRules() }}
-                >
-                  Edit folder suggestion rules…
-                </button>
-              )}
-            </>
-          )}
-          {onCoverageReport && (
-            <>
-              <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
-              <button
-                className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
-                onClick={() => { setMenu(null); onCoverageReport() }}
-              >
-                Training version report…
-              </button>
-            </>
-          )}
-          {onFindDuplicates && (
-            <>
-              <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
-              <button
-                className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
-                onClick={() => { setMenu(null); onFindDuplicates() }}
-              >
-                Find duplicates…
-              </button>
-            </>
-          )}
-          {(onSetWatchSource || onClearWatchSource) && (
-            <>
-              <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
-              {watchSourceName && (
-                <div className="px-3 py-1 text-[10px] text-amber-600 dark:text-amber-400 truncate">
-                  Watching source: {watchSourceName}
-                </div>
-              )}
-              {onSetWatchSource && (
+              {onCreateFolder && (
                 <button
                   className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
-                  onClick={() => { setMenu(null); onSetWatchSource() }}
+                  onClick={() => { setMenu(null); setIsCreating(true) }}
                 >
-                  {watchSource ? 'Change watch source…' : 'Set watch source…'}
+                  New subfolder…
                 </button>
               )}
-              {onClearWatchSource && (
+              {!isRoot && onRenameFolder && (
                 <button
-                  className="w-full text-left px-3 py-1.5 text-red-600 dark:text-red-400 hover:bg-red-600/20 transition-colors"
-                  onClick={() => { setMenu(null); onClearWatchSource() }}
+                  className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
+                  onClick={() => { setMenu(null); setIsRenaming(true) }}
                 >
-                  Stop watching source
+                  Rename folder…
                 </button>
               )}
-            </>
-          )}
-          {onDeletePackInfo && (
-            <>
-              <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
-              <button
-                className="w-full text-left px-3 py-1.5 text-red-600 dark:text-red-400 hover:bg-red-600/20 transition-colors"
-                onClick={() => { setMenu(null); onDeletePackInfo() }}
-              >
-                Remove Pack Info…
-              </button>
-            </>
-          )}
-          {onCreateBundle && (
-            <>
-              <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
+              {!isRoot && onDeleteEmptyFolder && (
+                <button
+                  className={`w-full text-left px-3 py-1.5 transition-colors ${canDeleteEmptyFolder ? 'text-red-600 dark:text-red-400 hover:bg-red-600/20' : 'text-gray-400 dark:text-gray-600 cursor-default'}`}
+                  disabled={!canDeleteEmptyFolder}
+                  onClick={() => { setMenu(null); void onDeleteEmptyFolder() }}
+                >
+                  Delete empty folderâ€¦
+                </button>
+              )}
               <button
                 className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
-                onClick={() => { setMenu(null); onCreateBundle?.() }}
+                onClick={() => { setMenu(null); onReveal() }}
               >
-                Create Multi-Amp Bundle…
+                Reveal in Explorer
               </button>
-            </>
-          )}
-          {onDeleteBundle && (
-            <>
-              <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
-              <button
-                className="w-full text-left px-3 py-1.5 text-red-600 dark:text-red-400 hover:bg-red-600/20 transition-colors"
-                onClick={() => { setMenu(null); onDeleteBundle?.() }}
-              >
-                Remove Multi-Amp Bundle…
-              </button>
-            </>
-          )}
-          {!isRoot && onSetFolderColor && (
-            <>
-              <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
-              <button
-                className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors flex items-center gap-2"
-                onClick={() => {
-                  // Position picker near the menu — picker is ~180px wide, ~120px tall
-                  const pickerW = 184, pickerH = 120
-                  const x = Math.min(menu!.x, window.innerWidth - pickerW - 8)
-                  const y = Math.min(menu!.y, window.innerHeight - pickerH - 8)
-                  setMenu(null)
-                  setColorPickerPos({ x, y })
-                }}
-              >
-                <span
-                  className="w-2.5 h-2.5 rounded-full border border-gray-400 flex-shrink-0"
-                  style={folderColor ? { background: folderColor, borderColor: folderColor } : undefined}
-                />
-                Set folder color…
-              </button>
-            </>
-          )}
+
+              {(onGenerateTemplate || onImportMetadata || onSuggestMetadata || onEditSuggestRules || onCopySuggestRules || onPasteSuggestRules) && (
+                <>
+                  <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
+                  <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Metadata</div>
+                  {onGenerateTemplate && (
+                    <button
+                      className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
+                      onClick={() => { setMenu(null); onGenerateTemplate() }}
+                    >
+                      Generate import template…
+                    </button>
+                  )}
+                  {onImportMetadata && (
+                    <button
+                      className="w-full text-left px-3 py-1.5 text-teal-700 dark:text-teal-400 hover:bg-indigo-600/40 transition-colors"
+                      onClick={() => { setMenu(null); onImportMetadata() }}
+                    >
+                      Import metadata from spreadsheet…
+                    </button>
+                  )}
+                  {onSuggestMetadata && (
+                    <button
+                      className="w-full text-left px-3 py-1.5 text-violet-700 dark:text-violet-400 hover:bg-indigo-600/40 transition-colors"
+                      onClick={() => { setMenu(null); onSuggestMetadata() }}
+                    >
+                      Suggest metadata…
+                    </button>
+                  )}
+                  {onEditSuggestRules && (
+                    <button
+                      className="w-full text-left px-3 py-1.5 text-violet-700 dark:text-violet-400 hover:bg-indigo-600/40 transition-colors"
+                      onClick={() => { setMenu(null); onEditSuggestRules() }}
+                    >
+                      Edit folder suggestion rules…
+                    </button>
+                  )}
+                  {onCopySuggestRules && (
+                    <button
+                      className="w-full text-left px-3 py-1.5 text-violet-700 dark:text-violet-400 hover:bg-indigo-600/40 transition-colors"
+                      onClick={() => { setMenu(null); onCopySuggestRules() }}
+                    >
+                      Copy folder suggestion rules
+                    </button>
+                  )}
+                  {onPasteSuggestRules && (
+                    <button
+                      className="w-full text-left px-3 py-1.5 text-violet-700 dark:text-violet-400 hover:bg-indigo-600/40 transition-colors"
+                      onClick={() => { setMenu(null); onPasteSuggestRules() }}
+                    >
+                      Paste folder suggestion rules
+                    </button>
+                  )}
+                </>
+              )}
+
+              {(onFindDuplicates || onCoverageReport || onSetWatchSource || onClearWatchSource) && (
+                <>
+                  <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
+                  <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Maintenance</div>
+                  {onFindDuplicates && (
+                    <button
+                      className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
+                      onClick={() => { setMenu(null); onFindDuplicates() }}
+                    >
+                      Find duplicates…
+                    </button>
+                  )}
+                  {onCoverageReport && (
+                    <button
+                      className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
+                      onClick={() => { setMenu(null); onCoverageReport() }}
+                    >
+                      Training version report…
+                    </button>
+                  )}
+                  {watchSourceName && (
+                    <div className="px-3 py-1 text-[10px] text-amber-600 dark:text-amber-400 truncate">
+                      Watching source: {watchSourceName}
+                    </div>
+                  )}
+                  {onSetWatchSource && (
+                    <button
+                      className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
+                      onClick={() => { setMenu(null); onSetWatchSource() }}
+                    >
+                      {watchSource ? 'Change watch source…' : 'Set watch source…'}
+                    </button>
+                  )}
+                  {onClearWatchSource && (
+                    <button
+                      className="w-full text-left px-3 py-1.5 text-red-600 dark:text-red-400 hover:bg-red-600/20 transition-colors"
+                      onClick={() => { setMenu(null); onClearWatchSource() }}
+                    >
+                      Stop watching source
+                    </button>
+                  )}
+                </>
+              )}
+
+              {(onExportFolder || onCreateBundle || onDeleteBundle || onDeletePackInfo || (!isRoot && onSetFolderColor)) && (
+                <>
+                  <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
+                  <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Organize / Export</div>
+                  {onExportFolder && (
+                    <>
+                      <button
+                        className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
+                        onClick={() => { setMenu(null); onExportFolder('csv') }}
+                      >
+                        Export folder as CSV
+                      </button>
+                      <button
+                        className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
+                        onClick={() => { setMenu(null); onExportFolder('xlsx') }}
+                      >
+                        Export folder as Excel
+                      </button>
+                    </>
+                  )}
+                  {onCreateBundle && (
+                    <button
+                      className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
+                      onClick={() => { setMenu(null); onCreateBundle?.() }}
+                    >
+                      Create Multi-Amp Bundle…
+                    </button>
+                  )}
+                  {onDeleteBundle && (
+                    <button
+                      className="w-full text-left px-3 py-1.5 text-red-600 dark:text-red-400 hover:bg-red-600/20 transition-colors"
+                      onClick={() => { setMenu(null); onDeleteBundle?.() }}
+                    >
+                      Remove Multi-Amp Bundle…
+                    </button>
+                  )}
+                  {onDeletePackInfo && (
+                    <button
+                      className="w-full text-left px-3 py-1.5 text-red-600 dark:text-red-400 hover:bg-red-600/20 transition-colors"
+                      onClick={() => { setMenu(null); onDeletePackInfo() }}
+                    >
+                      Remove Pack Info…
+                    </button>
+                  )}
+                  {!isRoot && onSetFolderColor && (
+                    <button
+                      className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors flex items-center gap-2"
+                      onClick={() => {
+                        const pickerW = 184, pickerH = 120
+                        const x = Math.min(menu!.x, window.innerWidth - pickerW - 8)
+                        const y = Math.min(menu!.y, window.innerHeight - pickerH - 8)
+                        setMenu(null)
+                        setColorPickerPos({ x, y })
+                      }}
+                    >
+                      <span
+                        className="w-2.5 h-2.5 rounded-full border border-gray-400 flex-shrink-0"
+                        style={folderColor ? { background: folderColor, borderColor: folderColor } : undefined}
+                      />
+                      Set folder color…
+                    </button>
+                  )}
+                </>
+              )}
             </>
           )}
         </div>

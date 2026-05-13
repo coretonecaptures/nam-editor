@@ -2,6 +2,7 @@ import { GEAR_TYPES, NamFile, TONE_TYPES } from '../types/nam'
 import {
   METADATA_SUGGEST_FIELD_OPTIONS,
   MetadataSuggestField,
+  MetadataSuggestMatchType,
   MetadataSuggestRule,
   MetadataSuggestScopedRuleSet,
 } from '../types/settings'
@@ -58,6 +59,10 @@ function compact(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '')
 }
 
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 function normalizePath(path: string): string {
   return path.replace(/\\/g, '/')
 }
@@ -83,6 +88,39 @@ function matchesToken(raw: string, tokens: Set<string>, token: string): boolean 
   return rawLower.includes(trimmed) || compact(rawLower).includes(compactToken)
 }
 
+function matchByType(raw: string, tokens: Set<string>, token: string, matchType: MetadataSuggestMatchType): { matched: boolean; extractedValue?: string; extractedMatch?: string } {
+  const trimmed = token.trim()
+  const rawLower = raw.toLowerCase()
+  const trimmedLower = trimmed.toLowerCase()
+  const compactToken = compact(trimmedLower)
+  const compactRaw = compact(rawLower)
+
+  if (!trimmed) return { matched: false }
+
+  switch (matchType) {
+    case 'contains':
+      return { matched: rawLower.includes(trimmedLower) || compactRaw.includes(compactToken) }
+    case 'starts_with':
+      return { matched: rawLower.startsWith(trimmedLower) || compactRaw.startsWith(compactToken) }
+    case 'ends_with':
+      return { matched: rawLower.endsWith(trimmedLower) || compactRaw.endsWith(compactToken) }
+    case 'prefix_value': {
+      const escaped = escapeRegExp(trimmed)
+      const regex = new RegExp(`(^|[^a-z0-9])(${escaped})([0-9]+(?:\\.[0-9]+)?)($|[^a-z0-9])`, 'i')
+      const match = raw.match(regex)
+      if (!match) return { matched: false }
+      return {
+        matched: true,
+        extractedValue: match[3],
+        extractedMatch: `${match[2]}${match[3]}`,
+      }
+    }
+    case 'exact':
+    default:
+      return { matched: matchesToken(raw, tokens, trimmed) }
+  }
+}
+
 function isBlankValue(value: unknown): boolean {
   return value == null || (typeof value === 'string' && value.trim() === '')
 }
@@ -92,6 +130,15 @@ function normalizedComparableValue(value: unknown): string {
   if (typeof value === 'string') return value.trim()
   if (typeof value === 'number') return String(value)
   return String(value).trim()
+}
+
+function parseOverwriteOnlyValues(value: string): Set<string> {
+  return new Set(
+    value
+      .split(',')
+      .map((item) => normalizedComparableValue(item).toLowerCase())
+      .filter(Boolean)
+  )
 }
 
 function isValidRuleValue(field: MetadataSuggestField, value: string): boolean {
@@ -150,11 +197,22 @@ export function buildMetadataSuggestionMatches(
       ...rules.filter((rule) => !shadowedTokens.has(compact(rule.token))),
     ]
 
-    const addSuggestion = (field: MetadataSuggestField, value: string, reason: string, overwriteExisting = false) => {
+    const addSuggestion = (
+      field: MetadataSuggestField,
+      value: string,
+      reason: string,
+      overwriteExisting = false,
+      overwriteOnlyValues = ''
+    ) => {
       if (claimed.has(field)) return
       const currentValue = file.metadata[field]
       if (!overwriteExisting && !isBlankValue(currentValue)) return
       if (!value.trim()) return
+      const guardValues = parseOverwriteOnlyValues(overwriteOnlyValues)
+      if (overwriteExisting && guardValues.size > 0) {
+        const currentComparable = normalizedComparableValue(currentValue).toLowerCase()
+        if (!guardValues.has(currentComparable)) return
+      }
       if (overwriteExisting && normalizedComparableValue(currentValue) === normalizedComparableValue(coerceRuleValue(field, value))) {
         return
       }
@@ -176,13 +234,13 @@ export function buildMetadataSuggestionMatches(
     for (const rule of orderedRules) {
       if (!rule.enabled) continue
       const token = rule.token.trim()
-      const value = rule.value.trim()
-      if (!value) continue
 
       const isBlankTokenRule = token.length === 0
 
-      const matchFilename = isBlankTokenRule ? false : matchesToken(baseName, fileTokens, token)
-      const matchFolder = isBlankTokenRule ? false : matchesToken(folderPath, folderTokens, token)
+      const filenameMatch = isBlankTokenRule ? { matched: false } : matchByType(baseName, fileTokens, token, rule.matchType)
+      const folderMatch = isBlankTokenRule ? { matched: false } : matchByType(folderPath, folderTokens, token, rule.matchType)
+      const matchFilename = filenameMatch.matched
+      const matchFolder = folderMatch.matched
       const matched = isBlankTokenRule
         ? true
         : rule.matchIn === 'filename'
@@ -192,6 +250,18 @@ export function buildMetadataSuggestionMatches(
             : (matchFilename || matchFolder)
 
       if (!matched) continue
+
+      const selectedMatch = rule.matchIn === 'filename'
+        ? filenameMatch
+        : rule.matchIn === 'folder'
+          ? folderMatch
+          : (filenameMatch.matched ? filenameMatch : folderMatch)
+
+      const templatedValue = rule.value
+        .replace(/\{match\}/gi, selectedMatch.extractedMatch ?? '')
+        .replace(/\{value\}/gi, selectedMatch.extractedValue ?? '')
+        .trim()
+      if (!templatedValue) continue
 
       const source = isBlankTokenRule
         ? 'scope-wide default rule'
@@ -207,15 +277,20 @@ export function buildMetadataSuggestionMatches(
 
       addSuggestion(
         rule.field,
-        value,
+        templatedValue,
         rule.overwriteExisting
           ? isBlankTokenRule
             ? 'Overwrite scope-wide default rule'
-            : `Overwrite rule matched token "${token}" in ${source}`
+            : rule.matchType === 'prefix_value'
+              ? `Overwrite rule matched ${selectedMatch.extractedMatch ?? `"${token}"`} in ${source}`
+              : `Overwrite rule matched token "${token}" in ${source}`
           : isBlankTokenRule
             ? 'Scope-wide default rule'
-            : `Rule matched token "${token}" in ${source}`,
-        rule.overwriteExisting
+            : rule.matchType === 'prefix_value'
+              ? `Rule matched ${selectedMatch.extractedMatch ?? `"${token}"`} in ${source}`
+              : `Rule matched token "${token}" in ${source}`,
+        rule.overwriteExisting,
+        rule.overwriteOnlyValues
       )
     }
 

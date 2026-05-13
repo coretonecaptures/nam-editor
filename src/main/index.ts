@@ -86,6 +86,57 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function hashFileSha256(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256')
+    const stream = fs.createReadStream(filePath)
+    stream.on('data', (chunk) => hash.update(chunk))
+    stream.on('error', reject)
+    stream.on('end', () => resolve(hash.digest('hex')))
+  })
+}
+
+async function mergeFolderContents(sourcePath: string, destPath: string): Promise<{ skippedPaths: string[] }> {
+  const skippedPaths: string[] = []
+  const entries = await fs.promises.readdir(sourcePath, { withFileTypes: true })
+
+  for (const entry of entries) {
+    const sourceChild = join(sourcePath, entry.name)
+    const destChild = join(destPath, entry.name)
+
+    if (entry.isDirectory()) {
+      if (fs.existsSync(destChild)) {
+        const destStat = await fs.promises.stat(destChild)
+        if (!destStat.isDirectory()) {
+          skippedPaths.push(sourceChild.replace(/\\/g, '/'))
+          continue
+        }
+        const nested = await mergeFolderContents(sourceChild, destChild)
+        skippedPaths.push(...nested.skippedPaths)
+        const remaining = await fs.promises.readdir(sourceChild)
+        if (remaining.length === 0) {
+          suppressWatcher()
+          await fs.promises.rmdir(sourceChild)
+        }
+      } else {
+        suppressWatcher()
+        await fs.promises.rename(sourceChild, destChild)
+      }
+      continue
+    }
+
+    if (fs.existsSync(destChild)) {
+      skippedPaths.push(sourceChild.replace(/\\/g, '/'))
+      continue
+    }
+
+    suppressWatcher()
+    await fs.promises.rename(sourceChild, destChild)
+  }
+
+  return { skippedPaths }
+}
+
 async function waitForStableFile(filePath: string, attempts = 10, delayMs = 700): Promise<boolean> {
   let lastSize = -1
   for (let i = 0; i < attempts; i++) {
@@ -913,6 +964,26 @@ app.whenReady().then(async () => {
     }
   })
 
+  ipcMain.handle('file:hashMany', async (_event, filePaths: string[]) => {
+    const CONCURRENCY = 8
+    const results: Array<{ filePath: string; success: boolean; hash?: string; error?: string }> = []
+
+    for (let i = 0; i < filePaths.length; i += CONCURRENCY) {
+      const batch = filePaths.slice(i, i + CONCURRENCY)
+      const batchResults = await Promise.all(batch.map(async (filePath) => {
+        try {
+          const hash = await hashFileSha256(filePath)
+          return { filePath, success: true, hash }
+        } catch (err) {
+          return { filePath, success: false, error: String(err) }
+        }
+      }))
+      results.push(...batchResults)
+    }
+
+    return results
+  })
+
   // IPC: Read a NAM file metadata (without exposing weights to renderer)
   const errorLogPath = join(app.getPath('userData'), 'parse-errors.log')
   ipcMain.handle('file:read', async (_event, filePath: string) => {
@@ -1174,14 +1245,15 @@ app.whenReady().then(async () => {
   })
 
   // IPC: Move a file to a different folder (physical rename on disk)
-  ipcMain.handle('file:move', async (_event, sourcePath: string, destDir: string, force = false) => {
+  ipcMain.handle('file:move', async (_event, sourcePath: string, destDir: string, force = false, destBaseName?: string) => {
     try {
-      const fileName = sourcePath.replace(/\\/g, '/').split('/').pop()!
+      const fileName = (destBaseName && destBaseName.trim()) || sourcePath.replace(/\\/g, '/').split('/').pop()!
       const destPath = join(destDir, fileName)
       if (fs.existsSync(destPath)) {
         if (!force) return { success: false, error: 'exists', destPath: destPath.replace(/\\/g, '/') }
         fs.unlinkSync(destPath)
       }
+      suppressWatcher()
       fs.renameSync(sourcePath, destPath)
       return { success: true, destPath: destPath.replace(/\\/g, '/') }
     } catch (err) {
@@ -1205,16 +1277,18 @@ app.whenReady().then(async () => {
   })
 
   // IPC: Copy file(s) to a destination folder (non-destructive)
-  ipcMain.handle('file:copy', async (_event, filePaths: string[], destDir: string) => {
+  ipcMain.handle('file:copy', async (_event, filePaths: string[], destDir: string, destBaseNames?: string[]) => {
     const results: { filePath: string; success: boolean; destPath?: string; error?: string }[] = []
-    for (const filePath of filePaths) {
+    for (let index = 0; index < filePaths.length; index += 1) {
+      const filePath = filePaths[index]
       try {
-        const fileName = filePath.replace(/\\/g, '/').split('/').pop()!
+        const fileName = (destBaseNames?.[index] && destBaseNames[index].trim()) || filePath.replace(/\\/g, '/').split('/').pop()!
         const destPath = join(destDir, fileName)
         if (fs.existsSync(destPath)) {
           results.push({ filePath, success: false, error: 'exists' })
           continue
         }
+        suppressWatcher()
         fs.copyFileSync(filePath, destPath)
         results.push({ filePath, success: true, destPath: destPath.replace(/\\/g, '/') })
       } catch (err) {
@@ -1393,15 +1467,49 @@ app.whenReady().then(async () => {
   })
 
   // IPC: Move a folder into another folder
-  ipcMain.handle('folder:move', async (_event, sourcePath: string, destParentPath: string) => {
+  ipcMain.handle('folder:deleteEmpty', async (_event, folderPath: string) => {
+    try {
+      const normalized = normalizePath(folderPath)
+      const entries = await fs.promises.readdir(normalized)
+      if (entries.length > 0) {
+        return { success: false, error: 'Folder is not empty' }
+      }
+      suppressWatcher()
+      await fs.promises.rmdir(normalized)
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('folder:move', async (_event, sourcePath: string, destParentPath: string, allowMerge = false) => {
     try {
       const normSource = normalizePath(sourcePath)
       const name = basename(normSource)
       const newPath = join(normalizePath(destParentPath), name)
       log(`folder:move source="${sourcePath}" normSource="${normSource}" dest="${destParentPath}" newPath="${newPath}" srcExists=${fs.existsSync(normSource)}`)
       if (fs.existsSync(newPath)) {
-        return { success: false, error: 'A folder with that name already exists at the destination' }
+        const destStat = await fs.promises.stat(newPath)
+        if (!destStat.isDirectory()) {
+          return { success: false, error: 'A non-folder item with that name already exists at the destination' }
+        }
+        if (!allowMerge) {
+          return { success: false, error: 'merge-required', mergeTargetPath: newPath.replace(/\\/g, '/') }
+        }
+        const mergeResult = await mergeFolderContents(normSource, newPath)
+        const remaining = await fs.promises.readdir(normSource)
+        if (remaining.length === 0) {
+          suppressWatcher()
+          await fs.promises.rmdir(normSource)
+        }
+        return {
+          success: true,
+          newPath: newPath.replace(/\\/g, '/'),
+          mergedIntoExisting: true,
+          skippedPaths: mergeResult.skippedPaths,
+        }
       }
+      suppressWatcher()
       fs.renameSync(normSource, newPath)
       return { success: true, newPath: newPath.replace(/\\/g, '/') }
     } catch (err) {
@@ -2011,6 +2119,7 @@ app.on('will-quit', () => {
     try { folderWatcher.close() } catch { /* ignore */ }
     folderWatcher = null
   }
+  closeFolderWatchers()
 })
 
 app.on('window-all-closed', () => {

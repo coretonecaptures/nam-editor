@@ -6,6 +6,7 @@ import {
   METADATA_SUGGEST_LOOKUP_VALUES,
   MetadataSuggestRule,
   MetadataSuggestMatchIn,
+  MetadataSuggestMatchType,
   cloneChecklistTemplate,
 } from '../types/settings'
 import { MetadataSuggestRuleLibraryModal } from './MetadataSuggestRuleLibraryModal'
@@ -32,6 +33,14 @@ type UpdateState =
   | { status: 'up-to-date'; version: string }
   | { status: 'available'; version: string; url: string }
   | { status: 'error'; message: string }
+
+const METADATA_SUGGEST_MATCH_TYPE_OPTIONS: Array<{ value: MetadataSuggestMatchType; label: string }> = [
+  { value: 'exact', label: 'Exact token' },
+  { value: 'contains', label: 'Contains' },
+  { value: 'starts_with', label: 'Starts with' },
+  { value: 'ends_with', label: 'Ends with' },
+  { value: 'prefix_value', label: 'Prefix + value' },
+]
 
 interface SettingsPanelProps {
   settings: AppSettings
@@ -805,7 +814,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                 ) : (
                   draft.metadataSuggestRules.map((rule, index) => (
                     <div key={rule.id} className={`rounded border p-2 ${rule.overwriteExisting ? 'border-amber-300/70 dark:border-amber-700/70 bg-amber-50/40 dark:bg-amber-900/10' : 'border-gray-200 dark:border-gray-800 bg-white/70 dark:bg-gray-950/30'}`}>
-                      <div className="grid grid-cols-1 md:grid-cols-[auto_minmax(0,1.05fr)_minmax(0,0.95fr)_minmax(0,1fr)_minmax(0,0.9fr)_auto_auto_auto] gap-2 items-center">
+                      <div className="grid grid-cols-1 md:grid-cols-[auto_minmax(0,1fr)_minmax(0,0.95fr)_minmax(0,1fr)_minmax(0,0.95fr)_minmax(0,0.95fr)_auto_auto_auto] gap-2 items-center">
                         <label className="inline-flex items-center justify-center text-xs text-gray-600 dark:text-gray-400">
                           <input
                             type="checkbox"
@@ -822,7 +831,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                         </label>
                         <input
                           value={rule.token}
-                          placeholder="Token, e.g. Mesa (blank = scope-wide default)"
+                          placeholder={rule.matchType === 'prefix_value' ? 'Prefix, e.g. G' : 'Token, e.g. Mesa (blank = scope-wide default)'}
                           onChange={(e) => {
                             const next = draft.metadataSuggestRules.map((item, itemIndex) =>
                               itemIndex === index ? { ...item, token: e.target.value } : item
@@ -851,6 +860,20 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                             <option key={option.value} value={option.value}>{option.label}</option>
                           ))}
                         </select>
+                        <select
+                          value={rule.matchType}
+                          onChange={(e) => {
+                            const next = draft.metadataSuggestRules.map((item, itemIndex) =>
+                              itemIndex === index ? { ...item, matchType: e.target.value as MetadataSuggestMatchType } : item
+                            )
+                            update('metadataSuggestRules', next)
+                          }}
+                          className="px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                        >
+                          {METADATA_SUGGEST_MATCH_TYPE_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
                         {METADATA_SUGGEST_LOOKUP_VALUES[rule.field] ? (
                           <select
                             value={rule.value}
@@ -870,7 +893,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                         ) : (
                           <input
                             value={rule.value}
-                            placeholder="Suggested value"
+                            placeholder={rule.matchType === 'prefix_value' ? 'Template, e.g. Gain {value} or {match}' : 'Suggested value'}
                             onChange={(e) => {
                               const next = draft.metadataSuggestRules.map((item, itemIndex) =>
                                 itemIndex === index ? { ...item, value: e.target.value } : item
@@ -931,6 +954,22 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                           </svg>
                         </button>
                       </div>
+                      {rule.overwriteExisting && (
+                        <div className="mt-2 grid grid-cols-1 md:grid-cols-[auto_minmax(0,1fr)] gap-2 items-center">
+                          <div className="text-[11px] font-medium text-amber-700 dark:text-amber-300">Overwrite only if current value is</div>
+                          <input
+                            value={rule.overwriteOnlyValues}
+                            placeholder="Optional comma list, e.g. tz-make, Unknown, N/A"
+                            onChange={(e) => {
+                              const next = draft.metadataSuggestRules.map((item, itemIndex) =>
+                                itemIndex === index ? { ...item, overwriteOnlyValues: e.target.value } : item
+                              )
+                              update('metadataSuggestRules', next)
+                            }}
+                            className="px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-amber-300/60 dark:border-amber-700/60 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-amber-500"
+                          />
+                        </div>
+                      )}
                     </div>
                   ))
                 )}
@@ -943,8 +982,10 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                       field: 'gear_make',
                       value: '',
                       matchIn: 'either',
+                      matchType: 'exact',
                       enabled: true,
                       overwriteExisting: false,
+                      overwriteOnlyValues: '',
                     },
                   ])}
                   className="pt-1 text-xs text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300 font-medium transition-colors"
@@ -952,7 +993,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                   + Add suggestion rule
                 </button>
                 <p className="text-[11px] text-gray-500 dark:text-gray-500 pt-1">
-                  Tip: repeat the same token across multiple rows if one detection should fill multiple fields. Leave the token blank to make a scope-wide default rule. Overwrite rows are highlighted and saved into the rule library automatically when you save settings.
+                  Tip: repeat the same token across multiple rows if one detection should fill multiple fields. Leave the token blank to make a scope-wide default rule. Use <code>Prefix + value</code> with templates like <code>{'{match}'}</code> or <code>Gain {'{value}'}</code> for settings strings such as <code>G5.5</code>. Overwrite rows are highlighted and saved into the rule library automatically when you save settings.
                 </p>
               </div>
             )}

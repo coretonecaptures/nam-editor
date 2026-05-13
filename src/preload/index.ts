@@ -17,13 +17,15 @@ const api = {
   openImportFile: (): Promise<string | null> => ipcRenderer.invoke('dialog:openImportFile'),
   openImageFile: (): Promise<string | null> => ipcRenderer.invoke('dialog:openImageFile'),
   readFileBinary: (filePath: string): Promise<{ data?: string; error?: string }> => ipcRenderer.invoke('file:readBinary', filePath),
+  hashFiles: (filePaths: string[]): Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]> =>
+    ipcRenderer.invoke('file:hashMany', filePaths),
   readFile: (filePath: string) => ipcRenderer.invoke('file:read', filePath),
   writeMetadata: (filePath: string, metadata: unknown) =>
     ipcRenderer.invoke('file:writeMetadata', filePath, metadata),
   scanFolder: (folderPath: string, hiddenFolders?: string) => ipcRenderer.invoke('folder:scanNam', folderPath, hiddenFolders),
   scanTree: (folderPath: string, hiddenFolders?: string) => ipcRenderer.invoke('folder:scanTree', folderPath, hiddenFolders),
-  moveFile: (sourcePath: string, destDir: string, force = false) =>
-    ipcRenderer.invoke('file:move', sourcePath, destDir, force) as Promise<{ success: boolean; error?: string; destPath?: string }>,
+  moveFile: (sourcePath: string, destDir: string, force = false, destBaseName?: string) =>
+    ipcRenderer.invoke('file:move', sourcePath, destDir, force, destBaseName) as Promise<{ success: boolean; error?: string; destPath?: string }>,
   revealFile: (filePath: string) => ipcRenderer.invoke('shell:revealFile', filePath),
   openFile: (filePath: string): Promise<{ success: boolean; error?: string }> => ipcRenderer.invoke('shell:openFile', filePath),
   getErrorLogPath: (): Promise<string> => ipcRenderer.invoke('log:getErrorLogPath'),
@@ -72,12 +74,14 @@ const api = {
     ipcRenderer.invoke('folder:create', parentPath, name),
   renameFolder: (folderPath: string, newName: string): Promise<{ success: boolean; newPath?: string; error?: string }> =>
     ipcRenderer.invoke('folder:rename', folderPath, newName),
-  moveFolder: (sourcePath: string, destParentPath: string): Promise<{ success: boolean; newPath?: string; error?: string }> =>
-    ipcRenderer.invoke('folder:move', sourcePath, destParentPath),
+  moveFolder: (sourcePath: string, destParentPath: string, allowMerge = false): Promise<{ success: boolean; newPath?: string; error?: string; mergedIntoExisting?: boolean; mergeTargetPath?: string; skippedPaths?: string[] }> =>
+    ipcRenderer.invoke('folder:move', sourcePath, destParentPath, allowMerge),
+  deleteEmptyFolder: (folderPath: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('folder:deleteEmpty', folderPath),
   trashFiles: (filePaths: string[]): Promise<{ filePath: string; success: boolean; error?: string; deleteMode?: 'trash' | 'delete' }[]> =>
     ipcRenderer.invoke('file:trash', filePaths),
-  copyFiles: (filePaths: string[], destDir: string): Promise<{ filePath: string; success: boolean; destPath?: string; error?: string }[]> =>
-    ipcRenderer.invoke('file:copy', filePaths, destDir),
+  copyFiles: (filePaths: string[], destDir: string, destBaseNames?: string[]): Promise<{ filePath: string; success: boolean; destPath?: string; error?: string }[]> =>
+    ipcRenderer.invoke('file:copy', filePaths, destDir, destBaseNames),
   clearNamLab: (filePaths: string[]): Promise<{ filePath: string; success: boolean; error?: string }[]> =>
     ipcRenderer.invoke('file:clearNamLab', filePaths),
   cleanOutdatedNamBot: (filePaths: string[]): Promise<{ filePath: string; success: boolean; error?: string; changed?: boolean }[]> =>

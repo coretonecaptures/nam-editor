@@ -27,9 +27,11 @@ import { FolderSuggestRulesModal } from './components/FolderSuggestRulesModal'
 import { BundleEditor } from './components/BundleEditor'
 import { NamDashboard } from './components/NamDashboard'
 import { SessionHistoryPanel } from './components/SessionHistoryPanel'
+import { LibraryCleanupModal, type LibraryCleanupFolderEntry, type LibraryCleanupLayout, type LibraryCleanupPreviewRow } from './components/LibraryCleanupModal'
 import * as XLSX from 'xlsx'
 import { buildMetadataSuggestionMatches, MetadataSuggestionMatch } from './utils/metadataSuggest'
 import { cloneMetadataSuggestRule, isMetadataSuggestRuleComplete, isMetadataSuggestRuleLibraryCandidate, metadataSuggestRuleSignature } from './utils/metadataSuggestRuleLibrary'
+import { detectPreset } from './utils/detectPreset'
 
 export interface HistoryEntry {
   id: string
@@ -71,6 +73,31 @@ interface FolderReadinessSummary {
   galleryCount: number
   hasCoverImage: boolean
   recentUpdatedCount: number
+}
+
+interface LibraryCleanupClassifiedFile {
+  sourcePath: string
+  destinationDir: string
+  destinationBaseName: string
+  needsReview: boolean
+  note: string | null
+}
+
+function cleanupSourceBaseName(sourcePath: string): string {
+  const normalized = sourcePath.replace(/\\/g, '/')
+  const baseName = normalized.split('/').pop() ?? normalized
+  return /\.nam$/i.test(baseName) ? baseName : `${baseName}.nam`
+}
+
+function inferCleanupDiCabFromFile(file: NamFile): 'DI' | 'CAB' | null {
+  const gearType = file.metadata.gear_type ?? ''
+  if (gearType === 'amp') return 'DI'
+  if (gearType.includes('cab')) return 'CAB'
+
+  const hay = `${file.fileName} ${file.metadata.name ?? ''}`.toLowerCase()
+  if (/\bdi\b/.test(hay) || /\bdirect\b/.test(hay)) return 'DI'
+  if (/\b(?:1x12|2x12|4x12|8x10|112|212|410|412)\b/.test(hay) || /\bcab\b/.test(hay)) return 'CAB'
+  return null
 }
 
 function wait(ms: number): Promise<void> {
@@ -161,6 +188,40 @@ function folderDisplayName(path: string | null): string {
   return parts[parts.length - 1] || normalized
 }
 
+function parentFolderPath(path: string): string {
+  const normalized = path.replace(/\\/g, '/')
+  const parts = normalized.split('/').filter(Boolean)
+  if (parts.length <= 1) return normalized
+  const rootPrefix = normalized.match(/^[A-Za-z]:/)?.[0] ?? ''
+  const parentParts = parts.slice(0, -1)
+  if (rootPrefix) return `${rootPrefix}/${parentParts.slice(1).join('/')}`.replace(/\/+/g, '/')
+  return parentParts.join('/')
+}
+
+function sanitizeCleanupPathPart(value: string): string {
+  return value
+    .replace(/[\\/]+/g, ' - ')
+    .replace(/[:*?"<>|]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/g, '')
+}
+
+function isPathWithin(path: string, ancestor: string): boolean {
+  const normalizedPath = path.replace(/\\/g, '/')
+  const normalizedAncestor = ancestor.replace(/\\/g, '/')
+  return normalizedPath === normalizedAncestor || normalizedPath.startsWith(normalizedAncestor + '/')
+}
+
+function flattenFolderTree(node: FolderNode, depth = 0): Array<{ path: string; label: string; depth: number }> {
+  const rows: Array<{ path: string; label: string; depth: number }> = []
+  for (const child of node.children) {
+    rows.push({ path: child.path.replace(/\\/g, '/'), label: child.name, depth })
+    rows.push(...flattenFolderTree(child, depth + 1))
+  }
+  return rows
+}
+
 function makeFolderWatchKey(sourceFolder: string, destFolder: string): string {
   return `${sourceFolder.replace(/\\/g, '/')}=>${destFolder.replace(/\\/g, '/')}`
 }
@@ -190,6 +251,7 @@ declare global {
       openImportFile: () => Promise<string | null>
       openImageFile: () => Promise<string | null>
       readFileBinary: (filePath: string) => Promise<{ data?: string; error?: string }>
+      hashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
       revealFile: (filePath: string) => Promise<void>
       openFile: (filePath: string) => Promise<{ success: boolean; error?: string }>
       readFile: (filePath: string) => Promise<{
@@ -205,7 +267,7 @@ declare global {
         sizeBytes?: number
       }>
       writeMetadata: (filePath: string, metadata: unknown) => Promise<{ success: boolean; error?: string }>
-      moveFile: (sourcePath: string, destDir: string, force?: boolean) => Promise<{ success: boolean; error?: string; destPath?: string }>
+      moveFile: (sourcePath: string, destDir: string, force?: boolean, destBaseName?: string) => Promise<{ success: boolean; error?: string; destPath?: string }>
       scanFolder: (folderPath: string, hiddenFolders?: string) => Promise<{ success: boolean; error?: string; files?: string[] }>
       scanTree: (folderPath: string, hiddenFolders?: string) => Promise<{ success: boolean; error?: string; tree?: FolderNode }>
       getErrorLogPath: () => Promise<string>
@@ -222,9 +284,10 @@ declare global {
       onFolderWatchError: (cb: (event: { sourceFolder: string; destFolder: string; message: string }) => void) => () => void
       createFolder: (parentPath: string, name: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       renameFolder: (folderPath: string, newName: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
-      moveFolder: (sourcePath: string, destParentPath: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
+      moveFolder: (sourcePath: string, destParentPath: string, allowMerge?: boolean) => Promise<{ success: boolean; newPath?: string; error?: string; mergedIntoExisting?: boolean; mergeTargetPath?: string; skippedPaths?: string[] }>
+      deleteEmptyFolder: (folderPath: string) => Promise<{ success: boolean; error?: string }>
       trashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; error?: string; deleteMode?: 'trash' | 'delete' }[]>
-      copyFiles: (filePaths: string[], destDir: string) => Promise<{ filePath: string; success: boolean; destPath?: string; error?: string }[]>
+      copyFiles: (filePaths: string[], destDir: string, destBaseNames?: string[]) => Promise<{ filePath: string; success: boolean; destPath?: string; error?: string }[]>
       clearNamLab: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; error?: string }[]>
       cleanOutdatedNamBot: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; error?: string; changed?: boolean }[]>
       getPendingFiles: () => Promise<string[]>
@@ -399,6 +462,18 @@ export default function App() {
   const [importModal, setImportModal] = useState<{ folderName: string; exactMatches: ImportMatch[]; prefixMatches: ImportMatch[]; unmatchedNames: string[] } | null>(null)
   const [suggestMetadataModal, setSuggestMetadataModal] = useState<{ folderName: string; matches: MetadataSuggestionMatch[] } | null>(null)
   const [suggestRulesEditorPath, setSuggestRulesEditorPath] = useState<string | null>(null)
+  const [suggestRulesClipboard, setSuggestRulesClipboard] = useState<{ sourceFolderPath: string; rules: MetadataSuggestRule[] } | null>(null)
+  const [showLibraryCleanup, setShowLibraryCleanup] = useState(false)
+  const [libraryCleanupOpenMode, setLibraryCleanupOpenMode] = useState<'library' | 'folder'>('library')
+  const [libraryCleanupSourceRoot, setLibraryCleanupSourceRoot] = useState<string | null>(null)
+  const [libraryCleanupDestinationRoot, setLibraryCleanupDestinationRoot] = useState<string | null>(null)
+  const [libraryCleanupActionMode, setLibraryCleanupActionMode] = useState<'copy' | 'move'>('copy')
+  const [libraryCleanupLayout, setLibraryCleanupLayout] = useState<LibraryCleanupLayout>('creator-amp-di-cab')
+  const [libraryCleanupFolderEntries, setLibraryCleanupFolderEntries] = useState<LibraryCleanupFolderEntry[]>([])
+  const [libraryCleanupFilePaths, setLibraryCleanupFilePaths] = useState<string[]>([])
+  const [libraryCleanupPreviewRows, setLibraryCleanupPreviewRows] = useState<LibraryCleanupPreviewRow[] | null>(null)
+  const [libraryCleanupBusyLabel, setLibraryCleanupBusyLabel] = useState<string | null>(null)
+  const [libraryCleanupRememberUnchecked, setLibraryCleanupRememberUnchecked] = useState(true)
   const [coverageReport, setCoverageReport] = useState<{ folderPath: string } | null>(null)
   const [watcherKey, setWatcherKey] = useState(0)
   const [recentFolders, setRecentFolders] = useState<string[]>(() => {
@@ -1845,9 +1920,31 @@ export default function App() {
     return result
   }
 
-  const handleMoveFolder = async (sourcePath: string, destParentPath: string) => {
-    const result = await window.api.moveFolder(sourcePath, destParentPath)
+  const handleMoveFolder = async (sourcePath: string, destParentPath: string, allowMerge = false) => {
+    const result = await window.api.moveFolder(sourcePath, destParentPath, allowMerge)
+    if (!result.success && result.error === 'merge-required' && result.mergeTargetPath) {
+      const sourceName = folderDisplayName(sourcePath)
+      const targetName = folderDisplayName(result.mergeTargetPath)
+      const confirmed = window.confirm(
+        `A folder named "${targetName}" already exists in the destination.\n\nMerge "${sourceName}" into it?\n\nSame-name subfolders will be merged. Existing same-name files will be left where they are.`
+      )
+      if (!confirmed) return result
+      return handleMoveFolder(sourcePath, destParentPath, true)
+    }
+
     if (result.success && result.newPath) {
+      if (result.mergedIntoExisting) {
+        if (librarian.rootFolder) await loadFolderByPath(librarian.rootFolder)
+        const skippedCount = result.skippedPaths?.length ?? 0
+        setStatus({
+          message: skippedCount > 0
+            ? `Folder merged with ${skippedCount} existing file${skippedCount !== 1 ? 's' : ''} left in place`
+            : 'Folder merged',
+          type: skippedCount > 0 ? 'info' : 'success'
+        })
+        return result
+      }
+
       const oldPrefix = sourcePath.replace(/\\/g, '/') + '/'
       const newPrefix = result.newPath + '/'
       setFiles((prev) => prev.map((f) => {
@@ -1867,6 +1964,22 @@ export default function App() {
       setStatus({ message: `Folder moved`, type: 'success' })
     } else {
       setStatus({ message: `Move failed: ${result.error}`, type: 'error' })
+    }
+    return result
+  }
+
+  const handleDeleteEmptyFolder = async (folderPath: string) => {
+    const confirmed = window.confirm(
+      `Delete the empty folder "${folderDisplayName(folderPath)}"?\n\nThis only works when the folder has no remaining contents.`
+    )
+    if (!confirmed) return { success: false, error: 'Cancelled' }
+
+    const result = await window.api.deleteEmptyFolder(folderPath)
+    if (result.success) {
+      if (librarian.rootFolder) await loadFolderByPath(librarian.rootFolder)
+      setStatus({ message: `Deleted empty folder: ${folderDisplayName(folderPath)}`, type: 'success' })
+    } else {
+      setStatus({ message: `Delete failed: ${result.error}`, type: 'error' })
     }
     return result
   }
@@ -2483,6 +2596,47 @@ export default function App() {
     setSuggestRulesEditorPath(folderPath.replace(/\\/g, '/'))
   }
 
+  const handleCopyScopedSuggestRules = (folderPath: string) => {
+    const normalizedPath = folderPath.replace(/\\/g, '/')
+    const rules = settings.metadataSuggestScopedRules.find((set) => set.scopePath.replace(/\\/g, '/') === normalizedPath)?.rules ?? []
+    if (rules.length === 0) {
+      setStatus({ message: `No folder suggestion rules to copy from ${folderDisplayName(folderPath)}`, type: 'info' })
+      return
+    }
+    setSuggestRulesClipboard({
+      sourceFolderPath: normalizedPath,
+      rules: rules.map((rule) => cloneMetadataSuggestRule(rule, 'scoped-clipboard')),
+    })
+    setStatus({
+      message: `Copied ${rules.length} folder suggestion rule${rules.length !== 1 ? 's' : ''} from ${folderDisplayName(folderPath)}`,
+      type: 'success',
+    })
+  }
+
+  const handlePasteScopedSuggestRules = (folderPath: string) => {
+    if (!suggestRulesClipboard || suggestRulesClipboard.rules.length === 0) return
+    const normalizedPath = folderPath.replace(/\\/g, '/')
+    const existingRules = settings.metadataSuggestScopedRules.find((set) => set.scopePath.replace(/\\/g, '/') === normalizedPath)?.rules ?? []
+    if (existingRules.length > 0) {
+      const confirmed = window.confirm(
+        `WARNING: ${folderDisplayName(folderPath)} already has ${existingRules.length} folder suggestion rule${existingRules.length !== 1 ? 's' : ''}.\n\nPasting will OVERWRITE the existing rules for this folder and cannot be undone.\n\nContinue?`
+      )
+      if (!confirmed) return
+    }
+    const pastedRules = suggestRulesClipboard.rules.map((rule) => cloneMetadataSuggestRule(rule, 'scoped-paste'))
+    const nextSets = settings.metadataSuggestScopedRules.filter((set) => set.scopePath.replace(/\\/g, '/') !== normalizedPath)
+    nextSets.push({ scopePath: normalizedPath, rules: pastedRules })
+    handleSaveSettings({
+      ...settings,
+      metadataSuggestScopedRules: nextSets,
+      metadataSuggestRuleLibrary: mergeRulesIntoLibrary(settings.metadataSuggestRuleLibrary, pastedRules),
+    })
+    setStatus({
+      message: `Pasted ${pastedRules.length} folder suggestion rule${pastedRules.length !== 1 ? 's' : ''} into ${folderDisplayName(folderPath)}`,
+      type: 'success',
+    })
+  }
+
   const handleSaveScopedSuggestRules = (folderPath: string, rules: MetadataSuggestRule[]) => {
     const normalizedPath = folderPath.replace(/\\/g, '/')
     const cleanedRules = rules.filter((rule) => rule.value.trim())
@@ -2522,6 +2676,393 @@ export default function App() {
         : 'Removed folder suggestion rules',
       type: 'success',
     })
+  }
+
+  const getLibraryCleanupSavedIgnores = useCallback(() => {
+    return (settings.libraryCleanupIgnoredPaths ?? []).map((path) => path.replace(/\\/g, '/'))
+  }, [settings.libraryCleanupIgnoredPaths])
+
+  const applyLibraryCleanupSavedIgnores = useCallback((entries: LibraryCleanupFolderEntry[]) => {
+    const saved = new Set(getLibraryCleanupSavedIgnores())
+    return entries.map((entry) => ({
+      ...entry,
+      savedIgnore: saved.has(entry.path),
+      checked: saved.has(entry.path) ? false : entry.checked,
+    }))
+  }, [getLibraryCleanupSavedIgnores])
+
+  const scanLibraryCleanupSourceRoot = useCallback(async (normalized: string) => {
+    setLibraryCleanupBusyLabel('Scanning source root...')
+    setLibraryCleanupPreviewRows(null)
+    const [flatResult, treeResult] = await Promise.all([
+      window.api.scanFolder(normalized, settings.hiddenFolders),
+      window.api.scanTree(normalized, settings.hiddenFolders),
+    ])
+    setLibraryCleanupBusyLabel(null)
+    if (!flatResult.success || !treeResult.success || !treeResult.tree || !flatResult.files) {
+      setStatus({ message: `Library cleanup scan failed: ${flatResult.error ?? treeResult.error ?? 'Unknown error'}`, type: 'error' })
+      return false
+    }
+    const entries = applyLibraryCleanupSavedIgnores(
+      flattenFolderTree(treeResult.tree).map((entry) => ({
+        ...entry,
+        checked: true,
+        savedIgnore: false,
+      }))
+    )
+    setLibraryCleanupSourceRoot(normalized)
+    setLibraryCleanupFolderEntries(entries)
+    setLibraryCleanupFilePaths(flatResult.files.map((filePath) => filePath.replace(/\\/g, '/')))
+    return true
+  }, [applyLibraryCleanupSavedIgnores, settings.hiddenFolders])
+
+  const handleOpenLibraryCleanup = () => {
+    setLibraryCleanupOpenMode('library')
+    setLibraryCleanupActionMode('copy')
+    setShowLibraryCleanup(true)
+    setLibraryCleanupPreviewRows(null)
+  }
+
+  const handleOpenFolderCleanup = async (folderPath: string) => {
+    const normalized = folderPath.replace(/\\/g, '/')
+    const folderName = folderDisplayName(normalized).toLowerCase()
+    const defaultDestinationRoot = folderName === 'needs review'
+      ? parentFolderPath(normalized)
+      : normalized
+    setLibraryCleanupOpenMode('folder')
+    setLibraryCleanupDestinationRoot(defaultDestinationRoot)
+    setLibraryCleanupActionMode('move')
+    setShowLibraryCleanup(true)
+    await scanLibraryCleanupSourceRoot(normalized)
+  }
+
+  const handlePickLibraryCleanupSourceRoot = async () => {
+    const picked = await window.api.openFolder(libraryCleanupSourceRoot ?? librarian.rootFolder ?? undefined)
+    if (!picked) return
+    const normalized = picked.replace(/\\/g, '/')
+    await scanLibraryCleanupSourceRoot(normalized)
+  }
+
+  const handlePickLibraryCleanupDestinationRoot = async () => {
+    const picked = await window.api.openFolder(libraryCleanupDestinationRoot ?? librarian.rootFolder ?? undefined)
+    if (!picked) return
+    const normalized = picked.replace(/\\/g, '/')
+    setLibraryCleanupDestinationRoot(normalized)
+    setLibraryCleanupPreviewRows(null)
+    setLibraryCleanupFolderEntries((prev) => applyLibraryCleanupSavedIgnores(
+      prev.map((entry) => ({ ...entry, checked: true, savedIgnore: false })),
+    ))
+  }
+
+  const buildLibraryCleanupExcludedPaths = useCallback(() => {
+    return new Set(
+      libraryCleanupFolderEntries
+        .filter((entry) => !entry.checked)
+        .map((entry) => entry.path.replace(/\\/g, '/'))
+    )
+  }, [libraryCleanupFolderEntries])
+
+  const classifyLibraryCleanupFile = useCallback((file: NamFile): LibraryCleanupClassifiedFile => {
+    const creator = file.metadata.modeled_by?.trim() ?? ''
+    const make = file.metadata.gear_make?.trim() ?? ''
+    const model = file.metadata.gear_model?.trim() ?? ''
+    const fileName = cleanupSourceBaseName(file.filePath)
+    const destParts: string[] = []
+    let note: string | null = null
+    let needsReview = false
+
+    const requireCreator = libraryCleanupLayout !== 'flat'
+    const requireAmp = libraryCleanupLayout === 'creator-amp' || libraryCleanupLayout === 'creator-amp-di-cab' || libraryCleanupLayout === 'creator-amp-di-cab-preset'
+    const requireDiCab = libraryCleanupLayout === 'creator-amp-di-cab' || libraryCleanupLayout === 'creator-amp-di-cab-preset'
+    const requirePreset = libraryCleanupLayout === 'creator-amp-di-cab-preset'
+    let stopDeeperClassification = false
+
+    if (requireCreator) {
+      if (!creator) {
+        needsReview = true
+        note = 'Missing creator'
+      } else {
+        const safeCreator = sanitizeCleanupPathPart(creator)
+        if (!safeCreator) {
+          needsReview = true
+          note = 'Creator name not usable as folder'
+        } else {
+          destParts.push(safeCreator)
+        }
+      }
+    }
+
+    if (!needsReview && requireAmp) {
+      if (!make || !model) {
+        stopDeeperClassification = true
+        note = destParts.length > 0 ? 'Stopped at current folder: missing manufacturer/model' : 'Missing manufacturer/model'
+      } else {
+        const safeAmp = sanitizeCleanupPathPart(`${make} ${model}`.trim())
+        if (!safeAmp) {
+          needsReview = true
+          note = 'Manufacturer/model not usable as folder'
+        } else {
+          destParts.push(safeAmp)
+        }
+      }
+    }
+
+    if (!needsReview && !stopDeeperClassification && requireDiCab) {
+      const diCab = inferCleanupDiCabFromFile(file)
+      if (diCab) destParts.push(diCab)
+      else {
+        stopDeeperClassification = true
+        note = destParts.length > 0 ? 'Stopped at current folder: missing DI/CAB classification' : 'Missing DI/CAB classification'
+      }
+    }
+
+    if (!needsReview && !stopDeeperClassification && requirePreset) {
+      const preset = detectPreset(file.config)
+      if (!preset) {
+        stopDeeperClassification = true
+        note = destParts.length > 0 ? 'Stopped at current folder: preset type not detected' : 'Preset type not detected'
+      } else {
+        const safePreset = sanitizeCleanupPathPart(preset)
+        if (!safePreset) {
+          needsReview = true
+          note = 'Preset type not usable as folder'
+        } else {
+          destParts.push(safePreset)
+        }
+      }
+    }
+
+    const finalParts = [...destParts]
+    if (
+      libraryCleanupOpenMode === 'folder' &&
+      librarian.rootFolder &&
+      libraryCleanupSourceRoot &&
+      libraryCleanupDestinationRoot === libraryCleanupSourceRoot &&
+      finalParts.length > 0
+    ) {
+      const rootPath = librarian.rootFolder.replace(/\\/g, '/')
+      const sourcePath = libraryCleanupSourceRoot.replace(/\\/g, '/')
+      const relativeSource = sourcePath.startsWith(rootPath + '/')
+        ? sourcePath.slice(rootPath.length + 1)
+        : sourcePath === rootPath
+          ? ''
+          : sourcePath
+      const sourceSegments = relativeSource
+        .split('/')
+        .filter(Boolean)
+        .map((segment) => sanitizeCleanupPathPart(segment))
+        .filter(Boolean)
+
+      while (
+        sourceSegments.length > 0 &&
+        finalParts.length > 0 &&
+        sourceSegments[0].toLowerCase() === finalParts[0].toLowerCase()
+      ) {
+        sourceSegments.shift()
+        finalParts.shift()
+      }
+    }
+
+    const destinationDir = needsReview
+      ? [libraryCleanupDestinationRoot!, ...finalParts, 'Needs Review'].join('/')
+      : [libraryCleanupDestinationRoot!, ...finalParts].join('/')
+
+    return {
+      sourcePath: file.filePath.replace(/\\/g, '/'),
+      destinationDir,
+      destinationBaseName: fileName,
+      needsReview,
+      note,
+    }
+  }, [libraryCleanupLayout, libraryCleanupDestinationRoot, libraryCleanupOpenMode, libraryCleanupSourceRoot, librarian.rootFolder])
+
+  const handlePreviewLibraryCleanup = async () => {
+    if (!libraryCleanupSourceRoot || !libraryCleanupDestinationRoot) {
+      setStatus({ message: 'Pick both a source root and a destination library root first', type: 'error' })
+      return
+    }
+    const sameRoot = libraryCleanupSourceRoot === libraryCleanupDestinationRoot
+    const allowNestedFolderCleanup =
+      libraryCleanupOpenMode === 'folder' &&
+      isPathWithin(libraryCleanupSourceRoot, libraryCleanupDestinationRoot)
+    if (!sameRoot && !allowNestedFolderCleanup && (isPathWithin(libraryCleanupSourceRoot, libraryCleanupDestinationRoot) || isPathWithin(libraryCleanupDestinationRoot, libraryCleanupSourceRoot))) {
+      setStatus({ message: 'Source root and destination library root cannot be nested inside each other', type: 'error' })
+      return
+    }
+    const excluded = Array.from(buildLibraryCleanupExcludedPaths())
+    const candidatePaths = libraryCleanupFilePaths.filter((filePath) => !excluded.some((excludedPath) => isPathWithin(filePath, excludedPath)))
+    const loadedFileMap = new Map(files.map((file) => [file.filePath.replace(/\\/g, '/'), file]))
+    setLibraryCleanupBusyLabel(`Analyzing ${candidatePaths.length} file(s)...`)
+    const validFiles: NamFile[] = []
+    const diskPaths: string[] = []
+    for (const filePath of candidatePaths) {
+      const loaded = loadedFileMap.get(filePath.replace(/\\/g, '/'))
+      if (loaded) validFiles.push(loaded)
+      else diskPaths.push(filePath)
+    }
+
+    const results: Array<Awaited<ReturnType<typeof window.api.readFile>>> = []
+    const concurrency = 40
+    for (let i = 0; i < diskPaths.length; i += concurrency) {
+      const chunk = diskPaths.slice(i, i + concurrency)
+      const chunkResults = await Promise.all(chunk.map((filePath) => window.api.readFile(filePath)))
+      results.push(...chunkResults)
+    }
+    const diskFiles: NamFile[] = results
+      .filter((result): result is Awaited<ReturnType<typeof window.api.readFile>> & { success: true; filePath: string; version: string; metadata: NamFile['metadata']; architecture: string; config: unknown } =>
+        !!result.success && !!result.filePath && !!result.version && !!result.metadata && !!result.architecture
+      )
+      .map((result) => ({
+        filePath: result.filePath,
+        fileName: result.filePath.replace(/\\/g, '/').split('/').pop() ?? result.filePath,
+        version: result.version,
+        metadata: migrateLegacyNamBotInMemory(result.metadata),
+        originalMetadata: migrateLegacyNamBotInMemory(result.metadata),
+        autoFilledFields: [],
+        architecture: result.architecture,
+        config: result.config ?? null,
+        isDirty: false,
+        mtimeMs: result.mtimeMs,
+        birthtimeMs: result.birthtimeMs,
+        sizeBytes: result.sizeBytes,
+      }))
+
+    validFiles.push(...diskFiles)
+
+    const previewRows = validFiles.map((file) => {
+      const classified = classifyLibraryCleanupFile(file)
+      return {
+        sourcePath: classified.sourcePath,
+        destinationPath: `${classified.destinationDir}/${classified.destinationBaseName}`,
+        note: classified.note,
+        needsReview: classified.needsReview,
+      } satisfies LibraryCleanupPreviewRow
+    })
+    setLibraryCleanupBusyLabel(null)
+    setLibraryCleanupPreviewRows(previewRows)
+    setStatus({ message: `Library cleanup preview built for ${previewRows.length} file${previewRows.length !== 1 ? 's' : ''}`, type: 'success' })
+  }
+
+  const ensureCleanupDestinationDir = async (destinationDir: string) => {
+    const normalized = destinationDir.replace(/\\/g, '/')
+    const parts = normalized.split('/').filter(Boolean)
+    if (parts.length === 0) return
+    let current = normalized.startsWith('//') ? '//' : ''
+    let driveRoot = ''
+    if (/^[A-Za-z]:$/.test(parts[0])) {
+      current = parts[0]
+      driveRoot = `${parts[0]}/`
+      parts.shift()
+    }
+    for (const part of parts) {
+      current = current ? `${current}/${part}` : part
+      const stat = await window.api.statPath(current)
+      if (!stat.isDirectory) {
+        const currentParts = current.replace(/\\/g, '/').split('/').filter(Boolean)
+        let parent = currentParts.slice(0, -1).join('/')
+        if (driveRoot && currentParts.length === 2 && /^[A-Za-z]:$/.test(currentParts[0])) {
+          parent = driveRoot
+        } else if (!parent) {
+          parent = current.match(/^[A-Za-z]:\//)?.[0] ?? ''
+        }
+        const name = current.replace(/\\/g, '/').split('/').pop() ?? current
+        const result = await window.api.createFolder(parent, name)
+        if (!result.success && !(await window.api.statPath(current)).isDirectory) {
+          throw new Error(result.error ?? `Could not create ${current}`)
+        }
+      }
+    }
+  }
+
+  const handleRunLibraryCleanup = async () => {
+    if (!libraryCleanupPreviewRows || libraryCleanupPreviewRows.length === 0 || !libraryCleanupDestinationRoot) return
+    if (libraryCleanupActionMode === 'move') {
+      const confirmed = window.confirm('WARNING: Move will relocate the source files and cannot be undone by NAM Lab.\n\nContinue?')
+      if (!confirmed) return
+    }
+    const uncheckedPaths = libraryCleanupFolderEntries.filter((entry) => !entry.checked).map((entry) => entry.path.replace(/\\/g, '/'))
+    if (libraryCleanupRememberUnchecked) {
+      const mergedIgnored = Array.from(new Set([
+        ...getLibraryCleanupSavedIgnores(),
+        ...uncheckedPaths,
+      ]))
+      handleSaveSettings({
+        ...settings,
+        libraryCleanupIgnoredPaths: mergedIgnored,
+      })
+    }
+
+    setLibraryCleanupBusyLabel(`Running ${libraryCleanupActionMode} cleanup...`)
+    let completed = 0
+    let failed = 0
+    let skipped = 0
+    let autoSuffixed = 0
+    const usedDestinations = new Set<string>()
+    for (const row of libraryCleanupPreviewRows) {
+      const normalizedDest = row.destinationPath.replace(/\\/g, '/')
+      const destDir = normalizedDest.split('/').slice(0, -1).join('/')
+      await ensureCleanupDestinationDir(destDir)
+      const originalBaseName = normalizedDest.split('/').pop() ?? ''
+      const sourceBaseName = cleanupSourceBaseName(row.sourcePath)
+      let desiredBaseName = originalBaseName
+      if (/\.nam$/i.test(sourceBaseName) && !/\.nam$/i.test(desiredBaseName)) {
+        desiredBaseName = `${desiredBaseName}.nam`
+      }
+      const collisionBaseName = desiredBaseName
+      let targetPath = `${destDir}/${desiredBaseName}`
+      let suffix = 2
+      // Avoid collisions with files already planned this run and with files already sitting in the destination.
+      // `readFile` is enough here because the destination should only contain `.nam` files we care about organizing.
+      while (usedDestinations.has(targetPath) || (await window.api.readFile(targetPath)).success) {
+        const dotIndex = collisionBaseName.lastIndexOf('.')
+        const stem = dotIndex > 0 ? collisionBaseName.slice(0, dotIndex) : collisionBaseName
+        const ext = dotIndex > 0 ? collisionBaseName.slice(dotIndex) : ''
+        desiredBaseName = `${stem} (${suffix})${ext}`
+        targetPath = `${destDir}/${desiredBaseName}`
+        suffix += 1
+      }
+      const normalizedSource = row.sourcePath.replace(/\\/g, '/')
+      if (normalizedSource === targetPath) {
+        usedDestinations.add(targetPath)
+        skipped += 1
+        continue
+      }
+      const result = libraryCleanupActionMode === 'copy'
+        ? (await window.api.copyFiles([row.sourcePath], destDir, [desiredBaseName]))[0]
+        : await window.api.moveFile(row.sourcePath, destDir, false, desiredBaseName)
+      if (!result.success || !result.destPath) {
+        failed += 1
+        continue
+      }
+      const actualBaseName = result.destPath.replace(/\\/g, '/').split('/').pop() ?? ''
+      if (actualBaseName !== desiredBaseName) {
+        const renameResult = await window.api.renameFile(result.destPath, desiredBaseName.replace(/\.[^.]+$/, ''))
+        if (!renameResult.success || !renameResult.newPath) {
+          failed += 1
+          continue
+        }
+        if (desiredBaseName !== actualBaseName) autoSuffixed += 1
+      } else if (desiredBaseName !== originalBaseName) {
+        autoSuffixed += 1
+      }
+      usedDestinations.add(targetPath)
+      completed += 1
+    }
+    setLibraryCleanupBusyLabel(null)
+    setStatus({
+      message: `Library cleanup complete: ${completed} ${libraryCleanupActionMode === 'copy' ? 'copied' : 'moved'}, ${skipped} skipped, ${autoSuffixed} auto-suffixed, ${failed} failed`,
+      type: failed > 0 ? 'error' : 'success',
+    })
+    if (completed > 0) {
+      setShowLibraryCleanup(false)
+      if (libraryCleanupOpenMode === 'library') {
+        await loadFolderByPath(libraryCleanupDestinationRoot)
+      } else if (librarian.rootFolder) {
+        await loadFolderByPath(librarian.rootFolder)
+      }
+    } else if (librarian.rootFolder) {
+      await refreshFolderTree()
+    }
   }
 
   const openSuggestMetadataModal = (scopedFiles: NamFile[], folderName: string) => {
@@ -2811,7 +3352,8 @@ export default function App() {
         onRefresh={handleRefresh}
         recentFolders={recentFolders}
         onOpenRecentFolder={(path) => loadFolderByPath(path)}
-        onFindDuplicates={files.length > 1 ? () => { setDuplicatesScopeFolder(null); setShowDuplicates(true) } : undefined}
+        onFindDuplicates={files.length > 0 ? () => { setDuplicatesScopeFolder(null); setShowDuplicates(true) } : undefined}
+        onOpenLibraryCleanup={handleOpenLibraryCleanup}
         showDashboard={files.length > 0}
         dashboardActive={showDashboard}
         onToggleDashboard={() => {
@@ -2829,12 +3371,14 @@ export default function App() {
           setShowToneStore(false)
           setBatchFolder(null)
         }}
-          toneStoreActive={showToneStorePanel}
-          onToggleToneStore={() => {
-            setShowToneStore((v) => !v)
-            setShowSettings(false)
-            setBatchFolder(null)
-          }}
+        toneStoreActive={showToneStorePanel}
+        onToggleToneStore={() => {
+          setShowToneStore((v) => !v)
+          setShowDashboard(false)
+          setHistoryOpen(false)
+          setShowSettings(false)
+          setBatchFolder(null)
+        }}
       />
 
       <div className="flex flex-1 overflow-hidden relative">
@@ -2922,6 +3466,7 @@ export default function App() {
                 onCreateFolder={handleCreateFolder}
                 onRenameFolder={handleRenameFolder}
                 onMoveFolder={handleMoveFolder}
+                onDeleteEmptyFolder={handleDeleteEmptyFolder}
                 onBatchEdit={(path, name) => {
                   setShowSettings(false)
                   const sel = [...selectedIds]
@@ -2959,7 +3504,10 @@ export default function App() {
                 watchSourceByDest={folderWatchSourceByDest}
                 onSetWatchSource={(folderPath) => { void handleSetWatchSource(folderPath) }}
                 onClearWatchSource={handleClearWatchSource}
+                onCopySuggestRules={handleCopyScopedSuggestRules}
+                onPasteSuggestRules={suggestRulesClipboard ? handlePasteScopedSuggestRules : undefined}
                 onFindDuplicates={handleFindDuplicatesInFolder}
+                onCleanThisFolder={(folderPath) => { void handleOpenFolderCleanup(folderPath) }}
               />
             </div>
             {!gridMaximized && <DragHandle onMouseDown={(e) => onDragStart('tree', e)} onCollapse={() => setTreeCollapsed((v) => !v)} collapsed={treeCollapsed} />}
@@ -3572,6 +4120,7 @@ export default function App() {
           onMoveDuplicates={handleMoveDuplicates}
           onTrashDuplicates={handleTrashDuplicates}
           getDeleteBehavior={(filePaths) => window.api.getDeleteBehavior(filePaths)}
+          getContentHashes={(filePaths) => window.api.hashFiles(filePaths)}
         />
       )}
 
@@ -3592,6 +4141,47 @@ export default function App() {
           matches={suggestMetadataModal.matches}
           onConfirm={handleSuggestMetadataConfirm}
           onClose={() => setSuggestMetadataModal(null)}
+        />
+      )}
+
+      {showLibraryCleanup && (
+          <LibraryCleanupModal
+            openMode={libraryCleanupOpenMode}
+            sourceRoot={libraryCleanupSourceRoot}
+            destinationRoot={libraryCleanupDestinationRoot}
+            actionMode={libraryCleanupActionMode}
+            layout={libraryCleanupLayout}
+            folderEntries={libraryCleanupFolderEntries}
+            previewRows={libraryCleanupPreviewRows}
+            busyLabel={libraryCleanupBusyLabel}
+            rememberUncheckedGlobally={libraryCleanupRememberUnchecked}
+            savedIgnoreCount={getLibraryCleanupSavedIgnores().length}
+            onClose={() => {
+              setShowLibraryCleanup(false)
+              setLibraryCleanupBusyLabel(null)
+          }}
+          onPickSourceRoot={handlePickLibraryCleanupSourceRoot}
+          onPickDestinationRoot={handlePickLibraryCleanupDestinationRoot}
+          onActionModeChange={(mode) => {
+            setLibraryCleanupActionMode(mode)
+            setLibraryCleanupPreviewRows(null)
+          }}
+          onLayoutChange={(nextLayout) => {
+            setLibraryCleanupLayout(nextLayout)
+            setLibraryCleanupPreviewRows(null)
+          }}
+          onToggleFolder={(path, checked) => {
+            setLibraryCleanupFolderEntries((prev) => prev.map((entry) => entry.path === path ? { ...entry, checked } : entry))
+            setLibraryCleanupPreviewRows(null)
+          }}
+          onRememberUncheckedChange={setLibraryCleanupRememberUnchecked}
+          onPreview={handlePreviewLibraryCleanup}
+            onRun={handleRunLibraryCleanup}
+            onResetSavedIgnores={() => {
+              handleSaveSettings({ ...settings, libraryCleanupIgnoredPaths: [] })
+              setLibraryCleanupFolderEntries((prev) => prev.map((entry) => ({ ...entry, savedIgnore: false, checked: true })))
+              setLibraryCleanupPreviewRows(null)
+            }}
         />
       )}
 

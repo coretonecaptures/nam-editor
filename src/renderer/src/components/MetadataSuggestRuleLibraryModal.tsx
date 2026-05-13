@@ -11,6 +11,13 @@ interface MetadataSuggestRuleLibraryModalProps {
 }
 
 const FIELD_LABELS = new Map(METADATA_SUGGEST_FIELD_OPTIONS.map((option) => [option.value, option.label]))
+const MATCH_TYPE_LABELS: Record<MetadataSuggestRule['matchType'], string> = {
+  exact: 'Exact token',
+  contains: 'Contains',
+  starts_with: 'Starts with',
+  ends_with: 'Ends with',
+  prefix_value: 'Prefix + value',
+}
 
 export function MetadataSuggestRuleLibraryModal({
   rules,
@@ -98,7 +105,15 @@ export function MetadataSuggestRuleLibraryModal({
                         )}
                       </div>
                       <div className="mt-1 text-[11px] text-gray-500 dark:text-gray-500">
+                        {MATCH_TYPE_LABELS[rule.matchType]}
+                        <span className="mx-1.5">·</span>
                         {rule.matchIn === 'either' ? 'Filename or folder' : rule.matchIn === 'filename' ? 'Filename only' : 'Folder only'}
+                        {rule.overwriteExisting && rule.overwriteOnlyValues.trim() && (
+                          <>
+                            <span className="mx-1.5">·</span>
+                            Guarded overwrite: {rule.overwriteOnlyValues}
+                          </>
+                        )}
                         {!rule.enabled && <span className="ml-2 text-amber-500 dark:text-amber-400">Disabled in library</span>}
                       </div>
                     </div>

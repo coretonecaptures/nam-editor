@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { NamFile } from '../types/nam'
 
 interface DuplicateGroup {
@@ -16,9 +16,10 @@ interface DuplicatesModalProps {
   onMoveDuplicates: (moves: { filePath: string; destName: string }[]) => Promise<void>
   onTrashDuplicates: (filePaths: string[]) => Promise<void>
   getDeleteBehavior: (filePaths: string[]) => Promise<{ permanentOnly: boolean; reason?: string }>
+  getContentHashes: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
 }
 
-type DetectionMode = 'filename' | 'metaname'
+type DetectionMode = 'filename' | 'metaname' | 'content'
 
 const CORE_FIELDS: (keyof NamFile['metadata'])[] = [
   'name', 'modeled_by', 'gear_make', 'gear_model', 'gear_type', 'tone_type', 'input_level_dbu'
@@ -28,7 +29,20 @@ function completeness(f: NamFile): number {
   return CORE_FIELDS.filter((k) => f.metadata[k] != null && f.metadata[k] !== '').length
 }
 
-function buildGroups(files: NamFile[], mode: DetectionMode): Omit<DuplicateGroup, 'status'>[] {
+function buildDuplicateGroup(key: string, grpFiles: NamFile[]): Omit<DuplicateGroup, 'status'> {
+  let keepIndex = 0
+  let best = -1
+  grpFiles.forEach((f, i) => {
+    const score = completeness(f)
+    if (score > best) {
+      best = score
+      keepIndex = i
+    }
+  })
+  return { key, files: grpFiles, keepIndex }
+}
+
+function buildGroups(files: NamFile[], mode: Exclude<DetectionMode, 'content'>): Omit<DuplicateGroup, 'status'>[] {
   const map = new Map<string, NamFile[]>()
   for (const f of files) {
     const raw = mode === 'filename' ? f.fileName : (f.metadata.name ?? '').trim()
@@ -39,15 +53,40 @@ function buildGroups(files: NamFile[], mode: DetectionMode): Omit<DuplicateGroup
   }
   return [...map.entries()]
     .filter(([, grpFiles]) => grpFiles.length >= 2)
-    .map(([key, grpFiles]) => {
-      let keepIndex = 0
-      let best = -1
-      grpFiles.forEach((f, i) => {
-        const score = completeness(f)
-        if (score > best) { best = score; keepIndex = i }
-      })
-      return { key, files: grpFiles, keepIndex }
-    })
+    .map(([key, grpFiles]) => buildDuplicateGroup(key, grpFiles))
+    .sort((a, b) => a.key.localeCompare(b.key))
+}
+
+function getContentHashCandidates(files: NamFile[]): string[] {
+  const bySize = new Map<string, NamFile[]>()
+  for (const file of files) {
+    const key = file.sizeBytes == null ? 'unknown' : String(file.sizeBytes)
+    if (!bySize.has(key)) bySize.set(key, [])
+    bySize.get(key)!.push(file)
+  }
+  return [...bySize.values()]
+    .filter((group) => group.length >= 2)
+    .flatMap((group) => group.map((file) => file.filePath))
+}
+
+function buildContentGroups(
+  files: NamFile[],
+  hashResults: { filePath: string; success: boolean; hash?: string; error?: string }[]
+): Omit<DuplicateGroup, 'status'>[] {
+  const byPath = new Map(files.map((file) => [file.filePath.replace(/\\/g, '/'), file]))
+  const byHash = new Map<string, NamFile[]>()
+
+  for (const result of hashResults) {
+    if (!result.success || !result.hash) continue
+    const file = byPath.get(result.filePath.replace(/\\/g, '/'))
+    if (!file) continue
+    if (!byHash.has(result.hash)) byHash.set(result.hash, [])
+    byHash.get(result.hash)!.push(file)
+  }
+
+  return [...byHash.entries()]
+    .filter(([, grpFiles]) => grpFiles.length >= 2)
+    .map(([hash, grpFiles]) => buildDuplicateGroup(hash, grpFiles))
     .sort((a, b) => a.key.localeCompare(b.key))
 }
 
@@ -67,12 +106,9 @@ function parentFolder(filePath: string): string {
   return parts[parts.length - 2] ?? ''
 }
 
-// When moving multiple files with the same basename to _Duplicates,
-// disambiguate by appending the source folder name: "filename (from FolderA).nam"
 function buildDestName(filePath: string, allDupePaths: string[]): string {
   const norm = filePath.replace(/\\/g, '/')
-  const basename = norm.split('/').pop() ?? norm // e.g. "friedman-crunch.nam"
-  // Check if any other file being moved has the same basename
+  const basename = norm.split('/').pop() ?? norm
   const siblings = allDupePaths.filter((p) => {
     const n = p.replace(/\\/g, '/')
     return n !== norm && (n.split('/').pop() ?? '') === basename
@@ -84,16 +120,47 @@ function buildDestName(filePath: string, allDupePaths: string[]): string {
   return `${base} (from ${folder})${ext}`
 }
 
-export function DuplicatesModal({ files, rootFolder, scopeLabel, onClose, onMoveDuplicates, onTrashDuplicates, getDeleteBehavior }: DuplicatesModalProps) {
+export function DuplicatesModal({
+  files,
+  rootFolder,
+  scopeLabel,
+  onClose,
+  onMoveDuplicates,
+  onTrashDuplicates,
+  getDeleteBehavior,
+  getContentHashes,
+}: DuplicatesModalProps) {
   const [mode, setMode] = useState<DetectionMode>('filename')
   const [groups, setGroups] = useState<DuplicateGroup[]>(() =>
     buildGroups(files, 'filename').map((g) => ({ ...g, status: null }))
   )
-  const [working, setWorking] = useState<number | null>(null) // group index being processed
+  const [working, setWorking] = useState<number | null>(null)
+  const [loadingContent, setLoadingContent] = useState(false)
+  const [contentHashFailures, setContentHashFailures] = useState(0)
 
-  const switchMode = (m: DetectionMode) => {
-    setMode(m)
-    setGroups(buildGroups(files, m).map((g) => ({ ...g, status: null })))
+  const switchMode = async (nextMode: DetectionMode) => {
+    setMode(nextMode)
+    setContentHashFailures(0)
+
+    if (nextMode !== 'content') {
+      setLoadingContent(false)
+      setGroups(buildGroups(files, nextMode).map((g) => ({ ...g, status: null })))
+      return
+    }
+
+    const candidatePaths = getContentHashCandidates(files)
+    setLoadingContent(true)
+    setGroups([])
+
+    if (candidatePaths.length === 0) {
+      setLoadingContent(false)
+      return
+    }
+
+    const results = await getContentHashes(candidatePaths)
+    setContentHashFailures(results.filter((result) => !result.success).length)
+    setGroups(buildContentGroups(files, results).map((g) => ({ ...g, status: null })))
+    setLoadingContent(false)
   }
 
   const setKeep = (gi: number, keepIndex: number) => {
@@ -167,12 +234,16 @@ export function DuplicatesModal({ files, rootFolder, scopeLabel, onClose, onMove
 
   const totalGroups = groups.length
   const handledGroups = groups.filter((g) => g.status !== null).length
+  const modeLabel =
+    mode === 'filename'
+      ? 'filename'
+      : mode === 'metaname'
+        ? 'metadata name'
+        : 'exact file content'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 w-[700px] max-h-[82vh] flex flex-col">
-
-        {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
           <div>
             <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Find Duplicates</h2>
@@ -182,10 +253,17 @@ export function DuplicatesModal({ files, rootFolder, scopeLabel, onClose, onMove
               </p>
             )}
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-              {totalGroups === 0
-                ? 'No duplicates found'
-                : `${totalGroups} group${totalGroups !== 1 ? 's' : ''} · ${handledGroups} handled · ${totalGroups - handledGroups} pending`}
+              {loadingContent
+                ? 'Hashing candidate files for exact-match comparison...'
+                : totalGroups === 0
+                  ? 'No duplicates found'
+                  : `${totalGroups} group${totalGroups !== 1 ? 's' : ''} - ${handledGroups} handled - ${totalGroups - handledGroups} pending`}
             </p>
+            {mode === 'content' && contentHashFailures > 0 && !loadingContent && (
+              <p className="text-[11px] text-amber-500 dark:text-amber-400 mt-1">
+                {contentHashFailures} file{contentHashFailures !== 1 ? 's' : ''} could not be hashed and were skipped.
+              </p>
+            )}
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors p-1">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -194,28 +272,41 @@ export function DuplicatesModal({ files, rootFolder, scopeLabel, onClose, onMove
           </button>
         </div>
 
-        {/* Mode tabs */}
         <div className="flex items-center gap-1 px-5 pt-3 pb-2 flex-shrink-0 border-b border-gray-100 dark:border-gray-800">
-          <button onClick={() => switchMode('filename')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mode === 'filename' ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}>
+          <button onClick={() => { void switchMode('filename') }} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mode === 'filename' ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}>
             By Filename
           </button>
-          <button onClick={() => switchMode('metaname')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mode === 'metaname' ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}>
+          <button onClick={() => { void switchMode('metaname') }} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mode === 'metaname' ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}>
             By Metadata Name
           </button>
+          <button onClick={() => { void switchMode('content') }} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mode === 'content' ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}>
+            By Exact Content
+          </button>
           <span className="ml-2 text-xs text-gray-400 dark:text-gray-600">
-            {mode === 'filename' ? 'Same .nam filename in different folders' : 'Same capture name in metadata field'}
+            {mode === 'filename'
+              ? 'Same .nam filename in different folders'
+              : mode === 'metaname'
+                ? 'Same capture name in metadata field'
+                : 'Byte-for-byte identical .nam file contents'}
           </span>
         </div>
 
-        {/* Groups list */}
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
-          {groups.length === 0 ? (
+          {loadingContent ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <svg className="w-10 h-10 text-indigo-300 dark:text-indigo-700 mb-3 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Hashing candidate files...</p>
+              <p className="text-xs text-gray-400 dark:text-gray-600 mt-1">Only same-size files are checked for exact content matches.</p>
+            </div>
+          ) : groups.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <svg className="w-10 h-10 text-gray-300 dark:text-gray-700 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               <p className="text-sm font-medium text-gray-500 dark:text-gray-400">No duplicates found</p>
-              <p className="text-xs text-gray-400 dark:text-gray-600 mt-1">All {files.length} files are unique by {mode === 'filename' ? 'filename' : 'metadata name'}</p>
+              <p className="text-xs text-gray-400 dark:text-gray-600 mt-1">All {files.length} files are unique by {modeLabel}</p>
             </div>
           ) : (
             groups.map((group, gi) => {
@@ -224,9 +315,10 @@ export function DuplicatesModal({ files, rootFolder, scopeLabel, onClose, onMove
               const dupesInGroup = group.files.filter((_, i) => i !== group.keepIndex).length
               return (
                 <div key={group.key} className={`border rounded-lg overflow-hidden transition-opacity ${isHandled ? 'opacity-50 border-gray-100 dark:border-gray-800' : 'border-gray-200 dark:border-gray-700'}`}>
-                  {/* Group header */}
                   <div className={`flex items-center gap-2 px-3 py-2 ${isHandled ? 'bg-gray-50 dark:bg-gray-800/30' : 'bg-gray-100 dark:bg-gray-800'}`}>
-                    <span className="text-xs font-semibold text-gray-700 dark:text-gray-300 truncate flex-1">{group.key}</span>
+                    <span className="text-xs font-semibold text-gray-700 dark:text-gray-300 truncate flex-1">
+                      {mode === 'content' ? `SHA-256 ${group.key.slice(0, 12)}...` : group.key}
+                    </span>
                     <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">{group.files.length} files</span>
 
                     {isHandled ? (
@@ -242,7 +334,7 @@ export function DuplicatesModal({ files, rootFolder, scopeLabel, onClose, onMove
                             title={`Move ${dupesInGroup} non-kept file${dupesInGroup !== 1 ? 's' : ''} to _Duplicates`}
                             className="px-2 py-1 text-xs font-medium rounded bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white transition-colors"
                           >
-                            {isWorking ? '…' : `Move ${dupesInGroup} →`}
+                            {isWorking ? '...' : `Move ${dupesInGroup} ->`}
                           </button>
                         )}
                         <button
@@ -251,13 +343,12 @@ export function DuplicatesModal({ files, rootFolder, scopeLabel, onClose, onMove
                           title={`Trash ${dupesInGroup} non-kept file${dupesInGroup !== 1 ? 's' : ''}`}
                           className="px-2 py-1 text-xs font-medium rounded bg-red-700 hover:bg-red-600 disabled:opacity-40 text-white transition-colors"
                         >
-                          {isWorking ? '…' : `Trash ${dupesInGroup}`}
+                          {isWorking ? '...' : `Trash ${dupesInGroup}`}
                         </button>
                       </div>
                     )}
                   </div>
 
-                  {/* File rows */}
                   <div className="divide-y divide-gray-100 dark:divide-gray-800">
                     {group.files.map((f, fi) => {
                       const isKeep = fi === group.keepIndex
@@ -271,12 +362,10 @@ export function DuplicatesModal({ files, rootFolder, scopeLabel, onClose, onMove
                           onClick={() => !isHandled && setKeep(gi, fi)}
                           title={isHandled ? '' : isKeep ? 'This file will be kept' : 'Click to keep this file instead'}
                         >
-                          {/* Keep radio */}
                           <div className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${isKeep ? 'border-emerald-500 bg-emerald-500' : 'border-gray-400 dark:border-gray-600'}`}>
                             {isKeep && <div className="w-1 h-1 rounded-full bg-white" />}
                           </div>
 
-                          {/* File info */}
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
                               <span className={`text-xs font-medium truncate ${isKeep ? 'text-emerald-700 dark:text-emerald-400' : 'text-gray-700 dark:text-gray-300'}`}>
@@ -290,7 +379,6 @@ export function DuplicatesModal({ files, rootFolder, scopeLabel, onClose, onMove
                             <div className="text-xs text-gray-400 dark:text-gray-600 truncate">{dir}</div>
                           </div>
 
-                          {/* Completeness bars */}
                           <div className="flex-shrink-0 text-right">
                             <div className="flex gap-0.5 justify-end">
                               {CORE_FIELDS.map((k) => (
@@ -309,13 +397,12 @@ export function DuplicatesModal({ files, rootFolder, scopeLabel, onClose, onMove
           )}
         </div>
 
-        {/* Footer */}
         <div className="flex items-center justify-between px-5 py-3 border-t border-gray-200 dark:border-gray-800 flex-shrink-0 bg-gray-50 dark:bg-gray-900 rounded-b-xl">
           <div className="text-xs text-gray-500 dark:text-gray-400">
             {pendingGroups.length > 0 ? (
               <>Click a file row to change which to keep. Use group buttons to handle one at a time.</>
             ) : totalGroups > 0 ? (
-              <span className="text-emerald-600 dark:text-emerald-400">All groups handled ✓</span>
+              <span className="text-emerald-600 dark:text-emerald-400">All groups handled.</span>
             ) : null}
           </div>
           <div className="flex gap-2 flex-shrink-0">
@@ -327,18 +414,18 @@ export function DuplicatesModal({ files, rootFolder, scopeLabel, onClose, onMove
                 {rootFolder && (
                   <button
                     onClick={handleAllMove}
-                    disabled={working !== null}
+                    disabled={working !== null || loadingContent}
                     className="px-3 py-1.5 text-xs font-medium rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white transition-colors"
                   >
-                    {working === -1 ? 'Working…' : `Move all ${pendingDupeFiles.length} to _Duplicates`}
+                    {working === -1 ? 'Working...' : `Move all ${pendingDupeFiles.length} to _Duplicates`}
                   </button>
                 )}
                 <button
                   onClick={handleAllTrash}
-                  disabled={working !== null}
+                  disabled={working !== null || loadingContent}
                   className="px-3 py-1.5 text-xs font-medium rounded-md bg-red-700 hover:bg-red-600 disabled:opacity-40 text-white transition-colors"
                 >
-                  {working === -1 ? 'Working…' : `Trash all ${pendingDupeFiles.length}`}
+                  {working === -1 ? 'Working...' : `Trash all ${pendingDupeFiles.length}`}
                 </button>
               </>
             )}

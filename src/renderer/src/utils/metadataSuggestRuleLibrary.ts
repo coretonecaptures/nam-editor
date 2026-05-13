@@ -14,7 +14,9 @@ export function metadataSuggestRuleSignature(rule: MetadataSuggestRule): string 
     rule.field,
     rule.value.trim(),
     rule.matchIn,
+    rule.matchType,
     rule.overwriteExisting ? 'overwrite' : 'blank',
+    rule.overwriteOnlyValues.trim().toLowerCase(),
   ].join('||')
 }
 
