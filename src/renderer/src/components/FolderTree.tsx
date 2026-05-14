@@ -40,7 +40,7 @@ interface FolderTreeProps {
   onCoverageReport?: (folderPath: string) => void
   onFindDuplicates?: (folderPath: string) => void
   onCleanThisFolder?: (folderPath: string) => void
-  onDeleteEmptyFolder?: (folderPath: string) => Promise<{ success: boolean; error?: string }>
+  onDeleteEmptyFolder?: (folderPath: string) => Promise<{ success: boolean; error?: string; removedCount?: number }>
   scrollToFolder?: string | null
   packInfoFolders?: Set<string>
   folderNameColors?: Record<string, string>
@@ -368,7 +368,7 @@ function TreeNode({
   onCoverageReport?: (folderPath: string) => void
   onFindDuplicates?: (folderPath: string) => void
   onCleanThisFolder?: (folderPath: string) => void
-  onDeleteEmptyFolder?: (folderPath: string) => Promise<{ success: boolean; error?: string }>
+  onDeleteEmptyFolder?: (folderPath: string) => Promise<{ success: boolean; error?: string; removedCount?: number }>
   expandSeq?: number
   collapseSeq?: number
   scrollToFolder?: string | null
@@ -566,7 +566,7 @@ function FolderRow({
   onCoverageReport?: () => void
   onFindDuplicates?: () => void
   onCleanThisFolder?: () => void
-  onDeleteEmptyFolder?: () => Promise<{ success: boolean; error?: string }>
+  onDeleteEmptyFolder?: () => Promise<{ success: boolean; error?: string; removedCount?: number }>
   isDraggableFolder?: boolean
   hasPackInfo?: boolean
   hasSuggestRules?: boolean
@@ -665,7 +665,7 @@ function FolderRow({
   const acceptsDrop = (types: readonly string[]) =>
     types.includes('application/x-nam-files') || types.includes('application/x-nam-folder')
   const watchSourceName = watchSource ? watchSource.replace(/\\/g, '/').split('/').pop() ?? watchSource : null
-  const canDeleteEmptyFolder = !isRoot && !hasChildren && totalCount === 0
+  const canDeleteEmptyFolder = !isRoot && totalCount === 0
 
   return (
     <div className="relative group" data-folder-path={folderPath}>
@@ -902,7 +902,7 @@ function FolderRow({
                   disabled={!canDeleteEmptyFolder}
                   onClick={() => { setMenu(null); void onDeleteEmptyFolder() }}
                 >
-                  Delete empty folder...
+                  Delete empty folder tree...
                 </button>
               )}
               <button

@@ -17,9 +17,10 @@ interface DuplicatesModalProps {
   onTrashDuplicates: (filePaths: string[]) => Promise<void>
   getDeleteBehavior: (filePaths: string[]) => Promise<{ permanentOnly: boolean; reason?: string }>
   getContentHashes: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
+  getModelHashes: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
 }
 
-type DetectionMode = 'filename' | 'metaname' | 'content'
+type DetectionMode = 'filename' | 'metaname' | 'content' | 'model'
 
 const CORE_FIELDS: (keyof NamFile['metadata'])[] = [
   'name', 'modeled_by', 'gear_make', 'gear_model', 'gear_type', 'tone_type', 'input_level_dbu'
@@ -129,6 +130,7 @@ export function DuplicatesModal({
   onTrashDuplicates,
   getDeleteBehavior,
   getContentHashes,
+  getModelHashes,
 }: DuplicatesModalProps) {
   const [mode, setMode] = useState<DetectionMode>('filename')
   const [groups, setGroups] = useState<DuplicateGroup[]>(() =>
@@ -142,13 +144,15 @@ export function DuplicatesModal({
     setMode(nextMode)
     setContentHashFailures(0)
 
-    if (nextMode !== 'content') {
+    if (nextMode !== 'content' && nextMode !== 'model') {
       setLoadingContent(false)
-      setGroups(buildGroups(files, nextMode).map((g) => ({ ...g, status: null })))
+      setGroups(buildGroups(files, nextMode as Exclude<DetectionMode, 'content' | 'model'>).map((g) => ({ ...g, status: null })))
       return
     }
 
-    const candidatePaths = getContentHashCandidates(files)
+    const candidatePaths = nextMode === 'content'
+      ? getContentHashCandidates(files)
+      : files.map((file) => file.filePath)
     setLoadingContent(true)
     setGroups([])
 
@@ -157,7 +161,9 @@ export function DuplicatesModal({
       return
     }
 
-    const results = await getContentHashes(candidatePaths)
+    const results = nextMode === 'content'
+      ? await getContentHashes(candidatePaths)
+      : await getModelHashes(candidatePaths)
     setContentHashFailures(results.filter((result) => !result.success).length)
     setGroups(buildContentGroups(files, results).map((g) => ({ ...g, status: null })))
     setLoadingContent(false)
@@ -239,7 +245,9 @@ export function DuplicatesModal({
       ? 'filename'
       : mode === 'metaname'
         ? 'metadata name'
-        : 'exact file content'
+        : mode === 'content'
+          ? 'exact file content'
+          : 'same model with metadata differences'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
@@ -282,12 +290,17 @@ export function DuplicatesModal({
           <button onClick={() => { void switchMode('content') }} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mode === 'content' ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}>
             By Exact Content
           </button>
+          <button onClick={() => { void switchMode('model') }} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mode === 'model' ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}>
+            Same Model, Metadata Differs
+          </button>
           <span className="ml-2 text-xs text-gray-400 dark:text-gray-600">
             {mode === 'filename'
               ? 'Same .nam filename in different folders'
               : mode === 'metaname'
                 ? 'Same capture name in metadata field'
-                : 'Byte-for-byte identical .nam file contents'}
+                : mode === 'content'
+                  ? 'Byte-for-byte identical .nam file contents'
+                  : 'Matches when the metadata block is ignored'}
           </span>
         </div>
 
@@ -298,7 +311,11 @@ export function DuplicatesModal({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Hashing candidate files...</p>
-              <p className="text-xs text-gray-400 dark:text-gray-600 mt-1">Only same-size files are checked for exact content matches.</p>
+              <p className="text-xs text-gray-400 dark:text-gray-600 mt-1">
+                {mode === 'content'
+                  ? 'Only same-size files are checked for exact content matches.'
+                  : 'Checking for files whose model content matches after removing metadata.'}
+              </p>
             </div>
           ) : groups.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
@@ -317,7 +334,11 @@ export function DuplicatesModal({
                 <div key={group.key} className={`border rounded-lg overflow-hidden transition-opacity ${isHandled ? 'opacity-50 border-gray-100 dark:border-gray-800' : 'border-gray-200 dark:border-gray-700'}`}>
                   <div className={`flex items-center gap-2 px-3 py-2 ${isHandled ? 'bg-gray-50 dark:bg-gray-800/30' : 'bg-gray-100 dark:bg-gray-800'}`}>
                     <span className="text-xs font-semibold text-gray-700 dark:text-gray-300 truncate flex-1">
-                      {mode === 'content' ? `SHA-256 ${group.key.slice(0, 12)}...` : group.key}
+                      {mode === 'content'
+                        ? `SHA-256 ${group.key.slice(0, 12)}...`
+                        : mode === 'model'
+                          ? `Model hash ${group.key.slice(0, 12)}...`
+                          : group.key}
                     </span>
                     <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">{group.files.length} files</span>
 

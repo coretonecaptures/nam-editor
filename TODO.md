@@ -32,6 +32,7 @@
 ## Grid and UI
 
 - In Batch Rename, add a quick helper / hotkey for common cleanup like replacing underscores with spaces, so users do not have to repeatedly type `_` -> ` ` by hand.
+- Metadata header path display: consider a second muted/grey full-path presentation or alternate layout that shows more of the real file path without stealing too much editor real estate.
 
 ## Checklist and release workflow
 

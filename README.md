@@ -45,7 +45,7 @@ NAM captures embed metadata (name, gear info, tone type, etc.) as JSON inside th
 - **Bulk editing** - batch editor, multi-select editor, and copy/paste metadata across files
 - **Batch rename** - suffix, prefix, find & replace, or template-based rename with live preview and conflict detection
 - **Duplicate detection** - find dupes by filename or capture name; choose a keeper and move or trash the rest, including folder-scoped duplicate scans from the tree
-- **Exact content duplicate detection** - third duplicate mode hashes the full `.nam` file to find true byte-for-byte duplicates, not just same names
+- **Advanced duplicate detection** - find dupes by filename, metadata name, exact full-file content, or "same model, metadata differs" when the model content matches but the metadata block has changed
 - **Smart defaults** - auto-fill empty fields at load time (modeled by, levels, amp info); each rule section independently togglable
 - **Metadata suggestions** - global and folder-scoped suggestion rules, overwrite guards for junk placeholders, reusable rule library, blank-token scope defaults, and filename-segment / example-based rule building for consistent naming styles
 - **Library cleanup / rebuild tools** - preview-first cleanup modal, top-level library intake flow, folder-level recategorize-in-place flow, `Needs Review` routing, CSV/XLSX export for the review list, and safe copy/move options
@@ -60,86 +60,17 @@ NAM captures embed metadata (name, gear info, tone type, etc.) as JSON inside th
 - **Training version report** - pivot table showing preset x capture coverage per folder
 - **File associations** - `.nam` files open directly in NAM Lab from Explorer/Finder
 
-[Full feature reference](docs/features.md)
+[Full feature reference](docs/features.md)  
+[Workflow guide and screenshots](docs/workflows.md)
 
 ---
 
-## Suggested Workflows
+## Workflow Guides
 
-### 1. I have a messy / disjointed library and want to build structure
+If you want the practical "how do I actually use this?" side of the app, start here:
 
-Use **Library Tools -> Clean Up / Build Library...**
-
-1. Pick a broad parent root that contains the captures you want to collect.
-2. Choose a destination library root.
-3. Choose `Copy` first unless you are very confident.
-4. Pick a structure such as:
-   - `Creator`
-   - `Creator > Amp`
-   - `Creator > Amp > DI/CAB`
-   - `Creator > Amp > DI/CAB > Preset Type`
-5. Build the preview.
-6. Review:
-   - `Ready`
-   - `Needs Review`
-   - `No Change`
-7. Export the `Needs Review` list if you want to clean those up in Excel or batch-edit them later.
-
-### 2. I already have a few folders and want to clean just one subtree
-
-Right-click the folder in the tree and use **Clean this folder...**
-
-Best for:
-- a creator folder
-- an amp folder
-- a flat `Needs Review` bucket
-- a subtree you already trust but want to organize more deeply
-
-If you clean a normal folder in place, NAM Lab treats that folder as an **anchor** and only builds the missing deeper structure underneath it.
-
-### 3. I fixed metadata inside `Needs Review` and want to recategorize those files
-
-1. Batch-edit or update the metadata you now know.
-2. Right-click the `Needs Review` folder.
-3. Choose **Clean this folder...**
-4. Let the destination root point to the **parent library root**.
-
-This is the best flow for moving repaired files back out of `Needs Review` into creator / amp / DI / preset structure.
-
-### 4. I repaired placeholder metadata like `tz-make` / `tz-model`
-
-After fixing those values, run cleanup again, but choose the **parent branch you want the files to live under** as the destination root.
-
-Example:
-- bad current path: `amalgamaudio/tz-make tz-model/di`
-- repaired desired path: `amalgamaudio/gibson g200/di`
-
-In that case, set **Destination Library Root** to:
-- `amalgamaudio`
-
-Do not leave it on the current placeholder folder, or NAM Lab will keep building underneath that junk branch because it is being treated as the current anchor.
-
-### 5. I have consistent filenames and want fast metadata
-
-Use **Suggest metadata...** plus the rule tools:
-
-- global rules for patterns you use everywhere
-- folder rules for creator-specific or batch-specific meaning
-- **Build from example...** when the filename style is structured
-
-Example naming style:
-- `JCM800 Lo P6 B8 M4 T7 G10`
-
-That can drive:
-- make / model
-- amp switches
-- amp settings
-
-without hand-tagging every file one at a time.
-
-For more detail, see:
-- [Full feature reference](docs/features.md)
 - [Library cleanup and metadata workflows](docs/workflows.md)
+- [Full feature reference](docs/features.md)
 
 ---
 

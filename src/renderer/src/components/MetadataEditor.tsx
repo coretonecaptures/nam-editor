@@ -170,8 +170,8 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
             <div className="flex items-center gap-3 mt-1">
               <button
                 onClick={onRevealInFinder}
-                className="text-xs text-gray-500 dark:text-gray-500 hover:text-indigo-400 transition-colors truncate max-w-lg text-left"
-                title="Reveal in Finder / Explorer"
+                className="text-xs text-gray-500 dark:text-gray-500 hover:text-indigo-400 transition-colors text-left flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
+                title={file.filePath}
               >
                 {file.filePath}
               </button>

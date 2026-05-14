@@ -220,6 +220,22 @@ export function FilenameRecipeBuilderModal({
     )))
   }
 
+  const duplicateMapping = (segmentIndex: number, mappingId: string) => {
+    setSegments((prev) => prev.map((segment) => {
+      if (segment.index !== segmentIndex) return segment
+      const source = segment.mappings.find((mapping) => mapping.id === mappingId)
+      if (!source) return segment
+      const clone: SegmentMappingDraft = {
+        ...source,
+        id: randomId('recipe-map'),
+      }
+      const sourceIndex = segment.mappings.findIndex((mapping) => mapping.id === mappingId)
+      const nextMappings = [...segment.mappings]
+      nextMappings.splice(sourceIndex + 1, 0, clone)
+      return { ...segment, mappings: nextMappings }
+    }))
+  }
+
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70">
       <div
@@ -279,7 +295,7 @@ export function FilenameRecipeBuilderModal({
                 <div className="space-y-2">
                   {segment.mappings.map((mapping) => (
                     <div key={mapping.id} className="space-y-1.5">
-                      <div className="grid grid-cols-1 md:grid-cols-[110px_minmax(0,0.95fr)_90px_minmax(0,1fr)_120px_auto] gap-2 items-center">
+                      <div className="grid grid-cols-1 md:grid-cols-[110px_minmax(0,0.95fr)_90px_minmax(0,1fr)_120px_auto_auto] gap-2 items-center">
                         <select
                           value={mapping.mode}
                           onChange={(e) => {
@@ -353,6 +369,17 @@ export function FilenameRecipeBuilderModal({
                           <option value="either">Filename or folder</option>
                           <option value="folder">Folder only</option>
                         </select>
+
+                        <button
+                          onClick={() => duplicateMapping(segment.index, mapping.id)}
+                          className="text-gray-400 hover:text-indigo-500 transition-colors justify-self-center"
+                          title="Duplicate mapping"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <rect x="9" y="9" width="10" height="10" rx="2" strokeWidth="1.8" />
+                            <rect x="5" y="5" width="10" height="10" rx="2" strokeWidth="1.8" />
+                          </svg>
+                        </button>
 
                         <button
                           onClick={() => removeMapping(segment.index, mapping.id)}

@@ -8,6 +8,8 @@ For the full feature inventory, see [features.md](features.md).
 
 ## 1. Build a cleaner library from a messy parent root
 
+![Library cleanup preview](images/library-cleanup-preview.png)
+
 Use this when you have:
 - downloads scattered across many folders
 - a staging area
@@ -124,6 +126,8 @@ So the rule of thumb is:
 
 ## 5. Use metadata suggestions for structured filename styles
 
+![Metadata editor and context tools](images/metadata-editor.png)
+
 Use this when the files themselves are named consistently even if the metadata is not.
 
 Good fit:
@@ -188,11 +192,11 @@ That gives you repair power without turning every overwrite into a broad hammer.
 
 ---
 
-## 8. Use content duplicate detection when names are unreliable
+## 8. Use duplicate modes intentionally when names are unreliable
 
-If filenames and metadata names are inconsistent, use the **Content** duplicate mode.
+If filenames and metadata names are inconsistent, pick the duplicate mode that matches the question you are actually asking.
 
-That mode:
+Use **Content** when you want:
 - hashes the full `.nam` file
 - finds true byte-for-byte duplicates
 
@@ -200,6 +204,11 @@ Use:
 - `Filename` mode when you want same-name cleanup
 - `Meta Name` when you care about the embedded capture name
 - `Content` when you want exact duplicate files regardless of names
+- `Same Model, Metadata Differs` when you want to find captures whose underlying model matches but one copy has cleaner or repaired metadata
+
+That last mode is especially useful during metadata cleanup when you suspect you have:
+- one file with placeholder metadata such as `tz-make` / `tz-model`
+- and another copy of the same capture whose metadata has already been corrected
 
 ---
 
@@ -216,3 +225,19 @@ If you are starting from a very messy library:
 7. Only switch to `Move` when you trust the pattern.
 
 This tends to be the least stressful path and gives you easy checkpoints if something unexpected shows up.
+
+---
+
+## 10. Tone3000-assisted intake workflow
+
+![Tone3000 browser inside NAM Lab](images/tone3000-browser.png)
+
+If you are actively collecting new captures from Tone3000, a practical flow is:
+
+1. Browse and download captures inside NAM Lab.
+2. Let them land in a staging or intake area.
+3. Run top-level cleanup in `Copy` mode first.
+4. Fix any `Needs Review` items.
+5. Re-run cleanup on the repaired subset.
+
+This tends to keep downloading, tagging, and final library organization in one place instead of bouncing between several tools.

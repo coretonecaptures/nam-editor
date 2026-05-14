@@ -96,6 +96,15 @@ function hashFileSha256(filePath: string): Promise<string> {
   })
 }
 
+async function hashFileWithoutMetadataSha256(filePath: string): Promise<string> {
+  const content = await fs.promises.readFile(filePath, 'utf-8')
+  const data = JSON.parse(content) as Record<string, unknown>
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    delete data.metadata
+  }
+  return crypto.createHash('sha256').update(JSON.stringify(data)).digest('hex')
+}
+
 async function mergeFolderContents(sourcePath: string, destPath: string): Promise<{ skippedPaths: string[] }> {
   const skippedPaths: string[] = []
   const entries = await fs.promises.readdir(sourcePath, { withFileTypes: true })
@@ -157,6 +166,24 @@ function closeFolderWatchers(): void {
     try { watcher.close() } catch { /* ignore */ }
   }
   folderWatchers.clear()
+}
+
+async function deleteEmptyFolderTree(folderPath: string): Promise<number> {
+  const entries = await fs.promises.readdir(folderPath, { withFileTypes: true })
+  let removedCount = 0
+
+  for (const entry of entries) {
+    const childPath = join(folderPath, entry.name)
+    if (entry.isDirectory()) {
+      removedCount += await deleteEmptyFolderTree(childPath)
+      continue
+    }
+    throw new Error('Folder tree is not empty')
+  }
+
+  suppressWatcher()
+  await fs.promises.rmdir(folderPath)
+  return removedCount + 1
 }
 
 function makeFolderWatchKey(sourceFolder: string, destFolder: string): string {
@@ -984,6 +1011,26 @@ app.whenReady().then(async () => {
     return results
   })
 
+  ipcMain.handle('file:hashManyWithoutMetadata', async (_event, filePaths: string[]) => {
+    const CONCURRENCY = 8
+    const results: Array<{ filePath: string; success: boolean; hash?: string; error?: string }> = []
+
+    for (let i = 0; i < filePaths.length; i += CONCURRENCY) {
+      const batch = filePaths.slice(i, i + CONCURRENCY)
+      const batchResults = await Promise.all(batch.map(async (filePath) => {
+        try {
+          const hash = await hashFileWithoutMetadataSha256(filePath)
+          return { filePath, success: true, hash }
+        } catch (err) {
+          return { filePath, success: false, error: String(err) }
+        }
+      }))
+      results.push(...batchResults)
+    }
+
+    return results
+  })
+
   // IPC: Read a NAM file metadata (without exposing weights to renderer)
   const errorLogPath = join(app.getPath('userData'), 'parse-errors.log')
   ipcMain.handle('file:read', async (_event, filePath: string) => {
@@ -1474,13 +1521,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('folder:deleteEmpty', async (_event, folderPath: string) => {
     try {
       const normalized = normalizePath(folderPath)
-      const entries = await fs.promises.readdir(normalized)
-      if (entries.length > 0) {
-        return { success: false, error: 'Folder is not empty' }
-      }
-      suppressWatcher()
-      await fs.promises.rmdir(normalized)
-      return { success: true }
+      const removedCount = await deleteEmptyFolderTree(normalized)
+      return { success: true, removedCount }
     } catch (err) {
       return { success: false, error: String(err) }
     }

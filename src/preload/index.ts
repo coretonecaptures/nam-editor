@@ -19,6 +19,8 @@ const api = {
   readFileBinary: (filePath: string): Promise<{ data?: string; error?: string }> => ipcRenderer.invoke('file:readBinary', filePath),
   hashFiles: (filePaths: string[]): Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]> =>
     ipcRenderer.invoke('file:hashMany', filePaths),
+  hashFilesWithoutMetadata: (filePaths: string[]): Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]> =>
+    ipcRenderer.invoke('file:hashManyWithoutMetadata', filePaths),
   readFile: (filePath: string) => ipcRenderer.invoke('file:read', filePath),
   writeMetadata: (filePath: string, metadata: unknown) =>
     ipcRenderer.invoke('file:writeMetadata', filePath, metadata),
@@ -76,7 +78,7 @@ const api = {
     ipcRenderer.invoke('folder:rename', folderPath, newName),
   moveFolder: (sourcePath: string, destParentPath: string, allowMerge = false): Promise<{ success: boolean; newPath?: string; error?: string; mergedIntoExisting?: boolean; mergeTargetPath?: string; skippedPaths?: string[] }> =>
     ipcRenderer.invoke('folder:move', sourcePath, destParentPath, allowMerge),
-  deleteEmptyFolder: (folderPath: string): Promise<{ success: boolean; error?: string }> =>
+  deleteEmptyFolder: (folderPath: string): Promise<{ success: boolean; error?: string; removedCount?: number }> =>
     ipcRenderer.invoke('folder:deleteEmpty', folderPath),
   trashFiles: (filePaths: string[]): Promise<{ filePath: string; success: boolean; error?: string; deleteMode?: 'trash' | 'delete' }[]> =>
     ipcRenderer.invoke('file:trash', filePaths),

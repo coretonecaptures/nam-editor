@@ -28,6 +28,7 @@ import { BundleEditor } from './components/BundleEditor'
 import { NamDashboard } from './components/NamDashboard'
 import { SessionHistoryPanel } from './components/SessionHistoryPanel'
 import { LibraryCleanupModal, type LibraryCleanupFolderEntry, type LibraryCleanupLayout, type LibraryCleanupPreviewRow } from './components/LibraryCleanupModal'
+import { HelpModal, type HelpModalTab } from './components/HelpModal'
 import * as XLSX from 'xlsx'
 import { buildMetadataSuggestionMatches, MetadataSuggestionMatch } from './utils/metadataSuggest'
 import { cloneMetadataSuggestRule, isMetadataSuggestRuleComplete, isMetadataSuggestRuleLibraryCandidate, metadataSuggestRuleSignature } from './utils/metadataSuggestRuleLibrary'
@@ -213,6 +214,14 @@ function isPathWithin(path: string, ancestor: string): boolean {
   return normalizedPath === normalizedAncestor || normalizedPath.startsWith(normalizedAncestor + '/')
 }
 
+function relativePathWithin(path: string, root: string): string {
+  const normalizedPath = path.replace(/\\/g, '/')
+  const normalizedRoot = root.replace(/\\/g, '/')
+  if (normalizedPath === normalizedRoot) return ''
+  if (normalizedPath.startsWith(normalizedRoot + '/')) return normalizedPath.slice(normalizedRoot.length + 1)
+  return normalizedPath
+}
+
 function flattenFolderTree(node: FolderNode, depth = 0): Array<{ path: string; label: string; depth: number }> {
   const rows: Array<{ path: string; label: string; depth: number }> = []
   for (const child of node.children) {
@@ -252,6 +261,7 @@ declare global {
       openImageFile: () => Promise<string | null>
       readFileBinary: (filePath: string) => Promise<{ data?: string; error?: string }>
       hashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
+      hashFilesWithoutMetadata: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
       revealFile: (filePath: string) => Promise<void>
       openFile: (filePath: string) => Promise<{ success: boolean; error?: string }>
       readFile: (filePath: string) => Promise<{
@@ -285,7 +295,7 @@ declare global {
       createFolder: (parentPath: string, name: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       renameFolder: (folderPath: string, newName: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       moveFolder: (sourcePath: string, destParentPath: string, allowMerge?: boolean) => Promise<{ success: boolean; newPath?: string; error?: string; mergedIntoExisting?: boolean; mergeTargetPath?: string; skippedPaths?: string[] }>
-      deleteEmptyFolder: (folderPath: string) => Promise<{ success: boolean; error?: string }>
+      deleteEmptyFolder: (folderPath: string) => Promise<{ success: boolean; error?: string; removedCount?: number }>
       trashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; error?: string; deleteMode?: 'trash' | 'delete' }[]>
       copyFiles: (filePaths: string[], destDir: string, destBaseNames?: string[]) => Promise<{ filePath: string; success: boolean; destPath?: string; error?: string }[]>
       clearNamLab: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; error?: string }[]>
@@ -410,6 +420,15 @@ function normalizeCreatorName(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '')
 }
 
+function formatBatchEditHistorySummary(batchFields: Partial<NamFile['metadata']>, fileCount: number): string {
+  const entries = Object.entries(batchFields) as Array<[keyof NamFile['metadata'], unknown]>
+  const details = entries.map(([field, value]) => {
+    if (value === null || value === undefined || value === '') return `${field}=(cleared)`
+    return `${field}=${String(value)}`
+  })
+  return `Batch edited ${fileCount} file${fileCount !== 1 ? 's' : ''} (${details.join(', ')})`
+}
+
 
 const EMPTY_LIBRARIAN: LibrarianState = {
   rootFolder: null,
@@ -418,6 +437,7 @@ const EMPTY_LIBRARIAN: LibrarianState = {
 }
 
 export default function App() {
+  const [helpView, setHelpView] = useState<HelpModalTab | null>(null)
   const [files, setFiles] = useState<NamFile[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [status, setStatus] = useState<{ message: string; type: 'info' | 'success' | 'error'; logPath?: string }>({
@@ -1687,7 +1707,7 @@ export default function App() {
     if (failed > 0) {
       setStatus({ message: `Batch saved ${savedPaths.size}, failed ${failed}`, type: 'error' })
     } else {
-      addHistoryEntry({ operation: 'batch-edit', summary: `Batch edited ${savedPaths.size} file${savedPaths.size !== 1 ? 's' : ''} (${Object.keys(batchFields).join(', ')})` })
+      addHistoryEntry({ operation: 'batch-edit', summary: formatBatchEditHistorySummary(batchFields, savedPaths.size) })
       setStatus({ message: `Batch saved ${savedPaths.size} file(s)`, type: 'success' })
     }
   }
@@ -1995,14 +2015,15 @@ export default function App() {
 
   const handleDeleteEmptyFolder = async (folderPath: string) => {
     const confirmed = window.confirm(
-      `Delete the empty folder "${folderDisplayName(folderPath)}"?\n\nThis only works when the folder has no remaining contents.`
+      `Delete the empty folder tree "${folderDisplayName(folderPath)}"?\n\nThis removes the selected folder and any empty child folders underneath it. It will stop if any files remain anywhere in that subtree.`
     )
     if (!confirmed) return { success: false, error: 'Cancelled' }
 
     const result = await window.api.deleteEmptyFolder(folderPath)
     if (result.success) {
       if (librarian.rootFolder) await loadFolderByPath(librarian.rootFolder)
-      setStatus({ message: `Deleted empty folder: ${folderDisplayName(folderPath)}`, type: 'success' })
+      const removed = result.removedCount ?? 1
+      setStatus({ message: `Deleted empty folder tree: ${folderDisplayName(folderPath)} (${removed} folder${removed !== 1 ? 's' : ''})`, type: 'success' })
     } else {
       setStatus({ message: `Delete failed: ${result.error}`, type: 'error' })
     }
@@ -2862,7 +2883,6 @@ export default function App() {
       libraryCleanupOpenMode === 'folder' &&
       librarian.rootFolder &&
       libraryCleanupSourceRoot &&
-      libraryCleanupDestinationRoot === libraryCleanupSourceRoot &&
       finalParts.length > 0
     ) {
       const rootPath = librarian.rootFolder.replace(/\\/g, '/')
@@ -2958,11 +2978,17 @@ export default function App() {
       const classified = classifyLibraryCleanupFile(file)
       const destinationPath = `${classified.destinationDir}/${classified.destinationBaseName}`.replace(/\\/g, '/')
       const sourcePath = classified.sourcePath.replace(/\\/g, '/')
-      const actionable = sourcePath !== destinationPath
+      const actionable = libraryCleanupOpenMode === 'folder' && libraryCleanupSourceRoot && libraryCleanupDestinationRoot
+        ? relativePathWithin(sourcePath, libraryCleanupSourceRoot) !== relativePathWithin(destinationPath, libraryCleanupDestinationRoot)
+        : sourcePath !== destinationPath
       return {
         sourcePath,
         destinationPath,
-        note: actionable ? classified.note : (classified.note ?? 'Already matches selected structure'),
+        note: actionable
+          ? classified.note
+          : (classified.note ?? (libraryCleanupOpenMode === 'folder'
+              ? 'Already matches selected structure beneath this folder'
+              : 'Already matches selected structure')),
         needsReview: classified.needsReview,
         actionable,
       } satisfies LibraryCleanupPreviewRow
@@ -3454,6 +3480,10 @@ export default function App() {
           setShowSettings(false)
           setBatchFolder(null)
         }}
+        helpOpen={helpView !== null}
+        onOpenHelp={() => setHelpView('workflows')}
+        onOpenFeatureHelp={() => setHelpView('features')}
+        onOpenAbout={() => setHelpView('about')}
       />
 
       <div className="flex flex-1 overflow-hidden relative">
@@ -4167,6 +4197,10 @@ export default function App() {
         )}
       </div>
 
+      {helpView && (
+        <HelpModal initialTab={helpView} onClose={() => setHelpView(null)} />
+      )}
+
       <DefaultsPill settings={settings} />
       {folderChanged && (
         <div className="flex items-center gap-3 px-4 py-1.5 bg-amber-500/10 border-t border-amber-500/30 flex-shrink-0">
@@ -4189,16 +4223,17 @@ export default function App() {
 
       {showDuplicates && (
         <DuplicatesModal
-          files={duplicateModalFiles}
-          rootFolder={librarian.rootFolder}
-          scopeLabel={duplicatesScopeFolder ? `Selected folder and children: ${duplicatesScopeFolder.split('/').slice(-3).join('/')}` : null}
-          onClose={() => { setShowDuplicates(false); setDuplicatesScopeFolder(null) }}
-          onMoveDuplicates={handleMoveDuplicates}
-          onTrashDuplicates={handleTrashDuplicates}
-          getDeleteBehavior={(filePaths) => window.api.getDeleteBehavior(filePaths)}
-          getContentHashes={(filePaths) => window.api.hashFiles(filePaths)}
-        />
-      )}
+            files={duplicateModalFiles}
+            rootFolder={librarian.rootFolder}
+            scopeLabel={duplicatesScopeFolder ? `Selected folder and children: ${duplicatesScopeFolder.split('/').slice(-3).join('/')}` : null}
+            onClose={() => { setShowDuplicates(false); setDuplicatesScopeFolder(null) }}
+            onMoveDuplicates={handleMoveDuplicates}
+            onTrashDuplicates={handleTrashDuplicates}
+            getDeleteBehavior={(filePaths) => window.api.getDeleteBehavior(filePaths)}
+            getContentHashes={(filePaths) => window.api.hashFiles(filePaths)}
+            getModelHashes={(filePaths) => window.api.hashFilesWithoutMetadata(filePaths)}
+          />
+        )}
 
       {importModal && (
         <ImportMetadataModal

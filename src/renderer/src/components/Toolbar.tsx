@@ -27,6 +27,10 @@ interface ToolbarProps {
   onHistoryToggle?: () => void
   toneStoreActive?: boolean
   onToggleToneStore?: () => void
+  helpOpen?: boolean
+  onOpenHelp?: () => void
+  onOpenFeatureHelp?: () => void
+  onOpenAbout?: () => void
 }
 
 export function Toolbar({
@@ -56,20 +60,37 @@ export function Toolbar({
   onHistoryToggle,
   toneStoreActive = false,
   onToggleToneStore,
+  helpOpen = false,
+  onOpenHelp,
+  onOpenFeatureHelp,
+  onOpenAbout,
 }: ToolbarProps) {
-  const [showRecent, setShowRecent] = useState(false)
+  const [showFileMenu, setShowFileMenu] = useState(false)
+  const [showActionsMenu, setShowActionsMenu] = useState(false)
   const [showLibraryTools, setShowLibraryTools] = useState(false)
-  const recentRef = useRef<HTMLDivElement>(null)
+  const [showHelpMenu, setShowHelpMenu] = useState(false)
+  const fileMenuRef = useRef<HTMLDivElement>(null)
+  const actionsMenuRef = useRef<HTMLDivElement>(null)
   const libraryToolsRef = useRef<HTMLDivElement>(null)
+  const helpMenuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (!showRecent) return
+    if (!showFileMenu) return
     const handler = (e: MouseEvent) => {
-      if (recentRef.current && !recentRef.current.contains(e.target as Node)) setShowRecent(false)
+      if (fileMenuRef.current && !fileMenuRef.current.contains(e.target as Node)) setShowFileMenu(false)
     }
     window.addEventListener('mousedown', handler)
     return () => window.removeEventListener('mousedown', handler)
-  }, [showRecent])
+  }, [showFileMenu])
+
+  useEffect(() => {
+    if (!showActionsMenu) return
+    const handler = (e: MouseEvent) => {
+      if (actionsMenuRef.current && !actionsMenuRef.current.contains(e.target as Node)) setShowActionsMenu(false)
+    }
+    window.addEventListener('mousedown', handler)
+    return () => window.removeEventListener('mousedown', handler)
+  }, [showActionsMenu])
 
   useEffect(() => {
     if (!showLibraryTools) return
@@ -79,6 +100,15 @@ export function Toolbar({
     window.addEventListener('mousedown', handler)
     return () => window.removeEventListener('mousedown', handler)
   }, [showLibraryTools])
+
+  useEffect(() => {
+    if (!showHelpMenu) return
+    const handler = (e: MouseEvent) => {
+      if (helpMenuRef.current && !helpMenuRef.current.contains(e.target as Node)) setShowHelpMenu(false)
+    }
+    window.addEventListener('mousedown', handler)
+    return () => window.removeEventListener('mousedown', handler)
+  }, [showHelpMenu])
   return (
     <div
       className="h-12 flex items-center gap-2 px-4 bg-gray-100 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex-shrink-0"
@@ -94,84 +124,78 @@ export function Toolbar({
 
       <div className="w-px h-5 bg-gray-300 dark:bg-gray-700" />
 
-      <button
-        onClick={onOpenFiles}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
-        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-      >
-        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-        </svg>
-        Open Files
-      </button>
-
-      <button
-        onClick={onOpenFolder}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-l-md text-xs font-medium bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
-        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-      >
-        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-        </svg>
-        Open Folder
-      </button>
-      <div ref={recentRef} className="relative" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+      <div ref={fileMenuRef} className="relative" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
         <button
-          onClick={() => setShowRecent((v) => !v)}
-          disabled={recentFolders.length === 0}
-          className="flex items-center px-1.5 py-1.5 rounded-r-md text-xs font-medium bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors border-l border-gray-300 dark:border-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
-          title="Recent folders"
+          onClick={() => setShowFileMenu((v) => !v)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+          title="Open files, folders, and recent locations"
         >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+          </svg>
+          File
           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
           </svg>
         </button>
-        {showRecent && (
+        {showFileMenu && (
           <div className="absolute left-0 top-full mt-1 w-80 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50 py-1">
-            <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-b border-gray-200 dark:border-gray-700">
-              Recent Folders
-            </div>
-            {recentFolders.map((folder) => {
-              const name = folder.replace(/\\/g, '/').split('/').pop() ?? folder
-              return (
-                <button
-                  key={folder}
-                  onClick={() => { setShowRecent(false); onOpenRecentFolder(folder) }}
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-                  title={folder}
-                >
-                  <div className="font-medium text-gray-700 dark:text-gray-300 truncate">{name}</div>
-                  <div className="text-xs text-gray-400 dark:text-gray-600 truncate">{folder}</div>
-                </button>
-              )
-            })}
+            <button
+              onClick={() => { setShowFileMenu(false); onOpenFiles() }}
+              className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+            >
+              Open Files...
+            </button>
+            <button
+              onClick={() => { setShowFileMenu(false); onOpenFolder() }}
+              className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+            >
+              Open Folder...
+            </button>
+            {recentFolders.length > 0 && (
+              <>
+                <div className="mx-3 my-1 border-t border-gray-200 dark:border-gray-700" />
+                <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                  Recent Folders
+                </div>
+                {recentFolders.slice(0, 6).map((folder) => {
+                  const name = folder.replace(/\\/g, '/').split('/').pop() ?? folder
+                  return (
+                    <button
+                      key={folder}
+                      onClick={() => { setShowFileMenu(false); onOpenRecentFolder(folder) }}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                      title={folder}
+                    >
+                      <div className="font-medium text-gray-700 dark:text-gray-300 truncate">{name}</div>
+                      <div className="text-xs text-gray-400 dark:text-gray-600 truncate">{folder}</div>
+                    </button>
+                  )
+                })}
+              </>
+            )}
+            {(fileCount > 0 || rootFolder) && <div className="mx-3 my-1 border-t border-gray-200 dark:border-gray-700" />}
+            {fileCount > 0 && (
+              <button
+                onClick={() => { setShowFileMenu(false); onCloseAll() }}
+                className="w-full text-left px-3 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+              >
+                Close All
+              </button>
+            )}
           </div>
         )}
       </div>
-
-      {fileCount > 0 && (
-        <button
-          onClick={onCloseAll}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-gray-200 dark:bg-gray-800 hover:bg-red-900/60 text-gray-700 dark:text-gray-300 hover:text-red-300 transition-colors"
-          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-          title="Close all files"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-          Close All
-        </button>
-      )}
 
       {rootFolder && (
         <button
           onClick={onRefresh}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+          title="Refresh the current library folder"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-          title="Rescan folder for new or removed files"
         >
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0A8.003 8.003 0 016.227 19" />
           </svg>
           Refresh
         </button>
@@ -238,34 +262,43 @@ export function Toolbar({
       </button>
 
 
-      {unnamedCount > 0 && (
+      {(unnamedCount > 0 || (autoFilledCount > 0 && onClearSuggestionsAll)) && (
         <>
           <div className="w-px h-5 bg-gray-300 dark:bg-gray-700" />
-          <button
-            onClick={onNameFromFilename}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
-            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-            title={`Set capture name from filename for ${unnamedCount} unnamed file${unnamedCount !== 1 ? 's' : ''}`}
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
-            </svg>
-            Name from File ({unnamedCount})
-          </button>
-        </>
-      )}
-
-      {autoFilledCount > 0 && onClearSuggestionsAll && (
-        <>
-          <div className="w-px h-5 bg-gray-300 dark:bg-gray-700" />
-          <button
-            onClick={onClearSuggestionsAll}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
-            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-            title={`Clear auto-filled suggestion/default values from ${autoFilledCount} loaded file${autoFilledCount !== 1 ? 's' : ''}`}
-          >
-            Clear Suggestions ({autoFilledCount})
-          </button>
+          <div ref={actionsMenuRef} className="relative" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+            <button
+              onClick={() => setShowActionsMenu((v) => !v)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+              title="Loaded-file cleanup and helper actions"
+            >
+              Actions
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {showActionsMenu && (
+              <div className="absolute left-0 top-full mt-1 w-72 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50 py-1">
+                {unnamedCount > 0 && (
+                  <button
+                    onClick={() => { setShowActionsMenu(false); onNameFromFilename() }}
+                    className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                    title={`Set capture name from filename for ${unnamedCount} unnamed file${unnamedCount !== 1 ? 's' : ''}`}
+                  >
+                    Name from File ({unnamedCount})
+                  </button>
+                )}
+                {autoFilledCount > 0 && onClearSuggestionsAll && (
+                  <button
+                    onClick={() => { setShowActionsMenu(false); onClearSuggestionsAll() }}
+                    className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                    title={`Clear auto-filled suggestion/default values from ${autoFilledCount} loaded file${autoFilledCount !== 1 ? 's' : ''}`}
+                  >
+                    Clear Suggestions ({autoFilledCount})
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </>
       )}
 
@@ -326,6 +359,64 @@ export function Toolbar({
           </svg>
           Find Tones
         </button>
+      )}
+
+      {(onOpenHelp || onOpenFeatureHelp || onOpenAbout) && (
+        <div ref={helpMenuRef} className="relative" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          <button
+            onClick={() => setShowHelpMenu((v) => !v)}
+            title="Help, guides, and about NAM Lab"
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              helpOpen
+                ? 'bg-sky-600 hover:bg-sky-500 text-white'
+                : 'bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
+            }`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <circle cx="12" cy="12" r="9" strokeWidth="1.8" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9.4 9.2a2.7 2.7 0 115.06 1.35c0 .84-.42 1.35-1.06 1.86-.61.48-1.17.96-1.17 1.96" />
+              <circle cx="12" cy="17.2" r="0.7" fill="currentColor" stroke="none" />
+            </svg>
+            Help
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {showHelpMenu && (
+            <div className="absolute right-0 top-full mt-1 w-64 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50 py-1">
+              <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-b border-gray-200 dark:border-gray-700">
+                Help
+              </div>
+              {onOpenHelp && (
+                <button
+                  onClick={() => { setShowHelpMenu(false); onOpenHelp() }}
+                  className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                >
+                  Workflow Guide
+                </button>
+              )}
+              {onOpenFeatureHelp && (
+                <button
+                  onClick={() => { setShowHelpMenu(false); onOpenFeatureHelp() }}
+                  className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                >
+                  Feature Reference
+                </button>
+              )}
+              {onOpenAbout && (
+                <>
+                  <div className="mx-3 my-1 border-t border-gray-200 dark:border-gray-700" />
+                  <button
+                    onClick={() => { setShowHelpMenu(false); onOpenAbout() }}
+                    className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                  >
+                    About NAM Lab
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
       )}
 
       <div className="w-px h-5 bg-gray-300 dark:bg-gray-700" />

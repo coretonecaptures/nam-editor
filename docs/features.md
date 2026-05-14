@@ -223,6 +223,7 @@ NAM Lab can find duplicates by:
 - filename
 - capture name
 - exact file content (full `.nam` file hash)
+- same model, metadata differs
 
 You can run duplicate scans from:
 - the main toolbar
@@ -234,6 +235,11 @@ Content mode is exact-match only:
 - it hashes the full `.nam` file
 - matching files are byte-for-byte identical, including metadata and model data
 - this is different from filename or meta-name grouping
+
+Same-model mode is intentionally different:
+- it strips the `metadata` block before hashing
+- matching files share the same model content even if metadata was repaired or changed later
+- this is useful for spotting cases where one file still has placeholders like `tz-make` / `tz-model` and another has already been cleaned up
 
 ---
 
