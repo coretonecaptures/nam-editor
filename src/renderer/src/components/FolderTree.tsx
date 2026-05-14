@@ -89,6 +89,7 @@ export function FolderTree({
   const [searchOpen, setSearchOpen] = useState(false)
   const [expandSeq, setExpandSeq] = useState(0)
   const [collapseSeq, setCollapseSeq] = useState(0)
+  const [subtreeToggle, setSubtreeToggle] = useState<{ path: string; expand: boolean; seq: number } | null>(null)
   const [query, setQuery] = useState('')
   const [activeTones, setActiveTones] = useState<Set<string>>(new Set())
   const [activeGears, setActiveGears] = useState<Set<string>>(new Set())
@@ -279,6 +280,7 @@ export function FolderTree({
           onFindDuplicates={onFindDuplicates ? () => onFindDuplicates(tree.path) : undefined}
           onCleanThisFolder={onCleanThisFolder ? () => onCleanThisFolder(tree.path) : undefined}
           onDeleteEmptyFolder={onDeleteEmptyFolder ? () => onDeleteEmptyFolder(tree.path) : undefined}
+          onToggleSubtree={(expand) => setSubtreeToggle({ path: tree.path, expand, seq: Date.now() })}
           hasSuggestRules={foldersWithSuggestRules?.has(tree.path.replace(/\\/g, '/')) ?? false}
         />
 
@@ -326,6 +328,8 @@ export function FolderTree({
             onSetWatchSource={onSetWatchSource}
             onClearWatchSource={onClearWatchSource}
             foldersWithSuggestRules={foldersWithSuggestRules}
+            subtreeToggle={subtreeToggle}
+            onToggleSubtreeRequest={(path, expand) => setSubtreeToggle({ path, expand, seq: Date.now() })}
           />
         ))}
       </div>
@@ -342,6 +346,8 @@ function TreeNode({
   onCompareFolders, onDeletePackInfo, bundleFolders, onCreateBundle, onDeleteBundle
   , onDeleteEmptyFolder
   , watchSourceByDest, onSetWatchSource, onClearWatchSource, foldersWithSuggestRules
+  , subtreeToggle
+  , onToggleSubtreeRequest
 }: {
   node: FolderNode
   selectedFolders: string[]
@@ -384,6 +390,8 @@ function TreeNode({
   onSetWatchSource?: (folderPath: string) => void
   onClearWatchSource?: (folderPath: string) => void
   foldersWithSuggestRules?: Set<string>
+  subtreeToggle?: { path: string; expand: boolean; seq: number } | null
+  onToggleSubtreeRequest?: (path: string, expand: boolean) => void
 }) {
   const [expanded, setExpanded] = useState(true)
 
@@ -400,6 +408,13 @@ function TreeNode({
       setExpanded(true)
     }
   }, [scrollToFolder, node.path])
+
+  useEffect(() => {
+    if (!subtreeToggle) return
+    if (node.path === subtreeToggle.path || node.path.startsWith(subtreeToggle.path + '/')) {
+      setExpanded(subtreeToggle.expand)
+    }
+  }, [subtreeToggle, node.path])
   const isSelected = selectedFolders.includes(node.path)
   const isMultiSelect = selectedFolders.length > 1
   const hasChildren = node.children.length > 0
@@ -456,6 +471,7 @@ function TreeNode({
         onFindDuplicates={onFindDuplicates ? () => onFindDuplicates(node.path) : undefined}
         onCleanThisFolder={onCleanThisFolder ? () => onCleanThisFolder(node.path) : undefined}
         onDeleteEmptyFolder={onDeleteEmptyFolder ? () => onDeleteEmptyFolder(node.path) : undefined}
+        onToggleSubtree={(expand) => onToggleSubtreeRequest ? onToggleSubtreeRequest(node.path, expand) : setExpanded(expand)}
         isDraggableFolder
         hasPackInfo={packInfoFolders?.has(node.path.replace(/\\/g, '/')) ?? false}
         hasSuggestRules={foldersWithSuggestRules?.has(node.path.replace(/\\/g, '/')) ?? false}
@@ -518,6 +534,8 @@ function TreeNode({
               onSetWatchSource={onSetWatchSource}
               onClearWatchSource={onClearWatchSource}
               foldersWithSuggestRules={foldersWithSuggestRules}
+              subtreeToggle={subtreeToggle}
+              onToggleSubtreeRequest={onToggleSubtreeRequest}
             />
           ))}
         </div>
@@ -533,6 +551,7 @@ function FolderRow({
   hasChildren, expanded, onToggleExpand, onClick, onSave, onRevert,
   onBatchEdit, onReveal, isFiltered, isHighlighted, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSuggestMetadata, onEditSuggestRules, onCopySuggestRules, onPasteSuggestRules, onSelectAll, onCoverageReport, onFindDuplicates, isDraggableFolder, hasPackInfo, hasSuggestRules = false, hasBundle, folderColor, onSetFolderColor, isMultiSelect, onCompareFolders, onDeletePackInfo, onCreateBundle, onDeleteBundle
   , watchSource, onSetWatchSource, onClearWatchSource, onCleanThisFolder, onDeleteEmptyFolder
+  , onToggleSubtree
 }: {
   label: string
   folderPath: string
@@ -581,6 +600,7 @@ function FolderRow({
   watchSource?: string | null
   onSetWatchSource?: () => void
   onClearWatchSource?: () => void
+  onToggleSubtree?: (expand: boolean) => void
 }) {
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -683,6 +703,11 @@ function FolderRow({
         }`}
         style={{ paddingLeft: isRoot ? '12px' : `${depth * 12 + 8}px` }}
         onClick={(e) => onClick(e.ctrlKey || e.metaKey)}
+        onDoubleClick={(e) => {
+          if (!hasChildren || !onToggleSubtree) return
+          e.stopPropagation()
+          onToggleSubtree(!expanded)
+        }}
         onContextMenu={openMenu}
         draggable={isDraggableFolder}
         onDragStart={isDraggableFolder ? (e) => {
@@ -763,10 +788,7 @@ function FolderRow({
             onClick={(e) => e.stopPropagation()}
           />
         ) : (
-          <span
-            className={`text-xs truncate flex-1 ${isRoot ? 'font-medium' : ''}`}
-            onDoubleClick={!isRoot && onRenameFolder ? (e) => { e.stopPropagation(); setIsRenaming(true) } : undefined}
-          >{label}</span>
+          <span className={`text-xs truncate flex-1 ${isRoot ? 'font-medium' : ''}`}>{label}</span>
         )}
 
         <button

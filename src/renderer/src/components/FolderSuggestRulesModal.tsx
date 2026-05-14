@@ -59,6 +59,7 @@ export function FolderSuggestRulesModal({
   const [showRuleLibraryPicker, setShowRuleLibraryPicker] = useState(false)
   const [showRecipeBuilder, setShowRecipeBuilder] = useState(false)
   const [showScopedPicker, setShowScopedPicker] = useState(false)
+  const [expandedOverwriteGuards, setExpandedOverwriteGuards] = useState<Record<string, boolean>>({})
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
   const dragStateRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null)
 
@@ -166,10 +167,22 @@ export function FolderSuggestRulesModal({
     setShowScopedPicker(false)
   }
 
+  const hasGuardValues = (rule: MetadataSuggestRule) => Boolean(rule.overwriteOnlyValues.trim())
+
+  const isGuardExpanded = (rule: MetadataSuggestRule) =>
+    expandedOverwriteGuards[rule.id] ?? hasGuardValues(rule)
+
+  const toggleGuardExpanded = (ruleId: string) => {
+    setExpandedOverwriteGuards((prev) => ({
+      ...prev,
+      [ruleId]: !prev[ruleId],
+    }))
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
       <div
-        className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-full max-w-4xl mx-4 flex flex-col max-h-[85vh] fixed left-1/2 top-1/2"
+        className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-full max-w-[78rem] mx-4 flex flex-col max-h-[85vh] fixed left-1/2 top-1/2"
         style={{ transform: `translate(calc(-50% + ${dragOffset.x}px), calc(-50% + ${dragOffset.y}px))` }}
       >
         <div
@@ -239,7 +252,7 @@ export function FolderSuggestRulesModal({
             ) : (
               draftRules.map((rule, index) => (
                 <div key={rule.id} className={`rounded border p-2 ${rule.overwriteExisting ? 'border-amber-300/70 dark:border-amber-700/70 bg-amber-50/40 dark:bg-amber-900/10' : 'border-gray-200 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-900/30'}`}>
-                  <div className="grid grid-cols-1 md:grid-cols-[auto_minmax(0,1fr)_96px_minmax(0,0.95fr)_minmax(0,1fr)_minmax(0,0.95fr)_minmax(0,0.95fr)_auto_auto_auto] gap-2 items-center">
+                  <div className="grid grid-cols-[auto_150px_82px_138px_150px_138px_138px_auto] gap-2 items-center">
                     <label className="inline-flex items-center justify-center text-xs text-gray-600 dark:text-gray-400">
                       <input
                         type="checkbox"
@@ -378,44 +391,81 @@ export function FolderSuggestRulesModal({
                       <option value="filename">Filename only</option>
                       <option value="folder">Folder only</option>
                     </select>
-                    <label className="inline-flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-300 font-medium whitespace-nowrap justify-self-start">
-                      <input
-                        type="checkbox"
-                        checked={rule.overwriteExisting}
-                        onChange={(e) => {
-                          const next = draftRules.map((item, itemIndex) =>
-                            itemIndex === index ? { ...item, overwriteExisting: e.target.checked } : item
-                          )
-                          setDraftRules(next)
-                        }}
-                        className="accent-amber-600"
-                      />
-                      Overwrite
-                    </label>
-                    <button
-                      onClick={() => setDraftRules([
-                        ...draftRules.slice(0, index + 1),
-                        cloneMetadataSuggestRule(rule, 'scoped-rule-clone'),
-                        ...draftRules.slice(index + 1),
-                      ])}
-                      className="text-gray-400 hover:text-violet-500 transition-colors justify-self-center"
-                      title="Clone rule"
-                    >
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h8a2 2 0 012 2v8m-2 0H8a2 2 0 01-2-2V7m2-2h8a2 2 0 012 2v8" />
-                      </svg>
-                    </button>
-                    <button
-                      onClick={() => setDraftRules(draftRules.filter((item) => item.id !== rule.id))}
-                      className="text-gray-400 hover:text-red-500 transition-colors justify-self-center"
-                      title="Remove rule"
-                    >
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
+                    <div className="flex items-center justify-end gap-2 whitespace-nowrap">
+                      <label className="inline-flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-300 font-medium whitespace-nowrap">
+                        <input
+                          type="checkbox"
+                          checked={rule.overwriteExisting}
+                          onChange={(e) => {
+                            const next = draftRules.map((item, itemIndex) =>
+                              itemIndex === index ? { ...item, overwriteExisting: e.target.checked } : item
+                            )
+                            setDraftRules(next)
+                          }}
+                          className="accent-amber-600"
+                        />
+                        Overwrite
+                      </label>
+                      {rule.overwriteExisting ? (
+                        <button
+                          type="button"
+                          onClick={() => toggleGuardExpanded(rule.id)}
+                          className={`inline-flex items-center gap-1 px-1.5 py-1 rounded text-[10px] border whitespace-nowrap transition-colors ${
+                            hasGuardValues(rule)
+                              ? 'text-amber-900 dark:text-amber-200 border-amber-400/80 dark:border-amber-500/80 bg-amber-100/80 dark:bg-amber-900/30'
+                              : 'text-amber-700 dark:text-amber-300 border-amber-300/60 dark:border-amber-700/60 hover:bg-amber-100/70 dark:hover:bg-amber-900/20'
+                          }`}
+                          title={hasGuardValues(rule)
+                            ? `Guard active: ${rule.overwriteOnlyValues}`
+                            : 'Optional overwrite guard: only overwrite when the current value matches one of your placeholder values'}
+                        >
+                          <span>Guard</span>
+                          {hasGuardValues(rule) ? (
+                            <span className="text-[9px] uppercase font-semibold">active</span>
+                          ) : (
+                            <span className="text-[9px] uppercase opacity-70">off</span>
+                          )}
+                          <svg className={`w-3 h-3 transition-transform ${isGuardExpanded(rule) ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </button>
+                      ) : (
+                        <span
+                          aria-hidden="true"
+                          className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-[10px] border whitespace-nowrap invisible"
+                        >
+                          <span>Guard</span>
+                          <span className="text-[9px] uppercase">off</span>
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </span>
+                      )}
+                      <button
+                        onClick={() => setDraftRules([
+                          ...draftRules.slice(0, index + 1),
+                          cloneMetadataSuggestRule(rule, 'scoped-rule-clone'),
+                          ...draftRules.slice(index + 1),
+                        ])}
+                        className="text-gray-400 hover:text-violet-500 transition-colors"
+                        title="Clone rule"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h8a2 2 0 012 2v8m-2 0H8a2 2 0 01-2-2V7m2-2h8a2 2 0 012 2v8" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => setDraftRules(draftRules.filter((item) => item.id !== rule.id))}
+                        className="text-gray-400 hover:text-red-500 transition-colors"
+                        title="Remove rule"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
-                  {rule.overwriteExisting && (
+                  {rule.overwriteExisting && isGuardExpanded(rule) && (
                     <div className="mt-2 grid grid-cols-1 md:grid-cols-[auto_minmax(0,1fr)] gap-2 items-center">
                       <div className="text-[11px] font-medium text-amber-700 dark:text-amber-300">Overwrite only if current value is</div>
                       <input

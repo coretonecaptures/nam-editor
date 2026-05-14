@@ -241,6 +241,8 @@ Same-model mode is intentionally different:
 - matching files share the same model content even if metadata was repaired or changed later
 - this is useful for spotting cases where one file still has placeholders like `tz-make` / `tz-model` and another has already been cleaned up
 
+When NAM Lab picks a default file to keep inside a duplicate group, it still prefers the file with richer core metadata first. If two files tie on metadata completeness, it now prefers cleaner filenames over obvious duplicate suffixes such as `(2)` or `- Copy`.
+
 ---
 
 ## Metadata Suggestions

@@ -30,13 +30,33 @@ function completeness(f: NamFile): number {
   return CORE_FIELDS.filter((k) => f.metadata[k] != null && f.metadata[k] !== '').length
 }
 
+function duplicateSuffixPenalty(fileName: string): number {
+  const base = fileName.replace(/\.nam$/i, '').trim()
+  let penalty = 0
+  if (/\(\d+\)$/.test(base)) penalty += 3
+  if (/(^|[\s_-])copy(?:\s*\(\d+\))?$/i.test(base)) penalty += 3
+  if (/\bcopy\b/i.test(base)) penalty += 1
+  return penalty
+}
+
+function compareKeepPreference(a: NamFile, b: NamFile): number {
+  const completenessDiff = completeness(a) - completeness(b)
+  if (completenessDiff !== 0) return completenessDiff
+
+  const suffixPenaltyDiff = duplicateSuffixPenalty(b.fileName) - duplicateSuffixPenalty(a.fileName)
+  if (suffixPenaltyDiff !== 0) return suffixPenaltyDiff
+
+  const nameLengthDiff = b.fileName.length - a.fileName.length
+  if (nameLengthDiff !== 0) return nameLengthDiff
+
+  return b.fileName.localeCompare(a.fileName)
+}
+
 function buildDuplicateGroup(key: string, grpFiles: NamFile[]): Omit<DuplicateGroup, 'status'> {
   let keepIndex = 0
-  let best = -1
   grpFiles.forEach((f, i) => {
-    const score = completeness(f)
-    if (score > best) {
-      best = score
+    const currentKeep = grpFiles[keepIndex]
+    if (i === 0 || compareKeepPreference(f, currentKeep) > 0) {
       keepIndex = i
     }
   })

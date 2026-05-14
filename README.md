@@ -45,7 +45,7 @@ NAM captures embed metadata (name, gear info, tone type, etc.) as JSON inside th
 - **Bulk editing** - batch editor, multi-select editor, and copy/paste metadata across files
 - **Batch rename** - suffix, prefix, find & replace, or template-based rename with live preview and conflict detection
 - **Duplicate detection** - find dupes by filename or capture name; choose a keeper and move or trash the rest, including folder-scoped duplicate scans from the tree
-- **Advanced duplicate detection** - find dupes by filename, metadata name, exact full-file content, or "same model, metadata differs" when the model content matches but the metadata block has changed
+- **Advanced duplicate detection** - find dupes by filename, metadata name, exact full-file content, or "same model, metadata differs" when the model content matches but the metadata block has changed. When duplicate groups tie on metadata richness, NAM Lab prefers cleaner original filenames over obvious suffixes like `(2)` or `- Copy`.
 - **Smart defaults** - auto-fill empty fields at load time (modeled by, levels, amp info); each rule section independently togglable
 - **Metadata suggestions** - global and folder-scoped suggestion rules, overwrite guards for junk placeholders, reusable rule library, blank-token scope defaults, and filename-segment / example-based rule building for consistent naming styles
 - **Library cleanup / rebuild tools** - preview-first cleanup modal, top-level library intake flow, folder-level recategorize-in-place flow, `Needs Review` routing, CSV/XLSX export for the review list, and safe copy/move options
