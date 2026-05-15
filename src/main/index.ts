@@ -1583,6 +1583,30 @@ app.whenReady().then(async () => {
     shell.openExternal(url)
   })
 
+  ipcMain.handle('app:showMessageBox', async (_event, options: {
+    type?: 'none' | 'info' | 'error' | 'question' | 'warning'
+    title?: string
+    message: string
+    detail?: string
+    buttons: string[]
+    defaultId?: number
+    cancelId?: number
+    noLink?: boolean
+  }) => {
+    const targetWindow = BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined
+    const result = await dialog.showMessageBox(targetWindow, {
+      type: options.type ?? 'info',
+      title: options.title,
+      message: options.message,
+      detail: options.detail,
+      buttons: options.buttons,
+      defaultId: options.defaultId,
+      cancelId: options.cancelId,
+      noLink: options.noLink ?? true,
+    })
+    return { response: result.response }
+  })
+
   ipcMain.handle('app:showTextContextMenu', async (_event, params: { hasSelection: boolean; isEditable: boolean }) => {
     if (!mainWindow) return
     const { hasSelection, isEditable } = params

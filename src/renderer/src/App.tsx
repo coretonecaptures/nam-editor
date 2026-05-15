@@ -304,6 +304,7 @@ declare global {
       onOpenFiles: (cb: (paths: string[]) => void) => () => void
       checkForUpdates: (includeRc: boolean) => Promise<{ hasUpdate?: boolean; latestVersion?: string; releaseUrl?: string; error?: string }>
       openExternal: (url: string) => Promise<void>
+      showMessageBox: (options: { type?: 'none' | 'info' | 'error' | 'question' | 'warning'; title?: string; message: string; detail?: string; buttons: string[]; defaultId?: number; cancelId?: number; noLink?: boolean }) => Promise<{ response: number }>
       detectNamPlayer: () => Promise<boolean>
       browseExecutable: () => Promise<string | null>
       openInNam: (filePath: string, standalonePath: string) => Promise<{ success: boolean; error?: string }>
@@ -673,27 +674,75 @@ export default function App() {
       if (toneStoreQueueJob.packInfoSeed) {
         const existingPack = await window.api.readPackInfo(toneStoreQueueJob.destDir)
         if (toneStoreQueueAbortRef.current !== abortToken) return
+        const seededPackInfo = {
+          title: toneStoreQueueJob.packInfoSeed.title,
+          subtitle: '',
+          capturedBy: toneStoreQueueJob.packInfoSeed.capturedBy,
+          description: toneStoreQueueJob.packInfoSeed.description,
+          equipment: [],
+          pedals: [],
+          switches: [],
+          glossary: [],
+          footer: '',
+          exportExcludedSubfolders: [],
+          exportExcludedCaptures: [],
+          exportColumns: ['name', 'maker', 'model', 'tone', 'input', 'output'],
+          recommendedInputGain: '',
+          checklistItems: [],
+          checklistNotes: '',
+          targetDate: '',
+          liveDate: '',
+          versionInfo: '',
+        }
+
+        let packToWrite: unknown | null = null
         if (existingPack.success && !existingPack.data) {
-          const writeResult = await window.api.writePackInfo(toneStoreQueueJob.destDir, {
-            title: toneStoreQueueJob.packInfoSeed.title,
-            subtitle: '',
-            capturedBy: toneStoreQueueJob.packInfoSeed.capturedBy,
-            description: toneStoreQueueJob.packInfoSeed.description,
-            equipment: [],
-            pedals: [],
-            switches: [],
-            glossary: [],
-            footer: '',
-            exportExcludedSubfolders: [],
-            exportExcludedCaptures: [],
-            exportColumns: ['name', 'maker', 'model', 'tone', 'input', 'output'],
-            recommendedInputGain: '',
-            checklistItems: [],
-            checklistNotes: '',
-            targetDate: '',
-            liveDate: '',
-            versionInfo: '',
-          })
+          packToWrite = seededPackInfo
+        } else if (existingPack.success && existingPack.data && typeof existingPack.data === 'object') {
+          const existingData = existingPack.data as Record<string, unknown>
+          const existingTitle = typeof existingData.title === 'string' ? existingData.title.trim() : ''
+          const existingCapturedBy = typeof existingData.capturedBy === 'string' ? existingData.capturedBy.trim() : ''
+          const existingDescription = typeof existingData.description === 'string' ? existingData.description : ''
+          const incomingTitle = toneStoreQueueJob.packInfoSeed.title.trim()
+          const incomingCapturedBy = toneStoreQueueJob.packInfoSeed.capturedBy.trim()
+          const looksDifferent =
+            (incomingTitle && incomingTitle !== existingTitle) ||
+            (incomingCapturedBy && incomingCapturedBy !== existingCapturedBy)
+
+          if (looksDifferent) {
+            const choice = await window.api.showMessageBox({
+              type: 'question',
+              title: 'Tone3000 Pack Info Already Exists',
+              message: 'This destination folder already has Pack Info.',
+              detail:
+                `Existing title: ${existingTitle || '(blank)'}\n` +
+                `Incoming title: ${incomingTitle || '(blank)'}\n\n` +
+                'Choose how NAM Lab should handle the new Tone3000 notes.',
+              buttons: ['Keep Existing', 'Append Notes', 'Replace Pack Info'],
+              defaultId: 1,
+              cancelId: 0,
+              noLink: true,
+            })
+            if (toneStoreQueueAbortRef.current !== abortToken) return
+
+            if (choice.response === 1) {
+              const existingDescTrimmed = existingDescription.trim()
+              const incomingDescTrimmed = toneStoreQueueJob.packInfoSeed.description.trim()
+              const joinedDescription = [existingDescTrimmed, incomingDescTrimmed]
+                .filter(Boolean)
+                .join('\n\n---\n\n')
+              packToWrite = {
+                ...existingData,
+                description: joinedDescription,
+              }
+            } else if (choice.response === 2) {
+              packToWrite = seededPackInfo
+            }
+          }
+        }
+
+        if (packToWrite) {
+          const writeResult = await window.api.writePackInfo(toneStoreQueueJob.destDir, packToWrite)
           if (toneStoreQueueAbortRef.current !== abortToken) return
           if (writeResult.success && toneStoreQueueJob.packInfoSeed.title.trim()) {
             const normalizedDest = toneStoreQueueJob.destDir.replace(/\\/g, '/')
@@ -822,19 +871,23 @@ export default function App() {
     return () => { cancelled = true }
   }, [librarian.rootFolder, packInfoFolders])
 
-  // Scan all pack-info folders when root folder changes (drives blue dot in tree)
-  useEffect(() => {
+  // Scan all pack-info folders under the current root (drives blue dot in tree)
+  const refreshPackInfoFolders = useCallback(() => {
     const rf = librarian.rootFolder
     if (!rf) {
       setPackInfoFolders(new Set())
       return
     }
-    let cancelled = false
     window.api.findPackFolders(rf).then((paths) => {
-      if (!cancelled) setPackInfoFolders(new Set(paths))
+      setPackInfoFolders(new Set(paths))
+    }).catch(() => {
+      setPackInfoFolders(new Set())
     })
-    return () => { cancelled = true }
   }, [librarian.rootFolder])
+
+  useEffect(() => {
+    refreshPackInfoFolders()
+  }, [refreshPackInfoFolders])
 
   // Scan bundle folders when root folder changes (drives chain-link icon in tree)
   const refreshBundleFolders = useCallback(() => {
@@ -1453,7 +1506,9 @@ export default function App() {
     if (treeResult.success && treeResult.tree) {
       setLibrarian((prev) => ({ ...prev, folderTree: treeResult.tree! }))
     }
-  }, [librarian.rootFolder, settings.hiddenFolders])
+    refreshPackInfoFolders()
+    refreshBundleFolders()
+  }, [librarian.rootFolder, settings.hiddenFolders, refreshPackInfoFolders, refreshBundleFolders])
 
   useEffect(() => {
     refreshFolderTreeRef.current = refreshFolderTree
@@ -3087,6 +3142,7 @@ export default function App() {
     let failed = 0
     let skipped = 0
     let autoSuffixed = 0
+    let packInfoTransferred: 'copied' | 'moved' | 'kept-destination' | null = null
     const usedDestinations = new Set<string>()
     for (const row of actionableRows) {
       const normalizedDest = row.destinationPath.replace(/\\/g, '/')
@@ -3138,9 +3194,40 @@ export default function App() {
       usedDestinations.add(targetPath)
       completed += 1
     }
+
+    if (completed > 0 && libraryCleanupSourceRoot && libraryCleanupDestinationRoot && libraryCleanupSourceRoot !== libraryCleanupDestinationRoot) {
+      const sourcePack = await window.api.readPackInfo(libraryCleanupSourceRoot)
+      const destinationPack = await window.api.readPackInfo(libraryCleanupDestinationRoot)
+      const sourcePackData = sourcePack.success ? sourcePack.data : null
+      const destinationPackData = destinationPack.success ? destinationPack.data : null
+      const destinationHasPackInfo = !!destinationPackData && typeof destinationPackData === 'object' && Object.keys(destinationPackData as Record<string, unknown>).length > 0
+
+      if (sourcePackData && !destinationHasPackInfo) {
+        const writeResult = await window.api.writePackInfo(libraryCleanupDestinationRoot, sourcePackData)
+        if (writeResult.success) {
+          if (libraryCleanupActionMode === 'move') {
+            const deleteResult = await window.api.deletePackInfo(libraryCleanupSourceRoot)
+            packInfoTransferred = deleteResult.success ? 'moved' : 'copied'
+          } else {
+            packInfoTransferred = 'copied'
+          }
+        }
+      } else if (sourcePackData && destinationHasPackInfo) {
+        packInfoTransferred = 'kept-destination'
+      }
+    }
+
     setLibraryCleanupBusyLabel(null)
+    let message = `Library cleanup complete: ${completed} ${libraryCleanupActionMode === 'copy' ? 'copied' : 'moved'}, ${skipped} skipped, ${autoSuffixed} auto-suffixed, ${failed} failed`
+    if (packInfoTransferred === 'moved') {
+      message += ', Pack Info moved to destination root'
+    } else if (packInfoTransferred === 'copied') {
+      message += ', Pack Info copied to destination root'
+    } else if (packInfoTransferred === 'kept-destination') {
+      message += ', destination Pack Info kept'
+    }
     setStatus({
-      message: `Library cleanup complete: ${completed} ${libraryCleanupActionMode === 'copy' ? 'copied' : 'moved'}, ${skipped} skipped, ${autoSuffixed} auto-suffixed, ${failed} failed`,
+      message,
       type: failed > 0 ? 'error' : 'success',
     })
     if (completed > 0) {
