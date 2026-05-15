@@ -256,6 +256,105 @@ function normalizeText(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? repairMojibake(value) : fallback
 }
 
+type PackGlossaryEntry = { term: string; description: string }
+
+interface PackNotesParseResult {
+  description: string
+  glossary: PackGlossaryEntry[]
+  sections: string[]
+}
+
+const PACK_NOTES_SECTION_LABELS = new Map<string, string>([
+  ['AMP SETTINGS', 'Amp Settings'],
+  ['CAB', 'Cab'],
+  ['MICS', 'Mics'],
+  ['TECHNICAL DETAILS', 'Technical Details'],
+  ['PACK DETAILS', 'Pack Details'],
+  ['SIGNAL CHAIN', 'Signal Chain'],
+  ['AMP SETTINGS', 'Amp Settings'],
+  ['AVALON EQ SETTINGS', 'Avalon EQ Settings'],
+  ['RHYTHM', 'Rhythm'],
+  ['LEAD', 'Lead'],
+  ['CHANNELS', 'Channels'],
+  ['MODES', 'Modes'],
+])
+
+function toSectionKey(value: string): string {
+  return value.trim().replace(/:+$/, '').replace(/\s+/g, ' ').toUpperCase()
+}
+
+function prettifySectionHeading(value: string): string {
+  const trimmed = value.trim().replace(/:+$/, '')
+  return PACK_NOTES_SECTION_LABELS.get(toSectionKey(trimmed)) ?? trimmed
+}
+
+function isLikelySectionHeading(line: string): boolean {
+  const trimmed = line.trim()
+  if (!trimmed) return false
+  const key = toSectionKey(trimmed)
+  if (PACK_NOTES_SECTION_LABELS.has(key)) return true
+  if (!trimmed.endsWith(':')) return false
+  const noColon = trimmed.slice(0, -1).trim()
+  if (!noColon) return false
+  return /^[A-Z0-9][A-Z0-9\s/&@.+-]{1,40}$/.test(noColon)
+}
+
+function parsePackNotes(rawText: string): PackNotesParseResult {
+  const normalized = rawText.replace(/\r\n/g, '\n').trim()
+  if (!normalized) return { description: '', glossary: [], sections: [] }
+
+  const lines = normalized.split('\n')
+  const glossary: PackGlossaryEntry[] = []
+  const seenGlossary = new Set<string>()
+  const sections = new Set<string>()
+  const descriptionLines: string[] = []
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed) {
+      if (descriptionLines.length > 0 && descriptionLines[descriptionLines.length - 1] !== '') {
+        descriptionLines.push('')
+      }
+      continue
+    }
+
+    const glossaryMatch = trimmed.match(/^(?:[-*•]\s*)?([A-Za-z0-9@.+/\- ]{1,40})\s*=\s*(.+)$/)
+    if (glossaryMatch) {
+      const term = glossaryMatch[1].trim()
+      const description = glossaryMatch[2].trim()
+      if (term && description) {
+        const key = `${term.toLowerCase()}::${description.toLowerCase()}`
+        if (!seenGlossary.has(key)) {
+          glossary.push({ term, description })
+          seenGlossary.add(key)
+        }
+      }
+      descriptionLines.push(`- ${term} = ${description}`)
+      continue
+    }
+
+    if (isLikelySectionHeading(trimmed)) {
+      const heading = prettifySectionHeading(trimmed)
+      sections.add(heading)
+      if (descriptionLines.length > 0 && descriptionLines[descriptionLines.length - 1] !== '') {
+        descriptionLines.push('')
+      }
+      descriptionLines.push(`## ${heading}`)
+      continue
+    }
+
+    descriptionLines.push(trimmed)
+  }
+
+  while (descriptionLines[descriptionLines.length - 1] === '') descriptionLines.pop()
+
+  return {
+    description: descriptionLines.join('\n'),
+    glossary,
+    sections: [...sections],
+  }
+}
+
 interface Props {
   folderPath: string
   folderName: string
@@ -672,6 +771,10 @@ export function PackInfoEditor({
   const [copyPickerOpen, setCopyPickerOpen] = useState(false)
   const [copyStatus, setCopyStatus] = useState<string | null>(null)
   const [parentChecklistItems, setParentChecklistItems] = useState<PackChecklistItem[]>([])
+  const [parseNotesOpen, setParseNotesOpen] = useState(false)
+  const [parseNotesText, setParseNotesText] = useState('')
+  const [parseToDescription, setParseToDescription] = useState(true)
+  const [parseToGlossary, setParseToGlossary] = useState(true)
 
   useEffect(() => {
     let cancelled = false
@@ -877,6 +980,8 @@ export function PackInfoEditor({
     return [...seen].sort()
   }, [captures, folderPath])
 
+  const parsedPackNotes = useMemo(() => parsePackNotes(parseNotesText), [parseNotesText])
+
   const handleSave = async () => {
     const res = await window.api.writePackInfo(folderPath, pack)
     if (res.success) {
@@ -899,6 +1004,43 @@ export function PackInfoEditor({
     setExporting(false)
     if (!res.success) setStatus(`Export failed: ${res.error ?? 'unknown error'}`)
   }
+
+  const handleApplyParsedNotes = useCallback(() => {
+    const normalizedInput = parseNotesText.trim()
+    if (!normalizedInput) {
+      setStatus('Paste some pack notes first')
+      return
+    }
+    if (!parseToDescription && !parseToGlossary) {
+      setStatus('Choose Description, Glossary, or both')
+      return
+    }
+
+    const glossaryByKey = new Set(
+      pack.glossary.map((item) => `${item.term.trim().toLowerCase()}::${item.description.trim().toLowerCase()}`)
+    )
+    const mergedGlossary = [...pack.glossary]
+    let addedGlossaryCount = 0
+    for (const item of parsedPackNotes.glossary) {
+      const key = `${item.term.trim().toLowerCase()}::${item.description.trim().toLowerCase()}`
+      if (!glossaryByKey.has(key)) {
+        glossaryByKey.add(key)
+        mergedGlossary.push(item)
+        addedGlossaryCount += 1
+      }
+    }
+
+    setPack((prev) => ({
+      ...prev,
+      description: parseToDescription ? parsedPackNotes.description : prev.description,
+      glossary: parseToGlossary ? mergedGlossary : prev.glossary,
+    }))
+    setSaved(false)
+    setStatus(
+      `Parsed pack notes${parseToDescription ? ' into description' : ''}${parseToDescription && parseToGlossary ? ' and' : ''}${parseToGlossary ? ` with ${addedGlossaryCount} glossary entr${addedGlossaryCount === 1 ? 'y' : 'ies'}` : ''}`
+    )
+    setTimeout(() => setStatus(null), 3000)
+  }, [pack.glossary, parseNotesText, parseToDescription, parseToGlossary, parsedPackNotes])
 
   const handleCopyTo = async (targetPath: string) => {
     setCopyPickerOpen(false)
@@ -1163,7 +1305,16 @@ export function PackInfoEditor({
 
         {/* Description */}
         <div className="pb-1">
-          <label className={labelCls}>Description</label>
+          <div className="flex items-center justify-between gap-3">
+            <label className={labelCls}>Description</label>
+            <button
+              type="button"
+              onClick={() => setParseNotesOpen((value) => !value)}
+              className="text-[11px] font-medium text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300 transition-colors"
+            >
+              {parseNotesOpen ? 'Hide pack notes parser' : 'Parse pack notes...'}
+            </button>
+          </div>
           <textarea
             value={pack.description}
             placeholder="Describe the amp, the tones, how it was captured..."
@@ -1182,6 +1333,93 @@ export function PackInfoEditor({
             {' '}Color: <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">[orange]text[/orange]</code>
             {' - '}available: orange, teal, red, blue, green, dim, white
           </div>
+          {parseNotesOpen && (
+            <div className="mt-3 rounded-lg border border-indigo-500/30 bg-indigo-500/5 dark:bg-indigo-500/10 p-3 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold text-gray-700 dark:text-gray-200">Parse Pack Notes</p>
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">
+                    Paste creator notes, token legends, or technical details here. We can send the cleaned text to Description and pull
+                    <code className="mx-1 bg-gray-100 dark:bg-gray-800 px-0.5 rounded">TOKEN = meaning</code>
+                    lines into Glossary.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setParseNotesText('')}
+                  className="text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                  title="Clear pasted notes"
+                >
+                  Clear
+                </button>
+              </div>
+
+              <textarea
+                value={parseNotesText}
+                onChange={(e) => setParseNotesText(e.target.value)}
+                placeholder={'Paste pack notes here...\n\nExample:\nAMP SETTINGS:\nD3 G6 T6 M4 B0 P6.5 M6\n\nSTD = standard quality architecture'}
+                rows={7}
+                className="w-full px-3 py-2 text-xs rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 resize-y font-mono leading-relaxed"
+              />
+
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <label className="inline-flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={parseToDescription}
+                    onChange={(e) => setParseToDescription(e.target.checked)}
+                    className="w-3.5 h-3.5 rounded accent-indigo-600"
+                  />
+                  Replace Description with cleaned notes
+                </label>
+                <label className="inline-flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={parseToGlossary}
+                    onChange={(e) => setParseToGlossary(e.target.checked)}
+                    className="w-3.5 h-3.5 rounded accent-indigo-600"
+                  />
+                  Add TOKEN = meaning lines to Glossary
+                </label>
+              </div>
+
+              {parseNotesText.trim() && (
+                <div className="rounded border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-900/70 p-2.5">
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400">
+                    <span>
+                      Cleaned description: <span className="font-semibold text-gray-700 dark:text-gray-200">{parsedPackNotes.description ? 'ready' : 'empty'}</span>
+                    </span>
+                    <span>
+                      Glossary entries found: <span className="font-semibold text-gray-700 dark:text-gray-200">{parsedPackNotes.glossary.length}</span>
+                    </span>
+                    {parsedPackNotes.sections.length > 0 && (
+                      <span>
+                        Sections: <span className="font-semibold text-gray-700 dark:text-gray-200">{parsedPackNotes.sections.join(', ')}</span>
+                      </span>
+                    )}
+                  </div>
+                  {parsedPackNotes.glossary.length > 0 && (
+                    <div className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
+                      First glossary hit:{' '}
+                      <code className="bg-gray-100 dark:bg-gray-800 px-1 rounded">
+                        {parsedPackNotes.glossary[0].term} = {parsedPackNotes.glossary[0].description}
+                      </code>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={handleApplyParsedNotes}
+                  className="px-3 py-1.5 text-xs font-medium rounded bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
+                >
+                  Apply parsed notes
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Captures */}
