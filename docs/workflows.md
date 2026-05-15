@@ -144,6 +144,7 @@ Tools to know:
 - **Build from example...**
 - rule library
 - overwrite guards
+- Pack Info glossary / switches -> rule generation
 
 Example naming style:
 - `JCM800 Lo P6 B8 M4 T7 G10`
@@ -154,6 +155,14 @@ Possible meaning:
 - `P6 B8 M4 T7 G10` -> amp settings
 
 This works best when the naming style is consistent across a set of files.
+
+Helpful reminder:
+- in `Prefix + value`, `{value}` means "the part after the prefix"
+- `{match}` means "the full token"
+- example:
+  - token `G`
+  - template `Gain {value}`
+  - `G10` becomes `Gain 10`
 
 ---
 
@@ -170,6 +179,33 @@ Use **folder rules** when:
 Folder rules override global token meaning in that subtree.
 
 That makes folder-scoped repair much safer than relying only on one giant global ruleset.
+
+---
+
+## 6b. Turn Pack Info into folder rules
+
+If you already have useful pack notes, glossary entries, or switch definitions in Pack Info, you can use those as a cleaner source for folder-scoped metadata rules.
+
+Good fit:
+- token legends such as `HG = High Gain`
+- switch lines such as `CH2 = Crunch`
+- channel / mode notes that belong only to one pack or creator subtree
+
+Practical flow:
+1. Open the folder's **Pack Info**.
+2. Curate the **Glossary** or **Switches & Modes** entries first.
+3. Choose a target field such as:
+   - `Amp Channel`
+   - `Amp Switches`
+   - `Tone Type`
+   - `Boost Pedal(s)`
+   - `Comments`
+4. Click:
+   - `Create selected rules`
+   - or `Create all rules`
+5. NAM Lab opens the folder rule editor immediately so you can review before applying suggestions.
+
+This is often a better workflow than reparsing raw description text every time, because the Pack Info sections are already partially structured.
 
 ---
 

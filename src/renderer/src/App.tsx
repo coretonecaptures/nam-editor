@@ -523,6 +523,7 @@ export default function App() {
   const suppressStartupAutoSelectRef = useRef(settings.showDashboardOnLaunch)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [showToneStore, setShowToneStore] = useState(false)
+  const [toneStoreMounted, setToneStoreMounted] = useState(false)
   const [toneStoreQueueJob, setToneStoreQueueJob] = useState<ToneStoreDownloadQueueJob | null>(null)
   const toneStoreQueueRunningRef = useRef(false)
   const toneStoreQueueAbortRef = useRef(0)
@@ -3440,6 +3441,10 @@ export default function App() {
 
   const selectedFiles = visibleFiles.filter((f) => selectedIds.has(f.filePath))
   const showToneStorePanel = showToneStore && !showSettings && !showDashboard && !historyOpen && batchFolder === null
+
+  useEffect(() => {
+    if (showToneStore || toneStoreSearchRequest) setToneStoreMounted(true)
+  }, [showToneStore, toneStoreSearchRequest])
   useEffect(() => {
     if (selectedFiles.length !== 1) {
       setMetadataCoverPath(null)
@@ -3507,7 +3512,11 @@ export default function App() {
     files.map((f) => f.metadata.gear_model).filter((v): v is string => !!v)
   )).sort()
   const suggestRulesEditorExample = suggestRulesEditorPath
-    ? (files.find((file) => file.filePath.replace(/\\/g, '/').startsWith(suggestRulesEditorPath + '/'))?.fileName ?? '')
+    ? (() => {
+        const exampleFile = files.find((file) => file.filePath.replace(/\\/g, '/').startsWith(suggestRulesEditorPath + '/'))
+        if (!exampleFile) return ''
+        return exampleFile.metadata.name?.trim() || exampleFile.fileName.replace(/\.nam$/i, '')
+      })()
     : ''
 
   return (
@@ -3838,20 +3847,26 @@ export default function App() {
 
         {/* Main content */}
         <div ref={mainContentRef} tabIndex={-1} className={`flex-1 overflow-hidden flex flex-col focus:outline-none${gridMaximized ? ' hidden' : ''}`} style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-          {showSettings ? (
-            <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} />
-            ) : showToneStorePanel ? (
+          {toneStoreMounted && (
+            <div
+              className={showToneStorePanel ? 'flex-1 min-h-0 flex flex-col' : 'absolute inset-0 opacity-0 pointer-events-none -z-10'}
+              aria-hidden={!showToneStorePanel}
+            >
               <ToneStore
                 onClose={() => setShowToneStore(false)}
                 onDownloaded={(paths) => loadFiles(paths, 'append')}
-              onFilterLocalCreator={handleFilterLocalCreator}
-              savedTone3000Username={settings.tone3000Username}
-              searchRequest={toneStoreSearchRequest}
-              queueJob={toneStoreQueueJob}
-              onStartQueue={handleStartToneStoreQueue}
-              onCancelQueue={handleCancelToneStoreQueue}
+                onFilterLocalCreator={handleFilterLocalCreator}
+                savedTone3000Username={settings.tone3000Username}
+                searchRequest={toneStoreSearchRequest}
+                queueJob={toneStoreQueueJob}
+                onStartQueue={handleStartToneStoreQueue}
+                onCancelQueue={handleCancelToneStoreQueue}
               />
-          ) : showDashboard ? (
+            </div>
+          )}
+          {showSettings ? (
+            <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} />
+          ) : showToneStorePanel ? null : showDashboard ? (
             <NamDashboard
               files={files}
               packChecklistRollup={dashboardChecklistEntries}
@@ -4128,6 +4143,11 @@ export default function App() {
                       darkAccentColor={settings.packExportDarkAccent}
                       parentPackPath={packInfoAncestor}
                       mode={folderPanelTab === 'checklist' ? 'checklist' : 'info'}
+                      currentFolderSuggestRules={
+                        settings.metadataSuggestScopedRules.find((set) => set.scopePath.replace(/\\/g, '/') === activeFolderPath.replace(/\\/g, '/'))?.rules ?? []
+                      }
+                      onCurrentFolderSuggestRulesChange={(rules) => handleSaveScopedSuggestRulesAndStayOpen(activeFolderPath, rules)}
+                      onOpenCurrentFolderSuggestRulesEditor={() => handleOpenSuggestRulesEditor(activeFolderPath)}
                       allFolderPaths={(() => {
                         const paths: string[] = []
                         const walk = (node: typeof librarian.folderTree) => {

@@ -32,11 +32,16 @@ function computeNewName(mode: Mode, base: string, file: NamFile, a: string, b: s
   }
 }
 
+function normalizeRenameBase(base: string, replaceUnderscores: boolean): string {
+  return replaceUnderscores ? base.replaceAll('_', ' ') : base
+}
+
 export function BatchRenameModal({ files, onApply, onClose }: Props) {
   const [mode, setMode] = useState<Mode>('suffix')
   const [inputA, setInputA] = useState('')
   const [inputB, setInputB] = useState('')
   const [renameFiles, setRenameFiles] = useState(true)
+  const [replaceUnderscores, setReplaceUnderscores] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -54,10 +59,12 @@ export function BatchRenameModal({ files, onApply, onClose }: Props) {
     // When renaming files, operate on the filename. When metadata-only, operate on
     // the current metadata name so the preview accurately reflects what will change.
     const oldName = renameFiles ? f.fileName : (f.metadata.name || f.fileName)
+    const sourceName = normalizeRenameBase(oldName, replaceUnderscores)
     return {
       filePath: f.filePath,
       oldName,
-      newName: computeNewName(mode, oldName, f, inputA, inputB)
+      sourceName,
+      newName: computeNewName(mode, sourceName, f, inputA, inputB)
     }
   })
 
@@ -201,6 +208,15 @@ export function BatchRenameModal({ files, onApply, onClose }: Props) {
             />
             <span className="text-xs text-gray-600 dark:text-gray-400">Also rename files on disk</span>
           </label>
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={replaceUnderscores}
+              onChange={(e) => setReplaceUnderscores(e.target.checked)}
+              className="w-3.5 h-3.5 rounded accent-indigo-600"
+            />
+            <span className="text-xs text-gray-600 dark:text-gray-400">Replace underscores with spaces</span>
+          </label>
           {!renameFiles && (
             <span className="text-[10px] text-gray-400 dark:text-gray-500 italic">— updates metadata name only, files stay unchanged</span>
           )}
@@ -226,6 +242,11 @@ export function BatchRenameModal({ files, onApply, onClose }: Props) {
               return (
                 <div key={p.filePath} className={`px-4 py-2 ${isConflict || isEmpty ? 'bg-red-50 dark:bg-red-900/10' : ''}`}>
                   <div className="text-xs text-gray-400 dark:text-gray-500 truncate">{p.oldName}</div>
+                  {replaceUnderscores && p.sourceName !== p.oldName && (
+                    <div className="text-[11px] text-gray-500 dark:text-gray-500 truncate mt-0.5">
+                      Source after underscore cleanup: {p.sourceName}
+                    </div>
+                  )}
                   <div className={`text-xs font-medium truncate mt-0.5 ${
                     isEmpty ? 'text-red-500'
                     : isConflict ? 'text-red-500'

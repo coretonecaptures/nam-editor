@@ -43,6 +43,29 @@ const METADATA_SUGGEST_MATCH_TYPE_OPTIONS: Array<{ value: MetadataSuggestMatchTy
   { value: 'prefix_value', label: 'Prefix + value' },
 ]
 
+function buildPrefixValueExample(rule: MetadataSuggestRule): {
+  sampleToken: string
+  sampleValue: string
+  sampleMatch: string
+  sampleOutput: string
+} {
+  const prefix = rule.token.trim() || 'G'
+  const sampleValue = '10'
+  const sampleToken = `${prefix}${sampleValue}`
+  const sampleMatch = sampleToken
+  const template = rule.value.trim() || `${prefix} {value}`
+  const sampleOutput = template
+    .replaceAll('{value}', sampleValue)
+    .replaceAll('{match}', sampleMatch)
+
+  return {
+    sampleToken,
+    sampleValue,
+    sampleMatch,
+    sampleOutput,
+  }
+}
+
 export function FolderSuggestRulesModal({
   folderPath,
   initialExample = '',
@@ -200,6 +223,13 @@ export function FolderSuggestRulesModal({
           </p>
         </div>
 
+        <div className="mx-5 mt-3 p-3 bg-indigo-50 dark:bg-indigo-900/15 border border-indigo-200 dark:border-indigo-800 rounded-lg flex-shrink-0">
+          <p className="text-xs font-semibold text-indigo-800 dark:text-indigo-300 mb-1">Prefix + value quick guide</p>
+          <p className="text-xs text-indigo-700 dark:text-indigo-400">
+            Use <span className="font-mono">{'{value}'}</span> for the part after the prefix, and <span className="font-mono">{'{match}'}</span> for the full token. Example: prefix <span className="font-mono">G</span> with template <span className="font-mono">Gain {'{value}'}</span> turns <span className="font-mono">G10</span> into <span className="font-mono">Gain 10</span>.
+          </p>
+        </div>
+
         <div className="px-5 py-3 flex items-center justify-between gap-3 flex-wrap flex-shrink-0">
           <div className="text-sm text-gray-700 dark:text-gray-300">
             <span className="font-semibold text-violet-600 dark:text-violet-400">{enabledCount}</span> enabled rule{enabledCount !== 1 ? 's' : ''}
@@ -250,7 +280,9 @@ export function FolderSuggestRulesModal({
                 No scoped rules yet for this folder.
               </div>
             ) : (
-              draftRules.map((rule, index) => (
+              draftRules.map((rule, index) => {
+                const prefixExample = rule.matchType === 'prefix_value' ? buildPrefixValueExample(rule) : null
+                return (
                 <div key={rule.id} className={`rounded border p-2 ${rule.overwriteExisting ? 'border-amber-300/70 dark:border-amber-700/70 bg-amber-50/40 dark:bg-amber-900/10' : 'border-gray-200 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-900/30'}`}>
                   <div className="grid grid-cols-[auto_150px_82px_138px_150px_138px_138px_auto] gap-2 items-center">
                     <label className="inline-flex items-center justify-center text-xs text-gray-600 dark:text-gray-400">
@@ -465,6 +497,15 @@ export function FolderSuggestRulesModal({
                       </button>
                     </div>
                   </div>
+                  {prefixExample ? (
+                    <div className="mt-2 pl-7 text-[11px] text-indigo-700 dark:text-indigo-300">
+                      <span className="font-medium">Quick example:</span>{' '}
+                      <span className="font-mono">{'{value}'}</span> = <span className="font-mono">{prefixExample.sampleValue}</span>,{' '}
+                      <span className="font-mono">{'{match}'}</span> = <span className="font-mono">{prefixExample.sampleMatch}</span>, so{' '}
+                      <span className="font-mono">{prefixExample.sampleToken}</span> becomes{' '}
+                      <span className="font-mono">{prefixExample.sampleOutput}</span>
+                    </div>
+                  ) : null}
                   {rule.overwriteExisting && isGuardExpanded(rule) && (
                     <div className="mt-2 grid grid-cols-1 md:grid-cols-[auto_minmax(0,1fr)] gap-2 items-center">
                       <div className="text-[11px] font-medium text-amber-700 dark:text-amber-300">Overwrite only if current value is</div>
@@ -482,7 +523,7 @@ export function FolderSuggestRulesModal({
                     </div>
                   )}
                 </div>
-              ))
+              )})
             )}
           </div>
         </div>

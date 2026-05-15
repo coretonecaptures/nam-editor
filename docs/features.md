@@ -315,10 +315,41 @@ You can map that into:
 - `Bass {value}`
 - `Volume {value}`
 
+The folder rule editor now keeps this more visible while you work:
+- a quick guide explains that `{value}` means "the part after the prefix"
+- `{match}` means "the full matched token"
+- live examples update as you type, so `G10` + `Gain {value}` clearly previews as `Gain 10`
+
 So a segment like `V8` can become:
 - `Volume 8`
 
 This works best when a creator or pack uses the same filename structure across many captures.
+
+### Matching source
+
+Filename-style rules are no longer limited to the raw filename on disk.
+
+When available, NAM Lab now prefers the capture's embedded metadata name first, and only falls back to the disk filename when that metadata name is blank. This matters when a capture has a cleaner metadata name like:
+
+- `[AMP] F.PLEX-HV-Hi SLP - BLEND #1`
+
+but the actual filename had to be flattened on disk into something like:
+
+- `_AMP_ F.PLEX-HV-Hi SLP - BLEND _1.nam`
+
+That makes rule building and rule matching behave more like the naming style you actually care about.
+
+### Pack Info as rule source
+
+Pack Info can now help bootstrap folder-scoped metadata rules from structured notes you have already curated.
+
+Current helpers include:
+- build rule seeds from selected text inside Description
+- parse selected `TOKEN = meaning` lines into Glossary
+- create folder rules from selected or all Glossary entries
+- create folder rules from selected or all Switches & Modes entries
+
+These rule-generation tools open the current folder's rule editor immediately after seeding the rules so you can review and tweak before applying them.
 
 ### Clearing suggestions
 

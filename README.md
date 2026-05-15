@@ -47,9 +47,9 @@ NAM captures embed metadata (name, gear info, tone type, etc.) as JSON inside th
 - **Duplicate detection** - find dupes by filename or capture name; choose a keeper and move or trash the rest, including folder-scoped duplicate scans from the tree
 - **Advanced duplicate detection** - find dupes by filename, metadata name, exact full-file content, or "same model, metadata differs" when the model content matches but the metadata block has changed. When duplicate groups tie on metadata richness, NAM Lab prefers cleaner original filenames over obvious suffixes like `(2)` or `- Copy`.
 - **Smart defaults** - auto-fill empty fields at load time (modeled by, levels, amp info); each rule section independently togglable
-- **Metadata suggestions** - global and folder-scoped suggestion rules, overwrite guards for junk placeholders, reusable rule library, blank-token scope defaults, and filename-segment / example-based rule building for consistent naming styles
+- **Metadata suggestions** - global and folder-scoped suggestion rules, overwrite guards for junk placeholders, reusable rule library, blank-token scope defaults, capture-name-aware matching, filename-segment / example-based rule building, and Pack Info powered rule seeding from glossary, switches, and selected notes
 - **Library cleanup / rebuild tools** - preview-first cleanup modal, top-level library intake flow, folder-level recategorize-in-place flow, `Needs Review` routing, CSV/XLSX export for the review list, and safe copy/move options
-- **Pack Info editor** - documentation sheet per amp pack with rich text description, equipment table, captures table, PDF export, and customizable dark-mode accent color
+- **Pack Info editor** - documentation sheet per amp pack with rich text description, glossary, switches, equipment table, captures table, PDF export, customizable dark-mode accent color, and helpers to turn curated pack notes into folder-scoped metadata rules
 - **Read Me tab** - open, edit, and save folder README text files directly inside NAM Lab
 - **Metadata cover image** - show `ampcover.*` images above the metadata editor without stretching, while keeping those cover images out of the gallery view
 - **Native text menus** - right-click selected text in Tone3000 details, Read Me, and Metadata fields for normal copy/paste/select-all behavior

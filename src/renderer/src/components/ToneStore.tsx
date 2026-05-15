@@ -157,6 +157,8 @@ export function ToneStore({
   const gearRef = useRef(gear)
   const sortRef = useRef(sort)
   const scopeRef = useRef(scope)
+  const bootstrappedRef = useRef(false)
+  const lastSearchRequestKeyRef = useRef<number | null>(null)
 
   // Detail / download state
   const [selectedTone, setSelectedTone] = useState<ToneResult | null>(null)
@@ -249,16 +251,23 @@ export function ToneStore({
 
   useEffect(() => {
     if (!connected || !statusChecked) return
-    if (searchRequest) {
+
+    if (searchRequest && searchRequest.key !== lastSearchRequestKeyRef.current) {
+      lastSearchRequestKeyRef.current = searchRequest.key
       setQuery(searchRequest.query)
       setCreatorUsername('')
       setGear('')
       setSort('trending')
       setScope('all')
       handleSearch(1, searchRequest.query, '', 'trending', '', 'all')
+      bootstrappedRef.current = true
       return
     }
-    handleSearch(1, queryRef.current, '', 'trending', '', 'all')
+
+    if (!bootstrappedRef.current) {
+      handleSearch(1, queryRef.current, gearRef.current, sortRef.current, creatorUsernameRef.current, scopeRef.current)
+      bootstrappedRef.current = true
+    }
   }, [connected, statusChecked, searchRequest, handleSearch])
 
   const handleConnect = async () => {

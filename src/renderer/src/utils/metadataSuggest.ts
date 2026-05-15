@@ -175,11 +175,14 @@ export function buildMetadataSuggestionMatches(
 ): MetadataSuggestionMatch[] {
   return scopedFiles.map((file) => {
     const baseName = file.fileName.replace(/\.nam$/i, '')
+    const captureName = file.metadata.name?.trim() ?? ''
     const normalizedPath = normalizePath(file.filePath)
     const folderPath = normalizedPath.split('/').slice(0, -1).join('/')
     const folderLabel = folderPath.split('/').slice(-3).join(' / ')
     const fileSegments = extractFilenameSegments(baseName)
+    const captureNameSegments = captureName ? extractFilenameSegments(captureName) : []
     const fileTokens = extractTokens(baseName)
+    const captureNameTokens = captureName ? extractTokens(captureName) : new Set<string>()
     const folderTokens = extractTokens(folderPath)
     const suggestions: MetadataSuggestion[] = []
     const claimed = new Set<MetadataSuggestField>()
@@ -258,13 +261,29 @@ export function buildMetadataSuggestionMatches(
     for (const rule of orderedRules) {
       if (!rule.enabled) continue
       const token = rule.token.trim()
-      const segmentText = rule.segmentIndex != null ? fileSegments[rule.segmentIndex - 1] ?? '' : ''
-      const segmentTokens = rule.segmentIndex != null ? extractTokens(segmentText) : fileTokens
+      const filenameCandidates =
+        rule.segmentIndex != null
+          ? [
+              { label: 'capture name', raw: captureNameSegments[rule.segmentIndex - 1] ?? '', tokens: captureNameTokens, enabled: Boolean(captureName) },
+              { label: 'filename', raw: fileSegments[rule.segmentIndex - 1] ?? '', tokens: fileTokens, enabled: true },
+            ]
+          : [
+              { label: 'capture name', raw: captureName, tokens: captureNameTokens, enabled: Boolean(captureName) },
+              { label: 'filename', raw: baseName, tokens: fileTokens, enabled: true },
+            ]
 
       const isBlankTokenRule = token.length === 0
 
-      const filenameTarget = rule.segmentIndex != null ? segmentText : baseName
-      const filenameMatch = isBlankTokenRule ? { matched: false } : matchByType(filenameTarget, segmentTokens, token, rule.matchType)
+      const filenameCandidateMatches = isBlankTokenRule
+        ? []
+        : filenameCandidates
+            .filter((candidate) => candidate.enabled && candidate.raw.trim())
+            .map((candidate) => ({
+              candidate,
+              result: matchByType(candidate.raw, candidate.tokens, token, rule.matchType),
+            }))
+      const matchedFilenameCandidate = filenameCandidateMatches.find((entry) => entry.result.matched)
+      const filenameMatch = matchedFilenameCandidate?.result ?? { matched: false }
       const folderMatch = isBlankTokenRule ? { matched: false } : matchByType(folderPath, folderTokens, token, rule.matchType)
       const matchFilename = filenameMatch.matched
       const matchFolder = folderMatch.matched
@@ -283,6 +302,7 @@ export function buildMetadataSuggestionMatches(
         : rule.matchIn === 'folder'
           ? folderMatch
           : (filenameMatch.matched ? filenameMatch : folderMatch)
+      const filenameSourceLabel = matchedFilenameCandidate?.candidate.label ?? 'filename'
 
       const templatedValue = rule.value
         .replace(/\{match\}/gi, selectedMatch.extractedMatch ?? '')
@@ -295,13 +315,13 @@ export function buildMetadataSuggestionMatches(
         : rule.segmentIndex != null
           ? `filename segment ${rule.segmentIndex}`
         : rule.matchIn === 'filename'
-          ? 'filename'
+          ? filenameSourceLabel
           : rule.matchIn === 'folder'
             ? 'folder path'
             : matchFilename && matchFolder
-              ? 'filename and folder path'
+              ? `${filenameSourceLabel} and folder path`
               : matchFilename
-                ? 'filename'
+                ? filenameSourceLabel
                 : 'folder path'
 
       addSuggestion(

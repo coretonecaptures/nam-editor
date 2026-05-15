@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, type MouseEvent } from 'react'
 import {
   closestCenter,
   DndContext,
@@ -15,8 +15,9 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { NamFile } from '../types/nam'
-import { AppSettings } from '../types/settings'
+import { AppSettings, MetadataSuggestField, MetadataSuggestRule } from '../types/settings'
 import { PACK_CAPTURE_COLUMNS, DEFAULT_EXPORT_COLUMNS, generatePackHtml } from '../utils/packExport'
+import { metadataSuggestRuleSignature } from '../utils/metadataSuggestRuleLibrary'
 
 export type CatalogItem = AppSettings['packGearCatalog'][number]
 export type ChecklistTemplateItem = AppSettings['packChecklistTemplate'][number]
@@ -144,6 +145,27 @@ const EMPTY_PACK: PackInfo = {
   deliveryTargets: DEFAULT_DELIVERY_TARGETS,
 }
 
+function hasMeaningfulPackInfoData(pack: PackInfo): boolean {
+  return Boolean(
+    pack.title.trim() ||
+    pack.subtitle.trim() ||
+    pack.capturedBy.trim() ||
+    pack.description.trim() ||
+    pack.footer.trim() ||
+    pack.recommendedInputGain.trim() ||
+    pack.checklistNotes.trim() ||
+    pack.targetDate.trim() ||
+    pack.liveDate.trim() ||
+    pack.versionInfo.trim() ||
+    pack.equipment.some((item) => item.label.trim() || item.value.trim()) ||
+    pack.pedals.some((item) => item.label.trim() || item.value.trim()) ||
+    pack.switches.some((item) => item.label.trim() || item.value.trim()) ||
+    pack.glossary.some((item) => item.term.trim() || item.description.trim()) ||
+    pack.checklistItems.some((item) => item.label.trim() || item.notes.trim() || item.completed || item.completedDate.trim()) ||
+    pack.deliveryMatrix.rows.length > 0
+  )
+}
+
 function createChecklistId(): string {
   return `check-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
@@ -256,6 +278,15 @@ function normalizeText(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? repairMojibake(value) : fallback
 }
 
+function showNativeTextContextMenu(event: MouseEvent<HTMLElement>) {
+  const selection = window.getSelection()?.toString().trim() ?? ''
+  const target = event.target as HTMLElement | null
+  const isEditable = !!target?.closest('input, textarea, [contenteditable="true"]')
+  if (!selection && !isEditable) return
+  event.preventDefault()
+  void window.api.showTextContextMenu({ hasSelection: !!selection, isEditable })
+}
+
 type PackGlossaryEntry = { term: string; description: string }
 
 interface PackNotesParseResult {
@@ -355,6 +386,101 @@ function parsePackNotes(rawText: string): PackNotesParseResult {
   }
 }
 
+function createPackRuleSeedId(): string {
+  return `pack-rule-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function guessRuleSeed(entry: PackGlossaryEntry): Pick<MetadataSuggestRule, 'field' | 'value'> {
+  const text = entry.description.trim()
+  const lower = text.toLowerCase()
+
+  if (lower.includes('high gain')) return { field: 'tone_type', value: 'hi_gain' }
+  if (lower.includes('overdrive')) return { field: 'tone_type', value: 'overdrive' }
+  if (lower.includes('distortion')) return { field: 'tone_type', value: 'distortion' }
+  if (lower.includes('crunch')) return { field: 'tone_type', value: 'crunch' }
+  if (/\bclean\b/.test(lower)) return { field: 'tone_type', value: 'clean' }
+  if (lower.includes('fuzz')) return { field: 'tone_type', value: 'fuzz' }
+  if (lower.includes('tube screamer') || lower.includes('klon') || lower.includes('pedal') || lower.includes('boost') || lower.includes('fortin')) {
+    return { field: 'nl_boost_pedal', value: text }
+  }
+  if (
+    lower.includes('channel') ||
+    lower.includes('mode') ||
+    lower.includes('input') ||
+    lower.includes('graphic eq') ||
+    lower.includes('eq enabled') ||
+    lower.includes('eq disabled') ||
+    lower.includes('bright') ||
+    lower.includes('fat') ||
+    lower.includes('voltage')
+  ) {
+    return { field: 'nl_amp_switches', value: text }
+  }
+  return { field: 'nl_comments', value: text }
+}
+
+function buildRuleSeedsFromText(rawText: string): MetadataSuggestRule[] {
+  return parsePackNotes(rawText).glossary
+    .filter((entry) => entry.term.trim() && entry.description.trim())
+    .map((entry) => {
+      const guessed = guessRuleSeed(entry)
+      return {
+        id: createPackRuleSeedId(),
+        token: entry.term.trim(),
+        segmentIndex: null,
+        field: guessed.field,
+        value: guessed.value,
+        matchIn: 'filename',
+        matchType: 'exact',
+        enabled: true,
+        overwriteExisting: false,
+        overwriteOnlyValues: '',
+      } satisfies MetadataSuggestRule
+    })
+}
+
+type PackRuleSeedTarget = MetadataSuggestField | 'auto_guess'
+
+const PACK_RULE_TARGET_OPTIONS: Array<{ value: PackRuleSeedTarget; label: string }> = [
+  { value: 'auto_guess', label: 'Auto-guess field' },
+  { value: 'nl_amp_channel', label: 'Amp Channel' },
+  { value: 'nl_amp_switches', label: 'Amp Switches' },
+  { value: 'tone_type', label: 'Tone Type' },
+  { value: 'nl_boost_pedal', label: 'Boost Pedal(s)' },
+  { value: 'nl_comments', label: 'Comments' },
+]
+
+function buildRuleFromGlossaryEntry(entry: PackGlossaryEntry, targetField: PackRuleSeedTarget): MetadataSuggestRule {
+  const guessed = guessRuleSeed(entry)
+  return {
+    id: createPackRuleSeedId(),
+    token: entry.term.trim(),
+    segmentIndex: null,
+    field: targetField === 'auto_guess' ? guessed.field : targetField,
+    value: targetField === 'auto_guess' ? guessed.value : entry.description.trim(),
+    matchIn: 'filename',
+    matchType: 'exact',
+    enabled: true,
+    overwriteExisting: false,
+    overwriteOnlyValues: '',
+  }
+}
+
+function buildRuleFromSwitchEntry(entry: { label: string; value: string }, targetField: MetadataSuggestField): MetadataSuggestRule {
+  return {
+    id: createPackRuleSeedId(),
+    token: entry.label.trim(),
+    segmentIndex: null,
+    field: targetField,
+    value: entry.value.trim(),
+    matchIn: 'filename',
+    matchType: 'exact',
+    enabled: true,
+    overwriteExisting: false,
+    overwriteOnlyValues: '',
+  }
+}
+
 interface Props {
   folderPath: string
   folderName: string
@@ -371,6 +497,9 @@ interface Props {
   allFolderPaths?: string[]
   parentPackPath?: string | null
   mode?: 'info' | 'checklist'
+  currentFolderSuggestRules?: MetadataSuggestRule[]
+  onCurrentFolderSuggestRulesChange?: (rules: MetadataSuggestRule[]) => void
+  onOpenCurrentFolderSuggestRulesEditor?: () => void
 }
 
 function CopyFolderPicker({
@@ -578,7 +707,7 @@ function SortableChecklistRow({
 
 function RowEditor<T extends Record<string, string>>({
   rows, onChange, keys, addLabel, placeholders, firstColWidth = 'max-w-[120px]',
-  catalogItems, onSaveToCatalog
+  catalogItems, onSaveToCatalog, selectedIndices, onToggleSelected
 }: {
   rows: T[]
   onChange: (rows: T[]) => void
@@ -588,6 +717,8 @@ function RowEditor<T extends Record<string, string>>({
   firstColWidth?: string
   catalogItems?: { label: string; value: string }[]
   onSaveToCatalog?: (label: string, value: string) => void
+  selectedIndices?: Set<number>
+  onToggleSelected?: (index: number, checked: boolean) => void
 }) {
   const [showPicker, setShowPicker] = useState(false)
   const pickerRef = useRef<HTMLDivElement>(null)
@@ -607,6 +738,15 @@ function RowEditor<T extends Record<string, string>>({
     <div className="space-y-1.5">
       {rows.map((row, i) => (
         <div key={i} className="flex gap-1.5 items-start">
+          {onToggleSelected && (
+            <input
+              type="checkbox"
+              checked={selectedIndices?.has(i) ?? false}
+              onChange={(e) => onToggleSelected(i, e.target.checked)}
+              className="mt-2 w-3.5 h-3.5 rounded accent-teal-600 flex-shrink-0"
+              title="Select row"
+            />
+          )}
           {/* Up/down reorder */}
           <div className="flex flex-col mt-0.5 flex-shrink-0">
             <button
@@ -750,6 +890,9 @@ export function PackInfoEditor({
   allFolderPaths = [],
   parentPackPath = null,
   mode = 'info',
+  currentFolderSuggestRules = [],
+  onCurrentFolderSuggestRulesChange,
+  onOpenCurrentFolderSuggestRulesEditor,
 }: Props) {
   const [pack, setPack] = useState<PackInfo>(EMPTY_PACK)
   const savedPackRef = useRef<PackInfo>(EMPTY_PACK)
@@ -775,6 +918,12 @@ export function PackInfoEditor({
   const [parseNotesText, setParseNotesText] = useState('')
   const [parseToDescription, setParseToDescription] = useState(true)
   const [parseToGlossary, setParseToGlossary] = useState(true)
+  const [selectedDescriptionText, setSelectedDescriptionText] = useState('')
+  const [selectedGlossaryIndices, setSelectedGlossaryIndices] = useState<Set<number>>(new Set())
+  const [selectedSwitchIndices, setSelectedSwitchIndices] = useState<Set<number>>(new Set())
+  const [glossaryRuleTarget, setGlossaryRuleTarget] = useState<PackRuleSeedTarget>('auto_guess')
+  const [switchRuleTarget, setSwitchRuleTarget] = useState<MetadataSuggestField>('nl_amp_switches')
+  const descriptionRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -981,6 +1130,7 @@ export function PackInfoEditor({
   }, [captures, folderPath])
 
   const parsedPackNotes = useMemo(() => parsePackNotes(parseNotesText), [parseNotesText])
+  const hasDescriptionSelection = selectedDescriptionText.trim().length > 0
 
   const handleSave = async () => {
     const res = await window.api.writePackInfo(folderPath, pack)
@@ -989,7 +1139,7 @@ export function PackInfoEditor({
       setSaved(true)
       setStatus('Saved')
       setTimeout(() => setStatus(null), 2000)
-      onPackSaved?.(folderPath.replace(/\\/g, '/'), !!pack.title.trim())
+      onPackSaved?.(folderPath.replace(/\\/g, '/'), hasMeaningfulPackInfoData(pack))
     } else {
       setStatus(`Save failed: ${res.error ?? 'unknown error'}`)
     }
@@ -1004,6 +1154,18 @@ export function PackInfoEditor({
     setExporting(false)
     if (!res.success) setStatus(`Export failed: ${res.error ?? 'unknown error'}`)
   }
+
+  const captureDescriptionSelection = useCallback(() => {
+    const el = descriptionRef.current
+    if (!el) {
+      setSelectedDescriptionText('')
+      return
+    }
+    const start = el.selectionStart ?? 0
+    const end = el.selectionEnd ?? 0
+    if (end > start) setSelectedDescriptionText(el.value.slice(start, end))
+    else setSelectedDescriptionText('')
+  }, [])
 
   const handleApplyParsedNotes = useCallback(() => {
     const normalizedInput = parseNotesText.trim()
@@ -1041,6 +1203,132 @@ export function PackInfoEditor({
     )
     setTimeout(() => setStatus(null), 3000)
   }, [pack.glossary, parseNotesText, parseToDescription, parseToGlossary, parsedPackNotes])
+
+  const openPackNotesParser = useCallback(() => {
+    const preferredSource = selectedDescriptionText.trim() || pack.description.trim()
+    if (preferredSource) setParseNotesText(preferredSource)
+    setParseNotesOpen((prev) => !prev)
+  }, [pack.description, selectedDescriptionText])
+
+  const handleAddSelectionToGlossary = useCallback(() => {
+    const selection = selectedDescriptionText.trim()
+    if (!selection) {
+      setStatus('Select some description text first')
+      return
+    }
+    const parsed = parsePackNotes(selection)
+    if (parsed.glossary.length === 0) {
+      setStatus('No TOKEN = meaning lines found in the selected text')
+      return
+    }
+    const glossaryByKey = new Set(
+      pack.glossary.map((item) => `${item.term.trim().toLowerCase()}::${item.description.trim().toLowerCase()}`)
+    )
+    const mergedGlossary = [...pack.glossary]
+    let addedCount = 0
+    for (const item of parsed.glossary) {
+      const key = `${item.term.trim().toLowerCase()}::${item.description.trim().toLowerCase()}`
+      if (!glossaryByKey.has(key)) {
+        glossaryByKey.add(key)
+        mergedGlossary.push(item)
+        addedCount += 1
+      }
+    }
+    setPack((prev) => ({ ...prev, glossary: mergedGlossary }))
+    setSaved(false)
+    setStatus(addedCount > 0 ? `Added ${addedCount} glossary entr${addedCount === 1 ? 'y' : 'ies'} from selection` : 'Selected glossary lines were already present')
+    setTimeout(() => setStatus(null), 3000)
+  }, [pack.glossary, selectedDescriptionText])
+
+  const handleCreateRuleSeedsFromSelection = useCallback(() => {
+    const selection = selectedDescriptionText.trim()
+    if (!selection) {
+      setStatus('Select some description text first')
+      return
+    }
+    if (!onCurrentFolderSuggestRulesChange) {
+      setStatus('Folder suggestion rules are not available here')
+      return
+    }
+    const seeds = buildRuleSeedsFromText(selection)
+    if (seeds.length === 0) {
+      setStatus('No TOKEN = meaning lines found for rule seeds')
+      return
+    }
+    const existing = new Set(currentFolderSuggestRules.map(metadataSuggestRuleSignature))
+    const additions = seeds.filter((rule) => !existing.has(metadataSuggestRuleSignature(rule)))
+    if (additions.length === 0) {
+      setStatus('Those rule seeds are already in this folder\'s suggestion rules')
+      return
+    }
+    onCurrentFolderSuggestRulesChange([...currentFolderSuggestRules, ...additions])
+    onOpenCurrentFolderSuggestRulesEditor?.()
+    setStatus(`Added ${additions.length} rule seed${additions.length === 1 ? '' : 's'} to this folder's suggestion rules`)
+    setTimeout(() => setStatus(null), 3000)
+  }, [currentFolderSuggestRules, onCurrentFolderSuggestRulesChange, onOpenCurrentFolderSuggestRulesEditor, selectedDescriptionText])
+
+  const addRulesToCurrentFolder = useCallback((
+    rules: MetadataSuggestRule[],
+    emptyMessage: string,
+    duplicateMessage: string,
+    successLabel: string
+  ) => {
+    if (!onCurrentFolderSuggestRulesChange) {
+      setStatus('Folder suggestion rules are not available here')
+      return
+    }
+    const cleaned = rules.filter((rule) => rule.token.trim() && rule.value.trim())
+    if (cleaned.length === 0) {
+      setStatus(emptyMessage)
+      return
+    }
+    const existing = new Set(currentFolderSuggestRules.map(metadataSuggestRuleSignature))
+    const additions = cleaned.filter((rule) => !existing.has(metadataSuggestRuleSignature(rule)))
+    if (additions.length === 0) {
+      setStatus(duplicateMessage)
+      return
+    }
+    onCurrentFolderSuggestRulesChange([...currentFolderSuggestRules, ...additions])
+    onOpenCurrentFolderSuggestRulesEditor?.()
+    setStatus(`Added ${additions.length} ${successLabel}${additions.length === 1 ? '' : 's'} to this folder's suggestion rules`)
+    setTimeout(() => setStatus(null), 3000)
+  }, [currentFolderSuggestRules, onCurrentFolderSuggestRulesChange, onOpenCurrentFolderSuggestRulesEditor])
+
+  const handleCreateGlossaryRules = useCallback((mode: 'selected' | 'all') => {
+    const sourceEntries = pack.glossary
+      .map((entry, index) => ({ entry, index }))
+      .filter(({ entry, index }) => {
+        if (!entry.term.trim() || !entry.description.trim()) return false
+        return mode === 'all' || selectedGlossaryIndices.has(index)
+      })
+      .map(({ entry }) => entry)
+
+    const rules = sourceEntries.map((entry) => buildRuleFromGlossaryEntry(entry, glossaryRuleTarget))
+    addRulesToCurrentFolder(
+      rules,
+      mode === 'all' ? 'No glossary entries are ready to become rules' : 'Select one or more glossary rows first',
+      'Those glossary rules are already in this folder\'s suggestion rules',
+      'glossary rule seed'
+    )
+  }, [addRulesToCurrentFolder, glossaryRuleTarget, pack.glossary, selectedGlossaryIndices])
+
+  const handleCreateSwitchRules = useCallback((mode: 'selected' | 'all') => {
+    const sourceEntries = pack.switches
+      .map((entry, index) => ({ entry, index }))
+      .filter(({ entry, index }) => {
+        if (!entry.label.trim() || !entry.value.trim()) return false
+        return mode === 'all' || selectedSwitchIndices.has(index)
+      })
+      .map(({ entry }) => entry)
+
+    const rules = sourceEntries.map((entry) => buildRuleFromSwitchEntry(entry, switchRuleTarget))
+    addRulesToCurrentFolder(
+      rules,
+      mode === 'all' ? 'No switch rows are ready to become rules' : 'Select one or more switch rows first',
+      'Those switch rules are already in this folder\'s suggestion rules',
+      'switch rule seed'
+    )
+  }, [addRulesToCurrentFolder, pack.switches, selectedSwitchIndices, switchRuleTarget])
 
   const handleCopyTo = async (targetPath: string) => {
     setCopyPickerOpen(false)
@@ -1096,7 +1384,7 @@ export function PackInfoEditor({
   const isPositiveStatus = !!status && (/^saved$/i.test(status) || /^synced\b/i.test(status))
 
   return (
-    <div className="h-full flex flex-col overflow-hidden">
+    <div className="h-full flex flex-col overflow-hidden" onContextMenu={showNativeTextContextMenu}>
         {/* Header */}
         <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
           <div>
@@ -1307,20 +1595,52 @@ export function PackInfoEditor({
         <div className="pb-1">
           <div className="flex items-center justify-between gap-3">
             <label className={labelCls}>Description</label>
-            <button
-              type="button"
-              onClick={() => setParseNotesOpen((value) => !value)}
-              className="text-[11px] font-medium text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300 transition-colors"
-            >
-              {parseNotesOpen ? 'Hide pack notes parser' : 'Parse pack notes...'}
-            </button>
+            <div className="flex items-center gap-3 flex-wrap justify-end">
+              <button
+                type="button"
+                onClick={handleAddSelectionToGlossary}
+                disabled={!hasDescriptionSelection}
+                className={`text-[11px] font-medium transition-colors ${
+                  hasDescriptionSelection
+                    ? 'text-teal-500 dark:text-teal-400 hover:text-teal-600 dark:hover:text-teal-300'
+                    : 'text-gray-400 dark:text-gray-600 cursor-default'
+                }`}
+                title={hasDescriptionSelection ? 'Turn selected TOKEN = meaning lines into glossary entries' : 'Select text in Description first'}
+              >
+                Parse selection as glossary
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateRuleSeedsFromSelection}
+                disabled={!hasDescriptionSelection}
+                className={`text-[11px] font-medium transition-colors ${
+                  hasDescriptionSelection
+                    ? 'text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300'
+                    : 'text-gray-400 dark:text-gray-600 cursor-default'
+                }`}
+                title={hasDescriptionSelection ? 'Turn selected TOKEN = meaning lines into metadata rule seeds' : 'Select text in Description first'}
+              >
+                Build rule seeds from selection
+              </button>
+              <button
+                type="button"
+                onClick={openPackNotesParser}
+                className="text-[11px] font-medium text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300 transition-colors"
+              >
+                {parseNotesOpen ? 'Hide pack notes parser' : 'Parse pack notes...'}
+              </button>
+            </div>
           </div>
           <textarea
+            ref={descriptionRef}
             value={pack.description}
             placeholder="Describe the amp, the tones, how it was captured..."
             onChange={(e) => update('description', e.target.value)}
-            rows={7}
-            className={`${inputCls('description')} resize-y leading-relaxed min-h-[80px] font-mono text-xs`}
+            onSelect={captureDescriptionSelection}
+            onKeyUp={captureDescriptionSelection}
+            onMouseUp={captureDescriptionSelection}
+            rows={pack.description.trim() ? 12 : 7}
+            className={`${inputCls('description')} resize-y leading-relaxed ${pack.description.trim() ? 'min-h-[220px]' : 'min-h-[80px]'} font-mono text-xs`}
           />
           <div className="mt-1 px-1 text-[10px] text-gray-400 dark:text-gray-500 leading-relaxed">
             <span className="font-semibold text-gray-500 dark:text-gray-400">Formatting (export only):</span>
@@ -1333,6 +1653,11 @@ export function PackInfoEditor({
             {' '}Color: <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">[orange]text[/orange]</code>
             {' - '}available: orange, teal, red, blue, green, dim, white
           </div>
+          {hasDescriptionSelection && (
+            <div className="mt-1 px-1 text-[10px] text-gray-500 dark:text-gray-400">
+              Using selected description text: <code className="bg-gray-100 dark:bg-gray-800 px-1 rounded">{selectedDescriptionText.trim().slice(0, 120)}{selectedDescriptionText.trim().length > 120 ? '...' : ''}</code>
+            </div>
+          )}
           {parseNotesOpen && (
             <div className="mt-3 rounded-lg border border-indigo-500/30 bg-indigo-500/5 dark:bg-indigo-500/10 p-3 space-y-3">
               <div className="flex items-start justify-between gap-3">
@@ -1704,27 +2029,111 @@ export function PackInfoEditor({
         {/* Switches - no catalog (per-amp) */}
         <SectionHeader label="Switches & Modes" hint="Channel modes | Tone stack | Voice switches" />
         <div className={sectionChanged('switches')}>
+          <div className="mb-2 flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
+              <select
+                value={switchRuleTarget}
+                onChange={(e) => setSwitchRuleTarget(e.target.value as MetadataSuggestField)}
+                className="text-xs px-2 py-1 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500"
+              >
+                {PACK_RULE_TARGET_OPTIONS.filter((option) => option.value !== 'auto_guess').map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => handleCreateSwitchRules('selected')}
+                className="text-xs text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300 font-medium transition-colors"
+              >
+                Create selected rules
+              </button>
+              <button
+                type="button"
+                onClick={() => handleCreateSwitchRules('all')}
+                className="text-xs text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300 font-medium transition-colors"
+              >
+                Create all rules
+              </button>
+            </div>
+            {selectedSwitchIndices.size > 0 && (
+              <span className="text-[11px] text-gray-500 dark:text-gray-400">{selectedSwitchIndices.size} selected</span>
+            )}
+          </div>
           <RowEditor
             rows={pack.switches}
-            onChange={(rows) => update('switches', rows)}
+            onChange={(rows) => {
+              update('switches', rows)
+              setSelectedSwitchIndices((prev) => new Set([...prev].filter((index) => index < rows.length)))
+            }}
             keys={['label', 'value']}
             addLabel="Add switch"
             placeholders={['Tight switch', 'Engaged on all BE channels']}
             firstColWidth="max-w-[140px]"
+            selectedIndices={selectedSwitchIndices}
+            onToggleSelected={(index, checked) => {
+              setSelectedSwitchIndices((prev) => {
+                const next = new Set(prev)
+                if (checked) next.add(index)
+                else next.delete(index)
+                return next
+              })
+            }}
           />
         </div>
 
         {/* Glossary */}
         <SectionHeader label="Glossary" hint="Define terms used in capture names" />
         <div className={`pb-4 ${sectionChanged('glossary')}`}>
+          <div className="mb-2 flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
+              <select
+                value={glossaryRuleTarget}
+                onChange={(e) => setGlossaryRuleTarget(e.target.value as PackRuleSeedTarget)}
+                className="text-xs px-2 py-1 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500"
+              >
+                {PACK_RULE_TARGET_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => handleCreateGlossaryRules('selected')}
+                className="text-xs text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300 font-medium transition-colors"
+              >
+                Create selected rules
+              </button>
+              <button
+                type="button"
+                onClick={() => handleCreateGlossaryRules('all')}
+                className="text-xs text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300 font-medium transition-colors"
+              >
+                Create all rules
+              </button>
+            </div>
+            {selectedGlossaryIndices.size > 0 && (
+              <span className="text-[11px] text-gray-500 dark:text-gray-400">{selectedGlossaryIndices.size} selected</span>
+            )}
+          </div>
           <RowEditor
             rows={pack.glossary}
-            onChange={(rows) => update('glossary', rows)}
+            onChange={(rows) => {
+              update('glossary', rows)
+              setSelectedGlossaryIndices((prev) => new Set([...prev].filter((index) => index < rows.length)))
+            }}
             keys={['term', 'description']}
             addLabel="Add entry"
             placeholders={['DI', 'Direct Inject - no cabinet']}
             catalogItems={catalogFor('glossary')}
             onSaveToCatalog={(label, value) => addToCatalog('glossary', label, value)}
+            selectedIndices={selectedGlossaryIndices}
+            onToggleSelected={(index, checked) => {
+              setSelectedGlossaryIndices((prev) => {
+                const next = new Set(prev)
+                if (checked) next.add(index)
+                else next.delete(index)
+                return next
+              })
+            }}
           />
         </div>
 
