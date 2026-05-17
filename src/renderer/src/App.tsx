@@ -319,6 +319,9 @@ declare global {
       retryFailedTrainerRuns: () => Promise<{ success: boolean; retried?: number }>
       clearFinishedTrainerRuns: () => Promise<{ success: boolean }>
       removeQueuedTrainerRuns: () => Promise<{ success: boolean }>
+      removeTrainerJob: (jobId: string) => Promise<{ success: boolean; error?: string }>
+      moveTrainerJob: (jobId: string, direction: 'up' | 'down') => Promise<{ success: boolean; error?: string }>
+      makeTrainerJobNext: (jobId: string) => Promise<{ success: boolean; error?: string }>
       onTrainerUpdate: (cb: (state: TrainerStateSnapshot) => void) => () => void
       openInNam: (filePath: string, standalonePath: string) => Promise<{ success: boolean; error?: string }>
       scanImages: (folderPath: string) => Promise<{ success: boolean; images: string[] }>

@@ -97,6 +97,7 @@ interface TrainerStartPayload {
   architecture: TrainerArchitecture
   epochs: number
   latency: number | null
+  thresholdEsr: number | null
   savePlot: boolean
   silent: boolean
   ignoreChecks: boolean
@@ -112,6 +113,7 @@ interface TrainerQueueJob {
   architecture: TrainerArchitecture
   epochs: number
   latency: number | null
+  thresholdEsr: number | null
   savePlot: boolean
   silent: boolean
   ignoreChecks: boolean
@@ -142,6 +144,7 @@ interface TrainerStateSnapshot {
   architecture: TrainerArchitecture | ''
   epochs: number | null
   latency: number | null
+  thresholdEsr: number | null
   modelName: string
   outputModelPath: string
   checkpointModelPath: string
@@ -176,6 +179,7 @@ const TRAINER_IDLE_STATE: TrainerStateSnapshot = {
   architecture: '',
   epochs: null,
   latency: null,
+  thresholdEsr: null,
   modelName: '',
   outputModelPath: '',
   checkpointModelPath: '',
@@ -274,6 +278,7 @@ def main():
         train_path=payload["trainPath"],
         epochs=payload["epochs"],
         latency=payload.get("latency"),
+        threshold_esr=payload.get("thresholdEsr"),
         model_type="WaveNet",
         architecture=payload["architecture"],
         batch_size=16,
@@ -326,6 +331,7 @@ function emitTrainerState(): void {
       progressBatchTotal: trainerState.progressBatchTotal,
       progressRate: trainerState.progressRate,
       progressLatestLine: trainerState.progressLatestLine,
+      thresholdEsr: trainerState.thresholdEsr,
     })
   }
   trainerState = {
@@ -543,6 +549,7 @@ function createTrainerJob(payload: TrainerStartPayload): TrainerQueueJob {
     architecture: payload.architecture,
     epochs: payload.epochs,
     latency: payload.latency,
+    thresholdEsr: payload.thresholdEsr,
     savePlot: payload.savePlot,
     silent: payload.silent,
     ignoreChecks: payload.ignoreChecks,
@@ -572,8 +579,62 @@ function updateTrainerJob(jobId: string, patch: Partial<TrainerQueueJob>): void 
   trainerQueue = trainerQueue.map((job) => (job.jobId === jobId ? { ...job, ...patch } : job))
 }
 
+function findTrainerJobIndex(jobId: string): number {
+  return trainerQueue.findIndex((job) => job.jobId === jobId)
+}
+
+function resetTrainerJobForQueue(job: TrainerQueueJob): TrainerQueueJob {
+  return {
+    ...job,
+    status: 'queued',
+    finishedAt: null,
+    error: '',
+    validationEsr: null,
+    progressPercent: null,
+    progressEpochCurrent: null,
+    progressEpochTotal: job.epochs,
+    progressBatchCurrent: null,
+    progressBatchTotal: null,
+    progressRate: null,
+    progressLatestLine: '',
+  }
+}
+
 function nextQueuedTrainerJob(): TrainerQueueJob | null {
   return trainerQueue.find((job) => job.status === 'queued') ?? null
+}
+
+function moveQueuedTrainerJob(jobId: string, direction: 'up' | 'down'): boolean {
+  const queuedIndexes = trainerQueue
+    .map((job, index) => ({ job, index }))
+    .filter(({ job }) => job.status === 'queued')
+
+  const currentQueuedIndex = queuedIndexes.findIndex(({ job }) => job.jobId === jobId)
+  if (currentQueuedIndex === -1) return false
+  const swapOffset = direction === 'up' ? -1 : 1
+  const targetQueuedIndex = currentQueuedIndex + swapOffset
+  if (targetQueuedIndex < 0 || targetQueuedIndex >= queuedIndexes.length) return false
+
+  const currentIndex = queuedIndexes[currentQueuedIndex].index
+  const targetIndex = queuedIndexes[targetQueuedIndex].index
+  const nextQueue = [...trainerQueue]
+  ;[nextQueue[currentIndex], nextQueue[targetIndex]] = [nextQueue[targetIndex], nextQueue[currentIndex]]
+  trainerQueue = nextQueue
+  return true
+}
+
+function makeQueuedTrainerJobNext(jobId: string): boolean {
+  const queuedIndexes = trainerQueue
+    .map((job, index) => ({ job, index }))
+    .filter(({ job }) => job.status === 'queued')
+  const currentQueuedIndex = queuedIndexes.findIndex(({ job }) => job.jobId === jobId)
+  if (currentQueuedIndex <= 0) return currentQueuedIndex === 0
+
+  const currentIndex = queuedIndexes[currentQueuedIndex].index
+  const [job] = trainerQueue.splice(currentIndex, 1)
+  const firstQueuedIndex = trainerQueue.findIndex((item) => item.status === 'queued')
+  trainerQueue.splice(firstQueuedIndex === -1 ? trainerQueue.length : firstQueuedIndex, 0, job)
+  return true
 }
 
 function hashFileSha256(filePath: string): Promise<string> {
@@ -1100,12 +1161,23 @@ function liftUiMetadata(meta: Record<string, unknown>): Record<string, unknown> 
   if (nb?.preset_name != null) meta.nb_preset_name = nb.preset_name
   const nl = meta.nam_lab as Record<string, unknown> | undefined
   if (nl) {
+    if (meta.nb_trained_epochs == null && nl.trained_epochs != null) meta.nb_trained_epochs = nl.trained_epochs
+    if (meta.nb_preset_name == null && nl.preset_name != null) meta.nb_preset_name = nl.preset_name
     const nlKeys = ['mics','cabinet','cabinet_config','amp_channel','boost_pedal','amp_settings','pedal_settings','amp_switches','comments','rating'] as const
     for (const k of nlKeys) {
       if (nl[k] != null) meta[`nl_${k}`] = nl[k]
     }
   }
   return meta
+}
+
+function persistTrainerMetadata(content: string, epochs: number, architecture: string): string {
+  let patched = content
+  patched = patchTopLevelNamBotField(patched, 'trained_epochs', epochs)
+  patched = patchTopLevelNamBotField(patched, 'preset_name', architecture)
+  patched = patchNamLabField(patched, 'trained_epochs', epochs)
+  patched = patchNamLabField(patched, 'preset_name', architecture)
+  return patched
 }
 
 // Surgically remove the entire "nam_lab": {...} block from metadata.
@@ -2198,6 +2270,7 @@ app.whenReady().then(async () => {
       progressBatchTotal: null,
       progressRate: null,
       progressLatestLine: '',
+      thresholdEsr: job.thresholdEsr,
     })
 
     trainerState = {
@@ -2210,6 +2283,7 @@ app.whenReady().then(async () => {
       architecture: job.architecture,
       epochs: job.epochs,
       latency: job.latency,
+      thresholdEsr: job.thresholdEsr,
       modelName: job.modelName,
       outputModelPath: join(trainPath, `${job.modelName}.nam`),
       checkpointModelPath: '',
@@ -2251,6 +2325,7 @@ app.whenReady().then(async () => {
       architecture: job.architecture,
       epochs: job.epochs,
       latency: job.latency,
+      thresholdEsr: job.thresholdEsr,
       savePlot: job.savePlot,
       silent: job.silent,
       ignoreChecks: job.ignoreChecks,
@@ -2309,6 +2384,34 @@ app.whenReady().then(async () => {
       }
       trainerChild = null
       try { await fs.promises.unlink(payloadPath) } catch { /* ignore */ }
+
+      if (finalStatus === 'success' && trainerState.outputModelPath) {
+        try {
+          const content = await fs.promises.readFile(trainerState.outputModelPath, 'utf-8')
+          const patched = persistTrainerMetadata(content, job.epochs, job.architecture)
+          JSON.parse(patched)
+          suppressWatcher()
+          await fs.promises.writeFile(trainerState.outputModelPath, patched, 'utf-8')
+          delete loadFileCache()[trainerState.outputModelPath]
+        } catch (metadataError) {
+          trainerState = {
+            ...trainerState,
+            logs: [...trainerState.logs, `Trainer metadata write warning: ${String(metadataError)}`].slice(-600),
+          }
+        }
+      }
+
+      if (wasCanceled && trainerState.outputModelPath) {
+        try {
+          if (fs.existsSync(trainerState.outputModelPath)) {
+            suppressWatcher()
+            await fs.promises.unlink(trainerState.outputModelPath)
+          }
+        } catch {
+          /* best effort; keep canceled state even if cleanup fails */
+        }
+      }
+
       emitTrainerState()
       if (!trainerPauseAfterCurrent) {
         await pumpTrainerQueue()
@@ -2423,20 +2526,7 @@ app.whenReady().then(async () => {
     trainerQueue = trainerQueue.map((job) => {
       if (job.status !== 'error') return job
       retried += 1
-      return {
-        ...job,
-        status: 'queued',
-        finishedAt: null,
-        error: '',
-        validationEsr: null,
-        progressPercent: null,
-        progressEpochCurrent: null,
-        progressEpochTotal: job.epochs,
-        progressBatchCurrent: null,
-        progressBatchTotal: null,
-        progressRate: null,
-        progressLatestLine: '',
-      }
+      return resetTrainerJobForQueue(job)
     })
     emitTrainerState()
     await pumpTrainerQueue()
@@ -2451,6 +2541,34 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('trainer:removeQueued', async () => {
     trainerQueue = trainerQueue.filter((job) => job.status !== 'queued')
+    emitTrainerState()
+    return { success: true }
+  })
+
+  ipcMain.handle('trainer:removeJob', async (_event, jobId: string) => {
+    const index = findTrainerJobIndex(jobId)
+    if (index === -1) return { success: false, error: 'Training queue item not found.' }
+    if (trainerState.activeJobId === jobId && (trainerState.status === 'starting' || trainerState.status === 'running')) {
+      return { success: false, error: 'Cannot remove the active training job while it is running.' }
+    }
+    trainerQueue.splice(index, 1)
+    emitTrainerState()
+    return { success: true }
+  })
+
+  ipcMain.handle('trainer:moveJob', async (_event, jobId: string, direction: 'up' | 'down') => {
+    if (direction !== 'up' && direction !== 'down') {
+      return { success: false, error: 'Invalid queue move direction.' }
+    }
+    const moved = moveQueuedTrainerJob(jobId, direction)
+    if (!moved) return { success: false, error: `Could not move that queue item ${direction}.` }
+    emitTrainerState()
+    return { success: true }
+  })
+
+  ipcMain.handle('trainer:makeNext', async (_event, jobId: string) => {
+    const moved = makeQueuedTrainerJobNext(jobId)
+    if (!moved) return { success: false, error: 'Could not make that queue item next.' }
     emitTrainerState()
     return { success: true }
   })

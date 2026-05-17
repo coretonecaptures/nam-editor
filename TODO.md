@@ -46,14 +46,13 @@
 
 ## Experimental training
 
-- Queue UX: allow removing any individual queued training item, not just clearing all queued jobs at once.
-- Queue UX: allow manual queue reordering with move up / move down actions.
-- Queue UX: add a fast action like right-click -> `Make next in queue` on any queued training item.
-- Queue UX: on completed training items, add a right-click action like `Show in folder` / `Reveal output` directly from the queue row.
-- Training safety: add an explicit `Emergency stop` / hard kill action with a warning that it may leave an incomplete training run on disk. If possible, do not promote or write the final `.nam` into the user-facing destination folder when a run is hard-stopped.
-- Training formats: allow multi-select architectures / presets and generate the cross product of selected output WAVs and selected formats when queueing jobs.
-- Training presets: move away from relying on locally customized `core.py` architectures by adding NAM Lab-owned training presets / recipe definitions for formats like `standard`, `complex`, `revyhi`, `revxstd`, and future custom variants.
-- Research / implement trainer `threshold_esr` support as an optional stop-when-good-enough target. Official NAM `train()` already exposes `threshold_esr` and wires it into `_ValidationStopping(monitor=\"ESR\", stopping_threshold=threshold_esr)`.
+- Queue UX: support drag-and-drop queue reordering in addition to move up / move down controls.
+- Training presets: expand the first-pass NAM Lab-owned presets into saved or importable recipe definitions so we do not rely on locally customized `core.py` architectures for formats like `complex`, `revyhi`, `revxstd`, and future custom variants.
+- Training ESR target: build on the first-pass `threshold_esr` support with clearer guidance, preset defaults, and queue-level visibility for stop-when-good-enough behavior.
+- Training history: persist processed training runs, with a way to review and export them later instead of keeping queue state only in memory.
+- Training verification report: scan a folder of WAVs / trained models and verify expected outputs, ESR targets, epochs, and architectures against watch or preset expectations.
+- Training workflow: consider a higher-level `job / batch` concept later, so one queued item can represent a multi-format set while watcher mode remains a separate automation layer.
+- Training workspace isolation: give each capture/format run its own internal work folder for Lightning logs, checkpoints, and graphs, then promote only the final user-facing assets back to the chosen destination.
 
 ## Metadata suggestions and organization
 

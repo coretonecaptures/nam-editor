@@ -115,6 +115,12 @@ const api = {
     ipcRenderer.invoke('trainer:clearFinished'),
   removeQueuedTrainerRuns: (): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('trainer:removeQueued'),
+  removeTrainerJob: (jobId: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('trainer:removeJob', jobId),
+  moveTrainerJob: (jobId: string, direction: 'up' | 'down'): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('trainer:moveJob', jobId, direction),
+  makeTrainerJobNext: (jobId: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('trainer:makeNext', jobId),
   onTrainerUpdate: (cb: (state: TrainerStateSnapshot) => void): (() => void) => {
     const handler = (_event: unknown, state: TrainerStateSnapshot) => cb(state)
     ipcRenderer.on('trainer:update', handler)

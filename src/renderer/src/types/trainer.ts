@@ -11,6 +11,21 @@ export const TRAINER_ARCHITECTURES = [
 
 export type TrainerArchitecture = typeof TRAINER_ARCHITECTURES[number]
 
+export interface TrainerPresetDefinition {
+  id: string
+  label: string
+  architecture: TrainerArchitecture
+  epochs: number
+  thresholdEsr: number | null
+}
+
+export const TRAINER_PRESETS: TrainerPresetDefinition[] = [
+  { id: 'standard', label: 'Standard', architecture: 'standard', epochs: 1000, thresholdEsr: null },
+  { id: 'complex', label: 'Complex', architecture: 'complex', epochs: 1000, thresholdEsr: null },
+  { id: 'revyhi', label: 'REVyHI', architecture: 'revyhi', epochs: 1500, thresholdEsr: null },
+  { id: 'revxstd', label: 'REVxSTD', architecture: 'revxstd', epochs: 1000, thresholdEsr: null },
+] as const
+
 export interface TrainerStartPayload {
   pythonPath: string
   inputPath: string
@@ -19,6 +34,7 @@ export interface TrainerStartPayload {
   architecture: TrainerArchitecture
   epochs: number
   latency: number | null
+  thresholdEsr: number | null
   savePlot: boolean
   silent: boolean
   ignoreChecks: boolean
@@ -37,6 +53,7 @@ export interface TrainerQueueJob {
   architecture: TrainerArchitecture
   epochs: number
   latency: number | null
+  thresholdEsr: number | null
   savePlot: boolean
   silent: boolean
   ignoreChecks: boolean
@@ -67,6 +84,7 @@ export interface TrainerStateSnapshot {
   architecture: TrainerArchitecture | ''
   epochs: number | null
   latency: number | null
+  thresholdEsr: number | null
   modelName: string
   outputModelPath: string
   checkpointModelPath: string
@@ -101,6 +119,7 @@ export const IDLE_TRAINER_STATE: TrainerStateSnapshot = {
   architecture: '',
   epochs: null,
   latency: null,
+  thresholdEsr: null,
   modelName: '',
   outputModelPath: '',
   checkpointModelPath: '',

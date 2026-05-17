@@ -3,6 +3,7 @@ import type { AppSettings } from '../types/settings'
 import {
   IDLE_TRAINER_STATE,
   TRAINER_ARCHITECTURES,
+  TRAINER_PRESETS,
   type TrainerArchitecture,
   type TrainerQueueJob,
   type TrainerStateSnapshot,
@@ -25,6 +26,8 @@ const ARCHITECTURE_LABELS: Record<TrainerArchitecture, string> = {
   revxstd: 'REVxSTD',
 }
 
+const CUSTOM_PRESET_ID = 'custom'
+
 function architectureEpochNote(architecture: TrainerArchitecture): string | null {
   if (architecture === 'complex') return 'Official trainer uses its recommended Complex learning settings.'
   if (architecture === 'revyhi') return 'Official trainer forces the author-recommended REVyHI defaults, including 1500 epochs.'
@@ -36,6 +39,10 @@ function effectiveEpochTotal(architecture: TrainerArchitecture | '', configured:
   if (architecture === 'revyhi') return 1500
   if (architecture === 'revxstd') return 1000
   return configured
+}
+
+function formatThresholdEsr(value: number | null): string {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '') : ''
 }
 
 function getEsrTone(esr: number | null): { text: string; classes: string } {
@@ -55,14 +62,17 @@ export function TrainingPanel({ settings, onSaveSettings, onClose }: Props) {
   const [inputPath, setInputPath] = useState(settings.namTrainingInputWav || '')
   const [outputPaths, setOutputPaths] = useState<string[]>([])
   const [trainPath, setTrainPath] = useState('')
+  const [selectedPresetId, setSelectedPresetId] = useState<string>(CUSTOM_PRESET_ID)
   const [architectures, setArchitectures] = useState<TrainerArchitecture[]>(['standard'])
   const [epochs, setEpochs] = useState('1000')
   const [latency, setLatency] = useState('')
+  const [thresholdEsr, setThresholdEsr] = useState('')
   const [savePlot, setSavePlot] = useState(true)
   const [silent, setSilent] = useState(false)
   const [ignoreChecks, setIgnoreChecks] = useState(false)
   const [launchError, setLaunchError] = useState('')
   const [trainerState, setTrainerState] = useState<TrainerStateSnapshot>(IDLE_TRAINER_STATE)
+  const [queueContextMenu, setQueueContextMenu] = useState<{ job: TrainerQueueJob; x: number; y: number } | null>(null)
   const rawLogRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -86,6 +96,22 @@ export function TrainingPanel({ settings, onSaveSettings, onClose }: Props) {
     if (!node) return
     node.scrollTop = node.scrollHeight
   }, [trainerState.logs.length])
+
+  useEffect(() => {
+    if (!queueContextMenu) return
+    const close = () => setQueueContextMenu(null)
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close()
+    }
+    window.addEventListener('mousedown', close)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [queueContextMenu])
 
   const isRunning = trainerState.status === 'starting' || trainerState.status === 'running'
   const activeJob = trainerState.activeJobId ? trainerState.queue.find((job) => job.jobId === trainerState.activeJobId) ?? null : null
@@ -130,16 +156,31 @@ export function TrainingPanel({ settings, onSaveSettings, onClose }: Props) {
     }
   }
 
+  const applyPreset = (presetId: string) => {
+    setSelectedPresetId(presetId)
+    if (presetId === CUSTOM_PRESET_ID) return
+    const preset = TRAINER_PRESETS.find((item) => item.id === presetId)
+    if (!preset) return
+    setArchitectures([preset.architecture])
+    if (!epochs.trim()) setEpochs(String(preset.epochs))
+    if (!thresholdEsr.trim() && preset.thresholdEsr != null) setThresholdEsr(formatThresholdEsr(preset.thresholdEsr))
+  }
+
   const handleQueue = async () => {
     setLaunchError('')
     const parsedEpochs = Number.parseInt(epochs, 10)
     const parsedLatency = latency.trim() === '' ? null : Number.parseInt(latency.trim(), 10)
+    const parsedThresholdEsr = thresholdEsr.trim() === '' ? null : Number.parseFloat(thresholdEsr.trim())
     if (!Number.isFinite(parsedEpochs) || parsedEpochs <= 0) {
       setLaunchError('Epochs must be a positive whole number.')
       return
     }
     if (latency.trim() !== '' && (!Number.isFinite(parsedLatency) || parsedLatency! < 0)) {
       setLaunchError('Latency must be blank or a non-negative integer sample offset.')
+      return
+    }
+    if (thresholdEsr.trim() !== '' && (!Number.isFinite(parsedThresholdEsr) || parsedThresholdEsr! <= 0)) {
+      setLaunchError('Target ESR must be blank or a positive number.')
       return
     }
 
@@ -153,6 +194,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose }: Props) {
           architecture,
           epochs: parsedEpochs,
           latency: parsedLatency,
+          thresholdEsr: parsedThresholdEsr,
           savePlot,
           silent,
           ignoreChecks,
@@ -169,6 +211,34 @@ export function TrainingPanel({ settings, onSaveSettings, onClose }: Props) {
   const queuedCount = trainerState.queue.filter((job) => job.status === 'queued').length
   const successCount = trainerState.queue.filter((job) => job.status === 'success').length
   const failedCount = trainerState.queue.filter((job) => job.status === 'error').length
+
+  const handleRemoveJob = async (job: TrainerQueueJob) => {
+    const result = await window.api.removeTrainerJob(job.jobId)
+    if (!result.success) {
+      setLaunchError(result.error ?? 'Could not remove that training queue item.')
+    }
+  }
+
+  const handleMoveJob = async (job: TrainerQueueJob, direction: 'up' | 'down') => {
+    const result = await window.api.moveTrainerJob(job.jobId, direction)
+    if (!result.success) {
+      setLaunchError(result.error ?? `Could not move that training queue item ${direction}.`)
+    }
+  }
+
+  const handleMakeNext = async (job: TrainerQueueJob) => {
+    const result = await window.api.makeTrainerJobNext(job.jobId)
+    if (!result.success) {
+      setLaunchError(result.error ?? 'Could not move that training queue item to the front.')
+    }
+  }
+
+  const handleShowQueueItemInFolder = (job: TrainerQueueJob) => {
+    if (job.outputModelPath) {
+      window.api.revealFile(job.outputModelPath)
+    }
+    setQueueContextMenu(null)
+  }
 
   return (
     <div className="h-full overflow-y-auto">
@@ -255,11 +325,29 @@ export function TrainingPanel({ settings, onSaveSettings, onClose }: Props) {
               />
             </Field>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <Field label="Preset">
+                <select
+                  value={selectedPresetId}
+                  onChange={(e) => applyPreset(e.target.value)}
+                  className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                >
+                  <option value={CUSTOM_PRESET_ID}>Custom</option>
+                  {TRAINER_PRESETS.map((preset) => (
+                    <option key={preset.id} value={preset.id}>
+                      {preset.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
               <Field label="Architecture(s)">
                 <ArchitectureMultiSelect
                   values={architectures}
-                  onChange={setArchitectures}
+                  onChange={(next) => {
+                    setArchitectures(next)
+                    setSelectedPresetId(CUSTOM_PRESET_ID)
+                  }}
                 />
               </Field>
 
@@ -271,11 +359,24 @@ export function TrainingPanel({ settings, onSaveSettings, onClose }: Props) {
                 />
               </Field>
 
-              <Field label="Latency" hint="Leave blank to let NAM auto-detect">
+              <Field label="Latency">
                 <input
                   value={latency}
                   onChange={(e) => setLatency(e.target.value)}
                   placeholder="Auto"
+                  title="Leave blank to let NAM auto-detect the sample offset between the DI and the captured output."
+                  className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                />
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <Field label="Target ESR">
+                <input
+                  value={thresholdEsr}
+                  onChange={(e) => setThresholdEsr(e.target.value)}
+                  placeholder="Optional"
+                  title="Optional early-stop target. NAM training will stop once validation ESR reaches or beats this value."
                   className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
                 />
               </Field>
@@ -296,6 +397,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose }: Props) {
             <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 px-3 py-3 text-xs text-gray-600 dark:text-gray-400 space-y-1">
               <div><span className="font-medium text-gray-700 dark:text-gray-300">Selected WAVs:</span> <code>{outputPaths.length}</code></div>
               <div><span className="font-medium text-gray-700 dark:text-gray-300">Selected architectures:</span> <code>{architectures.length}</code></div>
+              <div><span className="font-medium text-gray-700 dark:text-gray-300">Target ESR:</span> <code>{thresholdEsr.trim() || 'Off'}</code></div>
               <div><span className="font-medium text-gray-700 dark:text-gray-300">Example output model name:</span> <code>{resolvedModelName}</code></div>
               <div><span className="font-medium text-gray-700 dark:text-gray-300">Example final file:</span> <code>{trainPath ? `${trainPath.replace(/\\/g, '/')}/Standard/${resolvedModelName}.nam` : `Standard/${resolvedModelName}.nam`}</code></div>
               <div className="text-[11px] text-gray-500 dark:text-gray-500">
@@ -318,7 +420,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose }: Props) {
               >
                 {(() => {
                   const totalJobs = outputPaths.length * architectures.length
-                  return totalJobs === 1 ? 'Queue job' : `Queue ${totalJobs} jobs`
+                  return totalJobs === 1 ? 'Queue capture' : `Queue ${totalJobs} captures`
                 })()}
               </button>
               <button
@@ -327,9 +429,10 @@ export function TrainingPanel({ settings, onSaveSettings, onClose }: Props) {
                   if (!result.success) setLaunchError(result.error ?? 'Could not cancel the active training run.')
                 }}
                 disabled={!isRunning}
-                className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-red-500/20 disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
+                title="Hard-stop the current training run. NAM Lab will avoid promoting the final .nam when this is used."
+                className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-red-500/15 hover:bg-red-500/25 disabled:opacity-50 disabled:cursor-not-allowed text-red-700 dark:text-red-300"
               >
-                Cancel current
+                Emergency stop
               </button>
               <button
                 onClick={async () => { await window.api.setTrainerPauseAfterCurrent(!trainerState.pauseAfterCurrent) }}
@@ -402,6 +505,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose }: Props) {
                         {validationEsrTone.text}
                       </span>
                     </div>
+                  )}
+                  {typeof trainerState.thresholdEsr === 'number' && (
+                    <div>Target ESR: {trainerState.thresholdEsr}</div>
                   )}
                 </div>
               )}
@@ -487,18 +593,42 @@ export function TrainingPanel({ settings, onSaveSettings, onClose }: Props) {
                 <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-800 text-xs font-medium text-gray-700 dark:text-gray-300">
                   Queue
                 </div>
-                <div className="max-h-[320px] overflow-y-auto">
+                <div>
                   {trainerState.queue.length === 0 ? (
                     <div className="px-3 py-3 text-xs text-gray-500 dark:text-gray-500">Queued jobs will show up here.</div>
                   ) : (
                     <div className="divide-y divide-gray-200 dark:divide-gray-800">
                       {trainerState.queue.map((job) => (
-                        <QueueRow key={job.jobId} job={job} isActive={job.jobId === trainerState.activeJobId} />
+                        <QueueRow
+                          key={job.jobId}
+                          job={job}
+                          isActive={job.jobId === trainerState.activeJobId}
+                          onRemove={handleRemoveJob}
+                          onMove={handleMoveJob}
+                          onMakeNext={handleMakeNext}
+                          onContextMenu={(context) => setQueueContextMenu(context)}
+                        />
                       ))}
                     </div>
                   )}
                 </div>
               </div>
+
+              {queueContextMenu && (
+                <div
+                  className="fixed z-50 min-w-[180px] rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-xl overflow-hidden"
+                  style={{ left: queueContextMenu.x, top: queueContextMenu.y }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
+                  <button
+                    onClick={() => handleShowQueueItemInFolder(queueContextMenu.job)}
+                    disabled={queueContextMenu.job.status !== 'success' || !queueContextMenu.job.outputModelPath}
+                    className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Show in folder
+                  </button>
+                </div>
+              )}
 
               <details open className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-950 text-gray-100">
                 <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-gray-200">
@@ -674,8 +804,23 @@ function StatusPill({ status }: { status: TrainerStateSnapshot['status'] }) {
   )
 }
 
-function QueueRow({ job, isActive }: { job: TrainerQueueJob; isActive: boolean }) {
+function QueueRow({
+  job,
+  isActive,
+  onRemove,
+  onMove,
+  onMakeNext,
+  onContextMenu,
+}: {
+  job: TrainerQueueJob
+  isActive: boolean
+  onRemove: (job: TrainerQueueJob) => void | Promise<void>
+  onMove: (job: TrainerQueueJob, direction: 'up' | 'down') => void | Promise<void>
+  onMakeNext: (job: TrainerQueueJob) => void | Promise<void>
+  onContextMenu: (context: { job: TrainerQueueJob; x: number; y: number }) => void
+}) {
   const esrTone = getEsrTone(job.validationEsr)
+  const isQueued = job.status === 'queued'
   const statusClasses =
     job.status === 'success'
       ? 'text-emerald-700 dark:text-emerald-300'
@@ -688,25 +833,79 @@ function QueueRow({ job, isActive }: { job: TrainerQueueJob; isActive: boolean }
             : 'text-gray-700 dark:text-gray-300'
 
   return (
-    <div className={`px-3 py-2 text-xs ${isActive ? 'bg-indigo-500/10' : ''}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="font-medium text-gray-800 dark:text-gray-200 break-all">
-            {job.outputPath.replace(/\\/g, '/').split('/').pop()}
-          </div>
-          <div className="mt-0.5 text-gray-500 dark:text-gray-500 break-all">
-            {job.modelName}
+    <div
+      className={`px-3 py-2 text-xs ${isActive ? 'bg-indigo-500/10' : ''}`}
+      onContextMenu={(event) => {
+        event.preventDefault()
+        onContextMenu({ job, x: event.clientX, y: event.clientY })
+      }}
+    >
+      <div className="flex items-center gap-3">
+        <div className="flex flex-col gap-1">
+          <button
+            onClick={() => { void onMove(job, 'up') }}
+            disabled={!isQueued}
+            title="Move up"
+            className="w-5 h-5 rounded border border-gray-300 dark:border-gray-700 text-[10px] text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            ▲
+          </button>
+          <button
+            onClick={() => { void onMove(job, 'down') }}
+            disabled={!isQueued}
+            title="Move down"
+            className="w-5 h-5 rounded border border-gray-300 dark:border-gray-700 text-[10px] text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            ▼
+          </button>
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="font-medium text-gray-800 dark:text-gray-200 truncate">
+                {job.outputPath.replace(/\\/g, '/').split('/').pop()}
+              </div>
+              <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-500 dark:text-gray-500">
+                <span>{ARCHITECTURE_LABELS[job.architecture]}</span>
+                <span>Attempt {job.attempts}</span>
+                {typeof job.progressPercent === 'number' && <span>{job.progressPercent.toFixed(1)}%</span>}
+                {typeof job.validationEsr === 'number' && <span className={esrTone.classes}>ESR {esrTone.text}</span>}
+                {typeof job.thresholdEsr === 'number' && <span>Target {job.thresholdEsr}</span>}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className={`font-semibold whitespace-nowrap ${statusClasses}`}>
+                {job.status.toUpperCase()}
+              </div>
+              {isQueued && (
+                <button
+                  onClick={() => { void onMakeNext(job) }}
+                  className="px-2 py-1 rounded-md border border-indigo-300 dark:border-indigo-700 text-[11px] text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 whitespace-nowrap"
+                >
+                  Next
+                </button>
+              )}
+              {job.status === 'success' && !!job.outputModelPath && (
+                <button
+                  onClick={() => window.api.revealFile(job.outputModelPath)}
+                  className="px-2 py-1 rounded-md border border-gray-300 dark:border-gray-700 text-[11px] text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 whitespace-nowrap"
+                >
+                  Show
+                </button>
+              )}
+              {!isActive && (
+                <button
+                  onClick={() => { void onRemove(job) }}
+                  title="Remove from queue"
+                  className="w-6 h-6 rounded-md border border-red-300 dark:border-red-800 bg-red-500/10 text-red-700 dark:text-red-300 hover:bg-red-500/20"
+                >
+                  ×
+                </button>
+              )}
+            </div>
           </div>
         </div>
-        <div className={`font-semibold whitespace-nowrap ${statusClasses}`}>
-          {job.status.toUpperCase()}
-        </div>
-      </div>
-      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-500 dark:text-gray-500">
-        <span>{ARCHITECTURE_LABELS[job.architecture]}</span>
-        <span>Attempt {job.attempts}</span>
-        {typeof job.progressPercent === 'number' && <span>{job.progressPercent.toFixed(1)}%</span>}
-        {typeof job.validationEsr === 'number' && <span className={esrTone.classes}>ESR {esrTone.text}</span>}
       </div>
       {!!job.error && (
         <div className="mt-1 text-[11px] text-red-700 dark:text-red-300 break-words">
