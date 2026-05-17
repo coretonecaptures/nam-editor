@@ -199,6 +199,11 @@ export interface AppSettings {
   // NAM Standalone
   namStandalonePath: string
 
+  // Experimental local NAM training
+  enableExperimentalTraining: boolean
+  namPythonPath: string
+  namTrainingInputWav: string
+
   // Import: comma-separated suffix words that trigger prefix matching (e.g. "DI,DI2")
   importPrefixSuffixes: string
 
@@ -270,6 +275,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showFolderImages: true,
   checkForRCBuilds: false,
   namStandalonePath: '',
+  enableExperimentalTraining: false,
+  namPythonPath: '',
+  namTrainingInputWav: '',
   importPrefixSuffixes: 'DI',
   packGearCatalog: [],
   packChecklistTemplate: cloneChecklistTemplate(DEFAULT_PACK_CHECKLIST_TEMPLATE),

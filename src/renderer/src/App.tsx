@@ -23,6 +23,7 @@ import { FolderDashboard } from './components/FolderDashboard'
 import { FolderReadmePanel } from './components/FolderReadmePanel'
 import { PackInfoEditor, type DeliveryMatrixData, type PackInfo, type PackChecklistItem } from './components/PackInfoEditor'
 import { PackTargetsEditor } from './components/PackTargetsEditor'
+import { TrainingPanel } from './components/TrainingPanel'
 import { FolderSuggestRulesModal } from './components/FolderSuggestRulesModal'
 import { BundleEditor } from './components/BundleEditor'
 import { NamDashboard } from './components/NamDashboard'
@@ -33,6 +34,7 @@ import * as XLSX from 'xlsx'
 import { buildMetadataSuggestionMatches, MetadataSuggestionMatch } from './utils/metadataSuggest'
 import { cloneMetadataSuggestRule, isMetadataSuggestRuleComplete, isMetadataSuggestRuleLibraryCandidate, metadataSuggestRuleSignature } from './utils/metadataSuggestRuleLibrary'
 import { detectPreset } from './utils/detectPreset'
+import type { TrainerStartPayload, TrainerStateSnapshot } from './types/trainer'
 
 export interface HistoryEntry {
   id: string
@@ -258,6 +260,8 @@ declare global {
       openFiles: () => Promise<string[]>
       openFolder: (defaultPath?: string) => Promise<string | null>
       openImportFile: () => Promise<string | null>
+      openAudioFile: () => Promise<string | null>
+      openAudioFiles: () => Promise<string[]>
       openImageFile: () => Promise<string | null>
       readFileBinary: (filePath: string) => Promise<{ data?: string; error?: string }>
       hashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
@@ -307,6 +311,15 @@ declare global {
       showMessageBox: (options: { type?: 'none' | 'info' | 'error' | 'question' | 'warning'; title?: string; message: string; detail?: string; buttons: string[]; defaultId?: number; cancelId?: number; noLink?: boolean }) => Promise<{ response: number }>
       detectNamPlayer: () => Promise<boolean>
       browseExecutable: () => Promise<string | null>
+      getTrainerState: () => Promise<TrainerStateSnapshot>
+      startTrainerRun: (payload: TrainerStartPayload) => Promise<{ success: boolean; error?: string }>
+      enqueueTrainerRuns: (payloads: TrainerStartPayload[]) => Promise<{ success: boolean; error?: string; queued?: number }>
+      cancelTrainerRun: () => Promise<{ success: boolean; error?: string }>
+      setTrainerPauseAfterCurrent: (pause: boolean) => Promise<{ success: boolean }>
+      retryFailedTrainerRuns: () => Promise<{ success: boolean; retried?: number }>
+      clearFinishedTrainerRuns: () => Promise<{ success: boolean }>
+      removeQueuedTrainerRuns: () => Promise<{ success: boolean }>
+      onTrainerUpdate: (cb: (state: TrainerStateSnapshot) => void) => () => void
       openInNam: (filePath: string, standalonePath: string) => Promise<{ success: boolean; error?: string }>
       scanImages: (folderPath: string) => Promise<{ success: boolean; images: string[] }>
       findPackOwner: (folderPath: string, rootPath: string) => Promise<string | null>
@@ -449,6 +462,7 @@ export default function App() {
   const folderWatchBatchTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const [batchFolder, setBatchFolder] = useState<{ path: string | null; name: string; filePaths?: string[] } | null>(null)
   const [showSettings, setShowSettings] = useState(false)
+  const [selectedFilePanelTab, setSelectedFilePanelTab] = useState<'metadata' | 'training'>('metadata')
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
   const [namPlayerDetected, setNamPlayerDetected] = useState(false)
   const [librarian, setLibrarian] = useState<LibrarianState>(EMPTY_LIBRARIAN)
@@ -523,6 +537,7 @@ export default function App() {
   const suppressStartupAutoSelectRef = useRef(settings.showDashboardOnLaunch)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [showToneStore, setShowToneStore] = useState(false)
+  const [showTrainingWorkspace, setShowTrainingWorkspace] = useState(false)
   const [toneStoreMounted, setToneStoreMounted] = useState(false)
   const [toneStoreQueueJob, setToneStoreQueueJob] = useState<ToneStoreDownloadQueueJob | null>(null)
   const toneStoreQueueRunningRef = useRef(false)
@@ -770,6 +785,18 @@ export default function App() {
       toneStoreQueueRunningRef.current = false
     })
   }, [runToneStoreQueueStep, toneStoreQueueJob])
+
+  useEffect(() => {
+    if (!settings.enableExperimentalTraining && selectedFilePanelTab === 'training') {
+      setSelectedFilePanelTab('metadata')
+    }
+  }, [settings.enableExperimentalTraining, selectedFilePanelTab])
+
+  useEffect(() => {
+    if (!settings.enableExperimentalTraining && showTrainingWorkspace) {
+      setShowTrainingWorkspace(false)
+    }
+  }, [settings.enableExperimentalTraining, showTrainingWorkspace])
 
   // Reset folder panel tab and check for pack-owning ancestor when selected folder changes
   useEffect(() => {
@@ -3440,6 +3467,27 @@ export default function App() {
   })
 
   const selectedFiles = visibleFiles.filter((f) => selectedIds.has(f.filePath))
+
+  const handleOpenExperimentalTraining = () => {
+    setShowSettings(false)
+    setShowDashboard(false)
+    setHistoryOpen(false)
+    setShowToneStore(false)
+    setBatchFolder(null)
+    setShowTrainingWorkspace(true)
+
+    if (!settings.enableExperimentalTraining) {
+      setStatus({ message: 'Enable Experimental Local Training in Settings first.', type: 'info' })
+      return
+    }
+    setStatus({ message: 'Opened the experimental training workspace.', type: 'info' })
+  }
+
+  useEffect(() => {
+    if (selectedFiles.length !== 1 && selectedFilePanelTab === 'training') {
+      setSelectedFilePanelTab('metadata')
+    }
+  }, [selectedFiles.length, selectedFilePanelTab])
   const showToneStorePanel = showToneStore && !showSettings && !showDashboard && !historyOpen && batchFolder === null
 
   useEffect(() => {
@@ -3539,6 +3587,7 @@ export default function App() {
           setShowSettings((s) => !s)
           setBatchFolder(null)
           setShowToneStore(false)
+          setShowTrainingWorkspace(false)
           if (gridMaximized) setGridSlideOpen(true)
         }}
         unnamedCount={unnamedCount}
@@ -3551,6 +3600,8 @@ export default function App() {
         onOpenRecentFolder={(path) => loadFolderByPath(path)}
         onFindDuplicates={files.length > 0 ? () => { setDuplicatesScopeFolder(null); setShowDuplicates(true) } : undefined}
         onOpenLibraryCleanup={handleOpenLibraryCleanup}
+        showExperimentalTraining={settings.enableExperimentalTraining}
+        onOpenExperimentalTraining={handleOpenExperimentalTraining}
         showDashboard={files.length > 0}
         dashboardActive={showDashboard}
         onToggleDashboard={() => {
@@ -3558,6 +3609,7 @@ export default function App() {
           setHistoryOpen(false)
           setShowSettings(false)
           setShowToneStore(false)
+          setShowTrainingWorkspace(false)
           setBatchFolder(null)
         }}
         historyOpen={historyOpen}
@@ -3566,6 +3618,7 @@ export default function App() {
           setShowDashboard(false)
           setShowSettings(false)
           setShowToneStore(false)
+          setShowTrainingWorkspace(false)
           setBatchFolder(null)
         }}
         toneStoreActive={showToneStorePanel}
@@ -3574,6 +3627,7 @@ export default function App() {
           setShowDashboard(false)
           setHistoryOpen(false)
           setShowSettings(false)
+          setShowTrainingWorkspace(false)
           setBatchFolder(null)
         }}
         helpOpen={helpView !== null}
@@ -3866,7 +3920,13 @@ export default function App() {
           )}
           {showSettings ? (
             <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} />
-          ) : showToneStorePanel ? null : showDashboard ? (
+          ) : showToneStorePanel ? null : showTrainingWorkspace ? (
+            <TrainingPanel
+              settings={settings}
+              onSaveSettings={handleSaveSettings}
+              onClose={() => setShowTrainingWorkspace(false)}
+            />
+          ) : showDashboard ? (
             <NamDashboard
               files={files}
               packChecklistRollup={dashboardChecklistEntries}
@@ -3954,52 +4014,127 @@ export default function App() {
               gearModelSuggestions={gearModelSuggestions}
             />
           ) : selectedFiles.length === 1 ? (
-            <MetadataEditor
-              key={selectedFiles[0].filePath}
-              file={selectedFiles[0]}
-              coverImagePath={metadataCoverPath}
-              onChange={(m) => handleMetadataChange(selectedFiles[0].filePath, m)}
-              onSave={() => handleSave(selectedFiles[0].filePath)}
-              onSaveAndAdvance={() => handleSaveAndAdvance(selectedFiles[0].filePath)}
-              onRevert={() => {
-                const f = selectedFiles[0]
-                setFiles((prev) => prev.map((x) =>
-                  x.filePath === f.filePath
-                    ? { ...x, metadata: { ...x.originalMetadata }, isDirty: false, autoFilledFields: [] }
-                    : x
-                ))
-              }}
-              onRevealInFinder={() => window.api.revealFile(selectedFiles[0].filePath)}
-              renameTemplate={settings.renameTemplate}
-              onRenameFile={handleRenameFile}
-              gearMakeSuggestions={gearMakeSuggestions}
-              gearModelSuggestions={gearModelSuggestions}
-              showNamLabFields={settings.showNamLabFields}
-              hasActiveDefaults={
-                settings.enableAmpInfo ||
-                settings.enableCaptureDefaults ||
-                settings.populateNameFromFilename ||
-                settings.autoDetectToneType ||
-                !!settings.ampSuffix
-              }
-              onReapplyDefaults={() => {
-                const f = selectedFiles[0]
-                const baseName = f.fileName.replace(/\.nam$/i, '')
-                const currentMeta = f.metadata
-                const newMeta = applyDefaults(currentMeta, baseName, settings)
-                const newAutoFilled = (Object.keys(newMeta) as (keyof NamFile['metadata'])[]).filter(
-                  (k) => newMeta[k] != null && (currentMeta[k] == null || currentMeta[k] === '') && !f.autoFilledFields.includes(k)
-                )
-                const allAutoFilled = [...f.autoFilledFields, ...newAutoFilled]
-                const wasChanged = JSON.stringify(newMeta) !== JSON.stringify(f.originalMetadata)
-                setFiles((prev) => prev.map((x) =>
-                  x.filePath === f.filePath
-                    ? { ...x, metadata: newMeta, isDirty: wasChanged, autoFilledFields: allAutoFilled }
-                    : x
-                ))
-              }}
-              onClearSuggestions={() => handleClearSuggestionsForFile(selectedFiles[0].filePath)}
-            />
+            settings.enableExperimentalTraining ? (
+              <div className="h-full flex flex-col">
+                <div className="flex border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+                  {(['metadata', 'training'] as const).map((tab) => (
+                    <button
+                      key={tab}
+                      onClick={() => setSelectedFilePanelTab(tab)}
+                      className={`px-4 py-2 text-xs font-medium transition-colors border-b-2 -mb-px ${
+                        selectedFilePanelTab === tab
+                          ? 'border-teal-500 text-teal-600 dark:text-teal-400'
+                          : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                      }`}
+                    >
+                      {tab === 'metadata' ? 'Metadata' : 'Training'}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex-1 overflow-hidden">
+                  {selectedFilePanelTab === 'training' ? (
+                    <TrainingPanel
+                      settings={settings}
+                      onSaveSettings={handleSaveSettings}
+                    />
+                  ) : (
+                    <MetadataEditor
+                      key={selectedFiles[0].filePath}
+                      file={selectedFiles[0]}
+                      coverImagePath={metadataCoverPath}
+                      onChange={(m) => handleMetadataChange(selectedFiles[0].filePath, m)}
+                      onSave={() => handleSave(selectedFiles[0].filePath)}
+                      onSaveAndAdvance={() => handleSaveAndAdvance(selectedFiles[0].filePath)}
+                      onRevert={() => {
+                        const f = selectedFiles[0]
+                        setFiles((prev) => prev.map((x) =>
+                          x.filePath === f.filePath
+                            ? { ...x, metadata: { ...x.originalMetadata }, isDirty: false, autoFilledFields: [] }
+                            : x
+                        ))
+                      }}
+                      onRevealInFinder={() => window.api.revealFile(selectedFiles[0].filePath)}
+                      renameTemplate={settings.renameTemplate}
+                      onRenameFile={handleRenameFile}
+                      gearMakeSuggestions={gearMakeSuggestions}
+                      gearModelSuggestions={gearModelSuggestions}
+                      showNamLabFields={settings.showNamLabFields}
+                      hasActiveDefaults={
+                        settings.enableAmpInfo ||
+                        settings.enableCaptureDefaults ||
+                        settings.populateNameFromFilename ||
+                        settings.autoDetectToneType ||
+                        !!settings.ampSuffix
+                      }
+                      onReapplyDefaults={() => {
+                        const f = selectedFiles[0]
+                        const baseName = f.fileName.replace(/\.nam$/i, '')
+                        const currentMeta = f.metadata
+                        const newMeta = applyDefaults(currentMeta, baseName, settings)
+                        const newAutoFilled = (Object.keys(newMeta) as (keyof NamFile['metadata'])[]).filter(
+                          (k) => newMeta[k] != null && (currentMeta[k] == null || currentMeta[k] === '') && !f.autoFilledFields.includes(k)
+                        )
+                        const allAutoFilled = [...f.autoFilledFields, ...newAutoFilled]
+                        const wasChanged = JSON.stringify(newMeta) !== JSON.stringify(f.originalMetadata)
+                        setFiles((prev) => prev.map((x) =>
+                          x.filePath === f.filePath
+                            ? { ...x, metadata: newMeta, isDirty: wasChanged, autoFilledFields: allAutoFilled }
+                            : x
+                        ))
+                      }}
+                      onClearSuggestions={() => handleClearSuggestionsForFile(selectedFiles[0].filePath)}
+                    />
+                  )}
+                </div>
+              </div>
+            ) : (
+              <MetadataEditor
+                key={selectedFiles[0].filePath}
+                file={selectedFiles[0]}
+                coverImagePath={metadataCoverPath}
+                onChange={(m) => handleMetadataChange(selectedFiles[0].filePath, m)}
+                onSave={() => handleSave(selectedFiles[0].filePath)}
+                onSaveAndAdvance={() => handleSaveAndAdvance(selectedFiles[0].filePath)}
+                onRevert={() => {
+                  const f = selectedFiles[0]
+                  setFiles((prev) => prev.map((x) =>
+                    x.filePath === f.filePath
+                      ? { ...x, metadata: { ...x.originalMetadata }, isDirty: false, autoFilledFields: [] }
+                      : x
+                  ))
+                }}
+                onRevealInFinder={() => window.api.revealFile(selectedFiles[0].filePath)}
+                renameTemplate={settings.renameTemplate}
+                onRenameFile={handleRenameFile}
+                gearMakeSuggestions={gearMakeSuggestions}
+                gearModelSuggestions={gearModelSuggestions}
+                showNamLabFields={settings.showNamLabFields}
+                hasActiveDefaults={
+                  settings.enableAmpInfo ||
+                  settings.enableCaptureDefaults ||
+                  settings.populateNameFromFilename ||
+                  settings.autoDetectToneType ||
+                  !!settings.ampSuffix
+                }
+                onReapplyDefaults={() => {
+                  const f = selectedFiles[0]
+                  const baseName = f.fileName.replace(/\.nam$/i, '')
+                  const currentMeta = f.metadata
+                  const newMeta = applyDefaults(currentMeta, baseName, settings)
+                  const newAutoFilled = (Object.keys(newMeta) as (keyof NamFile['metadata'])[]).filter(
+                    (k) => newMeta[k] != null && (currentMeta[k] == null || currentMeta[k] === '') && !f.autoFilledFields.includes(k)
+                  )
+                  const allAutoFilled = [...f.autoFilledFields, ...newAutoFilled]
+                  const wasChanged = JSON.stringify(newMeta) !== JSON.stringify(f.originalMetadata)
+                  setFiles((prev) => prev.map((x) =>
+                    x.filePath === f.filePath
+                      ? { ...x, metadata: newMeta, isDirty: wasChanged, autoFilledFields: allAutoFilled }
+                      : x
+                  ))
+                }}
+                onClearSuggestions={() => handleClearSuggestionsForFile(selectedFiles[0].filePath)}
+              />
+            )
           ) : selectedFiles.length > 1 ? (
             <MultiSelectEditor
               files={selectedFiles}

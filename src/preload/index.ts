@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import fs from 'fs'
 import path from 'path'
+import type { TrainerStartPayload, TrainerStateSnapshot } from '../renderer/src/types/trainer'
 
 // Read settings.json from userData synchronously so the renderer has settings
 // available immediately — no async flash, no re-render on load.
@@ -15,6 +16,8 @@ const api = {
   openFiles: (): Promise<string[]> => ipcRenderer.invoke('dialog:openFiles'),
   openFolder: (defaultPath?: string): Promise<string | null> => ipcRenderer.invoke('dialog:openFolder', defaultPath),
   openImportFile: (): Promise<string | null> => ipcRenderer.invoke('dialog:openImportFile'),
+  openAudioFile: (): Promise<string | null> => ipcRenderer.invoke('dialog:openAudioFile'),
+  openAudioFiles: (): Promise<string[]> => ipcRenderer.invoke('dialog:openAudioFiles'),
   openImageFile: (): Promise<string | null> => ipcRenderer.invoke('dialog:openImageFile'),
   readFileBinary: (filePath: string): Promise<{ data?: string; error?: string }> => ipcRenderer.invoke('file:readBinary', filePath),
   hashFiles: (filePaths: string[]): Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]> =>
@@ -97,6 +100,26 @@ const api = {
   scanImages: (folderPath: string): Promise<{ success: boolean; images: string[] }> => ipcRenderer.invoke('folder:scanImages', folderPath),
   detectNamPlayer: (): Promise<boolean> => ipcRenderer.invoke('app:detectNamPlayer'),
   browseExecutable: (): Promise<string | null> => ipcRenderer.invoke('dialog:browseExecutable'),
+  getTrainerState: (): Promise<TrainerStateSnapshot> => ipcRenderer.invoke('trainer:getState'),
+  startTrainerRun: (payload: TrainerStartPayload): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('trainer:start', payload),
+  enqueueTrainerRuns: (payloads: TrainerStartPayload[]): Promise<{ success: boolean; error?: string; queued?: number }> =>
+    ipcRenderer.invoke('trainer:enqueue', payloads),
+  cancelTrainerRun: (): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('trainer:cancel'),
+  setTrainerPauseAfterCurrent: (pause: boolean): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('trainer:setPauseAfterCurrent', pause),
+  retryFailedTrainerRuns: (): Promise<{ success: boolean; retried?: number }> =>
+    ipcRenderer.invoke('trainer:retryFailed'),
+  clearFinishedTrainerRuns: (): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('trainer:clearFinished'),
+  removeQueuedTrainerRuns: (): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('trainer:removeQueued'),
+  onTrainerUpdate: (cb: (state: TrainerStateSnapshot) => void): (() => void) => {
+    const handler = (_event: unknown, state: TrainerStateSnapshot) => cb(state)
+    ipcRenderer.on('trainer:update', handler)
+    return () => ipcRenderer.removeListener('trainer:update', handler)
+  },
   openInNam: (filePath: string, standalonePath: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('app:openInNam', filePath, standalonePath),
   findPackFolders: (rootPath: string): Promise<string[]> =>

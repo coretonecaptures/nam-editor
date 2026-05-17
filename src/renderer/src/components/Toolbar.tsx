@@ -20,6 +20,8 @@ interface ToolbarProps {
   onOpenRecentFolder: (path: string) => void
   onFindDuplicates?: () => void
   onOpenLibraryCleanup?: () => void
+  showExperimentalTraining?: boolean
+  onOpenExperimentalTraining?: () => void
   showDashboard?: boolean
   dashboardActive?: boolean
   onToggleDashboard?: () => void
@@ -53,6 +55,8 @@ export function Toolbar({
   onOpenRecentFolder,
   onFindDuplicates,
   onOpenLibraryCleanup,
+  showExperimentalTraining = false,
+  onOpenExperimentalTraining,
   showDashboard = false,
   dashboardActive = false,
   onToggleDashboard,
@@ -201,7 +205,7 @@ export function Toolbar({
         </button>
       )}
 
-      {(onFindDuplicates || onOpenLibraryCleanup) && (
+      {(onFindDuplicates || onOpenLibraryCleanup || (showExperimentalTraining && onOpenExperimentalTraining)) && (
         <div ref={libraryToolsRef} className="relative" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           <button
             onClick={() => setShowLibraryTools((v) => !v)}
@@ -235,6 +239,14 @@ export function Toolbar({
                   className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
                 >
                   Clean Up / Build Library...
+                </button>
+              )}
+              {showExperimentalTraining && onOpenExperimentalTraining && (
+                <button
+                  onClick={() => { setShowLibraryTools(false); onOpenExperimentalTraining() }}
+                  className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                >
+                  Experimental Training...
                 </button>
               )}
             </div>

@@ -1176,6 +1176,72 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
             )}
           </div>
 
+          <div>
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-sm">🧪</span>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Experimental Training</h3>
+              <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
+            </div>
+            <div className="space-y-4">
+              <CheckboxField
+                label="Enable experimental local training"
+                description="Adds a hidden Training tab beside Metadata for a single selected file. This first pass launches the local NAM trainer in the background using your configured Python environment."
+                checked={draft.enableExperimentalTraining}
+                onChange={(v) => update('enableExperimentalTraining', v)}
+              />
+
+              {draft.enableExperimentalTraining && (
+                <>
+                  <SettingsField label="NAM Python executable" hint="Point this at the Python executable inside your working NAM environment">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={draft.namPythonPath}
+                        onChange={(e) => update('namPythonPath', e.target.value)}
+                        placeholder="e.g. C:\\Users\\Admin\\.conda\\envs\\nam\\python.exe"
+                        className="flex-1 px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono"
+                      />
+                      <button
+                        onClick={async () => {
+                          const p = await window.api.browseExecutable()
+                          if (p) update('namPythonPath', p)
+                        }}
+                        className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 flex-shrink-0"
+                      >
+                        Browse…
+                      </button>
+                    </div>
+                  </SettingsField>
+
+                  <SettingsField label="Default trainer input WAV" hint="Optional starter value for the experimental Training tab">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={draft.namTrainingInputWav}
+                        onChange={(e) => update('namTrainingInputWav', e.target.value)}
+                        placeholder="Select the input / DI WAV used for training"
+                        className="flex-1 px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono"
+                      />
+                      <button
+                        onClick={async () => {
+                          const p = await window.api.openAudioFile()
+                          if (p) update('namTrainingInputWav', p)
+                        }}
+                        className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 flex-shrink-0"
+                      >
+                        Browse…
+                      </button>
+                    </div>
+                  </SettingsField>
+
+                  <p className="text-xs text-gray-500 dark:text-gray-500">
+                    Phase I is intentionally narrow: one output WAV, one architecture, one destination folder, in-app logs, and background process launch only.
+                  </p>
+                </>
+              )}
+            </div>
+          </div>
+
         </div>
       </div>
 

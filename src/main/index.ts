@@ -86,6 +86,496 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+type TrainerArchitecture = 'standard' | 'complex' | 'lite' | 'feather' | 'nano' | 'revystd' | 'revyhi' | 'revxstd'
+type TrainerQueueJobStatus = 'queued' | 'starting' | 'running' | 'success' | 'error' | 'canceled'
+
+interface TrainerStartPayload {
+  pythonPath: string
+  inputPath: string
+  outputPath: string
+  trainPath: string
+  architecture: TrainerArchitecture
+  epochs: number
+  latency: number | null
+  savePlot: boolean
+  silent: boolean
+  ignoreChecks: boolean
+}
+
+interface TrainerQueueJob {
+  jobId: string
+  status: TrainerQueueJobStatus
+  pythonPath: string
+  inputPath: string
+  outputPath: string
+  trainPath: string
+  architecture: TrainerArchitecture
+  epochs: number
+  latency: number | null
+  savePlot: boolean
+  silent: boolean
+  ignoreChecks: boolean
+  modelName: string
+  outputModelPath: string
+  checkpointModelPath: string
+  attempts: number
+  startedAt: string | null
+  finishedAt: string | null
+  error: string
+  validationEsr: number | null
+  progressPercent: number | null
+  progressEpochCurrent: number | null
+  progressEpochTotal: number | null
+  progressBatchCurrent: number | null
+  progressBatchTotal: number | null
+  progressRate: number | null
+  progressLatestLine: string
+}
+
+interface TrainerStateSnapshot {
+  status: 'idle' | 'starting' | 'running' | 'success' | 'error' | 'canceled'
+  runId: string | null
+  pythonPath: string
+  inputPath: string
+  outputPath: string
+  trainPath: string
+  architecture: TrainerArchitecture | ''
+  epochs: number | null
+  latency: number | null
+  modelName: string
+  outputModelPath: string
+  checkpointModelPath: string
+  savePlot: boolean
+  silent: boolean
+  ignoreChecks: boolean
+  startedAt: string | null
+  finishedAt: string | null
+  logs: string[]
+  error: string
+  validationEsr: number | null
+  progressPhase: string
+  progressPercent: number | null
+  progressEpochCurrent: number | null
+  progressEpochTotal: number | null
+  progressBatchCurrent: number | null
+  progressBatchTotal: number | null
+  progressRate: number | null
+  progressLatestLine: string
+  activeJobId: string | null
+  pauseAfterCurrent: boolean
+  queue: TrainerQueueJob[]
+}
+
+const TRAINER_IDLE_STATE: TrainerStateSnapshot = {
+  status: 'idle',
+  runId: null,
+  pythonPath: '',
+  inputPath: '',
+  outputPath: '',
+  trainPath: '',
+  architecture: '',
+  epochs: null,
+  latency: null,
+  modelName: '',
+  outputModelPath: '',
+  checkpointModelPath: '',
+  savePlot: true,
+  silent: false,
+  ignoreChecks: false,
+  startedAt: null,
+  finishedAt: null,
+  logs: [],
+  error: '',
+  validationEsr: null,
+  progressPhase: '',
+  progressPercent: null,
+  progressEpochCurrent: null,
+  progressEpochTotal: null,
+  progressBatchCurrent: null,
+  progressBatchTotal: null,
+  progressRate: null,
+  progressLatestLine: '',
+  activeJobId: null,
+  pauseAfterCurrent: false,
+  queue: [],
+}
+
+let trainerState: TrainerStateSnapshot = { ...TRAINER_IDLE_STATE }
+let trainerChild: import('child_process').ChildProcessWithoutNullStreams | null = null
+let trainerQueue: TrainerQueueJob[] = []
+let trainerPauseAfterCurrent = false
+
+const TRAINER_RUNNER_SOURCE = String.raw`import json
+import os
+import shutil
+import sys
+import traceback
+from pathlib import Path
+
+from nam.train.core import train
+
+
+def _extract_validation_esr(result):
+    try:
+        metadata = getattr(result, "metadata", None)
+        if metadata is None:
+            return None
+        value = getattr(metadata, "validation_esr", None)
+        if value is None:
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _find_output_model_path(train_path, model_name):
+    root = Path(train_path)
+    if not root.exists():
+        return str(root / f"{model_name}.nam")
+
+    direct = root / f"{model_name}.nam"
+    if direct.exists():
+        return str(direct)
+
+    candidates = list(root.rglob("*.nam"))
+    if not candidates:
+        return str(direct)
+
+    best = [path for path in candidates if "checkpoint_best" in path.stem.lower()]
+    matching = [path for path in candidates if model_name.lower() in path.stem.lower()]
+    pool = best if best else matching if matching else candidates
+    newest = max(pool, key=lambda path: path.stat().st_mtime)
+    return str(newest)
+
+
+def _promote_output_model_path(train_path, model_name, discovered_path):
+    target = Path(train_path) / f"{model_name}.nam"
+    source = Path(discovered_path)
+    if not source.exists():
+        return str(target)
+    if source.resolve() == target.resolve():
+        return str(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+    return str(target)
+
+
+def main():
+    if len(sys.argv) < 2:
+        raise RuntimeError("Expected payload JSON path")
+
+    payload_path = sys.argv[1]
+    with open(payload_path, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+
+    result = train(
+        input_path=payload["inputPath"],
+        output_path=payload["outputPath"],
+        train_path=payload["trainPath"],
+        epochs=payload["epochs"],
+        latency=payload.get("latency"),
+        model_type="WaveNet",
+        architecture=payload["architecture"],
+        batch_size=16,
+        ny=8192,
+        lr=0.004,
+        lr_decay=0.002,
+        save_plot=payload.get("savePlot", True),
+        silent=payload.get("silent", False),
+        modelname=payload["modelName"],
+        ignore_checks=payload.get("ignoreChecks", False),
+        fit_mrstft=True,
+        user_metadata=None,
+    )
+
+    discovered_output = _find_output_model_path(payload["trainPath"], payload["modelName"])
+    promoted_output = _promote_output_model_path(payload["trainPath"], payload["modelName"], discovered_output)
+
+    summary = {
+        "modelName": payload["modelName"],
+        "outputModelPath": promoted_output,
+        "checkpointModelPath": discovered_output,
+        "validationEsr": _extract_validation_esr(result),
+    }
+    print("NAM_LAB_RESULT:" + json.dumps(summary), flush=True)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        traceback.print_exc()
+        print("NAM_LAB_ERROR:" + str(exc), flush=True)
+        sys.exit(1)
+`
+
+function emitTrainerState(): void {
+  if (trainerState.activeJobId) {
+    updateTrainerJob(trainerState.activeJobId, {
+      status: trainerState.status === 'starting' ? 'starting' : trainerState.status === 'running' ? 'running' : trainerState.status === 'success' ? 'success' : trainerState.status === 'error' ? 'error' : trainerState.status === 'canceled' ? 'canceled' : 'queued',
+      startedAt: trainerState.startedAt,
+      finishedAt: trainerState.finishedAt,
+      outputModelPath: trainerState.outputModelPath,
+      checkpointModelPath: trainerState.checkpointModelPath,
+      error: trainerState.error,
+      validationEsr: trainerState.validationEsr,
+      progressPercent: trainerState.progressPercent,
+      progressEpochCurrent: trainerState.progressEpochCurrent,
+      progressEpochTotal: trainerState.progressEpochTotal,
+      progressBatchCurrent: trainerState.progressBatchCurrent,
+      progressBatchTotal: trainerState.progressBatchTotal,
+      progressRate: trainerState.progressRate,
+      progressLatestLine: trainerState.progressLatestLine,
+    })
+  }
+  trainerState = {
+    ...trainerState,
+    queue: trainerQueue,
+    pauseAfterCurrent: trainerPauseAfterCurrent,
+  }
+  mainWindow?.webContents.send('trainer:update', trainerState)
+}
+
+function appendTrainerLog(line: string): void {
+  const trimmed = line.replace(/\r/g, '').trimEnd()
+  if (!trimmed) return
+  trainerState = {
+    ...trainerState,
+    logs: [...trainerState.logs, trimmed].slice(-600),
+  }
+  emitTrainerState()
+}
+
+function stripAnsi(text: string): string {
+  return text.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '')
+}
+
+function updateTrainerPhase(phase: string, latestLine?: string): void {
+  trainerState = {
+    ...trainerState,
+    progressPhase: phase,
+    progressLatestLine: latestLine ?? trainerState.progressLatestLine,
+  }
+  emitTrainerState()
+}
+
+function parseTrainerProgressLine(line: string): boolean {
+  const clean = stripAnsi(line).trim()
+  if (!clean) return false
+
+  if (/^Sanity Checking\b/i.test(clean)) {
+    trainerState = {
+      ...trainerState,
+      progressPhase: 'Sanity checking',
+      progressLatestLine: clean,
+    }
+    emitTrainerState()
+    return true
+  }
+
+  const epochMatch = clean.match(/^Epoch\s+(\d+):\s+(\d+)%.*?\|\s*(\d+)\/(\d+)\s+\[[^\]]*?([0-9.]+)it\/s/i)
+    ?? clean.match(/^Epoch\s+(\d+):\s+(\d+)%.*?\|\s*(\d+)\/(\d+)\s+\[/i)
+  if (epochMatch) {
+    const epochIndex = Number.parseInt(epochMatch[1], 10)
+    const epochPercent = Number.parseInt(epochMatch[2], 10)
+    const batchCurrent = Number.parseInt(epochMatch[3], 10)
+    const batchTotal = Number.parseInt(epochMatch[4], 10)
+    const rate = epochMatch[5] ? Number.parseFloat(epochMatch[5]) : null
+    const epochTotal = trainerState.epochs
+    const overallPercent = epochTotal && epochTotal > 0
+      ? Math.max(0, Math.min(100, (((epochIndex) + (batchTotal > 0 ? batchCurrent / batchTotal : epochPercent / 100)) / epochTotal) * 100))
+      : epochPercent
+    trainerState = {
+      ...trainerState,
+      progressPhase: 'Training',
+      progressPercent: overallPercent,
+      progressEpochCurrent: epochIndex + 1,
+      progressEpochTotal: epochTotal,
+      progressBatchCurrent: batchCurrent,
+      progressBatchTotal: batchTotal,
+      progressRate: rate ?? trainerState.progressRate,
+      progressLatestLine: clean,
+    }
+    emitTrainerState()
+    return true
+  }
+
+  if (/^Starting training\./i.test(clean)) {
+    trainerState = {
+      ...trainerState,
+      progressPhase: 'Training',
+      progressLatestLine: clean,
+    }
+    emitTrainerState()
+    return false
+  }
+
+  if (/^Validating data/i.test(clean) || /^V[23] checks/i.test(clean) || /^Checking blips/i.test(clean) || /^Replicate ESR/i.test(clean) || /^-Checks passed/i.test(clean) || /^Failed checks!/i.test(clean)) {
+    trainerState = {
+      ...trainerState,
+      progressPhase: 'Validation / checks',
+      progressLatestLine: clean,
+    }
+    emitTrainerState()
+    return false
+  }
+
+  if (/^Delay /i.test(clean) || /^After aplying safety factor/i.test(clean) || /^Plotting the latency/i.test(clean) || /^Cannot automatically analyze the latency/i.test(clean)) {
+    trainerState = {
+      ...trainerState,
+      progressPhase: 'Analyzing latency',
+      progressLatestLine: clean,
+    }
+    emitTrainerState()
+    return false
+  }
+
+  if (/^Plotting a comparison/i.test(clean) || /^Error-signal ratio/i.test(clean) || /^Run \(t=/i.test(clean)) {
+    trainerState = {
+      ...trainerState,
+      progressPhase: 'Exporting / plotting',
+      progressLatestLine: clean,
+    }
+    emitTrainerState()
+    return false
+  }
+
+  return false
+}
+
+function processTrainerOutputLine(line: string): void {
+  if (!line) return
+  if (line.startsWith('NAM_LAB_RESULT:')) {
+    try {
+      const parsed = JSON.parse(line.slice('NAM_LAB_RESULT:'.length)) as { validationEsr?: number | null; outputModelPath?: string; checkpointModelPath?: string; modelName?: string }
+      trainerState = {
+        ...trainerState,
+        validationEsr: typeof parsed.validationEsr === 'number' ? parsed.validationEsr : trainerState.validationEsr,
+        outputModelPath: parsed.outputModelPath || trainerState.outputModelPath,
+        checkpointModelPath: parsed.checkpointModelPath || trainerState.checkpointModelPath,
+        modelName: parsed.modelName || trainerState.modelName,
+        progressPhase: trainerState.progressPhase || 'Completed',
+      }
+      emitTrainerState()
+      return
+    } catch {
+      appendTrainerLog(line)
+      return
+    }
+  }
+  if (line.startsWith('NAM_LAB_ERROR:')) {
+    trainerState = {
+      ...trainerState,
+      error: line.slice('NAM_LAB_ERROR:'.length).trim(),
+    }
+    emitTrainerState()
+    return
+  }
+  if (parseTrainerProgressLine(line)) return
+  appendTrainerLog(stripAnsi(line))
+}
+
+function consumeTrainerChunk(remainder: string, chunk: Buffer): string {
+  const combined = remainder + chunk.toString('utf-8')
+  const parts = combined.split(/\r|\n/)
+  const nextRemainder = parts.pop() ?? ''
+  for (const part of parts) {
+    const normalized = part.trim()
+    if (normalized) processTrainerOutputLine(normalized)
+  }
+  return nextRemainder
+}
+
+async function ensureTrainerRunnerScript(): Promise<string> {
+  const dir = join(app.getPath('userData'), 'trainer')
+  await fs.promises.mkdir(dir, { recursive: true })
+  const runnerPath = join(dir, 'nam-lab-trainer-runner.py')
+  try {
+    const existing = await fs.promises.readFile(runnerPath, 'utf-8')
+    if (existing === TRAINER_RUNNER_SOURCE) return runnerPath
+  } catch {
+    // write below
+  }
+  await fs.promises.writeFile(runnerPath, TRAINER_RUNNER_SOURCE, 'utf-8')
+  return runnerPath
+}
+
+function deriveTrainerModelName(outputPath: string, architecture: TrainerArchitecture): string {
+  const _unused = architecture
+  const base = basename(outputPath, extname(outputPath)).trim() || 'model'
+  return base
+}
+
+function getTrainerArchitectureFolderName(architecture: TrainerArchitecture): string {
+  switch (architecture) {
+    case 'standard':
+      return 'Standard'
+    case 'complex':
+      return 'Complex'
+    case 'lite':
+      return 'Lite'
+    case 'feather':
+      return 'Feather'
+    case 'nano':
+      return 'Nano'
+    case 'revystd':
+      return 'REVySTD'
+    case 'revyhi':
+      return 'REVyHI'
+    case 'revxstd':
+      return 'REVxSTD'
+    default:
+      return architecture
+  }
+}
+
+function createTrainerJob(payload: TrainerStartPayload): TrainerQueueJob {
+  const modelName = deriveTrainerModelName(payload.outputPath, payload.architecture)
+  const architectureFolder = getTrainerArchitectureFolderName(payload.architecture)
+  const architectureTrainPath = join(payload.trainPath.trim(), architectureFolder)
+  return {
+    jobId: crypto.randomUUID(),
+    status: 'queued',
+    pythonPath: payload.pythonPath.trim(),
+    inputPath: payload.inputPath.trim(),
+    outputPath: payload.outputPath.trim(),
+    trainPath: architectureTrainPath,
+    architecture: payload.architecture,
+    epochs: payload.epochs,
+    latency: payload.latency,
+    savePlot: payload.savePlot,
+    silent: payload.silent,
+    ignoreChecks: payload.ignoreChecks,
+    modelName,
+    outputModelPath: join(architectureTrainPath, `${modelName}.nam`),
+    checkpointModelPath: '',
+    attempts: 0,
+    startedAt: null,
+    finishedAt: null,
+    error: '',
+    validationEsr: null,
+    progressPercent: null,
+    progressEpochCurrent: null,
+    progressEpochTotal: payload.epochs,
+    progressBatchCurrent: null,
+    progressBatchTotal: null,
+    progressRate: null,
+    progressLatestLine: '',
+  }
+}
+
+function getActiveTrainerJob(): TrainerQueueJob | null {
+  return trainerState.activeJobId ? (trainerQueue.find((job) => job.jobId === trainerState.activeJobId) ?? null) : null
+}
+
+function updateTrainerJob(jobId: string, patch: Partial<TrainerQueueJob>): void {
+  trainerQueue = trainerQueue.map((job) => (job.jobId === jobId ? { ...job, ...patch } : job))
+}
+
+function nextQueuedTrainerJob(): TrainerQueueJob | null {
+  return trainerQueue.find((job) => job.status === 'queued') ?? null
+}
+
 function hashFileSha256(filePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const hash = crypto.createHash('sha256')
@@ -972,6 +1462,28 @@ app.whenReady().then(async () => {
     return result.filePaths[0] ?? null
   })
 
+  ipcMain.handle('dialog:openAudioFile', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [
+        { name: 'Audio', extensions: ['wav', 'wave', 'aif', 'aiff'] },
+        { name: 'All Files', extensions: ['*'] },
+      ]
+    })
+    return result.filePaths[0] ?? null
+  })
+
+  ipcMain.handle('dialog:openAudioFiles', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Audio', extensions: ['wav', 'wave', 'aif', 'aiff'] },
+        { name: 'All Files', extensions: ['*'] },
+      ]
+    })
+    return result.filePaths
+  })
+
   // IPC: Open folder dialog
   ipcMain.handle('dialog:openFolder', async (_event, defaultPath?: string) => {
     const result = await dialog.showOpenDialog({
@@ -1661,6 +2173,286 @@ app.whenReady().then(async () => {
       filters
     })
     return result.canceled ? null : result.filePaths[0]
+  })
+
+  async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
+    const pythonPath = job.pythonPath
+    const inputPath = job.inputPath
+    const outputPath = job.outputPath
+    const trainPath = job.trainPath
+    const runId = job.jobId
+
+    updateTrainerJob(job.jobId, {
+      status: 'starting',
+      attempts: job.attempts + 1,
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      error: '',
+      validationEsr: null,
+      outputModelPath: join(trainPath, `${job.modelName}.nam`),
+      checkpointModelPath: '',
+      progressPercent: null,
+      progressEpochCurrent: null,
+      progressEpochTotal: job.epochs,
+      progressBatchCurrent: null,
+      progressBatchTotal: null,
+      progressRate: null,
+      progressLatestLine: '',
+    })
+
+    trainerState = {
+      status: 'starting',
+      runId,
+      pythonPath,
+      inputPath,
+      outputPath,
+      trainPath,
+      architecture: job.architecture,
+      epochs: job.epochs,
+      latency: job.latency,
+      modelName: job.modelName,
+      outputModelPath: join(trainPath, `${job.modelName}.nam`),
+      checkpointModelPath: '',
+      savePlot: job.savePlot,
+      silent: job.silent,
+      ignoreChecks: job.ignoreChecks,
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      logs: [],
+      error: '',
+      validationEsr: null,
+      progressPhase: 'Preparing',
+      progressPercent: null,
+      progressEpochCurrent: null,
+      progressEpochTotal: job.epochs,
+      progressBatchCurrent: null,
+      progressBatchTotal: null,
+      progressRate: null,
+      progressLatestLine: '',
+      activeJobId: job.jobId,
+      pauseAfterCurrent: trainerPauseAfterCurrent,
+      queue: trainerQueue,
+    }
+    emitTrainerState()
+
+    await fs.promises.access(pythonPath)
+    await fs.promises.access(inputPath)
+    await fs.promises.access(outputPath)
+    await fs.promises.mkdir(trainPath, { recursive: true })
+
+    const runnerPath = await ensureTrainerRunnerScript()
+    const payloadDir = join(app.getPath('userData'), 'trainer')
+    await fs.promises.mkdir(payloadDir, { recursive: true })
+    const payloadPath = join(payloadDir, `run-${runId}.json`)
+    const runnerPayload = {
+      inputPath,
+      outputPath,
+      trainPath,
+      architecture: job.architecture,
+      epochs: job.epochs,
+      latency: job.latency,
+      savePlot: job.savePlot,
+      silent: job.silent,
+      ignoreChecks: job.ignoreChecks,
+      modelName: job.modelName,
+    }
+    await fs.promises.writeFile(payloadPath, JSON.stringify(runnerPayload, null, 2), 'utf-8')
+
+    const { spawn } = await import('child_process')
+    trainerChild = spawn(pythonPath, ['-u', runnerPath, payloadPath], {
+      cwd: trainPath,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    trainerState = { ...trainerState, status: 'running', progressPhase: 'Launching trainer' }
+    emitTrainerState()
+
+    let stdoutRemainder = ''
+    let stderrRemainder = ''
+
+    trainerChild.stdout.on('data', (chunk: Buffer) => {
+      stdoutRemainder = consumeTrainerChunk(stdoutRemainder, chunk)
+    })
+
+    trainerChild.stderr.on('data', (chunk: Buffer) => {
+      stderrRemainder = consumeTrainerChunk(stderrRemainder, chunk)
+    })
+
+    trainerChild.once('error', async (error) => {
+      trainerState = {
+        ...trainerState,
+        status: 'error',
+        finishedAt: new Date().toISOString(),
+        error: String(error),
+      }
+      trainerChild = null
+      emitTrainerState()
+      if (!trainerPauseAfterCurrent) await pumpTrainerQueue()
+    })
+
+    trainerChild.once('close', async (code, signal) => {
+      if (stdoutRemainder.trim()) processTrainerOutputLine(stdoutRemainder.trim())
+      if (stderrRemainder.trim()) processTrainerOutputLine(stderrRemainder.trim())
+      const wasCanceled = trainerState.status === 'canceled'
+      const finalStatus: TrainerStateSnapshot['status'] = wasCanceled ? 'canceled' : code === 0 ? 'success' : 'error'
+      let finalError = trainerState.error
+      if (!wasCanceled && code !== 0 && !finalError) {
+        finalError = signal ? `Training process stopped by signal ${signal}` : `Training process exited with code ${code}`
+      }
+      trainerState = {
+        ...trainerState,
+        status: finalStatus,
+        finishedAt: new Date().toISOString(),
+        error: finalError,
+        progressPhase: wasCanceled ? 'Canceled' : code === 0 ? 'Completed' : 'Failed',
+        progressPercent: code === 0 ? 100 : trainerState.progressPercent,
+      }
+      trainerChild = null
+      try { await fs.promises.unlink(payloadPath) } catch { /* ignore */ }
+      emitTrainerState()
+      if (!trainerPauseAfterCurrent) {
+        await pumpTrainerQueue()
+      } else {
+        trainerState = { ...trainerState, activeJobId: null, runId: null }
+        emitTrainerState()
+      }
+    })
+  }
+
+  async function pumpTrainerQueue(): Promise<void> {
+    if (trainerChild || trainerState.status === 'starting' || trainerState.status === 'running') return
+    const nextJob = nextQueuedTrainerJob()
+    if (!nextJob) {
+      trainerState = {
+        ...TRAINER_IDLE_STATE,
+        queue: trainerQueue,
+        pauseAfterCurrent: trainerPauseAfterCurrent,
+      }
+      emitTrainerState()
+      return
+    }
+    try {
+      await startTrainerJob(nextJob)
+    } catch (error) {
+      updateTrainerJob(nextJob.jobId, {
+        status: 'error',
+        finishedAt: new Date().toISOString(),
+        error: String(error),
+      })
+      trainerState = {
+        ...TRAINER_IDLE_STATE,
+        status: 'error',
+        error: String(error),
+        finishedAt: new Date().toISOString(),
+        activeJobId: null,
+        queue: trainerQueue,
+        pauseAfterCurrent: trainerPauseAfterCurrent,
+      }
+      emitTrainerState()
+      if (!trainerPauseAfterCurrent) {
+        await pumpTrainerQueue()
+      }
+    }
+  }
+
+  ipcMain.handle('trainer:getState', async () => trainerState)
+
+  ipcMain.handle('trainer:cancel', async () => {
+    if (!trainerChild || trainerState.status !== 'running' && trainerState.status !== 'starting') {
+      return { success: false, error: 'No training run is currently active.' }
+    }
+    try {
+      trainerChild.kill()
+      trainerState = {
+        ...trainerState,
+        status: 'canceled',
+        finishedAt: new Date().toISOString(),
+        error: '',
+      }
+      emitTrainerState()
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('trainer:start', async (_event, payload: TrainerStartPayload) => {
+    const pythonPath = (payload.pythonPath ?? '').trim()
+    const inputPath = (payload.inputPath ?? '').trim()
+    const outputPath = (payload.outputPath ?? '').trim()
+    const trainPath = (payload.trainPath ?? '').trim()
+    if (!pythonPath || !inputPath || !outputPath || !trainPath) {
+      return { success: false, error: 'Python path, input audio, output audio, and train destination are required.' }
+    }
+    trainerQueue.push(createTrainerJob({ ...payload, pythonPath, inputPath, outputPath, trainPath }))
+    emitTrainerState()
+    await pumpTrainerQueue()
+    return { success: true }
+  })
+
+  ipcMain.handle('trainer:enqueue', async (_event, payloads: TrainerStartPayload[]) => {
+    const validPayloads = payloads
+      .map((payload) => ({
+        ...payload,
+        pythonPath: (payload.pythonPath ?? '').trim(),
+        inputPath: (payload.inputPath ?? '').trim(),
+        outputPath: (payload.outputPath ?? '').trim(),
+        trainPath: (payload.trainPath ?? '').trim(),
+      }))
+      .filter((payload) => payload.pythonPath && payload.inputPath && payload.outputPath && payload.trainPath)
+    if (validPayloads.length === 0) {
+      return { success: false, error: 'No valid training jobs were provided.' }
+    }
+    trainerQueue.push(...validPayloads.map((payload) => createTrainerJob(payload)))
+    emitTrainerState()
+    await pumpTrainerQueue()
+    return { success: true, queued: validPayloads.length }
+  })
+
+  ipcMain.handle('trainer:setPauseAfterCurrent', async (_event, pause: boolean) => {
+    trainerPauseAfterCurrent = !!pause
+    emitTrainerState()
+    if (!trainerPauseAfterCurrent) {
+      await pumpTrainerQueue()
+    }
+    return { success: true }
+  })
+
+  ipcMain.handle('trainer:retryFailed', async () => {
+    let retried = 0
+    trainerQueue = trainerQueue.map((job) => {
+      if (job.status !== 'error') return job
+      retried += 1
+      return {
+        ...job,
+        status: 'queued',
+        finishedAt: null,
+        error: '',
+        validationEsr: null,
+        progressPercent: null,
+        progressEpochCurrent: null,
+        progressEpochTotal: job.epochs,
+        progressBatchCurrent: null,
+        progressBatchTotal: null,
+        progressRate: null,
+        progressLatestLine: '',
+      }
+    })
+    emitTrainerState()
+    await pumpTrainerQueue()
+    return { success: true, retried }
+  })
+
+  ipcMain.handle('trainer:clearFinished', async () => {
+    trainerQueue = trainerQueue.filter((job) => !['success', 'error', 'canceled'].includes(job.status))
+    emitTrainerState()
+    return { success: true }
+  })
+
+  ipcMain.handle('trainer:removeQueued', async () => {
+    trainerQueue = trainerQueue.filter((job) => job.status !== 'queued')
+    emitTrainerState()
+    return { success: true }
   })
 
   // IPC: Open a .nam file in NAM standalone (via explicit path or OS default)

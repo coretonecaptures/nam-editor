@@ -44,6 +44,17 @@
 - Add a manual `Resync from watch source` action for a watch rule
 - Add a manual `Forget imported history` action for a watch rule
 
+## Experimental training
+
+- Queue UX: allow removing any individual queued training item, not just clearing all queued jobs at once.
+- Queue UX: allow manual queue reordering with move up / move down actions.
+- Queue UX: add a fast action like right-click -> `Make next in queue` on any queued training item.
+- Queue UX: on completed training items, add a right-click action like `Show in folder` / `Reveal output` directly from the queue row.
+- Training safety: add an explicit `Emergency stop` / hard kill action with a warning that it may leave an incomplete training run on disk. If possible, do not promote or write the final `.nam` into the user-facing destination folder when a run is hard-stopped.
+- Training formats: allow multi-select architectures / presets and generate the cross product of selected output WAVs and selected formats when queueing jobs.
+- Training presets: move away from relying on locally customized `core.py` architectures by adding NAM Lab-owned training presets / recipe definitions for formats like `standard`, `complex`, `revyhi`, `revxstd`, and future custom variants.
+- Research / implement trainer `threshold_esr` support as an optional stop-when-good-enough target. Official NAM `train()` already exposes `threshold_esr` and wires it into `_ValidationStopping(monitor=\"ESR\", stopping_threshold=threshold_esr)`.
+
 ## Metadata suggestions and organization
 
 - Refine overwrite guards for metadata suggestion rules with a friendlier UI than a raw comma-separated text field (for example chips, multi-pick placeholders, or explicit junk-value presets).
