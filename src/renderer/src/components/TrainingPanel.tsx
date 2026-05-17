@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import type { AppSettings } from '../types/settings'
 import {
   IDLE_TRAINER_STATE,
@@ -58,6 +58,15 @@ function getEsrTone(esr: number | null): { text: string; classes: string } {
   return { text: esr.toFixed(6), classes: 'text-red-700 dark:text-red-300' }
 }
 
+function showNativeTextContextMenu(event: MouseEvent<HTMLElement>) {
+  const selection = window.getSelection()?.toString().trim() ?? ''
+  const target = event.target as HTMLElement | null
+  const isEditable = !!target?.closest('input, textarea, [contenteditable="true"]')
+  if (!selection && !isEditable) return
+  event.preventDefault()
+  void window.api.showTextContextMenu({ hasSelection: !!selection, isEditable })
+}
+
 export function TrainingPanel({ settings, onSaveSettings, onClose }: Props) {
   const [inputPath, setInputPath] = useState(settings.namTrainingInputWav || '')
   const [outputPaths, setOutputPaths] = useState<string[]>([])
@@ -68,9 +77,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose }: Props) {
   const [latency, setLatency] = useState('')
   const [thresholdEsr, setThresholdEsr] = useState('')
   const [savePlot, setSavePlot] = useState(true)
-  const [silent, setSilent] = useState(false)
   const [ignoreChecks, setIgnoreChecks] = useState(false)
   const [launchError, setLaunchError] = useState('')
+  const [queueActionError, setQueueActionError] = useState('')
   const [trainerState, setTrainerState] = useState<TrainerStateSnapshot>(IDLE_TRAINER_STATE)
   const [queueContextMenu, setQueueContextMenu] = useState<{ job: TrainerQueueJob; x: number; y: number } | null>(null)
   const rawLogRef = useRef<HTMLDivElement | null>(null)
@@ -196,7 +205,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose }: Props) {
           latency: parsedLatency,
           thresholdEsr: parsedThresholdEsr,
           savePlot,
-          silent,
+          silent: true,
           ignoreChecks,
         }))
       )
@@ -206,6 +215,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose }: Props) {
       return
     }
     setLaunchError('')
+    setQueueActionError('')
   }
 
   const queuedCount = trainerState.queue.filter((job) => job.status === 'queued').length
@@ -215,21 +225,27 @@ export function TrainingPanel({ settings, onSaveSettings, onClose }: Props) {
   const handleRemoveJob = async (job: TrainerQueueJob) => {
     const result = await window.api.removeTrainerJob(job.jobId)
     if (!result.success) {
-      setLaunchError(result.error ?? 'Could not remove that training queue item.')
+      setQueueActionError(result.error ?? 'Could not remove that training queue item.')
+    } else {
+      setQueueActionError('')
     }
   }
 
   const handleMoveJob = async (job: TrainerQueueJob, direction: 'up' | 'down') => {
     const result = await window.api.moveTrainerJob(job.jobId, direction)
     if (!result.success) {
-      setLaunchError(result.error ?? `Could not move that training queue item ${direction}.`)
+      setQueueActionError(result.error ?? `Could not move that training queue item ${direction}.`)
+    } else {
+      setQueueActionError('')
     }
   }
 
   const handleMakeNext = async (job: TrainerQueueJob) => {
     const result = await window.api.makeTrainerJobNext(job.jobId)
     if (!result.success) {
-      setLaunchError(result.error ?? 'Could not move that training queue item to the front.')
+      setQueueActionError(result.error ?? 'Could not move that training queue item to the front.')
+    } else {
+      setQueueActionError('')
     }
   }
 
@@ -241,7 +257,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose }: Props) {
   }
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div className="h-full overflow-y-auto" onContextMenu={showNativeTextContextMenu}>
       <div className="max-w-5xl mx-auto px-6 py-5 space-y-5">
         <div className="rounded-xl border border-violet-500/30 bg-violet-500/10 px-4 py-3">
           <div className="flex items-start justify-between gap-3">
@@ -265,12 +281,6 @@ export function TrainingPanel({ settings, onSaveSettings, onClose }: Props) {
 
         <div className="space-y-5">
           <div className="space-y-4">
-            <Field label="NAM Python executable" hint="Configured in Settings">
-              <div className="rounded-lg border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 font-mono break-all">
-                {settings.namPythonPath || <span className="italic text-gray-400 dark:text-gray-500">Not configured yet</span>}
-              </div>
-            </Field>
-
             <Field label="Input Audio" hint="Trainer input / DI file">
               <PathPicker
                 value={inputPath}
@@ -325,7 +335,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose }: Props) {
               />
             </Field>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_minmax(110px,0.6fr)_minmax(110px,0.6fr)_minmax(120px,0.7fr)] gap-4">
               <Field label="Preset">
                 <select
                   value={selectedPresetId}
@@ -368,9 +378,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose }: Props) {
                   className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
                 />
               </Field>
-            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <Field label="Target ESR">
                 <input
                   value={thresholdEsr}
@@ -390,21 +398,25 @@ export function TrainingPanel({ settings, onSaveSettings, onClose }: Props) {
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <ToggleRow label="Save ESR plot" checked={savePlot} onChange={setSavePlot} />
-              <ToggleRow label="Silent run (suppress plots)" checked={silent} onChange={setSilent} />
               <ToggleRow label="Ignore checks" checked={ignoreChecks} onChange={setIgnoreChecks} />
             </div>
 
-            <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 px-3 py-3 text-xs text-gray-600 dark:text-gray-400 space-y-1">
-              <div><span className="font-medium text-gray-700 dark:text-gray-300">Selected WAVs:</span> <code>{outputPaths.length}</code></div>
-              <div><span className="font-medium text-gray-700 dark:text-gray-300">Selected architectures:</span> <code>{architectures.length}</code></div>
-              <div><span className="font-medium text-gray-700 dark:text-gray-300">Target ESR:</span> <code>{thresholdEsr.trim() || 'Off'}</code></div>
-              <div><span className="font-medium text-gray-700 dark:text-gray-300">Example output model name:</span> <code>{resolvedModelName}</code></div>
-              <div><span className="font-medium text-gray-700 dark:text-gray-300">Example final file:</span> <code>{trainPath ? `${trainPath.replace(/\\/g, '/')}/Standard/${resolvedModelName}.nam` : `Standard/${resolvedModelName}.nam`}</code></div>
-              <div className="text-[11px] text-gray-500 dark:text-gray-500">
-                The official trainer still creates Lightning logs and checkpoint artifacts underneath this folder. NAM Lab promotes the final
-                .nam back to the folder you picked so it sits beside the graph.
+            <details className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30">
+              <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-gray-700 dark:text-gray-300">
+                Training details
+              </summary>
+              <div className="border-t border-gray-200 dark:border-gray-800 px-3 py-3 text-xs text-gray-600 dark:text-gray-400 space-y-1 select-text">
+                <div><span className="font-medium text-gray-700 dark:text-gray-300">Selected WAVs:</span> <code>{outputPaths.length}</code></div>
+                <div><span className="font-medium text-gray-700 dark:text-gray-300">Selected architectures:</span> <code>{architectures.length}</code></div>
+                <div><span className="font-medium text-gray-700 dark:text-gray-300">Target ESR:</span> <code>{thresholdEsr.trim() || 'Off'}</code></div>
+                <div><span className="font-medium text-gray-700 dark:text-gray-300">Example output model name:</span> <code>{resolvedModelName}</code></div>
+                <div><span className="font-medium text-gray-700 dark:text-gray-300">Example final file:</span> <code>{trainPath ? `${trainPath.replace(/\\/g, '/')}/Standard/${resolvedModelName}.nam` : `Standard/${resolvedModelName}.nam`}</code></div>
+                <div className="text-[11px] text-gray-500 dark:text-gray-500">
+                  The official trainer still creates Lightning logs and checkpoint artifacts underneath this folder. NAM Lab promotes the final
+                  .nam back to the folder you picked so it sits beside the graph.
+                </div>
               </div>
-            </div>
+            </details>
 
             {launchError && (
               <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
@@ -593,6 +605,11 @@ export function TrainingPanel({ settings, onSaveSettings, onClose }: Props) {
                 <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-800 text-xs font-medium text-gray-700 dark:text-gray-300">
                   Queue
                 </div>
+                {!!queueActionError && (
+                  <div className="px-3 py-2 border-b border-red-500/20 bg-red-500/10 text-xs text-red-700 dark:text-red-300">
+                    {queueActionError}
+                  </div>
+                )}
                 <div>
                   {trainerState.queue.length === 0 ? (
                     <div className="px-3 py-3 text-xs text-gray-500 dark:text-gray-500">Queued jobs will show up here.</div>
@@ -837,6 +854,7 @@ function QueueRow({
       className={`px-3 py-2 text-xs ${isActive ? 'bg-indigo-500/10' : ''}`}
       onContextMenu={(event) => {
         event.preventDefault()
+        event.stopPropagation()
         onContextMenu({ job, x: event.clientX, y: event.clientY })
       }}
     >

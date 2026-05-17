@@ -48,6 +48,7 @@
 
 - Queue UX: support drag-and-drop queue reordering in addition to move up / move down controls.
 - Training presets: expand the first-pass NAM Lab-owned presets into saved or importable recipe definitions so we do not rely on locally customized `core.py` architectures for formats like `complex`, `revyhi`, `revxstd`, and future custom variants.
+- Training presets: support saved manual-launch presets as an alternative to watch-folder presets, so a user can open a folder to process, pick a saved setup (epochs, selected architectures, ESR target, and related training options), and run it without going through the watcher workflow.
 - Training ESR target: build on the first-pass `threshold_esr` support with clearer guidance, preset defaults, and queue-level visibility for stop-when-good-enough behavior.
 - Training history: persist processed training runs, with a way to review and export them later instead of keeping queue state only in memory.
 - Training verification report: scan a folder of WAVs / trained models and verify expected outputs, ESR targets, epochs, and architectures against watch or preset expectations.

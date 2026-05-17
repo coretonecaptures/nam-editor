@@ -2465,11 +2465,23 @@ app.whenReady().then(async () => {
       return { success: false, error: 'No training run is currently active.' }
     }
     try {
+      const canceledAt = new Date().toISOString()
+      trainerQueue = trainerQueue.map((job) => (
+        job.status === 'queued'
+          ? {
+              ...job,
+              status: 'canceled',
+              finishedAt: canceledAt,
+              error: 'Canceled before start by emergency stop.',
+            }
+          : job
+      ))
+      trainerPauseAfterCurrent = false
       trainerChild.kill()
       trainerState = {
         ...trainerState,
         status: 'canceled',
-        finishedAt: new Date().toISOString(),
+        finishedAt: canceledAt,
         error: '',
       }
       emitTrainerState()
