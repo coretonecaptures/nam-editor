@@ -79,6 +79,20 @@ export interface DeliveryTargetsData {
   qc: DeliveryTargetInfo
 }
 
+export interface DeliveryTargetChecklistData {
+  items: PackChecklistItem[]
+  notes: string
+  targetDate: string
+  liveDate: string
+  templateSignature: string
+}
+
+export interface DeliveryTargetChecklistsData {
+  tonex: DeliveryTargetChecklistData | null
+  proxy: DeliveryTargetChecklistData | null
+  qc: DeliveryTargetChecklistData | null
+}
+
 export interface PackInfo {
   title: string
   subtitle: string
@@ -100,6 +114,7 @@ export interface PackInfo {
   versionInfo: string
   deliveryMatrix: DeliveryMatrixData
   deliveryTargets: DeliveryTargetsData
+  deliveryTargetChecklists: DeliveryTargetChecklistsData
 }
 
 export const EMPTY_DELIVERY_TARGET: DeliveryTargetInfo = {
@@ -120,6 +135,12 @@ export const DEFAULT_DELIVERY_TARGETS: DeliveryTargetsData = {
   nam: { ...EMPTY_DELIVERY_TARGET, label: 'NAM' },
   proxy: { ...EMPTY_DELIVERY_TARGET, label: 'Proxy' },
   qc: { ...EMPTY_DELIVERY_TARGET, label: 'QC' },
+}
+
+export const EMPTY_DELIVERY_TARGET_CHECKLISTS: DeliveryTargetChecklistsData = {
+  tonex: null,
+  proxy: null,
+  qc: null,
 }
 
 const EMPTY_PACK: PackInfo = {
@@ -143,6 +164,7 @@ const EMPTY_PACK: PackInfo = {
   versionInfo: '',
   deliveryMatrix: EMPTY_DELIVERY_MATRIX,
   deliveryTargets: DEFAULT_DELIVERY_TARGETS,
+  deliveryTargetChecklists: EMPTY_DELIVERY_TARGET_CHECKLISTS,
 }
 
 function hasMeaningfulPackInfoData(pack: PackInfo): boolean {
@@ -162,7 +184,17 @@ function hasMeaningfulPackInfoData(pack: PackInfo): boolean {
     pack.switches.some((item) => item.label.trim() || item.value.trim()) ||
     pack.glossary.some((item) => item.term.trim() || item.description.trim()) ||
     pack.checklistItems.some((item) => item.label.trim() || item.notes.trim() || item.completed || item.completedDate.trim()) ||
-    pack.deliveryMatrix.rows.length > 0
+    pack.deliveryMatrix.rows.length > 0 ||
+    Object.values(pack.deliveryTargetChecklists).some((checklist) =>
+      checklist
+        ? Boolean(
+            checklist.notes.trim() ||
+            checklist.targetDate.trim() ||
+            checklist.liveDate.trim() ||
+            checklist.items.some((item) => item.label.trim() || item.notes.trim() || item.completed || item.completedDate.trim())
+          )
+        : false
+    )
   )
 }
 
@@ -196,6 +228,13 @@ function normalizeChecklistItem(value: Partial<PackChecklistItem>): PackChecklis
 
 function normalizeChecklistLabel(value: string): string {
   return value.trim().toLowerCase()
+}
+
+export function checklistTemplateSignature(items: ChecklistTemplateItem[] | PackChecklistItem[]): string {
+  return items
+    .map((item) => normalizeChecklistLabel(item.label))
+    .filter(Boolean)
+    .join('||')
 }
 
 export function createDeliveryRowId(): string {
@@ -276,6 +315,27 @@ function repairMojibake(value: string): string {
 
 function normalizeText(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? repairMojibake(value) : fallback
+}
+
+export function normalizeDeliveryTargetChecklistData(value: unknown): DeliveryTargetChecklistData | null {
+  if (!value || typeof value !== 'object') return null
+  const source = value as Partial<DeliveryTargetChecklistData>
+  return {
+    items: Array.isArray(source.items) ? source.items.map((item) => normalizeChecklistItem(item)) : [],
+    notes: normalizeText(source.notes),
+    targetDate: normalizeText(source.targetDate),
+    liveDate: normalizeText(source.liveDate),
+    templateSignature: normalizeText(source.templateSignature),
+  }
+}
+
+export function normalizeDeliveryTargetChecklistsData(value: unknown): DeliveryTargetChecklistsData {
+  const source = value && typeof value === 'object' ? (value as Partial<DeliveryTargetChecklistsData>) : {}
+  return {
+    tonex: normalizeDeliveryTargetChecklistData(source.tonex),
+    proxy: normalizeDeliveryTargetChecklistData(source.proxy),
+    qc: normalizeDeliveryTargetChecklistData(source.qc),
+  }
 }
 
 function showNativeTextContextMenu(event: MouseEvent<HTMLElement>) {
@@ -975,6 +1035,7 @@ export function PackInfoEditor({
               versionInfo: normalizeText(d.versionInfo),
               deliveryMatrix: normalizeDeliveryMatrixData(d.deliveryMatrix),
               deliveryTargets: normalizeDeliveryTargetsData(d.deliveryTargets),
+              deliveryTargetChecklists: normalizeDeliveryTargetChecklistsData(d.deliveryTargetChecklists),
             }
           })()
         : {
@@ -983,6 +1044,7 @@ export function PackInfoEditor({
             checklistItems: createChecklistItemsFromTemplate(checklistTemplate),
             deliveryMatrix: normalizeDeliveryMatrixData(null),
             deliveryTargets: normalizeDeliveryTargetsData(null),
+            deliveryTargetChecklists: normalizeDeliveryTargetChecklistsData(null),
           }
       setPack(loaded)
       savedPackRef.current = loaded

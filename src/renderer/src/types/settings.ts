@@ -11,6 +11,15 @@ export interface PackChecklistTemplateItem {
   label: string
 }
 
+export type TargetChecklistTemplateKey = 'nam' | 'tonex' | 'proxy' | 'qc'
+
+export interface TargetChecklistTemplates {
+  nam: PackChecklistTemplateItem[]
+  tonex: PackChecklistTemplateItem[]
+  proxy: PackChecklistTemplateItem[]
+  qc: PackChecklistTemplateItem[]
+}
+
 export interface FolderWatchRule {
   sourceFolder: string
   destFolder: string
@@ -98,6 +107,41 @@ export function cloneChecklistTemplate(items: PackChecklistTemplateItem[]): Pack
   return items.map((item) => ({ ...item }))
 }
 
+export function cloneTargetChecklistTemplates(templates: TargetChecklistTemplates): TargetChecklistTemplates {
+  return {
+    nam: cloneChecklistTemplate(templates.nam),
+    tonex: cloneChecklistTemplate(templates.tonex),
+    proxy: cloneChecklistTemplate(templates.proxy),
+    qc: cloneChecklistTemplate(templates.qc),
+  }
+}
+
+export const DEFAULT_TARGET_CHECKLIST_TEMPLATES: TargetChecklistTemplates = {
+  nam: cloneChecklistTemplate(DEFAULT_PACK_CHECKLIST_TEMPLATE),
+  tonex: [],
+  proxy: [],
+  qc: [
+    { id: 'qc-all-captures-completed', label: 'All captures completed' },
+    { id: 'qc-import-captures-from-spreadsheet', label: 'Import Captures from Spreadsheet to QC Target' },
+    { id: 'qc-decide-release-format', label: 'Decide release format (Bundle vs DI / CAB / Bundle)' },
+    { id: 'qc-pack-info-sheets-completed', label: 'Pack info sheet(s) completed (incl. glossary + write-ups)' },
+    { id: 'qc-include-irs', label: 'Include IR\'s? If so choose which to include' },
+    { id: 'qc-build-presets-di', label: 'Build Presets containing any/all include DI captures' },
+    { id: 'qc-build-presets-full-rig', label: 'Build Presets for Full Rig (Amp/Cab) presets' },
+    { id: 'qc-build-starter-presets', label: 'Build a few "Starter Presets" with FX that showcase the tones' },
+    { id: 'qc-confirm-no-duplicates', label: 'Confirm no duplicates in release' },
+    { id: 'qc-upload-presets-to-cortex-cloud', label: 'Upload Presets to Cortex Cloud' },
+    { id: 'qc-export-final-assets', label: 'Export final assets (captures, README, pack info, images)' },
+    { id: 'qc-shopify-product-page-completed', label: 'Shopify product page completed (description + pricing)' },
+    { id: 'qc-upload-to-shopify', label: 'Upload to Shopify and publish (attachments included)' },
+    { id: 'qc-email-campaign-sent', label: 'Email campaign sent (Shopify)' },
+    { id: 'qc-blog-post-published', label: 'Blog post published' },
+    { id: 'qc-forum-facebook-post-live', label: 'Forum / Facebook group post live' },
+    { id: 'qc-social-media-posts', label: 'Social media posts (Facebook, Instagram)' },
+    { id: 'qc-pack-released', label: 'Pack released' },
+  ],
+}
+
 export interface AppSettings {
   // Current Amp Info
   enableAmpInfo: boolean
@@ -161,6 +205,7 @@ export interface AppSettings {
   // Pack Info: global gear catalog reused across packs
   packGearCatalog: { category: 'equipment' | 'pedals' | 'glossary'; label: string; value: string }[]
   packChecklistTemplate: PackChecklistTemplateItem[]
+  targetChecklistTemplates: TargetChecklistTemplates
 
   // Folder tree colorization: maps folder name → hex color
   folderNameColors: Record<string, string>
@@ -228,6 +273,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   importPrefixSuffixes: 'DI',
   packGearCatalog: [],
   packChecklistTemplate: cloneChecklistTemplate(DEFAULT_PACK_CHECKLIST_TEMPLATE),
+  targetChecklistTemplates: cloneTargetChecklistTemplates(DEFAULT_TARGET_CHECKLIST_TEMPLATES),
   folderNameColors: {},
   packLogoLight: '',
   packLogoDark: '',
@@ -261,8 +307,26 @@ function normalizeMetadataSuggestRule(rule: Partial<MetadataSuggestRule> | null 
 }
 
 function normalizeSettingsMetadataRules(settings: AppSettings): AppSettings {
+  const rawTargetTemplates = settings.targetChecklistTemplates
+  const looksLikeLegacyBlankTargetTemplates =
+    Boolean(rawTargetTemplates) &&
+    (rawTargetTemplates?.tonex?.length ?? 0) === 0 &&
+    (rawTargetTemplates?.proxy?.length ?? 0) === 0 &&
+    (rawTargetTemplates?.qc?.length ?? 0) === 0 &&
+    JSON.stringify(rawTargetTemplates?.nam ?? []) === JSON.stringify(settings.packChecklistTemplate ?? DEFAULT_PACK_CHECKLIST_TEMPLATE)
+  const normalizedTargetChecklistTemplates: TargetChecklistTemplates = {
+    nam: cloneChecklistTemplate(rawTargetTemplates?.nam ?? settings.packChecklistTemplate ?? DEFAULT_PACK_CHECKLIST_TEMPLATE),
+    tonex: cloneChecklistTemplate(rawTargetTemplates?.tonex ?? []),
+    proxy: cloneChecklistTemplate(rawTargetTemplates?.proxy ?? []),
+    qc: cloneChecklistTemplate(
+      rawTargetTemplates?.qc && !looksLikeLegacyBlankTargetTemplates
+        ? rawTargetTemplates.qc
+        : DEFAULT_TARGET_CHECKLIST_TEMPLATES.qc
+    ),
+  }
   return {
     ...settings,
+    targetChecklistTemplates: normalizedTargetChecklistTemplates,
     metadataSuggestRules: (settings.metadataSuggestRules ?? []).map((rule, index) => normalizeMetadataSuggestRule(rule, index)),
     metadataSuggestScopedRules: (settings.metadataSuggestScopedRules ?? []).map((set, setIndex) => ({
       scopePath: set.scopePath,

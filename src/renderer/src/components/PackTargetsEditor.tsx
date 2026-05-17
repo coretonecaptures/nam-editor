@@ -1,13 +1,33 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import * as XLSX from 'xlsx'
 import type { NamFile, NamMetadata } from '../types/nam'
+import type { ChecklistTemplateItem, TargetChecklistTemplates } from '../types/settings'
 import { DEFAULT_EXPORT_COLUMNS, PACK_CAPTURE_COLUMNS, generatePackHtml } from '../utils/packExport'
 import {
+  checklistTemplateSignature,
+  type DeliveryTargetChecklistData,
   type DeliveryMatrixRow,
   type PackInfo,
+  type PackChecklistItem,
   createDeliveryRowId,
   normalizeDeliveryMatrixData,
   normalizeDeliveryMatrixRow,
+  normalizeDeliveryTargetChecklistsData,
   normalizeDeliveryTargetsData,
 } from './PackInfoEditor'
 
@@ -16,6 +36,7 @@ type TargetKey = 'tonex' | 'proxy' | 'qc'
 interface Props {
   folderPath: string
   folderName: string
+  targetChecklistTemplates: TargetChecklistTemplates
   onPackSaved?: (folderPath: string, hasData: boolean) => void
   logoLight?: string
   logoDark?: string
@@ -27,6 +48,145 @@ const TARGET_LABELS: Record<TargetKey, string> = {
   tonex: 'ToneX',
   proxy: 'Proxy',
   qc: 'QC',
+}
+
+function createChecklistId(): string {
+  return `target-check-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function normalizeChecklistLabel(value: string): string {
+  return value.trim().toLowerCase()
+}
+
+function normalizeChecklistItem(value: Partial<PackChecklistItem>): PackChecklistItem {
+  return {
+    id: value.id ?? createChecklistId(),
+    label: value.label ?? '',
+    completed: value.completed === true,
+    completedDate: value.completedDate ?? '',
+    notes: value.notes ?? '',
+  }
+}
+
+function createChecklistItemsFromTemplate(items: ChecklistTemplateItem[]): PackChecklistItem[] {
+  return items.map((item) => ({
+    id: createChecklistId(),
+    label: item.label,
+    completed: false,
+    completedDate: '',
+    notes: '',
+  }))
+}
+
+function createChecklistItemsFromBase(items: PackChecklistItem[]): PackChecklistItem[] {
+  return items
+    .filter((item) => item.label.trim())
+    .map((item) => ({
+      id: createChecklistId(),
+      label: item.label,
+      completed: false,
+      completedDate: '',
+      notes: '',
+    }))
+}
+
+function createTargetChecklistFromTemplate(template: ChecklistTemplateItem[]): DeliveryTargetChecklistData {
+  return {
+    items: createChecklistItemsFromTemplate(template),
+    notes: '',
+    targetDate: '',
+    liveDate: '',
+    templateSignature: checklistTemplateSignature(template),
+  }
+}
+
+function mergeMissingTemplateSteps(items: PackChecklistItem[], template: ChecklistTemplateItem[]): PackChecklistItem[] {
+  const existingLabels = new Set(items.map((item) => normalizeChecklistLabel(item.label)).filter(Boolean))
+  const missing = template
+    .filter((item) => item.label.trim() && !existingLabels.has(normalizeChecklistLabel(item.label)))
+    .map((item) => ({
+      id: createChecklistId(),
+      label: item.label,
+      completed: false,
+      completedDate: '',
+      notes: '',
+    }))
+  return [...items, ...missing]
+}
+
+function SortableTargetChecklistRow({
+  item,
+  onToggleCompleted,
+  onLabelChange,
+  onNotesChange,
+  onDateChange,
+  onRemove,
+}: {
+  item: PackChecklistItem
+  onToggleCompleted: (completed: boolean) => void
+  onLabelChange: (value: string) => void
+  onNotesChange: (value: string) => void
+  onDateChange: (value: string) => void
+  onRemove: () => void
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id })
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={`rounded p-2.5 transition-colors ${
+        isDragging
+          ? 'bg-teal-50 dark:bg-teal-900/20 border border-teal-300 dark:border-teal-700'
+          : 'bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700'
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          className="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded border border-gray-200 bg-gray-50 text-gray-400 transition-colors hover:border-teal-400 hover:text-teal-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-500 dark:hover:border-teal-500 dark:hover:text-teal-300 cursor-grab active:cursor-grabbing"
+          title="Drag to reorder"
+        >
+          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
+          </svg>
+        </button>
+        <input type="checkbox" checked={item.completed} onChange={(e) => onToggleCompleted(e.target.checked)} className="w-4 h-4 rounded accent-teal-600 flex-shrink-0" />
+        <div className="min-w-0 flex-[1.4]">
+          <input
+            value={item.label}
+            onChange={(e) => onLabelChange(e.target.value)}
+            placeholder="Checklist step"
+            className="w-full px-2 py-1.5 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500"
+          />
+        </div>
+        <div className="min-w-0 flex-1">
+          <input
+            value={item.notes}
+            onChange={(e) => onNotesChange(e.target.value)}
+            placeholder="Notes"
+            className="w-full px-2 py-1.5 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500"
+          />
+        </div>
+        <input
+          type="date"
+          value={item.completedDate}
+          onChange={(e) => onDateChange(e.target.value)}
+          className="w-[136px] flex-shrink-0 px-2 py-1.5 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500"
+        />
+        <button onClick={onRemove} className="text-gray-400 hover:text-red-500 transition-colors" title="Remove step">
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  )
 }
 
 const SEARCH_FIELDS: Array<keyof DeliveryMatrixRow> = [
@@ -140,6 +300,7 @@ function normalizePackData(raw: unknown): PackInfo {
     versionInfo: typeof source.versionInfo === 'string' ? source.versionInfo : '',
     deliveryMatrix: normalizeDeliveryMatrixData(source.deliveryMatrix),
     deliveryTargets: normalizeDeliveryTargetsData(source.deliveryTargets),
+    deliveryTargetChecklists: normalizeDeliveryTargetChecklistsData(source.deliveryTargetChecklists),
   }
 }
 
@@ -217,15 +378,17 @@ function buildVirtualFile(row: DeliveryMatrixRow, target: TargetKey, folderPath:
   }
 }
 
-export function PackTargetsEditor({ folderPath, folderName, onPackSaved, logoLight, logoDark, darkAccentColor = '#f97316' }: Props) {
+export function PackTargetsEditor({ folderPath, folderName, targetChecklistTemplates, onPackSaved, logoLight, logoDark, darkAccentColor = '#f97316' }: Props) {
   const [pack, setPack] = useState<PackInfo | null>(null)
   const [savedPack, setSavedPack] = useState<PackInfo | null>(null)
   const [status, setStatus] = useState<string | null>(null)
   const [selectedTarget, setSelectedTarget] = useState<TargetKey>('proxy')
+  const [checklistPanelOpenByTarget, setChecklistPanelOpenByTarget] = useState<Partial<Record<TargetKey, boolean>>>({})
   const [search, setSearch] = useState('')
   const [showAlternateOnly, setShowAlternateOnly] = useState(false)
   const [nameSortDir, setNameSortDir] = useState<'asc' | 'desc'>('asc')
   const [exporting, setExporting] = useState(false)
+  const checklistSensors = useSensors(useSensor(PointerSensor))
 
   useEffect(() => {
     let cancelled = false
@@ -246,6 +409,108 @@ export function PackTargetsEditor({ folderPath, folderName, onPackSaved, logoLig
     })
     setStatus(null)
   }, [])
+
+  const currentTargetTemplate = targetChecklistTemplates[selectedTarget]
+  const currentTargetTemplateSignature = useMemo(
+    () => checklistTemplateSignature(currentTargetTemplate),
+    [currentTargetTemplate]
+  )
+
+  const activeTargetChecklist = pack?.deliveryTargetChecklists[selectedTarget] ?? null
+  const targetChecklistDrifted = Boolean(
+    activeTargetChecklist && activeTargetChecklist.templateSignature !== currentTargetTemplateSignature
+  )
+  const checklistPanelOpen = checklistPanelOpenByTarget[selectedTarget] ?? Boolean(activeTargetChecklist)
+
+  const setChecklistPanelOpen = useCallback((target: TargetKey, open: boolean) => {
+    setChecklistPanelOpenByTarget((current) => ({ ...current, [target]: open }))
+  }, [])
+
+  const updateTargetChecklist = useCallback((target: TargetKey, updater: (current: DeliveryTargetChecklistData) => DeliveryTargetChecklistData) => {
+    updatePack((current) => {
+      const existing = current.deliveryTargetChecklists[target]
+      if (!existing) return current
+      return {
+        ...current,
+        deliveryTargetChecklists: {
+          ...current.deliveryTargetChecklists,
+          [target]: updater(existing),
+        },
+      }
+    })
+  }, [updatePack])
+
+  const createChecklistFromTemplateForTarget = useCallback((target: TargetKey) => {
+    updatePack((current) => ({
+      ...current,
+      deliveryTargetChecklists: {
+        ...current.deliveryTargetChecklists,
+        [target]: createTargetChecklistFromTemplate(targetChecklistTemplates[target]),
+      },
+    }))
+    setChecklistPanelOpen(target, true)
+    setStatus(`${TARGET_LABELS[target]} checklist created from template`)
+  }, [setChecklistPanelOpen, targetChecklistTemplates, updatePack])
+
+  const copyStepsFromBaseForTarget = useCallback((target: TargetKey) => {
+    updatePack((current) => ({
+      ...current,
+      deliveryTargetChecklists: {
+        ...current.deliveryTargetChecklists,
+        [target]: {
+          items: createChecklistItemsFromBase(current.checklistItems),
+          notes: '',
+          targetDate: '',
+          liveDate: '',
+          templateSignature: checklistTemplateSignature(targetChecklistTemplates[target]),
+        },
+      },
+    }))
+    setChecklistPanelOpen(target, true)
+    setStatus(`${TARGET_LABELS[target]} checklist copied from NAM/base checklist`)
+  }, [setChecklistPanelOpen, targetChecklistTemplates, updatePack])
+
+  const resetChecklistToTemplateForTarget = useCallback((target: TargetKey) => {
+    createChecklistFromTemplateForTarget(target)
+  }, [createChecklistFromTemplateForTarget])
+
+  const addMissingTemplateStepsForTarget = useCallback((target: TargetKey) => {
+    updateTargetChecklist(target, (current) => ({
+      ...current,
+      items: mergeMissingTemplateSteps(current.items, targetChecklistTemplates[target]),
+      templateSignature: checklistTemplateSignature(targetChecklistTemplates[target]),
+    }))
+    setStatus(`Added missing ${TARGET_LABELS[target]} template steps`)
+  }, [targetChecklistTemplates, updateTargetChecklist])
+
+  const setChecklistItemCompleted = useCallback((target: TargetKey, id: string, completed: boolean) => {
+    updateTargetChecklist(target, (current) => ({
+      ...current,
+      items: current.items.map((item) =>
+        item.id === id
+          ? { ...item, completed, completedDate: completed ? (item.completedDate || todayIso()) : '' }
+          : item
+      ),
+    }))
+  }, [updateTargetChecklist])
+
+  const addChecklistItem = useCallback((target: TargetKey) => {
+    updateTargetChecklist(target, (current) => ({
+      ...current,
+      items: [...current.items, { id: createChecklistId(), label: '', completed: false, completedDate: '', notes: '' }],
+    }))
+  }, [updateTargetChecklist])
+
+  const handleChecklistDragEnd = useCallback((target: TargetKey, event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    updateTargetChecklist(target, (current) => {
+      const oldIndex = current.items.findIndex((item) => item.id === active.id)
+      const newIndex = current.items.findIndex((item) => item.id === over.id)
+      if (oldIndex === -1 || newIndex === -1) return current
+      return { ...current, items: arrayMove(current.items, oldIndex, newIndex) }
+    })
+  }, [updateTargetChecklist])
 
   const showNativeTextContextMenu = useCallback((event: React.MouseEvent<HTMLElement>) => {
     const selection = window.getSelection()?.toString().trim()
@@ -378,6 +643,11 @@ export function PackTargetsEditor({ folderPath, folderName, onPackSaved, logoLig
   }), [filteredRows.length, rows.length, selectedTarget, targetRows])
 
   const targetMeta = pack?.deliveryTargets[selectedTarget]
+  const checklistCompletedCount = activeTargetChecklist?.items.filter((item) => item.completed).length ?? 0
+  const checklistTotalCount = activeTargetChecklist?.items.length ?? 0
+  const checklistPercent = checklistTotalCount > 0 ? Math.round((checklistCompletedCount / checklistTotalCount) * 100) : 0
+  const targetChecklistReleased = !!activeTargetChecklist?.liveDate
+  const targetChecklistOverdue = !targetChecklistReleased && !!activeTargetChecklist?.targetDate && activeTargetChecklist.targetDate < todayIso()
   const exportColumns = useMemo(
     () => PACK_CAPTURE_COLUMNS.filter((column) => (pack?.exportColumns ?? DEFAULT_EXPORT_COLUMNS).includes(column.id)).map((column) => column.label),
     [pack?.exportColumns]
@@ -439,6 +709,204 @@ export function PackTargetsEditor({ folderPath, folderName, onPackSaved, logoLig
               <div className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">{label}</div>
             </div>
           ))}
+        </div>
+
+        <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/30 overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setChecklistPanelOpen(selectedTarget, !checklistPanelOpen)}
+            className="w-full px-3 py-3 text-left transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/40"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-600 dark:text-gray-300">{TARGET_LABELS[selectedTarget]} Checklist</h4>
+                  {targetChecklistDrifted && (
+                    <span className="inline-flex items-center rounded-full bg-amber-100 dark:bg-amber-900/30 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                      Template changed
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 text-[11px] text-gray-400 dark:text-gray-500">
+                  Separate release steps, dates, and notes for this target only.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0 text-gray-400 dark:text-gray-500">
+                <span className="text-[10px] uppercase tracking-wide">{checklistPanelOpen ? 'Hide' : 'Show'}</span>
+                <svg className={`h-4 w-4 transition-transform ${checklistPanelOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
+              {[
+                ['Completed', `${checklistCompletedCount} / ${checklistTotalCount}`],
+                ['Target Date', activeTargetChecklist?.targetDate || 'Not set'],
+                ['Live Date', activeTargetChecklist?.liveDate || 'Not set'],
+                ['Status', activeTargetChecklist ? (targetChecklistReleased ? 'Released' : targetChecklistOverdue ? 'Overdue' : activeTargetChecklist.targetDate ? 'Scheduled' : 'No target date') : 'No checklist'],
+              ].map(([label, value]) => (
+                <div key={String(label)} className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-3 py-2">
+                  <div className="text-sm font-semibold text-gray-800 dark:text-gray-100 truncate">{value}</div>
+                  <div className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">{label}</div>
+                </div>
+              ))}
+            </div>
+          </button>
+
+          {checklistPanelOpen && (
+            <div className="border-t border-gray-200 dark:border-gray-700 px-3 py-3 space-y-3">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="text-[11px] text-gray-500 dark:text-gray-400">
+                  Template: {currentTargetTemplate.length > 0 ? `${currentTargetTemplate.length} steps` : 'Empty'}
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {!activeTargetChecklist ? (
+                    <>
+                      <button
+                        onClick={() => createChecklistFromTemplateForTarget(selectedTarget)}
+                        className="text-xs px-2.5 py-1 rounded bg-teal-600 text-white hover:bg-teal-700 transition-colors"
+                      >
+                        Create checklist from template
+                      </button>
+                      <button
+                        onClick={() => copyStepsFromBaseForTarget(selectedTarget)}
+                        className="text-xs px-2.5 py-1 rounded bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-900/40 transition-colors"
+                      >
+                        Copy steps from NAM checklist
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => resetChecklistToTemplateForTarget(selectedTarget)}
+                        className="text-xs px-2.5 py-1 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                      >
+                        Reset from template
+                      </button>
+                      <button
+                        onClick={() => copyStepsFromBaseForTarget(selectedTarget)}
+                        className="text-xs px-2.5 py-1 rounded bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-900/40 transition-colors"
+                      >
+                        Copy steps from NAM checklist
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {!activeTargetChecklist ? (
+                <div className="rounded border border-dashed border-gray-300 dark:border-gray-700 px-3 py-5 text-xs text-gray-400 dark:text-gray-500">
+                  No {TARGET_LABELS[selectedTarget]} checklist yet. Start from the {TARGET_LABELS[selectedTarget]} template, or copy the current NAM/base checklist labels into a new target checklist.
+                </div>
+              ) : (
+                <>
+                  {targetChecklistDrifted && (
+                    <div className="rounded-lg border border-amber-300/70 dark:border-amber-700/70 bg-amber-50/40 dark:bg-amber-900/10 px-3 py-2.5 space-y-2">
+                      <p className="text-xs text-amber-800 dark:text-amber-300">
+                        This {TARGET_LABELS[selectedTarget]} checklist no longer matches the current {TARGET_LABELS[selectedTarget]} template.
+                      </p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          onClick={() => updateTargetChecklist(selectedTarget, (current) => ({ ...current, templateSignature: currentTargetTemplateSignature }))}
+                          className="text-xs px-2.5 py-1 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                        >
+                          Keep current checklist
+                        </button>
+                        <button
+                          onClick={() => resetChecklistToTemplateForTarget(selectedTarget)}
+                          className="text-xs px-2.5 py-1 rounded bg-amber-600 text-white hover:bg-amber-700 transition-colors"
+                        >
+                          Reset from template
+                        </button>
+                        <button
+                          onClick={() => addMissingTemplateStepsForTarget(selectedTarget)}
+                          className="text-xs px-2.5 py-1 rounded bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-900/40 transition-colors"
+                        >
+                          Copy in missing template steps only
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Target Date</label>
+                      <input
+                        type="date"
+                        value={activeTargetChecklist.targetDate}
+                        onChange={(e) => updateTargetChecklist(selectedTarget, (current) => ({ ...current, targetDate: e.target.value }))}
+                        className="w-full text-xs px-2.5 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Live Date</label>
+                      <input
+                        type="date"
+                        value={activeTargetChecklist.liveDate}
+                        onChange={(e) => updateTargetChecklist(selectedTarget, (current) => ({ ...current, liveDate: e.target.value }))}
+                        className="w-full text-xs px-2.5 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Notes</label>
+                    <textarea
+                      value={activeTargetChecklist.notes}
+                      onChange={(e) => updateTargetChecklist(selectedTarget, (current) => ({ ...current, notes: e.target.value }))}
+                      rows={4}
+                      className="w-full min-h-[110px] text-xs px-2.5 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500 resize-y"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    {activeTargetChecklist.items.length === 0 ? (
+                      <div className="rounded border border-dashed border-gray-300 dark:border-gray-700 px-3 py-3 text-xs text-gray-400 dark:text-gray-500">
+                        No checklist steps yet for this target.
+                      </div>
+                    ) : (
+                      <DndContext sensors={checklistSensors} collisionDetection={closestCenter} onDragEnd={(event) => handleChecklistDragEnd(selectedTarget, event)}>
+                        <SortableContext items={activeTargetChecklist.items.map((item) => item.id)} strategy={verticalListSortingStrategy}>
+                          {activeTargetChecklist.items.map((item) => (
+                            <SortableTargetChecklistRow
+                              key={item.id}
+                              item={item}
+                              onToggleCompleted={(completed) => setChecklistItemCompleted(selectedTarget, item.id, completed)}
+                              onLabelChange={(value) => updateTargetChecklist(selectedTarget, (current) => ({
+                                ...current,
+                                items: current.items.map((step) => step.id === item.id ? { ...step, label: value } : step),
+                              }))}
+                              onNotesChange={(value) => updateTargetChecklist(selectedTarget, (current) => ({
+                                ...current,
+                                items: current.items.map((step) => step.id === item.id ? { ...step, notes: value } : step),
+                              }))}
+                              onDateChange={(value) => updateTargetChecklist(selectedTarget, (current) => ({
+                                ...current,
+                                items: current.items.map((step) => step.id === item.id ? { ...step, completedDate: value, completed: value ? true : step.completed } : step),
+                              }))}
+                              onRemove={() => updateTargetChecklist(selectedTarget, (current) => ({
+                                ...current,
+                                items: current.items.filter((step) => step.id !== item.id),
+                              }))}
+                            />
+                          ))}
+                        </SortableContext>
+                      </DndContext>
+                    )}
+
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <button
+                        onClick={() => addChecklistItem(selectedTarget)}
+                        className="text-xs text-teal-600 dark:text-teal-400 hover:text-teal-700 dark:hover:text-teal-300 font-medium transition-colors"
+                      >
+                        + Add step
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/30 p-3 space-y-3">

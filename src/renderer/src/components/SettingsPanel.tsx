@@ -1,13 +1,16 @@
 import { useState } from 'react'
 import {
   AppSettings,
+  DEFAULT_TARGET_CHECKLIST_TEMPLATES,
   DEFAULT_PACK_CHECKLIST_TEMPLATE,
   METADATA_SUGGEST_FIELD_OPTIONS,
   METADATA_SUGGEST_LOOKUP_VALUES,
   MetadataSuggestRule,
   MetadataSuggestMatchIn,
   MetadataSuggestMatchType,
+  TargetChecklistTemplateKey,
   cloneChecklistTemplate,
+  cloneTargetChecklistTemplates,
 } from '../types/settings'
 import { MetadataSuggestRuleLibraryModal } from './MetadataSuggestRuleLibraryModal'
 import { FilenameRecipeBuilderModal } from './FilenameRecipeBuilderModal'
@@ -54,6 +57,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
   const [saved, setSaved] = useState(false)
   const [updateState, setUpdateState] = useState<UpdateState>({ status: 'idle' })
   const [checklistTemplateOpen, setChecklistTemplateOpen] = useState(false)
+  const [activeChecklistTemplate, setActiveChecklistTemplate] = useState<TargetChecklistTemplateKey>('nam')
   const [packCatalogOpen, setPackCatalogOpen] = useState(false)
   const [metadataSuggestOpen, setMetadataSuggestOpen] = useState(false)
   const [showRuleLibraryPicker, setShowRuleLibraryPicker] = useState(false)
@@ -76,6 +80,45 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
   const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
     setDraft((prev) => ({ ...prev, [key]: value }))
     setSaved(false)
+  }
+
+  const checklistTemplateLabels: Record<TargetChecklistTemplateKey, string> = {
+    nam: 'NAM / Base',
+    tonex: 'ToneX',
+    proxy: 'Proxy',
+    qc: 'QC',
+  }
+
+  const activeChecklistTemplateItems =
+    activeChecklistTemplate === 'nam'
+      ? draft.packChecklistTemplate
+      : draft.targetChecklistTemplates[activeChecklistTemplate]
+
+  const updateChecklistTemplateItems = (key: TargetChecklistTemplateKey, items: AppSettings['packChecklistTemplate']) => {
+    if (key === 'nam') {
+      update('packChecklistTemplate', items)
+      return
+    }
+    update('targetChecklistTemplates', {
+      ...draft.targetChecklistTemplates,
+      [key]: items,
+    })
+  }
+
+  const resetChecklistTemplateToDefaults = (key: TargetChecklistTemplateKey) => {
+    if (key === 'nam') {
+      update('packChecklistTemplate', cloneChecklistTemplate(DEFAULT_PACK_CHECKLIST_TEMPLATE))
+      return
+    }
+    update('targetChecklistTemplates', {
+      ...draft.targetChecklistTemplates,
+      [key]: cloneChecklistTemplate(DEFAULT_TARGET_CHECKLIST_TEMPLATES[key]),
+    })
+  }
+
+  const resetAllChecklistTemplatesToDefaults = () => {
+    update('packChecklistTemplate', cloneChecklistTemplate(DEFAULT_PACK_CHECKLIST_TEMPLATE))
+    update('targetChecklistTemplates', cloneTargetChecklistTemplates(DEFAULT_TARGET_CHECKLIST_TEMPLATES))
   }
 
   // Theme applies immediately without requiring Save
@@ -668,43 +711,74 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
             </div>
           </div>
 
-          {/* Pack Checklist Template */}
+          {/* Checklist Templates */}
           <div>
             <div className="flex items-center gap-2 mb-4">
               <span className="text-sm">✓</span>
-              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Pack Checklist Template</h3>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Checklist Templates</h3>
               <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
             </div>
             <p className="text-xs text-gray-500 dark:text-gray-500 mb-4">
-              Default release steps used when a new Pack Checklist is created for a folder with Pack Info. Keep this collapsed if you rarely change it.
+              Store separate default checklist steps for the NAM/base workflow and for target-specific workflows like ToneX, Proxy, and QC. New target checklists are seeded from the matching template.
             </p>
             <div className="mb-3 flex items-center gap-2 flex-wrap">
               <button
                 onClick={() => setChecklistTemplateOpen((v) => !v)}
                 className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
               >
-                <span>{checklistTemplateOpen ? 'Hide template steps' : 'Edit template steps'}</span>
-                <span className="text-[10px] text-gray-400">{draft.packChecklistTemplate.length}</span>
+                <span>{checklistTemplateOpen ? 'Hide templates' : 'Edit templates'}</span>
+                <span className="text-[10px] text-gray-400">
+                  {draft.packChecklistTemplate.length + draft.targetChecklistTemplates.tonex.length + draft.targetChecklistTemplates.proxy.length + draft.targetChecklistTemplates.qc.length}
+                </span>
               </button>
               <button
-                onClick={() => update('packChecklistTemplate', cloneChecklistTemplate(DEFAULT_PACK_CHECKLIST_TEMPLATE))}
+                onClick={resetAllChecklistTemplatesToDefaults}
                 className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors"
-                title="Replace the checklist template with the current NAM Lab defaults"
+                title="Replace all checklist templates with the current NAM Lab defaults"
               >
-                Reset to current defaults
+                Reset all to defaults
               </button>
             </div>
             {checklistTemplateOpen && (
               <div className="space-y-1.5 rounded-lg border border-gray-200 dark:border-gray-800 p-3 bg-gray-50/60 dark:bg-gray-900/30">
-                {draft.packChecklistTemplate.map((item, i) => (
+                <div className="flex items-center gap-2 flex-wrap pb-2">
+                  {(Object.keys(checklistTemplateLabels) as TargetChecklistTemplateKey[]).map((key) => {
+                    const count = key === 'nam' ? draft.packChecklistTemplate.length : draft.targetChecklistTemplates[key].length
+                    return (
+                      <button
+                        key={key}
+                        onClick={() => setActiveChecklistTemplate(key)}
+                        className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                          activeChecklistTemplate === key
+                            ? 'bg-teal-600 text-white'
+                            : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
+                        }`}
+                      >
+                        {checklistTemplateLabels[key]}
+                        <span className="ml-1 text-[10px] opacity-80">{count}</span>
+                      </button>
+                    )
+                  })}
+                  <button
+                    onClick={() => resetChecklistTemplateToDefaults(activeChecklistTemplate)}
+                    className="ml-auto inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors"
+                    title={`Replace the ${checklistTemplateLabels[activeChecklistTemplate]} checklist template with its current default`}
+                  >
+                    Reset {checklistTemplateLabels[activeChecklistTemplate]}
+                  </button>
+                </div>
+                <p className="text-[11px] text-gray-500 dark:text-gray-400 pb-1">
+                  Editing template: <span className="font-medium text-gray-700 dark:text-gray-300">{checklistTemplateLabels[activeChecklistTemplate]}</span>
+                </p>
+                {activeChecklistTemplateItems.map((item, i) => (
                   <div key={item.id} className="flex items-center gap-1.5">
                     <div className="flex flex-col flex-shrink-0">
                       <button
                         onClick={() => {
                           if (i === 0) return
-                          const next = [...draft.packChecklistTemplate]
+                          const next = [...activeChecklistTemplateItems]
                           ;[next[i - 1], next[i]] = [next[i], next[i - 1]]
-                          update('packChecklistTemplate', next)
+                          updateChecklistTemplateItems(activeChecklistTemplate, next)
                         }}
                         disabled={i === 0}
                         className="text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 disabled:opacity-20 disabled:pointer-events-none transition-colors leading-none"
@@ -716,12 +790,12 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                       </button>
                       <button
                         onClick={() => {
-                          if (i === draft.packChecklistTemplate.length - 1) return
-                          const next = [...draft.packChecklistTemplate]
+                          if (i === activeChecklistTemplateItems.length - 1) return
+                          const next = [...activeChecklistTemplateItems]
                           ;[next[i], next[i + 1]] = [next[i + 1], next[i]]
-                          update('packChecklistTemplate', next)
+                          updateChecklistTemplateItems(activeChecklistTemplate, next)
                         }}
-                        disabled={i === draft.packChecklistTemplate.length - 1}
+                        disabled={i === activeChecklistTemplateItems.length - 1}
                         className="text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 disabled:opacity-20 disabled:pointer-events-none transition-colors leading-none"
                         title="Move down"
                       >
@@ -734,16 +808,16 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                       type="text"
                       value={item.label}
                       onChange={(e) => {
-                        const next = draft.packChecklistTemplate.map((step, idx) =>
+                        const next = activeChecklistTemplateItems.map((step, idx) =>
                           idx === i ? { ...step, label: e.target.value } : step
                         )
-                        update('packChecklistTemplate', next)
+                        updateChecklistTemplateItems(activeChecklistTemplate, next)
                       }}
                       placeholder="Checklist step"
                       className="flex-1 px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
                     />
                     <button
-                      onClick={() => update('packChecklistTemplate', draft.packChecklistTemplate.filter((_, idx) => idx !== i))}
+                      onClick={() => updateChecklistTemplateItems(activeChecklistTemplate, activeChecklistTemplateItems.filter((_, idx) => idx !== i))}
                       className="text-gray-400 hover:text-red-500 transition-colors flex-shrink-0"
                       title="Remove"
                     >
@@ -754,7 +828,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                   </div>
                 ))}
                 <button
-                  onClick={() => update('packChecklistTemplate', [...draft.packChecklistTemplate, { id: `step-${Date.now()}`, label: '' }])}
+                  onClick={() => updateChecklistTemplateItems(activeChecklistTemplate, [...activeChecklistTemplateItems, { id: `step-${Date.now()}`, label: '' }])}
                   className="pt-1 text-xs text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300 font-medium transition-colors"
                 >
                   + Add checklist step

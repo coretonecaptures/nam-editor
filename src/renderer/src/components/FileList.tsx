@@ -1853,7 +1853,7 @@ function FileItem({
               return src ? <img src={src} alt={meta.gear_type} className="h-7 w-auto object-contain opacity-60" /> : null
             })()}
             {meta.date && (
-              <div className="text-xs text-gray-400 dark:text-gray-600 tabular-nums text-right">
+              <div className="text-xs text-gray-400 dark:text-gray-300 tabular-nums text-right">
                 {`${meta.date.year}-${String(meta.date.month).padStart(2, '0')}-${String(meta.date.day).padStart(2, '0')}`}
               </div>
             )}

@@ -31,7 +31,6 @@
 
 ## Grid and UI
 
-- In Batch Rename, add a quick helper / hotkey for common cleanup like replacing underscores with spaces, so users do not have to repeatedly type `_` -> ` ` by hand.
 - Metadata header path display: consider a second muted/grey full-path presentation or alternate layout that shows more of the real file path without stealing too much editor real estate.
 
 ## Checklist and release workflow
@@ -39,7 +38,6 @@
 - Checklist row sync button is tiny and too far away
 - Add a `Sync All` action for checklist rows
 - Pack metadata cover image: add adjustable framing / zoom window for `ampcover.*`
-- Add target-specific checklists for Delivery Targets (`ToneX`, `Proxy`, `QC`) so release steps can differ per platform while still allowing shared/base checklist content where useful. First pass: keep the current base checklist, add optional per-target checklist overrides, and surface target checklist status in the `Targets` tab before deciding whether it also belongs in the main dashboard.
 
 ## Folder watch
 

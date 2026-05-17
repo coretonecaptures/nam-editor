@@ -4119,6 +4119,7 @@ export default function App() {
                       key={activeFolderPath}
                       folderPath={activeFolderPath}
                       folderName={activeFolderName}
+                      targetChecklistTemplates={settings.targetChecklistTemplates}
                       onPackSaved={handlePackSaved}
                       logoLight={settings.packLogoLight}
                       logoDark={settings.packLogoDark}
