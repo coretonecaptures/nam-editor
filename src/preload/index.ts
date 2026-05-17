@@ -105,10 +105,19 @@ const api = {
     ipcRenderer.invoke('trainer:start', payload),
   enqueueTrainerRuns: (payloads: TrainerStartPayload[]): Promise<{ success: boolean; error?: string; queued?: number }> =>
     ipcRenderer.invoke('trainer:enqueue', payloads),
+  setTrainerProfilesState: (payload: unknown): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('trainer:setProfilesState', payload),
+  getTrainerProfilesState: (): Promise<unknown> => ipcRenderer.invoke('trainer:getProfilesState'),
+  setTrainerProfileRunning: (profileId: string, running: boolean): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('trainer:setProfileRunning', profileId, running),
+  runTrainerFolderOnce: (payload: unknown): Promise<{ success: boolean; error?: string; queued?: number; scanned?: number }> =>
+    ipcRenderer.invoke('trainer:runFolderOnce', payload),
   cancelTrainerRun: (): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('trainer:cancel'),
   setTrainerPauseAfterCurrent: (pause: boolean): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('trainer:setPauseAfterCurrent', pause),
+  startQueuedTrainerRuns: (): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('trainer:startQueued'),
   retryFailedTrainerRuns: (): Promise<{ success: boolean; retried?: number }> =>
     ipcRenderer.invoke('trainer:retryFailed'),
   clearFinishedTrainerRuns: (): Promise<{ success: boolean }> =>

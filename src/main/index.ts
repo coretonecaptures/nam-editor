@@ -58,6 +58,31 @@ interface FolderWatchImportEntry {
   importedAt: string
 }
 
+type TrainingSourceMode = 'watcher' | 'manual-folder-run' | 'manual-direct'
+type TrainingSourcePostProcessMode = 'move' | 'copy' | 'keep'
+type TrainingLatencyMode = 'auto' | 'manual'
+
+interface TrainingProfile {
+  id: string
+  name: string
+  sourceMode: 'watcher' | 'manual-folder-run'
+  enabled: boolean
+  autoRun: boolean
+  namingTemplate: string
+  architectures: TrainerArchitecture[]
+  epochs: number
+  thresholdEsr: number | null
+  latencyMode: TrainingLatencyMode
+  latencyValue: number | null
+  savePlot: boolean
+  ignoreChecks: boolean
+  sourcePostProcess: TrainingSourcePostProcessMode
+  watchFolder: string
+  processedWavRoot: string
+  graphRoot: string
+  finalModelRoot: string
+}
+
 let folderWatchImports = new Map<string, FolderWatchImportEntry[]>()
 
 // ---- Startup logger ----
@@ -101,6 +126,17 @@ interface TrainerStartPayload {
   savePlot: boolean
   silent: boolean
   ignoreChecks: boolean
+  profileId?: string | null
+  profileName?: string | null
+  sourceMode?: TrainingSourceMode
+  finalModelRoot?: string | null
+  processedWavRoot?: string | null
+  graphRoot?: string | null
+  sourcePostProcess?: TrainingSourcePostProcessMode
+  namingTemplate?: string | null
+  submissionId?: string | null
+  submissionLabel?: string | null
+  submissionCreatedAt?: string | null
 }
 
 interface TrainerQueueJob {
@@ -132,6 +168,63 @@ interface TrainerQueueJob {
   progressBatchTotal: number | null
   progressRate: number | null
   progressLatestLine: string
+  profileId: string | null
+  profileName: string | null
+  sourceMode: TrainingSourceMode
+  finalModelRoot: string
+  processedWavRoot: string
+  graphRoot: string
+  sourcePostProcess: TrainingSourcePostProcessMode
+  workspacePath: string
+  graphPath: string
+  sourceSizeBytes: number | null
+  sourceMtimeMs: number | null
+  submissionId: string | null
+  submissionLabel: string | null
+  submissionCreatedAt: string | null
+}
+
+interface TrainerHistoryEntry {
+  historyId: string
+  timestamp: string
+  profileId: string | null
+  profileName: string | null
+  sourceMode: TrainingSourceMode
+  sourcePath: string
+  sourceSizeBytes: number | null
+  sourceMtimeMs: number | null
+  architecture: TrainerArchitecture
+  finalModelPath: string
+  processedWavPath: string
+  graphPath: string
+  status: 'success' | 'error' | 'canceled'
+  attempts: number
+  validationEsr: number | null
+  thresholdEsr: number | null
+  epochs: number
+  latencyMode: TrainingLatencyMode
+  latencyValue: number | null
+  finalModelName: string
+  failureReason: string
+  submissionId: string | null
+  submissionLabel: string | null
+  submissionCreatedAt: string | null
+}
+
+interface TrainerWatcherRuntime {
+  profileId: string
+  profileName: string
+  enabled: boolean
+  autoRun: boolean
+  running: boolean
+  sourceMode: 'watcher' | 'manual-folder-run'
+  watchFolder: string
+  pendingCount: number
+}
+
+interface TrainerProfilesStateSnapshot {
+  watchers: TrainerWatcherRuntime[]
+  graphRetentionEnabled: boolean
 }
 
 interface TrainerStateSnapshot {
@@ -167,6 +260,8 @@ interface TrainerStateSnapshot {
   activeJobId: string | null
   pauseAfterCurrent: boolean
   queue: TrainerQueueJob[]
+  history: TrainerHistoryEntry[]
+  watcherState: TrainerProfilesStateSnapshot
 }
 
 const TRAINER_IDLE_STATE: TrainerStateSnapshot = {
@@ -202,12 +297,25 @@ const TRAINER_IDLE_STATE: TrainerStateSnapshot = {
   activeJobId: null,
   pauseAfterCurrent: false,
   queue: [],
+  history: [],
+  watcherState: {
+    watchers: [],
+    graphRetentionEnabled: true,
+  },
 }
 
 let trainerState: TrainerStateSnapshot = { ...TRAINER_IDLE_STATE }
 let trainerChild: import('child_process').ChildProcessWithoutNullStreams | null = null
 let trainerQueue: TrainerQueueJob[] = []
 let trainerPauseAfterCurrent = false
+let trainingProfiles: TrainingProfile[] = []
+let trainingRetainGraphs = true
+let trainerHistory: TrainerHistoryEntry[] = []
+const trainingWatchers = new Map<string, import('fs').FSWatcher>()
+const trainingWatcherPendingTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const trainingWatcherPendingCounts = new Map<string, number>()
+const trainingWatcherRunning = new Set<string>()
+const TRAINER_HISTORY_FILENAME = 'trainer-history.json'
 
 const TRAINER_RUNNER_SOURCE = String.raw`import json
 import os
@@ -314,6 +422,163 @@ if __name__ == "__main__":
         sys.exit(1)
 `
 
+function getTrainerHistoryPath(): string {
+  return join(app.getPath('userData'), TRAINER_HISTORY_FILENAME)
+}
+
+function loadTrainerHistory(): TrainerHistoryEntry[] {
+  try {
+    const filePath = getTrainerHistoryPath()
+    if (!fs.existsSync(filePath)) return []
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+    return Array.isArray(parsed) ? parsed as TrainerHistoryEntry[] : []
+  } catch {
+    return []
+  }
+}
+
+function saveTrainerHistory(): void {
+  try {
+    fs.mkdirSync(dirname(getTrainerHistoryPath()), { recursive: true })
+    fs.writeFileSync(getTrainerHistoryPath(), JSON.stringify(trainerHistory.slice(0, 2000), null, 2), 'utf-8')
+  } catch (error) {
+    log(`trainer history save failed: ${String(error)}`)
+  }
+}
+
+function makeTrainerWatcherSnapshot(): TrainerProfilesStateSnapshot {
+  return {
+    watchers: trainingProfiles
+      .filter((profile) => profile.sourceMode === 'watcher')
+      .map((profile) => ({
+        profileId: profile.id,
+        profileName: profile.name,
+        enabled: profile.enabled,
+        autoRun: profile.autoRun,
+        running: trainingWatcherRunning.has(profile.id),
+        sourceMode: profile.sourceMode,
+        watchFolder: profile.watchFolder,
+        pendingCount: trainingWatcherPendingCounts.get(profile.id) ?? 0,
+      })),
+    graphRetentionEnabled: trainingRetainGraphs,
+  }
+}
+
+function sanitizeTrainerPathPart(value: string): string {
+  return value
+    .replace(/[\\/]+/g, ' - ')
+    .replace(/[:*?"<>|]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/g, '')
+}
+
+function fillTrainerNamingTemplate(
+  template: string,
+  outputPath: string,
+  architecture: TrainerArchitecture,
+  profileName: string | null,
+  thresholdEsr: number | null
+): string {
+  const basenameValue = basename(outputPath, extname(outputPath)).trim() || 'model'
+  const architectureLabel = getTrainerArchitectureFolderName(architecture)
+  const profileLabel = (profileName ?? '').trim()
+  const esrLabel = typeof thresholdEsr === 'number' && Number.isFinite(thresholdEsr)
+    ? String(thresholdEsr).trim()
+    : ''
+  const raw = (template || '{basename}')
+    .replace(/\{basename\}/gi, basenameValue)
+    .replace(/\{architecture\}/gi, architectureLabel)
+    .replace(/\{profile\}/gi, profileLabel)
+    .replace(/\{esr\}/gi, esrLabel)
+  const sanitized = sanitizeTrainerPathPart(raw)
+  return sanitized || basenameValue
+}
+
+function getTrainerRunWorkspaceRoot(): string {
+  return join(app.getPath('userData'), 'trainer-runs')
+}
+
+function getTrainerRunWorkspacePath(jobId: string, modelName: string, architecture: TrainerArchitecture): string {
+  return join(
+    getTrainerRunWorkspaceRoot(),
+    `${jobId}-${sanitizeTrainerPathPart(modelName)}-${sanitizeTrainerPathPart(getTrainerArchitectureFolderName(architecture))}`
+  )
+}
+
+function appendTrainerHistory(entry: TrainerHistoryEntry): void {
+  trainerHistory = [entry, ...trainerHistory].slice(0, 2000)
+  saveTrainerHistory()
+}
+
+function clearTrainingWatcherTimer(profileId: string): void {
+  const timer = trainingWatcherPendingTimers.get(profileId)
+  if (timer) {
+    clearTimeout(timer)
+    trainingWatcherPendingTimers.delete(profileId)
+  }
+}
+
+async function findFilesRecursive(root: string, matcher: (filePath: string) => boolean): Promise<string[]> {
+  const results: string[] = []
+  const visit = async (folderPath: string) => {
+    const entries = await fs.promises.readdir(folderPath, { withFileTypes: true })
+    for (const entry of entries) {
+      const fullPath = join(folderPath, entry.name)
+      if (entry.isDirectory()) {
+        await visit(fullPath)
+      } else if (matcher(fullPath)) {
+        results.push(fullPath)
+      }
+    }
+  }
+  if (fs.existsSync(root)) {
+    await visit(root)
+  }
+  return results
+}
+
+async function ensureUniqueFilePath(targetPath: string): Promise<string> {
+  if (!fs.existsSync(targetPath)) return targetPath
+  const dirPath = dirname(targetPath)
+  const ext = extname(targetPath)
+  const stem = basename(targetPath, ext)
+  for (let index = 1; index < 1000; index += 1) {
+    const candidate = join(dirPath, `${stem} (${index})${ext}`)
+    if (!fs.existsSync(candidate)) return candidate
+  }
+  return join(dirPath, `${stem}-${Date.now()}${ext}`)
+}
+
+async function promoteTrainerGraph(job: TrainerQueueJob): Promise<string> {
+  if (!job.savePlot || !trainingRetainGraphs) return ''
+  const graphFiles = await findFilesRecursive(job.workspacePath, (filePath) => /\.png$/i.test(filePath))
+  if (graphFiles.length === 0) return ''
+  const preferred = graphFiles.find((filePath) => basename(filePath, extname(filePath)) === job.modelName) ?? graphFiles[0]
+  const architectureFolder = getTrainerArchitectureFolderName(job.architecture)
+  const graphRoot = job.graphRoot.trim() || join(job.finalModelRoot, '_graphs')
+  const destinationDir = join(graphRoot, architectureFolder)
+  await fs.promises.mkdir(destinationDir, { recursive: true })
+  const destinationPath = await ensureUniqueFilePath(join(destinationDir, `${job.modelName}${extname(preferred) || '.png'}`))
+  suppressWatcher()
+  await fs.promises.copyFile(preferred, destinationPath)
+  return destinationPath
+}
+
+async function postProcessTrainerSourceWav(job: TrainerQueueJob): Promise<string> {
+  if (job.sourcePostProcess === 'keep' || !job.processedWavRoot.trim()) return ''
+  const destinationDir = join(job.processedWavRoot.trim(), getTrainerArchitectureFolderName(job.architecture))
+  await fs.promises.mkdir(destinationDir, { recursive: true })
+  const destinationPath = await ensureUniqueFilePath(join(destinationDir, basename(job.outputPath)))
+  suppressWatcher()
+  if (job.sourcePostProcess === 'move') {
+    await fs.promises.rename(job.outputPath, destinationPath)
+  } else {
+    await fs.promises.copyFile(job.outputPath, destinationPath)
+  }
+  return destinationPath
+}
+
 function emitTrainerState(): void {
   if (trainerState.activeJobId) {
     updateTrainerJob(trainerState.activeJobId, {
@@ -338,6 +603,8 @@ function emitTrainerState(): void {
     ...trainerState,
     queue: trainerQueue,
     pauseAfterCurrent: trainerPauseAfterCurrent,
+    history: trainerHistory,
+    watcherState: makeTrainerWatcherSnapshot(),
   }
   mainWindow?.webContents.send('trainer:update', trainerState)
 }
@@ -506,10 +773,14 @@ async function ensureTrainerRunnerScript(): Promise<string> {
   return runnerPath
 }
 
-function deriveTrainerModelName(outputPath: string, architecture: TrainerArchitecture): string {
-  const _unused = architecture
-  const base = basename(outputPath, extname(outputPath)).trim() || 'model'
-  return base
+function deriveTrainerModelName(
+  outputPath: string,
+  architecture: TrainerArchitecture,
+  namingTemplate: string | null | undefined,
+  profileName: string | null | undefined,
+  thresholdEsr: number | null | undefined
+): string {
+  return fillTrainerNamingTemplate(namingTemplate || '{basename}', outputPath, architecture, profileName ?? null, thresholdEsr ?? null)
 }
 
 function getTrainerArchitectureFolderName(architecture: TrainerArchitecture): string {
@@ -536,16 +807,19 @@ function getTrainerArchitectureFolderName(architecture: TrainerArchitecture): st
 }
 
 function createTrainerJob(payload: TrainerStartPayload): TrainerQueueJob {
-  const modelName = deriveTrainerModelName(payload.outputPath, payload.architecture)
+  const jobId = crypto.randomUUID()
+  const modelName = deriveTrainerModelName(payload.outputPath, payload.architecture, payload.namingTemplate, payload.profileName, payload.thresholdEsr)
   const architectureFolder = getTrainerArchitectureFolderName(payload.architecture)
-  const architectureTrainPath = join(payload.trainPath.trim(), architectureFolder)
+  const finalModelRoot = (payload.finalModelRoot ?? payload.trainPath).trim()
+  const architectureFinalRoot = join(finalModelRoot, architectureFolder)
+  const workspacePath = getTrainerRunWorkspacePath(jobId, modelName, payload.architecture)
   return {
-    jobId: crypto.randomUUID(),
+    jobId,
     status: 'queued',
     pythonPath: payload.pythonPath.trim(),
     inputPath: payload.inputPath.trim(),
     outputPath: payload.outputPath.trim(),
-    trainPath: architectureTrainPath,
+    trainPath: workspacePath,
     architecture: payload.architecture,
     epochs: payload.epochs,
     latency: payload.latency,
@@ -554,7 +828,7 @@ function createTrainerJob(payload: TrainerStartPayload): TrainerQueueJob {
     silent: payload.silent,
     ignoreChecks: payload.ignoreChecks,
     modelName,
-    outputModelPath: join(architectureTrainPath, `${modelName}.nam`),
+    outputModelPath: join(architectureFinalRoot, `${modelName}.nam`),
     checkpointModelPath: '',
     attempts: 0,
     startedAt: null,
@@ -568,6 +842,20 @@ function createTrainerJob(payload: TrainerStartPayload): TrainerQueueJob {
     progressBatchTotal: null,
     progressRate: null,
     progressLatestLine: '',
+    profileId: payload.profileId ?? null,
+    profileName: payload.profileName ?? null,
+    sourceMode: payload.sourceMode ?? 'manual-direct',
+    finalModelRoot,
+    processedWavRoot: (payload.processedWavRoot ?? '').trim(),
+    graphRoot: (payload.graphRoot ?? '').trim(),
+    sourcePostProcess: payload.sourcePostProcess ?? 'keep',
+    workspacePath,
+    graphPath: '',
+    sourceSizeBytes: null,
+    sourceMtimeMs: null,
+    submissionId: payload.submissionId ?? null,
+    submissionLabel: payload.submissionLabel ?? null,
+    submissionCreatedAt: payload.submissionCreatedAt ?? null,
   }
 }
 
@@ -635,6 +923,276 @@ function makeQueuedTrainerJobNext(jobId: string): boolean {
   const firstQueuedIndex = trainerQueue.findIndex((item) => item.status === 'queued')
   trainerQueue.splice(firstQueuedIndex === -1 ? trainerQueue.length : firstQueuedIndex, 0, job)
   return true
+}
+
+function isTrainingProfileActive(profile: TrainingProfile): boolean {
+  return profile.enabled && profile.sourceMode === 'watcher' && (profile.autoRun || trainingWatcherRunning.has(profile.id))
+}
+
+function closeTrainingWatchers(): void {
+  for (const watcher of trainingWatchers.values()) {
+    try { watcher.close() } catch { /* ignore */ }
+  }
+  trainingWatchers.clear()
+  for (const timer of trainingWatcherPendingTimers.values()) {
+    clearTimeout(timer)
+  }
+  trainingWatcherPendingTimers.clear()
+  trainingWatcherPendingCounts.clear()
+}
+
+async function statTrainingSource(filePath: string): Promise<{ sizeBytes: number; mtimeMs: number }> {
+  const stat = await fs.promises.stat(filePath)
+  return {
+    sizeBytes: stat.size,
+    mtimeMs: stat.mtimeMs,
+  }
+}
+
+function trainerQueueAlreadyHasSource(profileId: string | null, sourcePath: string, architecture: TrainerArchitecture): boolean {
+  const normalized = normalizePath(sourcePath)
+  return trainerQueue.some((job) =>
+    normalizePath(job.outputPath) === normalized &&
+    job.architecture === architecture &&
+    job.profileId === profileId &&
+    job.status !== 'canceled'
+  )
+}
+
+function makeTrainerQueueDuplicateKey(payload: TrainerStartPayload): string {
+  return [
+    normalizePath(payload.outputPath.trim()),
+    payload.architecture,
+    payload.sourceMode ?? 'manual-direct',
+    normalizePath((payload.finalModelRoot ?? payload.trainPath).trim()),
+    payload.profileId ?? '',
+  ].join('::')
+}
+
+function trainerHistoryAlreadyHasSource(profileId: string | null, sourcePath: string, architecture: TrainerArchitecture, mtimeMs: number | null, sizeBytes: number | null): boolean {
+  const normalized = normalizePath(sourcePath)
+  return trainerHistory.some((entry) =>
+    normalizePath(entry.sourcePath) === normalized &&
+    entry.profileId === profileId &&
+    entry.architecture === architecture &&
+    entry.sourceMtimeMs === mtimeMs &&
+    entry.sourceSizeBytes === sizeBytes &&
+    entry.status === 'success'
+  )
+}
+
+function hasPendingSiblingTrainerJobs(job: TrainerQueueJob): boolean {
+  const normalized = normalizePath(job.outputPath)
+  return trainerQueue.some((item) =>
+    item.jobId !== job.jobId &&
+    normalizePath(item.outputPath) === normalized &&
+    item.profileId === job.profileId &&
+    ['queued', 'starting', 'running'].includes(item.status)
+  )
+}
+
+async function buildTrainerPayloadsForProfile(
+  profile: TrainingProfile,
+  pythonPath: string,
+  inputPath: string,
+  sourceWavPaths: string[],
+  sourceModeOverride?: TrainingSourceMode,
+  submissionMeta?: { id: string; label: string; createdAt: string }
+): Promise<TrainerStartPayload[]> {
+  const payloads: TrainerStartPayload[] = []
+  if (!pythonPath.trim() || !inputPath.trim() || !profile.finalModelRoot.trim()) return payloads
+  for (const outputPath of sourceWavPaths) {
+    const normalizedOutputPath = outputPath.trim()
+    if (!normalizedOutputPath) continue
+    let sourceStats: { sizeBytes: number; mtimeMs: number } | null = null
+    try {
+      sourceStats = await statTrainingSource(normalizedOutputPath)
+    } catch {
+      continue
+    }
+    for (const architecture of profile.architectures) {
+      if (trainerQueueAlreadyHasSource(profile.id, normalizedOutputPath, architecture)) continue
+      if (trainerHistoryAlreadyHasSource(profile.id, normalizedOutputPath, architecture, sourceStats.mtimeMs, sourceStats.sizeBytes)) continue
+      payloads.push({
+        pythonPath,
+        inputPath,
+        outputPath: normalizedOutputPath,
+        trainPath: profile.finalModelRoot,
+        architecture,
+        epochs: profile.epochs,
+        latency: profile.latencyMode === 'manual' ? profile.latencyValue : null,
+        thresholdEsr: profile.thresholdEsr,
+        savePlot: profile.savePlot,
+        silent: true,
+        ignoreChecks: profile.ignoreChecks,
+        profileId: profile.id,
+        profileName: profile.name,
+        sourceMode: sourceModeOverride ?? profile.sourceMode,
+        finalModelRoot: profile.finalModelRoot,
+        processedWavRoot: profile.processedWavRoot,
+        graphRoot: profile.graphRoot,
+        sourcePostProcess: profile.sourcePostProcess,
+        namingTemplate: profile.namingTemplate,
+        submissionId: submissionMeta?.id ?? null,
+        submissionLabel: submissionMeta?.label ?? null,
+        submissionCreatedAt: submissionMeta?.createdAt ?? null,
+      })
+    }
+  }
+  return payloads
+}
+
+async function enqueueTrainingPayloads(payloads: TrainerStartPayload[]): Promise<number> {
+  if (payloads.length === 0) return 0
+  const existingKeys = new Set(
+    trainerQueue
+      .filter((job) => ['queued', 'starting', 'running'].includes(job.status))
+      .map((job) => [
+        normalizePath(job.outputPath.trim()),
+        job.architecture,
+        job.sourceMode,
+        normalizePath(job.finalModelRoot.trim()),
+        job.profileId ?? '',
+      ].join('::'))
+  )
+  const seenPayloadKeys = new Set<string>()
+  const uniquePayloads = payloads.filter((payload) => {
+    const key = makeTrainerQueueDuplicateKey(payload)
+    if (existingKeys.has(key) || seenPayloadKeys.has(key)) return false
+    seenPayloadKeys.add(key)
+    return true
+  })
+  if (uniquePayloads.length === 0) {
+    emitTrainerState()
+    return 0
+  }
+  const jobs = uniquePayloads.map((payload) => createTrainerJob(payload))
+  for (const job of jobs) {
+    try {
+      const stats = await statTrainingSource(job.outputPath)
+      job.sourceSizeBytes = stats.sizeBytes
+      job.sourceMtimeMs = stats.mtimeMs
+    } catch {
+      // leave null
+    }
+  }
+  trainerQueue.push(...jobs)
+  emitTrainerState()
+  await pumpTrainerQueue()
+  return jobs.length
+}
+
+async function scanWavFilesInFolder(folderPath: string): Promise<string[]> {
+  const entries = await fs.promises.readdir(folderPath, { withFileTypes: true })
+  return entries
+    .filter((entry) => entry.isFile() && /\.wav$/i.test(entry.name))
+    .map((entry) => join(folderPath, entry.name))
+    .sort((a, b) => a.localeCompare(b))
+}
+
+async function enqueueExistingTrainingWatcherFiles(profile: TrainingProfile): Promise<void> {
+  const sourceFolder = profile.watchFolder.trim()
+  if (!sourceFolder || !trainerConfiguredPythonPath || !trainerConfiguredInputPath) return
+  try {
+    const files = await scanWavFilesInFolder(sourceFolder)
+    if (files.length === 0) return
+    const submissionMeta = {
+      id: crypto.randomUUID(),
+      label: `Watcher - ${profile.name}`,
+      createdAt: new Date().toISOString(),
+    }
+    const payloads = await buildTrainerPayloadsForProfile(
+      profile,
+      trainerConfiguredPythonPath,
+      trainerConfiguredInputPath,
+      files,
+      'watcher',
+      submissionMeta
+    )
+    if (payloads.length === 0) return
+    await enqueueTrainingPayloads(payloads)
+  } catch (error) {
+    log(`training watcher initial scan failed for "${profile.name}": ${String(error)}`)
+  }
+}
+
+async function ensureTrainingWatcherAutoStart(profile: TrainingProfile): Promise<void> {
+  if (!profile.autoRun) return
+  if (trainerPauseAfterCurrent) {
+    trainerPauseAfterCurrent = false
+    emitTrainerState()
+  }
+  await pumpTrainerQueue()
+}
+
+function scheduleTrainingWatcherFile(profile: TrainingProfile, filePath: string): void {
+  const key = profile.id
+  clearTrainingWatcherTimer(key)
+  trainingWatcherPendingCounts.set(key, (trainingWatcherPendingCounts.get(key) ?? 0) + 1)
+  emitTrainerState()
+  const timer = setTimeout(async () => {
+    try {
+      if (!fs.existsSync(filePath)) return
+      const first = await statTrainingSource(filePath)
+      await wait(1200)
+      const second = await statTrainingSource(filePath)
+      if (first.sizeBytes !== second.sizeBytes || first.mtimeMs !== second.mtimeMs) {
+        scheduleTrainingWatcherFile(profile, filePath)
+        return
+      }
+      const payloads = await buildTrainerPayloadsForProfile(
+        profile,
+        trainerConfiguredPythonPath,
+        trainerConfiguredInputPath,
+        [filePath],
+        'watcher',
+        {
+          id: crypto.randomUUID(),
+          label: `Watcher - ${profile.name}`,
+          createdAt: new Date().toISOString(),
+        }
+      )
+      await enqueueTrainingPayloads(payloads)
+      await ensureTrainingWatcherAutoStart(profile)
+    } catch (error) {
+      log(`training watcher enqueue failed for ${filePath}: ${String(error)}`)
+    } finally {
+      trainingWatcherPendingCounts.set(key, Math.max(0, (trainingWatcherPendingCounts.get(key) ?? 1) - 1))
+      clearTrainingWatcherTimer(key)
+      emitTrainerState()
+    }
+  }, 1200)
+  trainingWatcherPendingTimers.set(key, timer)
+}
+
+let trainerConfiguredPythonPath = ''
+let trainerConfiguredInputPath = ''
+
+function resetTrainingWatchProfiles(profiles: TrainingProfile[], retainGraphs: boolean): void {
+  const manualRunning = new Set(trainingWatcherRunning)
+  closeTrainingWatchers()
+  trainingProfiles = profiles
+  trainingRetainGraphs = retainGraphs
+  trainingWatcherRunning.clear()
+  for (const profile of trainingProfiles) {
+    if (manualRunning.has(profile.id)) trainingWatcherRunning.add(profile.id)
+    if (!isTrainingProfileActive(profile) || !profile.watchFolder.trim()) continue
+    const sourceFolder = profile.watchFolder.trim()
+    try {
+      const watcher = fs.watch(sourceFolder, { recursive: false }, (_eventType, filename) => {
+        const nextName = typeof filename === 'string' ? filename : filename?.toString() ?? ''
+        if (!nextName || !/\.wav$/i.test(nextName)) return
+        scheduleTrainingWatcherFile(profile, join(sourceFolder, nextName))
+      })
+      trainingWatchers.set(profile.id, watcher)
+      trainingWatcherRunning.add(profile.id)
+      void enqueueExistingTrainingWatcherFiles(profile)
+      void ensureTrainingWatcherAutoStart(profile)
+    } catch (error) {
+      log(`training watcher error "${profile.name}": ${String(error)}`)
+    }
+  }
+  emitTrainerState()
 }
 
 function hashFileSha256(filePath: string): Promise<string> {
@@ -1486,6 +2044,8 @@ app.whenReady().then(async () => {
   log('app.whenReady fired')
   switchLogToUserData()
   await loadTone3kTokens()
+  trainerHistory = loadTrainerHistory()
+  trainerState = { ...trainerState, history: trainerHistory, watcherState: makeTrainerWatcherSnapshot() }
   log(`log file moved to userData: ${logPath}`)
 
   app.setName('NAM Lab')
@@ -2312,6 +2872,15 @@ app.whenReady().then(async () => {
     await fs.promises.access(pythonPath)
     await fs.promises.access(inputPath)
     await fs.promises.access(outputPath)
+    try {
+      const outputStat = await fs.promises.stat(outputPath)
+      updateTrainerJob(job.jobId, {
+        sourceSizeBytes: outputStat.size,
+        sourceMtimeMs: outputStat.mtimeMs,
+      })
+    } catch {
+      /* best effort */
+    }
     await fs.promises.mkdir(trainPath, { recursive: true })
 
     const runnerPath = await ensureTrainerRunnerScript()
@@ -2387,6 +2956,25 @@ app.whenReady().then(async () => {
 
       if (finalStatus === 'success' && trainerState.outputModelPath) {
         try {
+          await fs.promises.mkdir(dirname(job.outputModelPath), { recursive: true })
+          const finalModelPath = await ensureUniqueFilePath(job.outputModelPath)
+          suppressWatcher()
+          await fs.promises.copyFile(trainerState.outputModelPath, finalModelPath)
+          trainerState = {
+            ...trainerState,
+            outputModelPath: finalModelPath,
+          }
+        } catch (promoteError) {
+          trainerState = {
+            ...trainerState,
+            status: 'error',
+            error: `Could not promote final model: ${String(promoteError)}`,
+          }
+        }
+      }
+
+      if (trainerState.status === 'success' && trainerState.outputModelPath) {
+        try {
           const content = await fs.promises.readFile(trainerState.outputModelPath, 'utf-8')
           const patched = persistTrainerMetadata(content, job.epochs, job.architecture)
           JSON.parse(patched)
@@ -2401,6 +2989,33 @@ app.whenReady().then(async () => {
         }
       }
 
+      let promotedGraphPath = ''
+      let processedWavPath = ''
+      if (finalStatus === 'success') {
+        try {
+          promotedGraphPath = await promoteTrainerGraph(job)
+          if (promotedGraphPath) {
+            updateTrainerJob(job.jobId, { graphPath: promotedGraphPath })
+            trainerState = { ...trainerState }
+          }
+        } catch (graphError) {
+          trainerState = {
+            ...trainerState,
+            logs: [...trainerState.logs, `Trainer graph promote warning: ${String(graphError)}`].slice(-600),
+          }
+        }
+        try {
+          if (!hasPendingSiblingTrainerJobs(job)) {
+            processedWavPath = await postProcessTrainerSourceWav(job)
+          }
+        } catch (sourceMoveError) {
+          trainerState = {
+            ...trainerState,
+            logs: [...trainerState.logs, `Trainer source post-process warning: ${String(sourceMoveError)}`].slice(-600),
+          }
+        }
+      }
+
       if (wasCanceled && trainerState.outputModelPath) {
         try {
           if (fs.existsSync(trainerState.outputModelPath)) {
@@ -2411,6 +3026,33 @@ app.whenReady().then(async () => {
           /* best effort; keep canceled state even if cleanup fails */
         }
       }
+
+      appendTrainerHistory({
+        historyId: crypto.randomUUID(),
+        timestamp: trainerState.finishedAt ?? new Date().toISOString(),
+        profileId: job.profileId,
+        profileName: job.profileName,
+        sourceMode: job.sourceMode,
+        sourcePath: job.outputPath,
+        sourceSizeBytes: getActiveTrainerJob()?.sourceSizeBytes ?? job.sourceSizeBytes,
+        sourceMtimeMs: getActiveTrainerJob()?.sourceMtimeMs ?? job.sourceMtimeMs,
+        architecture: job.architecture,
+        finalModelPath: finalStatus === 'success' ? trainerState.outputModelPath : '',
+        processedWavPath,
+        graphPath: promotedGraphPath,
+        status: finalStatus === 'success' ? 'success' : finalStatus === 'error' ? 'error' : 'canceled',
+        attempts: job.attempts,
+        validationEsr: trainerState.validationEsr,
+        thresholdEsr: job.thresholdEsr,
+        epochs: job.epochs,
+        latencyMode: job.latency == null ? 'auto' : 'manual',
+        latencyValue: job.latency,
+        finalModelName: job.modelName,
+        failureReason: finalStatus === 'success' ? '' : finalError,
+        submissionId: job.submissionId,
+        submissionLabel: job.submissionLabel,
+        submissionCreatedAt: job.submissionCreatedAt,
+      })
 
       emitTrainerState()
       if (!trainerPauseAfterCurrent) {
@@ -2499,9 +3141,7 @@ app.whenReady().then(async () => {
     if (!pythonPath || !inputPath || !outputPath || !trainPath) {
       return { success: false, error: 'Python path, input audio, output audio, and train destination are required.' }
     }
-    trainerQueue.push(createTrainerJob({ ...payload, pythonPath, inputPath, outputPath, trainPath }))
-    emitTrainerState()
-    await pumpTrainerQueue()
+    await enqueueTrainingPayloads([{ ...payload, pythonPath, inputPath, outputPath, trainPath }])
     return { success: true }
   })
 
@@ -2518,10 +3158,69 @@ app.whenReady().then(async () => {
     if (validPayloads.length === 0) {
       return { success: false, error: 'No valid training jobs were provided.' }
     }
-    trainerQueue.push(...validPayloads.map((payload) => createTrainerJob(payload)))
-    emitTrainerState()
-    await pumpTrainerQueue()
+    await enqueueTrainingPayloads(validPayloads)
     return { success: true, queued: validPayloads.length }
+  })
+
+  ipcMain.handle('trainer:setProfilesState', async (_event, payload: {
+    pythonPath: string
+    inputPath: string
+    retainGraphs: boolean
+    profiles: TrainingProfile[]
+  }) => {
+    trainerConfiguredPythonPath = (payload?.pythonPath ?? '').trim()
+    trainerConfiguredInputPath = (payload?.inputPath ?? '').trim()
+    resetTrainingWatchProfiles(Array.isArray(payload?.profiles) ? payload.profiles : [], payload?.retainGraphs ?? true)
+    return { success: true }
+  })
+
+  ipcMain.handle('trainer:getProfilesState', async () => makeTrainerWatcherSnapshot())
+
+  ipcMain.handle('trainer:setProfileRunning', async (_event, profileId: string, running: boolean) => {
+    const target = trainingProfiles.find((profile) => profile.id === profileId && profile.sourceMode === 'watcher')
+    if (!target) return { success: false, error: 'Training watcher profile not found.' }
+    if (!target.enabled) return { success: false, error: 'Enable the watcher profile before starting it.' }
+    if (running) trainingWatcherRunning.add(profileId)
+    else trainingWatcherRunning.delete(profileId)
+    resetTrainingWatchProfiles(trainingProfiles, trainingRetainGraphs)
+    return { success: true }
+  })
+
+  ipcMain.handle('trainer:runFolderOnce', async (_event, payload: {
+    profile: TrainingProfile
+    folderPath: string
+    pythonPath: string
+    inputPath: string
+    submissionId?: string
+    submissionLabel?: string
+    submissionCreatedAt?: string
+  }) => {
+    const folderPath = (payload?.folderPath ?? '').trim()
+    const pythonPath = (payload?.pythonPath ?? '').trim()
+    const inputPath = (payload?.inputPath ?? '').trim()
+    if (!folderPath || !pythonPath || !inputPath) {
+      return { success: false, error: 'Folder path, Python path, and input audio are required.' }
+    }
+    const files = await scanWavFilesInFolder(folderPath)
+    if (files.length === 0) {
+      return { success: false, error: 'No WAV files were found in that folder.' }
+    }
+    const payloads = await buildTrainerPayloadsForProfile(
+      payload.profile,
+      pythonPath,
+      inputPath,
+      files,
+      'manual-folder-run',
+      payload.submissionId && payload.submissionLabel
+        ? {
+            id: payload.submissionId,
+            label: payload.submissionLabel,
+            createdAt: payload.submissionCreatedAt ?? new Date().toISOString(),
+          }
+        : undefined
+    )
+    const queued = await enqueueTrainingPayloads(payloads)
+    return { success: true, queued, scanned: files.length }
   })
 
   ipcMain.handle('trainer:setPauseAfterCurrent', async (_event, pause: boolean) => {
@@ -2530,6 +3229,13 @@ app.whenReady().then(async () => {
     if (!trainerPauseAfterCurrent) {
       await pumpTrainerQueue()
     }
+    return { success: true }
+  })
+
+  ipcMain.handle('trainer:startQueued', async () => {
+    trainerPauseAfterCurrent = false
+    emitTrainerState()
+    await pumpTrainerQueue()
     return { success: true }
   })
 

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import {
   AppSettings,
   DEFAULT_TARGET_CHECKLIST_TEMPLATES,
@@ -8,18 +8,22 @@ import {
   MetadataSuggestRule,
   MetadataSuggestMatchIn,
   MetadataSuggestMatchType,
+  TrainingPreset,
+  TrainingWatchProfile,
   TargetChecklistTemplateKey,
   cloneChecklistTemplate,
   cloneTargetChecklistTemplates,
 } from '../types/settings'
 import { MetadataSuggestRuleLibraryModal } from './MetadataSuggestRuleLibraryModal'
 import { FilenameRecipeBuilderModal } from './FilenameRecipeBuilderModal'
+import { TRAINER_ARCHITECTURES } from '../types/trainer'
 import {
   cloneMetadataSuggestRule,
   isMetadataSuggestRuleLibraryCandidate,
   isMetadataSuggestRuleComplete,
   metadataSuggestRuleSignature,
 } from '../utils/metadataSuggestRuleLibrary'
+import type { TrainerProfilesStateSnapshot } from '../types/trainer'
 
 const PACK_DARK_ACCENT_PRESETS = [
   '#f97316',
@@ -54,6 +58,8 @@ interface SettingsPanelProps {
 
 export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps) {
   const [draft, setDraft] = useState<AppSettings>({ ...settings })
+  const [settingsTab, setSettingsTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'training'>('global')
+  const [maximized, setMaximized] = useState(false)
   const [saved, setSaved] = useState(false)
   const [updateState, setUpdateState] = useState<UpdateState>({ status: 'idle' })
   const [checklistTemplateOpen, setChecklistTemplateOpen] = useState(false)
@@ -63,6 +69,9 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
   const [showRuleLibraryPicker, setShowRuleLibraryPicker] = useState(false)
   const [showRecipeBuilder, setShowRecipeBuilder] = useState(false)
   const [folderWatchesOpen, setFolderWatchesOpen] = useState(false)
+  const [trainingWatchersOpen, setTrainingWatchersOpen] = useState(false)
+  const [trainingPresetsOpen, setTrainingPresetsOpen] = useState(false)
+  const [trainingProfilesState, setTrainingProfilesState] = useState<TrainerProfilesStateSnapshot>({ watchers: [], graphRetentionEnabled: draft.trainingRetainGraphs })
 
   const handleCheckForUpdates = async () => {
     setUpdateState({ status: 'checking' })
@@ -144,10 +153,75 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
     setTimeout(() => setSaved(false), 2000)
   }
 
+  useEffect(() => {
+    if (!draft.enableExperimentalTraining) return
+    void window.api.getTrainerProfilesState().then((state) => setTrainingProfilesState(state as TrainerProfilesStateSnapshot)).catch(() => null)
+  }, [draft.enableExperimentalTraining, draft.trainingWatchProfiles, draft.trainingPresets, draft.trainingRetainGraphs])
+
+  const updateTrainingPreset = (presetId: string, patch: Partial<TrainingPreset>) => {
+    update('trainingPresets', draft.trainingPresets.map((preset) => (
+      preset.id === presetId ? { ...preset, ...patch } : preset
+    )))
+  }
+
+  const updateTrainingWatchProfile = (watchId: string, patch: Partial<TrainingWatchProfile>) => {
+    update('trainingWatchProfiles', draft.trainingWatchProfiles.map((profile) => (
+      profile.id === watchId ? { ...profile, ...patch } : profile
+    )))
+  }
+
+  const addTrainingPreset = () => {
+    const nextIndex = draft.trainingPresets.length + 1
+    const nextPreset: TrainingPreset = {
+      id: `training-preset-${Date.now()}-${nextIndex}`,
+      name: `Preset ${nextIndex}`,
+      architectures: ['standard'],
+      epochs: 1000,
+      thresholdEsr: null,
+      latencyMode: 'auto',
+      latencyValue: null,
+      savePlot: true,
+      ignoreChecks: false,
+    }
+    update('trainingPresets', [...draft.trainingPresets, nextPreset])
+    setTrainingPresetsOpen(true)
+  }
+
+  const addTrainingWatchProfile = () => {
+    const nextIndex = draft.trainingWatchProfiles.length + 1
+    const nextProfile: TrainingWatchProfile = {
+      id: `training-watch-${Date.now()}-${nextIndex}`,
+      name: `Watcher ${nextIndex}`,
+      enabled: true,
+      autoRun: true,
+      watchFolder: '',
+      presetId: draft.trainingPresets[0]?.id ?? '',
+      namingTemplate: '{basename}',
+      sourcePostProcess: 'move',
+      processedWavRoot: '',
+      graphRoot: '',
+      finalModelRoot: '',
+    }
+    update('trainingWatchProfiles', [...draft.trainingWatchProfiles, nextProfile])
+    setTrainingWatchersOpen(true)
+  }
+
   const formatWatchPath = (path: string) => {
     const normalized = path.replace(/\\/g, '/')
     const parts = normalized.split('/').filter(Boolean)
     return parts.length <= 4 ? normalized : `.../${parts.slice(-4).join('/')}`
+  }
+
+  const fillTrainingWatchProcessedLayout = (watchId: string, watchFolder: string) => {
+    const trimmed = watchFolder.trim()
+    if (!trimmed) return
+    const normalized = trimmed.replace(/\\/g, '/').replace(/\/+$/, '')
+    const processedRoot = `${normalized}/_Processed`
+    updateTrainingWatchProfile(watchId, {
+      finalModelRoot: `${processedRoot}/Models`,
+      processedWavRoot: `${processedRoot}/WAV`,
+      graphRoot: `${processedRoot}/Graphs`,
+    })
   }
 
   const appendLibraryRulesToGlobal = (selectedRules: MetadataSuggestRule[]) => {
@@ -176,7 +250,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className={`flex flex-col overflow-hidden ${maximized ? 'fixed inset-4 z-[70] rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 shadow-2xl h-auto' : 'h-full'}`}>
       <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
         <div>
           <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Settings</h2>
@@ -185,6 +259,22 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
           </p>
         </div>
         <div className="flex items-center gap-2">
+        <button
+          onClick={() => setMaximized((v) => !v)}
+          title={maximized ? 'Restore settings panel' : 'Maximize settings panel'}
+          className={`p-2 rounded-lg transition-colors ${
+            maximized
+              ? 'bg-indigo-600 text-white'
+              : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300'
+          }`}
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            {maximized
+              ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
+              : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+            }
+          </svg>
+        </button>
         <button
           onClick={onClose}
           className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
@@ -215,12 +305,36 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-5">
-        <div className="max-w-2xl space-y-8">
+        <div className={`${maximized ? 'max-w-none' : 'max-w-2xl'} space-y-8`}>
+          <div className="border-b border-gray-200 dark:border-gray-800">
+          <div className="flex flex-wrap gap-6 -mb-px">
+            {([
+              ['global', 'Global'],
+              ['defaults', 'Capture Defaults'],
+              ['metadata', 'Metadata'],
+              ['pack', 'Pack'],
+              ['training', 'Training'],
+            ] as const).map(([value, label]) => (
+              <button
+                key={value}
+                onClick={() => setSettingsTab(value)}
+                className={`border-b-2 px-1 py-3 text-sm font-medium transition-colors ${
+                  settingsTab === value
+                    ? 'border-cyan-400 text-cyan-400'
+                    : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          </div>
 
           {/* Appearance */}
+          {settingsTab === 'global' && (
           <div>
             <div className="flex items-center gap-2 mb-4">
-              <span className="text-sm">🎨</span>
+              <span className="text-sm">UI</span>
               <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Appearance</h3>
               <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
             </div>
@@ -288,14 +402,16 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
               </div>
             </div>
           </div>
+          )}
 
           {/* Capture Defaults */}
+          {settingsTab === 'defaults' && (
           <Section
-            icon="🎚️"
+            icon="Fill"
             title="Capture Defaults"
             enabled={draft.enableCaptureDefaults}
             onToggle={(v) => update('enableCaptureDefaults', v)}
-            description="Applied to files where the field is empty or null on open."
+            description="When enabled, these values populate any file you open where the matching field is empty. For more granular control, use folder metadata."
           >
             <SettingsField label="Default Modeled By" hint="Applied if file has no modeled_by value">
               <input
@@ -330,73 +446,17 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
               />
             </SettingsField>
           </Section>
+          )}
 
           {/* Behavior */}
+          {settingsTab === 'global' && (
           <div>
             <div className="flex items-center gap-2 mb-4">
-              <span className="text-sm">⚙️</span>
+              <span className="text-sm">App</span>
               <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Behavior</h3>
               <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
             </div>
             <div className="space-y-4">
-              <CheckboxField
-                label="Populate name from filename"
-                description="When a file has no name, automatically set it to the filename (without .nam extension)."
-                checked={draft.populateNameFromFilename}
-                onChange={(v) => update('populateNameFromFilename', v)}
-              />
-
-              <CheckboxField
-                label="Auto-detect tone type from filename"
-                description={
-                  <>
-                    Scans the filename for tone keywords and sets Tone Type if empty.
-                    When multiple keywords match, the <em>rightmost</em> one wins — so
-                    &ldquo;Clean Crunch DI&rdquo; → <strong>Crunch</strong>.
-                    Keywords: clean · crunch · lead/highgain/hi-gain · fuzz · overdrive/od/edge/drive · distortion/dist.
-                  </>
-                }
-                checked={draft.autoDetectToneType}
-                onChange={(v) => update('autoDetectToneType', v)}
-              />
-
-              <SettingsField label="Amp Suffix" hint="Filename endings that identify a capture as Amp type — comma separated">
-                <div className="space-y-1">
-                  <input
-                    type="text"
-                    value={draft.ampSuffix}
-                    onChange={(e) => update('ampSuffix', e.target.value)}
-                    placeholder="e.g. DI, DIR, DIRECT"
-                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors font-mono"
-                  />
-                  <p className="text-xs text-gray-500 dark:text-gray-500">
-                    Leave blank to disable. Case-insensitive, spaces ignored.
-                  </p>
-                </div>
-              </SettingsField>
-
-              <CheckboxField
-                label="Default to Cab if no amp suffix match"
-                description="When a file has no gear type and the filename doesn't match the amp suffix, set it to Cab. Leave off to keep gear type blank."
-                checked={draft.defaultToCab}
-                onChange={(v) => update('defaultToCab', v)}
-              />
-
-              <SettingsField label="File Rename Template" hint="Used by the Rename button in the metadata editor">
-                <div className="space-y-1.5">
-                  <input
-                    type="text"
-                    value={draft.renameTemplate}
-                    onChange={(e) => update('renameTemplate', e.target.value)}
-                    placeholder="{name}  or  {gear_make} {gear_model} - {name}"
-                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors font-mono"
-                  />
-                  <p className="text-xs text-gray-500 dark:text-gray-500">
-                    Tokens: {'{name}'} {'{gear_make}'} {'{gear_model}'} {'{gear_type}'} {'{tone_type}'} {'{modeled_by}'}
-                  </p>
-                </div>
-              </SettingsField>
-
               <div className="pt-2 border-t border-gray-200 dark:border-gray-800">
                 <p className="text-xs text-gray-500 dark:text-gray-500 mb-3">Confirmation dialogs</p>
                 <div className="space-y-3">
@@ -416,11 +476,13 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
               </div>
             </div>
           </div>
+          )}
 
           {/* Startup */}
+          {settingsTab === 'global' && (
           <div>
             <div className="flex items-center gap-2 mb-4">
-              <span className="text-sm">🚀</span>
+              <span className="text-sm">Start</span>
               <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Startup</h3>
               <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
             </div>
@@ -484,42 +546,24 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
               )}
             </div>
           </div>
+          )}
 
           {/* Library */}
+          {settingsTab === 'global' && (
           <div>
             <div className="flex items-center gap-2 mb-4">
-              <span className="text-sm">📚</span>
+              <span className="text-sm">Lib</span>
               <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Library</h3>
               <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
             </div>
             <div className="space-y-4">
-              <CheckboxField
-                label="Show NAM Lab metadata fields"
-                description="Show and edit extended capture details (mics, cabinet, amp channel, settings, comments) in the metadata editor."
-                checked={draft.showNamLabFields}
-                onChange={(v) => update('showNamLabFields', v)}
-              />
               <CheckboxField
                 label="Show folder images"
                 description="When a folder is selected with no captures chosen, display image files from that folder (and parent folders) in the right panel."
                 checked={draft.showFolderImages}
                 onChange={(v) => update('showFolderImages', v)}
               />
-              <SettingsField label="Import Prefix Suffixes" hint="Last-word suffixes that trigger prefix matching during spreadsheet import">
-                <div className="space-y-1.5">
-                  <input
-                    type="text"
-                    value={draft.importPrefixSuffixes}
-                    onChange={(e) => update('importPrefixSuffixes', e.target.value)}
-                    placeholder="e.g. DI"
-                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors font-mono"
-                  />
-                  <p className="text-xs text-gray-500 dark:text-gray-500">
-                    Comma-separated. When a row's last word matches one of these (case-insensitive), the app strips it and looks for captures whose name starts with the remainder. e.g. a "Friedman BE100 DI" row matches "Friedman BE100 Crunch" captures.
-                  </p>
-                </div>
-              </SettingsField>
-              <SettingsField label="Hidden Folders" hint="Folder names to exclude when scanning — subfolders are also excluded">
+              <SettingsField label="Hidden Folders" hint="Folder names to exclude when scanning - subfolders are also excluded">
                 <div className="space-y-1.5">
                   <input
                     type="text"
@@ -544,11 +588,101 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
               </SettingsField>
             </div>
           </div>
+          )}
 
-          {/* Pack Info Catalog */}
+          {settingsTab === 'global' && (
           <div>
             <div className="flex items-center gap-2 mb-4">
-              <span className="text-sm">📦</span>
+              <span className="text-sm">App</span>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Application</h3>
+              <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
+            </div>
+            <div className="space-y-4">
+              <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-3 space-y-3">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <button
+                    onClick={handleCheckForUpdates}
+                    disabled={updateState.status === 'checking'}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white flex-shrink-0"
+                  >
+                    {updateState.status === 'checking' ? 'Checking...' : 'Check for Updates'}
+                  </button>
+                  {updateState.status === 'idle' && (
+                    <span className="text-xs text-gray-500 dark:text-gray-500">v{import.meta.env.VITE_APP_VERSION}</span>
+                  )}
+                  {updateState.status === 'up-to-date' && (
+                    <span className="text-xs text-green-600 dark:text-green-400">Up to date (v{updateState.version})</span>
+                  )}
+                  {updateState.status === 'available' && (
+                    <span className="text-xs text-amber-500 dark:text-amber-400">
+                      v{updateState.version} available -{' '}
+                      <button
+                        onClick={() => window.api.openExternal((updateState as { url: string }).url)}
+                        className="underline hover:text-amber-400 transition-colors"
+                      >
+                        Download
+                      </button>
+                    </span>
+                  )}
+                  {updateState.status === 'error' && (
+                    <span className="text-xs text-red-500 dark:text-red-400">Could not check: {(updateState as { message: string }).message}</span>
+                  )}
+                  <label className="flex items-center gap-1.5 ml-auto cursor-pointer select-none flex-shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={draft.checkForRCBuilds}
+                      onChange={(e) => {
+                        const updated = { ...draft, checkForRCBuilds: e.target.checked }
+                        setDraft(updated)
+                        onSave(updated)
+                        setUpdateState({ status: 'idle' })
+                      }}
+                      className="w-3.5 h-3.5 rounded accent-indigo-500"
+                    />
+                    <span className="text-xs text-gray-500 dark:text-gray-500">Include RC builds</span>
+                  </label>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">NAM Standalone</span>
+                  <span className="text-xs text-gray-400 dark:text-gray-500 truncate flex-1 font-mono">
+                    {draft.namStandalonePath || <span className="italic text-gray-400 dark:text-gray-600">Not configured</span>}
+                  </span>
+                  <button
+                    onClick={async () => {
+                      const p = await window.api.browseExecutable()
+                      if (p) {
+                        const updated = { ...draft, namStandalonePath: p }
+                        setDraft(updated)
+                        onSave(updated)
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 flex-shrink-0"
+                  >
+                    Browse...
+                  </button>
+                  {draft.namStandalonePath && (
+                    <button
+                      onClick={() => {
+                        const updated = { ...draft, namStandalonePath: '' }
+                        setDraft(updated)
+                        onSave(updated)
+                      }}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-red-500/20 text-gray-500 dark:text-gray-400 flex-shrink-0"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+          )}
+
+          {/* Pack Info Catalog */}
+          {settingsTab === 'pack' && (
+          <div>
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-sm">Cat</span>
               <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Pack Info Catalog</h3>
               <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
             </div>
@@ -569,7 +703,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                 const others = draft.packGearCatalog.filter((i) => i.category !== cat)
                 const label = cat === 'glossary' ? 'Glossary' : cat === 'equipment' ? 'Equipment' : 'Pedals'
                 const ph0 = cat === 'glossary' ? 'DI' : cat === 'equipment' ? 'Amp' : 'Boost'
-                const ph1 = cat === 'glossary' ? 'Direct Inject — no cabinet' : cat === 'equipment' ? 'Friedman BE-100 Deluxe V2' : 'Klon Centaur (unity gain)'
+                const ph1 = cat === 'glossary' ? 'Direct Inject - no cabinet' : cat === 'equipment' ? 'Friedman BE-100 Deluxe V2' : 'Klon Centaur (unity gain)'
                 return (
                   <div key={cat}>
                     <p className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider mb-2">{label}</p>
@@ -618,11 +752,13 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
             </div>
             )}
           </div>
+          )}
 
           {/* Pack Export Logos */}
+          {settingsTab === 'pack' && (
           <div>
             <div className="flex items-center gap-2 mb-4">
-              <span className="text-sm">🖼️</span>
+              <span className="text-sm">Logo</span>
               <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Pack Export Logos</h3>
               <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
             </div>
@@ -693,7 +829,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                         }}
                         className="text-xs px-2.5 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:border-teal-500 dark:hover:border-teal-500 transition-colors"
                       >
-                        Choose…
+                        Choose...
                       </button>
                       {val && (
                         <button
@@ -701,7 +837,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                           className="text-xs text-gray-400 hover:text-red-500 transition-colors"
                           title="Remove logo"
                         >
-                          ✕ Clear
+                          Clear
                         </button>
                       )}
                     </div>
@@ -710,11 +846,13 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
               })}
             </div>
           </div>
+          )}
 
           {/* Checklist Templates */}
+          {settingsTab === 'pack' && (
           <div>
             <div className="flex items-center gap-2 mb-4">
-              <span className="text-sm">✓</span>
+              <span className="text-sm">List</span>
               <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Checklist Templates</h3>
               <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
             </div>
@@ -836,37 +974,9 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
               </div>
             )}
           </div>
+          )}
 
-          {/* Current Amp Info */}
-          <Section
-            icon="🔊"
-            title="Current Amp Info"
-            enabled={draft.enableAmpInfo}
-            onToggle={(v) => update('enableAmpInfo', v)}
-            description="Sets a default Manufacturer and Model on any file that has those fields empty when opened. Best used when working on a batch of captures for a single amp — e.g. tagging an entire session before sharing. Disable this when browsing a large shared library, or you may unintentionally stamp your amp info onto captures from other artists."
-          >
-            <SettingsField label="Manufacturer" hint="Applied if file has no gear_make value">
-              <input
-                type="text"
-                value={draft.defaultManufacturer}
-                onChange={(e) => update('defaultManufacturer', e.target.value)}
-                disabled={!draft.enableAmpInfo}
-                placeholder="e.g. Friedman"
-                className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              />
-            </SettingsField>
-            <SettingsField label="Model" hint="Applied if file has no gear_model value">
-              <input
-                type="text"
-                value={draft.defaultModel}
-                onChange={(e) => update('defaultModel', e.target.value)}
-                disabled={!draft.enableAmpInfo}
-                placeholder="e.g. BE100 Deluxe"
-                className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              />
-            </SettingsField>
-          </Section>
-
+          {settingsTab === 'metadata' && (
           <div>
             <div className="flex items-center gap-2 mb-4">
               <span className="text-sm">Tags</span>
@@ -874,7 +984,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
               <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
             </div>
             <p className="text-xs text-gray-500 dark:text-gray-500 mb-4">
-              Folder right-click -&gt; <strong>Suggest metadata…</strong> previews token-based suggestions for blank fields only. Built-in hints currently cover tone type detection from filename and DI/direct naming -&gt; amp gear type. Add your own global rules below for things like maker/model/cabinet naming. Folder-scoped rules can be edited from the folder tree and will override matching global token meanings inside that subtree.
+              These rules can populate missing metadata across files you open. For more granular control within a specific subtree, use folder metadata and folder-scoped rules.
             </p>
             <div className="mb-3 flex items-center gap-2 flex-wrap">
               <button
@@ -888,14 +998,14 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                 onClick={() => setShowRuleLibraryPicker(true)}
                 className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/30 transition-colors"
               >
-                Add from library…
+                Add from library...
                 <span className="text-[10px] text-violet-500/80">{draft.metadataSuggestRuleLibrary.length}</span>
               </button>
               <button
                 onClick={() => setShowRecipeBuilder(true)}
                 className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors"
               >
-                Build from example…
+                Build from example...
               </button>
             </div>
             {metadataSuggestOpen && (
@@ -991,7 +1101,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                             }}
                             className="px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
                           >
-                            <option value="">Pick value…</option>
+                            <option value="">Pick value...</option>
                             {METADATA_SUGGEST_LOOKUP_VALUES[rule.field]!.map((option) => (
                               <option key={option} value={option}>{option}</option>
                             ))}
@@ -1105,6 +1215,128 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
               </div>
             )}
           </div>
+          )}
+
+          {settingsTab === 'metadata' && (
+          <div>
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-sm">Meta</span>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Naming and Detection</h3>
+              <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
+            </div>
+            <div className="space-y-4">
+              <CheckboxField
+                label="Populate name from filename"
+                description="When a file has no name, automatically set it to the filename without the .nam extension."
+                checked={draft.populateNameFromFilename}
+                onChange={(v) => update('populateNameFromFilename', v)}
+              />
+              <CheckboxField
+                label="Auto-detect tone type from filename"
+                description={
+                  <>
+                    Scans the filename for tone keywords and sets Tone Type if empty. When multiple keywords match, the <em>rightmost</em> one wins, so{' '}
+                    <strong>Clean Crunch DI</strong> becomes <strong>Crunch</strong>.
+                  </>
+                }
+                checked={draft.autoDetectToneType}
+                onChange={(v) => update('autoDetectToneType', v)}
+              />
+              <SettingsField label="Amp Suffix" hint="Filename endings that identify a capture as Amp type - comma separated">
+                <div className="space-y-1">
+                  <input
+                    type="text"
+                    value={draft.ampSuffix}
+                    onChange={(e) => update('ampSuffix', e.target.value)}
+                    placeholder="e.g. DI, DIR, DIRECT"
+                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors font-mono"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-500">Leave blank to disable. Case-insensitive, spaces ignored.</p>
+                </div>
+              </SettingsField>
+              <CheckboxField
+                label="Default to Cab if no amp suffix match"
+                description="When a file has no gear type and the filename does not match the amp suffix, set it to Cab. Leave off to keep gear type blank."
+                checked={draft.defaultToCab}
+                onChange={(v) => update('defaultToCab', v)}
+              />
+              <SettingsField label="File Rename Template" hint="Used by the Rename button in the metadata editor">
+                <div className="space-y-1.5">
+                  <input
+                    type="text"
+                    value={draft.renameTemplate}
+                    onChange={(e) => update('renameTemplate', e.target.value)}
+                    placeholder="{name} or {gear_make} {gear_model} - {name}"
+                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors font-mono"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-500">Tokens: {'{name}'} {'{gear_make}'} {'{gear_model}'} {'{gear_type}'} {'{tone_type}'} {'{modeled_by}'}</p>
+                </div>
+              </SettingsField>
+            </div>
+          </div>
+          )}
+
+          {settingsTab === 'metadata' && (
+          <div>
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-sm">Tool</span>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Metadata Tools</h3>
+              <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
+            </div>
+            <div className="space-y-4">
+              <CheckboxField
+                label="Show NAM Lab metadata fields"
+                description="Show and edit extended capture details like mics, cabinet, amp channel, settings, and comments in the metadata editor."
+                checked={draft.showNamLabFields}
+                onChange={(v) => update('showNamLabFields', v)}
+              />
+              <SettingsField label="Import Prefix Suffixes" hint="Last-word suffixes that trigger prefix matching during spreadsheet import">
+                <div className="space-y-1.5">
+                  <input
+                    type="text"
+                    value={draft.importPrefixSuffixes}
+                    onChange={(e) => update('importPrefixSuffixes', e.target.value)}
+                    placeholder="e.g. DI"
+                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors font-mono"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-500">Comma-separated. When a row's last word matches one of these, the app strips it and looks for captures whose name starts with the remainder.</p>
+                </div>
+              </SettingsField>
+            </div>
+          </div>
+          )}
+
+          {/* Current Amp Info */}
+          {settingsTab === 'metadata' && (
+          <Section
+            icon="Amp"
+            title="Current Amp Info"
+            enabled={draft.enableAmpInfo}
+            onToggle={(v) => update('enableAmpInfo', v)}
+            description="These values populate any file you open where Manufacturer or Model is empty. For more granular control within a specific subtree, use folder metadata."
+          >
+            <SettingsField label="Manufacturer" hint="Applied if file has no gear_make value">
+              <input
+                type="text"
+                value={draft.defaultManufacturer}
+                onChange={(e) => update('defaultManufacturer', e.target.value)}
+                disabled={!draft.enableAmpInfo}
+                placeholder="e.g. Friedman"
+                className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+            </SettingsField>
+            <SettingsField label="Model" hint="Applied if file has no gear_model value">
+              <input
+                type="text"
+                value={draft.defaultModel}
+                onChange={(e) => update('defaultModel', e.target.value)}
+                disabled={!draft.enableAmpInfo}
+                placeholder="e.g. BE100 Deluxe"
+                className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+            </SettingsField>
+          </Section>
+          )}
 
           {showRuleLibraryPicker && (
             <MetadataSuggestRuleLibraryModal
@@ -1125,6 +1357,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
             />
           )}
 
+          {settingsTab === 'global' && (
           <div>
             <div className="flex items-center gap-2 mb-4">
               <span className="text-sm">Watch</span>
@@ -1175,10 +1408,12 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
               </div>
             )}
           </div>
+          )}
 
+          {settingsTab === 'training' && (
           <div>
             <div className="flex items-center gap-2 mb-4">
-              <span className="text-sm">🧪</span>
+              <span className="text-sm">Train</span>
               <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Experimental Training</h3>
               <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
             </div>
@@ -1208,7 +1443,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                         }}
                         className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 flex-shrink-0"
                       >
-                        Browse…
+                        Browse...
                       </button>
                     </div>
                   </SettingsField>
@@ -1229,100 +1464,320 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                         }}
                         className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 flex-shrink-0"
                       >
-                        Browse…
+                        Browse...
                       </button>
                     </div>
                   </SettingsField>
 
+                  <CheckboxField
+                    label="Retain graphs after training"
+                    description="Keep ESR / comparison PNG graphs as user-facing artifacts. When off, NAM Lab keeps the final .nam but leaves graph files in the internal run workspace only."
+                    checked={draft.trainingRetainGraphs}
+                    onChange={(v) => update('trainingRetainGraphs', v)}
+                  />
+
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setTrainingWatchersOpen((v) => !v)}
+                        className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                      >
+                        {trainingWatchersOpen ? 'Hide Watch Folders' : 'Show Watch Folders'}
+                        <span className="text-[10px] text-gray-400">{draft.trainingWatchProfiles.length}</span>
+                      </button>
+                      <button
+                        onClick={addTrainingWatchProfile}
+                        className="text-xs px-3 py-1.5 rounded border border-indigo-300 dark:border-indigo-800 bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-500/20 transition-colors"
+                      >
+                        + Watch Folder
+                      </button>
+                    </div>
+                    {trainingWatchersOpen && (
+                      <div className="space-y-3">
+                        {draft.trainingWatchProfiles.length === 0 ? (
+                          <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 px-3 py-3 text-xs text-gray-500 dark:text-gray-500">
+                            No training watch folders yet. Add one, choose a preset, and it can feed the shared queue whenever new WAVs appear.
+                          </div>
+                        ) : (
+                          draft.trainingWatchProfiles.map((profile) => (
+                            <div key={profile.id} className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-3 space-y-3">
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="text"
+                                  value={profile.name}
+                                  onChange={(e) => updateTrainingWatchProfile(profile.id, { name: e.target.value })}
+                                  className="flex-1 px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                                />
+                                <select
+                                  value={profile.presetId}
+                                  onChange={(e) => updateTrainingWatchProfile(profile.id, { presetId: e.target.value })}
+                                  className="px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 min-w-[180px]"
+                                >
+                                  <option value="">Pick preset...</option>
+                                  {draft.trainingPresets.map((preset) => (
+                                    <option key={preset.id} value={preset.id}>{preset.name}</option>
+                                  ))}
+                                </select>
+                                <button
+                                  onClick={() => update('trainingWatchProfiles', draft.trainingWatchProfiles.filter((item) => item.id !== profile.id))}
+                                  className="px-2.5 py-2 rounded-lg border border-red-300 dark:border-red-800 bg-red-500/10 text-red-700 dark:text-red-300 hover:bg-red-500/20 transition-colors"
+                                  title="Remove watcher"
+                                >
+                                  x
+                                </button>
+                              </div>
+                              <div className="grid grid-cols-1 md:grid-cols-[auto_auto_1fr] gap-3 items-start">
+                                <CheckboxField label="Enabled" description="" checked={profile.enabled} onChange={(v) => updateTrainingWatchProfile(profile.id, { enabled: v })} />
+                                <CheckboxField label="Auto-run" description="" checked={profile.autoRun} onChange={(v) => updateTrainingWatchProfile(profile.id, { autoRun: v })} />
+                                <div className="text-xs text-gray-500 dark:text-gray-500 pt-1">
+                                  Runtime: {trainingProfilesState.watchers.find((item) => item.profileId === profile.id)?.running ? 'Watching' : 'Stopped'}
+                                </div>
+                              </div>
+                              {(() => {
+                                const linkedPreset = draft.trainingPresets.find((preset) => preset.id === profile.presetId)
+                                if (!linkedPreset) return null
+                                return (
+                                  <div className="rounded-lg border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-xs text-sky-800 dark:text-sky-200">
+                                    {linkedPreset.architectures.map((item) => item.toUpperCase()).join(', ') || 'No architectures'} · {linkedPreset.epochs} epochs · {linkedPreset.thresholdEsr != null ? `Target ESR ${linkedPreset.thresholdEsr}` : 'No ESR target'}
+                                  </div>
+                                )
+                              })()}
+                              <SettingsField label="Watch Folder">
+                                <div className="flex gap-2">
+                                  <input
+                                    type="text"
+                                    value={profile.watchFolder}
+                                    onChange={(e) => updateTrainingWatchProfile(profile.id, { watchFolder: e.target.value })}
+                                    className="flex-1 px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 font-mono"
+                                  />
+                                  <button
+                                    onClick={async () => {
+                                      const picked = await window.api.openFolder(profile.watchFolder || undefined)
+                                      if (picked) updateTrainingWatchProfile(profile.id, { watchFolder: picked })
+                                    }}
+                                    className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
+                                  >
+                                    Browse...
+                                  </button>
+                                </div>
+                              </SettingsField>
+                              <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-3 items-end">
+                                <SettingsField label="Naming Template" labelTitle="Use {basename}, {architecture}, {profile}, and {esr} in final output names.">
+                                  <input
+                                    type="text"
+                                    value={profile.namingTemplate}
+                                    onChange={(e) => updateTrainingWatchProfile(profile.id, { namingTemplate: e.target.value })}
+                                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 font-mono"
+                                  />
+                                </SettingsField>
+                                <button
+                                  onClick={() => fillTrainingWatchProcessedLayout(profile.id, profile.watchFolder)}
+                                  className="px-3 py-2 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
+                                  title="Auto-fill output folders relative to the watch folder using _Processed/Models, _Processed/WAV, and _Processed/Graphs."
+                                >
+                                  Auto-fill _Processed folders
+                                </button>
+                              </div>
+                              {profile.watchFolder.trim() && (
+                                <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-950/20 px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
+                                  Relative helper preview: <code>{`${profile.watchFolder.replace(/\\/g, '/').replace(/\/+$/, '')}/_Processed/Models`}</code>
+                                  <span className="mx-2">|</span>
+                                  <code>{`${profile.watchFolder.replace(/\\/g, '/').replace(/\/+$/, '')}/_Processed/WAV`}</code>
+                                  <span className="mx-2">|</span>
+                                  <code>{`${profile.watchFolder.replace(/\\/g, '/').replace(/\/+$/, '')}/_Processed/Graphs`}</code>
+                                </div>
+                              )}
+                              <div className="grid grid-cols-1 gap-3">
+                                <SettingsField label="Model Output Root" labelTitle="Promoted final .nam files land here, in architecture subfolders.">
+                                  <div className="flex gap-2">
+                                    <input
+                                      type="text"
+                                      value={profile.finalModelRoot}
+                                      onChange={(e) => updateTrainingWatchProfile(profile.id, { finalModelRoot: e.target.value })}
+                                      className="flex-1 px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 font-mono"
+                                    />
+                                    <button
+                                      onClick={async () => {
+                                        const picked = await window.api.openFolder(profile.finalModelRoot || profile.watchFolder || undefined)
+                                        if (picked) updateTrainingWatchProfile(profile.id, { finalModelRoot: picked })
+                                      }}
+                                      className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
+                                    >
+                                      Browse...
+                                    </button>
+                                  </div>
+                                </SettingsField>
+                                <SettingsField label="Processed Source WAV Root" labelTitle="Successful source WAVs can be moved or copied here after all selected architectures finish.">
+                                  <div className="flex gap-2">
+                                    <input
+                                      type="text"
+                                      value={profile.processedWavRoot}
+                                      onChange={(e) => updateTrainingWatchProfile(profile.id, { processedWavRoot: e.target.value })}
+                                      className="flex-1 px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 font-mono"
+                                    />
+                                    <button
+                                      onClick={async () => {
+                                        const picked = await window.api.openFolder(profile.processedWavRoot || profile.watchFolder || undefined)
+                                        if (picked) updateTrainingWatchProfile(profile.id, { processedWavRoot: picked })
+                                      }}
+                                      className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
+                                    >
+                                      Browse...
+                                    </button>
+                                  </div>
+                                </SettingsField>
+                                <SettingsField label="Graph Output Root" labelTitle="Promoted ESR / comparison PNG graphs land here when graph retention is enabled.">
+                                  <div className="flex gap-2">
+                                    <input
+                                      type="text"
+                                      value={profile.graphRoot}
+                                      onChange={(e) => updateTrainingWatchProfile(profile.id, { graphRoot: e.target.value })}
+                                      className="flex-1 px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 font-mono"
+                                    />
+                                    <button
+                                      onClick={async () => {
+                                        const picked = await window.api.openFolder(profile.graphRoot || profile.watchFolder || undefined)
+                                        if (picked) updateTrainingWatchProfile(profile.id, { graphRoot: picked })
+                                      }}
+                                      className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
+                                    >
+                                      Browse...
+                                    </button>
+                                  </div>
+                                </SettingsField>
+                                <SettingsField label="Source WAV handling" labelTitle="Choose whether successful source WAVs are moved, copied, or left in place.">
+                                  <select
+                                    value={profile.sourcePostProcess}
+                                    onChange={(e) => updateTrainingWatchProfile(profile.id, { sourcePostProcess: e.target.value as TrainingWatchProfile['sourcePostProcess'] })}
+                                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                                  >
+                                    <option value="move">Move to Processed Source WAV Root</option>
+                                    <option value="copy">Copy to Processed Source WAV Root</option>
+                                    <option value="keep">Keep source WAV in place</option>
+                                  </select>
+                                </SettingsField>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-3 pt-2 border-t border-gray-200 dark:border-gray-800">
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setTrainingPresetsOpen((v) => !v)}
+                        className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                      >
+                        {trainingPresetsOpen ? 'Hide Presets' : 'Show Presets'}
+                        <span className="text-[10px] text-gray-400">{draft.trainingPresets.length}</span>
+                      </button>
+                      <button
+                        onClick={addTrainingPreset}
+                        className="text-xs px-3 py-1.5 rounded border border-indigo-300 dark:border-indigo-800 bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-500/20 transition-colors"
+                      >
+                        + Preset
+                      </button>
+                    </div>
+                    {trainingPresetsOpen && (
+                      <div className="space-y-3">
+                        {draft.trainingPresets.length === 0 ? (
+                          <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 px-3 py-3 text-xs text-gray-500 dark:text-gray-500">
+                            No training presets yet. Add one to store a reusable training recipe for watchers and manual runs.
+                          </div>
+                        ) : (
+                          draft.trainingPresets.map((preset) => (
+                            <div key={preset.id} className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-3 space-y-3">
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="text"
+                                  value={preset.name}
+                                  onChange={(e) => updateTrainingPreset(preset.id, { name: e.target.value })}
+                                  className="flex-1 px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                                />
+                                <button
+                                  onClick={() => update('trainingPresets', draft.trainingPresets.filter((item) => item.id !== preset.id))}
+                                  className="px-2.5 py-2 rounded-lg border border-red-300 dark:border-red-800 bg-red-500/10 text-red-700 dark:text-red-300 hover:bg-red-500/20 transition-colors"
+                                  title="Remove preset"
+                                >
+                                  x
+                                </button>
+                              </div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <SettingsField label="Architecture(s)">
+                                  <SettingsArchitectureMultiSelect
+                                    values={preset.architectures}
+                                    onChange={(next) => updateTrainingPreset(preset.id, { architectures: next as TrainingPreset['architectures'] })}
+                                  />
+                                </SettingsField>
+                                <SettingsField label="Epochs">
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    value={preset.epochs}
+                                    onChange={(e) => updateTrainingPreset(preset.id, { epochs: Math.max(1, Number(e.target.value) || 1) })}
+                                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                                  />
+                                </SettingsField>
+                                <SettingsField label="Latency">
+                                  <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-2">
+                                    <select
+                                      value={preset.latencyMode}
+                                      onChange={(e) => updateTrainingPreset(preset.id, { latencyMode: e.target.value as TrainingPreset['latencyMode'] })}
+                                      className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                                    >
+                                      <option value="auto">Auto</option>
+                                      <option value="manual">Manual</option>
+                                    </select>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      value={preset.latencyValue ?? ''}
+                                      disabled={preset.latencyMode !== 'manual'}
+                                      onChange={(e) => updateTrainingPreset(preset.id, { latencyValue: e.target.value === '' ? null : Math.max(0, Number(e.target.value) || 0) })}
+                                      placeholder="Samples"
+                                      className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
+                                    />
+                                  </div>
+                                </SettingsField>
+                                <SettingsField label="Target ESR">
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step="0.0001"
+                                    value={preset.thresholdEsr ?? ''}
+                                    onChange={(e) => updateTrainingPreset(preset.id, { thresholdEsr: e.target.value === '' ? null : Number(e.target.value) })}
+                                    placeholder="Optional"
+                                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                                  />
+                                </SettingsField>
+                              </div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <CheckboxField label="Save graph" description="" checked={preset.savePlot} onChange={(v) => updateTrainingPreset(preset.id, { savePlot: v })} />
+                                <CheckboxField label="Ignore trainer checks" description="" checked={preset.ignoreChecks} onChange={(v) => updateTrainingPreset(preset.id, { ignoreChecks: v })} />
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+
                   <p className="text-xs text-gray-500 dark:text-gray-500">
-                    Phase I is intentionally narrow: one output WAV, one architecture, one destination folder, in-app logs, and background process launch only.
+                    Watch folders pick a preset and feed the shared queue. Presets are the reusable training recipes used by watchers and one-time folder runs.
                   </p>
                 </>
               )}
             </div>
           </div>
+          )}
 
         </div>
       </div>
 
       {/* Footer */}
       <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-800">
-        {/* Updates row */}
-        <div className="px-6 py-3 border-b border-gray-200 dark:border-gray-800 flex items-center gap-3 flex-wrap">
-          <button
-            onClick={handleCheckForUpdates}
-            disabled={updateState.status === 'checking'}
-            className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white flex-shrink-0"
-          >
-            {updateState.status === 'checking' ? 'Checking…' : 'Check for Updates'}
-          </button>
-          {updateState.status === 'idle' && (
-            <span className="text-xs text-gray-500 dark:text-gray-600">v{import.meta.env.VITE_APP_VERSION}</span>
-          )}
-          {updateState.status === 'up-to-date' && (
-            <span className="text-xs text-green-600 dark:text-green-400">✓ You're up to date (v{updateState.version})</span>
-          )}
-          {updateState.status === 'available' && (
-            <span className="text-xs text-amber-500 dark:text-amber-400">
-              v{updateState.version} is available —{' '}
-              <button
-                onClick={() => window.api.openExternal((updateState as { url: string }).url)}
-                className="underline hover:text-amber-400 transition-colors"
-              >
-                Download
-              </button>
-            </span>
-          )}
-          {updateState.status === 'error' && (
-            <span className="text-xs text-red-500 dark:text-red-400">Could not check: {(updateState as { message: string }).message}</span>
-          )}
-          <label className="flex items-center gap-1.5 ml-auto cursor-pointer select-none flex-shrink-0">
-            <input
-              type="checkbox"
-              checked={draft.checkForRCBuilds}
-              onChange={(e) => {
-                const updated = { ...draft, checkForRCBuilds: e.target.checked }
-                setDraft(updated)
-                onSave(updated)
-                setUpdateState({ status: 'idle' })
-              }}
-              className="w-3.5 h-3.5 rounded accent-indigo-500"
-            />
-            <span className="text-xs text-gray-500 dark:text-gray-500">Include RC builds</span>
-          </label>
-        </div>
-        {/* NAM Standalone row */}
-        <div className="px-6 py-3 border-b border-gray-200 dark:border-gray-800 flex items-center gap-3">
-          <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">NAM Standalone</span>
-          <span className="text-xs text-gray-400 dark:text-gray-500 truncate flex-1 font-mono">
-            {draft.namStandalonePath || <span className="italic text-gray-400 dark:text-gray-600">Not configured</span>}
-          </span>
-          <button
-            onClick={async () => {
-              const p = await window.api.browseExecutable()
-              if (p) {
-                const updated = { ...draft, namStandalonePath: p }
-                setDraft(updated)
-                onSave(updated)
-              }
-            }}
-            className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 flex-shrink-0"
-          >
-            Browse…
-          </button>
-          {draft.namStandalonePath && (
-            <button
-              onClick={() => {
-                const updated = { ...draft, namStandalonePath: '' }
-                setDraft(updated)
-                onSave(updated)
-              }}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-red-500/20 text-gray-500 dark:text-gray-400 flex-shrink-0"
-            >
-              Clear
-            </button>
-          )}
-        </div>
         {/* About row */}
         <div className="px-6 py-3 flex items-center justify-between">
           <div className="text-xs text-gray-400 dark:text-gray-600">
@@ -1341,7 +1796,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                 window.api.revealFile(p)
               }}
               className="text-xs text-gray-500 dark:text-gray-600 hover:text-gray-400 dark:hover:text-gray-400 transition-colors underline"
-              title="Open the startup log folder — useful for reporting issues"
+              title="Open the startup log folder - useful for reporting issues"
             >
               Open Log
             </button>
@@ -1417,7 +1872,7 @@ function CheckboxField({
       />
       <div>
         <span className="text-sm text-gray-700 dark:text-gray-300 font-medium">{label}</span>
-        <p className="text-xs text-gray-500 dark:text-gray-500 mt-0.5">{description}</p>
+        {description ? <p className="text-xs text-gray-500 dark:text-gray-500 mt-0.5">{description}</p> : null}
       </div>
     </label>
   )
@@ -1426,15 +1881,17 @@ function CheckboxField({
 function SettingsField({
   label,
   hint,
+  labelTitle,
   children
 }: {
   label: string
   hint?: string
+  labelTitle?: string
   children: React.ReactNode
 }) {
   return (
     <div>
-      <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">
+      <label title={labelTitle} className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">
         {label}
         {hint && <span className="ml-2 text-gray-500 dark:text-gray-500 font-normal">{hint}</span>}
       </label>
@@ -1442,3 +1899,63 @@ function SettingsField({
     </div>
   )
 }
+
+function SettingsArchitectureMultiSelect({
+  values,
+  onChange,
+}: {
+  values: string[]
+  onChange: (next: string[]) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const label =
+    values.length === 0
+      ? 'Choose architectures'
+      : values.length === 1
+        ? values[0]
+        : `${values.length} selected`
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full h-10 px-3 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 flex items-center justify-between gap-3"
+      >
+        <span className="truncate">{label}</span>
+        <span className="text-xs text-gray-500 dark:text-gray-400" aria-hidden="true">{open ? '^' : 'v'}</span>
+      </button>
+      {open && (
+        <div className="absolute z-30 mt-2 w-full rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-xl overflow-hidden">
+          <div className="max-h-64 overflow-y-auto p-2 space-y-1">
+            {TRAINER_ARCHITECTURES.map((option) => {
+              const checked = values.includes(option)
+              return (
+                <label
+                  key={option}
+                  className={`flex items-center gap-2 rounded-lg px-2.5 py-2 cursor-pointer text-sm ${
+                    checked
+                      ? 'bg-indigo-500/10 text-indigo-700 dark:text-indigo-200'
+                      : 'text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(e) => {
+                      if (e.target.checked) onChange([...values, option])
+                      else onChange(values.filter((item) => item !== option))
+                    }}
+                    className="accent-indigo-600"
+                  />
+                  <span>{option}</span>
+                </label>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+

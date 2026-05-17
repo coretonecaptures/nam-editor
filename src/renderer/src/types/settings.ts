@@ -33,6 +33,62 @@ export interface FolderWatchImportEntry {
   importedAt: string
 }
 
+export const TRAINING_SOURCE_MODES = ['watcher', 'manual-folder-run'] as const
+export type TrainingSourceMode = typeof TRAINING_SOURCE_MODES[number]
+
+export const TRAINING_SOURCE_POST_PROCESS_OPTIONS = ['move', 'copy', 'keep'] as const
+export type TrainingSourcePostProcessMode = typeof TRAINING_SOURCE_POST_PROCESS_OPTIONS[number]
+
+export const TRAINING_LATENCY_MODES = ['auto', 'manual'] as const
+export type TrainingLatencyMode = typeof TRAINING_LATENCY_MODES[number]
+
+export interface TrainingProfile {
+  id: string
+  name: string
+  sourceMode: TrainingSourceMode
+  enabled: boolean
+  autoRun: boolean
+  namingTemplate: string
+  architectures: string[]
+  epochs: number
+  thresholdEsr: number | null
+  latencyMode: TrainingLatencyMode
+  latencyValue: number | null
+  savePlot: boolean
+  ignoreChecks: boolean
+  sourcePostProcess: TrainingSourcePostProcessMode
+  watchFolder: string
+  processedWavRoot: string
+  graphRoot: string
+  finalModelRoot: string
+}
+
+export interface TrainingPreset {
+  id: string
+  name: string
+  architectures: string[]
+  epochs: number
+  thresholdEsr: number | null
+  latencyMode: TrainingLatencyMode
+  latencyValue: number | null
+  savePlot: boolean
+  ignoreChecks: boolean
+}
+
+export interface TrainingWatchProfile {
+  id: string
+  name: string
+  enabled: boolean
+  autoRun: boolean
+  watchFolder: string
+  presetId: string
+  namingTemplate: string
+  sourcePostProcess: TrainingSourcePostProcessMode
+  processedWavRoot: string
+  graphRoot: string
+  finalModelRoot: string
+}
+
 export const METADATA_SUGGEST_FIELD_OPTIONS = [
   { value: 'modeled_by', label: 'Modeled By' },
   { value: 'gear_type', label: 'Gear Type' },
@@ -203,6 +259,9 @@ export interface AppSettings {
   enableExperimentalTraining: boolean
   namPythonPath: string
   namTrainingInputWav: string
+  trainingPresets: TrainingPreset[]
+  trainingWatchProfiles: TrainingWatchProfile[]
+  trainingRetainGraphs: boolean
 
   // Import: comma-separated suffix words that trigger prefix matching (e.g. "DI,DI2")
   importPrefixSuffixes: string
@@ -243,7 +302,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultManufacturer: '',
   defaultModel: '',
 
-  enableCaptureDefaults: true,
+  enableCaptureDefaults: false,
   defaultModeledBy: '',
   defaultInputLevel: '',
   defaultOutputLevel: '',
@@ -278,6 +337,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   enableExperimentalTraining: false,
   namPythonPath: '',
   namTrainingInputWav: '',
+  trainingPresets: [],
+  trainingWatchProfiles: [],
+  trainingRetainGraphs: true,
   importPrefixSuffixes: 'DI',
   packGearCatalog: [],
   packChecklistTemplate: cloneChecklistTemplate(DEFAULT_PACK_CHECKLIST_TEMPLATE),
@@ -314,6 +376,88 @@ function normalizeMetadataSuggestRule(rule: Partial<MetadataSuggestRule> | null 
   }
 }
 
+function normalizeTrainingProfile(
+  profile: Partial<TrainingProfile> | null | undefined,
+  index = 0
+): TrainingProfile {
+  const sourceMode = profile?.sourceMode === 'manual-folder-run' ? 'manual-folder-run' : 'watcher'
+  const rawArchitectures = Array.isArray(profile?.architectures)
+    ? profile?.architectures.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    : []
+  return {
+    id: profile?.id || `training-profile-${Date.now()}-${index}`,
+    name: profile?.name?.trim() || `Training Profile ${index + 1}`,
+    sourceMode,
+    enabled: profile?.enabled ?? true,
+    autoRun: sourceMode === 'watcher' ? (profile?.autoRun ?? true) : false,
+    namingTemplate: profile?.namingTemplate?.trim() || '{basename}',
+    architectures: rawArchitectures,
+    epochs: Number.isFinite(profile?.epochs) && (profile?.epochs ?? 0) > 0 ? Math.floor(profile!.epochs as number) : 1000,
+    thresholdEsr: typeof profile?.thresholdEsr === 'number' && Number.isFinite(profile.thresholdEsr) && profile.thresholdEsr > 0
+      ? profile.thresholdEsr
+      : null,
+    latencyMode: profile?.latencyMode === 'manual' ? 'manual' : 'auto',
+    latencyValue: typeof profile?.latencyValue === 'number' && Number.isFinite(profile.latencyValue) && profile.latencyValue >= 0
+      ? Math.floor(profile.latencyValue)
+      : null,
+    savePlot: profile?.savePlot ?? true,
+    ignoreChecks: profile?.ignoreChecks ?? false,
+    sourcePostProcess: profile?.sourcePostProcess === 'copy' || profile?.sourcePostProcess === 'keep' ? profile.sourcePostProcess : 'move',
+    watchFolder: profile?.watchFolder?.trim() || '',
+    processedWavRoot: profile?.processedWavRoot?.trim() || '',
+    graphRoot: profile?.graphRoot?.trim() || '',
+    finalModelRoot: profile?.finalModelRoot?.trim() || '',
+  }
+}
+
+function normalizeTrainingPreset(
+  preset: Partial<TrainingPreset> | null | undefined,
+  index = 0
+): TrainingPreset {
+  const rawArchitectures = Array.isArray(preset?.architectures)
+    ? preset?.architectures.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    : []
+  return {
+    id: preset?.id || `training-preset-${Date.now()}-${index}`,
+    name: preset?.name?.trim() || `Preset ${index + 1}`,
+    architectures: rawArchitectures,
+    epochs: Number.isFinite(preset?.epochs) && (preset?.epochs ?? 0) > 0 ? Math.floor(preset!.epochs as number) : 1000,
+    thresholdEsr: typeof preset?.thresholdEsr === 'number' && Number.isFinite(preset.thresholdEsr) && preset.thresholdEsr > 0
+      ? preset.thresholdEsr
+      : null,
+    latencyMode: preset?.latencyMode === 'manual' ? 'manual' : 'auto',
+    latencyValue: typeof preset?.latencyValue === 'number' && Number.isFinite(preset.latencyValue) && preset.latencyValue >= 0
+      ? Math.floor(preset.latencyValue)
+      : null,
+    savePlot: preset?.savePlot ?? true,
+    ignoreChecks: preset?.ignoreChecks ?? false,
+  }
+}
+
+function normalizeTrainingWatchProfile(
+  profile: Partial<TrainingWatchProfile> | null | undefined,
+  legacyPreset: Partial<TrainingPreset> | Partial<TrainingProfile> | null | undefined = null,
+  index = 0
+): TrainingWatchProfile {
+  return {
+    id: profile?.id || `training-watch-${Date.now()}-${index}`,
+    name: profile?.name?.trim() || `Watcher ${index + 1}`,
+    enabled: profile?.enabled ?? true,
+    autoRun: profile?.autoRun ?? true,
+    watchFolder: profile?.watchFolder?.trim() || '',
+    presetId: profile?.presetId?.trim() || '',
+    namingTemplate: profile?.namingTemplate?.trim() || legacyPreset?.namingTemplate?.trim() || '{basename}',
+    sourcePostProcess: profile?.sourcePostProcess === 'copy' || profile?.sourcePostProcess === 'keep'
+      ? profile.sourcePostProcess
+      : legacyPreset?.sourcePostProcess === 'copy' || legacyPreset?.sourcePostProcess === 'keep'
+        ? legacyPreset.sourcePostProcess
+        : 'move',
+    processedWavRoot: profile?.processedWavRoot?.trim() || legacyPreset?.processedWavRoot?.trim() || '',
+    graphRoot: profile?.graphRoot?.trim() || legacyPreset?.graphRoot?.trim() || '',
+    finalModelRoot: profile?.finalModelRoot?.trim() || legacyPreset?.finalModelRoot?.trim() || '',
+  }
+}
+
 function normalizeSettingsMetadataRules(settings: AppSettings): AppSettings {
   const rawTargetTemplates = settings.targetChecklistTemplates
   const looksLikeLegacyBlankTargetTemplates =
@@ -332,9 +476,26 @@ function normalizeSettingsMetadataRules(settings: AppSettings): AppSettings {
         : DEFAULT_TARGET_CHECKLIST_TEMPLATES.qc
     ),
   }
+  const legacyProfiles = (settings as Partial<AppSettings> & { trainingProfiles?: Partial<TrainingProfile>[] }).trainingProfiles ?? []
+  const hasExplicitTrainingPresets = Array.isArray(settings.trainingPresets)
+  const hasExplicitTrainingWatchProfiles = Array.isArray(settings.trainingWatchProfiles)
+  const migratedPresets = legacyProfiles.map((profile, index) => normalizeTrainingPreset(profile, index))
+  const migratedWatchProfiles = legacyProfiles
+    .filter((profile) => profile?.sourceMode === 'watcher')
+    .map((profile, index) => normalizeTrainingWatchProfile({
+      id: profile?.id,
+      name: profile?.name,
+      enabled: profile?.enabled,
+      autoRun: profile?.autoRun,
+      watchFolder: profile?.watchFolder,
+      presetId: profile?.id,
+    }, profile, index))
+  const presetLookup = new Map((hasExplicitTrainingPresets ? settings.trainingPresets : migratedPresets).map((preset) => [preset.id, preset]))
   return {
     ...settings,
     targetChecklistTemplates: normalizedTargetChecklistTemplates,
+    trainingPresets: (hasExplicitTrainingPresets ? settings.trainingPresets : migratedPresets).map((preset, index) => normalizeTrainingPreset(preset, index)),
+    trainingWatchProfiles: (hasExplicitTrainingWatchProfiles ? settings.trainingWatchProfiles : migratedWatchProfiles).map((profile, index) => normalizeTrainingWatchProfile(profile, presetLookup.get(profile?.presetId?.trim?.() || '') ?? null, index)),
     metadataSuggestRules: (settings.metadataSuggestRules ?? []).map((rule, index) => normalizeMetadataSuggestRule(rule, index)),
     metadataSuggestScopedRules: (settings.metadataSuggestScopedRules ?? []).map((set, setIndex) => ({
       scopePath: set.scopePath,

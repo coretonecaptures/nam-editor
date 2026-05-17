@@ -38,6 +38,17 @@ export interface TrainerStartPayload {
   savePlot: boolean
   silent: boolean
   ignoreChecks: boolean
+  profileId?: string | null
+  profileName?: string | null
+  sourceMode?: 'watcher' | 'manual-folder-run' | 'manual-direct'
+  finalModelRoot?: string | null
+  processedWavRoot?: string | null
+  graphRoot?: string | null
+  sourcePostProcess?: 'move' | 'copy' | 'keep'
+  namingTemplate?: string | null
+  submissionId?: string | null
+  submissionLabel?: string | null
+  submissionCreatedAt?: string | null
 }
 
 export type TrainerStatus = 'idle' | 'starting' | 'running' | 'success' | 'error' | 'canceled'
@@ -72,6 +83,63 @@ export interface TrainerQueueJob {
   progressBatchTotal: number | null
   progressRate: number | null
   progressLatestLine: string
+  profileId: string | null
+  profileName: string | null
+  sourceMode: 'watcher' | 'manual-folder-run' | 'manual-direct'
+  finalModelRoot: string
+  processedWavRoot: string
+  graphRoot: string
+  sourcePostProcess: 'move' | 'copy' | 'keep'
+  workspacePath: string
+  graphPath: string
+  sourceSizeBytes: number | null
+  sourceMtimeMs: number | null
+  submissionId: string | null
+  submissionLabel: string | null
+  submissionCreatedAt: string | null
+}
+
+export interface TrainerHistoryEntry {
+  historyId: string
+  timestamp: string
+  profileId: string | null
+  profileName: string | null
+  sourceMode: 'watcher' | 'manual-folder-run' | 'manual-direct'
+  sourcePath: string
+  sourceSizeBytes: number | null
+  sourceMtimeMs: number | null
+  architecture: TrainerArchitecture
+  finalModelPath: string
+  processedWavPath: string
+  graphPath: string
+  status: 'success' | 'error' | 'canceled'
+  attempts: number
+  validationEsr: number | null
+  thresholdEsr: number | null
+  epochs: number
+  latencyMode: 'auto' | 'manual'
+  latencyValue: number | null
+  finalModelName: string
+  failureReason: string
+  submissionId: string | null
+  submissionLabel: string | null
+  submissionCreatedAt: string | null
+}
+
+export interface TrainerWatcherRuntime {
+  profileId: string
+  profileName: string
+  enabled: boolean
+  autoRun: boolean
+  running: boolean
+  sourceMode: 'watcher' | 'manual-folder-run'
+  watchFolder: string
+  pendingCount: number
+}
+
+export interface TrainerProfilesStateSnapshot {
+  watchers: TrainerWatcherRuntime[]
+  graphRetentionEnabled: boolean
 }
 
 export interface TrainerStateSnapshot {
@@ -107,6 +175,8 @@ export interface TrainerStateSnapshot {
   activeJobId: string | null
   pauseAfterCurrent: boolean
   queue: TrainerQueueJob[]
+  history: TrainerHistoryEntry[]
+  watcherState: TrainerProfilesStateSnapshot
 }
 
 export const IDLE_TRAINER_STATE: TrainerStateSnapshot = {
@@ -142,4 +212,9 @@ export const IDLE_TRAINER_STATE: TrainerStateSnapshot = {
   activeJobId: null,
   pauseAfterCurrent: false,
   queue: [],
+  history: [],
+  watcherState: {
+    watchers: [],
+    graphRetentionEnabled: true,
+  },
 }

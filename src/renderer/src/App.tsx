@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import beakerTransparent from './assets/images/beaker.only.transparent.png'
 import { NamFile, NamMetadata, TONE_TYPES, GEAR_TYPES } from './types/nam'
-import { AppSettings, FolderWatchImportEntry, FolderWatchRule, MetadataSuggestRule, loadSettings, saveSettings } from './types/settings'
+import { AppSettings, FolderWatchImportEntry, FolderWatchRule, MetadataSuggestRule, TrainingProfile, loadSettings, saveSettings } from './types/settings'
 import { loadLayout, saveLayout } from './types/layout'
 import { LibrarianState } from './types/librarian'
 import { FileList, ALL_GRID_COLUMNS, doExportCSV, doExportXLSX } from './components/FileList'
@@ -34,7 +34,7 @@ import * as XLSX from 'xlsx'
 import { buildMetadataSuggestionMatches, MetadataSuggestionMatch } from './utils/metadataSuggest'
 import { cloneMetadataSuggestRule, isMetadataSuggestRuleComplete, isMetadataSuggestRuleLibraryCandidate, metadataSuggestRuleSignature } from './utils/metadataSuggestRuleLibrary'
 import { detectPreset } from './utils/detectPreset'
-import type { TrainerStartPayload, TrainerStateSnapshot } from './types/trainer'
+import { IDLE_TRAINER_STATE, type TrainerProfilesStateSnapshot, type TrainerStartPayload, type TrainerStateSnapshot } from './types/trainer'
 
 export interface HistoryEntry {
   id: string
@@ -237,6 +237,36 @@ function makeFolderWatchKey(sourceFolder: string, destFolder: string): string {
   return `${sourceFolder.replace(/\\/g, '/')}=>${destFolder.replace(/\\/g, '/')}`
 }
 
+function resolveTrainingWatcherProfiles(settings: AppSettings): TrainingProfile[] {
+  const presetMap = new Map(settings.trainingPresets.map((preset) => [preset.id, preset]))
+  return settings.trainingWatchProfiles
+    .map((watchProfile) => {
+      const preset = presetMap.get(watchProfile.presetId)
+      if (!preset) return null
+      return {
+        id: watchProfile.id,
+        name: watchProfile.name,
+        sourceMode: 'watcher' as const,
+        enabled: watchProfile.enabled,
+        autoRun: watchProfile.autoRun,
+        namingTemplate: watchProfile.namingTemplate,
+        architectures: preset.architectures,
+        epochs: preset.epochs,
+        thresholdEsr: preset.thresholdEsr,
+        latencyMode: preset.latencyMode,
+        latencyValue: preset.latencyValue,
+        savePlot: preset.savePlot,
+        ignoreChecks: preset.ignoreChecks,
+        sourcePostProcess: watchProfile.sourcePostProcess,
+        watchFolder: watchProfile.watchFolder,
+        processedWavRoot: watchProfile.processedWavRoot,
+        graphRoot: watchProfile.graphRoot,
+        finalModelRoot: watchProfile.finalModelRoot,
+      }
+    })
+    .filter((profile): profile is TrainingProfile => profile !== null)
+}
+
 const AMPCOVER_PATTERN = /^ampcover\.(png|jpe?g|webp|gif|avif)$/i
 
 const HISTORY_STORAGE_KEY = 'nam-lab-history'
@@ -314,6 +344,10 @@ declare global {
       getTrainerState: () => Promise<TrainerStateSnapshot>
       startTrainerRun: (payload: TrainerStartPayload) => Promise<{ success: boolean; error?: string }>
       enqueueTrainerRuns: (payloads: TrainerStartPayload[]) => Promise<{ success: boolean; error?: string; queued?: number }>
+      setTrainerProfilesState: (payload: { pythonPath: string; inputPath: string; retainGraphs: boolean; profiles: TrainingProfile[] }) => Promise<{ success: boolean }>
+      getTrainerProfilesState: () => Promise<TrainerProfilesStateSnapshot>
+      setTrainerProfileRunning: (profileId: string, running: boolean) => Promise<{ success: boolean; error?: string }>
+      runTrainerFolderOnce: (payload: { profile: TrainingProfile; folderPath: string; pythonPath: string; inputPath: string; submissionId?: string; submissionLabel?: string; submissionCreatedAt?: string }) => Promise<{ success: boolean; error?: string; queued?: number; scanned?: number }>
       cancelTrainerRun: () => Promise<{ success: boolean; error?: string }>
       setTrainerPauseAfterCurrent: (pause: boolean) => Promise<{ success: boolean }>
       retryFailedTrainerRuns: () => Promise<{ success: boolean; retried?: number }>
@@ -541,6 +575,8 @@ export default function App() {
   const [historyOpen, setHistoryOpen] = useState(false)
   const [showToneStore, setShowToneStore] = useState(false)
   const [showTrainingWorkspace, setShowTrainingWorkspace] = useState(false)
+  const [trainingWorkspaceMode, setTrainingWorkspaceMode] = useState<'files' | 'folder' | 'queue' | 'history'>('files')
+  const [globalTrainerState, setGlobalTrainerState] = useState<TrainerStateSnapshot>(IDLE_TRAINER_STATE)
   const [toneStoreMounted, setToneStoreMounted] = useState(false)
   const [toneStoreQueueJob, setToneStoreQueueJob] = useState<ToneStoreDownloadQueueJob | null>(null)
   const toneStoreQueueRunningRef = useRef(false)
@@ -1085,6 +1121,22 @@ export default function App() {
       imports: settings.folderWatchImports,
     })
   }, [settings.folderWatchImports, settings.folderWatchRules])
+
+  useEffect(() => {
+    void window.api.setTrainerProfilesState({
+      pythonPath: settings.namPythonPath,
+      inputPath: settings.namTrainingInputWav,
+      retainGraphs: settings.trainingRetainGraphs,
+      profiles: settings.enableExperimentalTraining ? resolveTrainingWatcherProfiles(settings) : [],
+    })
+  }, [
+    settings.enableExperimentalTraining,
+    settings.namPythonPath,
+    settings.namTrainingInputWav,
+    settings.trainingPresets,
+    settings.trainingWatchProfiles,
+    settings.trainingRetainGraphs,
+  ])
 
   useEffect(() => {
     const pendingBatches = new Map<string, {
@@ -3470,13 +3522,33 @@ export default function App() {
   })
 
   const selectedFiles = visibleFiles.filter((f) => selectedIds.has(f.filePath))
+  const selectedSingleFilePath = selectedFiles.length === 1 ? selectedFiles[0].filePath : null
+  const selectedFileSignature = selectedFiles.map((f) => f.filePath).sort().join('|')
+  const skipNextTrainingWorkspaceSelectionCloseRef = useRef(false)
+  const previousSelectionSignatureRef = useRef(selectedFileSignature)
 
-  const handleOpenExperimentalTraining = () => {
+  useEffect(() => {
+    let alive = true
+    void window.api.getTrainerState().then((state) => {
+      if (alive) setGlobalTrainerState(state)
+    }).catch(() => null)
+    const unsubscribe = window.api.onTrainerUpdate((state) => {
+      if (alive) setGlobalTrainerState(state)
+    })
+    return () => {
+      alive = false
+      unsubscribe()
+    }
+  }, [])
+
+  const handleOpenExperimentalTraining = (mode: 'files' | 'folder' | 'queue' | 'history' = 'files') => {
     setShowSettings(false)
     setShowDashboard(false)
     setHistoryOpen(false)
     setShowToneStore(false)
     setBatchFolder(null)
+    setTrainingWorkspaceMode(mode)
+    skipNextTrainingWorkspaceSelectionCloseRef.current = true
     setShowTrainingWorkspace(true)
 
     if (!settings.enableExperimentalTraining) {
@@ -3491,7 +3563,36 @@ export default function App() {
       setSelectedFilePanelTab('metadata')
     }
   }, [selectedFiles.length, selectedFilePanelTab])
+  const previousSelectedSingleFilePathRef = useRef<string | null>(null)
+  useEffect(() => {
+    const previous = previousSelectedSingleFilePathRef.current
+    if (
+      previous &&
+      selectedSingleFilePath &&
+      previous !== selectedSingleFilePath &&
+      selectedFilePanelTab === 'training'
+    ) {
+      setSelectedFilePanelTab('metadata')
+    }
+    previousSelectedSingleFilePathRef.current = selectedSingleFilePath
+  }, [selectedFilePanelTab, selectedSingleFilePath])
+  useEffect(() => {
+    const previous = previousSelectionSignatureRef.current
+    const changed = previous !== selectedFileSignature
+    if (showTrainingWorkspace && changed) {
+      if (skipNextTrainingWorkspaceSelectionCloseRef.current) {
+        skipNextTrainingWorkspaceSelectionCloseRef.current = false
+      } else {
+        setShowTrainingWorkspace(false)
+      }
+    } else if (skipNextTrainingWorkspaceSelectionCloseRef.current && showTrainingWorkspace) {
+      skipNextTrainingWorkspaceSelectionCloseRef.current = false
+    }
+    previousSelectionSignatureRef.current = selectedFileSignature
+  }, [selectedFileSignature, showTrainingWorkspace])
   const showToneStorePanel = showToneStore && !showSettings && !showDashboard && !historyOpen && batchFolder === null
+  const activeTrainingQueueCount = globalTrainerState.queue.filter((job) => ['queued', 'starting', 'running'].includes(job.status)).length
+  const trainingQueueIsActive = globalTrainerState.status === 'starting' || globalTrainerState.status === 'running'
 
   useEffect(() => {
     if (showToneStore || toneStoreSearchRequest) setToneStoreMounted(true)
@@ -3604,7 +3705,10 @@ export default function App() {
         onFindDuplicates={files.length > 0 ? () => { setDuplicatesScopeFolder(null); setShowDuplicates(true) } : undefined}
         onOpenLibraryCleanup={handleOpenLibraryCleanup}
         showExperimentalTraining={settings.enableExperimentalTraining}
-        onOpenExperimentalTraining={handleOpenExperimentalTraining}
+        onOpenExperimentalTraining={() => handleOpenExperimentalTraining('files')}
+        trainingQueueCount={activeTrainingQueueCount}
+        trainingQueueActive={trainingQueueIsActive}
+        onOpenTrainingQueue={() => handleOpenExperimentalTraining('queue')}
         showDashboard={files.length > 0}
         dashboardActive={showDashboard}
         onToggleDashboard={() => {
@@ -3927,6 +4031,7 @@ export default function App() {
             <TrainingPanel
               settings={settings}
               onSaveSettings={handleSaveSettings}
+              initialRunMode={trainingWorkspaceMode}
               onClose={() => setShowTrainingWorkspace(false)}
             />
           ) : showDashboard ? (
