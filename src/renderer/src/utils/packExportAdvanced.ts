@@ -105,7 +105,7 @@ function deriveStats(captures: NamFile[]) {
     .map(f => (f.metadata.training as Record<string, unknown> | undefined)?.validation_esr)
     .filter((v): v is number => typeof v === 'number')
   const avgEsr = esrValues.length ? esrValues.reduce((a, b) => a + b, 0) / esrValues.length : null
-  const levelValues = captures.map(f => f.metadata.input_level_dbu).filter(Boolean) as string[]
+  const levelValues = captures.map(f => f.metadata.input_level_dbu).filter(v => v != null)
   const refLevel = mode(levelValues)
   const gearValues = captures
     .map(f => [f.metadata.gear_make, f.metadata.gear_model].filter(Boolean).join(' ').trim())
@@ -233,7 +233,8 @@ export function generatePackHtmlAdvanced(
       : ''
     const epochStr = stats.epochValue ? `${stats.epochValue.toLocaleString()} ep` : '—'
     const trainingSubSub = stats.avgEsr !== null && stats.avgEsr < 0.01 ? 'convergence-locked' : ''
-    const refValue = stats.refLevel ? esc(stats.refLevel.startsWith('+') || stats.refLevel.startsWith('-') ? stats.refLevel + ' dBu' : stats.refLevel) : '—'
+    const refStr = stats.refLevel !== undefined ? String(stats.refLevel) : ''
+    const refValue = refStr ? esc((refStr.startsWith('+') || refStr.startsWith('-') ? refStr : '+' + refStr) + ' dBu') : '—'
     const refSub = stats.refGear ? esc(stats.refGear) : ''
 
     return `<div class="stats-bar">
