@@ -3839,6 +3839,7 @@ export default function App() {
                     setHistoryOpen(false)
                     setShowSettings(false)
                     setShowToneStore(false)
+                    setShowTrainingWorkspace(false)
                     setBatchFolder(null)
                   }
                 }}
