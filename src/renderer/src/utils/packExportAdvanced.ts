@@ -76,7 +76,7 @@ const LIGHT_THEME = (accent: string): Theme => ({
 // strings the parser can't split fall back to verbatim text.
 function styleSettings(raw: string, esc: (s: string) => string, t: Theme): string {
   if (!raw) return `<span style="color:${t.dimmer}">—</span>`
-  const re = /([A-Za-z][A-Za-z0-9.]*)\s+([\d.]+)/g
+  const re = /([A-Za-z]+)\s*([0-9][0-9.]*)/g
   const parts: [string, string][] = []
   let m: RegExpExecArray | null
   while ((m = re.exec(raw)) !== null) parts.push([m[1], m[2]])
