@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import beakerTransparent from './assets/images/beaker.only.transparent.png'
 import { NamFile, NamMetadata, TONE_TYPES, GEAR_TYPES } from './types/nam'
-import { AppSettings, FolderWatchImportEntry, FolderWatchRule, MetadataSuggestRule, loadSettings, saveSettings } from './types/settings'
+import { AppSettings, FolderWatchImportEntry, FolderWatchRule, MetadataSuggestRule, TrainingProfile, loadSettings, saveSettings } from './types/settings'
 import { loadLayout, saveLayout } from './types/layout'
 import { LibrarianState } from './types/librarian'
 import { FileList, ALL_GRID_COLUMNS, doExportCSV, doExportXLSX } from './components/FileList'
@@ -23,6 +23,7 @@ import { FolderDashboard } from './components/FolderDashboard'
 import { FolderReadmePanel } from './components/FolderReadmePanel'
 import { PackInfoEditor, type DeliveryMatrixData, type PackInfo, type PackChecklistItem } from './components/PackInfoEditor'
 import { PackTargetsEditor } from './components/PackTargetsEditor'
+import { TrainingPanel } from './components/TrainingPanel'
 import { FolderSuggestRulesModal } from './components/FolderSuggestRulesModal'
 import { BundleEditor } from './components/BundleEditor'
 import { NamDashboard } from './components/NamDashboard'
@@ -33,6 +34,7 @@ import * as XLSX from 'xlsx'
 import { buildMetadataSuggestionMatches, MetadataSuggestionMatch } from './utils/metadataSuggest'
 import { cloneMetadataSuggestRule, isMetadataSuggestRuleComplete, isMetadataSuggestRuleLibraryCandidate, metadataSuggestRuleSignature } from './utils/metadataSuggestRuleLibrary'
 import { detectPreset } from './utils/detectPreset'
+import { IDLE_TRAINER_STATE, type TrainerProfilesStateSnapshot, type TrainerStartPayload, type TrainerStateSnapshot } from './types/trainer'
 
 export interface HistoryEntry {
   id: string
@@ -235,6 +237,37 @@ function makeFolderWatchKey(sourceFolder: string, destFolder: string): string {
   return `${sourceFolder.replace(/\\/g, '/')}=>${destFolder.replace(/\\/g, '/')}`
 }
 
+function resolveTrainingWatcherProfiles(settings: AppSettings): TrainingProfile[] {
+  const presetMap = new Map(settings.trainingPresets.map((preset) => [preset.id, preset]))
+  return settings.trainingWatchProfiles
+    .map((watchProfile) => {
+      const preset = presetMap.get(watchProfile.presetId)
+      if (!preset) return null
+      return {
+        id: watchProfile.id,
+        name: watchProfile.name,
+        sourceMode: 'watcher' as const,
+        enabled: watchProfile.enabled,
+        autoRun: watchProfile.autoRun,
+        initialScanMode: watchProfile.initialScanMode,
+        namingTemplate: watchProfile.namingTemplate,
+        architectures: preset.architectures,
+        epochs: preset.epochs,
+        thresholdEsr: preset.thresholdEsr,
+        latencyMode: preset.latencyMode,
+        latencyValue: preset.latencyValue,
+        savePlot: preset.savePlot,
+        ignoreChecks: preset.ignoreChecks,
+        sourcePostProcess: watchProfile.sourcePostProcess,
+        watchFolder: watchProfile.watchFolder,
+        processedWavRoot: watchProfile.processedWavRoot,
+        graphRoot: watchProfile.graphRoot,
+        finalModelRoot: watchProfile.finalModelRoot,
+      }
+    })
+    .filter((profile): profile is TrainingProfile => profile !== null)
+}
+
 const AMPCOVER_PATTERN = /^ampcover\.(png|jpe?g|webp|gif|avif)$/i
 
 const HISTORY_STORAGE_KEY = 'nam-lab-history'
@@ -258,6 +291,8 @@ declare global {
       openFiles: () => Promise<string[]>
       openFolder: (defaultPath?: string) => Promise<string | null>
       openImportFile: () => Promise<string | null>
+      openAudioFile: () => Promise<string | null>
+      openAudioFiles: () => Promise<string[]>
       openImageFile: () => Promise<string | null>
       readFileBinary: (filePath: string) => Promise<{ data?: string; error?: string }>
       hashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
@@ -307,6 +342,26 @@ declare global {
       showMessageBox: (options: { type?: 'none' | 'info' | 'error' | 'question' | 'warning'; title?: string; message: string; detail?: string; buttons: string[]; defaultId?: number; cancelId?: number; noLink?: boolean }) => Promise<{ response: number }>
       detectNamPlayer: () => Promise<boolean>
       browseExecutable: () => Promise<string | null>
+      getTrainerState: () => Promise<TrainerStateSnapshot>
+      startTrainerRun: (payload: TrainerStartPayload) => Promise<{ success: boolean; error?: string }>
+      enqueueTrainerRuns: (payloads: TrainerStartPayload[]) => Promise<{ success: boolean; error?: string; queued?: number }>
+      setTrainerProfilesState: (payload: { pythonPath: string; inputPath: string; retainGraphs: boolean; profiles: TrainingProfile[] }) => Promise<{ success: boolean }>
+      getTrainerProfilesState: () => Promise<TrainerProfilesStateSnapshot>
+      markTrainingWatchCurrentContentsSeen: (profileId: string) => Promise<{ success: boolean; error?: string; marked?: number }>
+      setTrainerProfileRunning: (profileId: string, running: boolean) => Promise<{ success: boolean; error?: string }>
+      runTrainerFolderOnce: (payload: { profile: TrainingProfile; folderPath: string; pythonPath: string; inputPath: string; submissionId?: string; submissionLabel?: string; submissionCreatedAt?: string }) => Promise<{ success: boolean; error?: string; queued?: number; scanned?: number }>
+      cancelTrainerRun: () => Promise<{ success: boolean; error?: string }>
+      setTrainerPauseAfterCurrent: (pause: boolean) => Promise<{ success: boolean }>
+      retryFailedTrainerRuns: () => Promise<{ success: boolean; retried?: number }>
+      retryTrainerJob: (jobId: string) => Promise<{ success: boolean; error?: string }>
+      clearFinishedTrainerRuns: () => Promise<{ success: boolean }>
+      removeQueuedTrainerRuns: () => Promise<{ success: boolean }>
+      removeTrainerJob: (jobId: string) => Promise<{ success: boolean; error?: string }>
+      watcherQueueAction: (jobId: string, action: 'remove' | 'skip' | 'move-canceled' | 'retry-now') => Promise<{ success: boolean; error?: string }>
+      moveTrainerJob: (jobId: string, direction: 'up' | 'down') => Promise<{ success: boolean; error?: string }>
+      makeTrainerJobNext: (jobId: string) => Promise<{ success: boolean; error?: string }>
+      retryTrainerHistoryEntry: (historyId: string) => Promise<{ success: boolean; error?: string; queued?: number }>
+      onTrainerUpdate: (cb: (state: TrainerStateSnapshot) => void) => () => void
       openInNam: (filePath: string, standalonePath: string) => Promise<{ success: boolean; error?: string }>
       scanImages: (folderPath: string) => Promise<{ success: boolean; images: string[] }>
       findPackOwner: (folderPath: string, rootPath: string) => Promise<string | null>
@@ -449,6 +504,7 @@ export default function App() {
   const folderWatchBatchTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const [batchFolder, setBatchFolder] = useState<{ path: string | null; name: string; filePaths?: string[] } | null>(null)
   const [showSettings, setShowSettings] = useState(false)
+  const [selectedFilePanelTab, setSelectedFilePanelTab] = useState<'metadata' | 'training'>('metadata')
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
   const [namPlayerDetected, setNamPlayerDetected] = useState(false)
   const [librarian, setLibrarian] = useState<LibrarianState>(EMPTY_LIBRARIAN)
@@ -523,6 +579,10 @@ export default function App() {
   const suppressStartupAutoSelectRef = useRef(settings.showDashboardOnLaunch)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [showToneStore, setShowToneStore] = useState(false)
+  const [showTrainingWorkspace, setShowTrainingWorkspace] = useState(false)
+  const [trainingWorkspaceMode, setTrainingWorkspaceMode] = useState<'files' | 'folder' | 'queue' | 'history'>('files')
+  const [globalTrainerState, setGlobalTrainerState] = useState<TrainerStateSnapshot>(IDLE_TRAINER_STATE)
+  const trainerWatcherAutoStartRecoveryRef = useRef('')
   const [toneStoreMounted, setToneStoreMounted] = useState(false)
   const [toneStoreQueueJob, setToneStoreQueueJob] = useState<ToneStoreDownloadQueueJob | null>(null)
   const toneStoreQueueRunningRef = useRef(false)
@@ -770,6 +830,18 @@ export default function App() {
       toneStoreQueueRunningRef.current = false
     })
   }, [runToneStoreQueueStep, toneStoreQueueJob])
+
+  useEffect(() => {
+    if (!settings.enableExperimentalTraining && selectedFilePanelTab === 'training') {
+      setSelectedFilePanelTab('metadata')
+    }
+  }, [settings.enableExperimentalTraining, selectedFilePanelTab])
+
+  useEffect(() => {
+    if (!settings.enableExperimentalTraining && showTrainingWorkspace) {
+      setShowTrainingWorkspace(false)
+    }
+  }, [settings.enableExperimentalTraining, showTrainingWorkspace])
 
   // Reset folder panel tab and check for pack-owning ancestor when selected folder changes
   useEffect(() => {
@@ -1055,6 +1127,22 @@ export default function App() {
       imports: settings.folderWatchImports,
     })
   }, [settings.folderWatchImports, settings.folderWatchRules])
+
+  useEffect(() => {
+    void window.api.setTrainerProfilesState({
+      pythonPath: settings.namPythonPath,
+      inputPath: settings.namTrainingInputWav,
+      retainGraphs: settings.trainingRetainGraphs,
+      profiles: settings.enableExperimentalTraining ? resolveTrainingWatcherProfiles(settings) : [],
+    })
+  }, [
+    settings.enableExperimentalTraining,
+    settings.namPythonPath,
+    settings.namTrainingInputWav,
+    settings.trainingPresets,
+    settings.trainingWatchProfiles,
+    settings.trainingRetainGraphs,
+  ])
 
   useEffect(() => {
     const pendingBatches = new Map<string, {
@@ -3440,7 +3528,109 @@ export default function App() {
   })
 
   const selectedFiles = visibleFiles.filter((f) => selectedIds.has(f.filePath))
+  const selectedSingleFilePath = selectedFiles.length === 1 ? selectedFiles[0].filePath : null
+  const selectedFileSignature = selectedFiles.map((f) => f.filePath).sort().join('|')
+  const skipNextTrainingWorkspaceSelectionCloseRef = useRef(false)
+  const previousSelectionSignatureRef = useRef(selectedFileSignature)
+
+  useEffect(() => {
+    let alive = true
+    void window.api.getTrainerState().then((state) => {
+      if (alive) setGlobalTrainerState(state)
+    }).catch(() => null)
+    const unsubscribe = window.api.onTrainerUpdate((state) => {
+      if (alive) setGlobalTrainerState(state)
+    })
+    return () => {
+      alive = false
+      unsubscribe()
+    }
+  }, [])
+
+  const handleOpenExperimentalTraining = (mode: 'files' | 'folder' | 'queue' | 'history' = 'files') => {
+    setShowSettings(false)
+    setShowDashboard(false)
+    setHistoryOpen(false)
+    setShowToneStore(false)
+    setBatchFolder(null)
+    setTrainingWorkspaceMode(mode)
+    skipNextTrainingWorkspaceSelectionCloseRef.current = true
+    setShowTrainingWorkspace(true)
+
+    if (!settings.enableExperimentalTraining) {
+      setStatus({ message: 'Enable Local Training in Settings first.', type: 'info' })
+      return
+    }
+    setStatus({ message: 'Opened the training workspace.', type: 'info' })
+  }
+
+  useEffect(() => {
+    if (selectedFiles.length !== 1 && selectedFilePanelTab === 'training') {
+      setSelectedFilePanelTab('metadata')
+    }
+  }, [selectedFiles.length, selectedFilePanelTab])
+  const previousSelectedSingleFilePathRef = useRef<string | null>(null)
+  useEffect(() => {
+    const previous = previousSelectedSingleFilePathRef.current
+    if (
+      previous &&
+      selectedSingleFilePath &&
+      previous !== selectedSingleFilePath &&
+      selectedFilePanelTab === 'training'
+    ) {
+      setSelectedFilePanelTab('metadata')
+    }
+    previousSelectedSingleFilePathRef.current = selectedSingleFilePath
+  }, [selectedFilePanelTab, selectedSingleFilePath])
+  useEffect(() => {
+    const previous = previousSelectionSignatureRef.current
+    const changed = previous !== selectedFileSignature
+    if (showTrainingWorkspace && changed) {
+      if (trainingWorkspaceMode === 'files') {
+        previousSelectionSignatureRef.current = selectedFileSignature
+        return
+      }
+      if (skipNextTrainingWorkspaceSelectionCloseRef.current) {
+        skipNextTrainingWorkspaceSelectionCloseRef.current = false
+      } else {
+        setShowTrainingWorkspace(false)
+      }
+    } else if (skipNextTrainingWorkspaceSelectionCloseRef.current && showTrainingWorkspace) {
+      skipNextTrainingWorkspaceSelectionCloseRef.current = false
+    }
+    previousSelectionSignatureRef.current = selectedFileSignature
+  }, [selectedFileSignature, showTrainingWorkspace, trainingWorkspaceMode])
   const showToneStorePanel = showToneStore && !showSettings && !showDashboard && !historyOpen && batchFolder === null
+  const activeTrainingQueueCount = globalTrainerState.queue.filter((job) => ['queued', 'starting', 'running'].includes(job.status)).length
+  const trainingQueueIsActive = globalTrainerState.status === 'starting' || globalTrainerState.status === 'running'
+
+  useEffect(() => {
+    const autoRunWatcherIds = new Set(
+      settings.enableExperimentalTraining
+        ? settings.trainingWatchProfiles
+            .filter((profile) => profile.enabled && profile.autoRun)
+            .map((profile) => profile.id)
+        : []
+    )
+    const queuedWatcherJobs = globalTrainerState.queue.filter(
+      (job) => job.status === 'queued' && job.sourceMode === 'watcher' && !!job.profileId && autoRunWatcherIds.has(job.profileId)
+    )
+    if (queuedWatcherJobs.length === 0 || trainingQueueIsActive) {
+      trainerWatcherAutoStartRecoveryRef.current = ''
+      return
+    }
+    const recoveryKey = queuedWatcherJobs.map((job) => job.jobId).join('|')
+    if (!recoveryKey || trainerWatcherAutoStartRecoveryRef.current === recoveryKey) return
+    trainerWatcherAutoStartRecoveryRef.current = recoveryKey
+    void window.api.startQueuedTrainerRuns().catch(() => {
+      trainerWatcherAutoStartRecoveryRef.current = ''
+    })
+  }, [
+    globalTrainerState.queue,
+    settings.enableExperimentalTraining,
+    settings.trainingWatchProfiles,
+    trainingQueueIsActive,
+  ])
 
   useEffect(() => {
     if (showToneStore || toneStoreSearchRequest) setToneStoreMounted(true)
@@ -3539,6 +3729,7 @@ export default function App() {
           setShowSettings((s) => !s)
           setBatchFolder(null)
           setShowToneStore(false)
+          setShowTrainingWorkspace(false)
           if (gridMaximized) setGridSlideOpen(true)
         }}
         unnamedCount={unnamedCount}
@@ -3551,6 +3742,11 @@ export default function App() {
         onOpenRecentFolder={(path) => loadFolderByPath(path)}
         onFindDuplicates={files.length > 0 ? () => { setDuplicatesScopeFolder(null); setShowDuplicates(true) } : undefined}
         onOpenLibraryCleanup={handleOpenLibraryCleanup}
+        showExperimentalTraining={settings.enableExperimentalTraining}
+        onOpenExperimentalTraining={() => handleOpenExperimentalTraining('files')}
+        trainingQueueCount={activeTrainingQueueCount}
+        trainingQueueActive={trainingQueueIsActive}
+        onOpenTrainingQueue={() => handleOpenExperimentalTraining('queue')}
         showDashboard={files.length > 0}
         dashboardActive={showDashboard}
         onToggleDashboard={() => {
@@ -3558,6 +3754,7 @@ export default function App() {
           setHistoryOpen(false)
           setShowSettings(false)
           setShowToneStore(false)
+          setShowTrainingWorkspace(false)
           setBatchFolder(null)
         }}
         historyOpen={historyOpen}
@@ -3566,6 +3763,7 @@ export default function App() {
           setShowDashboard(false)
           setShowSettings(false)
           setShowToneStore(false)
+          setShowTrainingWorkspace(false)
           setBatchFolder(null)
         }}
         toneStoreActive={showToneStorePanel}
@@ -3574,6 +3772,7 @@ export default function App() {
           setShowDashboard(false)
           setHistoryOpen(false)
           setShowSettings(false)
+          setShowTrainingWorkspace(false)
           setBatchFolder(null)
         }}
         helpOpen={helpView !== null}
@@ -3866,7 +4065,14 @@ export default function App() {
           )}
           {showSettings ? (
             <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} />
-          ) : showToneStorePanel ? null : showDashboard ? (
+          ) : showToneStorePanel ? null : showTrainingWorkspace ? (
+            <TrainingPanel
+              settings={settings}
+              onSaveSettings={handleSaveSettings}
+              initialRunMode={trainingWorkspaceMode}
+              onClose={() => setShowTrainingWorkspace(false)}
+            />
+          ) : showDashboard ? (
             <NamDashboard
               files={files}
               packChecklistRollup={dashboardChecklistEntries}
@@ -3954,52 +4160,127 @@ export default function App() {
               gearModelSuggestions={gearModelSuggestions}
             />
           ) : selectedFiles.length === 1 ? (
-            <MetadataEditor
-              key={selectedFiles[0].filePath}
-              file={selectedFiles[0]}
-              coverImagePath={metadataCoverPath}
-              onChange={(m) => handleMetadataChange(selectedFiles[0].filePath, m)}
-              onSave={() => handleSave(selectedFiles[0].filePath)}
-              onSaveAndAdvance={() => handleSaveAndAdvance(selectedFiles[0].filePath)}
-              onRevert={() => {
-                const f = selectedFiles[0]
-                setFiles((prev) => prev.map((x) =>
-                  x.filePath === f.filePath
-                    ? { ...x, metadata: { ...x.originalMetadata }, isDirty: false, autoFilledFields: [] }
-                    : x
-                ))
-              }}
-              onRevealInFinder={() => window.api.revealFile(selectedFiles[0].filePath)}
-              renameTemplate={settings.renameTemplate}
-              onRenameFile={handleRenameFile}
-              gearMakeSuggestions={gearMakeSuggestions}
-              gearModelSuggestions={gearModelSuggestions}
-              showNamLabFields={settings.showNamLabFields}
-              hasActiveDefaults={
-                settings.enableAmpInfo ||
-                settings.enableCaptureDefaults ||
-                settings.populateNameFromFilename ||
-                settings.autoDetectToneType ||
-                !!settings.ampSuffix
-              }
-              onReapplyDefaults={() => {
-                const f = selectedFiles[0]
-                const baseName = f.fileName.replace(/\.nam$/i, '')
-                const currentMeta = f.metadata
-                const newMeta = applyDefaults(currentMeta, baseName, settings)
-                const newAutoFilled = (Object.keys(newMeta) as (keyof NamFile['metadata'])[]).filter(
-                  (k) => newMeta[k] != null && (currentMeta[k] == null || currentMeta[k] === '') && !f.autoFilledFields.includes(k)
-                )
-                const allAutoFilled = [...f.autoFilledFields, ...newAutoFilled]
-                const wasChanged = JSON.stringify(newMeta) !== JSON.stringify(f.originalMetadata)
-                setFiles((prev) => prev.map((x) =>
-                  x.filePath === f.filePath
-                    ? { ...x, metadata: newMeta, isDirty: wasChanged, autoFilledFields: allAutoFilled }
-                    : x
-                ))
-              }}
-              onClearSuggestions={() => handleClearSuggestionsForFile(selectedFiles[0].filePath)}
-            />
+            settings.enableExperimentalTraining ? (
+              <div className="h-full flex flex-col">
+                <div className="flex border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+                  {(['metadata', 'training'] as const).map((tab) => (
+                    <button
+                      key={tab}
+                      onClick={() => setSelectedFilePanelTab(tab)}
+                      className={`px-4 py-2 text-xs font-medium transition-colors border-b-2 -mb-px ${
+                        selectedFilePanelTab === tab
+                          ? 'border-teal-500 text-teal-600 dark:text-teal-400'
+                          : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                      }`}
+                    >
+                      {tab === 'metadata' ? 'Metadata' : 'Training'}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex-1 overflow-hidden">
+                  {selectedFilePanelTab === 'training' ? (
+                    <TrainingPanel
+                      settings={settings}
+                      onSaveSettings={handleSaveSettings}
+                    />
+                  ) : (
+                    <MetadataEditor
+                      key={selectedFiles[0].filePath}
+                      file={selectedFiles[0]}
+                      coverImagePath={metadataCoverPath}
+                      onChange={(m) => handleMetadataChange(selectedFiles[0].filePath, m)}
+                      onSave={() => handleSave(selectedFiles[0].filePath)}
+                      onSaveAndAdvance={() => handleSaveAndAdvance(selectedFiles[0].filePath)}
+                      onRevert={() => {
+                        const f = selectedFiles[0]
+                        setFiles((prev) => prev.map((x) =>
+                          x.filePath === f.filePath
+                            ? { ...x, metadata: { ...x.originalMetadata }, isDirty: false, autoFilledFields: [] }
+                            : x
+                        ))
+                      }}
+                      onRevealInFinder={() => window.api.revealFile(selectedFiles[0].filePath)}
+                      renameTemplate={settings.renameTemplate}
+                      onRenameFile={handleRenameFile}
+                      gearMakeSuggestions={gearMakeSuggestions}
+                      gearModelSuggestions={gearModelSuggestions}
+                      showNamLabFields={settings.showNamLabFields}
+                      hasActiveDefaults={
+                        settings.enableAmpInfo ||
+                        settings.enableCaptureDefaults ||
+                        settings.populateNameFromFilename ||
+                        settings.autoDetectToneType ||
+                        !!settings.ampSuffix
+                      }
+                      onReapplyDefaults={() => {
+                        const f = selectedFiles[0]
+                        const baseName = f.fileName.replace(/\.nam$/i, '')
+                        const currentMeta = f.metadata
+                        const newMeta = applyDefaults(currentMeta, baseName, settings)
+                        const newAutoFilled = (Object.keys(newMeta) as (keyof NamFile['metadata'])[]).filter(
+                          (k) => newMeta[k] != null && (currentMeta[k] == null || currentMeta[k] === '') && !f.autoFilledFields.includes(k)
+                        )
+                        const allAutoFilled = [...f.autoFilledFields, ...newAutoFilled]
+                        const wasChanged = JSON.stringify(newMeta) !== JSON.stringify(f.originalMetadata)
+                        setFiles((prev) => prev.map((x) =>
+                          x.filePath === f.filePath
+                            ? { ...x, metadata: newMeta, isDirty: wasChanged, autoFilledFields: allAutoFilled }
+                            : x
+                        ))
+                      }}
+                      onClearSuggestions={() => handleClearSuggestionsForFile(selectedFiles[0].filePath)}
+                    />
+                  )}
+                </div>
+              </div>
+            ) : (
+              <MetadataEditor
+                key={selectedFiles[0].filePath}
+                file={selectedFiles[0]}
+                coverImagePath={metadataCoverPath}
+                onChange={(m) => handleMetadataChange(selectedFiles[0].filePath, m)}
+                onSave={() => handleSave(selectedFiles[0].filePath)}
+                onSaveAndAdvance={() => handleSaveAndAdvance(selectedFiles[0].filePath)}
+                onRevert={() => {
+                  const f = selectedFiles[0]
+                  setFiles((prev) => prev.map((x) =>
+                    x.filePath === f.filePath
+                      ? { ...x, metadata: { ...x.originalMetadata }, isDirty: false, autoFilledFields: [] }
+                      : x
+                  ))
+                }}
+                onRevealInFinder={() => window.api.revealFile(selectedFiles[0].filePath)}
+                renameTemplate={settings.renameTemplate}
+                onRenameFile={handleRenameFile}
+                gearMakeSuggestions={gearMakeSuggestions}
+                gearModelSuggestions={gearModelSuggestions}
+                showNamLabFields={settings.showNamLabFields}
+                hasActiveDefaults={
+                  settings.enableAmpInfo ||
+                  settings.enableCaptureDefaults ||
+                  settings.populateNameFromFilename ||
+                  settings.autoDetectToneType ||
+                  !!settings.ampSuffix
+                }
+                onReapplyDefaults={() => {
+                  const f = selectedFiles[0]
+                  const baseName = f.fileName.replace(/\.nam$/i, '')
+                  const currentMeta = f.metadata
+                  const newMeta = applyDefaults(currentMeta, baseName, settings)
+                  const newAutoFilled = (Object.keys(newMeta) as (keyof NamFile['metadata'])[]).filter(
+                    (k) => newMeta[k] != null && (currentMeta[k] == null || currentMeta[k] === '') && !f.autoFilledFields.includes(k)
+                  )
+                  const allAutoFilled = [...f.autoFilledFields, ...newAutoFilled]
+                  const wasChanged = JSON.stringify(newMeta) !== JSON.stringify(f.originalMetadata)
+                  setFiles((prev) => prev.map((x) =>
+                    x.filePath === f.filePath
+                      ? { ...x, metadata: newMeta, isDirty: wasChanged, autoFilledFields: allAutoFilled }
+                      : x
+                  ))
+                }}
+                onClearSuggestions={() => handleClearSuggestionsForFile(selectedFiles[0].filePath)}
+              />
+            )
           ) : selectedFiles.length > 1 ? (
             <MultiSelectEditor
               files={selectedFiles}

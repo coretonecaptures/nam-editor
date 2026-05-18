@@ -20,6 +20,11 @@ interface ToolbarProps {
   onOpenRecentFolder: (path: string) => void
   onFindDuplicates?: () => void
   onOpenLibraryCleanup?: () => void
+  showExperimentalTraining?: boolean
+  onOpenExperimentalTraining?: () => void
+  trainingQueueCount?: number
+  trainingQueueActive?: boolean
+  onOpenTrainingQueue?: () => void
   showDashboard?: boolean
   dashboardActive?: boolean
   onToggleDashboard?: () => void
@@ -53,6 +58,11 @@ export function Toolbar({
   onOpenRecentFolder,
   onFindDuplicates,
   onOpenLibraryCleanup,
+  showExperimentalTraining = false,
+  onOpenExperimentalTraining,
+  trainingQueueCount = 0,
+  trainingQueueActive = false,
+  onOpenTrainingQueue,
   showDashboard = false,
   dashboardActive = false,
   onToggleDashboard,
@@ -201,7 +211,7 @@ export function Toolbar({
         </button>
       )}
 
-      {(onFindDuplicates || onOpenLibraryCleanup) && (
+      {(onFindDuplicates || onOpenLibraryCleanup || (showExperimentalTraining && onOpenExperimentalTraining)) && (
         <div ref={libraryToolsRef} className="relative" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           <button
             onClick={() => setShowLibraryTools((v) => !v)}
@@ -235,6 +245,14 @@ export function Toolbar({
                   className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
                 >
                   Clean Up / Build Library...
+                </button>
+              )}
+              {showExperimentalTraining && onOpenExperimentalTraining && (
+                <button
+                  onClick={() => { setShowLibraryTools(false); onOpenExperimentalTraining() }}
+                  className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                >
+                  Training...
                 </button>
               )}
             </div>
@@ -303,6 +321,28 @@ export function Toolbar({
       )}
 
       <div className="flex-1" />
+
+      {showExperimentalTraining && onOpenTrainingQueue && (
+        <button
+          onClick={onOpenTrainingQueue}
+          title={trainingQueueCount > 0 ? `${trainingQueueCount} training queue item${trainingQueueCount === 1 ? '' : 's'}` : 'Open training queue'}
+          className={`relative flex items-center justify-center w-9 h-9 rounded-md transition-colors ${
+            trainingQueueActive
+              ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+              : 'bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
+          }`}
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h11M8 12h11M8 18h11M3 6h.01M3 12h.01M3 18h.01" />
+          </svg>
+          {trainingQueueCount > 0 && (
+            <span className="absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-600 text-white text-[10px] font-semibold flex items-center justify-center leading-none">
+              {trainingQueueCount > 99 ? '99+' : trainingQueueCount}
+            </span>
+          )}
+        </button>
+      )}
 
       {showDashboard && onToggleDashboard && (
         <>
