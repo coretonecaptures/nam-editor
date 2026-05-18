@@ -1020,7 +1020,7 @@ export function PackInfoEditor({
   onPackSaved,
   logoLight,
   logoDark,
-  darkAccentColor = '#f97316',
+  darkAccentColor = '#f9b966',
   allFolderPaths = [],
   parentPackPath = null,
   mode = 'info',

@@ -355,7 +355,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   folderNameColors: {},
   packLogoLight: '',
   packLogoDark: '',
-  packExportDarkAccent: '#f97316',
+  packExportDarkAccent: '#f9b966',
   defaultFolderTab: 'overview',
   showDashboardOnLaunch: true,
   tone3000Username: '',

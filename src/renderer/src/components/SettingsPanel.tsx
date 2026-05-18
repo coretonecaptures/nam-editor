@@ -26,6 +26,7 @@ import {
 import type { TrainerProfilesStateSnapshot } from '../types/trainer'
 
 const PACK_DARK_ACCENT_PRESETS = [
+  '#f9b966',
   '#f97316',
   '#f59e0b',
   '#2dd4bf',
