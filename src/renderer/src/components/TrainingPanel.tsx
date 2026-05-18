@@ -1,4 +1,5 @@
 ﻿import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import * as XLSX from 'xlsx'
 import type { AppSettings, TrainingPreset } from '../types/settings'
 import {
   IDLE_TRAINER_STATE,
@@ -114,6 +115,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const [historyStatusFilter, setHistoryStatusFilter] = useState<string>('all')
   const [historyArchitectureFilter, setHistoryArchitectureFilter] = useState<string>('all')
   const [historyTimeFilter, setHistoryTimeFilter] = useState<'all' | 'day' | 'week' | 'month' | 'quarter'>('all')
+  const [historyEsrFilter, setHistoryEsrFilter] = useState<'all' | 'green' | 'amber' | 'red' | 'none'>('all')
   const [historySearch, setHistorySearch] = useState('')
   const [showSavePresetModal, setShowSavePresetModal] = useState(false)
   const [presetNameDraft, setPresetNameDraft] = useState('')
@@ -250,13 +252,25 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 : 90 * 24 * 60 * 60 * 1000
         if (!Number.isFinite(entryTime) || now - entryTime > maxAgeMs) return false
       }
+      if (historyEsrFilter !== 'all') {
+        const esr = entry.validationEsr
+        if (historyEsrFilter === 'none') {
+          if (typeof esr === 'number') return false
+        } else if (historyEsrFilter === 'green') {
+          if (typeof esr !== 'number' || esr >= 0.01) return false
+        } else if (historyEsrFilter === 'amber') {
+          if (typeof esr !== 'number' || esr < 0.01 || esr >= 0.05) return false
+        } else if (historyEsrFilter === 'red') {
+          if (typeof esr !== 'number' || esr < 0.05) return false
+        }
+      }
       if (historySearch.trim()) {
         const hay = `${entry.finalModelName} ${entry.sourcePath} ${entry.finalModelPath} ${entry.profileName ?? ''}`.toLowerCase()
         if (!hay.includes(historySearch.trim().toLowerCase())) return false
       }
       return true
     }),
-    [historyArchitectureFilter, historyProfileFilter, historySearch, historyStatusFilter, historyTimeFilter, trainerState.history]
+    [historyArchitectureFilter, historyEsrFilter, historyProfileFilter, historySearch, historyStatusFilter, historyTimeFilter, trainerState.history]
   )
   const groupedHistory = useMemo(() => {
     const groups: Array<{ key: string; label: string; createdAt: string | null; entries: TrainerHistoryEntry[] }> = []
@@ -736,17 +750,43 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     setPresetSaveNotice(`Saved preset "${preset.name}".`)
   }
 
+  const handleExportHistory = () => {
+    const rows = filteredHistory.map((entry) => ({
+      Timestamp: new Date(entry.timestamp).toLocaleString(),
+      'Model Name': entry.finalModelName,
+      Profile: entry.profileName ?? (entry.sourceMode === 'watcher' ? 'Watcher' : entry.sourceMode === 'manual-folder-run' ? 'Folder run' : 'Manual'),
+      Architecture: ARCHITECTURE_LABELS[entry.architecture as TrainerArchitecture] ?? entry.architecture,
+      Status: entry.status,
+      Epochs: entry.epochs,
+      'Validation ESR': entry.validationEsr ?? '',
+      'Target ESR': entry.thresholdEsr ?? '',
+      'Latency Mode': entry.latencyMode,
+      'Latency Value': entry.latencyValue ?? '',
+      Attempts: entry.attempts,
+      Submission: entry.submissionLabel ?? '',
+      'Source WAV': entry.sourcePath,
+      'Model Path': entry.finalModelPath,
+      'Graph Path': entry.graphPath,
+      'Failure Reason': entry.failureReason,
+    }))
+    const ws = XLSX.utils.json_to_sheet(rows)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Training History')
+    const date = new Date().toISOString().split('T')[0]
+    XLSX.writeFile(wb, `training-history-${date}.xlsx`)
+  }
+
   return (
     <div
       className={`overflow-y-auto ${maximized ? 'fixed inset-4 z-[70] rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 shadow-2xl h-auto' : 'h-full'}`}
       onContextMenu={showNativeTextContextMenu}
     >
       <div className="max-w-5xl mx-auto px-6 py-5 space-y-5">
-        <div className="rounded-xl border border-violet-500/30 bg-violet-500/10 px-4 py-3">
+        <div className="rounded-xl border border-violet-300/60 dark:border-violet-500/30 bg-violet-50 dark:bg-violet-500/10 px-4 py-3">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <div className="text-sm font-semibold text-violet-100">Local Training</div>
-              <p className="mt-1 text-xs text-violet-200/85">
+              <div className="text-sm font-semibold text-violet-800 dark:text-violet-200">Local Training</div>
+              <p className="mt-1 text-xs text-violet-700/80 dark:text-violet-200/85">
                 Queue one input DI with multiple reamped WAVs. NAM Lab runs them serially, keeps a local queue, and promotes the final
                 .nam back to your chosen destination folder beside the ESR plot. If you have not configured the local trainer yet, refer to the
                 official NAM trainer install guide first.
@@ -759,7 +799,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 className={`p-2 rounded-lg transition-colors ${
                   maximized
                     ? 'bg-indigo-600 text-white'
-                    : 'bg-violet-950/40 hover:bg-violet-900/60 text-violet-100 border border-violet-400/20'
+                    : 'bg-violet-100 dark:bg-violet-950/40 hover:bg-violet-200 dark:hover:bg-violet-900/60 text-violet-700 dark:text-violet-200 border border-violet-300/60 dark:border-violet-400/20'
                 }`}
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -772,7 +812,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               {onClose && (
                 <button
                   onClick={onClose}
-                  className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-violet-950/40 hover:bg-violet-900/60 text-violet-100 border border-violet-400/20"
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-violet-100 dark:bg-violet-950/40 hover:bg-violet-200 dark:hover:bg-violet-900/60 text-violet-700 dark:text-violet-200 border border-violet-300/60 dark:border-violet-400/20"
                 >
                   Close
                 </button>
@@ -833,164 +873,176 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               </div>
             ) : (
             <>
-            <Field label="Input Audio" hint="Trainer input / DI file">
-              <PathPicker
-                value={inputPath}
-                placeholder="Select the trainer input WAV"
-                onChange={setInputPath}
-                onBrowse={handleBrowseInput}
-              />
-            </Field>
-
-            {runMode === 'files' ? (
-            <>
-            <Field label="Output Audio">
-              <div className="space-y-2">
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => { void handleBrowseOutputs() }}
-                    className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
-                  >
-                    Choose WAVs...
-                  </button>
-                  {outputPaths.length > 0 && (
-                    <button
-                      onClick={() => setOutputPaths([])}
-                      className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-                <div className="rounded-lg border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 min-h-[88px] max-h-[180px] overflow-y-auto font-mono">
-                  {outputPaths.length === 0 ? (
-                    <span className="italic text-gray-400 dark:text-gray-500">No output WAVs selected yet.</span>
-                  ) : (
-                    <div className="space-y-1">
-                      {outputPaths.map((path) => (
-                        <div key={path} className="break-all">{path}</div>
-                      ))}
+            {/* ── Captures ── */}
+            <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/[0.05] dark:bg-cyan-500/[0.04] p-4 space-y-4">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-cyan-600 dark:text-cyan-400">Captures</span>
+              {runMode === 'files' ? (
+                <div className="space-y-4">
+                  <Field label="Input DI" hint="Trainer reference / DI file">
+                    <PathPicker
+                      value={inputPath}
+                      placeholder="Select the trainer input WAV"
+                      onChange={setInputPath}
+                      onBrowse={handleBrowseInput}
+                    />
+                  </Field>
+                  <Field label="Output WAVs">
+                    <div className="space-y-2">
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => { void handleBrowseOutputs() }}
+                          className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
+                        >
+                          Choose WAVs...
+                        </button>
+                        {outputPaths.length > 0 && (
+                          <button
+                            onClick={() => setOutputPaths([])}
+                            className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
+                      <div className="rounded-lg border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 min-h-[88px] max-h-[180px] overflow-y-auto font-mono">
+                        {outputPaths.length === 0 ? (
+                          <span className="italic text-gray-400 dark:text-gray-500">No output WAVs selected yet.</span>
+                        ) : (
+                          <div className="space-y-1">
+                            {outputPaths.map((path) => (
+                              <div key={path} className="break-all">{path}</div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  )}
-                </div>
-              </div>
-            </Field>
-
-            </>
-            ) : (
-            <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-3 space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-medium text-gray-800 dark:text-gray-200">Run Folder Once</div>
-                  <div className="text-xs text-gray-500 dark:text-gray-500">Queue every WAV in a folder using a saved preset or custom settings from this page.</div>
-                </div>
-              </div>
-              <Field label="Folder">
-                <PathPicker
-                  value={folderRunPath}
-                  placeholder="Choose a folder containing WAV files"
-                  onChange={setFolderRunPath}
-                  onBrowse={async () => {
-                    const path = await window.api.openFolder(folderRunPath || trainPath || undefined)
-                    if (path) setFolderRunPath(path)
-                  }}
-                  browseLabel="Folder..."
-                />
-              </Field>
-            </div>
-            )}
-
-            <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_minmax(110px,0.6fr)_minmax(110px,0.6fr)_minmax(120px,0.7fr)] gap-4">
-              <Field label="Preset">
-                <select
-                  value={currentPresetId}
-                  onChange={(e) => {
-                    if (runMode === 'files') applyPreset(e.target.value)
-                    else setFolderRunProfileId(e.target.value)
-                  }}
-                  className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                >
-                  <option value={CUSTOM_PRESET_ID}>Custom</option>
-                  {availablePresets.map((preset) => (
-                    <option key={preset.id} value={preset.id}>
-                      {preset.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-
-              {currentRunPreset ? (
-                <div className="md:col-span-4 rounded-lg border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-xs text-sky-800 dark:text-sky-200">
-                  {describePreset(currentRunPreset)}
+                  </Field>
                 </div>
               ) : (
-                <>
-                  <Field label="Architecture(s)">
-                    <ArchitectureMultiSelect
-                      values={architectures}
-                      onChange={(next) => {
-                        setArchitectures(next)
-                        if (runMode === 'files') setSelectedPresetId(CUSTOM_PRESET_ID)
-                        else setFolderRunProfileId(CUSTOM_PRESET_ID)
+                <div className="space-y-4">
+                  <Field label="Input DI" hint="Trainer reference / DI file">
+                    <PathPicker
+                      value={inputPath}
+                      placeholder="Select the trainer input WAV"
+                      onChange={setInputPath}
+                      onBrowse={handleBrowseInput}
+                    />
+                  </Field>
+                  <div>
+                    <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Folder</div>
+                    <div className="text-[11px] text-gray-500 dark:text-gray-500 mb-2">Queue every WAV in a folder using a saved preset or custom settings below.</div>
+                    <PathPicker
+                      value={folderRunPath}
+                      placeholder="Choose a folder containing WAV files"
+                      onChange={setFolderRunPath}
+                      onBrowse={async () => {
+                        const path = await window.api.openFolder(folderRunPath || trainPath || undefined)
+                        if (path) setFolderRunPath(path)
                       }}
+                      browseLabel="Folder..."
                     />
-                  </Field>
+                  </div>
+                </div>
+              )}
+            </div>
 
-                  <Field label="Epochs">
-                    <input
-                      value={epochs}
-                      onChange={(e) => setEpochs(e.target.value)}
-                      className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                    />
-                  </Field>
+            {/* ── Training Settings ── */}
+            <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/[0.05] dark:bg-indigo-500/[0.04] p-4 space-y-4">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-indigo-500 dark:text-indigo-400">Training Settings</span>
+              <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_minmax(110px,0.6fr)_minmax(110px,0.6fr)_minmax(120px,0.7fr)] gap-4">
+                <Field label="Preset">
+                  <select
+                    value={currentPresetId}
+                    onChange={(e) => {
+                      if (runMode === 'files') applyPreset(e.target.value)
+                      else setFolderRunProfileId(e.target.value)
+                    }}
+                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value={CUSTOM_PRESET_ID}>Custom</option>
+                    {availablePresets.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
 
-                  <Field label="Latency">
-                    <input
-                      value={latency}
-                      onChange={(e) => setLatency(e.target.value)}
-                      placeholder="Auto"
-                      title="Leave blank to let NAM auto-detect the sample offset between the DI and the captured output."
-                      className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                    />
-                  </Field>
+                {currentRunPreset ? (
+                  <div className="md:col-span-4 rounded-lg border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-xs text-sky-800 dark:text-sky-200">
+                    {describePreset(currentRunPreset)}
+                  </div>
+                ) : (
+                  <>
+                    <Field label="Architecture(s)">
+                      <ArchitectureMultiSelect
+                        values={architectures}
+                        onChange={(next) => {
+                          setArchitectures(next)
+                          if (runMode === 'files') setSelectedPresetId(CUSTOM_PRESET_ID)
+                          else setFolderRunProfileId(CUSTOM_PRESET_ID)
+                        }}
+                      />
+                    </Field>
 
-                  <Field label="Target ESR">
-                    <input
-                      value={thresholdEsr}
-                      onChange={(e) => setThresholdEsr(e.target.value)}
-                      placeholder="Optional"
-                      title="Optional early-stop target. NAM training will stop once validation ESR reaches or beats this value."
-                      className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                    />
-                  </Field>
+                    <Field label="Epochs">
+                      <input
+                        value={epochs}
+                        onChange={(e) => setEpochs(e.target.value)}
+                        className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                      />
+                    </Field>
+
+                    <Field label="Latency">
+                      <input
+                        value={latency}
+                        onChange={(e) => setLatency(e.target.value)}
+                        placeholder="Auto"
+                        title="Leave blank to let NAM auto-detect the sample offset between the DI and the captured output."
+                        className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                      />
+                    </Field>
+
+                    <Field label="Target ESR">
+                      <input
+                        value={thresholdEsr}
+                        onChange={(e) => setThresholdEsr(e.target.value)}
+                        placeholder="Optional"
+                        title="Optional early-stop target. NAM training will stop once validation ESR reaches or beats this value."
+                        className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                      />
+                    </Field>
+                  </>
+                )}
+              </div>
+
+              {showsCustomSettings && (
+                <>
+                  {epochNote && (
+                    <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                      {epochNote}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap items-center gap-3 pt-1 border-t border-indigo-500/15">
+                    <ToggleRow label="Save ESR plot" checked={savePlot} onChange={setSavePlot} />
+                    <ToggleRow label="Ignore checks" checked={ignoreChecks} onChange={setIgnoreChecks} />
+                    <div className="flex-1" />
+                    <button
+                      onClick={handleSaveAsPreset}
+                      className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
+                    >
+                      Save as Preset
+                    </button>
+                  </div>
                 </>
               )}
             </div>
 
-            {showsCustomSettings && (
-            <>
-            {epochNote && (
-              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                {epochNote}
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-3 items-center">
-              <ToggleRow label="Save ESR plot" checked={savePlot} onChange={setSavePlot} />
-              <ToggleRow label="Ignore checks" checked={ignoreChecks} onChange={setIgnoreChecks} />
-              <button
-                onClick={handleSaveAsPreset}
-                className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
-              >
-                Save as Preset
-              </button>
-            </div>
-            </>
-            )}
-
-            <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-3 space-y-3">
+            {/* ── Output Routing ── */}
+            <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-4 space-y-3">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Output Routing</span>
               <div className="grid grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)] gap-4 items-end">
-                <Field label="Output Routing">
+                <Field label="Routing Mode">
                   <select
                     value={manualRoutingMode}
                     onChange={(e) => setManualRoutingMode(e.target.value as 'root' | 'sibling_processed')}
@@ -1019,42 +1071,52 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   </div>
                 )}
               </div>
-            <div className="text-xs text-gray-500 dark:text-gray-400">
+              <div className="text-xs text-gray-500 dark:text-gray-400">
                 Example model: <code>{exampleFinalModelPath}</code>
                 <span className="mx-2">·</span>
                 Example graph: <code>{exampleGraphPath}</code>
               </div>
             </div>
 
-            <div className="flex justify-center pt-1">
-              {runMode === 'files' ? (
-                <button
-                  onClick={handleQueue}
-                  disabled={!canQueue}
-                  className="px-5 py-2 rounded-lg text-sm font-medium transition-colors bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white"
-                >
-                  {(() => {
+            <button
+              onClick={runMode === 'files' ? handleQueue : () => { void handleRunFolderOnce() }}
+              disabled={runMode === 'files' ? !canQueue : false}
+              className={`w-full py-3 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-white ${
+                runMode === 'files'
+                  ? 'bg-indigo-600 hover:bg-indigo-500'
+                  : 'bg-emerald-600 hover:bg-emerald-500'
+              }`}
+            >
+              {runMode === 'files'
+                ? (() => {
                     const totalJobs = outputPaths.length * (activePreset ? activePreset.architectures.length : architectures.length)
                     return totalJobs === 1 ? 'Queue capture' : `Queue ${totalJobs} captures`
-                  })()}
-                </button>
-              ) : (
-                <button
-                  onClick={() => { void handleRunFolderOnce() }}
-                  className="px-5 py-2 rounded-lg text-sm font-medium transition-colors bg-emerald-600 hover:bg-emerald-500 text-white"
-                >
-                  Queue folder
-                </button>
-              )}
-            </div>
+                  })()
+                : 'Queue folder'}
+            </button>
             </>
             )}
 
           {runMode === 'history' ? (
             <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
               <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-800 space-y-3">
-                <div className="text-xs font-medium text-gray-700 dark:text-gray-300">Training History</div>
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                    Training History{filteredHistory.length > 0 ? ` (${filteredHistory.length})` : ''}
+                  </div>
+                  <button
+                    onClick={handleExportHistory}
+                    disabled={filteredHistory.length === 0}
+                    title="Export filtered history to Excel"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors border bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600"
+                  >
+                    <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                    </svg>
+                    Export filtered
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
                   <select
                     value={historyProfileFilter}
                     onChange={(e) => setHistoryProfileFilter(e.target.value)}
@@ -1085,6 +1147,23 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     {TRAINER_ARCHITECTURES.map((architecture) => (
                       <option key={architecture} value={architecture}>{ARCHITECTURE_LABELS[architecture]}</option>
                     ))}
+                  </select>
+                  <select
+                    value={historyEsrFilter}
+                    onChange={(e) => setHistoryEsrFilter(e.target.value as 'all' | 'green' | 'amber' | 'red' | 'none')}
+                    className={`px-2.5 py-1.5 rounded text-xs focus:outline-none bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 border-2 ${
+                      historyEsrFilter === 'green' ? 'border-emerald-500'
+                      : historyEsrFilter === 'amber' ? 'border-amber-500'
+                      : historyEsrFilter === 'red' ? 'border-red-500'
+                      : historyEsrFilter === 'none' ? 'border-gray-400 dark:border-gray-500'
+                      : 'border-gray-300 dark:border-gray-700'
+                    }`}
+                  >
+                    <option value="all">All ESR</option>
+                    <option value="green">Good — &lt; 0.01</option>
+                    <option value="amber">Fair — 0.01–0.05</option>
+                    <option value="red">Poor — ≥ 0.05</option>
+                    <option value="none">No ESR result</option>
                   </select>
                   <select
                     value={historyTimeFilter}
@@ -1133,6 +1212,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
             </div>
           ) : (
           <div className="space-y-4">
+          {runMode !== 'queue' && (
           <details className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30">
             <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-gray-700 dark:text-gray-300">
               Training details
@@ -1149,6 +1229,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               </div>
             </div>
           </details>
+          )}
 
           {launchError && (
             <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
@@ -1156,7 +1237,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
             </div>
           )}
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 px-3 py-2.5 flex flex-wrap items-center gap-2">
             <button
               onClick={async () => {
                 const result = await window.api.cancelTrainerRun()
@@ -1164,49 +1245,78 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               }}
               disabled={!isRunning}
               title="Hard-stop the current training run. NAM Lab will avoid promoting the final .nam when this is used."
-              className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-red-500/15 hover:bg-red-500/25 disabled:opacity-50 disabled:cursor-not-allowed text-red-700 dark:text-red-300"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border bg-red-500/10 hover:bg-red-500/20 disabled:opacity-40 disabled:cursor-not-allowed text-red-700 dark:text-red-300 border-red-300/50 dark:border-red-800/60"
             >
+              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <rect x="4" y="4" width="12" height="12" rx="2" />
+              </svg>
               Emergency stop
             </button>
             <button
               onClick={async () => { await window.api.setTrainerPauseAfterCurrent(!trainerState.pauseAfterCurrent) }}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${trainerState.pauseAfterCurrent ? 'bg-amber-500/20 text-amber-200' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'}`}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+                trainerState.pauseAfterCurrent
+                  ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300 border-amber-400/50 dark:border-amber-700/60'
+                  : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-300 dark:hover:bg-gray-600'
+              }`}
             >
-              {trainerState.pauseAfterCurrent ? 'Pause after current: On' : 'Pause after current'}
+              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <rect x="5" y="4" width="3.5" height="12" rx="1" />
+                <rect x="11.5" y="4" width="3.5" height="12" rx="1" />
+              </svg>
+              {trainerState.pauseAfterCurrent ? 'Pause: On' : 'Pause after current'}
             </button>
             <button
               onClick={async () => { await window.api.setTrainerPauseAfterCurrent(false) }}
               disabled={!trainerState.pauseAfterCurrent || queuedCount === 0 || isRunning}
-              className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600"
             >
-              Resume queue
+              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
+              </svg>
+              Resume
             </button>
+
+            <div className="w-px h-5 bg-gray-300 dark:bg-gray-700 mx-0.5 self-center" />
+
             <button
               onClick={async () => { await window.api.retryFailedTrainerRuns() }}
               disabled={!trainerState.queue.some((job) => job.status === 'error')}
-              className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600"
             >
+              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+              </svg>
               Retry failed
             </button>
             <button
               onClick={async () => { await window.api.removeQueuedTrainerRuns() }}
               disabled={!trainerState.queue.some((job) => job.status === 'queued')}
-              className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600"
             >
+              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
               Remove queued
             </button>
             <button
               onClick={async () => { await window.api.clearFinishedTrainerRuns() }}
               disabled={!trainerState.queue.some((job) => ['success', 'error', 'canceled'].includes(job.status))}
-              className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600"
             >
+              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+              </svg>
               Clear finished
             </button>
             {!!trainerState.outputModelPath && (trainerState.status === 'success' || trainerState.status === 'error' || trainerState.status === 'canceled') && (
               <button
                 onClick={() => window.api.revealFile(trainerState.outputModelPath || trainPath)}
-                className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600"
               >
+                <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
+                </svg>
                 Reveal output
               </button>
             )}
@@ -1214,26 +1324,60 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
             <button
               onClick={async () => { await window.api.startQueuedTrainerRuns() }}
               disabled={queuedCount === 0 || isRunning}
-              className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white"
+              className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition-colors bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white"
             >
+              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
+              </svg>
               Start queue
             </button>
           </div>
 
           <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">Run Status</div>
-                  <div className="text-xs text-gray-500 dark:text-gray-500">
-                    {activeJob
-                      ? `${trainerState.status.toUpperCase()} - ${ARCHITECTURE_LABELS[activeJob.architecture]}`
-                      : trainerState.queue.length > 0
-                        ? `${queuedCount} queued - ${successCount} succeeded - ${failedCount} failed`
-                        : 'No active training run'}
+            <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">Run Status</div>
+                <StatusPill status={trainerState.status} />
+              </div>
+              <div className="grid grid-cols-4 gap-2">
+                <div className="flex items-center gap-3 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2.5">
+                  <svg className="w-7 h-7 flex-shrink-0 text-amber-500 dark:text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z" />
+                  </svg>
+                  <div>
+                    <div className="text-xl font-bold text-amber-600 dark:text-amber-400 tabular-nums leading-none">{queuedCount}</div>
+                    <div className="text-[10px] font-medium text-amber-700/80 dark:text-amber-400/70 mt-0.5">Queued</div>
                   </div>
                 </div>
-                <StatusPill status={trainerState.status} />
+                <div className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 ${isRunning ? 'border-indigo-400/40 bg-indigo-500/10' : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/50'}`}>
+                  <svg className={`w-7 h-7 flex-shrink-0 ${isRunning ? 'text-indigo-500 dark:text-indigo-400' : 'text-gray-300 dark:text-gray-600'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
+                  </svg>
+                  <div>
+                    <div className={`text-xl font-bold tabular-nums leading-none ${isRunning ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-300 dark:text-gray-600'}`}>{isRunning ? 1 : 0}</div>
+                    <div className={`text-[10px] font-medium mt-0.5 truncate ${isRunning && activeJob ? 'text-indigo-700/80 dark:text-indigo-400/70' : 'text-gray-400 dark:text-gray-600'}`}>
+                      {isRunning && activeJob ? ARCHITECTURE_LABELS[activeJob.architecture] : 'Active'}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-2.5">
+                  <svg className="w-7 h-7 flex-shrink-0 text-emerald-500 dark:text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div>
+                    <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400 tabular-nums leading-none">{successCount}</div>
+                    <div className="text-[10px] font-medium text-emerald-700/80 dark:text-emerald-400/70 mt-0.5">Done</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 rounded-xl border border-red-400/30 bg-red-500/10 px-3 py-2.5">
+                  <svg className="w-7 h-7 flex-shrink-0 text-red-500 dark:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                  </svg>
+                  <div>
+                    <div className="text-xl font-bold text-red-600 dark:text-red-400 tabular-nums leading-none">{failedCount}</div>
+                    <div className="text-[10px] font-medium text-red-700/80 dark:text-red-400/70 mt-0.5">Failed</div>
+                  </div>
+                </div>
               </div>
               {!!trainerState.startedAt && (
                 <div className="mt-2 text-[11px] text-gray-500 dark:text-gray-500 space-y-0.5">
@@ -1626,7 +1770,9 @@ function ArchitectureMultiSelect({ values, onChange }: { values: TrainerArchitec
         className="w-full h-10 px-3 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 flex items-center justify-between gap-3"
       >
         <span className="truncate">{label}</span>
-        <span className="text-xs text-gray-500 dark:text-gray-400" aria-hidden="true">{open ? '^' : 'v'}</span>
+        <svg className={`w-3.5 h-3.5 flex-shrink-0 text-gray-400 transition-transform duration-150 ${open ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+        </svg>
       </button>
       {open && (
         <div className="absolute z-30 mt-2 w-full rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-xl overflow-hidden">
@@ -1836,17 +1982,21 @@ function QueueRow({
             onClick={() => { void onMove(job, 'up') }}
             disabled={!isQueued}
             title="Move up"
-            className="w-5 h-5 rounded border border-gray-300 dark:border-gray-700 text-[10px] text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="w-6 h-6 flex items-center justify-center rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
-            ^
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5" />
+            </svg>
           </button>
           <button
             onClick={() => { void onMove(job, 'down') }}
             disabled={!isQueued}
             title="Move down"
-            className="w-5 h-5 rounded border border-gray-300 dark:border-gray-700 text-[10px] text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="w-6 h-6 flex items-center justify-center rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
-            v
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+            </svg>
           </button>
         </div>
 
@@ -1896,9 +2046,11 @@ function QueueRow({
                 <button
                   onClick={() => { void onRemove(job) }}
                   title="Remove from queue"
-                  className="w-6 h-6 rounded-md border border-red-300 dark:border-red-800 bg-red-500/10 text-red-700 dark:text-red-300 hover:bg-red-500/20"
+                  className="w-6 h-6 flex items-center justify-center rounded-md border border-red-300/60 dark:border-red-800/60 bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 transition-colors"
                 >
-                  x
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
                 </button>
               )}
             </div>

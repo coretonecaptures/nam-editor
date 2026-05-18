@@ -300,6 +300,9 @@ export interface AppSettings {
 
   // Library cleanup: exact source folder paths to always exclude on this computer
   libraryCleanupIgnoredPaths: string[]
+
+  // WAV coverage check: per-folder comparison WAV folder paths
+  folderWavComparisonPaths: Record<string, string>
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -360,6 +363,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   metadataSuggestScopedRules: [],
   metadataSuggestRuleLibrary: [],
   libraryCleanupIgnoredPaths: [],
+  folderWavComparisonPaths: {},
 }
 
 const STORAGE_KEY = 'nam-editor-settings'

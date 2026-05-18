@@ -697,18 +697,18 @@ export function PackTargetsEditor({ folderPath, folderName, targetChecklistTempl
         </div>
 
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            {[
-              ['Matrix Rows', summary.totalRows],
-              [`${TARGET_LABELS[selectedTarget]} Rows`, summary.targetRows],
-              ['Visible Rows', summary.visibleRows],
-              ['Alt Names', summary.alternateRows],
-              ['Export Columns', exportColumns.length],
-            ].map(([label, value]) => (
-            <div key={String(label)} className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-3 py-2.5">
-              <div className="text-lg font-semibold text-gray-800 dark:text-gray-100">{value}</div>
-              <div className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">{label}</div>
-            </div>
-          ))}
+            {([
+              ['Matrix Rows', summary.totalRows, 'border-indigo-200 dark:border-indigo-700/40 bg-indigo-50 dark:bg-indigo-500/[0.06]', 'text-indigo-700 dark:text-indigo-400'],
+              [`${TARGET_LABELS[selectedTarget]} Rows`, summary.targetRows, 'border-teal-200 dark:border-teal-700/40 bg-teal-50 dark:bg-teal-500/[0.06]', 'text-teal-700 dark:text-teal-400'],
+              ['Visible Rows', summary.visibleRows, 'border-sky-200 dark:border-sky-700/40 bg-sky-50 dark:bg-sky-500/[0.06]', 'text-sky-700 dark:text-sky-400'],
+              ['Alt Names', summary.alternateRows, 'border-amber-200 dark:border-amber-700/40 bg-amber-50 dark:bg-amber-500/[0.06]', 'text-amber-700 dark:text-amber-400'],
+              ['Export Columns', exportColumns.length, 'border-violet-200 dark:border-violet-700/40 bg-violet-50 dark:bg-violet-500/[0.06]', 'text-violet-700 dark:text-violet-400'],
+            ] as [string, number, string, string][]).map(([label, value, cardCls, numCls]) => (
+              <div key={label} className={`rounded-lg border ${cardCls} px-3 py-2.5`}>
+                <div className={`text-lg font-semibold ${numCls}`}>{value}</div>
+                <div className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">{label}</div>
+              </div>
+            ))}
         </div>
 
         <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/30 overflow-hidden">
@@ -739,17 +739,39 @@ export function PackTargetsEditor({ folderPath, folderName, targetChecklistTempl
               </div>
             </div>
             <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
-              {[
-                ['Completed', `${checklistCompletedCount} / ${checklistTotalCount}`],
-                ['Target Date', activeTargetChecklist?.targetDate || 'Not set'],
-                ['Live Date', activeTargetChecklist?.liveDate || 'Not set'],
-                ['Status', activeTargetChecklist ? (targetChecklistReleased ? 'Released' : targetChecklistOverdue ? 'Overdue' : activeTargetChecklist.targetDate ? 'Scheduled' : 'No target date') : 'No checklist'],
-              ].map(([label, value]) => (
-                <div key={String(label)} className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-3 py-2">
-                  <div className="text-sm font-semibold text-gray-800 dark:text-gray-100 truncate">{value}</div>
-                  <div className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">{label}</div>
+              <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-3 py-2">
+                <div className={`text-sm font-semibold truncate ${
+                  checklistTotalCount === 0 ? 'text-gray-500 dark:text-gray-400'
+                  : checklistCompletedCount === checklistTotalCount ? 'text-emerald-600 dark:text-emerald-400'
+                  : checklistCompletedCount > 0 ? 'text-amber-600 dark:text-amber-400'
+                  : 'text-gray-800 dark:text-gray-100'
+                }`}>{checklistCompletedCount} / {checklistTotalCount}</div>
+                <div className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">Completed</div>
+              </div>
+              <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-3 py-2">
+                <div className={`text-sm font-semibold truncate ${activeTargetChecklist?.targetDate ? 'text-sky-600 dark:text-sky-400' : 'text-gray-400 dark:text-gray-500'}`}>
+                  {activeTargetChecklist?.targetDate || 'Not set'}
                 </div>
-              ))}
+                <div className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">Target Date</div>
+              </div>
+              <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-3 py-2">
+                <div className={`text-sm font-semibold truncate ${activeTargetChecklist?.liveDate ? 'text-teal-600 dark:text-teal-400' : 'text-gray-400 dark:text-gray-500'}`}>
+                  {activeTargetChecklist?.liveDate || 'Not set'}
+                </div>
+                <div className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">Live Date</div>
+              </div>
+              <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-3 py-2">
+                <div className={`text-sm font-semibold truncate ${
+                  !activeTargetChecklist ? 'text-gray-400 dark:text-gray-500'
+                  : targetChecklistReleased ? 'text-emerald-600 dark:text-emerald-400'
+                  : targetChecklistOverdue ? 'text-red-600 dark:text-red-400'
+                  : activeTargetChecklist.targetDate ? 'text-amber-600 dark:text-amber-400'
+                  : 'text-gray-500 dark:text-gray-400'
+                }`}>
+                  {activeTargetChecklist ? (targetChecklistReleased ? 'Released' : targetChecklistOverdue ? 'Overdue' : activeTargetChecklist.targetDate ? 'Scheduled' : 'No target date') : 'No checklist'}
+                </div>
+                <div className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">Status</div>
+              </div>
             </div>
           </button>
 

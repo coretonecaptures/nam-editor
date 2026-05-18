@@ -1218,6 +1218,308 @@ async function enqueueTrainingPayloads(payloads: TrainerStartPayload[]): Promise
   return jobs.length
 }
 
+async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
+  const pythonPath = job.pythonPath
+  const inputPath = job.inputPath
+  const outputPath = job.outputPath
+  const trainPath = job.trainPath
+  const runId = job.jobId
+
+  updateTrainerJob(job.jobId, {
+    status: 'starting',
+    attempts: job.attempts + 1,
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    error: '',
+    validationEsr: null,
+    outputModelPath: join(trainPath, `${job.modelName}.nam`),
+    checkpointModelPath: '',
+    progressPercent: null,
+    progressEpochCurrent: null,
+    progressEpochTotal: job.epochs,
+    progressBatchCurrent: null,
+    progressBatchTotal: null,
+    progressRate: null,
+    progressLatestLine: '',
+    thresholdEsr: job.thresholdEsr,
+  })
+
+  trainerState = {
+    status: 'starting',
+    runId,
+    pythonPath,
+    inputPath,
+    outputPath,
+    trainPath,
+    architecture: job.architecture,
+    epochs: job.epochs,
+    latency: job.latency,
+    thresholdEsr: job.thresholdEsr,
+    modelName: job.modelName,
+    outputModelPath: join(trainPath, `${job.modelName}.nam`),
+    checkpointModelPath: '',
+    savePlot: job.savePlot,
+    silent: job.silent,
+    ignoreChecks: job.ignoreChecks,
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    logs: [],
+    error: '',
+    validationEsr: null,
+    progressPhase: 'Preparing',
+    progressPercent: null,
+    progressEpochCurrent: null,
+    progressEpochTotal: job.epochs,
+    progressBatchCurrent: null,
+    progressBatchTotal: null,
+    progressRate: null,
+    progressLatestLine: '',
+    activeJobId: job.jobId,
+    pauseAfterCurrent: trainerPauseAfterCurrent,
+    queue: trainerQueue,
+  }
+  emitTrainerState()
+
+  await fs.promises.access(pythonPath)
+  await fs.promises.access(inputPath)
+  await fs.promises.access(outputPath)
+  try {
+    const outputStat = await fs.promises.stat(outputPath)
+    updateTrainerJob(job.jobId, {
+      sourceSizeBytes: outputStat.size,
+      sourceMtimeMs: outputStat.mtimeMs,
+    })
+  } catch {
+    /* best effort */
+  }
+  await fs.promises.mkdir(trainPath, { recursive: true })
+
+  const runnerPath = await ensureTrainerRunnerScript()
+  const payloadDir = join(app.getPath('userData'), 'trainer')
+  await fs.promises.mkdir(payloadDir, { recursive: true })
+  const payloadPath = join(payloadDir, `run-${runId}.json`)
+  const runnerPayload = {
+    inputPath,
+    outputPath,
+    trainPath,
+    architecture: job.architecture,
+    epochs: job.epochs,
+    latency: job.latency,
+    thresholdEsr: job.thresholdEsr,
+    savePlot: job.savePlot,
+    silent: job.silent,
+    ignoreChecks: job.ignoreChecks,
+    modelName: job.modelName,
+  }
+  await fs.promises.writeFile(payloadPath, JSON.stringify(runnerPayload, null, 2), 'utf-8')
+
+  const { spawn } = await import('child_process')
+  trainerChild = spawn(pythonPath, ['-u', runnerPath, payloadPath], {
+    cwd: trainPath,
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  trainerState = { ...trainerState, status: 'running', progressPhase: 'Launching trainer' }
+  emitTrainerState()
+
+  let stdoutRemainder = ''
+  let stderrRemainder = ''
+
+  trainerChild.stdout.on('data', (chunk: Buffer) => {
+    stdoutRemainder = consumeTrainerChunk(stdoutRemainder, chunk)
+  })
+
+  trainerChild.stderr.on('data', (chunk: Buffer) => {
+    stderrRemainder = consumeTrainerChunk(stderrRemainder, chunk)
+  })
+
+  trainerChild.once('error', async (error) => {
+    trainerState = {
+      ...trainerState,
+      status: 'error',
+      finishedAt: new Date().toISOString(),
+      error: String(error),
+    }
+    trainerChild = null
+    emitTrainerState()
+    if (!trainerPauseAfterCurrent) await pumpTrainerQueue()
+  })
+
+  trainerChild.once('close', async (code, signal) => {
+    if (stdoutRemainder.trim()) processTrainerOutputLine(stdoutRemainder.trim())
+    if (stderrRemainder.trim()) processTrainerOutputLine(stderrRemainder.trim())
+    const wasCanceled = trainerState.status === 'canceled'
+    const finalStatus: TrainerStateSnapshot['status'] = wasCanceled ? 'canceled' : code === 0 ? 'success' : 'error'
+    let finalError = trainerState.error
+    if (!wasCanceled && code !== 0 && !finalError) {
+      finalError = signal ? `Training process stopped by signal ${signal}` : `Training process exited with code ${code}`
+    }
+    trainerState = {
+      ...trainerState,
+      status: finalStatus,
+      finishedAt: new Date().toISOString(),
+      error: finalError,
+      progressPhase: wasCanceled ? 'Canceled' : code === 0 ? 'Completed' : 'Failed',
+      progressPercent: code === 0 ? 100 : trainerState.progressPercent,
+    }
+    trainerChild = null
+    try { await fs.promises.unlink(payloadPath) } catch { /* ignore */ }
+
+    if (finalStatus === 'success' && trainerState.outputModelPath) {
+      try {
+        await fs.promises.mkdir(dirname(job.outputModelPath), { recursive: true })
+        const finalModelPath = await ensureUniqueFilePath(job.outputModelPath)
+        suppressWatcher()
+        await fs.promises.copyFile(trainerState.outputModelPath, finalModelPath)
+        trainerState = {
+          ...trainerState,
+          outputModelPath: finalModelPath,
+        }
+      } catch (promoteError) {
+        trainerState = {
+          ...trainerState,
+          status: 'error',
+          error: `Could not promote final model: ${String(promoteError)}`,
+        }
+      }
+    }
+
+    if (trainerState.status === 'success' && trainerState.outputModelPath) {
+      try {
+        const content = await fs.promises.readFile(trainerState.outputModelPath, 'utf-8')
+        const patched = persistTrainerMetadata(content, {
+          epochs: job.epochs,
+          architecture: job.architecture,
+          modelName: job.modelName,
+          modeledBy: job.modeledBy,
+          inputLevelDbu: job.inputLevelDbu,
+          outputLevelDbu: job.outputLevelDbu,
+          validationEsr: trainerState.validationEsr,
+          manualLatencySamples: job.latency,
+        })
+        JSON.parse(patched)
+        suppressWatcher()
+        await fs.promises.writeFile(trainerState.outputModelPath, patched, 'utf-8')
+        delete loadFileCache()[trainerState.outputModelPath]
+      } catch (metadataError) {
+        trainerState = {
+          ...trainerState,
+          logs: [...trainerState.logs, `Trainer metadata write warning: ${String(metadataError)}`].slice(-600),
+        }
+      }
+    }
+
+    let promotedGraphPath = ''
+    let processedWavPath = ''
+    if (finalStatus === 'success') {
+      try {
+        promotedGraphPath = await promoteTrainerGraph(job)
+        if (promotedGraphPath) {
+          updateTrainerJob(job.jobId, { graphPath: promotedGraphPath })
+          trainerState = { ...trainerState }
+        }
+      } catch (graphError) {
+        trainerState = {
+          ...trainerState,
+          logs: [...trainerState.logs, `Trainer graph promote warning: ${String(graphError)}`].slice(-600),
+        }
+      }
+      try {
+        if (!hasPendingSiblingTrainerJobs(job)) {
+          processedWavPath = await postProcessTrainerSourceWav(job)
+        }
+      } catch (sourceMoveError) {
+        trainerState = {
+          ...trainerState,
+          logs: [...trainerState.logs, `Trainer source post-process warning: ${String(sourceMoveError)}`].slice(-600),
+        }
+      }
+    }
+
+    if (wasCanceled && trainerState.outputModelPath) {
+      try {
+        if (fs.existsSync(trainerState.outputModelPath)) {
+          suppressWatcher()
+          await fs.promises.unlink(trainerState.outputModelPath)
+        }
+      } catch {
+        /* best effort; keep canceled state even if cleanup fails */
+      }
+    }
+
+    appendTrainerHistory({
+      historyId: crypto.randomUUID(),
+      timestamp: trainerState.finishedAt ?? new Date().toISOString(),
+      profileId: job.profileId,
+      profileName: job.profileName,
+      sourceMode: job.sourceMode,
+      sourcePath: job.outputPath,
+      sourceSizeBytes: getActiveTrainerJob()?.sourceSizeBytes ?? job.sourceSizeBytes,
+      sourceMtimeMs: getActiveTrainerJob()?.sourceMtimeMs ?? job.sourceMtimeMs,
+      architecture: job.architecture,
+      finalModelPath: finalStatus === 'success' ? trainerState.outputModelPath : '',
+      processedWavPath,
+      graphPath: promotedGraphPath,
+      status: finalStatus === 'success' ? 'success' : finalStatus === 'error' ? 'error' : 'canceled',
+      attempts: job.attempts,
+      validationEsr: trainerState.validationEsr,
+      thresholdEsr: job.thresholdEsr,
+      epochs: job.epochs,
+      latencyMode: job.latency == null ? 'auto' : 'manual',
+      latencyValue: job.latency,
+      finalModelName: job.modelName,
+      failureReason: finalStatus === 'success' ? '' : finalError,
+      submissionId: job.submissionId,
+      submissionLabel: job.submissionLabel,
+      submissionCreatedAt: job.submissionCreatedAt,
+    })
+
+    emitTrainerState()
+    if (!trainerPauseAfterCurrent) {
+      await pumpTrainerQueue()
+    } else {
+      trainerState = { ...trainerState, activeJobId: null, runId: null }
+      emitTrainerState()
+    }
+  })
+}
+
+async function pumpTrainerQueue(): Promise<void> {
+  if (trainerChild || trainerState.status === 'starting' || trainerState.status === 'running') return
+  const nextJob = nextQueuedTrainerJob()
+  if (!nextJob) {
+    trainerState = {
+      ...TRAINER_IDLE_STATE,
+      queue: trainerQueue,
+      pauseAfterCurrent: trainerPauseAfterCurrent,
+    }
+    emitTrainerState()
+    return
+  }
+  try {
+    await startTrainerJob(nextJob)
+  } catch (error) {
+    updateTrainerJob(nextJob.jobId, {
+      status: 'error',
+      finishedAt: new Date().toISOString(),
+      error: String(error),
+    })
+    trainerState = {
+      ...TRAINER_IDLE_STATE,
+      status: 'error',
+      error: String(error),
+      finishedAt: new Date().toISOString(),
+      activeJobId: null,
+      queue: trainerQueue,
+      pauseAfterCurrent: trainerPauseAfterCurrent,
+    }
+    emitTrainerState()
+    if (!trainerPauseAfterCurrent) {
+      await pumpTrainerQueue()
+    }
+  }
+}
+
 async function scanWavFilesInFolder(folderPath: string): Promise<string[]> {
   const entries = await fs.promises.readdir(folderPath, { withFileTypes: true })
   return entries
@@ -3088,308 +3390,6 @@ app.whenReady().then(async () => {
     return result.canceled ? null : result.filePaths[0]
   })
 
-  async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
-    const pythonPath = job.pythonPath
-    const inputPath = job.inputPath
-    const outputPath = job.outputPath
-    const trainPath = job.trainPath
-    const runId = job.jobId
-
-    updateTrainerJob(job.jobId, {
-      status: 'starting',
-      attempts: job.attempts + 1,
-      startedAt: new Date().toISOString(),
-      finishedAt: null,
-      error: '',
-      validationEsr: null,
-      outputModelPath: join(trainPath, `${job.modelName}.nam`),
-      checkpointModelPath: '',
-      progressPercent: null,
-      progressEpochCurrent: null,
-      progressEpochTotal: job.epochs,
-      progressBatchCurrent: null,
-      progressBatchTotal: null,
-      progressRate: null,
-      progressLatestLine: '',
-      thresholdEsr: job.thresholdEsr,
-    })
-
-    trainerState = {
-      status: 'starting',
-      runId,
-      pythonPath,
-      inputPath,
-      outputPath,
-      trainPath,
-      architecture: job.architecture,
-      epochs: job.epochs,
-      latency: job.latency,
-      thresholdEsr: job.thresholdEsr,
-      modelName: job.modelName,
-      outputModelPath: join(trainPath, `${job.modelName}.nam`),
-      checkpointModelPath: '',
-      savePlot: job.savePlot,
-      silent: job.silent,
-      ignoreChecks: job.ignoreChecks,
-      startedAt: new Date().toISOString(),
-      finishedAt: null,
-      logs: [],
-      error: '',
-      validationEsr: null,
-      progressPhase: 'Preparing',
-      progressPercent: null,
-      progressEpochCurrent: null,
-      progressEpochTotal: job.epochs,
-      progressBatchCurrent: null,
-      progressBatchTotal: null,
-      progressRate: null,
-      progressLatestLine: '',
-      activeJobId: job.jobId,
-      pauseAfterCurrent: trainerPauseAfterCurrent,
-      queue: trainerQueue,
-    }
-    emitTrainerState()
-
-    await fs.promises.access(pythonPath)
-    await fs.promises.access(inputPath)
-    await fs.promises.access(outputPath)
-    try {
-      const outputStat = await fs.promises.stat(outputPath)
-      updateTrainerJob(job.jobId, {
-        sourceSizeBytes: outputStat.size,
-        sourceMtimeMs: outputStat.mtimeMs,
-      })
-    } catch {
-      /* best effort */
-    }
-    await fs.promises.mkdir(trainPath, { recursive: true })
-
-    const runnerPath = await ensureTrainerRunnerScript()
-    const payloadDir = join(app.getPath('userData'), 'trainer')
-    await fs.promises.mkdir(payloadDir, { recursive: true })
-    const payloadPath = join(payloadDir, `run-${runId}.json`)
-    const runnerPayload = {
-      inputPath,
-      outputPath,
-      trainPath,
-      architecture: job.architecture,
-      epochs: job.epochs,
-      latency: job.latency,
-      thresholdEsr: job.thresholdEsr,
-      savePlot: job.savePlot,
-      silent: job.silent,
-      ignoreChecks: job.ignoreChecks,
-      modelName: job.modelName,
-    }
-    await fs.promises.writeFile(payloadPath, JSON.stringify(runnerPayload, null, 2), 'utf-8')
-
-    const { spawn } = await import('child_process')
-    trainerChild = spawn(pythonPath, ['-u', runnerPath, payloadPath], {
-      cwd: trainPath,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    trainerState = { ...trainerState, status: 'running', progressPhase: 'Launching trainer' }
-    emitTrainerState()
-
-    let stdoutRemainder = ''
-    let stderrRemainder = ''
-
-    trainerChild.stdout.on('data', (chunk: Buffer) => {
-      stdoutRemainder = consumeTrainerChunk(stdoutRemainder, chunk)
-    })
-
-    trainerChild.stderr.on('data', (chunk: Buffer) => {
-      stderrRemainder = consumeTrainerChunk(stderrRemainder, chunk)
-    })
-
-    trainerChild.once('error', async (error) => {
-      trainerState = {
-        ...trainerState,
-        status: 'error',
-        finishedAt: new Date().toISOString(),
-        error: String(error),
-      }
-      trainerChild = null
-      emitTrainerState()
-      if (!trainerPauseAfterCurrent) await pumpTrainerQueue()
-    })
-
-    trainerChild.once('close', async (code, signal) => {
-      if (stdoutRemainder.trim()) processTrainerOutputLine(stdoutRemainder.trim())
-      if (stderrRemainder.trim()) processTrainerOutputLine(stderrRemainder.trim())
-      const wasCanceled = trainerState.status === 'canceled'
-      const finalStatus: TrainerStateSnapshot['status'] = wasCanceled ? 'canceled' : code === 0 ? 'success' : 'error'
-      let finalError = trainerState.error
-      if (!wasCanceled && code !== 0 && !finalError) {
-        finalError = signal ? `Training process stopped by signal ${signal}` : `Training process exited with code ${code}`
-      }
-      trainerState = {
-        ...trainerState,
-        status: finalStatus,
-        finishedAt: new Date().toISOString(),
-        error: finalError,
-        progressPhase: wasCanceled ? 'Canceled' : code === 0 ? 'Completed' : 'Failed',
-        progressPercent: code === 0 ? 100 : trainerState.progressPercent,
-      }
-      trainerChild = null
-      try { await fs.promises.unlink(payloadPath) } catch { /* ignore */ }
-
-      if (finalStatus === 'success' && trainerState.outputModelPath) {
-        try {
-          await fs.promises.mkdir(dirname(job.outputModelPath), { recursive: true })
-          const finalModelPath = await ensureUniqueFilePath(job.outputModelPath)
-          suppressWatcher()
-          await fs.promises.copyFile(trainerState.outputModelPath, finalModelPath)
-          trainerState = {
-            ...trainerState,
-            outputModelPath: finalModelPath,
-          }
-        } catch (promoteError) {
-          trainerState = {
-            ...trainerState,
-            status: 'error',
-            error: `Could not promote final model: ${String(promoteError)}`,
-          }
-        }
-      }
-
-      if (trainerState.status === 'success' && trainerState.outputModelPath) {
-        try {
-          const content = await fs.promises.readFile(trainerState.outputModelPath, 'utf-8')
-          const patched = persistTrainerMetadata(content, {
-            epochs: job.epochs,
-            architecture: job.architecture,
-            modelName: job.modelName,
-            modeledBy: job.modeledBy,
-            inputLevelDbu: job.inputLevelDbu,
-            outputLevelDbu: job.outputLevelDbu,
-            validationEsr: trainerState.validationEsr,
-            manualLatencySamples: job.latency,
-          })
-          JSON.parse(patched)
-          suppressWatcher()
-          await fs.promises.writeFile(trainerState.outputModelPath, patched, 'utf-8')
-          delete loadFileCache()[trainerState.outputModelPath]
-        } catch (metadataError) {
-          trainerState = {
-            ...trainerState,
-            logs: [...trainerState.logs, `Trainer metadata write warning: ${String(metadataError)}`].slice(-600),
-          }
-        }
-      }
-
-      let promotedGraphPath = ''
-      let processedWavPath = ''
-      if (finalStatus === 'success') {
-        try {
-          promotedGraphPath = await promoteTrainerGraph(job)
-          if (promotedGraphPath) {
-            updateTrainerJob(job.jobId, { graphPath: promotedGraphPath })
-            trainerState = { ...trainerState }
-          }
-        } catch (graphError) {
-          trainerState = {
-            ...trainerState,
-            logs: [...trainerState.logs, `Trainer graph promote warning: ${String(graphError)}`].slice(-600),
-          }
-        }
-        try {
-          if (!hasPendingSiblingTrainerJobs(job)) {
-            processedWavPath = await postProcessTrainerSourceWav(job)
-          }
-        } catch (sourceMoveError) {
-          trainerState = {
-            ...trainerState,
-            logs: [...trainerState.logs, `Trainer source post-process warning: ${String(sourceMoveError)}`].slice(-600),
-          }
-        }
-      }
-
-      if (wasCanceled && trainerState.outputModelPath) {
-        try {
-          if (fs.existsSync(trainerState.outputModelPath)) {
-            suppressWatcher()
-            await fs.promises.unlink(trainerState.outputModelPath)
-          }
-        } catch {
-          /* best effort; keep canceled state even if cleanup fails */
-        }
-      }
-
-      appendTrainerHistory({
-        historyId: crypto.randomUUID(),
-        timestamp: trainerState.finishedAt ?? new Date().toISOString(),
-        profileId: job.profileId,
-        profileName: job.profileName,
-        sourceMode: job.sourceMode,
-        sourcePath: job.outputPath,
-        sourceSizeBytes: getActiveTrainerJob()?.sourceSizeBytes ?? job.sourceSizeBytes,
-        sourceMtimeMs: getActiveTrainerJob()?.sourceMtimeMs ?? job.sourceMtimeMs,
-        architecture: job.architecture,
-        finalModelPath: finalStatus === 'success' ? trainerState.outputModelPath : '',
-        processedWavPath,
-        graphPath: promotedGraphPath,
-        status: finalStatus === 'success' ? 'success' : finalStatus === 'error' ? 'error' : 'canceled',
-        attempts: job.attempts,
-        validationEsr: trainerState.validationEsr,
-        thresholdEsr: job.thresholdEsr,
-        epochs: job.epochs,
-        latencyMode: job.latency == null ? 'auto' : 'manual',
-        latencyValue: job.latency,
-        finalModelName: job.modelName,
-        failureReason: finalStatus === 'success' ? '' : finalError,
-        submissionId: job.submissionId,
-        submissionLabel: job.submissionLabel,
-        submissionCreatedAt: job.submissionCreatedAt,
-      })
-
-      emitTrainerState()
-      if (!trainerPauseAfterCurrent) {
-        await pumpTrainerQueue()
-      } else {
-        trainerState = { ...trainerState, activeJobId: null, runId: null }
-        emitTrainerState()
-      }
-    })
-  }
-
-  async function pumpTrainerQueue(): Promise<void> {
-    if (trainerChild || trainerState.status === 'starting' || trainerState.status === 'running') return
-    const nextJob = nextQueuedTrainerJob()
-    if (!nextJob) {
-      trainerState = {
-        ...TRAINER_IDLE_STATE,
-        queue: trainerQueue,
-        pauseAfterCurrent: trainerPauseAfterCurrent,
-      }
-      emitTrainerState()
-      return
-    }
-    try {
-      await startTrainerJob(nextJob)
-    } catch (error) {
-      updateTrainerJob(nextJob.jobId, {
-        status: 'error',
-        finishedAt: new Date().toISOString(),
-        error: String(error),
-      })
-      trainerState = {
-        ...TRAINER_IDLE_STATE,
-        status: 'error',
-        error: String(error),
-        finishedAt: new Date().toISOString(),
-        activeJobId: null,
-        queue: trainerQueue,
-        pauseAfterCurrent: trainerPauseAfterCurrent,
-      }
-      emitTrainerState()
-      if (!trainerPauseAfterCurrent) {
-        await pumpTrainerQueue()
-      }
-    }
-  }
-
   ipcMain.handle('trainer:getState', async () => trainerState)
 
   ipcMain.handle('trainer:cancel', async () => {
@@ -3865,6 +3865,18 @@ app.whenReady().then(async () => {
   })
 
   // IPC: Walk the folder tree and return paths of all folders that have nam-bundle.json
+  ipcMain.handle('folder:listWavFiles', async (_event, folderPath: string) => {
+    try {
+      const entries = await fs.promises.readdir(folderPath, { withFileTypes: true })
+      return entries
+        .filter((e) => e.isFile() && /\.wav$/i.test(e.name))
+        .map((e) => e.name)
+        .sort((a, b) => a.localeCompare(b))
+    } catch {
+      return []
+    }
+  })
+
   ipcMain.handle('folder:scanBundlePaths', async (_event, rootPath: string) => {
     const results: string[] = []
     const walk = async (dir: string, depth: number) => {

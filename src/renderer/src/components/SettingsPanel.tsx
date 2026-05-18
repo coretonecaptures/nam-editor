@@ -316,31 +316,32 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
         </div>
       </div>
 
+      <div className="flex-shrink-0 border-b border-gray-200 dark:border-gray-800 px-6 bg-white dark:bg-gray-950">
+        <div className="flex flex-wrap gap-6 -mb-px">
+          {([
+            ['global', 'Global'],
+            ['defaults', 'Capture Defaults'],
+            ['metadata', 'Metadata'],
+            ['pack', 'Pack'],
+            ['training', 'Training'],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              onClick={() => setSettingsTab(value)}
+              className={`border-b-2 px-1 py-3 text-sm font-medium transition-colors ${
+                settingsTab === value
+                  ? 'border-cyan-400 text-cyan-400'
+                  : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="flex-1 overflow-y-auto px-6 py-5">
         <div className={`${maximized ? 'max-w-none' : 'max-w-2xl'} space-y-8`}>
-          <div className="sticky top-0 z-10 -mx-6 px-6 border-b border-gray-200 dark:border-gray-800 bg-white/95 dark:bg-gray-900/95 backdrop-blur">
-          <div className="flex flex-wrap gap-6 -mb-px">
-            {([
-              ['global', 'Global'],
-              ['defaults', 'Capture Defaults'],
-              ['metadata', 'Metadata'],
-              ['pack', 'Pack'],
-              ['training', 'Training'],
-            ] as const).map(([value, label]) => (
-              <button
-                key={value}
-                onClick={() => setSettingsTab(value)}
-                className={`border-b-2 px-1 py-3 text-sm font-medium transition-colors ${
-                  settingsTab === value
-                    ? 'border-cyan-400 text-cyan-400'
-                    : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          </div>
 
           {/* Appearance */}
           {settingsTab === 'global' && (
@@ -701,13 +702,25 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
             <p className="text-xs text-gray-500 dark:text-gray-500 mb-4">
               Your personal gear library. Items saved here appear in the "From catalog" picker when editing a Pack Info sheet, so you never retype your standard rig.
             </p>
-            <button
-              onClick={() => setPackCatalogOpen((v) => !v)}
-              className="mb-3 inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-            >
-              <span>{packCatalogOpen ? 'Hide catalog items' : 'Edit catalog items'}</span>
-              <span className="text-[10px] text-gray-400">{draft.packGearCatalog.length}</span>
-            </button>
+            <div className="mb-3 flex items-stretch rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
+              <button
+                onClick={() => setPackCatalogOpen((v) => !v)}
+                className="flex-1 flex items-center gap-2 px-3 py-2.5 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-left"
+              >
+                <svg
+                  className={`w-3.5 h-3.5 flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-150 ${packCatalogOpen ? 'rotate-90' : ''}`}
+                  fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                </svg>
+                <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Gear Catalog</span>
+                {draft.packGearCatalog.length > 0 && (
+                  <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 tabular-nums">
+                    {draft.packGearCatalog.length}
+                  </span>
+                )}
+              </button>
+            </div>
             {packCatalogOpen && (
             <div className="space-y-5">
               {(['equipment', 'pedals', 'glossary'] as const).map((cat) => {
@@ -872,15 +885,23 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
               Store separate default checklist steps for the NAM/base workflow and for target-specific workflows like ToneX, Proxy, and QC. New target checklists are seeded from the matching template.
             </p>
             <div className="mb-3 flex items-center gap-2 flex-wrap">
-              <button
-                onClick={() => setChecklistTemplateOpen((v) => !v)}
-                className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-              >
-                <span>{checklistTemplateOpen ? 'Hide templates' : 'Edit templates'}</span>
-                <span className="text-[10px] text-gray-400">
-                  {draft.packChecklistTemplate.length + draft.targetChecklistTemplates.tonex.length + draft.targetChecklistTemplates.proxy.length + draft.targetChecklistTemplates.qc.length}
-                </span>
-              </button>
+              <div className="flex items-stretch rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
+                <button
+                  onClick={() => setChecklistTemplateOpen((v) => !v)}
+                  className="flex items-center gap-2 px-3 py-2.5 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-left"
+                >
+                  <svg
+                    className={`w-3.5 h-3.5 flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-150 ${checklistTemplateOpen ? 'rotate-90' : ''}`}
+                    fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                  </svg>
+                  <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Checklist Templates</span>
+                  <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 tabular-nums">
+                    {draft.packChecklistTemplate.length + draft.targetChecklistTemplates.tonex.length + draft.targetChecklistTemplates.proxy.length + draft.targetChecklistTemplates.qc.length}
+                  </span>
+                </button>
+              </div>
               <button
                 onClick={resetAllChecklistTemplatesToDefaults}
                 className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors"
@@ -999,13 +1020,25 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
               These rules can populate missing metadata across files you open. For more granular control within a specific subtree, use folder metadata and folder-scoped rules.
             </p>
             <div className="mb-3 flex items-center gap-2 flex-wrap">
-              <button
-                onClick={() => setMetadataSuggestOpen((v) => !v)}
-                className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+              <div className="flex items-stretch rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
+                <button
+                  onClick={() => setMetadataSuggestOpen((v) => !v)}
+                  className="flex items-center gap-2 px-3 py-2.5 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-left"
                 >
-                  <span>{metadataSuggestOpen ? 'Hide suggestion rules' : 'Edit suggestion rules'}</span>
-                  <span className="text-[10px] text-gray-400">{draft.metadataSuggestRules.filter((rule) => rule.enabled).length}</span>
+                  <svg
+                    className={`w-3.5 h-3.5 flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-150 ${metadataSuggestOpen ? 'rotate-90' : ''}`}
+                    fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                  </svg>
+                  <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Suggestion Rules</span>
+                  {draft.metadataSuggestRules.length > 0 && (
+                    <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 tabular-nums">
+                      {draft.metadataSuggestRules.filter((rule) => rule.enabled).length}/{draft.metadataSuggestRules.length}
+                    </span>
+                  )}
                 </button>
+              </div>
               <button
                 onClick={() => setShowRuleLibraryPicker(true)}
                 className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/30 transition-colors"
@@ -1379,13 +1412,23 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
             <p className="text-xs text-gray-500 dark:text-gray-500 mb-4">
               Destination folders in NAM Lab can watch a source folder and automatically copy in new top-level <code>.nam</code> files.
             </p>
-            <div className="mb-3 flex items-center gap-2 flex-wrap">
+            <div className="mb-3 flex items-stretch rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
               <button
                 onClick={() => setFolderWatchesOpen((v) => !v)}
-                className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                className="flex-1 flex items-center gap-2 px-3 py-2.5 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-left"
               >
-                <span>{folderWatchesOpen ? 'Hide auto-copy rules' : 'Show auto-copy rules'}</span>
-                <span className="text-[10px] text-gray-400">{draft.folderWatchRules.filter((rule) => rule.enabled).length}</span>
+                <svg
+                  className={`w-3.5 h-3.5 flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-150 ${folderWatchesOpen ? 'rotate-90' : ''}`}
+                  fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                </svg>
+                <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Auto-Copy Rules</span>
+                {draft.folderWatchRules.filter((rule) => rule.enabled).length > 0 && (
+                  <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 tabular-nums">
+                    {draft.folderWatchRules.filter((rule) => rule.enabled).length}
+                  </span>
+                )}
               </button>
             </div>
             {folderWatchesOpen && (
@@ -1489,19 +1532,32 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                   />
 
                   <div className="space-y-3">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-stretch rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
                       <button
                         onClick={() => setTrainingWatchersOpen((v) => !v)}
-                        className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                        className="flex-1 flex items-center gap-2 px-3 py-2.5 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-left"
                       >
-                        {trainingWatchersOpen ? 'Hide Watch Folders' : 'Show Watch Folders'}
-                        <span className="text-[10px] text-gray-400">{draft.trainingWatchProfiles.length}</span>
+                        <svg
+                          className={`w-3.5 h-3.5 flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-150 ${trainingWatchersOpen ? 'rotate-90' : ''}`}
+                          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                        </svg>
+                        <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Watch Folders</span>
+                        {draft.trainingWatchProfiles.length > 0 && (
+                          <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 tabular-nums">
+                            {draft.trainingWatchProfiles.length}
+                          </span>
+                        )}
                       </button>
                       <button
                         onClick={addTrainingWatchProfile}
-                        className="text-xs px-3 py-1.5 rounded border border-indigo-300 dark:border-indigo-800 bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-500/20 transition-colors"
+                        className="flex items-center gap-1.5 px-3 py-2.5 border-l border-gray-200 dark:border-gray-700 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-300 transition-colors text-xs font-medium"
                       >
-                        + Watch Folder
+                        <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                        </svg>
+                        Add
                       </button>
                     </div>
                     {trainingWatchersOpen && (
@@ -1512,18 +1568,18 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                           </div>
                         ) : (
                           draft.trainingWatchProfiles.map((profile) => (
-                            <div key={profile.id} className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-3 space-y-3">
-                              <div className="flex items-center gap-2">
+                            <div key={profile.id} className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden shadow-sm">
+                              <div className="flex items-center gap-2 px-3 py-2.5 bg-gray-100 dark:bg-gray-800/80 border-b border-gray-200 dark:border-gray-700">
                                 <input
                                   type="text"
                                   value={profile.name}
                                   onChange={(e) => updateTrainingWatchProfile(profile.id, { name: e.target.value })}
-                                  className="flex-1 px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                                  className="flex-1 px-2.5 py-1.5 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
                                 />
                                 <select
                                   value={profile.presetId}
                                   onChange={(e) => updateTrainingWatchProfile(profile.id, { presetId: e.target.value })}
-                                  className="px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 min-w-[180px]"
+                                  className="px-2.5 py-1.5 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-md text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 min-w-[180px]"
                                 >
                                   <option value="">Pick preset...</option>
                                   {draft.trainingPresets.map((preset) => (
@@ -1532,12 +1588,15 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                                 </select>
                                 <button
                                   onClick={() => update('trainingWatchProfiles', draft.trainingWatchProfiles.filter((item) => item.id !== profile.id))}
-                                  className="px-2.5 py-2 rounded-lg border border-red-300 dark:border-red-800 bg-red-500/10 text-red-700 dark:text-red-300 hover:bg-red-500/20 transition-colors"
+                                  className="w-8 h-8 flex items-center justify-center rounded-lg border border-red-300/60 dark:border-red-800/60 bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 transition-colors flex-shrink-0"
                                   title="Remove watcher"
                                 >
-                                  x
+                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                  </svg>
                                 </button>
                               </div>
+                              <div className="px-3 py-3 bg-white dark:bg-gray-900/50 space-y-3">
                               <div className="grid grid-cols-1 md:grid-cols-[auto_auto_1fr] gap-3 items-start">
                                 <CheckboxField label="Enabled" description="" checked={profile.enabled} onChange={(v) => updateTrainingWatchProfile(profile.id, { enabled: v })} />
                                 <CheckboxField label="Auto-run" description="" checked={profile.autoRun} onChange={(v) => updateTrainingWatchProfile(profile.id, { autoRun: v })} />
@@ -1692,6 +1751,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                                   </select>
                                 </SettingsField>
                               </div>
+                              </div>
                             </div>
                           ))
                         )}
@@ -1700,19 +1760,32 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                   </div>
 
                   <div className="space-y-3 pt-2 border-t border-gray-200 dark:border-gray-800">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-stretch rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
                       <button
                         onClick={() => setTrainingPresetsOpen((v) => !v)}
-                        className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                        className="flex-1 flex items-center gap-2 px-3 py-2.5 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-left"
                       >
-                        {trainingPresetsOpen ? 'Hide Presets' : 'Show Presets'}
-                        <span className="text-[10px] text-gray-400">{draft.trainingPresets.length}</span>
+                        <svg
+                          className={`w-3.5 h-3.5 flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-150 ${trainingPresetsOpen ? 'rotate-90' : ''}`}
+                          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                        </svg>
+                        <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Training Presets</span>
+                        {draft.trainingPresets.length > 0 && (
+                          <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 tabular-nums">
+                            {draft.trainingPresets.length}
+                          </span>
+                        )}
                       </button>
                       <button
                         onClick={addTrainingPreset}
-                        className="text-xs px-3 py-1.5 rounded border border-indigo-300 dark:border-indigo-800 bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-500/20 transition-colors"
+                        className="flex items-center gap-1.5 px-3 py-2.5 border-l border-gray-200 dark:border-gray-700 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-300 transition-colors text-xs font-medium"
                       >
-                        + Preset
+                        <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                        </svg>
+                        Add
                       </button>
                     </div>
                     {trainingPresetsOpen && (
@@ -1723,22 +1796,25 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                           </div>
                         ) : (
                           draft.trainingPresets.map((preset) => (
-                            <div key={preset.id} className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-3 space-y-3">
-                              <div className="flex items-center gap-2">
+                            <div key={preset.id} className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden shadow-sm">
+                              <div className="flex items-center gap-2 px-3 py-2.5 bg-gray-100 dark:bg-gray-800/80 border-b border-gray-200 dark:border-gray-700">
                                 <input
                                   type="text"
                                   value={preset.name}
                                   onChange={(e) => updateTrainingPreset(preset.id, { name: e.target.value })}
-                                  className="flex-1 px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                                  className="flex-1 px-2.5 py-1.5 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
                                 />
                                 <button
                                   onClick={() => update('trainingPresets', draft.trainingPresets.filter((item) => item.id !== preset.id))}
-                                  className="px-2.5 py-2 rounded-lg border border-red-300 dark:border-red-800 bg-red-500/10 text-red-700 dark:text-red-300 hover:bg-red-500/20 transition-colors"
+                                  className="w-8 h-8 flex items-center justify-center rounded-lg border border-red-300/60 dark:border-red-800/60 bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 transition-colors flex-shrink-0"
                                   title="Remove preset"
                                 >
-                                  x
+                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                  </svg>
                                 </button>
                               </div>
+                              <div className="px-3 py-3 bg-white dark:bg-gray-900/50 space-y-3">
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                 <SettingsField label="Architecture(s)">
                                   <SettingsArchitectureMultiSelect
@@ -1791,6 +1867,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                 <CheckboxField label="Save graph" description="" checked={preset.savePlot} onChange={(v) => updateTrainingPreset(preset.id, { savePlot: v })} />
                                 <CheckboxField label="Ignore trainer checks" description="" checked={preset.ignoreChecks} onChange={(v) => updateTrainingPreset(preset.id, { ignoreChecks: v })} />
+                              </div>
                               </div>
                             </div>
                           ))
@@ -1958,7 +2035,9 @@ function SettingsArchitectureMultiSelect({
         className="w-full h-10 px-3 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 flex items-center justify-between gap-3"
       >
         <span className="truncate">{label}</span>
-        <span className="text-xs text-gray-500 dark:text-gray-400" aria-hidden="true">{open ? '^' : 'v'}</span>
+        <svg className={`w-3.5 h-3.5 flex-shrink-0 text-gray-400 transition-transform duration-150 ${open ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+        </svg>
       </button>
       {open && (
         <div className="absolute z-30 mt-2 w-full rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-xl overflow-hidden">

@@ -21,6 +21,7 @@ import { FolderCompareModal } from './components/FolderCompareModal'
 import { FolderGallery, FolderImagesData } from './components/FolderGallery'
 import { FolderDashboard } from './components/FolderDashboard'
 import { FolderReadmePanel } from './components/FolderReadmePanel'
+import { WavCoverageTab } from './components/WavCoverageTab'
 import { PackInfoEditor, type DeliveryMatrixData, type PackInfo, type PackChecklistItem } from './components/PackInfoEditor'
 import { PackTargetsEditor } from './components/PackTargetsEditor'
 import { TrainingPanel } from './components/TrainingPanel'
@@ -34,7 +35,7 @@ import * as XLSX from 'xlsx'
 import { buildMetadataSuggestionMatches, MetadataSuggestionMatch } from './utils/metadataSuggest'
 import { cloneMetadataSuggestRule, isMetadataSuggestRuleComplete, isMetadataSuggestRuleLibraryCandidate, metadataSuggestRuleSignature } from './utils/metadataSuggestRuleLibrary'
 import { detectPreset } from './utils/detectPreset'
-import { IDLE_TRAINER_STATE, type TrainerProfilesStateSnapshot, type TrainerStartPayload, type TrainerStateSnapshot } from './types/trainer'
+import { IDLE_TRAINER_STATE, TRAINER_ARCHITECTURES, type TrainerArchitecture, type TrainerProfilesStateSnapshot, type TrainerStartPayload, type TrainerStateSnapshot } from './types/trainer'
 
 export interface HistoryEntry {
   id: string
@@ -3587,6 +3588,68 @@ export default function App() {
     setStatus({ message: 'Opened the training workspace.', type: 'info' })
   }
 
+  const handleTrainWavsFromCoverage = useCallback(async (wavPaths: string[]) => {
+    if (!settings.enableExperimentalTraining) {
+      setStatus({ message: 'Enable Local Training in Settings first.', type: 'info' })
+      return
+    }
+    if (!settings.namPythonPath.trim() || !settings.namTrainingInputWav.trim()) {
+      setStatus({ message: 'Configure Python path and input WAV in Settings before training.', type: 'info' })
+      return
+    }
+    const folderPath = ((librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null) ?? librarian.rootFolder)
+    if (!folderPath) return
+    const preset = settings.trainingPresets[0] ?? null
+    const architectures = (preset?.architectures ?? ['standard']).filter(
+      (a): a is TrainerArchitecture => TRAINER_ARCHITECTURES.includes(a as TrainerArchitecture)
+    )
+    const epochs = preset?.epochs ?? 1000
+    const latency = preset?.latencyMode === 'manual' ? (preset?.latencyValue ?? null) : null
+    const thresholdEsr = preset?.thresholdEsr ?? null
+    const savePlot = preset?.savePlot ?? false
+    const ignoreChecks = preset?.ignoreChecks ?? false
+    const modeledBy = settings.enableCaptureDefaults && settings.defaultModeledBy.trim() ? settings.defaultModeledBy.trim() : null
+    const submissionId = `wav-check-${Date.now()}`
+    const submissionLabel = `WAV Check – ${wavPaths.length} capture${wavPaths.length !== 1 ? 's' : ''}`
+    const submissionCreatedAt = new Date().toISOString()
+    const payloads: TrainerStartPayload[] = wavPaths.flatMap((wavPath) =>
+      architectures.map((architecture) => ({
+        pythonPath: settings.namPythonPath.trim(),
+        inputPath: settings.namTrainingInputWav.trim(),
+        outputPath: wavPath,
+        trainPath: folderPath,
+        architecture,
+        epochs,
+        latency,
+        thresholdEsr,
+        savePlot,
+        silent: true,
+        ignoreChecks,
+        sourceMode: 'manual-direct' as const,
+        finalModelRoot: folderPath,
+        processedWavRoot: '',
+        graphRoot: folderPath,
+        sourcePostProcess: 'keep' as const,
+        namingTemplate: '{basename}',
+        profileId: preset?.id ?? null,
+        profileName: preset?.name ?? null,
+        modeledBy,
+        inputLevelDbu: null,
+        outputLevelDbu: null,
+        submissionId,
+        submissionLabel,
+        submissionCreatedAt,
+      }))
+    )
+    const result = await window.api.enqueueTrainerRuns(payloads)
+    if (result.success) {
+      handleOpenExperimentalTraining('queue')
+      setStatus({ message: `Queued ${result.queued ?? payloads.length} training job${payloads.length !== 1 ? 's' : ''}.`, type: 'success' })
+    } else {
+      setStatus({ message: result.error ?? 'Failed to queue training jobs.', type: 'error' })
+    }
+  }, [settings, librarian, handleOpenExperimentalTraining])
+
   useEffect(() => {
     if (selectedFiles.length !== 1 && selectedFilePanelTab === 'training') {
       setSelectedFilePanelTab('metadata')
@@ -4339,7 +4402,7 @@ export default function App() {
             const hasPack = packInfoFolders.has(activeFolderPath)
             const showCreatePrompt = !hasPack
             const showGalleryTab = showGallery
-            const availableTabs = (['overview', 'pack', 'checklist', 'gallery', 'readme', 'targets'] as const)
+            const availableTabs = (['overview', 'pack', 'checklist', 'gallery', 'readme', 'targets', 'wav-check'] as const)
               .filter((tab) => (tab !== 'gallery' || showGalleryTab) && (tab !== 'checklist' || hasPack) && (tab !== 'targets' || hasPack))
             return (
               <div className="h-full flex flex-col">
@@ -4364,7 +4427,9 @@ export default function App() {
                                 ? 'Gallery'
                                 : tab === 'targets'
                                   ? 'Targets'
-                                  : 'Read Me'}
+                                  : tab === 'wav-check'
+                                    ? 'WAV Check'
+                                    : 'Read Me'}
                       </button>
                     ))}
                 </div>
@@ -4432,6 +4497,22 @@ export default function App() {
                     />
                   ) : folderPanelTab === 'gallery' && showGalleryTab ? (
                     <FolderGallery data={folderImages!} />
+                  ) : folderPanelTab === 'wav-check' ? (
+                    <WavCoverageTab
+                      key={activeFolderPath}
+                      folderPath={activeFolderPath}
+                      namFiles={visibleFiles}
+                      comparisonFolder={settings.folderWavComparisonPaths[activeFolderPath.replace(/\\/g, '/')] ?? null}
+                      onSetComparisonFolder={(path) => {
+                        const next = { ...settings.folderWavComparisonPaths }
+                        const key = activeFolderPath.replace(/\\/g, '/')
+                        if (path) next[key] = path
+                        else delete next[key]
+                        handleSaveSettings({ ...settings, folderWavComparisonPaths: next })
+                      }}
+                      canTrain={settings.enableExperimentalTraining && !!settings.namPythonPath.trim() && !!settings.namTrainingInputWav.trim()}
+                      onTrainWavs={handleTrainWavsFromCoverage}
+                    />
                   ) : hasPack ? (
                     <PackInfoEditor
                       key={`${activeFolderPath}:${folderPanelTab}`}

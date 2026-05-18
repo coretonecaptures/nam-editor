@@ -1774,7 +1774,7 @@ function FileItem({
   const missingFields = TRACKED.filter((f) => !meta[f.key])
   const missing = missingFields.length
   const creatorChipClass = solidPills
-    ? 'bg-sky-500/20 text-sky-200 border border-sky-400/30'
+    ? 'bg-sky-500 text-white border border-sky-600/30'
     : 'bg-sky-50 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800/60'
 
   return (

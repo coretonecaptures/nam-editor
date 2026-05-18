@@ -63,10 +63,10 @@
 - Training ESR target (partially done): `threshold_esr` support exists; next improve guidance, preset defaults, and queue/history visibility for stop-when-good-enough behavior.
 - Training history (partially done): reviewable grouped history exists; add export/report workflows and make sure the long-term storage/revisit experience is as useful as the live queue.
 - Training watcher intake: maybe later, if the final expected output file is missing, allow reprocessing even when matching history already exists.
-- Training verification report: scan a folder of WAVs / trained models and verify expected outputs, ESR targets, epochs, and architectures against watch or preset expectations.
+- Training verification report (partially done): WAV Check tab added — compares NAMs in the current folder against a user-chosen WAV staging folder, shows trained/missing/extra counts, and provides per-row Train and Train All buttons that enqueue jobs and jump to the queue view; remaining work is to surface ESR targets, epoch counts, and architecture verification against preset expectations.
 - Training workflow (partially done): submission groups exist in queue/history; later consider a higher-level `job / batch` concept where one queued item can represent a multi-format set while watcher mode remains a separate automation layer.
 - Training settings IA (partially done): training already has its own Settings tab; revisit once watcher folders, presets, history, and verification need more room or more specialized navigation inside Training itself.
-- Settings disclosure UX: replace the repeated `Show ...` / `Hide ...` buttons for editable lists (folder watch rules, training presets, watch folders, etc.) with a cleaner UI pattern so these sections feel less clunky to open and manage.
+- Settings disclosure UX (partially done): Watch Folder cards, Pack Catalog, Checklist Templates, Metadata Suggestions, and Auto-Copy Rules sections were converted to a header-band chevron pattern; remaining work is to extend the same pattern to training presets and watch folder profiles.
 - Training watch/preset UX: redesign watch folders and presets into a cleaner expandable master-detail style, so the user first sees a compact list with key summary fields and only expands/drills into one item at a time to edit the full details.
 - Training drag-and-drop WAV intake: support dragging WAV files from Windows Explorer/Finder into the Training page’s WAV input area so the dropped files populate the selected capture list.
 
