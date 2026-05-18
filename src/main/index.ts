@@ -197,7 +197,7 @@ interface TrainerHistoryEntry {
   finalModelPath: string
   processedWavPath: string
   graphPath: string
-  status: 'success' | 'error' | 'canceled'
+  status: 'success' | 'error' | 'canceled' | 'skipped'
   attempts: number
   validationEsr: number | null
   thresholdEsr: number | null
@@ -209,6 +209,18 @@ interface TrainerHistoryEntry {
   submissionId: string | null
   submissionLabel: string | null
   submissionCreatedAt: string | null
+}
+
+interface TrainerSkippedEntry {
+  skipId: string
+  profileId: string | null
+  profileName: string | null
+  sourcePath: string
+  architecture: TrainerArchitecture
+  sourceSizeBytes: number | null
+  sourceMtimeMs: number | null
+  skippedAt: string
+  reason: string
 }
 
 interface TrainerWatcherRuntime {
@@ -311,11 +323,13 @@ let trainerPauseAfterCurrent = false
 let trainingProfiles: TrainingProfile[] = []
 let trainingRetainGraphs = true
 let trainerHistory: TrainerHistoryEntry[] = []
+let trainerSkipped: TrainerSkippedEntry[] = []
 const trainingWatchers = new Map<string, import('fs').FSWatcher>()
 const trainingWatcherPendingTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const trainingWatcherPendingCounts = new Map<string, number>()
 const trainingWatcherRunning = new Set<string>()
 const TRAINER_HISTORY_FILENAME = 'trainer-history.json'
+const TRAINER_SKIPPED_FILENAME = 'trainer-skipped.json'
 
 const TRAINER_RUNNER_SOURCE = String.raw`import json
 import os
@@ -426,6 +440,10 @@ function getTrainerHistoryPath(): string {
   return join(app.getPath('userData'), TRAINER_HISTORY_FILENAME)
 }
 
+function getTrainerSkippedPath(): string {
+  return join(app.getPath('userData'), TRAINER_SKIPPED_FILENAME)
+}
+
 function loadTrainerHistory(): TrainerHistoryEntry[] {
   try {
     const filePath = getTrainerHistoryPath()
@@ -437,12 +455,32 @@ function loadTrainerHistory(): TrainerHistoryEntry[] {
   }
 }
 
+function loadTrainerSkipped(): TrainerSkippedEntry[] {
+  try {
+    const filePath = getTrainerSkippedPath()
+    if (!fs.existsSync(filePath)) return []
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+    return Array.isArray(parsed) ? parsed as TrainerSkippedEntry[] : []
+  } catch {
+    return []
+  }
+}
+
 function saveTrainerHistory(): void {
   try {
     fs.mkdirSync(dirname(getTrainerHistoryPath()), { recursive: true })
     fs.writeFileSync(getTrainerHistoryPath(), JSON.stringify(trainerHistory.slice(0, 2000), null, 2), 'utf-8')
   } catch (error) {
     log(`trainer history save failed: ${String(error)}`)
+  }
+}
+
+function saveTrainerSkipped(): void {
+  try {
+    fs.mkdirSync(dirname(getTrainerSkippedPath()), { recursive: true })
+    fs.writeFileSync(getTrainerSkippedPath(), JSON.stringify(trainerSkipped.slice(0, 2000), null, 2), 'utf-8')
+  } catch (error) {
+    log(`trainer skipped save failed: ${String(error)}`)
   }
 }
 
@@ -511,11 +549,88 @@ function appendTrainerHistory(entry: TrainerHistoryEntry): void {
   saveTrainerHistory()
 }
 
-function clearTrainingWatcherTimer(profileId: string): void {
-  const timer = trainingWatcherPendingTimers.get(profileId)
+function makeTrainerSkippedKey(
+  profileId: string | null,
+  sourcePath: string,
+  architecture: TrainerArchitecture,
+  sourceMtimeMs: number | null,
+  sourceSizeBytes: number | null
+): string {
+  return [
+    profileId ?? '',
+    normalizePath(sourcePath),
+    architecture,
+    sourceMtimeMs ?? '',
+    sourceSizeBytes ?? '',
+  ].join('::')
+}
+
+function appendTrainerSkipped(entry: TrainerSkippedEntry): void {
+  const key = makeTrainerSkippedKey(entry.profileId, entry.sourcePath, entry.architecture, entry.sourceMtimeMs, entry.sourceSizeBytes)
+  trainerSkipped = [
+    entry,
+    ...trainerSkipped.filter((item) =>
+      makeTrainerSkippedKey(item.profileId, item.sourcePath, item.architecture, item.sourceMtimeMs, item.sourceSizeBytes) !== key
+    ),
+  ].slice(0, 2000)
+  saveTrainerSkipped()
+}
+
+function clearTrainerSkipped(profileId: string | null, sourcePath: string, architecture: TrainerArchitecture): void {
+  const normalized = normalizePath(sourcePath)
+  trainerSkipped = trainerSkipped.filter((entry) =>
+    !(
+      entry.profileId === profileId &&
+      normalizePath(entry.sourcePath) === normalized &&
+      entry.architecture === architecture
+    )
+  )
+  saveTrainerSkipped()
+}
+
+function appendTrainerCanceledHistory(
+  job: TrainerQueueJob,
+  reason: string,
+  processedWavPath = '',
+  status: TrainerHistoryEntry['status'] = 'canceled'
+): void {
+  appendTrainerHistory({
+    historyId: crypto.randomUUID(),
+    timestamp: new Date().toISOString(),
+    profileId: job.profileId,
+    profileName: job.profileName,
+    sourceMode: job.sourceMode,
+    sourcePath: job.outputPath,
+    sourceSizeBytes: job.sourceSizeBytes,
+    sourceMtimeMs: job.sourceMtimeMs,
+    architecture: job.architecture,
+    finalModelPath: '',
+    processedWavPath,
+    graphPath: '',
+    status,
+    attempts: job.attempts,
+    validationEsr: null,
+    thresholdEsr: job.thresholdEsr,
+    epochs: job.epochs,
+    latencyMode: job.latency == null ? 'auto' : 'manual',
+    latencyValue: job.latency,
+    finalModelName: job.modelName,
+    failureReason: reason,
+    submissionId: job.submissionId,
+    submissionLabel: job.submissionLabel,
+    submissionCreatedAt: job.submissionCreatedAt,
+  })
+}
+
+function makeTrainingWatcherTimerKey(profileId: string, filePath: string): string {
+  return `${profileId}::${normalizePath(filePath)}`
+}
+
+function clearTrainingWatcherTimer(timerKey: string): void {
+  const timer = trainingWatcherPendingTimers.get(timerKey)
   if (timer) {
     clearTimeout(timer)
-    trainingWatcherPendingTimers.delete(profileId)
+    trainingWatcherPendingTimers.delete(timerKey)
   }
 }
 
@@ -978,6 +1093,12 @@ function trainerHistoryAlreadyHasSource(profileId: string | null, sourcePath: st
     entry.sourceMtimeMs === mtimeMs &&
     entry.sourceSizeBytes === sizeBytes &&
     entry.status === 'success'
+  ) || trainerSkipped.some((entry) =>
+    normalizePath(entry.sourcePath) === normalized &&
+    entry.profileId === profileId &&
+    entry.architecture === architecture &&
+    entry.sourceMtimeMs === mtimeMs &&
+    entry.sourceSizeBytes === sizeBytes
   )
 }
 
@@ -1067,6 +1188,8 @@ async function enqueueTrainingPayloads(payloads: TrainerStartPayload[]): Promise
     return 0
   }
   const jobs = uniquePayloads.map((payload) => createTrainerJob(payload))
+  trainerQueue.push(...jobs)
+  emitTrainerState()
   for (const job of jobs) {
     try {
       const stats = await statTrainingSource(job.outputPath)
@@ -1076,7 +1199,6 @@ async function enqueueTrainingPayloads(payloads: TrainerStartPayload[]): Promise
       // leave null
     }
   }
-  trainerQueue.push(...jobs)
   emitTrainerState()
   await pumpTrainerQueue()
   return jobs.length
@@ -1111,6 +1233,7 @@ async function enqueueExistingTrainingWatcherFiles(profile: TrainingProfile): Pr
     )
     if (payloads.length === 0) return
     await enqueueTrainingPayloads(payloads)
+    await ensureTrainingWatcherAutoStart(profile)
   } catch (error) {
     log(`training watcher initial scan failed for "${profile.name}": ${String(error)}`)
   }
@@ -1126,9 +1249,10 @@ async function ensureTrainingWatcherAutoStart(profile: TrainingProfile): Promise
 }
 
 function scheduleTrainingWatcherFile(profile: TrainingProfile, filePath: string): void {
-  const key = profile.id
-  clearTrainingWatcherTimer(key)
-  trainingWatcherPendingCounts.set(key, (trainingWatcherPendingCounts.get(key) ?? 0) + 1)
+  const countKey = profile.id
+  const timerKey = makeTrainingWatcherTimerKey(profile.id, filePath)
+  clearTrainingWatcherTimer(timerKey)
+  trainingWatcherPendingCounts.set(countKey, (trainingWatcherPendingCounts.get(countKey) ?? 0) + 1)
   emitTrainerState()
   const timer = setTimeout(async () => {
     try {
@@ -1157,12 +1281,12 @@ function scheduleTrainingWatcherFile(profile: TrainingProfile, filePath: string)
     } catch (error) {
       log(`training watcher enqueue failed for ${filePath}: ${String(error)}`)
     } finally {
-      trainingWatcherPendingCounts.set(key, Math.max(0, (trainingWatcherPendingCounts.get(key) ?? 1) - 1))
-      clearTrainingWatcherTimer(key)
+      trainingWatcherPendingCounts.set(countKey, Math.max(0, (trainingWatcherPendingCounts.get(countKey) ?? 1) - 1))
+      clearTrainingWatcherTimer(timerKey)
       emitTrainerState()
     }
   }, 1200)
-  trainingWatcherPendingTimers.set(key, timer)
+  trainingWatcherPendingTimers.set(timerKey, timer)
 }
 
 let trainerConfiguredPythonPath = ''
@@ -2045,6 +2169,7 @@ app.whenReady().then(async () => {
   switchLogToUserData()
   await loadTone3kTokens()
   trainerHistory = loadTrainerHistory()
+  trainerSkipped = loadTrainerSkipped()
   trainerState = { ...trainerState, history: trainerHistory, watcherState: makeTrainerWatcherSnapshot() }
   log(`log file moved to userData: ${logPath}`)
 
@@ -3251,6 +3376,19 @@ app.whenReady().then(async () => {
     return { success: true, retried }
   })
 
+  ipcMain.handle('trainer:retryJob', async (_event, jobId: string) => {
+    const index = findTrainerJobIndex(jobId)
+    if (index === -1) return { success: false, error: 'Training queue item not found.' }
+    const job = trainerQueue[index]
+    if (job.status !== 'error' && job.status !== 'canceled') {
+      return { success: false, error: 'Only failed or canceled training items can be retried.' }
+    }
+    trainerQueue[index] = resetTrainerJobForQueue(job)
+    emitTrainerState()
+    await pumpTrainerQueue()
+    return { success: true }
+  })
+
   ipcMain.handle('trainer:clearFinished', async () => {
     trainerQueue = trainerQueue.filter((job) => !['success', 'error', 'canceled'].includes(job.status))
     emitTrainerState()
@@ -3274,6 +3412,71 @@ app.whenReady().then(async () => {
     return { success: true }
   })
 
+  ipcMain.handle('trainer:watcherQueueAction', async (_event, jobId: string, action: 'remove' | 'skip' | 'move-canceled' | 'retry-now') => {
+    const index = findTrainerJobIndex(jobId)
+    if (index === -1) return { success: false, error: 'Training queue item not found.' }
+    const job = trainerQueue[index]
+    if (job.sourceMode !== 'watcher') return { success: false, error: 'That queue item is not from a watch folder.' }
+    if (trainerState.activeJobId === jobId && (trainerState.status === 'starting' || trainerState.status === 'running')) {
+      return { success: false, error: 'Cannot change the active training job while it is running.' }
+    }
+
+    if (action === 'retry-now') {
+      clearTrainerSkipped(job.profileId, job.outputPath, job.architecture)
+      const moved = makeQueuedTrainerJobNext(jobId)
+      trainerPauseAfterCurrent = false
+      emitTrainerState()
+      await pumpTrainerQueue()
+      return moved ? { success: true } : { success: false, error: 'Could not make that watcher item next.' }
+    }
+
+    if (action === 'remove') {
+      trainerQueue.splice(index, 1)
+      emitTrainerState()
+      return { success: true }
+    }
+
+    if (action === 'skip') {
+      appendTrainerSkipped({
+        skipId: crypto.randomUUID(),
+        profileId: job.profileId,
+        profileName: job.profileName,
+        sourcePath: job.outputPath,
+        architecture: job.architecture,
+        sourceSizeBytes: job.sourceSizeBytes,
+        sourceMtimeMs: job.sourceMtimeMs,
+        skippedAt: new Date().toISOString(),
+        reason: 'Skipped from watcher queue by user.',
+      })
+      appendTrainerCanceledHistory(job, 'Skipped from watcher queue by user.', '', 'skipped')
+      trainerQueue.splice(index, 1)
+      emitTrainerState()
+      return { success: true }
+    }
+
+    const profile = trainingProfiles.find((item) => item.id === job.profileId)
+    const cancelRoot = profile?.watchFolder?.trim()
+    if (!cancelRoot) return { success: false, error: 'Watch folder is missing, so the source cannot be moved to _Canceled.' }
+    const destinationDir = join(cancelRoot, '_Canceled')
+    await fs.promises.mkdir(destinationDir, { recursive: true })
+    const destinationPath = await ensureUniqueFilePath(join(destinationDir, basename(job.outputPath)))
+    suppressWatcher()
+    await fs.promises.rename(job.outputPath, destinationPath)
+    const normalizedSource = normalizePath(job.outputPath)
+    const removedJobs = trainerQueue.filter((item) =>
+      item.sourceMode === 'watcher' &&
+      item.profileId === job.profileId &&
+      normalizePath(item.outputPath) === normalizedSource &&
+      item.status === 'queued'
+    )
+    trainerQueue = trainerQueue.filter((item) => !removedJobs.some((removed) => removed.jobId === item.jobId))
+    for (const removedJob of removedJobs) {
+      appendTrainerCanceledHistory(removedJob, 'Moved source to _Canceled by user.', destinationPath)
+    }
+    emitTrainerState()
+    return { success: true }
+  })
+
   ipcMain.handle('trainer:moveJob', async (_event, jobId: string, direction: 'up' | 'down') => {
     if (direction !== 'up' && direction !== 'down') {
       return { success: false, error: 'Invalid queue move direction.' }
@@ -3289,6 +3492,38 @@ app.whenReady().then(async () => {
     if (!moved) return { success: false, error: 'Could not make that queue item next.' }
     emitTrainerState()
     return { success: true }
+  })
+
+  ipcMain.handle('trainer:retryHistoryEntry', async (_event, historyId: string) => {
+    const entry = trainerHistory.find((item) => item.historyId === historyId)
+    if (!entry) return { success: false, error: 'Training history entry not found.' }
+    if (!entry.profileId) return { success: false, error: 'Only profile-backed watcher or folder runs can be retried from history right now.' }
+    const profile = trainingProfiles.find((item) => item.id === entry.profileId)
+    if (!profile) return { success: false, error: 'The training profile used by that history entry no longer exists.' }
+    if (!trainerConfiguredPythonPath || !trainerConfiguredInputPath) {
+      return { success: false, error: 'Configure the NAM Python path and input WAV before retrying from history.' }
+    }
+    const sourcePath = [entry.processedWavPath, entry.sourcePath].find((candidate) => candidate && fs.existsSync(candidate))
+    if (!sourcePath) return { success: false, error: 'The source WAV for that history entry could not be found.' }
+    clearTrainerSkipped(entry.profileId, entry.sourcePath, entry.architecture)
+    clearTrainerSkipped(entry.profileId, sourcePath, entry.architecture)
+    const payloads = (await buildTrainerPayloadsForProfile(
+      profile,
+      trainerConfiguredPythonPath,
+      trainerConfiguredInputPath,
+      [sourcePath],
+      entry.sourceMode,
+      {
+        id: crypto.randomUUID(),
+        label: `Retry - ${entry.profileName ?? profile.name}`,
+        createdAt: new Date().toISOString(),
+      }
+    )).filter((payload) => payload.architecture === entry.architecture)
+    if (payloads.length === 0) {
+      return { success: false, error: 'That history entry could not be re-queued.' }
+    }
+    const queued = await enqueueTrainingPayloads(payloads)
+    return { success: queued > 0, queued, error: queued > 0 ? undefined : 'That retry did not add a new queue item.' }
   })
 
   // IPC: Open a .nam file in NAM standalone (via explicit path or OS default)

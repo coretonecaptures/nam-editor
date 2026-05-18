@@ -112,7 +112,7 @@ export interface TrainerHistoryEntry {
   finalModelPath: string
   processedWavPath: string
   graphPath: string
-  status: 'success' | 'error' | 'canceled'
+  status: 'success' | 'error' | 'canceled' | 'skipped'
   attempts: number
   validationEsr: number | null
   thresholdEsr: number | null

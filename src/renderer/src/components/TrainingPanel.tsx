@@ -113,6 +113,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const [historyProfileFilter, setHistoryProfileFilter] = useState<string>('all')
   const [historyStatusFilter, setHistoryStatusFilter] = useState<string>('all')
   const [historyArchitectureFilter, setHistoryArchitectureFilter] = useState<string>('all')
+  const [historyTimeFilter, setHistoryTimeFilter] = useState<'all' | 'day' | 'week' | 'month' | 'quarter'>('all')
   const [historySearch, setHistorySearch] = useState('')
   const rawLogRef = useRef<HTMLDivElement | null>(null)
 
@@ -226,14 +227,45 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       if (historyProfileFilter !== 'all' && (entry.profileId ?? 'manual') !== historyProfileFilter) return false
       if (historyStatusFilter !== 'all' && entry.status !== historyStatusFilter) return false
       if (historyArchitectureFilter !== 'all' && entry.architecture !== historyArchitectureFilter) return false
+      if (historyTimeFilter !== 'all') {
+        const now = Date.now()
+        const entryTime = new Date(entry.timestamp).getTime()
+        const maxAgeMs =
+          historyTimeFilter === 'day'
+            ? 24 * 60 * 60 * 1000
+            : historyTimeFilter === 'week'
+              ? 7 * 24 * 60 * 60 * 1000
+              : historyTimeFilter === 'month'
+                ? 30 * 24 * 60 * 60 * 1000
+                : 90 * 24 * 60 * 60 * 1000
+        if (!Number.isFinite(entryTime) || now - entryTime > maxAgeMs) return false
+      }
       if (historySearch.trim()) {
         const hay = `${entry.finalModelName} ${entry.sourcePath} ${entry.finalModelPath} ${entry.profileName ?? ''}`.toLowerCase()
         if (!hay.includes(historySearch.trim().toLowerCase())) return false
       }
       return true
     }),
-    [historyArchitectureFilter, historyProfileFilter, historySearch, historyStatusFilter, trainerState.history]
+    [historyArchitectureFilter, historyProfileFilter, historySearch, historyStatusFilter, historyTimeFilter, trainerState.history]
   )
+  const groupedHistory = useMemo(() => {
+    const groups: Array<{ key: string; label: string; createdAt: string | null; entries: TrainerHistoryEntry[] }> = []
+    for (const entry of filteredHistory) {
+      const key = entry.submissionId ?? `ungrouped:${entry.historyId}`
+      const existing = groups[groups.length - 1]
+      if (existing && existing.key === key) {
+        existing.entries.push(entry)
+      } else {
+        groups.push({
+          key,
+          label: entry.submissionLabel ?? (entry.profileName ?? (entry.sourceMode === 'watcher' ? 'Watcher' : entry.sourceMode === 'manual-folder-run' ? 'Folder run' : 'Run WAVs')),
+          createdAt: entry.submissionCreatedAt ?? entry.timestamp,
+          entries: [entry],
+        })
+      }
+    }
+    return groups
+  }, [filteredHistory])
 
   const canQueue =
     !!settings.namPythonPath.trim() &&
@@ -551,11 +583,42 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     setQueueContextMenu(null)
   }
 
+  const handleRetryQueueItem = async (job: TrainerQueueJob) => {
+    const result = await window.api.retryTrainerJob(job.jobId)
+    if (!result.success) {
+      setQueueActionError(result.error ?? 'Could not retry that training queue item.')
+    } else {
+      setQueueActionError('')
+      setQueueContextMenu(null)
+    }
+  }
+
   const handleShowHistoryPath = (filePath: string) => {
     if (filePath) {
       void window.api.revealFile(filePath)
     }
     setHistoryContextMenu(null)
+  }
+
+  const handleWatcherQueueAction = async (job: TrainerQueueJob, action: 'remove' | 'skip' | 'move-canceled' | 'retry-now') => {
+    const result = await window.api.watcherQueueAction(job.jobId, action)
+    if (!result.success) {
+      setQueueActionError(result.error ?? 'Could not update that watcher queue item.')
+    } else {
+      setQueueActionError('')
+      setQueueContextMenu(null)
+    }
+  }
+
+  const handleRetryHistoryEntry = async (entry: TrainerHistoryEntry) => {
+    const result = await window.api.retryTrainerHistoryEntry(entry.historyId)
+    if (!result.success) {
+      setQueueActionError(result.error ?? 'Could not retry that history item.')
+    } else {
+      setQueueActionError('')
+      setHistoryContextMenu(null)
+      setRunMode('queue')
+    }
   }
 
   const handleSaveAsPreset = () => {
@@ -928,7 +991,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
             <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
               <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-800 space-y-3">
                 <div className="text-xs font-medium text-gray-700 dark:text-gray-300">Training History</div>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
                   <select
                     value={historyProfileFilter}
                     onChange={(e) => setHistoryProfileFilter(e.target.value)}
@@ -947,6 +1010,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     <option value="all">All statuses</option>
                     <option value="success">Success</option>
                     <option value="error">Failed</option>
+                    <option value="skipped">Skipped</option>
                     <option value="canceled">Canceled</option>
                   </select>
                   <select
@@ -959,6 +1023,17 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                       <option key={architecture} value={architecture}>{ARCHITECTURE_LABELS[architecture]}</option>
                     ))}
                   </select>
+                  <select
+                    value={historyTimeFilter}
+                    onChange={(e) => setHistoryTimeFilter(e.target.value as 'all' | 'day' | 'week' | 'month' | 'quarter')}
+                    className="px-2.5 py-1.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="all">All time</option>
+                    <option value="day">Last day</option>
+                    <option value="week">Last week</option>
+                    <option value="month">Last month</option>
+                    <option value="quarter">Last 3 months</option>
+                  </select>
                   <input
                     value={historySearch}
                     onChange={(e) => setHistorySearch(e.target.value)}
@@ -967,16 +1042,27 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   />
                 </div>
               </div>
-              <div className="divide-y divide-gray-200 dark:divide-gray-800">
+              <div className="p-2 space-y-2">
                 {filteredHistory.length === 0 ? (
                   <div className="px-3 py-3 text-xs text-gray-500 dark:text-gray-500">Completed, failed, and canceled runs will persist here.</div>
                 ) : (
-                  filteredHistory.map((entry) => (
-                    <HistoryRow
-                      key={entry.historyId}
-                      entry={entry}
-                      onContextMenu={(context) => setHistoryContextMenu(context)}
-                    />
+                  groupedHistory.map((group) => (
+                    <div key={group.key} className="space-y-1.5">
+                      <div className="px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 text-[11px] text-gray-600 dark:text-gray-300 flex items-center justify-between gap-3">
+                        <span className="font-medium">{group.label}</span>
+                        <span className="text-gray-500 dark:text-gray-400">
+                          {group.entries.length} item{group.entries.length === 1 ? '' : 's'}
+                          {group.createdAt ? ` · ${new Date(group.createdAt).toLocaleString()}` : ''}
+                        </span>
+                      </div>
+                      {group.entries.map((entry) => (
+                        <HistoryRow
+                          key={entry.historyId}
+                          entry={entry}
+                          onContextMenu={(context) => setHistoryContextMenu(context)}
+                        />
+                      ))}
+                    </div>
                   ))
                 )}
               </div>
@@ -1182,7 +1268,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
 
               <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
                 <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-800 space-y-3">
-                  <div className="text-xs font-medium text-gray-700 dark:text-gray-300">Queue</div>
+                  <div className="text-xs font-medium text-gray-700 dark:text-gray-300">Queue ({trainerState.queue.length})</div>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                     <select
                       value={queueProfileFilter}
@@ -1238,9 +1324,10 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                               {group.createdAt ? ` · ${new Date(group.createdAt).toLocaleString()}` : ''}
                             </span>
                           </div>
-                          {group.jobs.map((job) => (
+                          {group.jobs.map((job, index) => (
                             <QueueRow
                               key={job.jobId}
+                              batchIndex={index + 1}
                               job={job}
                               isActive={job.jobId === trainerState.activeJobId}
                               onRemove={handleRemoveJob}
@@ -1258,16 +1345,51 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
 
               {queueContextMenu && (
                 <div
-                  className="fixed z-50 min-w-[180px] rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-xl overflow-hidden"
+                  className="fixed z-50 min-w-[220px] rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-xl overflow-hidden"
                   style={{ left: queueContextMenu.x, top: queueContextMenu.y }}
                   onMouseDown={(e) => e.stopPropagation()}
                 >
+                  {queueContextMenu.job.sourceMode === 'watcher' && queueContextMenu.job.status === 'queued' ? (
+                    <>
+                      <button
+                        onClick={() => { void handleWatcherQueueAction(queueContextMenu.job, 'remove') }}
+                        className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+                      >
+                        Remove from queue
+                      </button>
+                      <button
+                        onClick={() => { void handleWatcherQueueAction(queueContextMenu.job, 'skip') }}
+                        className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+                      >
+                        Skip until manually retried
+                      </button>
+                      <button
+                        onClick={() => { void handleWatcherQueueAction(queueContextMenu.job, 'move-canceled') }}
+                        className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+                      >
+                        Move source to _Canceled and remove
+                      </button>
+                      <button
+                        onClick={() => { void handleWatcherQueueAction(queueContextMenu.job, 'retry-now') }}
+                        className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+                      >
+                        Retry now
+                      </button>
+                    </>
+                  ) : null}
                   <button
                     onClick={() => handleShowQueueItemInFolder(queueContextMenu.job)}
                     disabled={queueContextMenu.job.status !== 'success' || !queueContextMenu.job.outputModelPath}
                     className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     Show in folder
+                  </button>
+                  <button
+                    onClick={() => { void handleRetryQueueItem(queueContextMenu.job) }}
+                    disabled={!['error', 'canceled'].includes(queueContextMenu.job.status)}
+                    className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Retry
                   </button>
                 </div>
               )}
@@ -1320,6 +1442,13 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Show WAV
+              </button>
+              <button
+                onClick={() => { void handleRetryHistoryEntry(historyContextMenu.entry) }}
+                disabled={!(historyContextMenu.entry.profileId && ['error', 'canceled', 'skipped'].includes(historyContextMenu.entry.status))}
+                className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Retry run
               </button>
             </div>
           )}
@@ -1470,10 +1599,12 @@ function HistoryRow({
       ? 'text-emerald-700 dark:text-emerald-300'
       : entry.status === 'error'
         ? 'text-red-700 dark:text-red-300'
-        : 'text-amber-700 dark:text-amber-300'
+        : entry.status === 'skipped'
+          ? 'text-yellow-700 dark:text-yellow-300'
+          : 'text-amber-700 dark:text-amber-300'
   return (
     <div
-      className="px-3 py-2 text-xs"
+      className="px-3 py-2 text-xs rounded-lg border border-gray-300 dark:border-gray-700/90 bg-gray-50 dark:bg-gray-900/50 shadow-sm"
       onContextMenu={onContextMenu ? (event) => {
         event.preventDefault()
         event.stopPropagation()
@@ -1500,8 +1631,13 @@ function HistoryRow({
             <div className="mt-1 text-[11px] text-red-700 dark:text-red-300 break-words">{entry.failureReason}</div>
           )}
         </div>
-        <div className={`font-semibold whitespace-nowrap ${statusClasses}`}>
-          {entry.status.toUpperCase()}
+        <div className="flex flex-col items-end gap-1 text-right">
+          <div className={`font-semibold whitespace-nowrap ${statusClasses}`}>
+            {entry.status.toUpperCase()}
+          </div>
+          <div className="text-[11px] font-medium text-gray-700 dark:text-gray-200 whitespace-nowrap">
+            {new Date(entry.timestamp).toLocaleString()}
+          </div>
         </div>
       </div>
     </div>
@@ -1527,6 +1663,7 @@ function StatusPill({ status }: { status: TrainerStateSnapshot['status'] }) {
 }
 
 function QueueRow({
+  batchIndex,
   job,
   isActive,
   onRemove,
@@ -1534,6 +1671,7 @@ function QueueRow({
   onMakeNext,
   onContextMenu,
 }: {
+  batchIndex: number
   job: TrainerQueueJob
   isActive: boolean
   onRemove: (job: TrainerQueueJob) => void | Promise<void>
@@ -1556,10 +1694,10 @@ function QueueRow({
 
   return (
     <div
-      className={`px-3 py-2 rounded-lg border text-xs ${
+      className={`px-3 py-2 rounded-lg border text-xs shadow-sm ${
         isActive
-          ? 'bg-indigo-500/10 border-indigo-300/50 dark:border-indigo-700/50'
-          : 'bg-gray-50 dark:bg-gray-900/40 border-gray-200 dark:border-gray-800'
+          ? 'bg-indigo-500/10 border-indigo-400/70 dark:border-indigo-600/80'
+          : 'bg-gray-50 dark:bg-gray-900/55 border-gray-300 dark:border-gray-700/90'
       }`}
       onContextMenu={(event) => {
         event.preventDefault()
@@ -1590,8 +1728,13 @@ function QueueRow({
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className="font-medium text-gray-800 dark:text-gray-200 truncate">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-1.5 text-[10px] font-semibold text-gray-600 dark:text-gray-300">
+                  {batchIndex}
+                </span>
+                <div className="font-medium text-gray-800 dark:text-gray-200 truncate">
                 {job.outputPath.replace(/\\/g, '/').split('/').pop()}
+                </div>
               </div>
               <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-500 dark:text-gray-500">
                 <span className="rounded-full border border-sky-300 dark:border-sky-800 bg-sky-500/10 px-1.5 py-0.5 text-sky-700 dark:text-sky-300">

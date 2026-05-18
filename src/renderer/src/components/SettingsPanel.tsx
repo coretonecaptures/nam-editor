@@ -306,7 +306,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
 
       <div className="flex-1 overflow-y-auto px-6 py-5">
         <div className={`${maximized ? 'max-w-none' : 'max-w-2xl'} space-y-8`}>
-          <div className="border-b border-gray-200 dark:border-gray-800">
+          <div className="sticky top-0 z-10 -mx-6 px-6 border-b border-gray-200 dark:border-gray-800 bg-white/95 dark:bg-gray-900/95 backdrop-blur">
           <div className="flex flex-wrap gap-6 -mb-px">
             {([
               ['global', 'Global'],
@@ -1361,7 +1361,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
           <div>
             <div className="flex items-center gap-2 mb-4">
               <span className="text-sm">Watch</span>
-              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Folder Watches</h3>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">New .nam Auto-Copy Rules</h3>
               <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
             </div>
             <p className="text-xs text-gray-500 dark:text-gray-500 mb-4">
@@ -1372,14 +1372,14 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                 onClick={() => setFolderWatchesOpen((v) => !v)}
                 className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
               >
-                <span>{folderWatchesOpen ? 'Hide folder watches' : 'Show folder watches'}</span>
+                <span>{folderWatchesOpen ? 'Hide auto-copy rules' : 'Show auto-copy rules'}</span>
                 <span className="text-[10px] text-gray-400">{draft.folderWatchRules.filter((rule) => rule.enabled).length}</span>
               </button>
             </div>
             {folderWatchesOpen && (
               <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-3 bg-gray-50/60 dark:bg-gray-900/30">
                 {draft.folderWatchRules.filter((rule) => rule.enabled).length === 0 ? (
-                  <p className="text-xs text-gray-500 dark:text-gray-500">No folder watches configured yet.</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-500">No auto-copy rules configured yet.</p>
                 ) : (
                   <div className="space-y-2">
                     {draft.folderWatchRules.filter((rule) => rule.enabled).map((rule) => (

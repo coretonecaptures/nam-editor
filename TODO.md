@@ -46,6 +46,7 @@
 
 ## Experimental training
 
+- Training comparison test: run the same capture through a full `1000 epoch REVxSTD` build in both NAM-BOT and NAM Lab, then compare the resulting `.nam` files directly and also do a listening check to confirm they sound the same (or understand why they do not).
 - Training queue controls/icons: replace the temporary plain-text queue controls (`^`, `v`, `x`) with nicer stable icons/SVGs that cannot regress into mojibake.
 - Training panel layout: do a dedicated neatening pass on the Training section so Run WAVs / Run Folder / Queue, routing, and custom controls use space more gracefully and read more cleanly.
 - Training custom-run UX: make `Save as Preset` actually work end to end by prompting for a preset name and saving the recipe into the preset library.
@@ -63,8 +64,10 @@
 - Training verification report: scan a folder of WAVs / trained models and verify expected outputs, ESR targets, epochs, and architectures against watch or preset expectations.
 - Training workflow: consider a higher-level `job / batch` concept later, so one queued item can represent a multi-format set while watcher mode remains a separate automation layer.
 - Training workspace isolation: give each capture/format run its own internal work folder for Lightning logs, checkpoints, and graphs, then promote only the final user-facing assets back to the chosen destination.
+- Training history: reflect the same WAV / Folder Run / Watcher batch grouping concept that the live queue uses, so history is easier to scan by submission instead of reading every item as one long flat list.
 - Training settings IA: move experimental training settings into their own dedicated Settings tab once watcher folders, presets, history, and verification need more room than the general Settings page can comfortably give them.
 - Settings IA: split Settings into tab-like sections such as `Training`, `Global`, `Metadata`, `Capture Defaults`, and related groupings so the growing watch / preset / checklist / metadata surface does not all compete in one long page.
+- Settings disclosure UX: replace the repeated `Show ...` / `Hide ...` buttons for editable lists (folder watch rules, training presets, watch folders, etc.) with a cleaner UI pattern so these sections feel less clunky to open and manage.
 
 ## Metadata suggestions and organization
 

@@ -351,11 +351,14 @@ declare global {
       cancelTrainerRun: () => Promise<{ success: boolean; error?: string }>
       setTrainerPauseAfterCurrent: (pause: boolean) => Promise<{ success: boolean }>
       retryFailedTrainerRuns: () => Promise<{ success: boolean; retried?: number }>
+      retryTrainerJob: (jobId: string) => Promise<{ success: boolean; error?: string }>
       clearFinishedTrainerRuns: () => Promise<{ success: boolean }>
       removeQueuedTrainerRuns: () => Promise<{ success: boolean }>
       removeTrainerJob: (jobId: string) => Promise<{ success: boolean; error?: string }>
+      watcherQueueAction: (jobId: string, action: 'remove' | 'skip' | 'move-canceled' | 'retry-now') => Promise<{ success: boolean; error?: string }>
       moveTrainerJob: (jobId: string, direction: 'up' | 'down') => Promise<{ success: boolean; error?: string }>
       makeTrainerJobNext: (jobId: string) => Promise<{ success: boolean; error?: string }>
+      retryTrainerHistoryEntry: (historyId: string) => Promise<{ success: boolean; error?: string; queued?: number }>
       onTrainerUpdate: (cb: (state: TrainerStateSnapshot) => void) => () => void
       openInNam: (filePath: string, standalonePath: string) => Promise<{ success: boolean; error?: string }>
       scanImages: (folderPath: string) => Promise<{ success: boolean; images: string[] }>
@@ -577,6 +580,7 @@ export default function App() {
   const [showTrainingWorkspace, setShowTrainingWorkspace] = useState(false)
   const [trainingWorkspaceMode, setTrainingWorkspaceMode] = useState<'files' | 'folder' | 'queue' | 'history'>('files')
   const [globalTrainerState, setGlobalTrainerState] = useState<TrainerStateSnapshot>(IDLE_TRAINER_STATE)
+  const trainerWatcherAutoStartRecoveryRef = useRef('')
   const [toneStoreMounted, setToneStoreMounted] = useState(false)
   const [toneStoreQueueJob, setToneStoreQueueJob] = useState<ToneStoreDownloadQueueJob | null>(null)
   const toneStoreQueueRunningRef = useRef(false)
@@ -3593,6 +3597,34 @@ export default function App() {
   const showToneStorePanel = showToneStore && !showSettings && !showDashboard && !historyOpen && batchFolder === null
   const activeTrainingQueueCount = globalTrainerState.queue.filter((job) => ['queued', 'starting', 'running'].includes(job.status)).length
   const trainingQueueIsActive = globalTrainerState.status === 'starting' || globalTrainerState.status === 'running'
+
+  useEffect(() => {
+    const autoRunWatcherIds = new Set(
+      settings.enableExperimentalTraining
+        ? settings.trainingWatchProfiles
+            .filter((profile) => profile.enabled && profile.autoRun)
+            .map((profile) => profile.id)
+        : []
+    )
+    const queuedWatcherJobs = globalTrainerState.queue.filter(
+      (job) => job.status === 'queued' && job.sourceMode === 'watcher' && !!job.profileId && autoRunWatcherIds.has(job.profileId)
+    )
+    if (queuedWatcherJobs.length === 0 || trainingQueueIsActive) {
+      trainerWatcherAutoStartRecoveryRef.current = ''
+      return
+    }
+    const recoveryKey = queuedWatcherJobs.map((job) => job.jobId).join('|')
+    if (!recoveryKey || trainerWatcherAutoStartRecoveryRef.current === recoveryKey) return
+    trainerWatcherAutoStartRecoveryRef.current = recoveryKey
+    void window.api.startQueuedTrainerRuns().catch(() => {
+      trainerWatcherAutoStartRecoveryRef.current = ''
+    })
+  }, [
+    globalTrainerState.queue,
+    settings.enableExperimentalTraining,
+    settings.trainingWatchProfiles,
+    trainingQueueIsActive,
+  ])
 
   useEffect(() => {
     if (showToneStore || toneStoreSearchRequest) setToneStoreMounted(true)

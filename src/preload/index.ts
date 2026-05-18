@@ -120,16 +120,22 @@ const api = {
     ipcRenderer.invoke('trainer:startQueued'),
   retryFailedTrainerRuns: (): Promise<{ success: boolean; retried?: number }> =>
     ipcRenderer.invoke('trainer:retryFailed'),
+  retryTrainerJob: (jobId: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('trainer:retryJob', jobId),
   clearFinishedTrainerRuns: (): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('trainer:clearFinished'),
   removeQueuedTrainerRuns: (): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('trainer:removeQueued'),
   removeTrainerJob: (jobId: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('trainer:removeJob', jobId),
+  watcherQueueAction: (jobId: string, action: 'remove' | 'skip' | 'move-canceled' | 'retry-now'): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('trainer:watcherQueueAction', jobId, action),
   moveTrainerJob: (jobId: string, direction: 'up' | 'down'): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('trainer:moveJob', jobId, direction),
   makeTrainerJobNext: (jobId: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('trainer:makeNext', jobId),
+  retryTrainerHistoryEntry: (historyId: string): Promise<{ success: boolean; error?: string; queued?: number }> =>
+    ipcRenderer.invoke('trainer:retryHistoryEntry', historyId),
   onTrainerUpdate: (cb: (state: TrainerStateSnapshot) => void): (() => void) => {
     const handler = (_event: unknown, state: TrainerStateSnapshot) => cb(state)
     ipcRenderer.on('trainer:update', handler)
