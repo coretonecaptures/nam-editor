@@ -392,10 +392,6 @@ ${statsBarHtml}
 
 ${contentsHtml}
 
-${info.recommendedInputGain ? `<div class="section">
-  <div class="micro" style="margin-top:14pt">Recommended Input Gain</div>
-  <div style="font-family:'IBM Plex Mono',monospace; font-size:14pt; color:${t.fg}; margin-top:4pt">${esc(info.recommendedInputGain)}</div>
-</div>` : ''}
 
 ${hasCaptures ? `<div class="section break">
   <div class="section-head">
