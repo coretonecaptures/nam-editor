@@ -386,9 +386,9 @@ export function generatePackHtmlAdvanced(
   ${info.subtitle ? `<div class="basedon">${esc(info.subtitle)}</div>` : ''}
 </div>
 
-${statsBarHtml}
-
 ${hasDesc ? `<div class="desc" style="margin-top:16pt">${parseDescription(info.description, dark)}</div>` : ''}
+
+${statsBarHtml}
 
 ${contentsHtml}
 
