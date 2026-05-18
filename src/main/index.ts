@@ -130,6 +130,9 @@ interface TrainerStartPayload {
   ignoreChecks: boolean
   profileId?: string | null
   profileName?: string | null
+  modeledBy?: string | null
+  inputLevelDbu?: number | null
+  outputLevelDbu?: number | null
   sourceMode?: TrainingSourceMode
   finalModelRoot?: string | null
   processedWavRoot?: string | null
@@ -172,6 +175,9 @@ interface TrainerQueueJob {
   progressLatestLine: string
   profileId: string | null
   profileName: string | null
+  modeledBy: string | null
+  inputLevelDbu: number | null
+  outputLevelDbu: number | null
   sourceMode: TrainingSourceMode
   finalModelRoot: string
   processedWavRoot: string
@@ -961,6 +967,9 @@ function createTrainerJob(payload: TrainerStartPayload): TrainerQueueJob {
     progressLatestLine: '',
     profileId: payload.profileId ?? null,
     profileName: payload.profileName ?? null,
+    modeledBy: payload.modeledBy?.trim() || null,
+    inputLevelDbu: Number.isFinite(payload.inputLevelDbu) ? payload.inputLevelDbu ?? null : null,
+    outputLevelDbu: Number.isFinite(payload.outputLevelDbu) ? payload.outputLevelDbu ?? null : null,
     sourceMode: payload.sourceMode ?? 'manual-direct',
     finalModelRoot,
     processedWavRoot: (payload.processedWavRoot ?? '').trim(),
@@ -1148,6 +1157,9 @@ async function buildTrainerPayloadsForProfile(
         savePlot: profile.savePlot,
         silent: true,
         ignoreChecks: profile.ignoreChecks,
+        modeledBy: trainerConfiguredModeledBy || null,
+        inputLevelDbu: trainerConfiguredInputLevelDbu,
+        outputLevelDbu: trainerConfiguredOutputLevelDbu,
         profileId: profile.id,
         profileName: profile.name,
         sourceMode: sourceModeOverride ?? profile.sourceMode,
@@ -1331,6 +1343,9 @@ function scheduleTrainingWatcherFile(profile: TrainingProfile, filePath: string)
 
 let trainerConfiguredPythonPath = ''
 let trainerConfiguredInputPath = ''
+let trainerConfiguredModeledBy = ''
+let trainerConfiguredInputLevelDbu: number | null = null
+let trainerConfiguredOutputLevelDbu: number | null = null
 
 function resetTrainingWatchProfiles(profiles: TrainingProfile[], retainGraphs: boolean): void {
   const manualRunning = new Set(trainingWatcherRunning)
@@ -1895,12 +1910,111 @@ function liftUiMetadata(meta: Record<string, unknown>): Record<string, unknown> 
   return meta
 }
 
-function persistTrainerMetadata(content: string, epochs: number, architecture: string): string {
+function patchMetadataField(content: string, field: string, value: unknown): string {
+  const newVal = serializeJsonValue(value)
+  const fieldRe = new RegExp(
+    `("${escapeRe(field)}")(\\s*:\\s*)(null|true|false|"(?:[^"\\\\]|\\\\.)*"|-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)`
+  )
+  const metaKeyMatch = /"metadata"\s*:\s*\{/.exec(content)
+  if (!metaKeyMatch) return content
+  const openBrace = metaKeyMatch.index + metaKeyMatch[0].length - 1
+  const closeBrace = findMatchingBrace(content, openBrace)
+  if (closeBrace === -1) return content
+  let inner = content.slice(openBrace + 1, closeBrace)
+  if (fieldRe.test(inner)) {
+    inner = inner.replace(fieldRe, (_m, k, sep) => k + sep + newVal)
+    return content.slice(0, openBrace + 1) + inner + content.slice(closeBrace)
+  }
+  if (value === null || value === undefined) return content
+  const indentMatch = /\n([ \t]+)"/.exec(inner)
+  const indent = indentMatch ? indentMatch[1] : '    '
+  const trimmed = inner.trimEnd()
+  const needsComma = trimmed.length > 0 && !trimmed.endsWith(',')
+  const trailing = inner.slice(trimmed.length)
+  inner = trimmed + (needsComma ? ',' : '') + `\n${indent}"${field}": ${newVal}` + trailing
+  return content.slice(0, openBrace + 1) + inner + content.slice(closeBrace)
+}
+
+function patchTrainingField(content: string, field: string, value: unknown): string {
+  const newVal = serializeJsonValue(value)
+  const fieldRe = new RegExp(
+    `("${escapeRe(field)}")(\\s*:\\s*)(null|true|false|"(?:[^"\\\\]|\\\\.)*"|-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)`
+  )
+  const trainingRe = /"training"\s*:\s*\{/
+  const trainingMatch = trainingRe.exec(content)
+  if (trainingMatch) {
+    const openBrace = trainingMatch.index + trainingMatch[0].length - 1
+    const closeBrace = findMatchingBrace(content, openBrace)
+    if (closeBrace !== -1) {
+      let inner = content.slice(openBrace + 1, closeBrace)
+      if (fieldRe.test(inner)) {
+        inner = inner.replace(fieldRe, (_m, k, sep) => k + sep + newVal)
+        return content.slice(0, openBrace + 1) + inner + content.slice(closeBrace)
+      }
+      if (value !== null && value !== undefined) {
+        const indentMatch = /\n([ \t]+)"/.exec(inner)
+        const indent = indentMatch ? indentMatch[1] : '      '
+        const trimmed = inner.trimEnd()
+        const needsComma = trimmed.length > 0 && !trimmed.endsWith(',')
+        const trailing = inner.slice(trimmed.length)
+        inner = trimmed + (needsComma ? ',' : '') + `\n${indent}"${field}": ${newVal}` + trailing
+        return content.slice(0, openBrace + 1) + inner + content.slice(closeBrace)
+      }
+      return content
+    }
+  }
+
+  if (value === null || value === undefined) return content
+  const metaKeyMatch = /"metadata"\s*:\s*\{/.exec(content)
+  if (!metaKeyMatch) return content
+  const openBrace = metaKeyMatch.index + metaKeyMatch[0].length - 1
+  const closeBrace = findMatchingBrace(content, openBrace)
+  if (closeBrace === -1) return content
+  let inner = content.slice(openBrace + 1, closeBrace)
+  const indentMatch = /\n([ \t]+)"/.exec(inner)
+  const indent = indentMatch ? indentMatch[1] : '    '
+  const trimmed = inner.trimEnd()
+  const needsComma = trimmed.length > 0 && !trimmed.endsWith(',')
+  const trailing = inner.slice(trimmed.length)
+  const trainingBlock = `\n${indent}"training": {\n${indent}  "${field}": ${newVal}\n${indent}}`
+  inner = trimmed + (needsComma ? ',' : '') + trainingBlock + trailing
+  return content.slice(0, openBrace + 1) + inner + content.slice(closeBrace)
+}
+
+function persistTrainerMetadata(
+  content: string,
+  options: {
+    epochs: number
+    architecture: TrainerArchitecture
+    modelName: string
+    modeledBy: string | null
+    inputLevelDbu: number | null
+    outputLevelDbu: number | null
+    validationEsr: number | null
+    manualLatencySamples: number | null
+  }
+): string {
   let patched = content
-  patched = patchTopLevelNamBotField(patched, 'trained_epochs', epochs)
-  patched = patchTopLevelNamBotField(patched, 'preset_name', architecture)
-  patched = patchNamLabField(patched, 'trained_epochs', epochs)
-  patched = patchNamLabField(patched, 'preset_name', architecture)
+  const architectureLabel = getTrainerArchitectureFolderName(options.architecture)
+  patched = patchMetadataField(patched, 'name', options.modelName)
+  if (options.modeledBy?.trim()) {
+    patched = patchMetadataField(patched, 'modeled_by', options.modeledBy.trim())
+  }
+  if (options.inputLevelDbu != null) {
+    patched = patchMetadataField(patched, 'input_level_dbu', options.inputLevelDbu)
+  }
+  if (options.outputLevelDbu != null) {
+    patched = patchMetadataField(patched, 'output_level_dbu', options.outputLevelDbu)
+  }
+  patched = patchTrainingField(patched, 'validation_esr', options.validationEsr)
+  patched = patchTopLevelNamBotField(patched, 'trained_epochs', options.epochs)
+  patched = patchTopLevelNamBotField(patched, 'preset_name', architectureLabel)
+  patched = patchTopLevelNamBotField(patched, 'validation_esr', options.validationEsr)
+  patched = patchTopLevelNamBotField(patched, 'manual_latency_samples', options.manualLatencySamples ?? 0)
+  patched = patchNamLabField(patched, 'trained_epochs', options.epochs)
+  patched = patchNamLabField(patched, 'preset_name', architectureLabel)
+  patched = patchNamLabField(patched, 'validation_esr', options.validationEsr)
+  patched = patchNamLabField(patched, 'manual_latency_samples', options.manualLatencySamples ?? 0)
   return patched
 }
 
@@ -3143,7 +3257,16 @@ app.whenReady().then(async () => {
       if (trainerState.status === 'success' && trainerState.outputModelPath) {
         try {
           const content = await fs.promises.readFile(trainerState.outputModelPath, 'utf-8')
-          const patched = persistTrainerMetadata(content, job.epochs, job.architecture)
+          const patched = persistTrainerMetadata(content, {
+            epochs: job.epochs,
+            architecture: job.architecture,
+            modelName: job.modelName,
+            modeledBy: job.modeledBy,
+            inputLevelDbu: job.inputLevelDbu,
+            outputLevelDbu: job.outputLevelDbu,
+            validationEsr: trainerState.validationEsr,
+            manualLatencySamples: job.latency,
+          })
           JSON.parse(patched)
           suppressWatcher()
           await fs.promises.writeFile(trainerState.outputModelPath, patched, 'utf-8')
@@ -3332,11 +3455,17 @@ app.whenReady().then(async () => {
   ipcMain.handle('trainer:setProfilesState', async (_event, payload: {
     pythonPath: string
     inputPath: string
+    modeledBy: string
+    inputLevelDbu: number | null
+    outputLevelDbu: number | null
     retainGraphs: boolean
     profiles: TrainingProfile[]
   }) => {
     trainerConfiguredPythonPath = (payload?.pythonPath ?? '').trim()
     trainerConfiguredInputPath = (payload?.inputPath ?? '').trim()
+    trainerConfiguredModeledBy = (payload?.modeledBy ?? '').trim()
+    trainerConfiguredInputLevelDbu = Number.isFinite(payload?.inputLevelDbu) ? payload.inputLevelDbu ?? null : null
+    trainerConfiguredOutputLevelDbu = Number.isFinite(payload?.outputLevelDbu) ? payload.outputLevelDbu ?? null : null
     resetTrainingWatchProfiles(Array.isArray(payload?.profiles) ? payload.profiles : [], payload?.retainGraphs ?? true)
     return { success: true }
   })

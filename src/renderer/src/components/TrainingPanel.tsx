@@ -115,6 +115,10 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const [historyArchitectureFilter, setHistoryArchitectureFilter] = useState<string>('all')
   const [historyTimeFilter, setHistoryTimeFilter] = useState<'all' | 'day' | 'week' | 'month' | 'quarter'>('all')
   const [historySearch, setHistorySearch] = useState('')
+  const [showSavePresetModal, setShowSavePresetModal] = useState(false)
+  const [presetNameDraft, setPresetNameDraft] = useState('')
+  const [presetSaveError, setPresetSaveError] = useState('')
+  const [presetSaveNotice, setPresetSaveNotice] = useState('')
   const rawLogRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -142,6 +146,12 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     if (!node) return
     node.scrollTop = node.scrollHeight
   }, [trainerState.logs.length])
+
+  useEffect(() => {
+    if (!presetSaveNotice) return
+    const timer = window.setTimeout(() => setPresetSaveNotice(''), 2500)
+    return () => window.clearTimeout(timer)
+  }, [presetSaveNotice])
 
   useEffect(() => {
     if (!queueContextMenu) return
@@ -402,6 +412,16 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       setLaunchError('Choose an output root before queueing captures.')
       return
     }
+    const captureDefaultsEnabled = settings.enableCaptureDefaults
+    const modeledBy = captureDefaultsEnabled && settings.defaultModeledBy.trim() !== ''
+      ? settings.defaultModeledBy.trim()
+      : null
+    const inputLevelDbu = captureDefaultsEnabled && settings.defaultInputLevel.trim() !== ''
+      ? Number.parseFloat(settings.defaultInputLevel.trim())
+      : null
+    const outputLevelDbu = captureDefaultsEnabled && settings.defaultOutputLevel.trim() !== ''
+      ? Number.parseFloat(settings.defaultOutputLevel.trim())
+      : null
 
     const result = await window.api.enqueueTrainerRuns(
       (() => {
@@ -430,6 +450,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
             namingTemplate: '{basename}',
             profileId: activePreset?.id ?? null,
             profileName: activePreset?.name ?? null,
+            modeledBy,
+            inputLevelDbu: Number.isFinite(inputLevelDbu) ? inputLevelDbu : null,
+            outputLevelDbu: Number.isFinite(outputLevelDbu) ? outputLevelDbu : null,
             submissionId,
             submissionLabel,
             submissionCreatedAt,
@@ -500,6 +523,16 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       return
     }
     const routing = getManualFolderRouting()
+    const captureDefaultsEnabled = settings.enableCaptureDefaults
+    const modeledBy = captureDefaultsEnabled && settings.defaultModeledBy.trim() !== ''
+      ? settings.defaultModeledBy.trim()
+      : null
+    const inputLevelDbu = captureDefaultsEnabled && settings.defaultInputLevel.trim() !== ''
+      ? Number.parseFloat(settings.defaultInputLevel.trim())
+      : null
+    const outputLevelDbu = captureDefaultsEnabled && settings.defaultOutputLevel.trim() !== ''
+      ? Number.parseFloat(settings.defaultOutputLevel.trim())
+      : null
     const submissionId = `manual-folder-${Date.now()}`
     const submissionLabel = `Folder Run - ${folderRunPath.trim().replace(/\\/g, '/').split('/').pop() || 'Folder'}`
     const submissionCreatedAt = new Date().toISOString()
@@ -518,6 +551,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
         latencyValue: preset.latencyValue,
         savePlot: preset.savePlot,
         ignoreChecks: preset.ignoreChecks,
+        modeledBy,
+        inputLevelDbu: Number.isFinite(inputLevelDbu) ? inputLevelDbu : null,
+        outputLevelDbu: Number.isFinite(outputLevelDbu) ? outputLevelDbu : null,
         sourcePostProcess: routing.sourcePostProcess,
         watchFolder: '',
         processedWavRoot: routing.processedWavRoot,
@@ -637,11 +673,48 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       setLaunchError('Target ESR must be blank or a positive number before saving a preset.')
       return
     }
-    const name = window.prompt('Preset name', `${architectures.map((item) => ARCHITECTURE_LABELS[item]).join(' + ')} ${parsedEpochs} epoch`)
-    if (!name || !name.trim()) return
+    if (architectures.length === 0) {
+      setLaunchError('Choose at least one architecture before saving a preset.')
+      return
+    }
+    setPresetNameDraft(`${architectures.map((item) => ARCHITECTURE_LABELS[item]).join(' + ')} ${parsedEpochs} epoch`)
+    setPresetSaveError('')
+    setShowSavePresetModal(true)
+  }
+
+  const handleConfirmSavePreset = () => {
+    const parsedEpochs = Number.parseInt(epochs, 10)
+    const parsedLatency = latency.trim() === '' ? null : Number.parseInt(latency.trim(), 10)
+    const parsedThresholdEsr = thresholdEsr.trim() === '' ? null : Number.parseFloat(thresholdEsr.trim())
+    const name = presetNameDraft.trim()
+    if (!name) {
+      setPresetSaveError('Enter a preset name.')
+      return
+    }
+    if (!Number.isFinite(parsedEpochs) || parsedEpochs <= 0) {
+      setPresetSaveError('Epochs must be a positive whole number.')
+      return
+    }
+    if (latency.trim() !== '' && (!Number.isFinite(parsedLatency) || parsedLatency! < 0)) {
+      setPresetSaveError('Latency must be blank or a non-negative integer sample offset.')
+      return
+    }
+    if (thresholdEsr.trim() !== '' && (!Number.isFinite(parsedThresholdEsr) || parsedThresholdEsr! <= 0)) {
+      setPresetSaveError('Target ESR must be blank or a positive number.')
+      return
+    }
+    if (architectures.length === 0) {
+      setPresetSaveError('Choose at least one architecture.')
+      return
+    }
+    const duplicateName = settings.trainingPresets.some((preset) => preset.name.trim().toLowerCase() === name.toLowerCase())
+    if (duplicateName) {
+      setPresetSaveError('A preset with that name already exists.')
+      return
+    }
     const preset: TrainingPreset = {
       id: makePresetId(name),
-      name: name.trim(),
+      name,
       architectures,
       epochs: parsedEpochs,
       thresholdEsr: parsedThresholdEsr,
@@ -655,7 +728,12 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       trainingPresets: [...settings.trainingPresets, preset],
     })
     setSelectedPresetId(preset.id)
-    setLaunchError(`Saved preset "${preset.name}".`)
+    if (runMode === 'folder') setFolderRunProfileId(preset.id)
+    setShowSavePresetModal(false)
+    setPresetNameDraft('')
+    setPresetSaveError('')
+    setLaunchError('')
+    setPresetSaveNotice(`Saved preset "${preset.name}".`)
   }
 
   return (
@@ -670,7 +748,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               <div className="text-sm font-semibold text-violet-100">Local Training</div>
               <p className="mt-1 text-xs text-violet-200/85">
                 Queue one input DI with multiple reamped WAVs. NAM Lab runs them serially, keeps a local queue, and promotes the final
-                .nam back to your chosen destination folder beside the ESR plot.
+                .nam back to your chosen destination folder beside the ESR plot. If you have not configured the local trainer yet, refer to the
+                official NAM trainer install guide first.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -737,6 +816,11 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 {isRunning
                   ? `Queue running - ${queuedCount} queued${activeJob ? `, active: ${ARCHITECTURE_LABELS[activeJob.architecture]}` : ''}.`
                   : `Queue waiting - ${queuedCount} queued item${queuedCount === 1 ? '' : 's'}.`}
+              </div>
+            )}
+            {presetSaveNotice && (
+              <div className="text-sm font-medium text-emerald-600 dark:text-emerald-400">
+                {presetSaveNotice}
               </div>
             )}
             {runMode === 'queue' ? (
@@ -891,7 +975,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               </div>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] gap-3 items-center">
+            <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-3 items-center">
               <ToggleRow label="Save ESR plot" checked={savePlot} onChange={setSavePlot} />
               <ToggleRow label="Ignore checks" checked={ignoreChecks} onChange={setIgnoreChecks} />
               <button
@@ -900,51 +984,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               >
                 Save as Preset
               </button>
-              {runMode === 'files' ? (
-                <button
-                  onClick={handleQueue}
-                  disabled={!canQueue}
-                  className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white whitespace-nowrap"
-                >
-                  {(() => {
-                    const totalJobs = outputPaths.length * (activePreset ? activePreset.architectures.length : architectures.length)
-                    return totalJobs === 1 ? 'Queue capture' : `Queue ${totalJobs} captures`
-                  })()}
-                </button>
-              ) : (
-                <button
-                  onClick={() => { void handleRunFolderOnce() }}
-                  className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-emerald-600 hover:bg-emerald-500 text-white whitespace-nowrap"
-                >
-                  Queue folder
-                </button>
-              )}
             </div>
             </>
-            )}
-
-            {!showsCustomSettings && (
-              <div className="flex justify-end">
-                {runMode === 'files' ? (
-                  <button
-                    onClick={handleQueue}
-                    disabled={!canQueue}
-                    className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white"
-                  >
-                    {(() => {
-                      const totalJobs = outputPaths.length * (activePreset ? activePreset.architectures.length : architectures.length)
-                      return totalJobs === 1 ? 'Queue capture' : `Queue ${totalJobs} captures`
-                    })()}
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => { void handleRunFolderOnce() }}
-                    className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-emerald-600 hover:bg-emerald-500 text-white"
-                  >
-                    Queue folder
-                  </button>
-                )}
-              </div>
             )}
 
             <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-3 space-y-3">
@@ -983,6 +1024,28 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 <span className="mx-2">·</span>
                 Example graph: <code>{exampleGraphPath}</code>
               </div>
+            </div>
+
+            <div className="flex justify-center pt-1">
+              {runMode === 'files' ? (
+                <button
+                  onClick={handleQueue}
+                  disabled={!canQueue}
+                  className="px-5 py-2 rounded-lg text-sm font-medium transition-colors bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white"
+                >
+                  {(() => {
+                    const totalJobs = outputPaths.length * (activePreset ? activePreset.architectures.length : architectures.length)
+                    return totalJobs === 1 ? 'Queue capture' : `Queue ${totalJobs} captures`
+                  })()}
+                </button>
+              ) : (
+                <button
+                  onClick={() => { void handleRunFolderOnce() }}
+                  className="px-5 py-2 rounded-lg text-sm font-medium transition-colors bg-emerald-600 hover:bg-emerald-500 text-white"
+                >
+                  Queue folder
+                </button>
+              )}
             </div>
             </>
             )}
@@ -1417,6 +1480,66 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
             </div>
           </div>
           </div>
+          )}
+          {showSavePresetModal && (
+            <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 px-4">
+              <div className="w-full max-w-md rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 shadow-2xl">
+                <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
+                  <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">Save Preset</div>
+                  <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Save the current training recipe so you can reuse it later for Run WAVs, Run Folder, or watch folders.
+                  </div>
+                </div>
+                <div className="px-5 py-4 space-y-4">
+                  <Field label="Preset Name">
+                    <input
+                      value={presetNameDraft}
+                      onChange={(e) => {
+                        setPresetNameDraft(e.target.value)
+                        if (presetSaveError) setPresetSaveError('')
+                      }}
+                      placeholder="e.g. REVxSTD 1000 epoch"
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          handleConfirmSavePreset()
+                        } else if (e.key === 'Escape') {
+                          setShowSavePresetModal(false)
+                          setPresetSaveError('')
+                        }
+                      }}
+                      className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                    />
+                  </Field>
+                  <div className="rounded-lg border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-xs text-sky-800 dark:text-sky-200">
+                    {architectures.map((item) => ARCHITECTURE_LABELS[item]).join(', ')} · {epochs} epochs · {thresholdEsr.trim() ? `Target ESR ${thresholdEsr.trim()}` : 'No ESR target'}
+                  </div>
+                  {presetSaveError && (
+                    <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+                      {presetSaveError}
+                    </div>
+                  )}
+                </div>
+                <div className="px-5 py-4 border-t border-gray-200 dark:border-gray-800 flex items-center justify-end gap-3">
+                  <button
+                    onClick={() => {
+                      setShowSavePresetModal(false)
+                      setPresetSaveError('')
+                    }}
+                    className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleConfirmSavePreset}
+                    className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-indigo-600 hover:bg-indigo-500 text-white"
+                  >
+                    Save Preset
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
           {historyContextMenu && (
             <div

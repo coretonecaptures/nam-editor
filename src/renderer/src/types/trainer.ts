@@ -40,6 +40,9 @@ export interface TrainerStartPayload {
   ignoreChecks: boolean
   profileId?: string | null
   profileName?: string | null
+  modeledBy?: string | null
+  inputLevelDbu?: number | null
+  outputLevelDbu?: number | null
   sourceMode?: 'watcher' | 'manual-folder-run' | 'manual-direct'
   finalModelRoot?: string | null
   processedWavRoot?: string | null
@@ -85,6 +88,9 @@ export interface TrainerQueueJob {
   progressLatestLine: string
   profileId: string | null
   profileName: string | null
+  modeledBy: string | null
+  inputLevelDbu: number | null
+  outputLevelDbu: number | null
   sourceMode: 'watcher' | 'manual-folder-run' | 'manual-direct'
   finalModelRoot: string
   processedWavRoot: string

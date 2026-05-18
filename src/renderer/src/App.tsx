@@ -345,7 +345,15 @@ declare global {
       getTrainerState: () => Promise<TrainerStateSnapshot>
       startTrainerRun: (payload: TrainerStartPayload) => Promise<{ success: boolean; error?: string }>
       enqueueTrainerRuns: (payloads: TrainerStartPayload[]) => Promise<{ success: boolean; error?: string; queued?: number }>
-      setTrainerProfilesState: (payload: { pythonPath: string; inputPath: string; retainGraphs: boolean; profiles: TrainingProfile[] }) => Promise<{ success: boolean }>
+      setTrainerProfilesState: (payload: {
+        pythonPath: string
+        inputPath: string
+        modeledBy: string
+        inputLevelDbu: number | null
+        outputLevelDbu: number | null
+        retainGraphs: boolean
+        profiles: TrainingProfile[]
+      }) => Promise<{ success: boolean }>
       getTrainerProfilesState: () => Promise<TrainerProfilesStateSnapshot>
       markTrainingWatchCurrentContentsSeen: (profileId: string) => Promise<{ success: boolean; error?: string; marked?: number }>
       setTrainerProfileRunning: (profileId: string, running: boolean) => Promise<{ success: boolean; error?: string }>
@@ -1129,16 +1137,31 @@ export default function App() {
   }, [settings.folderWatchImports, settings.folderWatchRules])
 
   useEffect(() => {
+    const captureDefaultsEnabled = settings.enableCaptureDefaults
+    const defaultInputLevel = captureDefaultsEnabled && settings.defaultInputLevel.trim() !== ''
+      ? Number.parseFloat(settings.defaultInputLevel.trim())
+      : null
+    const defaultOutputLevel = captureDefaultsEnabled && settings.defaultOutputLevel.trim() !== ''
+      ? Number.parseFloat(settings.defaultOutputLevel.trim())
+      : null
+
     void window.api.setTrainerProfilesState({
       pythonPath: settings.namPythonPath,
       inputPath: settings.namTrainingInputWav,
+      modeledBy: captureDefaultsEnabled ? settings.defaultModeledBy : '',
+      inputLevelDbu: Number.isFinite(defaultInputLevel) ? defaultInputLevel : null,
+      outputLevelDbu: Number.isFinite(defaultOutputLevel) ? defaultOutputLevel : null,
       retainGraphs: settings.trainingRetainGraphs,
       profiles: settings.enableExperimentalTraining ? resolveTrainingWatcherProfiles(settings) : [],
     })
   }, [
+    settings.enableCaptureDefaults,
     settings.enableExperimentalTraining,
     settings.namPythonPath,
     settings.namTrainingInputWav,
+    settings.defaultModeledBy,
+    settings.defaultInputLevel,
+    settings.defaultOutputLevel,
     settings.trainingPresets,
     settings.trainingWatchProfiles,
     settings.trainingRetainGraphs,
