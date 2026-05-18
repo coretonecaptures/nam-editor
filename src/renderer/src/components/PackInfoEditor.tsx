@@ -2,7 +2,9 @@ import { useState, useEffect, useCallback, useRef, useMemo, type MouseEvent } fr
 import {
   closestCenter,
   DndContext,
+  DragOverlay,
   type DragEndEvent,
+  type DragStartEvent,
   PointerSensor,
   useSensor,
   useSensors,
@@ -17,6 +19,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { NamFile } from '../types/nam'
 import { AppSettings, MetadataSuggestField, MetadataSuggestRule } from '../types/settings'
 import { PACK_CAPTURE_COLUMNS, DEFAULT_EXPORT_COLUMNS, generatePackHtml } from '../utils/packExport'
+import { generatePackHtmlAdvanced } from '../utils/packExportAdvanced'
 import { metadataSuggestRuleSignature } from '../utils/metadataSuggestRuleLibrary'
 
 export type CatalogItem = AppSettings['packGearCatalog'][number]
@@ -765,6 +768,90 @@ function SortableChecklistRow({
   )
 }
 
+function SortableRowEditorRow({
+  id, row, index, keys, placeholders, firstColWidth,
+  onChange, onRemove, catalogItems, onSaveToCatalog, selectedIndices, onToggleSelected,
+}: {
+  id: string
+  row: Record<string, string>
+  index: number
+  keys: string[]
+  placeholders: string[]
+  firstColWidth: string
+  onChange: (index: number, key: string, value: string) => void
+  onRemove: (index: number) => void
+  catalogItems?: { label: string; value: string }[]
+  onSaveToCatalog?: (label: string, value: string) => void
+  selectedIndices?: Set<number>
+  onToggleSelected?: (index: number, checked: boolean) => void
+}) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const style = { transform: CSS.Transform.toString(transform), transition }
+
+  return (
+    <div ref={setNodeRef} style={style} className={`flex gap-1.5 items-start ${isDragging ? 'opacity-0' : ''}`}>
+      {onToggleSelected && (
+        <input
+          type="checkbox"
+          checked={selectedIndices?.has(index) ?? false}
+          onChange={(e) => onToggleSelected(index, e.target.checked)}
+          className="mt-2 w-3.5 h-3.5 rounded accent-teal-600 flex-shrink-0"
+          title="Select row"
+        />
+      )}
+      <button
+        ref={setActivatorNodeRef}
+        type="button"
+        {...attributes}
+        {...listeners}
+        className="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded border border-gray-200 bg-gray-50 text-gray-400 transition-colors hover:border-teal-400 hover:text-teal-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-500 dark:hover:border-teal-500 dark:hover:text-teal-300 cursor-grab active:cursor-grabbing"
+        title="Drag to reorder"
+      >
+        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
+        </svg>
+      </button>
+      {keys.map((k, ki) => (
+        <input
+          key={k}
+          value={row[k] ?? ''}
+          placeholder={placeholders[ki]}
+          onChange={(e) => onChange(index, k, e.target.value)}
+          className={`flex-1 text-xs px-2 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500 ${ki === 0 ? firstColWidth : ''}`}
+        />
+      ))}
+      {onSaveToCatalog && (() => {
+        const rowLabel = String(row[keys[0]] ?? '').trim()
+        const rowValue = String(row[keys[1] ?? keys[0]] ?? '').trim()
+        const alreadyInCatalog = !!catalogItems?.some(
+          (c) => c.label.trim() === rowLabel && c.value.trim() === rowValue
+        )
+        if (alreadyInCatalog) return null
+        return (
+          <button
+            onClick={() => onSaveToCatalog(rowLabel, rowValue)}
+            className="text-gray-300 dark:text-gray-600 hover:text-teal-500 dark:hover:text-teal-400 transition-colors mt-1 flex-shrink-0"
+            title="Save to catalog"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+            </svg>
+          </button>
+        )
+      })()}
+      <button
+        onClick={() => onRemove(index)}
+        className="text-gray-400 hover:text-red-500 transition-colors mt-1 flex-shrink-0"
+        title="Remove"
+      >
+        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+  )
+}
+
 function RowEditor<T extends Record<string, string>>({
   rows, onChange, keys, addLabel, placeholders, firstColWidth = 'max-w-[120px]',
   catalogItems, onSaveToCatalog, selectedIndices, onToggleSelected
@@ -781,10 +868,19 @@ function RowEditor<T extends Record<string, string>>({
   onToggleSelected?: (index: number, checked: boolean) => void
 }) {
   const [showPicker, setShowPicker] = useState(false)
+  const [activeId, setActiveId] = useState<string | null>(null)
   const pickerRef = useRef<HTMLDivElement>(null)
+  const rowIdsRef = useRef<string[]>([])
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+
+  // Keep stable IDs in sync with rows length
+  while (rowIdsRef.current.length < rows.length) rowIdsRef.current.push(crypto.randomUUID())
+  if (rowIdsRef.current.length > rows.length) rowIdsRef.current = rowIdsRef.current.slice(0, rows.length)
+
+  const activeRow = activeId ? rows[rowIdsRef.current.indexOf(activeId)] ?? null : null
+
   const emptyRow = () => Object.fromEntries(keys.map((k) => [k, ''])) as T
 
-  // Close picker on outside click
   useEffect(() => {
     if (!showPicker) return
     const handler = (e: MouseEvent) => {
@@ -794,85 +890,63 @@ function RowEditor<T extends Record<string, string>>({
     return () => document.removeEventListener('mousedown', handler)
   }, [showPicker])
 
+  const handleDragStart = ({ active }: DragStartEvent) => setActiveId(String(active.id))
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    setActiveId(null)
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIndex = rowIdsRef.current.indexOf(String(active.id))
+    const newIndex = rowIdsRef.current.indexOf(String(over.id))
+    if (oldIndex < 0 || newIndex < 0) return
+    rowIdsRef.current = arrayMove(rowIdsRef.current, oldIndex, newIndex)
+    onChange(arrayMove(rows, oldIndex, newIndex))
+  }
+
+  const handleRowChange = (index: number, key: string, value: string) => {
+    const next = [...rows]
+    next[index] = { ...next[index], [key]: value }
+    onChange(next)
+  }
+
+  const handleRowRemove = (index: number) => {
+    rowIdsRef.current = rowIdsRef.current.filter((_, i) => i !== index)
+    onChange(rows.filter((_, j) => j !== index))
+  }
+
   return (
     <div className="space-y-1.5">
-      {rows.map((row, i) => (
-        <div key={i} className="flex gap-1.5 items-start">
-          {onToggleSelected && (
-            <input
-              type="checkbox"
-              checked={selectedIndices?.has(i) ?? false}
-              onChange={(e) => onToggleSelected(i, e.target.checked)}
-              className="mt-2 w-3.5 h-3.5 rounded accent-teal-600 flex-shrink-0"
-              title="Select row"
-            />
-          )}
-          {/* Up/down reorder */}
-          <div className="flex flex-col mt-0.5 flex-shrink-0">
-            <button
-              onClick={() => { const n = [...rows]; [n[i-1], n[i]] = [n[i], n[i-1]]; onChange(n) }}
-              disabled={i === 0}
-              className="text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 disabled:opacity-20 disabled:pointer-events-none transition-colors leading-none"
-              title="Move up"
-            >
-              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 15l7-7 7 7" />
-              </svg>
-            </button>
-            <button
-              onClick={() => { const n = [...rows]; [n[i], n[i+1]] = [n[i+1], n[i]]; onChange(n) }}
-              disabled={i === rows.length - 1}
-              className="text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 disabled:opacity-20 disabled:pointer-events-none transition-colors leading-none"
-              title="Move down"
-            >
-              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-          </div>
-          {keys.map((k, ki) => (
-            <input
-              key={String(k)}
-              value={row[k]}
-              placeholder={placeholders[ki]}
-              onChange={(e) => {
-                const next = [...rows]
-                next[i] = { ...next[i], [k]: e.target.value }
-                onChange(next)
-              }}
-              className={`flex-1 text-xs px-2 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-teal-500 ${ki === 0 ? firstColWidth : ''}`}
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={() => setActiveId(null)}>
+        <SortableContext items={rowIdsRef.current} strategy={verticalListSortingStrategy}>
+          {rows.map((row, i) => (
+            <SortableRowEditorRow
+              key={rowIdsRef.current[i]}
+              id={rowIdsRef.current[i]}
+              row={row as Record<string, string>}
+              index={i}
+              keys={keys.map(String)}
+              placeholders={placeholders}
+              firstColWidth={firstColWidth}
+              onChange={handleRowChange}
+              onRemove={handleRowRemove}
+              catalogItems={catalogItems}
+              onSaveToCatalog={onSaveToCatalog}
+              selectedIndices={selectedIndices}
+              onToggleSelected={onToggleSelected}
             />
           ))}
-          {onSaveToCatalog && (() => {
-            const rowLabel = String(row[keys[0]]).trim()
-            const rowValue = String(row[keys[1] ?? keys[0]]).trim()
-            const alreadyInCatalog = !!catalogItems?.some(
-              (c) => c.label.trim() === rowLabel && c.value.trim() === rowValue
-            )
-            if (alreadyInCatalog) return null
-            return (
-            <button
-              onClick={() => onSaveToCatalog(String(row[keys[0]]), String(row[keys[1] ?? keys[0]]))}
-              className="text-gray-300 dark:text-gray-600 hover:text-teal-500 dark:hover:text-teal-400 transition-colors mt-1 flex-shrink-0"
-              title="Save to catalog"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+        </SortableContext>
+        <DragOverlay dropAnimation={null}>
+          {activeRow ? (
+            <div className="flex items-center gap-2 px-2 py-1.5 rounded border border-teal-400 dark:border-teal-500 bg-white dark:bg-gray-800 shadow-lg text-xs text-gray-700 dark:text-gray-200 opacity-95">
+              <svg className="h-3.5 w-3.5 flex-shrink-0 text-teal-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
               </svg>
-            </button>
-            )
-          })()}
-          <button
-            onClick={() => onChange(rows.filter((_, j) => j !== i))}
-            className="text-gray-400 hover:text-red-500 transition-colors mt-1 flex-shrink-0"
-            title="Remove"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-      ))}
+              <span className="truncate">{keys.map((k) => String(activeRow[k] ?? '')).filter(Boolean).join(' — ')}</span>
+            </div>
+          ) : null}
+        </DragOverlay>
+      </DndContext>
       <div className="flex items-center gap-3 flex-wrap">
         <button
           onClick={() => onChange([...rows, emptyRow()])}
@@ -1217,6 +1291,16 @@ export function PackInfoEditor({
     if (!res.success) setStatus(`Export failed: ${res.error ?? 'unknown error'}`)
   }
 
+  const handleExportAdvanced = async () => {
+    setExporting(true)
+    if (!saved) await handleSave()
+    const logo = darkExport ? (logoDark || undefined) : (logoLight || undefined)
+    const html = generatePackHtmlAdvanced(pack, folderPath, folderName, captures, darkExport, logo, darkAccentColor)
+    const res = await window.api.exportPackSheet(html)
+    setExporting(false)
+    if (!res.success) setStatus(`Export failed: ${res.error ?? 'unknown error'}`)
+  }
+
   const captureDescriptionSelection = useCallback(() => {
     const el = descriptionRef.current
     if (!el) {
@@ -1475,7 +1559,14 @@ export function PackInfoEditor({
                   disabled={exporting}
                   className="text-xs px-2.5 py-1 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
                 >
-                  Export PDF...
+                  Simple PDF...
+                </button>
+                <button
+                  onClick={handleExportAdvanced}
+                  disabled={exporting}
+                  className="text-xs px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-50"
+                >
+                  Advanced PDF...
                 </button>
               </>
             )}

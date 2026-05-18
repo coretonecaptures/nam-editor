@@ -3920,7 +3920,7 @@ app.whenReady().then(async () => {
     try {
       const os = await import('os')
       const tmpFile = join(os.tmpdir(), `nam-pack-export-${Date.now()}.html`)
-      await fs.promises.writeFile(tmpFile, html, 'utf-8')
+      await fs.promises.writeFile(tmpFile, '﻿' + html, 'utf-8')
       await shell.openExternal(`file://${tmpFile}`)
       return { success: true }
     } catch (e) {
