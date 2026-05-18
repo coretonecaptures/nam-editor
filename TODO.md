@@ -9,7 +9,6 @@
 
 - Pack Info export markdown: add support for indented / nested bullet lists in the PDF export parser
 - Pack Info `Copy to...`
-- Pack export print page-break improvements
 - Pack export subfolder filter
 - Pack export body text size and footer text size controls
 - Add selection-based spreadsheet export from the file list and grid, e.g. right-click selected rows -> `Export these to Excel`, so small ad hoc subsets do not require a separate filter or folder.
@@ -26,7 +25,6 @@
 
 - Blank xlsx import template with lookup dropdowns
 - Large collection / network share load performance: add mtime cache
-- Speed up the list sort/filter toolbar by memoizing expensive `FileList` derived work (`filtered`, `sorted`, duplicate counts, preset detection, and related summary counts)
 - Tone3000 search follow-up: if the API stays limited, explore a bounded multi-page fetch/cache strategy for narrow searches, favorites, or creator-focused browsing without trying to mirror the full catalog locally.
 
 ## Grid and UI
