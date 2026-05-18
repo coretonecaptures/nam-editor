@@ -87,6 +87,37 @@ function styleSettings(raw: string, esc: (s: string) => string, t: Theme): strin
   ).join('')}</span>`
 }
 
+export type ExportTarget = 'nam' | 'proxy' | 'qc' | 'tonex'
+
+function mode<T>(arr: T[]): T | undefined {
+  const counts = new Map<T, number>()
+  for (const v of arr) counts.set(v, (counts.get(v) ?? 0) + 1)
+  let best: T | undefined; let bestCount = 0
+  for (const [v, c] of counts) if (c > bestCount) { best = v; bestCount = c }
+  return best
+}
+
+function deriveStats(captures: NamFile[]) {
+  const presets = [...new Set(captures.map(f => f.metadata.nb_preset_name).filter(Boolean))] as string[]
+  const epochs = captures.map(f => f.metadata.nb_trained_epochs).filter(Boolean) as number[]
+  const epochValue = mode(epochs)
+  const esrValues = captures
+    .map(f => (f.metadata.training as Record<string, unknown> | undefined)?.validation_esr)
+    .filter((v): v is number => typeof v === 'number')
+  const avgEsr = esrValues.length ? esrValues.reduce((a, b) => a + b, 0) / esrValues.length : null
+  const levelValues = captures.map(f => f.metadata.input_level_dbu).filter(Boolean) as string[]
+  const refLevel = mode(levelValues)
+  const gearValues = captures
+    .map(f => [f.metadata.gear_make, f.metadata.gear_model].filter(Boolean).join(' ').trim())
+    .filter(Boolean) as string[]
+  const refGear = mode(gearValues)
+  const toneTypes = [...new Set(captures.map(f => f.metadata.tone_type).filter(Boolean))] as string[]
+  const channels = [...new Set(
+    captures.map(f => f.metadata.nl_amp_channel).filter(Boolean)
+  )].slice(0, 5) as string[]
+  return { presets, epochValue, avgEsr, refLevel, refGear, toneTypes, channels }
+}
+
 export function generatePackHtmlAdvanced(
   info: PackInfo,
   folderPath: string,
@@ -94,7 +125,8 @@ export function generatePackHtmlAdvanced(
   allCaptures: NamFile[],
   dark: boolean,
   logo?: string,
-  darkAccentColor = '#f9b966'
+  darkAccentColor = '#f9b966',
+  target: ExportTarget = 'nam'
 ): string {
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const t = dark ? DARK_THEME(darkAccentColor) : LIGHT_THEME('#c46010')
@@ -166,6 +198,69 @@ export function generatePackHtmlAdvanced(
   const hasGlossary  = info.glossary.length > 0
   const hasCaptures  = captures.length > 0
   const hasFooter    = info.footer.trim().length > 0
+
+  // ── Stats bar ──
+  const stats = deriveStats(captures)
+
+  const statsBarHtml = (() => {
+    const captureSubtitle = stats.channels.length
+      ? stats.channels.join(' · ')
+      : stats.toneTypes.map(tt => tt.replace('_', '-')).join(' · ')
+
+    const statCol = (label: string, value: string, sub: string) =>
+      `<div class="stat">
+        <div class="stat-label">${label}</div>
+        <div class="stat-value">${value}</div>
+        ${sub ? `<div class="stat-sub">${sub}</div>` : ''}
+      </div>`
+
+    const captureStat = statCol('Captures', String(captures.length), esc(captureSubtitle))
+
+    if (target === 'proxy') {
+      return `<div class="stats-bar">${captureStat}${statCol('Format', 'Proxy', 'Kemper / hardware')}</div>`
+    }
+    if (target === 'qc') {
+      return `<div class="stats-bar">${captureStat}${statCol('Format', 'QC', 'Quad-Cortex / hardware')}</div>`
+    }
+    if (target === 'tonex') {
+      return `<div class="stats-bar">${captureStat}${statCol('Format', 'ToneX', '')}</div>`
+    }
+
+    // NAM — full 4-column bar
+    const algoValue = stats.presets[0] ? esc(stats.presets[0].toUpperCase()) : '—'
+    const algoSub = stats.presets.length > 1
+      ? esc('+ ' + stats.presets.slice(1).join(' / '))
+      : ''
+    const epochStr = stats.epochValue ? `${stats.epochValue.toLocaleString()} ep` : '—'
+    const trainingSubSub = stats.avgEsr !== null && stats.avgEsr < 0.01 ? 'convergence-locked' : ''
+    const refValue = stats.refLevel ? esc(stats.refLevel.startsWith('+') || stats.refLevel.startsWith('-') ? stats.refLevel + ' dBu' : stats.refLevel) : '—'
+    const refSub = stats.refGear ? esc(stats.refGear) : ''
+
+    return `<div class="stats-bar">
+      ${captureStat}
+      ${statCol('Algorithm', algoValue, algoSub)}
+      ${statCol('Training', epochStr, trainingSubSub)}
+      ${statCol('Reference', refValue, refSub)}
+    </div>`
+  })()
+
+  // ── Contents ──
+  const contentsSections: { title: string }[] = []
+  if (hasDesc) contentsSections.push({ title: 'Overview' })
+  if (hasCaptures) contentsSections.push({ title: 'Captures' })
+  if (hasEquip) contentsSections.push({ title: 'Equipment' })
+  if (hasPedals) contentsSections.push({ title: 'Drive Pedals' })
+  if (hasSwitches) contentsSections.push({ title: 'Switches' })
+  if (hasGlossary) contentsSections.push({ title: 'Glossary' })
+
+  const contentsHtml = contentsSections.length > 1
+    ? `<div class="contents">${contentsSections.map((s, i) =>
+        `<div class="contents-item">
+          <div class="contents-num">${String(i + 1).padStart(2, '0')}</div>
+          <div class="contents-title">${esc(s.title)}</div>
+        </div>`
+      ).join('')}</div>`
+    : ''
 
   // ── HTML ──
   return `<!DOCTYPE html>
@@ -261,6 +356,20 @@ export function generatePackHtmlAdvanced(
   .colophon img.logo { height: 36px; }
 
   .section-head, .kv-row, .switch-card .row { break-after: avoid; }
+
+  /* Stats bar */
+  .stats-bar { display: flex; gap: 0; margin-top: 20pt; border-top: 1px solid ${t.rule}; border-bottom: 1px solid ${t.rule}; break-inside: avoid; }
+  .stat { flex: 1; padding: 12pt 0 12pt 0; padding-right: 16pt; }
+  .stat + .stat { border-left: 1px solid ${t.rule}; padding-left: 16pt; }
+  .stat-label { font-family: "IBM Plex Mono", monospace; font-size: 8pt; letter-spacing: 0.28em; text-transform: uppercase; color: ${t.dim}; margin-bottom: 5pt; }
+  .stat-value { font-family: "IBM Plex Mono", monospace; font-size: 18pt; font-weight: 600; color: ${t.fg}; line-height: 1.1; letter-spacing: -0.02em; }
+  .stat-sub { font-size: 8.5pt; color: ${t.dim}; margin-top: 4pt; letter-spacing: 0.04em; }
+
+  /* Contents */
+  .contents { display: flex; gap: 0; margin-top: 20pt; break-inside: avoid; }
+  .contents-item { flex: 1; padding-top: 10pt; border-top: 1px solid ${t.rule}; }
+  .contents-num { font-family: "IBM Plex Mono", monospace; font-size: 9pt; color: ${t.accent}; margin-bottom: 3pt; }
+  .contents-title { font-size: 11pt; font-weight: 600; color: ${t.fg}; }
 </style>
 </head>
 <body>
@@ -276,7 +385,11 @@ export function generatePackHtmlAdvanced(
   ${info.subtitle ? `<div class="basedon">${esc(info.subtitle)}</div>` : ''}
 </div>
 
-${hasDesc ? `<div class="desc">${parseDescription(info.description, dark)}</div>` : ''}
+${statsBarHtml}
+
+${hasDesc ? `<div class="desc" style="margin-top:16pt">${parseDescription(info.description, dark)}</div>` : ''}
+
+${contentsHtml}
 
 ${info.recommendedInputGain ? `<div class="section">
   <div class="micro" style="margin-top:14pt">Recommended Input Gain</div>
