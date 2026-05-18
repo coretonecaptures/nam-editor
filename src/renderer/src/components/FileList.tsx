@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
 import { NamFile, GEAR_TYPES, TONE_TYPES } from '../types/nam'
@@ -362,7 +362,7 @@ export function FileList({
   const [showBatchRename, setShowBatchRename] = useState(false)
   const exportRef = useRef<HTMLDivElement>(null)
   const chooserRef = useRef<HTMLDivElement>(null)
-  const duplicateFileKeys = new Set(
+  const duplicateFileKeys = useMemo(() => new Set(
     [...files.reduce((map, file) => {
       const key = file.fileName.trim().toLowerCase()
       if (!key) return map
@@ -371,10 +371,10 @@ export function FileList({
     }, new Map<string, number>()).entries()]
       .filter(([, count]) => count >= 2)
       .map(([key]) => key)
-  )
+  ), [files])
 
   // Compute filtered + sorted here (before hooks) so the trim useEffect can reference sorted.
-  const filtered = files.filter((f) => {
+  const filtered = useMemo(() => files.filter((f) => {
     const m = f.metadata
     const o = f.originalMetadata
     if (search) {
@@ -433,9 +433,9 @@ export function FileList({
       case 'rated':      return (m.nl_rating ?? 0) > 0
       default:           return true
     }
-  })
+  }), [files, search, viewMode, gearFilter, toneFilter, presetFilter, mfrFilter, nameSearch, columnFilters, esrFilter, ratingFilter, filter, duplicateFileKeys])
 
-  const sorted = [...filtered].sort((a, b) => {
+  const sorted = useMemo(() => [...filtered].sort((a, b) => {
     if (sortKey) {
       const av = getSortValue(a, sortKey)
       const bv = getSortValue(b, sortKey)
@@ -448,9 +448,8 @@ export function FileList({
       const result = sortDir === 'asc' ? cmp : -cmp
       if (result !== 0) return result
     }
-    // Secondary (or sole) sort: name A-Z
     return (a.metadata.name || a.fileName).localeCompare(b.metadata.name || b.fileName)
-  })
+  }), [filtered, sortKey, sortDir])
 
   useEffect(() => {
     if (!showExport) return
