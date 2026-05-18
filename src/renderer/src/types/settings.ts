@@ -42,12 +42,16 @@ export type TrainingSourcePostProcessMode = typeof TRAINING_SOURCE_POST_PROCESS_
 export const TRAINING_LATENCY_MODES = ['auto', 'manual'] as const
 export type TrainingLatencyMode = typeof TRAINING_LATENCY_MODES[number]
 
+export const TRAINING_WATCH_INITIAL_SCAN_MODES = ['process-existing', 'new-only'] as const
+export type TrainingWatchInitialScanMode = typeof TRAINING_WATCH_INITIAL_SCAN_MODES[number]
+
 export interface TrainingProfile {
   id: string
   name: string
   sourceMode: TrainingSourceMode
   enabled: boolean
   autoRun: boolean
+  initialScanMode?: TrainingWatchInitialScanMode
   namingTemplate: string
   architectures: string[]
   epochs: number
@@ -80,6 +84,7 @@ export interface TrainingWatchProfile {
   name: string
   enabled: boolean
   autoRun: boolean
+  initialScanMode: TrainingWatchInitialScanMode
   watchFolder: string
   presetId: string
   namingTemplate: string
@@ -444,6 +449,7 @@ function normalizeTrainingWatchProfile(
     name: profile?.name?.trim() || `Watcher ${index + 1}`,
     enabled: profile?.enabled ?? true,
     autoRun: profile?.autoRun ?? true,
+    initialScanMode: profile?.initialScanMode === 'new-only' ? 'new-only' : 'process-existing',
     watchFolder: profile?.watchFolder?.trim() || '',
     presetId: profile?.presetId?.trim() || '',
     namingTemplate: profile?.namingTemplate?.trim() || legacyPreset?.namingTemplate?.trim() || '{basename}',

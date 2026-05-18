@@ -108,6 +108,8 @@ const api = {
   setTrainerProfilesState: (payload: unknown): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('trainer:setProfilesState', payload),
   getTrainerProfilesState: (): Promise<unknown> => ipcRenderer.invoke('trainer:getProfilesState'),
+  markTrainingWatchCurrentContentsSeen: (profileId: string): Promise<{ success: boolean; error?: string; marked?: number }> =>
+    ipcRenderer.invoke('trainer:markWatchCurrentSeen', profileId),
   setTrainerProfileRunning: (profileId: string, running: boolean): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('trainer:setProfileRunning', profileId, running),
   runTrainerFolderOnce: (payload: unknown): Promise<{ success: boolean; error?: string; queued?: number; scanned?: number }> =>

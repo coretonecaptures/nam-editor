@@ -61,6 +61,7 @@ interface FolderWatchImportEntry {
 type TrainingSourceMode = 'watcher' | 'manual-folder-run' | 'manual-direct'
 type TrainingSourcePostProcessMode = 'move' | 'copy' | 'keep'
 type TrainingLatencyMode = 'auto' | 'manual'
+type TrainingWatchInitialScanMode = 'process-existing' | 'new-only'
 
 interface TrainingProfile {
   id: string
@@ -68,6 +69,7 @@ interface TrainingProfile {
   sourceMode: 'watcher' | 'manual-folder-run'
   enabled: boolean
   autoRun: boolean
+  initialScanMode?: TrainingWatchInitialScanMode
   namingTemplate: string
   architectures: TrainerArchitecture[]
   epochs: number
@@ -1239,6 +1241,44 @@ async function enqueueExistingTrainingWatcherFiles(profile: TrainingProfile): Pr
   }
 }
 
+async function markExistingTrainingWatcherFilesAsSeen(profile: TrainingProfile): Promise<number> {
+  const sourceFolder = profile.watchFolder.trim()
+  if (!sourceFolder) return 0
+  try {
+    const files = await scanWavFilesInFolder(sourceFolder)
+    if (files.length === 0) return 0
+    let marked = 0
+    for (const filePath of files) {
+      let sourceStats: { sizeBytes: number; mtimeMs: number } | null = null
+      try {
+        sourceStats = await statTrainingSource(filePath)
+      } catch {
+        continue
+      }
+      for (const architecture of profile.architectures) {
+        if (trainerQueueAlreadyHasSource(profile.id, filePath, architecture)) continue
+        if (trainerHistoryAlreadyHasSource(profile.id, filePath, architecture, sourceStats.mtimeMs, sourceStats.sizeBytes)) continue
+        appendTrainerSkipped({
+          skipId: crypto.randomUUID(),
+          profileId: profile.id,
+          profileName: profile.name,
+          sourcePath: filePath,
+          architecture,
+          sourceSizeBytes: sourceStats.sizeBytes,
+          sourceMtimeMs: sourceStats.mtimeMs,
+          skippedAt: new Date().toISOString(),
+          reason: 'baseline-seen',
+        })
+        marked += 1
+      }
+    }
+    return marked
+  } catch (error) {
+    log(`training watcher baseline mark failed for "${profile.name}": ${String(error)}`)
+    return 0
+  }
+}
+
 async function ensureTrainingWatcherAutoStart(profile: TrainingProfile): Promise<void> {
   if (!profile.autoRun) return
   if (trainerPauseAfterCurrent) {
@@ -1310,7 +1350,9 @@ function resetTrainingWatchProfiles(profiles: TrainingProfile[], retainGraphs: b
       })
       trainingWatchers.set(profile.id, watcher)
       trainingWatcherRunning.add(profile.id)
-      void enqueueExistingTrainingWatcherFiles(profile)
+      if ((profile.initialScanMode ?? 'process-existing') === 'process-existing') {
+        void enqueueExistingTrainingWatcherFiles(profile)
+      }
       void ensureTrainingWatcherAutoStart(profile)
     } catch (error) {
       log(`training watcher error "${profile.name}": ${String(error)}`)
@@ -3300,6 +3342,14 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('trainer:getProfilesState', async () => makeTrainerWatcherSnapshot())
+
+  ipcMain.handle('trainer:markWatchCurrentSeen', async (_event, profileId: string) => {
+    const target = trainingProfiles.find((profile) => profile.id === profileId && profile.sourceMode === 'watcher')
+    if (!target) return { success: false, error: 'Training watcher profile not found.' }
+    const marked = await markExistingTrainingWatcherFilesAsSeen(target)
+    emitTrainerState()
+    return { success: true, marked }
+  })
 
   ipcMain.handle('trainer:setProfileRunning', async (_event, profileId: string, running: boolean) => {
     const target = trainingProfiles.find((profile) => profile.id === profileId && profile.sourceMode === 'watcher')

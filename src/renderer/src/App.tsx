@@ -249,6 +249,7 @@ function resolveTrainingWatcherProfiles(settings: AppSettings): TrainingProfile[
         sourceMode: 'watcher' as const,
         enabled: watchProfile.enabled,
         autoRun: watchProfile.autoRun,
+        initialScanMode: watchProfile.initialScanMode,
         namingTemplate: watchProfile.namingTemplate,
         architectures: preset.architectures,
         epochs: preset.epochs,
@@ -346,6 +347,7 @@ declare global {
       enqueueTrainerRuns: (payloads: TrainerStartPayload[]) => Promise<{ success: boolean; error?: string; queued?: number }>
       setTrainerProfilesState: (payload: { pythonPath: string; inputPath: string; retainGraphs: boolean; profiles: TrainingProfile[] }) => Promise<{ success: boolean }>
       getTrainerProfilesState: () => Promise<TrainerProfilesStateSnapshot>
+      markTrainingWatchCurrentContentsSeen: (profileId: string) => Promise<{ success: boolean; error?: string; marked?: number }>
       setTrainerProfileRunning: (profileId: string, running: boolean) => Promise<{ success: boolean; error?: string }>
       runTrainerFolderOnce: (payload: { profile: TrainingProfile; folderPath: string; pythonPath: string; inputPath: string; submissionId?: string; submissionLabel?: string; submissionCreatedAt?: string }) => Promise<{ success: boolean; error?: string; queued?: number; scanned?: number }>
       cancelTrainerRun: () => Promise<{ success: boolean; error?: string }>
@@ -3556,10 +3558,10 @@ export default function App() {
     setShowTrainingWorkspace(true)
 
     if (!settings.enableExperimentalTraining) {
-      setStatus({ message: 'Enable Experimental Local Training in Settings first.', type: 'info' })
+      setStatus({ message: 'Enable Local Training in Settings first.', type: 'info' })
       return
     }
-    setStatus({ message: 'Opened the experimental training workspace.', type: 'info' })
+    setStatus({ message: 'Opened the training workspace.', type: 'info' })
   }
 
   useEffect(() => {
@@ -3584,6 +3586,10 @@ export default function App() {
     const previous = previousSelectionSignatureRef.current
     const changed = previous !== selectedFileSignature
     if (showTrainingWorkspace && changed) {
+      if (trainingWorkspaceMode === 'files') {
+        previousSelectionSignatureRef.current = selectedFileSignature
+        return
+      }
       if (skipNextTrainingWorkspaceSelectionCloseRef.current) {
         skipNextTrainingWorkspaceSelectionCloseRef.current = false
       } else {
@@ -3593,7 +3599,7 @@ export default function App() {
       skipNextTrainingWorkspaceSelectionCloseRef.current = false
     }
     previousSelectionSignatureRef.current = selectedFileSignature
-  }, [selectedFileSignature, showTrainingWorkspace])
+  }, [selectedFileSignature, showTrainingWorkspace, trainingWorkspaceMode])
   const showToneStorePanel = showToneStore && !showSettings && !showDashboard && !historyOpen && batchFolder === null
   const activeTrainingQueueCount = globalTrainerState.queue.filter((job) => ['queued', 'starting', 'running'].includes(job.status)).length
   const trainingQueueIsActive = globalTrainerState.status === 'starting' || globalTrainerState.status === 'running'

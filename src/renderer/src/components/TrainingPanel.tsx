@@ -667,7 +667,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
         <div className="rounded-xl border border-violet-500/30 bg-violet-500/10 px-4 py-3">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <div className="text-sm font-semibold text-violet-100">Experimental Local Training</div>
+              <div className="text-sm font-semibold text-violet-100">Local Training</div>
               <p className="mt-1 text-xs text-violet-200/85">
                 Queue one input DI with multiple reamped WAVs. NAM Lab runs them serially, keeps a local queue, and promotes the final
                 .nam back to your chosen destination folder beside the ESR plot.
@@ -1056,11 +1056,12 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                         </span>
                       </div>
                       {group.entries.map((entry) => (
-                        <HistoryRow
-                          key={entry.historyId}
-                          entry={entry}
-                          onContextMenu={(context) => setHistoryContextMenu(context)}
-                        />
+                        <div key={entry.historyId} className="ml-3">
+                          <HistoryRow
+                            entry={entry}
+                            onContextMenu={(context) => setHistoryContextMenu(context)}
+                          />
+                        </div>
                       ))}
                     </div>
                   ))
@@ -1325,16 +1326,17 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                             </span>
                           </div>
                           {group.jobs.map((job, index) => (
-                            <QueueRow
-                              key={job.jobId}
-                              batchIndex={index + 1}
-                              job={job}
-                              isActive={job.jobId === trainerState.activeJobId}
-                              onRemove={handleRemoveJob}
-                              onMove={handleMoveJob}
-                              onMakeNext={handleMakeNext}
-                              onContextMenu={(context) => setQueueContextMenu(context)}
-                            />
+                            <div key={job.jobId} className="ml-3">
+                              <QueueRow
+                                batchIndex={index + 1}
+                                job={job}
+                                isActive={job.jobId === trainerState.activeJobId}
+                                onRemove={handleRemoveJob}
+                                onMove={handleMoveJob}
+                                onMakeNext={handleMakeNext}
+                                onContextMenu={(context) => setQueueContextMenu(context)}
+                              />
+                            </div>
                           ))}
                         </div>
                       ))}

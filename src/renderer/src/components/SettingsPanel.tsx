@@ -194,6 +194,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
       name: `Watcher ${nextIndex}`,
       enabled: true,
       autoRun: true,
+      initialScanMode: 'process-existing',
       watchFolder: '',
       presetId: draft.trainingPresets[0]?.id ?? '',
       namingTemplate: '{basename}',
@@ -222,6 +223,17 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
       processedWavRoot: `${processedRoot}/WAV`,
       graphRoot: `${processedRoot}/Graphs`,
     })
+  }
+
+  const markTrainingWatchCurrentContentsAsSeen = async (watchId: string) => {
+    const result = await window.api.markTrainingWatchCurrentContentsSeen(watchId)
+    if (!result.success) {
+      window.alert(result.error || 'Could not mark current watcher contents as seen.')
+      return
+    }
+    window.alert(result.marked && result.marked > 0
+      ? `Marked ${result.marked} watcher item${result.marked === 1 ? '' : 's'} as already seen.`
+      : 'No untracked watcher items needed to be marked as seen.')
   }
 
   const appendLibraryRulesToGlobal = (selectedRules: MetadataSuggestRule[]) => {
@@ -1414,13 +1426,13 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
           <div>
             <div className="flex items-center gap-2 mb-4">
               <span className="text-sm">Train</span>
-              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Experimental Training</h3>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Training</h3>
               <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
             </div>
             <div className="space-y-4">
               <CheckboxField
-                label="Enable experimental local training"
-                description="Adds a hidden Training tab beside Metadata for a single selected file. This first pass launches the local NAM trainer in the background using your configured Python environment."
+                label="Enable local training"
+                description="Turns on NAM Lab's training workspace and launches the local NAM trainer in the background using your configured Python environment."
                 checked={draft.enableExperimentalTraining}
                 onChange={(v) => update('enableExperimentalTraining', v)}
               />
@@ -1561,6 +1573,29 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                                   </button>
                                 </div>
                               </SettingsField>
+                              <div className="grid grid-cols-1 md:grid-cols-[minmax(0,220px)_auto] gap-3 items-end">
+                                <SettingsField
+                                  label="Watcher start mode"
+                                  labelTitle="Choose whether this watcher should process older untracked WAVs already in the folder, or only react to new files that appear after the watcher starts."
+                                >
+                                  <select
+                                    value={profile.initialScanMode ?? 'process-existing'}
+                                    onChange={(e) => updateTrainingWatchProfile(profile.id, { initialScanMode: e.target.value as TrainingWatchProfile['initialScanMode'] })}
+                                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                                  >
+                                    <option value="process-existing">Process existing untracked files</option>
+                                    <option value="new-only">Watch new files only</option>
+                                  </select>
+                                </SettingsField>
+                                <button
+                                  onClick={() => void markTrainingWatchCurrentContentsAsSeen(profile.id)}
+                                  disabled={!profile.watchFolder.trim() || !profile.presetId}
+                                  className="h-10 px-3 py-2 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  title="Record the current WAVs in this folder as already seen so the watcher skips them until you explicitly retry them later."
+                                >
+                                  Mark current contents as seen
+                                </button>
+                              </div>
                               <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-3 items-end">
                                 <SettingsField label="Naming Template" labelTitle="Use {basename}, {architecture}, {profile}, and {esr} in final output names.">
                                   <input
