@@ -738,11 +738,14 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       setLaunchError('Target ESR must be blank or a positive number before saving a preset.')
       return
     }
-    if (architectures.length === 0) {
+    if (namMode === 'a1' && architectures.length === 0) {
       setLaunchError('Choose at least one architecture before saving a preset.')
       return
     }
-    setPresetNameDraft(`${architectures.map((item) => ARCHITECTURE_LABELS[item]).join(' + ')} ${parsedEpochs} epoch`)
+    const autoName = namMode === 'a2'
+      ? `A2 PackedWaveNet ${parsedEpochs} epoch`
+      : `${architectures.map((item) => architectureDisplayLabel(item)).join(' + ')} ${parsedEpochs} epoch`
+    setPresetNameDraft(autoName)
     setPresetSaveError('')
     setShowSavePresetModal(true)
   }
@@ -768,7 +771,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       setPresetSaveError('Target ESR must be blank or a positive number.')
       return
     }
-    if (architectures.length === 0) {
+    if (namMode === 'a1' && architectures.length === 0) {
       setPresetSaveError('Choose at least one architecture.')
       return
     }
@@ -780,7 +783,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     const preset: TrainingPreset = {
       id: makePresetId(name),
       name,
-      architectures,
+      namMode,
+      architectures: namMode === 'a2' ? ['a2'] : architectures,
       epochs: parsedEpochs,
       thresholdEsr: parsedThresholdEsr,
       latencyMode: parsedLatency == null ? 'auto' : 'manual',

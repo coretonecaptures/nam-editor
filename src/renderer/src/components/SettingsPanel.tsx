@@ -2025,6 +2025,27 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                               )}
                               <div className="px-3 py-3 bg-white dark:bg-gray-900/50 space-y-3">
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <SettingsField label="NAM Version">
+                                  <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 text-xs">
+                                    {(['a1', 'a2'] as const).map((mode) => (
+                                      <button
+                                        key={mode}
+                                        onClick={() => updateTrainingPreset(preset.id, {
+                                          namMode: mode,
+                                          architectures: mode === 'a2' ? ['a2'] : preset.architectures.filter((a) => a !== 'a2'),
+                                        })}
+                                        className={`flex-1 py-1.5 px-3 font-medium transition-colors ${
+                                          (preset.namMode ?? 'a1') === mode
+                                            ? 'bg-indigo-600 text-white'
+                                            : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+                                        }`}
+                                      >
+                                        {mode === 'a1' ? 'A1 WaveNet' : 'A2 PackedWaveNet'}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </SettingsField>
+                                {(preset.namMode ?? 'a1') === 'a1' && (
                                 <SettingsField label="Architecture(s)">
                                   <SettingsArchitectureMultiSelect
                                     values={preset.architectures}
@@ -2032,6 +2053,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                                     userProfiles={draft.userCaptureProfiles ?? []}
                                   />
                                 </SettingsField>
+                                )}
                                 <SettingsField label="Epochs">
                                   <input
                                     type="number"
