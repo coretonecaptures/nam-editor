@@ -41,6 +41,7 @@ let folderWatcher: import('fs').FSWatcher | null = null
 let folderWatchRules: FolderWatchRule[] = []
 const folderWatchers = new Map<string, import('fs').FSWatcher>()
 const folderWatchInFlight = new Set<string>()
+let folderWatchPollInterval: ReturnType<typeof setInterval> | null = null
 // Suppress folder:changed events for 3s after any local write to avoid false-positive banners
 let watcherSuppressUntil = 0
 function suppressWatcher() { watcherSuppressUntil = Date.now() + 3000 }
@@ -1758,6 +1759,10 @@ function closeFolderWatchers(): void {
     try { watcher.close() } catch { /* ignore */ }
   }
   folderWatchers.clear()
+  if (folderWatchPollInterval !== null) {
+    clearInterval(folderWatchPollInterval)
+    folderWatchPollInterval = null
+  }
 }
 
 async function deleteEmptyFolderTree(folderPath: string): Promise<number> {
@@ -1980,6 +1985,22 @@ function resetFolderWatchRules(rules: FolderWatchRule[]): void {
     } catch (err) {
       log(`folderWatch rule error source="${sourceFolder}" dest="${destFolder}": ${String(err)}`)
     }
+  }
+
+  // Polling fallback — fs.watch on Windows can miss events from external processes
+  // (e.g. Python NAM trainer). Re-scan all active source folders every 45 seconds.
+  if (folderWatchRules.some((r) => r.enabled)) {
+    folderWatchPollInterval = setInterval(() => {
+      for (const rule of folderWatchRules) {
+        if (!rule.enabled) continue
+        const sourceFolder = normalizePath(rule.sourceFolder)
+        const destFolder = normalizePath(rule.destFolder)
+        if (!sourceFolder || !destFolder) continue
+        if (sourceFolder.toLowerCase() === destFolder.toLowerCase()) continue
+        if (isNestedPath(sourceFolder, destFolder) || isNestedPath(destFolder, sourceFolder)) continue
+        void syncExistingWatchedFiles({ ...rule, sourceFolder, destFolder })
+      }
+    }, 45_000)
   }
 }
 
