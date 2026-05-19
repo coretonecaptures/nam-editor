@@ -15,6 +15,18 @@ interface ArchitectureProfilePickerProps {
 const STOCK_IDS = ['standard', 'lite', 'feather', 'nano']
 const EXTENDED_IDS = ['complex', 'revystd', 'revyhi', 'revxstd']
 
+// Accent colors per built-in profile ID
+const PROFILE_ACCENT: Record<string, { topBorder: string; dot: string }> = {
+  standard: { topBorder: 'border-t-slate-400 dark:border-t-slate-500',    dot: 'bg-slate-400 dark:bg-slate-500' },
+  lite:     { topBorder: 'border-t-emerald-400 dark:border-t-emerald-500', dot: 'bg-emerald-400 dark:bg-emerald-500' },
+  feather:  { topBorder: 'border-t-sky-400 dark:border-t-sky-500',         dot: 'bg-sky-400 dark:bg-sky-500' },
+  nano:     { topBorder: 'border-t-amber-400 dark:border-t-amber-500',     dot: 'bg-amber-400 dark:bg-amber-500' },
+  complex:  { topBorder: 'border-t-blue-500 dark:border-t-blue-400',       dot: 'bg-blue-500 dark:bg-blue-400' },
+  revystd:  { topBorder: 'border-t-violet-500 dark:border-t-violet-400',   dot: 'bg-violet-500 dark:bg-violet-400' },
+  revyhi:   { topBorder: 'border-t-purple-500 dark:border-t-purple-400',   dot: 'bg-purple-500 dark:bg-purple-400' },
+  revxstd:  { topBorder: 'border-t-fuchsia-500 dark:border-t-fuchsia-400', dot: 'bg-fuchsia-500 dark:bg-fuchsia-400' },
+}
+
 function ProfileCard({
   profile,
   selected,
@@ -22,6 +34,7 @@ function ProfileCard({
   onClone,
   onEdit,
   onDelete,
+  accent,
 }: {
   profile: CaptureProfile | UserCaptureProfile
   selected: boolean
@@ -29,12 +42,15 @@ function ProfileCard({
   onClone?: () => void
   onEdit?: () => void
   onDelete?: () => void
+  accent?: { topBorder: string; dot: string }
 }) {
   const isBuiltIn = (profile as CaptureProfile).builtIn === true
 
   return (
     <div
       className={`relative group rounded-lg border cursor-pointer transition-all ${
+        accent ? `border-t-2 ${accent.topBorder}` : ''
+      } ${
         selected
           ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-500/10 ring-1 ring-indigo-500/40'
           : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 hover:border-indigo-400 dark:hover:border-indigo-500/60'
@@ -43,12 +59,15 @@ function ProfileCard({
     >
       <div className="px-3 py-2.5">
         <div className="flex items-start justify-between gap-1.5">
-          <div className="min-w-0">
-            <div className={`text-xs font-semibold truncate ${selected ? 'text-indigo-700 dark:text-indigo-200' : 'text-gray-900 dark:text-gray-100'}`}>
-              {profile.name}
-            </div>
-            <div className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 leading-tight line-clamp-2">
-              {profile.description}
+          <div className="min-w-0 flex items-start gap-1.5 flex-1">
+            {accent && <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 mt-[3px] ${accent.dot}`} />}
+            <div className="min-w-0">
+              <div className={`text-xs font-semibold truncate ${selected ? 'text-indigo-700 dark:text-indigo-200' : 'text-gray-900 dark:text-gray-100'}`}>
+                {profile.name}
+              </div>
+              <div className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 leading-tight line-clamp-2">
+                {profile.description}
+              </div>
             </div>
           </div>
           {selected && (
@@ -145,6 +164,7 @@ export function ArchitectureProfilePicker({
             selected={selectedIds.includes(profile.id)}
             onToggle={() => toggle(profile.id)}
             onClone={onClone ? () => handleClone(profile) : undefined}
+            accent={PROFILE_ACCENT[profile.id]}
           />
         ))}
       </div>
@@ -156,6 +176,7 @@ export function ArchitectureProfilePicker({
             selected={selectedIds.includes(profile.id)}
             onToggle={() => toggle(profile.id)}
             onClone={onClone ? () => handleClone(profile) : undefined}
+            accent={PROFILE_ACCENT[profile.id]}
           />
         ))}
       </div>

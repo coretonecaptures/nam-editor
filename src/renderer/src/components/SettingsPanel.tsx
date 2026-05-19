@@ -1895,9 +1895,12 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                           <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
                         </svg>
                         <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Capture Profiles</span>
+                        <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 tabular-nums">
+                          {8 + (draft.userCaptureProfiles ?? []).length}
+                        </span>
                         {(draft.userCaptureProfiles ?? []).length > 0 && (
-                          <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 tabular-nums">
-                            {(draft.userCaptureProfiles ?? []).length} custom
+                          <span className="text-[10px] text-gray-400 dark:text-gray-500">
+                            · {(draft.userCaptureProfiles ?? []).length} custom
                           </span>
                         )}
                       </button>
