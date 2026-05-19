@@ -119,7 +119,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const [selectedPresetId, setSelectedPresetId] = useState<string>(CUSTOM_PRESET_ID)
   const [namMode, setNamMode] = useState<'a1' | 'a2'>('a1')
   const [architectures, setArchitectures] = useState<string[]>(['standard'])
-  const [normalizeWavOverride, setNormalizeWavOverride] = useState<'global' | 'on' | 'off'>('global')
+  const [normalizeWavOverride, setNormalizeWavOverride] = useState<'global' | 'on' | 'off'>('off')
   const [normalizeWavTargetDb, setNormalizeWavTargetDb] = useState('')
   const [captureProfileEditorOpen, setCaptureProfileEditorOpen] = useState(false)
   const [captureProfileEditorTarget, setCaptureProfileEditorTarget] = useState<UserCaptureProfile | null>(null)

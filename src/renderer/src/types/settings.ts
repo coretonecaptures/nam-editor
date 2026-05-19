@@ -369,7 +369,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   namPythonPath: '',
   namA2PythonPath: '',
   namTrainingInputWav: '',
-  normalizeWavBeforeTraining: true,
+  normalizeWavBeforeTraining: false,
   normalizeWavTargetDb: -5.0,
   trainingPresets: [],
   trainingWatchProfiles: [],
@@ -468,7 +468,7 @@ function normalizeTrainingPreset(
       : null,
     savePlot: preset?.savePlot ?? true,
     ignoreChecks: preset?.ignoreChecks ?? false,
-    normalizeWav: preset?.normalizeWav === 'on' ? 'on' : preset?.normalizeWav === 'off' ? 'off' : 'global',
+    normalizeWav: preset?.normalizeWav === 'on' ? 'on' : preset?.normalizeWav === 'global' ? 'global' : 'off',
     normalizeWavTargetDb: typeof preset?.normalizeWavTargetDb === 'number' && Number.isFinite(preset.normalizeWavTargetDb)
       ? preset.normalizeWavTargetDb
       : null,
