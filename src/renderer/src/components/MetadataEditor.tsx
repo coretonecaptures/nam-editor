@@ -423,16 +423,24 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
             >
               <div className="flex items-center gap-2">
                 {!latencyUnlocked ? (
-                  <button
-                    onClick={() => setLatencyUnlocked(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-amber-400 dark:hover:border-amber-500 hover:text-amber-600 dark:hover:text-amber-400 transition-colors bg-gray-50 dark:bg-gray-800/60"
-                    title="Click to unlock latency editing"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
-                    </svg>
-                    <span className="font-mono">{m.latency_recommended != null ? `${m.latency_recommended} samples` : '—'}</span>
-                  </button>
+                  <>
+                    <input
+                      type="text"
+                      readOnly
+                      value={m.latency_recommended != null ? String(m.latency_recommended) : ''}
+                      placeholder="not set"
+                      className="flex-1 px-3 py-1.5 bg-gray-100 dark:bg-gray-800/40 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-500 dark:text-gray-400 font-mono cursor-default placeholder-gray-400 dark:placeholder-gray-600"
+                    />
+                    <button
+                      onClick={() => setLatencyUnlocked(true)}
+                      className="flex-shrink-0 p-1.5 rounded text-gray-400 dark:text-gray-500 hover:text-amber-500 dark:hover:text-amber-400 transition-colors"
+                      title="Unlock to edit latency"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                      </svg>
+                    </button>
+                  </>
                 ) : (
                   <>
                     <NumberInput

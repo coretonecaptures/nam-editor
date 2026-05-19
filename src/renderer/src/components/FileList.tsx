@@ -359,6 +359,7 @@ export function FileList({
   const anchorIndexRef = useRef<number>(-1)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; filePath: string } | null>(null)
   const ctxMenuRef = useRef<HTMLDivElement>(null)
+  const [jsonModal, setJsonModal] = useState<{ fileName: string; json: string } | null>(null)
   const [showBatchRename, setShowBatchRename] = useState(false)
   const exportRef = useRef<HTMLDivElement>(null)
   const chooserRef = useRef<HTMLDivElement>(null)
@@ -1037,6 +1038,35 @@ export function FileList({
             </svg>
             Show in folder
           </button>
+          {selectedVisible.length === 1 && (
+            <button
+              className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
+              onClick={async () => {
+                const file = sorted.find((f) => f.filePath === ctxMenu.filePath)
+                const raw = await window.api.readFile(ctxMenu.filePath)
+                setCtxMenu(null)
+                if (typeof raw === 'string') {
+                  try {
+                    const parsed = JSON.parse(raw)
+                    const pruned = JSON.parse(JSON.stringify(parsed, (_key, val) => {
+                      if (Array.isArray(val) && val.length > 8 && typeof val[0] === 'number') {
+                        return `[… ${val.length} values …]`
+                      }
+                      return val
+                    }))
+                    setJsonModal({ fileName: file?.fileName ?? ctxMenu.filePath, json: JSON.stringify(pruned, null, 2) })
+                  } catch {
+                    setJsonModal({ fileName: file?.fileName ?? ctxMenu.filePath, json: raw })
+                  }
+                }
+              }}
+            >
+              <svg className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+              </svg>
+              View JSON
+            </button>
+          )}
           {onShowInFolderTree && selectedVisible.length === 1 && (
             <button
               className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
@@ -1247,6 +1277,47 @@ export function FileList({
           onApply={(renames, renameFiles) => { onBatchRename(renames, renameFiles); setShowBatchRename(false) }}
           onClose={() => setShowBatchRename(false)}
         />
+      )}
+
+      {jsonModal && createPortal(
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70"
+          onClick={() => setJsonModal(null)}
+        >
+          <div
+            className="relative flex flex-col bg-gray-950 border border-gray-700 rounded-xl shadow-2xl"
+            style={{ width: 'min(860px, 92vw)', maxHeight: '88vh' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800 flex-shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                </svg>
+                <span className="text-sm font-medium text-gray-200 truncate">{jsonModal.fileName}</span>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  onClick={() => navigator.clipboard.writeText(jsonModal.json)}
+                  className="px-2.5 py-1 rounded text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors"
+                  title="Copy JSON"
+                >
+                  Copy
+                </button>
+                <button
+                  onClick={() => setJsonModal(null)}
+                  className="p-1.5 rounded hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <pre className="flex-1 overflow-auto p-4 text-xs text-gray-300 font-mono leading-relaxed whitespace-pre">{jsonModal.json}</pre>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   )

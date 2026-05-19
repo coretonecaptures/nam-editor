@@ -2,8 +2,9 @@ import React, { Fragment, useEffect, useMemo, useState } from 'react'
 import ctcLogo from '../assets/images/ctc.logo.png'
 import workflowsDoc from '../../../../docs/workflows.md?raw'
 import featuresDoc from '../../../../docs/features.md?raw'
+import trainingDoc from '../../../../docs/training.md?raw'
 
-export type HelpModalTab = 'workflows' | 'features' | 'about'
+export type HelpModalTab = 'workflows' | 'features' | 'training' | 'about'
 
 interface HelpModalProps {
   initialTab?: HelpModalTab
@@ -256,6 +257,7 @@ export function HelpModal({ initialTab = 'workflows', onClose }: HelpModalProps)
     () => ({
       workflows: workflowsDoc,
       features: featuresDoc,
+      training: trainingDoc,
     }),
     []
   )
@@ -299,6 +301,16 @@ export function HelpModal({ initialTab = 'workflows', onClose }: HelpModalProps)
               }`}
             >
               Feature Reference
+            </button>
+            <button
+              onClick={() => setTab('training')}
+              className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
+                tab === 'training'
+                  ? 'bg-sky-100 dark:bg-sky-900/30 text-sky-800 dark:text-sky-200'
+                  : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+              }`}
+            >
+              Training Guide
             </button>
             <button
               onClick={() => setTab('about')}

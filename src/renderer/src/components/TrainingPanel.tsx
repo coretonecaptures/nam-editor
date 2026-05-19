@@ -1,4 +1,5 @@
 ﻿import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
 import type { AppSettings, TrainingPreset } from '../types/settings'
 import {
@@ -108,6 +109,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const [trainerState, setTrainerState] = useState<TrainerStateSnapshot>(IDLE_TRAINER_STATE)
   const [queueContextMenu, setQueueContextMenu] = useState<{ job: TrainerQueueJob; x: number; y: number } | null>(null)
   const [historyContextMenu, setHistoryContextMenu] = useState<{ entry: TrainerHistoryEntry; x: number; y: number } | null>(null)
+  const [graphModalSrc, setGraphModalSrc] = useState<string | null>(null)
   const [queueProfileFilter, setQueueProfileFilter] = useState<string>('all')
   const [queueStatusFilter, setQueueStatusFilter] = useState<string>('all')
   const [queueArchitectureFilter, setQueueArchitectureFilter] = useState<string>('all')
@@ -650,6 +652,14 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     setHistoryContextMenu(null)
   }
 
+  const handleShowGraphModal = async (graphPath: string) => {
+    setHistoryContextMenu(null)
+    const result = await window.api.readFileBinary(graphPath)
+    if (result.data) {
+      setGraphModalSrc(`data:image/png;base64,${result.data}`)
+    }
+  }
+
   const handleWatcherQueueAction = async (job: TrainerQueueJob, action: 'remove' | 'skip' | 'move-canceled' | 'retry-now') => {
     const result = await window.api.watcherQueueAction(job.jobId, action)
     if (!result.success) {
@@ -1003,11 +1013,11 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                       />
                     </Field>
 
-                    <Field label="Target ESR">
+                    <Field label="Target ESR" hint="Stops training early once this ESR is reached. Quality guide: <0.01 = Great · <0.035 = Good · <0.1 = Acceptable">
                       <input
                         value={thresholdEsr}
                         onChange={(e) => setThresholdEsr(e.target.value)}
-                        placeholder="Optional"
+                        placeholder="Optional — e.g. 0.01"
                         title="Optional early-stop target. NAM training will stop once validation ESR reaches or beats this value."
                         className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
                       />
@@ -1699,11 +1709,11 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 Show .nam
               </button>
               <button
-                onClick={() => handleShowHistoryPath(historyContextMenu.entry.graphPath)}
+                onClick={() => { void handleShowGraphModal(historyContextMenu.entry.graphPath) }}
                 disabled={!historyContextMenu.entry.graphPath}
                 className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                Show graph
+                View graph
               </button>
               <button
                 onClick={() => handleShowHistoryPath(historyContextMenu.entry.processedWavPath || historyContextMenu.entry.sourcePath)}
@@ -1725,6 +1735,33 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       </div>
     </div>
     </div>
+    {graphModalSrc && createPortal(
+      <div
+        className="fixed inset-0 z-[200] flex items-center justify-center bg-black/75"
+        onClick={() => setGraphModalSrc(null)}
+      >
+        <div
+          className="relative max-w-[90vw] max-h-[90vh] rounded-lg overflow-hidden shadow-2xl bg-gray-950"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <img
+            src={graphModalSrc}
+            alt="Training graph"
+            className="block max-w-[90vw] max-h-[88vh] object-contain"
+          />
+          <button
+            onClick={() => setGraphModalSrc(null)}
+            className="absolute top-2 right-2 p-1.5 rounded-full bg-black/50 hover:bg-black/70 text-white transition-colors"
+            title="Close"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>,
+      document.body
+    )}
   )
 }
 
@@ -1892,8 +1929,17 @@ function HistoryRow({
             <span>{ARCHITECTURE_LABELS[entry.architecture]}</span>
             <span>{new Date(entry.timestamp).toLocaleString()}</span>
             <span>Epochs {entry.epochs}</span>
-            {typeof entry.thresholdEsr === 'number' && <span>Target {entry.thresholdEsr}</span>}
-            {typeof entry.validationEsr === 'number' && <span className={esrTone.classes}>ESR {esrTone.text}</span>}
+            {typeof entry.validationEsr === 'number' ? (
+              typeof entry.thresholdEsr === 'number' ? (
+                entry.validationEsr <= entry.thresholdEsr
+                  ? <span className="rounded-full border border-emerald-400/60 dark:border-emerald-700/60 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-700 dark:text-emerald-300">ESR {esrTone.text} — stopped early ✓</span>
+                  : <span className={esrTone.classes}>ESR {esrTone.text} (target {entry.thresholdEsr})</span>
+              ) : (
+                <span className={esrTone.classes}>ESR {esrTone.text}</span>
+              )
+            ) : (
+              typeof entry.thresholdEsr === 'number' && <span className="text-gray-400 dark:text-gray-600">Target ESR {entry.thresholdEsr}</span>
+            )}
           </div>
           <div className="mt-1 text-[11px] text-gray-500 dark:text-gray-500 break-all">
             {entry.finalModelPath || entry.sourcePath}

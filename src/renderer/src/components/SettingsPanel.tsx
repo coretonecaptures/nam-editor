@@ -140,6 +140,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
   }
 
   const handleSave = () => {
+    if (duplicatePresetIds.size > 0 || duplicateProfileIds.size > 0) return
     const existing = new Set(draft.metadataSuggestRuleLibrary.map(metadataSuggestRuleSignature))
     const additions = draft.metadataSuggestRules
       .filter(isMetadataSuggestRuleLibraryCandidate)
@@ -188,6 +189,14 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
     setTrainingPresetsOpen(true)
   }
 
+  const duplicateTrainingPreset = (presetId: string) => {
+    const source = draft.trainingPresets.find((p) => p.id === presetId)
+    if (!source) return
+    const clone: TrainingPreset = { ...source, id: `training-preset-${Date.now()}`, name: `${source.name} (copy)` }
+    update('trainingPresets', [...draft.trainingPresets, clone])
+    setTrainingPresetsOpen(true)
+  }
+
   const addTrainingWatchProfile = () => {
     const nextIndex = draft.trainingWatchProfiles.length + 1
     const nextProfile: TrainingWatchProfile = {
@@ -207,6 +216,34 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
     update('trainingWatchProfiles', [...draft.trainingWatchProfiles, nextProfile])
     setTrainingWatchersOpen(true)
   }
+
+  const duplicateTrainingWatchProfile = (profileId: string) => {
+    const source = draft.trainingWatchProfiles.find((p) => p.id === profileId)
+    if (!source) return
+    const clone: TrainingWatchProfile = { ...source, id: `training-watch-${Date.now()}`, name: `${source.name} (copy)` }
+    update('trainingWatchProfiles', [...draft.trainingWatchProfiles, clone])
+    setTrainingWatchersOpen(true)
+  }
+
+  const presetSignature = (p: TrainingPreset) =>
+    JSON.stringify({ name: p.name, architectures: p.architectures, epochs: p.epochs, thresholdEsr: p.thresholdEsr, latencyMode: p.latencyMode, latencyValue: p.latencyValue, savePlot: p.savePlot, ignoreChecks: p.ignoreChecks })
+
+  const watchProfileSignature = (p: TrainingWatchProfile) =>
+    JSON.stringify({ name: p.name, watchFolder: p.watchFolder, presetId: p.presetId, finalModelRoot: p.finalModelRoot, processedWavRoot: p.processedWavRoot, graphRoot: p.graphRoot, sourcePostProcess: p.sourcePostProcess, namingTemplate: p.namingTemplate, initialScanMode: p.initialScanMode, enabled: p.enabled, autoRun: p.autoRun })
+
+  const duplicatePresetIds = new Set(
+    draft.trainingPresets
+      .map((p) => presetSignature(p))
+      .filter((sig, i, arr) => arr.indexOf(sig) !== i)
+      .flatMap((sig) => draft.trainingPresets.filter((p) => presetSignature(p) === sig).map((p) => p.id))
+  )
+
+  const duplicateProfileIds = new Set(
+    draft.trainingWatchProfiles
+      .map((p) => watchProfileSignature(p))
+      .filter((sig, i, arr) => arr.indexOf(sig) !== i)
+      .flatMap((sig) => draft.trainingWatchProfiles.filter((p) => watchProfileSignature(p) === sig).map((p) => p.id))
+  )
 
   const formatWatchPath = (path: string) => {
     const normalized = path.replace(/\\/g, '/')
@@ -296,7 +333,9 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
         </button>
         <button
           onClick={handleSave}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-indigo-600 hover:bg-indigo-500 text-white"
+          disabled={duplicatePresetIds.size > 0 || duplicateProfileIds.size > 0}
+          title={duplicatePresetIds.size > 0 || duplicateProfileIds.size > 0 ? 'Resolve exact duplicates before saving' : undefined}
+          className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {saved ? (
             <>
@@ -1588,6 +1627,15 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                                   ))}
                                 </select>
                                 <button
+                                  onClick={() => duplicateTrainingWatchProfile(profile.id)}
+                                  className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors flex-shrink-0"
+                                  title="Duplicate watcher"
+                                >
+                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
+                                  </svg>
+                                </button>
+                                <button
                                   onClick={() => update('trainingWatchProfiles', draft.trainingWatchProfiles.filter((item) => item.id !== profile.id))}
                                   className="w-8 h-8 flex items-center justify-center rounded-lg border border-red-300/60 dark:border-red-800/60 bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 transition-colors flex-shrink-0"
                                   title="Remove watcher"
@@ -1597,6 +1645,12 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                                   </svg>
                                 </button>
                               </div>
+                              {duplicateProfileIds.has(profile.id) && (
+                                <div className="px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-700/50 text-[11px] text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+                                  <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+                                  Exact duplicate of another watcher — change at least one field before saving.
+                                </div>
+                              )}
                               <div className="px-3 py-3 bg-white dark:bg-gray-900/50 space-y-3">
                               <div className="grid grid-cols-1 md:grid-cols-[auto_auto_1fr] gap-3 items-start">
                                 <CheckboxField label="Enabled" description="" checked={profile.enabled} onChange={(v) => updateTrainingWatchProfile(profile.id, { enabled: v })} />
@@ -1673,15 +1727,6 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                                   Auto-fill _Processed folders
                                 </button>
                               </div>
-                              {profile.watchFolder.trim() && (
-                                <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-950/20 px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
-                                  Relative helper preview: <code>{`${profile.watchFolder.replace(/\\/g, '/').replace(/\/+$/, '')}/_Processed/Models`}</code>
-                                  <span className="mx-2">|</span>
-                                  <code>{`${profile.watchFolder.replace(/\\/g, '/').replace(/\/+$/, '')}/_Processed/WAV`}</code>
-                                  <span className="mx-2">|</span>
-                                  <code>{`${profile.watchFolder.replace(/\\/g, '/').replace(/\/+$/, '')}/_Processed/Graphs`}</code>
-                                </div>
-                              )}
                               <div className="grid grid-cols-1 gap-3">
                                 <SettingsField label="Model Output Root" labelTitle="Promoted final .nam files land here, in architecture subfolders.">
                                   <div className="flex gap-2">
@@ -1695,25 +1740,6 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                                       onClick={async () => {
                                         const picked = await window.api.openFolder(profile.finalModelRoot || profile.watchFolder || undefined)
                                         if (picked) updateTrainingWatchProfile(profile.id, { finalModelRoot: picked })
-                                      }}
-                                      className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
-                                    >
-                                      Browse...
-                                    </button>
-                                  </div>
-                                </SettingsField>
-                                <SettingsField label="Processed Source WAV Root" labelTitle="Successful source WAVs can be moved or copied here after all selected architectures finish.">
-                                  <div className="flex gap-2">
-                                    <input
-                                      type="text"
-                                      value={profile.processedWavRoot}
-                                      onChange={(e) => updateTrainingWatchProfile(profile.id, { processedWavRoot: e.target.value })}
-                                      className="flex-1 px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 font-mono"
-                                    />
-                                    <button
-                                      onClick={async () => {
-                                        const picked = await window.api.openFolder(profile.processedWavRoot || profile.watchFolder || undefined)
-                                        if (picked) updateTrainingWatchProfile(profile.id, { processedWavRoot: picked })
                                       }}
                                       className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
                                     >
@@ -1740,18 +1766,70 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                                     </button>
                                   </div>
                                 </SettingsField>
-                                <SettingsField label="Source WAV handling" labelTitle="Choose whether successful source WAVs are moved, copied, or left in place.">
+                                <SettingsField label="Source WAV handling" labelTitle="Choose whether successful source WAVs are moved, copied, or left in place after training completes.">
                                   <select
                                     value={profile.sourcePostProcess}
                                     onChange={(e) => updateTrainingWatchProfile(profile.id, { sourcePostProcess: e.target.value as TrainingWatchProfile['sourcePostProcess'] })}
                                     className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
                                   >
-                                    <option value="move">Move to Processed Source WAV Root</option>
-                                    <option value="copy">Copy to Processed Source WAV Root</option>
+                                    <option value="move">Move source WAV to folder below</option>
+                                    <option value="copy">Copy source WAV to folder below</option>
                                     <option value="keep">Keep source WAV in place</option>
                                   </select>
                                 </SettingsField>
+                                <div className={profile.sourcePostProcess === 'keep' ? 'opacity-40 pointer-events-none' : ''}>
+                                  <SettingsField label="Source WAV Destination" labelTitle="Where source WAVs are moved or copied after all selected architectures finish training.">
+                                    <div className="flex gap-2">
+                                      <input
+                                        type="text"
+                                        value={profile.processedWavRoot}
+                                        onChange={(e) => updateTrainingWatchProfile(profile.id, { processedWavRoot: e.target.value })}
+                                        className="flex-1 px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 font-mono"
+                                      />
+                                      <button
+                                        onClick={async () => {
+                                          const picked = await window.api.openFolder(profile.processedWavRoot || profile.watchFolder || undefined)
+                                          if (picked) updateTrainingWatchProfile(profile.id, { processedWavRoot: picked })
+                                        }}
+                                        className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
+                                      >
+                                        Browse...
+                                      </button>
+                                    </div>
+                                  </SettingsField>
+                                </div>
                               </div>
+                              {/* Live path summary */}
+                              {profile.watchFolder.trim() && (() => {
+                                const sep = typeof process !== 'undefined' && process.platform === 'win32' ? '\\' : '/'
+                                const normSep = (p: string) => sep === '\\' ? p.replace(/\//g, '\\') : p.replace(/\\/g, '/')
+                                const fmtPath = (p: string) => p.trim() ? normSep(p.trim()) : null
+                                return (
+                                  <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40 px-3 py-2.5 text-[11px] text-gray-500 dark:text-gray-400 space-y-1">
+                                    <div className="flex gap-2">
+                                      <span className="w-28 flex-shrink-0 text-gray-400 dark:text-gray-500">Models →</span>
+                                      {fmtPath(profile.finalModelRoot)
+                                        ? <code className="break-all">{fmtPath(profile.finalModelRoot)}</code>
+                                        : <span className="italic text-gray-400 dark:text-gray-600">not set</span>}
+                                    </div>
+                                    <div className="flex gap-2">
+                                      <span className="w-28 flex-shrink-0 text-gray-400 dark:text-gray-500">Graphs →</span>
+                                      {fmtPath(profile.graphRoot)
+                                        ? <code className="break-all">{fmtPath(profile.graphRoot)}</code>
+                                        : <span className="italic text-gray-400 dark:text-gray-600">not set</span>}
+                                    </div>
+                                    <div className="flex gap-2">
+                                      <span className="w-28 flex-shrink-0 text-gray-400 dark:text-gray-500">Source WAVs →</span>
+                                      {profile.sourcePostProcess === 'keep'
+                                        ? <span className="italic">kept in place</span>
+                                        : fmtPath(profile.processedWavRoot)
+                                          ? <><code className="break-all">{fmtPath(profile.processedWavRoot)}</code><span className="ml-1 text-gray-400 dark:text-gray-500">({profile.sourcePostProcess})</span></>
+                                          : <span className="italic text-gray-400 dark:text-gray-600">not set</span>
+                                      }
+                                    </div>
+                                  </div>
+                                )
+                              })()}
                               </div>
                             </div>
                           ))
@@ -1806,6 +1884,15 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                                   className="flex-1 px-2.5 py-1.5 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
                                 />
                                 <button
+                                  onClick={() => duplicateTrainingPreset(preset.id)}
+                                  className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors flex-shrink-0"
+                                  title="Duplicate preset"
+                                >
+                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
+                                  </svg>
+                                </button>
+                                <button
                                   onClick={() => update('trainingPresets', draft.trainingPresets.filter((item) => item.id !== preset.id))}
                                   className="w-8 h-8 flex items-center justify-center rounded-lg border border-red-300/60 dark:border-red-800/60 bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 transition-colors flex-shrink-0"
                                   title="Remove preset"
@@ -1815,6 +1902,12 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                                   </svg>
                                 </button>
                               </div>
+                              {duplicatePresetIds.has(preset.id) && (
+                                <div className="px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-700/50 text-[11px] text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+                                  <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+                                  Exact duplicate of another preset — change at least one field before saving.
+                                </div>
+                              )}
                               <div className="px-3 py-3 bg-white dark:bg-gray-900/50 space-y-3">
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                 <SettingsField label="Architecture(s)">
@@ -1853,14 +1946,14 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                                     />
                                   </div>
                                 </SettingsField>
-                                <SettingsField label="Target ESR">
+                                <SettingsField label="Target ESR" labelTitle="Stop training early once this ESR is reached. Quality: <0.01 = Great · <0.035 = Good · <0.1 = Acceptable">
                                   <input
                                     type="number"
                                     min={0}
                                     step="0.0001"
                                     value={preset.thresholdEsr ?? ''}
                                     onChange={(e) => updateTrainingPreset(preset.id, { thresholdEsr: e.target.value === '' ? null : Number(e.target.value) })}
-                                    placeholder="Optional"
+                                    placeholder="e.g. 0.01"
                                     className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
                                   />
                                 </SettingsField>
