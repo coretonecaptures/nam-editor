@@ -353,6 +353,8 @@ declare global {
         inputLevelDbu: number | null
         outputLevelDbu: number | null
         retainGraphs: boolean
+        normalizeWav: boolean
+        normalizeWavTargetDb: number
         profiles: TrainingProfile[]
       }) => Promise<{ success: boolean }>
       getTrainerProfilesState: () => Promise<TrainerProfilesStateSnapshot>
@@ -1153,6 +1155,8 @@ export default function App() {
       inputLevelDbu: Number.isFinite(defaultInputLevel) ? defaultInputLevel : null,
       outputLevelDbu: Number.isFinite(defaultOutputLevel) ? defaultOutputLevel : null,
       retainGraphs: settings.trainingRetainGraphs,
+      normalizeWav: settings.normalizeWavBeforeTraining ?? true,
+      normalizeWavTargetDb: settings.normalizeWavTargetDb ?? -5.0,
       profiles: settings.enableExperimentalTraining ? resolveTrainingWatcherProfiles(settings) : [],
       userCaptureProfiles: settings.userCaptureProfiles ?? [],
     })
@@ -1167,6 +1171,8 @@ export default function App() {
     settings.trainingPresets,
     settings.trainingWatchProfiles,
     settings.trainingRetainGraphs,
+    settings.normalizeWavBeforeTraining,
+    settings.normalizeWavTargetDb,
     settings.userCaptureProfiles,
   ])
 

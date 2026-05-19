@@ -1635,6 +1635,30 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                     onChange={(v) => update('trainingRetainGraphs', v)}
                   />
 
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <CheckboxField
+                      label="Normalize WAV pair before training"
+                      description="Applies identical linked peak gain to both input and output WAVs before each training run. Originals are never modified — normalized copies are used only within the run workspace."
+                      checked={draft.normalizeWavBeforeTraining ?? true}
+                      onChange={(v) => update('normalizeWavBeforeTraining', v)}
+                    />
+                    {(draft.normalizeWavBeforeTraining ?? true) && (
+                      <div className="flex items-center gap-2 ml-6">
+                        <label className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">Target</label>
+                        <input
+                          type="number"
+                          step="0.5"
+                          max="0"
+                          min="-30"
+                          value={draft.normalizeWavTargetDb ?? -5.0}
+                          onChange={(e) => update('normalizeWavTargetDb', Number(e.target.value))}
+                          className="w-20 px-2 py-1.5 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                        />
+                        <span className="text-xs text-gray-500 dark:text-gray-400">dBFS</span>
+                      </div>
+                    )}
+                  </div>
+
                   <div className="space-y-3">
                     <div className="flex items-stretch rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
                       <button
@@ -2100,6 +2124,34 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                                 <CheckboxField label="Save graph" description="" checked={preset.savePlot} onChange={(v) => updateTrainingPreset(preset.id, { savePlot: v })} />
                                 <CheckboxField label="Ignore trainer checks" description="" checked={preset.ignoreChecks} onChange={(v) => updateTrainingPreset(preset.id, { ignoreChecks: v })} />
                               </div>
+                              <SettingsField label="Normalize WAV" hint="Override the global normalize setting for this preset">
+                                <div className="flex items-center gap-2">
+                                  <select
+                                    value={preset.normalizeWav ?? 'global'}
+                                    onChange={(e) => updateTrainingPreset(preset.id, { normalizeWav: e.target.value as 'global' | 'on' | 'off' })}
+                                    className="px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                                  >
+                                    <option value="global">Global default</option>
+                                    <option value="on">On</option>
+                                    <option value="off">Off</option>
+                                  </select>
+                                  {(preset.normalizeWav ?? 'global') !== 'off' && (
+                                    <>
+                                      <input
+                                        type="number"
+                                        step="0.5"
+                                        max="0"
+                                        min="-30"
+                                        value={preset.normalizeWavTargetDb ?? ''}
+                                        onChange={(e) => updateTrainingPreset(preset.id, { normalizeWavTargetDb: e.target.value === '' ? null : Number(e.target.value) })}
+                                        placeholder="Global"
+                                        className="w-20 px-2 py-1.5 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                                      />
+                                      <span className="text-xs text-gray-500 dark:text-gray-400">dBFS</span>
+                                    </>
+                                  )}
+                                </div>
+                              </SettingsField>
                               </div>
                             </div>
                           ))

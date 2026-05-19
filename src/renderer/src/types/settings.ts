@@ -92,6 +92,8 @@ export interface TrainingPreset {
   latencyValue: number | null
   savePlot: boolean
   ignoreChecks: boolean
+  normalizeWav?: 'global' | 'on' | 'off'
+  normalizeWavTargetDb?: number | null
 }
 
 export interface TrainingWatchProfile {
@@ -280,6 +282,8 @@ export interface AppSettings {
   namPythonPath: string
   namA2PythonPath: string
   namTrainingInputWav: string
+  normalizeWavBeforeTraining: boolean
+  normalizeWavTargetDb: number
   trainingPresets: TrainingPreset[]
   trainingWatchProfiles: TrainingWatchProfile[]
   trainingRetainGraphs: boolean
@@ -365,6 +369,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   namPythonPath: '',
   namA2PythonPath: '',
   namTrainingInputWav: '',
+  normalizeWavBeforeTraining: true,
+  normalizeWavTargetDb: -5.0,
   trainingPresets: [],
   trainingWatchProfiles: [],
   trainingRetainGraphs: true,
@@ -462,6 +468,10 @@ function normalizeTrainingPreset(
       : null,
     savePlot: preset?.savePlot ?? true,
     ignoreChecks: preset?.ignoreChecks ?? false,
+    normalizeWav: preset?.normalizeWav === 'on' ? 'on' : preset?.normalizeWav === 'off' ? 'off' : 'global',
+    normalizeWavTargetDb: typeof preset?.normalizeWavTargetDb === 'number' && Number.isFinite(preset.normalizeWavTargetDb)
+      ? preset.normalizeWavTargetDb
+      : null,
   }
 }
 

@@ -151,6 +151,8 @@ export interface TrainerStartPayload {
   batchSize?: number | null
   ny?: number | null
   fitMrstft?: boolean | null
+  normalizeWav?: boolean
+  normalizeWavTargetDb?: number
   captureProfileId?: string | null
   profileId?: string | null
   profileName?: string | null
@@ -186,6 +188,8 @@ export interface TrainerQueueJob {
   batchSize: number
   ny: number
   fitMrstft: boolean
+  normalizeWav: boolean
+  normalizeWavTargetDb: number
   captureProfileId: string | null
   epochs: number
   latency: number | null

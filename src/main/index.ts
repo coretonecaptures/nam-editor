@@ -443,6 +443,9 @@ import sys
 import traceback
 from pathlib import Path
 
+import numpy as np
+import soundfile as sf
+
 from nam.train.core import train
 
 
@@ -489,6 +492,26 @@ def _promote_output_model_path(train_path, model_name, discovered_path):
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
     return str(target)
+
+
+def _normalize_wav_pair(input_path, output_path, target_db, workspace):
+    in_data, in_sr = sf.read(input_path, dtype="float32")
+    out_data, out_sr = sf.read(output_path, dtype="float32")
+    if in_sr != out_sr:
+        raise ValueError(f"Sample rate mismatch: input {in_sr} Hz vs output {out_sr} Hz")
+    max_peak = max(float(np.max(np.abs(in_data))), float(np.max(np.abs(out_data))))
+    if max_peak == 0:
+        raise ValueError("Cannot normalize: one or both WAV files are silent")
+    target_amplitude = 10 ** (target_db / 20.0)
+    gain = target_amplitude / max_peak
+    gain_db = 20.0 * np.log10(gain)
+    print(f"NAM_LAB_NORMALIZE: peak={max_peak:.6f} gain={gain_db:+.2f} dB target={target_db} dBFS", flush=True)
+    ws = Path(workspace)
+    norm_input = str(ws / "input_norm.wav")
+    norm_output = str(ws / "output_norm.wav")
+    sf.write(norm_input, in_data * gain, in_sr)
+    sf.write(norm_output, out_data * gain, out_sr)
+    return norm_input, norm_output
 
 
 def _detect_nam_version():
@@ -579,7 +602,16 @@ def main():
                 "Set a separate NAM A1 Python path in NAM Lab Settings, or downgrade your NAM install."
             )
 
-    result = _run_a2(payload) if requested == "a2" else _run_a1(payload)
+    active_input = payload["inputPath"]
+    active_output = payload["outputPath"]
+    if payload.get("normalizeWav", False):
+        target_db = payload.get("normalizeWavTargetDb", -5.0)
+        active_input, active_output = _normalize_wav_pair(
+            active_input, active_output, target_db, payload["trainPath"]
+        )
+
+    norm_payload = {**payload, "inputPath": active_input, "outputPath": active_output}
+    result = _run_a2(norm_payload) if requested == "a2" else _run_a1(norm_payload)
 
     discovered_output = _find_output_model_path(payload["trainPath"], payload["modelName"])
     promoted_output = _promote_output_model_path(payload["trainPath"], payload["modelName"], discovered_output)
@@ -1109,6 +1141,8 @@ function createTrainerJob(payload: TrainerStartPayload): TrainerQueueJob {
     batchSize: payload.batchSize ?? 16,
     ny: payload.ny ?? 8192,
     fitMrstft: payload.fitMrstft ?? true,
+    normalizeWav: payload.normalizeWav ?? true,
+    normalizeWavTargetDb: payload.normalizeWavTargetDb ?? -5.0,
     captureProfileId: payload.captureProfileId ?? null,
     epochs: payload.epochs,
     latency: payload.latency,
@@ -1319,6 +1353,8 @@ async function buildTrainerPayloadsForProfile(
         outputPath: normalizedOutputPath,
         trainPath: profile.finalModelRoot,
         namMode: isA2 ? 'a2' : 'a1',
+        normalizeWav: trainerConfiguredNormalizeWav,
+        normalizeWavTargetDb: trainerConfiguredNormalizeWavTargetDb,
         architecture,
         waveNetConfig: profileCfg?.waveNetConfig ?? null,
         lr: profileCfg?.lr ?? 0.004,
@@ -1479,6 +1515,8 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     outputPath,
     trainPath,
     namMode: job.namMode ?? 'a1',
+    normalizeWav: job.normalizeWav,
+    normalizeWavTargetDb: job.normalizeWavTargetDb,
     architecture: job.architecture,
     waveNetConfig: job.waveNetConfig,
     lr: job.lr,
@@ -1831,6 +1869,8 @@ let trainerConfiguredInputPath = ''
 let trainerConfiguredModeledBy = ''
 let trainerConfiguredInputLevelDbu: number | null = null
 let trainerConfiguredOutputLevelDbu: number | null = null
+let trainerConfiguredNormalizeWav = true
+let trainerConfiguredNormalizeWavTargetDb = -5.0
 
 function resetTrainingWatchProfiles(profiles: TrainingProfile[], retainGraphs: boolean): void {
   const manualRunning = new Set(trainingWatcherRunning)
@@ -3737,6 +3777,8 @@ app.whenReady().then(async () => {
     inputLevelDbu: number | null
     outputLevelDbu: number | null
     retainGraphs: boolean
+    normalizeWav?: boolean
+    normalizeWavTargetDb?: number
     profiles: TrainingProfile[]
     userCaptureProfiles?: UserCaptureProfile[]
   }) => {
@@ -3745,6 +3787,8 @@ app.whenReady().then(async () => {
     trainerConfiguredModeledBy = (payload?.modeledBy ?? '').trim()
     trainerConfiguredInputLevelDbu = Number.isFinite(payload?.inputLevelDbu) ? payload.inputLevelDbu ?? null : null
     trainerConfiguredOutputLevelDbu = Number.isFinite(payload?.outputLevelDbu) ? payload.outputLevelDbu ?? null : null
+    trainerConfiguredNormalizeWav = payload?.normalizeWav ?? true
+    trainerConfiguredNormalizeWavTargetDb = Number.isFinite(payload?.normalizeWavTargetDb) ? (payload.normalizeWavTargetDb ?? -5.0) : -5.0
     trainerUserCaptureProfiles = Array.isArray(payload?.userCaptureProfiles) ? payload.userCaptureProfiles : []
     resetTrainingWatchProfiles(Array.isArray(payload?.profiles) ? payload.profiles : [], payload?.retainGraphs ?? true)
     return { success: true }

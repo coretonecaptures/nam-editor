@@ -119,6 +119,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const [selectedPresetId, setSelectedPresetId] = useState<string>(CUSTOM_PRESET_ID)
   const [namMode, setNamMode] = useState<'a1' | 'a2'>('a1')
   const [architectures, setArchitectures] = useState<string[]>(['standard'])
+  const [normalizeWavOverride, setNormalizeWavOverride] = useState<'global' | 'on' | 'off'>('global')
+  const [normalizeWavTargetDb, setNormalizeWavTargetDb] = useState('')
   const [captureProfileEditorOpen, setCaptureProfileEditorOpen] = useState(false)
   const [captureProfileEditorTarget, setCaptureProfileEditorTarget] = useState<UserCaptureProfile | null>(null)
   const [epochs, setEpochs] = useState('1000')
@@ -420,6 +422,14 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     setIgnoreChecks(preset.ignoreChecks)
   }
 
+  function resolveNormalize(override: 'global' | 'on' | 'off', targetDbStr: string): { normalizeWav: boolean; normalizeWavTargetDb: number } {
+    const globalOn = settings.normalizeWavBeforeTraining ?? true
+    const globalDb = settings.normalizeWavTargetDb ?? -5.0
+    const on = override === 'on' ? true : override === 'off' ? false : globalOn
+    const db = targetDbStr.trim() !== '' ? Number.parseFloat(targetDbStr) : globalDb
+    return { normalizeWav: on, normalizeWavTargetDb: Number.isFinite(db) ? db : globalDb }
+  }
+
   const handleQueue = async () => {
     setLaunchError('')
     const parsedEpochs = activePreset ? activePreset.epochs : Number.parseInt(epochs, 10)
@@ -464,6 +474,12 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     const resolvedPythonPath = activeNamMode === 'a2' && settings.namA2PythonPath?.trim()
       ? settings.namA2PythonPath.trim()
       : settings.namPythonPath.trim()
+    const activeNormalizeOverride = activePreset?.normalizeWav ?? normalizeWavOverride
+    const activeNormalizeTargetDb = activePreset?.normalizeWavTargetDb != null
+      ? String(activePreset.normalizeWavTargetDb)
+      : normalizeWavTargetDb
+    const { normalizeWav: resolvedNormalizeWav, normalizeWavTargetDb: resolvedNormalizeDb } =
+      resolveNormalize(activeNormalizeOverride as 'global' | 'on' | 'off', activeNormalizeTargetDb)
 
     const result = await window.api.enqueueTrainerRuns(
       (() => {
@@ -488,6 +504,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               batchSize: profileCfg?.batchSize ?? 16,
               ny: profileCfg?.ny ?? 8192,
               fitMrstft: profileCfg?.fitMrstft ?? true,
+              normalizeWav: resolvedNormalizeWav,
+              normalizeWavTargetDb: resolvedNormalizeDb,
               captureProfileId: activeNamMode === 'a1' ? architecture : null,
               epochs: parsedEpochs,
               latency: parsedLatency,
@@ -549,6 +567,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       latencyValue: parsedLatency,
       savePlot,
       ignoreChecks,
+      normalizeWav: normalizeWavOverride,
+      normalizeWavTargetDb: normalizeWavTargetDb.trim() !== '' ? Number.parseFloat(normalizeWavTargetDb) : null,
     }
   }
 
@@ -791,6 +811,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       latencyValue: parsedLatency,
       savePlot,
       ignoreChecks,
+      normalizeWav: normalizeWavOverride,
+      normalizeWavTargetDb: normalizeWavTargetDb.trim() !== '' ? Number.parseFloat(normalizeWavTargetDb) : null,
     }
     onSaveSettings({
       ...settings,
@@ -1108,6 +1130,33 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   <div className="flex flex-wrap items-center gap-3 pt-1 border-t border-indigo-500/15">
                     <ToggleRow label="Save ESR plot" checked={savePlot} onChange={setSavePlot} />
                     <ToggleRow label="Ignore checks" checked={ignoreChecks} onChange={setIgnoreChecks} />
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs text-gray-500 dark:text-gray-400">Normalize</span>
+                      <select
+                        value={normalizeWavOverride}
+                        onChange={(e) => setNormalizeWavOverride(e.target.value as 'global' | 'on' | 'off')}
+                        className="px-2 py-1 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                      >
+                        <option value="global">Default ({(settings.normalizeWavBeforeTraining ?? true) ? 'on' : 'off'})</option>
+                        <option value="on">On</option>
+                        <option value="off">Off</option>
+                      </select>
+                      {normalizeWavOverride !== 'off' && (
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            step="0.5"
+                            max="0"
+                            min="-30"
+                            value={normalizeWavTargetDb}
+                            onChange={(e) => setNormalizeWavTargetDb(e.target.value)}
+                            placeholder={String(settings.normalizeWavTargetDb ?? -5.0)}
+                            className="w-16 px-2 py-1 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                          />
+                          <span className="text-xs text-gray-500 dark:text-gray-400">dBFS</span>
+                        </div>
+                      )}
+                    </div>
                     <div className="flex-1" />
                     <button
                       onClick={handleSaveAsPreset}
