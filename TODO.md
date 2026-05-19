@@ -18,7 +18,6 @@
 - Per-capture images
 - OS `Open folder in NAM Lab`
 - Append to comments (batch)
-- Unify list-view filter clear buttons
 - High priority: when moving duplicates, let the user choose the destination folder at move time instead of always using the root `_Duplicates` folder
 
 ## Import and performance
@@ -49,22 +48,19 @@
 - Training comparison test: run the same capture through a full `1000 epoch REVxSTD` build in both NAM-BOT and NAM Lab, then compare the resulting `.nam` files directly and also do a listening check to confirm they sound the same (or understand why they do not).
 - Training queue controls/icons: replace the temporary plain-text queue controls (`^`, `v`, `x`) with nicer stable icons/SVGs that cannot regress into mojibake.
 - Training panel layout (partially done): a first cleanup pass happened, but the Training section still needs a dedicated neatening pass so Run WAVs / Run Folder / Queue, routing, and custom controls use space more gracefully and read more cleanly.
-- Training architecture picker UX: allow the first/last selected architecture to be cleared so the selection can truly go empty, then validate on save/queue instead of forcing one architecture to remain selected in the control.
+- Training architecture picker UX: validate on queue that at least one profile is selected, since the new card grid allows the selection to go empty.
 - Training queue status line: fix the green running summary so it reports active/running work accurately (for example, a single active run should not say `Queue Running - 0 queued` in a misleading way).
 - Training history graph preview: make `Show graph` open an in-app modal/lightbox that loads the PNG inside NAM Lab instead of only bouncing out to the OS.
 - Training watch presets: support more than one preset per watch folder, so one watched source can fan out into multiple training recipes such as `REVxSTD 1000 epoch` and `Standard 500 epoch`.
-- Training presets/watch folders: add `Duplicate Preset` and `Duplicate Watch Folder` actions that clone the full configuration for quick tweaking, but prevent saving a true exact duplicate with no meaningful changes.
 - Queue UX: support drag-and-drop queue reordering in addition to move up / move down controls.
 - Queue grouping (partially done): queue/history rows already carry submission grouping for `Run WAVs`, `Run Folder`, and `Watcher`; remaining work is to deepen the batch/session UX where it helps without complicating the serial executor.
 - Queue/history grouping UX: allow grouped Watcher / Run WAVs / Folder Run batches to be collapsed and expanded so long queues and histories are easier to scan.
-- Training presets (partially done): saved presets now exist for manual runs and watchers; expand them into importable/shareable recipe definitions so we do not rely on locally customized `core.py` architectures for formats like `complex`, `revyhi`, `revxstd`, and future custom variants.
-- Training ESR target (done): `threshold_esr` wired end-to-end; quality scale guidance on all ESR inputs; history rows show "stopped early ✓" badge when ESR ≤ target; un-met targets show "(target X)" inline.
+- Training preset sharing: consider an export/import format so Capture Profile configs can be shared between users as standalone recipe files.
 - Training history (partially done): reviewable grouped history exists; add export/report workflows and make sure the long-term storage/revisit experience is as useful as the live queue.
 - Training watcher intake: maybe later, if the final expected output file is missing, allow reprocessing even when matching history already exists.
 - Training verification report (partially done): WAV Check tab added — compares NAMs in the current folder against a user-chosen WAV staging folder, shows trained/missing/extra counts, and provides per-row Train and Train All buttons that enqueue jobs and jump to the queue view; remaining work is to surface ESR targets, epoch counts, and architecture verification against preset expectations.
 - Training workflow (partially done): submission groups exist in queue/history; later consider a higher-level `job / batch` concept where one queued item can represent a multi-format set while watcher mode remains a separate automation layer.
 - Training settings IA (partially done): training already has its own Settings tab; revisit once watcher folders, presets, history, and verification need more room or more specialized navigation inside Training itself.
-- Settings disclosure UX (partially done): Watch Folder cards, Pack Catalog, Checklist Templates, Metadata Suggestions, and Auto-Copy Rules sections were converted to a header-band chevron pattern; remaining work is to extend the same pattern to training presets and watch folder profiles.
 - Training watch/preset UX: redesign watch folders and presets into a cleaner expandable master-detail style, so the user first sees a compact list with key summary fields and only expands/drills into one item at a time to edit the full details.
 - Training drag-and-drop WAV intake: support dragging WAV files from Windows Explorer/Finder into the Training page’s WAV input area so the dropped files populate the selected capture list.
 
