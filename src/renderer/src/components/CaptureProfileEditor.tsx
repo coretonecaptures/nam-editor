@@ -197,7 +197,7 @@ export function CaptureProfileEditor({ profile, onSave, onCancel }: CaptureProfi
 
   return createPortal(
     <div className="fixed inset-0 z-[150] flex items-start justify-center bg-black/70 overflow-y-auto py-8 px-4">
-      <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-full max-w-2xl">
+      <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-full max-w-4xl">
         <div className="px-5 pt-5 pb-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
             {profile ? 'Edit Profile' : 'New Capture Profile'}
@@ -374,7 +374,7 @@ export function CaptureProfileEditor({ profile, onSave, onCancel }: CaptureProfi
             <textarea
               value={jsonPaste}
               onChange={(e) => { setJsonPaste(e.target.value); setJsonError('') }}
-              rows={4}
+              rows={8}
               placeholder={'[\n  { "input_size": 1, "channels": 8, "head_size": 8, ... },\n  ...\n]'}
               className="w-full px-3 py-2 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-xs font-mono text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 resize-none"
             />

@@ -28,6 +28,8 @@
 
 ## Grid and UI
 
+- File list filter bar: current multi-row layout wraps messily at narrow widths. A collapsible Filters popover with active-filter chips was explored and reverted (see git history). Design a better solution — options include horizontal-scroll filter row, compact icon-triggered filter drawer, or a redesigned toolbar that gives filters more breathing room without eating into list height.
+
 - Metadata header path display: consider a second muted/grey full-path presentation or alternate layout that shows more of the real file path without stealing too much editor real estate.
 
 ## Checklist and release workflow

@@ -356,8 +356,6 @@ export function FileList({
   const [visibleCols, setVisibleCols] = useState<string[]>(loadVisibleCols)
   const [showExport, setShowExport] = useState(false)
   const [showColChooser, setShowColChooser] = useState(false)
-  const [showFiltersPopover, setShowFiltersPopover] = useState(false)
-  const filtersPopoverRef = useRef<HTMLDivElement>(null)
   const anchorIndexRef = useRef<number>(-1)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; filePath: string } | null>(null)
   const ctxMenuRef = useRef<HTMLDivElement>(null)
@@ -471,15 +469,6 @@ export function FileList({
     window.addEventListener('mousedown', handler)
     return () => window.removeEventListener('mousedown', handler)
   }, [showColChooser])
-
-  useEffect(() => {
-    if (!showFiltersPopover) return
-    const handler = (e: MouseEvent) => {
-      if (filtersPopoverRef.current && !filtersPopoverRef.current.contains(e.target as Node)) setShowFiltersPopover(false)
-    }
-    window.addEventListener('mousedown', handler)
-    return () => window.removeEventListener('mousedown', handler)
-  }, [showFiltersPopover])
 
   const handleVisibleColsChange = (cols: string[]) => {
     setVisibleCols(cols)
@@ -754,137 +743,165 @@ export function FileList({
         </div>
       </div>
 
-      {/* Filter bar — status + secondary filters popover */}
-      {(() => {
-        const mfrOptions = [...new Set(files.map((f) => f.metadata.gear_make).filter((v): v is string => !!v))].sort()
-        const secondaryActive = [gearFilter, toneFilter, presetFilter, mfrFilter, nameSearch].filter(Boolean).length
-        const clearSecondary = () => { setGearFilter(''); setToneFilter(''); setPresetFilter(''); setMfrFilter(''); setNameSearch('') }
-        return (
-          <div className="px-3 pb-1.5 flex gap-1.5 flex-wrap items-center flex-shrink-0">
-            {/* Status */}
-            <select
-              value={filter === 'all' ? '' : filter}
-              onChange={(e) => setFilter((e.target.value || 'all') as FilterMode)}
-              className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
-                filter !== 'all'
-                  ? 'bg-indigo-100 dark:bg-indigo-900/40 border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-400'
-                  : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
-              }`}
-            >
-              <option value="">All files</option>
-              {statusFilterOptions.map(({ value, label }) => (
-                <option key={value} value={value} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{label}</option>
-              ))}
-            </select>
+      {/* Status filters */}
+      <div className="px-3 pb-1 flex gap-1.5 flex-wrap items-center flex-shrink-0">
+        <button
+          onClick={() => setFilter('all')}
+          className={`text-xs px-2 py-0.5 rounded-full transition-colors ${
+            filter === 'all'
+              ? 'bg-indigo-600 text-white'
+              : 'bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+          }`}
+        >
+          All
+        </button>
+        <select
+          value={filter === 'all' ? '' : filter}
+          onChange={(e) => setFilter((e.target.value || 'all') as FilterMode)}
+          className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
+            filter !== 'all'
+              ? 'bg-indigo-100 dark:bg-indigo-900/40 border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-400'
+              : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
+          }`}
+        >
+          <option value="">Status...</option>
+          {statusFilterOptions.map(({ value, label }) => (
+            <option key={value} value={value} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">
+              {label}
+            </option>
+          ))}
+        </select>
+        {ratingFilter !== null && ratingFilter !== undefined && (
+          <button
+            onClick={() => onRatingFilterClear?.()}
+            className="text-xs px-2 py-0.5 rounded-full bg-amber-500 text-white hover:bg-amber-600 transition-colors"
+          >
+            {ratingFilter === 0 ? 'Unrated' : '*'.repeat(ratingFilter)} x
+          </button>
+        )}
+        {activeFolderPath && onDirectFilesOnlyChange && (
+          <button
+            onClick={() => onDirectFilesOnlyChange(!directFilesOnly)}
+            className={`text-xs py-0.5 px-2 rounded-full border transition-colors ${
+              directFilesOnly
+                ? 'bg-sky-100 dark:bg-sky-900/30 border-sky-300 dark:border-sky-700 text-sky-700 dark:text-sky-400'
+                : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
+            }`}
+            title={directFilesOnly ? 'Currently showing only files directly inside the selected folder. Click to include subfolders too.' : 'Currently including files from subfolders. Click to show only files directly inside the selected folder.'}
+          >
+            {directFilesOnly ? 'Showing: This Folder Only' : 'Showing: Including Subfolders'}
+          </button>
+        )}
+      </div>
 
-            {/* Secondary filters popover — list mode only */}
-            {viewMode === 'list' && (
-              <div ref={filtersPopoverRef} className="relative">
-                <button
-                  onClick={() => setShowFiltersPopover((v) => !v)}
-                  className={`text-xs py-0.5 px-2 rounded-full border transition-colors flex items-center gap-1 ${
-                    secondaryActive > 0
-                      ? 'bg-violet-100 dark:bg-violet-900/30 border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-400'
+      {/* Gear + Tone dropdowns - list mode only; grid mode uses per-column header filters */}
+      {viewMode === 'list' && (
+        <div className="px-3 pb-2 flex gap-1.5 flex-shrink-0 flex-wrap">
+          <select
+            value={gearFilter}
+            onChange={(e) => { setGearFilter(e.target.value); if (!e.target.value) onGearFilterClear?.() }}
+            className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
+              gearFilter
+                ? 'bg-orange-100 dark:bg-orange-900/30 border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-400'
+                : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
+            }`}
+          >
+            <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Gear type...</option>
+            {GEAR_TYPES.map((g) => <option key={g} value={g} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{g}</option>)}
+          </select>
+          <select
+            value={toneFilter}
+            onChange={(e) => { setToneFilter(e.target.value); if (!e.target.value) onToneFilterClear?.() }}
+            className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
+              toneFilter
+                ? 'bg-indigo-100 dark:bg-indigo-900/40 border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-400'
+                : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
+            }`}
+          >
+            <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Tone type...</option>
+            {TONE_TYPES.map((t) => <option key={t} value={t} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{t}</option>)}
+          </select>
+          <select
+            value={presetFilter}
+            onChange={(e) => setPresetFilter(e.target.value)}
+            className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
+              presetFilter
+                ? 'bg-teal-100 dark:bg-teal-900/30 border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400'
+                : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
+            }`}
+          >
+            <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Preset...</option>
+            {['Standard', 'Complex', 'Lite', 'Feather', 'Nano', 'REVySTD', 'REVyHI', 'REVxSTD'].map((p) => (
+              <option key={p} value={p} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{p}</option>
+            ))}
+            <option value="__none__" className="bg-white dark:bg-gray-900 text-gray-500 dark:text-gray-500">- None detected -</option>
+          </select>
+          {/* Manufacturer filter */}
+          {(() => {
+            const mfrOptions = [...new Set(files.map((f) => f.metadata.gear_make).filter((v): v is string => !!v))].sort()
+            return (
+              <div className="flex items-center gap-0.5">
+                <select
+                  value={mfrFilter}
+                  onChange={(e) => setMfrFilter(e.target.value)}
+                  className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
+                    mfrFilter
+                      ? 'bg-purple-100 dark:bg-purple-900/30 border-purple-300 dark:border-purple-700 text-purple-700 dark:text-purple-400'
                       : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
                   }`}
                 >
-                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
-                  </svg>
-                  Filters{secondaryActive > 0 ? ` (${secondaryActive})` : ''}
-                </button>
-                {showFiltersPopover && (
-                  <div className="absolute left-0 top-full mt-1 w-64 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl z-50 p-3 space-y-2.5">
-                    <div>
-                      <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-1">Gear Type</div>
-                      <select value={gearFilter} onChange={(e) => { setGearFilter(e.target.value); if (!e.target.value) onGearFilterClear?.() }}
-                        className="w-full text-xs py-1 px-2 rounded-lg border bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 focus:outline-none">
-                        <option value="">Any</option>
-                        {GEAR_TYPES.map((g) => <option key={g} value={g}>{g}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-1">Tone Type</div>
-                      <select value={toneFilter} onChange={(e) => { setToneFilter(e.target.value); if (!e.target.value) onToneFilterClear?.() }}
-                        className="w-full text-xs py-1 px-2 rounded-lg border bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 focus:outline-none">
-                        <option value="">Any</option>
-                        {TONE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-1">Architecture Preset</div>
-                      <select value={presetFilter} onChange={(e) => setPresetFilter(e.target.value)}
-                        className="w-full text-xs py-1 px-2 rounded-lg border bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 focus:outline-none">
-                        <option value="">Any</option>
-                        {['Standard', 'Complex', 'Lite', 'Feather', 'Nano', 'REVySTD', 'REVyHI', 'REVxSTD'].map((p) => <option key={p} value={p}>{p}</option>)}
-                        <option value="__none__">— None detected —</option>
-                      </select>
-                    </div>
-                    {mfrOptions.length > 0 && (
-                      <div>
-                        <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-1">Manufacturer</div>
-                        <select value={mfrFilter} onChange={(e) => setMfrFilter(e.target.value)}
-                          className="w-full text-xs py-1 px-2 rounded-lg border bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 focus:outline-none">
-                          <option value="">Any</option>
-                          {mfrOptions.map((m) => <option key={m} value={m}>{m}</option>)}
-                        </select>
-                      </div>
-                    )}
-                    <div>
-                      <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-1">Name Contains</div>
-                      <input type="text" value={nameSearch} onChange={(e) => setNameSearch(e.target.value)}
-                        placeholder="Type to filter by name..."
-                        className="w-full text-xs py-1 px-2 rounded-lg border bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500" />
-                    </div>
-                    {secondaryActive > 0 && (
-                      <button onClick={clearSecondary} className="w-full text-xs text-red-500 hover:text-red-700 dark:hover:text-red-400 transition-colors pt-1 border-t border-gray-200 dark:border-gray-700 text-left">
-                        Clear all filters
-                      </button>
-                    )}
-                  </div>
+                  <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Manufacturer...</option>
+                  {mfrOptions.map((m) => <option key={m} value={m} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{m}</option>)}
+                </select>
+                {mfrFilter && (
+                  <button
+                    onClick={() => setMfrFilter('')}
+                    className="text-purple-500 hover:text-purple-700 dark:hover:text-purple-300 transition-colors"
+                    title="Clear manufacturer filter"
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
                 )}
               </div>
-            )}
-
-            {/* Active secondary filter chips */}
-            {gearFilter && <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/30 border border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-400 flex items-center gap-1">
-              {gearFilter} <button onClick={() => { setGearFilter(''); onGearFilterClear?.() }} className="hover:text-orange-900 dark:hover:text-orange-200">×</button>
-            </span>}
-            {toneFilter && <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/40 border border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-400 flex items-center gap-1">
-              {toneFilter} <button onClick={() => { setToneFilter(''); onToneFilterClear?.() }} className="hover:text-indigo-900 dark:hover:text-indigo-200">×</button>
-            </span>}
-            {presetFilter && <span className="text-xs px-2 py-0.5 rounded-full bg-teal-100 dark:bg-teal-900/30 border border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400 flex items-center gap-1">
-              {presetFilter === '__none__' ? 'No preset' : presetFilter} <button onClick={() => setPresetFilter('')} className="hover:text-teal-900 dark:hover:text-teal-200">×</button>
-            </span>}
-            {mfrFilter && <span className="text-xs px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900/30 border border-purple-300 dark:border-purple-700 text-purple-700 dark:text-purple-400 flex items-center gap-1">
-              {mfrFilter} <button onClick={() => setMfrFilter('')} className="hover:text-purple-900 dark:hover:text-purple-200">×</button>
-            </span>}
-            {nameSearch && <span className="text-xs px-2 py-0.5 rounded-full bg-teal-100 dark:bg-teal-900/30 border border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400 flex items-center gap-1">
-              "{nameSearch}" <button onClick={() => setNameSearch('')} className="hover:text-teal-900 dark:hover:text-teal-200">×</button>
-            </span>}
-            {ratingFilter !== null && ratingFilter !== undefined && (
-              <button onClick={() => onRatingFilterClear?.()} className="text-xs px-2 py-0.5 rounded-full bg-amber-500 text-white hover:bg-amber-600 transition-colors">
-                {ratingFilter === 0 ? 'Unrated' : '*'.repeat(ratingFilter)} ×
-              </button>
-            )}
-
-            {/* Direct/subfolder toggle */}
-            {activeFolderPath && onDirectFilesOnlyChange && (
+            )
+          })()}
+          {/* Name-only filter */}
+          <div className="relative ml-1">
+            <input
+              type="text"
+              value={nameSearch}
+              onChange={(e) => setNameSearch(e.target.value)}
+              placeholder="Name contains..."
+              title="Filters to files where the capture name contains this text"
+              className={`text-xs py-0.5 pl-2.5 pr-6 rounded-full border transition-colors focus:outline-none focus:border-indigo-500 ${
+                nameSearch
+                  ? 'bg-teal-100 dark:bg-teal-900/30 border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400'
+                  : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400 placeholder-gray-400 dark:placeholder-gray-600'
+              }`}
+              style={{ width: 130 }}
+            />
+            {nameSearch && (
               <button
-                onClick={() => onDirectFilesOnlyChange(!directFilesOnly)}
-                className={`text-xs py-0.5 px-2 rounded-full border transition-colors ml-auto ${
-                  directFilesOnly
-                    ? 'bg-sky-100 dark:bg-sky-900/30 border-sky-300 dark:border-sky-700 text-sky-700 dark:text-sky-400'
-                    : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
-                }`}
-                title={directFilesOnly ? 'Showing only direct files. Click to include subfolders.' : 'Including subfolders. Click to show direct files only.'}
+                onClick={() => setNameSearch('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-teal-500 hover:text-teal-700 dark:hover:text-teal-300"
               >
-                {directFilesOnly ? 'This folder' : '+ Subfolders'}
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
               </button>
             )}
           </div>
-        )
-      })()}
+        </div>
+      )}
+
+      {/*
+        TODO: Rethink list filter bar layout — current multi-row wrapping is messy at narrow widths.
+        Options explored: collapsible Filters popover with active-filter chips (implemented and reverted —
+        see git history). Consider: compact filter bar with horizontal scroll, or a dedicated filter
+        drawer/sidebar that doesn't eat vertical space from the file list.
+      */}
       {/* Grid mode: active column filter indicator */}
       {viewMode === 'grid' && Object.values(columnFilters).some((f) => f.text || f.selected.length > 0) && (
         <div className="px-3 pb-1.5 flex items-center gap-2 flex-shrink-0">
