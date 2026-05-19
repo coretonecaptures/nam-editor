@@ -1012,33 +1012,14 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 ) : (
                   <>
                     <Field label="Architecture(s)">
-                      <ArchitectureProfilePicker
-                        selectedIds={architectures}
+                      <ArchitectureMultiSelect
+                        values={architectures}
                         onChange={(next) => {
                           setArchitectures(next)
                           if (runMode === 'files') setSelectedPresetId(CUSTOM_PRESET_ID)
                           else setFolderRunProfileId(CUSTOM_PRESET_ID)
                         }}
                         userProfiles={settings.userCaptureProfiles ?? []}
-                        onClone={(profile) => {
-                          setCaptureProfileEditorTarget(null)
-                          setCaptureProfileEditorOpen(true)
-                          setTimeout(() => {
-                            setCaptureProfileEditorTarget({
-                              id: `profile-${Date.now()}`,
-                              name: `${profile.name} (copy)`,
-                              description: profile.description,
-                              waveNetConfig: { ...profile.waveNetConfig, layers_configs: profile.waveNetConfig.layers_configs.map((l) => ({ ...l })) },
-                              lr: profile.lr, lrDecay: profile.lrDecay, defaultEpochs: profile.defaultEpochs,
-                              batchSize: profile.batchSize, ny: profile.ny, fitMrstft: profile.fitMrstft,
-                            })
-                          }, 0)
-                        }}
-                        onEdit={(profile) => { setCaptureProfileEditorTarget(profile); setCaptureProfileEditorOpen(true) }}
-                        onDelete={(id) => {
-                          onSaveSettings({ ...settings, userCaptureProfiles: (settings.userCaptureProfiles ?? []).filter((p) => p.id !== id) })
-                        }}
-                        onNew={() => { setCaptureProfileEditorTarget(null); setCaptureProfileEditorOpen(true) }}
                       />
                     </Field>
 
@@ -1060,7 +1041,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                       />
                     </Field>
 
-                    <Field label="Target ESR" hint="Stops training early once this ESR is reached. Quality guide: <0.01 = Great · <0.035 = Good · <0.1 = Acceptable">
+                    <Field label="Target ESR" labelTitle="Stops training early once this ESR is reached. Quality guide: <0.01 = Great · <0.035 = Good · <0.1 = Acceptable">
                       <input
                         value={thresholdEsr}
                         onChange={(e) => setThresholdEsr(e.target.value)}
@@ -1828,11 +1809,12 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   )
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function Field({ label, hint, labelTitle, children }: { label: string; hint?: string; labelTitle?: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">
+      <label title={labelTitle} className={`block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 ${labelTitle ? 'cursor-help' : ''}`}>
         {label}
+        {labelTitle && <span className="ml-1 text-gray-400 dark:text-gray-600">ⓘ</span>}
         {hint && <span className="ml-2 text-gray-500 dark:text-gray-500 font-normal">{hint}</span>}
       </label>
       {children}
@@ -1840,27 +1822,29 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   )
 }
 
-function ArchitectureMultiSelect({ values, onChange }: { values: TrainerArchitecture[]; onChange: (next: TrainerArchitecture[]) => void }) {
+function ArchitectureMultiSelect({ values, onChange, userProfiles = [] }: { values: string[]; onChange: (next: string[]) => void; userProfiles?: import('../types/settings').UserCaptureProfile[] }) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     if (!open) return
     const onPointerDown = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
-        setOpen(false)
-      }
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
     }
     document.addEventListener('mousedown', onPointerDown)
     return () => document.removeEventListener('mousedown', onPointerDown)
   }, [open])
 
+  const allOptions = [
+    ...TRAINER_ARCHITECTURES.map((id) => ({ id, name: ARCHITECTURE_LABELS[id] ?? id })),
+    ...userProfiles.map((p) => ({ id: p.id, name: p.name })),
+  ]
   const label =
     values.length === 0
-      ? 'Choose formats'
+      ? 'Choose profiles'
       : values.length === 1
-        ? ARCHITECTURE_LABELS[values[0]]
-        : `${values.length} formats selected`
+        ? (allOptions.find((o) => o.id === values[0])?.name ?? values[0])
+        : `${values.length} selected`
 
   return (
     <div ref={rootRef} className="relative">
@@ -1877,30 +1861,27 @@ function ArchitectureMultiSelect({ values, onChange }: { values: TrainerArchitec
       {open && (
         <div className="absolute z-30 mt-2 w-full rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-xl overflow-hidden">
           <div className="max-h-64 overflow-y-auto p-2 space-y-1">
+            {TRAINER_ARCHITECTURES.length > 0 && (
+              <div className="px-2.5 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">Built-in</div>
+            )}
             {TRAINER_ARCHITECTURES.map((option) => {
               const checked = values.includes(option)
               return (
-                <label
-                  key={option}
-                  className={`flex items-center gap-2 rounded-lg px-2.5 py-2 cursor-pointer text-sm ${
-                    checked
-                      ? 'bg-indigo-500/10 text-indigo-700 dark:text-indigo-200'
-                      : 'text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        onChange([...values, option])
-                      } else {
-                        onChange(values.filter((item) => item !== option))
-                      }
-                    }}
-                    className="accent-indigo-600"
-                  />
-                  <span>{ARCHITECTURE_LABELS[option]}</span>
+                <label key={option} className={`flex items-center gap-2 rounded-lg px-2.5 py-2 cursor-pointer text-sm ${checked ? 'bg-indigo-500/10 text-indigo-700 dark:text-indigo-200' : 'text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'}`}>
+                  <input type="checkbox" checked={checked} onChange={(e) => { if (e.target.checked) onChange([...values, option]); else onChange(values.filter((item) => item !== option)) }} className="accent-indigo-600" />
+                  <span>{ARCHITECTURE_LABELS[option] ?? option}</span>
+                </label>
+              )
+            })}
+            {userProfiles.length > 0 && (
+              <div className="px-2.5 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 border-t border-gray-100 dark:border-gray-800 mt-1">Custom</div>
+            )}
+            {userProfiles.map((profile) => {
+              const checked = values.includes(profile.id)
+              return (
+                <label key={profile.id} className={`flex items-center gap-2 rounded-lg px-2.5 py-2 cursor-pointer text-sm ${checked ? 'bg-indigo-500/10 text-indigo-700 dark:text-indigo-200' : 'text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'}`}>
+                  <input type="checkbox" checked={checked} onChange={(e) => { if (e.target.checked) onChange([...values, profile.id]); else onChange(values.filter((item) => item !== profile.id)) }} className="accent-indigo-600" />
+                  <span>{profile.name}</span>
                 </label>
               )
             })}
