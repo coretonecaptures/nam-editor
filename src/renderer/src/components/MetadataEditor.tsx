@@ -89,6 +89,7 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
   const m = file.metadata
   const orig = file.originalMetadata
   const [nlShowAll, setNlShowAll] = useState(false)
+  const [latencyUnlocked, setLatencyUnlocked] = useState(false)
   const [isEditingName, setIsEditingName] = useState(false)
   const [nameEditValue, setNameEditValue] = useState('')
   const nameInputRef = useRef<HTMLInputElement>(null)
@@ -416,6 +417,53 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
                 autoFilled={false}
               />
             </Field>
+            <Field
+              label="Latency (samples)"
+              hint="Auto-set by the NAM trainer. Only edit if you need to override for pedal/plugin output calibration."
+            >
+              <div className="flex items-center gap-2">
+                {!latencyUnlocked ? (
+                  <button
+                    onClick={() => setLatencyUnlocked(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-amber-400 dark:hover:border-amber-500 hover:text-amber-600 dark:hover:text-amber-400 transition-colors bg-gray-50 dark:bg-gray-800/60"
+                    title="Click to unlock latency editing"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                    </svg>
+                    <span className="font-mono">{m.latency_recommended != null ? `${m.latency_recommended} samples` : '—'}</span>
+                  </button>
+                ) : (
+                  <>
+                    <NumberInput
+                      value={m.latency_recommended ?? ''}
+                      onChange={(v) => update('latency_recommended', v)}
+                      placeholder="e.g. 1024"
+                      step={1}
+                      changed={isManuallyChanged('latency_recommended')}
+                      autoFilled={false}
+                    />
+                    <button
+                      onClick={() => setLatencyUnlocked(false)}
+                      className="flex-shrink-0 p-1.5 rounded text-amber-500 hover:text-amber-600 transition-colors"
+                      title="Lock field"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 00-9 0v3.75M3.75 21.75h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H3.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                      </svg>
+                    </button>
+                  </>
+                )}
+              </div>
+              {latencyUnlocked && (
+                <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
+                  <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                  </svg>
+                  Normally auto-set by the NAM trainer. Only change if overriding for output calibration.
+                </p>
+              )}
+            </Field>
           </Section>
 
           {/* Read-only stats */}
@@ -461,12 +509,6 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
                     good={passed ? true : false}
                   />
                 )
-              })()}
-              {(() => {
-                const t = m.training as Record<string, unknown> | undefined
-                const cal = ((t?.data as Record<string, unknown> | undefined)?.latency as Record<string, unknown> | undefined)?.calibration as Record<string, unknown> | undefined
-                if (cal?.recommended == null) return null
-                return <StatCard label="Calibrated Latency" value={`${cal.recommended} samples`} />
               })()}
               {(() => {
                 const nb = (((m as Record<string, unknown>).nam_bot as Record<string, unknown> | undefined)

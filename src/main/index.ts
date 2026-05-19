@@ -2207,6 +2207,10 @@ function liftUiMetadata(meta: Record<string, unknown>): Record<string, unknown> 
   const nb = getPreferredNamBot(meta)
   if (nb?.trained_epochs != null) meta.nb_trained_epochs = nb.trained_epochs
   if (nb?.preset_name != null) meta.nb_preset_name = nb.preset_name
+  // Lift latency calibration value to flat key for the editor
+  const trainingData = (meta.training as Record<string, unknown> | undefined)?.data as Record<string, unknown> | undefined
+  const latencyCal = (trainingData?.latency as Record<string, unknown> | undefined)?.calibration as Record<string, unknown> | undefined
+  if (latencyCal?.recommended != null) meta.latency_recommended = latencyCal.recommended
   const nl = meta.nam_lab as Record<string, unknown> | undefined
   if (nl) {
     if (meta.nb_trained_epochs == null && nl.trained_epochs != null) meta.nb_trained_epochs = nl.trained_epochs
@@ -2519,6 +2523,50 @@ function patchTopLevelNamBotField(content: string, field: string, value: unknown
   const namBotBlock = `\n${indent}"nam_bot": {\n${indent}  "${field}": ${newVal}\n${indent}}`
   inner = trimmed + (needsComma ? ',' : '') + namBotBlock + trailing
   return content.slice(0, metaOpenBrace + 1) + inner + content.slice(metaCloseBrace)
+}
+
+// Patch metadata.training.data.latency.calibration.recommended.
+// Only updates an existing calibration block — does not synthesise the whole
+// training.data.latency hierarchy from scratch (that would risk corrupting
+// files that were never trained through NAM Lab).
+function patchLatencyRecommended(content: string, value: unknown): string {
+  if (value === null || value === undefined) return content
+  const newVal = serializeJsonValue(value)
+  const fieldRe = /("recommended")(\s*:\s*)(null|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/
+
+  const navigate = (src: string, re: RegExp, fromPos: number): { open: number; close: number } | null => {
+    const slice = src.slice(fromPos)
+    const m = re.exec(slice)
+    if (!m) return null
+    const open = fromPos + m.index + m[0].length - 1
+    const close = findMatchingBrace(src, open)
+    return close === -1 ? null : { open, close }
+  }
+
+  const metaMatch = /"metadata"\s*:\s*\{/.exec(content)
+  if (!metaMatch) return content
+  const metaOpen = metaMatch.index + metaMatch[0].length - 1
+  const training = navigate(content, /"training"\s*:\s*\{/, metaOpen)
+  if (!training) return content
+  const data = navigate(content, /"data"\s*:\s*\{/, training.open)
+  if (!data) return content
+  const latency = navigate(content, /"latency"\s*:\s*\{/, data.open)
+  if (!latency) return content
+  const cal = navigate(content, /"calibration"\s*:\s*\{/, latency.open)
+  if (!cal) return content
+
+  let calInner = content.slice(cal.open + 1, cal.close)
+  if (fieldRe.test(calInner)) {
+    calInner = calInner.replace(fieldRe, (_m, k, sep) => k + sep + newVal)
+  } else {
+    const indentMatch = /\n([ \t]+)"/.exec(calInner)
+    const indent = indentMatch ? indentMatch[1] : '        '
+    const trimmed = calInner.trimEnd()
+    const needsComma = trimmed.length > 0 && !trimmed.endsWith(',')
+    const trailing = calInner.slice(trimmed.length)
+    calInner = trimmed + (needsComma ? ',' : '') + `\n${indent}"recommended": ${newVal}` + trailing
+  }
+  return content.slice(0, cal.open + 1) + calInner + content.slice(cal.close)
 }
 
 function migrateLegacyNamBotMetadata(content: string): { content: string; changed: boolean } {
@@ -2865,6 +2913,12 @@ app.whenReady().then(async () => {
         if (origVal !== newVal || (origVal == null && newVal != null)) {
           patched = patchNamLabField(patched, k, newVal)
         }
+      }
+
+      // Handle latency_recommended — stored at metadata.training.data.latency.calibration.recommended
+      if (Object.prototype.hasOwnProperty.call(incoming, 'latency_recommended')) {
+        const newLatency = incoming.latency_recommended != null ? Math.round(Number(incoming.latency_recommended)) : null
+        if (newLatency !== null) patched = patchLatencyRecommended(patched, newLatency)
       }
 
       // Validate output is well-formed JSON before touching disk
