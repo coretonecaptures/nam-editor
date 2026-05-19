@@ -180,6 +180,19 @@ export function ArchitectureProfilePicker({
           />
         ))}
       </div>
+      {sectionLabel('A2 PackedWaveNet')}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div
+          className="rounded-lg border border-dashed border-pink-300 dark:border-pink-700/50 bg-pink-50/30 dark:bg-pink-900/10 px-3 py-2.5 opacity-60 cursor-not-allowed"
+          title="A2 (PackedWaveNet) training is not yet available in the NAM trainer. Coming soon."
+        >
+          <div className="flex items-center gap-1.5 mb-1">
+            <span className="text-[11px] font-semibold text-pink-500 dark:text-pink-400">A2</span>
+            <span className="text-[9px] uppercase tracking-wider font-medium text-pink-400 dark:text-pink-500 bg-pink-100 dark:bg-pink-900/40 px-1 py-px rounded">Soon</span>
+          </div>
+          <div className="text-[10px] text-gray-400 dark:text-gray-500 leading-snug">PackedWaveNet — not yet released in trainer</div>
+        </div>
+      </div>
       {sectionLabel('Custom Profiles')}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {userProfiles.map((profile) => (

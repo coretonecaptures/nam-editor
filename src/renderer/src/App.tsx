@@ -1419,7 +1419,7 @@ export default function App() {
         const autoFilledFields = (Object.keys(meta) as (keyof NamFile['metadata'])[]).filter(
           (k) => meta[k] != null && (workingMeta[k] == null || workingMeta[k] === '')
         )
-        loaded.push({ filePath: r.filePath, fileName: baseName, version: r.version ?? '?', metadata: meta, originalMetadata: rawMeta, autoFilledFields, architecture: r.architecture ?? '?', config: r.config, isDirty: wasChanged, mtimeMs: r.mtimeMs, birthtimeMs: r.birthtimeMs, sizeBytes: r.sizeBytes })
+        loaded.push({ filePath: r.filePath, fileName: baseName, version: r.version ?? '?', notes: (r as Record<string, unknown>).notes as string[] | undefined, metadata: meta, originalMetadata: rawMeta, autoFilledFields, architecture: r.architecture ?? '?', config: r.config, isDirty: wasChanged, mtimeMs: r.mtimeMs, birthtimeMs: r.birthtimeMs, sizeBytes: r.sizeBytes })
       } else {
         errors++
       }
@@ -3137,6 +3137,7 @@ export default function App() {
         filePath: result.filePath,
         fileName: result.filePath.replace(/\\/g, '/').split('/').pop() ?? result.filePath,
         version: result.version,
+        notes: (result as Record<string, unknown>).notes as string[] | undefined,
         metadata: migrateLegacyNamBotInMemory(result.metadata),
         originalMetadata: migrateLegacyNamBotInMemory(result.metadata),
         autoFilledFields: [],

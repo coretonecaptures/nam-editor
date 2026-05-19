@@ -280,7 +280,6 @@ export interface AppSettings {
   // Experimental local NAM training
   enableExperimentalTraining: boolean
   namPythonPath: string
-  namA2PythonPath: string
   namTrainingInputWav: string
   normalizeWavBeforeTraining: boolean
   normalizeWavTargetDb: number
@@ -367,7 +366,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   namStandalonePath: '',
   enableExperimentalTraining: false,
   namPythonPath: '',
-  namA2PythonPath: '',
   namTrainingInputWav: '',
   normalizeWavBeforeTraining: false,
   normalizeWavTargetDb: -5.0,

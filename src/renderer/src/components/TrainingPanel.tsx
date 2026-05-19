@@ -471,9 +471,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     const outputLevelDbu = captureDefaultsEnabled && settings.defaultOutputLevel.trim() !== ''
       ? Number.parseFloat(settings.defaultOutputLevel.trim())
       : null
-    const resolvedPythonPath = activeNamMode === 'a2' && settings.namA2PythonPath?.trim()
-      ? settings.namA2PythonPath.trim()
-      : settings.namPythonPath.trim()
+    const resolvedPythonPath = settings.namPythonPath.trim()
     const activeNormalizeOverride = activePreset?.normalizeWav ?? normalizeWavOverride
     const activeNormalizeTargetDb = activePreset?.normalizeWavTargetDb != null
       ? String(activePreset.normalizeWavTargetDb)
@@ -636,9 +634,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
         finalModelRoot: routing.finalModelRoot,
       },
       folderPath: folderRunPath.trim(),
-      pythonPath: (preset.namMode === 'a2' && settings.namA2PythonPath?.trim())
-        ? settings.namA2PythonPath.trim()
-        : settings.namPythonPath.trim(),
+      pythonPath: settings.namPythonPath.trim(),
       inputPath: inputPath.trim(),
       submissionId,
       submissionLabel,
@@ -1054,25 +1050,24 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   <>
                     <Field label="NAM Version">
                       <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 text-xs">
-                        {(['a1', 'a2'] as const).map((mode) => (
-                          <button
-                            key={mode}
-                            onClick={() => setNamMode(mode)}
-                            className={`flex-1 py-1.5 px-3 font-medium transition-colors ${
-                              namMode === mode
-                                ? 'bg-indigo-600 text-white'
-                                : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
-                            }`}
-                          >
-                            {mode === 'a1' ? 'A1 WaveNet' : 'A2 PackedWaveNet'}
-                          </button>
-                        ))}
+                        <button
+                          onClick={() => setNamMode('a1')}
+                          className={`flex-1 py-1.5 px-3 font-medium transition-colors ${
+                            namMode === 'a1'
+                              ? 'bg-indigo-600 text-white'
+                              : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+                          }`}
+                        >
+                          A1 WaveNet
+                        </button>
+                        <button
+                          disabled
+                          title="A2 (PackedWaveNet) training is not yet available in the released NAM package. Expected when NAM ships A2 training support."
+                          className="flex-1 py-1.5 px-3 font-medium opacity-40 cursor-not-allowed bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400"
+                        >
+                          A2 — Coming Soon
+                        </button>
                       </div>
-                      {namMode === 'a2' && (
-                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                          Trains two outputs simultaneously (3ch nano + 8ch standard). Requires new NAM ≥ 0.10 — set NAM A2 Python path in Settings.
-                        </p>
-                      )}
                     </Field>
 
                     {namMode === 'a1' && (

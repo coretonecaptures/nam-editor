@@ -112,6 +112,7 @@ const DEFAULT_VISIBLE_COLS = ALL_GRID_COLUMNS.filter((c) => c.defaultVisible).ma
 const GRID_COL_STORAGE_KEY = 'nam-lab-grid-columns'
 const SORT_STORAGE_KEY = 'nam-lab-sort'
 const DETECTED_PRESET_COLORS: Record<string, string> = {
+  'A2': '#ec4899',
   Complex: '#a855f7',
   Standard: '#3b82f6',
   Lite: '#22c55e',
@@ -392,7 +393,9 @@ export function FileList({
       if (gearFilter && m.gear_type !== gearFilter) return false
       if (toneFilter && m.tone_type !== toneFilter) return false
       if (presetFilter === '__none__' && detectPreset(f.config) !== null) return false
-      else if (presetFilter && presetFilter !== '__none__' && detectPreset(f.config) !== presetFilter) return false
+      else if (presetFilter === '__a2__' && detectPreset(f.config) !== 'A2') return false
+      else if (presetFilter === '__a1__' && detectPreset(f.config) === 'A2') return false
+      else if (presetFilter && presetFilter !== '__none__' && presetFilter !== '__a1__' && presetFilter !== '__a2__' && detectPreset(f.config) !== presetFilter) return false
       if (mfrFilter && m.gear_make !== mfrFilter) return false
       if (nameSearch) {
         const q = nameSearch.toLowerCase()
@@ -743,8 +746,8 @@ export function FileList({
         </div>
       </div>
 
-      {/* Status filters */}
-      <div className="px-3 pb-1 flex gap-1.5 flex-wrap items-center flex-shrink-0">
+      {/* All filters in one wrapping row — no artificial row break */}
+      <div className="px-3 pb-2 flex gap-1.5 flex-wrap items-center flex-shrink-0">
         <button
           onClick={() => setFilter('all')}
           className={`text-xs px-2 py-0.5 rounded-full transition-colors ${
@@ -792,11 +795,8 @@ export function FileList({
             {directFilesOnly ? 'Showing: This Folder Only' : 'Showing: Including Subfolders'}
           </button>
         )}
-      </div>
-
-      {/* Gear + Tone dropdowns - list mode only; grid mode uses per-column header filters */}
-      {viewMode === 'list' && (
-        <div className="px-3 pb-2 flex gap-1.5 flex-shrink-0 flex-wrap">
+        {/* Gear + Tone + Preset + Manufacturer + Name — list mode only; grid uses per-column header filters */}
+        {viewMode === 'list' && (<>
           <select
             value={gearFilter}
             onChange={(e) => { setGearFilter(e.target.value); if (!e.target.value) onGearFilterClear?.() }}
@@ -830,7 +830,9 @@ export function FileList({
                 : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
             }`}
           >
-            <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Preset...</option>
+            <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Preset / Gen...</option>
+            <option value="__a1__" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">A1 WaveNet (all)</option>
+            <option value="__a2__" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">A2 WaveNet</option>
             {['Standard', 'Complex', 'Lite', 'Feather', 'Nano', 'REVySTD', 'REVyHI', 'REVxSTD'].map((p) => (
               <option key={p} value={p} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{p}</option>
             ))}
@@ -893,15 +895,9 @@ export function FileList({
               </button>
             )}
           </div>
-        </div>
-      )}
+        </>)}
+      </div>
 
-      {/*
-        TODO: Rethink list filter bar layout — current multi-row wrapping is messy at narrow widths.
-        Options explored: collapsible Filters popover with active-filter chips (implemented and reverted —
-        see git history). Consider: compact filter bar with horizontal scroll, or a dedicated filter
-        drawer/sidebar that doesn't eat vertical space from the file list.
-      */}
       {/* Grid mode: active column filter indicator */}
       {viewMode === 'grid' && Object.values(columnFilters).some((f) => f.text || f.selected.length > 0) && (
         <div className="px-3 pb-1.5 flex items-center gap-2 flex-shrink-0">

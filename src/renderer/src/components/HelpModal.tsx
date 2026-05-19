@@ -3,8 +3,19 @@ import ctcLogo from '../assets/images/ctc.logo.png'
 import workflowsDoc from '../../../../docs/workflows.md?raw'
 import featuresDoc from '../../../../docs/features.md?raw'
 import trainingDoc from '../../../../docs/training.md?raw'
+import a2Doc from '../../../../docs/a2-status.md?raw'
+import installDoc from '../../../../docs/install.md?raw'
 
-export type HelpModalTab = 'workflows' | 'features' | 'training' | 'about'
+export type HelpModalTab = 'workflows' | 'features' | 'training' | 'a2' | 'install' | 'about'
+
+// Map relative .md filenames to their tab IDs so internal doc links navigate within the modal
+const MD_LINK_TO_TAB: Record<string, HelpModalTab> = {
+  'workflows.md': 'workflows',
+  'features.md': 'features',
+  'training.md': 'training',
+  'a2-status.md': 'a2',
+  'install.md': 'install',
+}
 
 interface HelpModalProps {
   initialTab?: HelpModalTab
@@ -18,7 +29,7 @@ type UpdateState =
   | { status: 'up-to-date' }
   | { status: 'error'; message: string }
 
-function renderInline(text: string): React.ReactNode[] {
+function renderInline(text: string, onNavigate?: (tab: HelpModalTab) => void): React.ReactNode[] {
   const segments = text.split(/(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\))/g)
   return segments.map((segment, idx) => {
     if (!segment) return null
@@ -38,6 +49,18 @@ function renderInline(text: string): React.ReactNode[] {
     const linkMatch = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(segment)
     if (linkMatch) {
       const [, label, href] = linkMatch
+      const internalTab = MD_LINK_TO_TAB[href]
+      if (internalTab && onNavigate) {
+        return (
+          <button
+            key={`link-${idx}`}
+            onClick={() => onNavigate(internalTab)}
+            className="text-sky-600 dark:text-sky-400 hover:text-sky-500 underline underline-offset-2"
+          >
+            {label}
+          </button>
+        )
+      }
       return (
         <button
           key={`link-${idx}`}
@@ -52,7 +75,7 @@ function renderInline(text: string): React.ReactNode[] {
   })
 }
 
-function MarkdownViewer({ markdown }: { markdown: string }) {
+function MarkdownViewer({ markdown, onNavigate }: { markdown: string; onNavigate?: (tab: HelpModalTab) => void }) {
   const lines = markdown.replace(/\r\n/g, '\n').split('\n')
   const blocks: React.ReactNode[] = []
   let i = 0
@@ -61,10 +84,7 @@ function MarkdownViewer({ markdown }: { markdown: string }) {
     const rawLine = lines[i]
     const line = rawLine.trim()
 
-    if (!line) {
-      i += 1
-      continue
-    }
+    if (!line) { i += 1; continue }
 
     if (line === '---') {
       blocks.push(<hr key={`hr-${i}`} className="border-gray-200 dark:border-gray-800 my-5" />)
@@ -72,10 +92,7 @@ function MarkdownViewer({ markdown }: { markdown: string }) {
       continue
     }
 
-    if (line.startsWith('![')) {
-      i += 1
-      continue
-    }
+    if (line.startsWith('![')) { i += 1; continue }
 
     if (line.startsWith('# ')) {
       blocks.push(
@@ -107,6 +124,49 @@ function MarkdownViewer({ markdown }: { markdown: string }) {
       continue
     }
 
+    // Table support: lines starting with |
+    if (line.startsWith('|')) {
+      const tableLines: string[] = []
+      while (i < lines.length && lines[i].trim().startsWith('|')) {
+        tableLines.push(lines[i].trim())
+        i += 1
+      }
+      // Filter out separator rows (|---|---|)
+      const dataRows = tableLines.filter((l) => !/^\|[\s\-|:]+\|$/.test(l))
+      if (dataRows.length > 0) {
+        const parseRow = (l: string) => l.replace(/^\||\|$/g, '').split('|').map((c) => c.trim())
+        const [headerRow, ...bodyRows] = dataRows
+        const headers = parseRow(headerRow)
+        blocks.push(
+          <div key={`table-${i}`} className="overflow-x-auto my-3">
+            <table className="text-xs w-full border-collapse">
+              <thead>
+                <tr>
+                  {headers.map((h, hi) => (
+                    <th key={hi} className="text-left px-3 py-1.5 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-semibold border border-gray-200 dark:border-gray-700">
+                      {renderInline(h, onNavigate)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {bodyRows.map((row, ri) => (
+                  <tr key={ri} className={ri % 2 === 0 ? '' : 'bg-gray-50 dark:bg-gray-800/40'}>
+                    {parseRow(row).map((cell, ci) => (
+                      <td key={ci} className="px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400">
+                        {renderInline(cell, onNavigate)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      }
+      continue
+    }
+
     if (/^- /.test(line)) {
       const items: string[] = []
       while (i < lines.length && /^- /.test(lines[i].trim())) {
@@ -116,7 +176,7 @@ function MarkdownViewer({ markdown }: { markdown: string }) {
       blocks.push(
         <ul key={`ul-${i}`} className="list-disc pl-5 space-y-1 text-sm text-gray-700 dark:text-gray-300">
           {items.map((item, idx) => (
-            <li key={idx}>{renderInline(item)}</li>
+            <li key={idx}>{renderInline(item, onNavigate)}</li>
           ))}
         </ul>
       )
@@ -132,7 +192,7 @@ function MarkdownViewer({ markdown }: { markdown: string }) {
       blocks.push(
         <ol key={`ol-${i}`} className="list-decimal pl-5 space-y-1 text-sm text-gray-700 dark:text-gray-300">
           {items.map((item, idx) => (
-            <li key={idx}>{renderInline(item)}</li>
+            <li key={idx}>{renderInline(item, onNavigate)}</li>
           ))}
         </ol>
       )
@@ -147,7 +207,8 @@ function MarkdownViewer({ markdown }: { markdown: string }) {
       !lines[i].trim().startsWith('#') &&
       !/^- /.test(lines[i].trim()) &&
       !/^\d+\.\s/.test(lines[i].trim()) &&
-      !lines[i].trim().startsWith('![')
+      !lines[i].trim().startsWith('![') &&
+      !lines[i].trim().startsWith('|')
     ) {
       paragraphLines.push(lines[i].trim())
       i += 1
@@ -155,7 +216,7 @@ function MarkdownViewer({ markdown }: { markdown: string }) {
 
     blocks.push(
       <p key={`p-${i}`} className="text-sm leading-6 text-gray-700 dark:text-gray-300">
-        {renderInline(paragraphLines.join(' '))}
+        {renderInline(paragraphLines.join(' '), onNavigate)}
       </p>
     )
   }
@@ -246,6 +307,15 @@ function AboutPanel() {
   )
 }
 
+const NAV_ITEMS: { id: HelpModalTab; label: string; badge?: string }[] = [
+  { id: 'workflows', label: 'Workflow Guide' },
+  { id: 'features',  label: 'Feature Reference' },
+  { id: 'training',  label: 'Training Guide' },
+  { id: 'a2',        label: 'A2 PackedWaveNet', badge: 'Soon' },
+  { id: 'install',   label: 'First Launch / Install' },
+  { id: 'about',     label: 'About NAM Lab' },
+]
+
 export function HelpModal({ initialTab = 'workflows', onClose }: HelpModalProps) {
   const [tab, setTab] = useState<HelpModalTab>(initialTab)
 
@@ -258,6 +328,8 @@ export function HelpModal({ initialTab = 'workflows', onClose }: HelpModalProps)
       workflows: workflowsDoc,
       features: featuresDoc,
       training: trainingDoc,
+      a2: a2Doc,
+      install: installDoc,
     }),
     []
   )
@@ -281,55 +353,34 @@ export function HelpModal({ initialTab = 'workflows', onClose }: HelpModalProps)
         </div>
 
         <div className="flex flex-1 min-h-0">
-          <aside className="w-56 border-r border-gray-200 dark:border-gray-800 p-4 space-y-2 flex-shrink-0">
-            <button
-              onClick={() => setTab('workflows')}
-              className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
-                tab === 'workflows'
-                  ? 'bg-sky-100 dark:bg-sky-900/30 text-sky-800 dark:text-sky-200'
-                  : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
-              }`}
-            >
-              Workflow Guide
-            </button>
-            <button
-              onClick={() => setTab('features')}
-              className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
-                tab === 'features'
-                  ? 'bg-sky-100 dark:bg-sky-900/30 text-sky-800 dark:text-sky-200'
-                  : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
-              }`}
-            >
-              Feature Reference
-            </button>
-            <button
-              onClick={() => setTab('training')}
-              className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
-                tab === 'training'
-                  ? 'bg-sky-100 dark:bg-sky-900/30 text-sky-800 dark:text-sky-200'
-                  : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
-              }`}
-            >
-              Training Guide
-            </button>
-            <button
-              onClick={() => setTab('about')}
-              className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
-                tab === 'about'
-                  ? 'bg-sky-100 dark:bg-sky-900/30 text-sky-800 dark:text-sky-200'
-                  : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
-              }`}
-            >
-              About NAM Lab
-            </button>
-            <div className="pt-3 text-[11px] text-gray-500 dark:text-gray-500 leading-5">
-              Use the workflow guide for process help, the feature reference for capability detail,
-              and About for version, contact, and update info.
-            </div>
+          <aside className="w-56 border-r border-gray-200 dark:border-gray-800 p-4 space-y-1 flex-shrink-0">
+            {NAV_ITEMS.map(({ id, label, badge }) => (
+              <button
+                key={id}
+                onClick={() => setTab(id)}
+                className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
+                  tab === id
+                    ? 'bg-sky-100 dark:bg-sky-900/30 text-sky-800 dark:text-sky-200'
+                    : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+                }`}
+              >
+                {label}
+                {badge && (
+                  <span className="ml-1.5 text-[9px] font-semibold uppercase tracking-wide text-pink-500 dark:text-pink-400 bg-pink-100 dark:bg-pink-900/40 px-1 py-px rounded">
+                    {badge}
+                  </span>
+                )}
+              </button>
+            ))}
           </aside>
 
-          <div className="flex-1 overflow-y-auto px-6 py-5">
-            {tab === 'about' ? <AboutPanel /> : <MarkdownViewer markdown={docs[tab]} />}
+          <div
+            className="flex-1 overflow-y-auto px-6 py-5 select-text cursor-text"
+          >
+            {tab === 'about'
+              ? <AboutPanel />
+              : <MarkdownViewer markdown={docs[tab as keyof typeof docs]} onNavigate={setTab} />
+            }
           </div>
         </div>
       </div>

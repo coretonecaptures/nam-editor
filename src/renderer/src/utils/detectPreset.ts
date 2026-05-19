@@ -8,16 +8,37 @@
 //   REVySTD=5 layers, 8ch, kernel 5
 //   REVyHI =5 layers, 10ch, kernel 6
 //   REVxSTD=4 layers, 8ch, kernel 6
+//
+// A2 WaveNet (condition_dsp wrapper, bottleneck/gating_mode/conv_pre_film fields):
+//   Returns 'A2 WaveNet' — specific preset names not yet defined for A2.
+
+function isA2LayerConfig(l0: Record<string, unknown>): boolean {
+  return 'bottleneck' in l0 || 'gating_mode' in l0 || 'conv_pre_film' in l0 || 'secondary_activation' in l0
+}
 
 export function detectPreset(config: unknown): string | null {
   const cfg = config as Record<string, unknown> | undefined
   if (!cfg) return null
+
+  // A2: layers live at config.condition_dsp.config.layers, not config.layers
+  const conditionDsp = cfg.condition_dsp as Record<string, unknown> | undefined
+  const a2Layers = (conditionDsp?.config as Record<string, unknown> | undefined)?.layers
+  if (Array.isArray(a2Layers) && a2Layers.length > 0) {
+    const l0 = a2Layers[0] as Record<string, unknown>
+    if (isA2LayerConfig(l0)) return 'A2'
+  }
+
+  // A1: layers at config.layers
   const layers = cfg.layers
   if (!Array.isArray(layers) || layers.length === 0) return null
 
+  const l0 = layers[0] as Record<string, unknown>
+
+  // Defensive check — if A2 fields appear in config.layers too, flag it
+  if (isA2LayerConfig(l0)) return 'A2'
+
   const headScale = cfg.head_scale as number | undefined
   const numLayers = layers.length
-  const l0 = layers[0] as Record<string, unknown>
   const ch0 = l0.channels as number | undefined
   const kernelSize = l0.kernel_size as number | undefined
 

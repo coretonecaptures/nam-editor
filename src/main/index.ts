@@ -7,6 +7,19 @@ import crypto from 'crypto'
 
 const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
 
+// Enforce single instance — prevents double-launch on Windows (e.g. shell file association)
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+  })
+}
+
 // Compares two semver strings (e.g. "0.5.5" > "0.5.4", "0.5.5" > "0.5.5-rc1")
 // Returns positive if a > b, negative if a < b, 0 if equal
 function compareVersions(a: string, b: string): number {
@@ -591,15 +604,15 @@ def main():
     if requested != detected:
         if requested == "a2":
             raise RuntimeError(
-                "A2 (PackedWaveNet) training requires the new NAM (>= 0.10). "
-                "Your installed NAM uses the A1 WaveNet architecture. "
-                "Set a separate NAM A2 Python path in NAM Lab Settings, or update your NAM install."
+                "A2 (PackedWaveNet) training requires a NAM install that supports A2. "
+                "Your current NAM install uses A1 WaveNet. "
+                "Update your Python environment to a NAM version that includes PackedWaveNet support."
             )
         else:
             raise RuntimeError(
-                "A1 (WaveNet) training requires the original NAM (< 0.10). "
-                "Your installed NAM only supports A2 (PackedWaveNet). "
-                "Set a separate NAM A1 Python path in NAM Lab Settings, or downgrade your NAM install."
+                "A1 (WaveNet) training requires the original NAM. "
+                "Your installed NAM appears to support only A2 (PackedWaveNet). "
+                "Check your Python environment in NAM Lab Settings."
             )
 
     active_input = payload["inputPath"]
@@ -2349,6 +2362,23 @@ function createWindow(): void {
     event.preventDefault()
   })
 
+  // Enable right-click Copy/Paste context menu for text selection in the app
+  mainWindow.webContents.on('context-menu', (_event, params) => {
+    const menuItems: Electron.MenuItemConstructorOptions[] = []
+    if (params.selectionText) {
+      menuItems.push({ label: 'Copy', role: 'copy' })
+    }
+    if (params.isEditable) {
+      if (params.selectionText) menuItems.push({ type: 'separator' })
+      menuItems.push({ label: 'Cut', role: 'cut' })
+      menuItems.push({ label: 'Paste', role: 'paste' })
+      menuItems.push({ label: 'Select All', role: 'selectAll' })
+    }
+    if (menuItems.length > 0) {
+      Menu.buildFromTemplate(menuItems).popup({ window: mainWindow! })
+    }
+  })
+
   if (isDev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
     mainWindow.webContents.openDevTools({ mode: 'detach' })
@@ -3073,10 +3103,12 @@ app.whenReady().then(async () => {
       const content = await fs.promises.readFile(filePath, 'utf-8')
       const data = JSON.parse(content)
       const meta = liftUiMetadata(data.metadata ?? {})
+      const topNotes = Array.isArray(data.notes) ? (data.notes as unknown[]).filter((n): n is string => typeof n === 'string') : undefined
       const result = {
         success: true,
         filePath,
         version: data.version ?? '?',
+        notes: topNotes,
         metadata: meta,
         architecture: data.architecture ?? '?',
         config: data.config ?? null,
@@ -3084,8 +3116,8 @@ app.whenReady().then(async () => {
         birthtimeMs: stat.birthtimeMs,
         sizeBytes: stat.size,
       }
-      // Update cache entry â€” save lazily (written on app quit or folder scan)
-      cache[filePath] = { mtimeMs: stat.mtimeMs, size: stat.size, data: { version: result.version, metadata: meta, architecture: result.architecture, config: result.config } }
+      // Update cache entry — save lazily (written on app quit or folder scan)
+      cache[filePath] = { mtimeMs: stat.mtimeMs, size: stat.size, data: { version: result.version, notes: result.notes, metadata: meta, architecture: result.architecture, config: result.config } }
       return result
     } catch (err) {
       const line = `[${new Date().toISOString()}] ${filePath}\n  ${String(err)}\n`
@@ -3258,7 +3290,8 @@ app.whenReady().then(async () => {
           const content = fs.readFileSync(filePath, 'utf-8')
           const data = JSON.parse(content)
           const meta = liftUiMetadata(data.metadata ?? {})
-          return { success: true, filePath, version: data.version ?? '?', metadata: meta, architecture: data.architecture ?? '?', config: data.config ?? null }
+          const topNotes = Array.isArray(data.notes) ? (data.notes as unknown[]).filter((n): n is string => typeof n === 'string') : undefined
+          return { success: true, filePath, version: data.version ?? '?', notes: topNotes, metadata: meta, architecture: data.architecture ?? '?', config: data.config ?? null }
         } catch (err) {
           const line = `[${new Date().toISOString()}] ${filePath}\n  ${String(err)}\n`
           fs.appendFileSync(errorLogPath, line, 'utf-8')

@@ -480,7 +480,10 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
               <StatCard label="Architecture" value={file.architecture} />
               <StatCard label="NAM Version" value={file.version} />
               {(() => {
-                const layers = (file.config as Record<string, unknown> | undefined)?.layers
+                const cfg = file.config as Record<string, unknown> | undefined
+                // A2: layers at config.condition_dsp.config.layers; A1: config.layers
+                const a2Layers = ((cfg?.condition_dsp as Record<string, unknown> | undefined)?.config as Record<string, unknown> | undefined)?.layers
+                const layers = Array.isArray(a2Layers) && a2Layers.length > 0 ? a2Layers : cfg?.layers
                 const channels = (Array.isArray(layers) && layers.length > 0)
                   ? (layers[0] as Record<string, unknown>)?.channels as number | undefined
                   : undefined
@@ -528,6 +531,17 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
               {dateStr && <StatCard label="Captured On" value={dateStr} />}
               {file.sizeBytes != null && <StatCard label="File Size" value={formatBytes(file.sizeBytes) ?? '0 B'} />}
             </div>
+            {file.notes && file.notes.length > 0 && (
+              <div className="mt-3 rounded-lg border border-pink-200 dark:border-pink-800/40 bg-pink-50/50 dark:bg-pink-900/10 px-3 py-2.5 space-y-1">
+                <div className="flex items-center gap-1.5 mb-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-pink-500 dark:text-pink-400">A2 Model Notes</span>
+                  <span className="text-[9px] text-pink-400 dark:text-pink-500">(read-only)</span>
+                </div>
+                {file.notes.map((note, i) => (
+                  <p key={i} className="text-xs text-gray-600 dark:text-gray-400 leading-snug">{note}</p>
+                ))}
+              </div>
+            )}
           </Section>
 
           {/* Star rating — always visible */}
@@ -677,7 +691,7 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
                   )}
 
                   {show('nl_comments') && (
-                    <Field label="Comments">
+                    <Field label="Notes / Comments">
                       <textarea
                         value={m.nl_comments ?? ''}
                         onChange={(e) => update('nl_comments', e.target.value)}

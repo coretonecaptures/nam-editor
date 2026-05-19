@@ -1,6 +1,6 @@
 # NAM Lab Full Feature Reference
 
-This document is the clean feature overview for NAM Lab. For install notes, see [install.md](install.md).
+This document is the clean feature overview for NAM Lab. For first-launch and install notes, see **First Launch / Install** in the left menu.
 
 ---
 

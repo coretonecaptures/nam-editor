@@ -26,9 +26,16 @@
 - Large collection / network share load performance: add mtime cache
 - Tone3000 search follow-up: if the API stays limited, explore a bounded multi-page fetch/cache strategy for narrow searches, favorites, or creator-focused browsing without trying to mirror the full catalog locally.
 
-## Grid and UI
+## Onboarding and discoverability
 
-- File list filter bar: current multi-row layout wraps messily at narrow widths. A collapsible Filters popover with active-filter chips was explored and reverted (see git history). Design a better solution — options include horizontal-scroll filter row, compact icon-triggered filter drawer, or a redesigned toolbar that gives filters more breathing room without eating into list height.
+- Inline `?` help popovers on complex fields (Python path, training presets, metadata suggestions, watch folders) — one-click "how to set this up" context that doesn't require opening docs.
+- Setup wizard (non-forced): shown on the home/empty state when no folder is loaded (first launch experience), and accessible anytime from the Help menu. Covers: (1) loading a NAM folder, (2) key settings walkthrough with plain-language explanations of what each does, (3) capture defaults and what "fill on load" means, (4) Python/training setup if the user wants local training. Not a blocker — dismissible at any point.
+- Clean function wizard: step-by-step guide explaining what the Clean tool does, when to use it, and how to configure it safely before running it on a real library.
+- Metadata suggestions wizard: walkthrough for building suggestion rules — explains the concept, walks through creating a first rule, shows a live preview of what would change before the user commits.
+- Capture defaults "fill blank on load" toggles: add a checkbox next to each capture default field so users can opt in to auto-populating that field when loading a .nam that has it blank, without needing to configure a full metadata suggestion rule.
+- Settings discoverability: the app has grown deep — consider a search-within-settings feature or a "Quick Setup" shortcut panel that surfaces the most commonly needed first-time settings (Python path, default folder, modeled-by name) without scrolling the full settings page.
+
+## Grid and UI
 
 - Metadata header path display: consider a second muted/grey full-path presentation or alternate layout that shows more of the real file path without stealing too much editor real estate.
 

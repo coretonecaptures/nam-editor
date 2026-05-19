@@ -42,6 +42,7 @@ export interface NamFile {
   filePath: string
   fileName: string
   version: string
+  notes?: string[]          // top-level notes array (A2 files); read-only, not in metadata block
   metadata: NamMetadata
   originalMetadata: NamMetadata  // raw values from file before any defaults applied
   autoFilledFields: (keyof NamMetadata)[]  // fields set by settings rules at load time
