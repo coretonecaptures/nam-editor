@@ -1,15 +1,19 @@
-﻿import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+﻿import { useEffect, useMemo, useRef, useState, useCallback, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
-import type { AppSettings, TrainingPreset } from '../types/settings'
+import type { AppSettings, TrainingPreset, UserCaptureProfile } from '../types/settings'
 import {
   IDLE_TRAINER_STATE,
   TRAINER_ARCHITECTURES,
+  BUILT_IN_CAPTURE_PROFILES,
   type TrainerArchitecture,
   type TrainerHistoryEntry,
   type TrainerQueueJob,
   type TrainerStateSnapshot,
+  type CaptureProfile,
 } from '../types/trainer'
+import { ArchitectureProfilePicker } from './ArchitectureProfilePicker'
+import { CaptureProfileEditor } from './CaptureProfileEditor'
 
 interface Props {
   settings: AppSettings
@@ -30,6 +34,16 @@ const ARCHITECTURE_LABELS: Record<TrainerArchitecture, string> = {
 }
 
 const CUSTOM_PRESET_ID = 'custom'
+
+function lookupProfileConfig(
+  profileId: string,
+  userProfiles: UserCaptureProfile[]
+): Pick<CaptureProfile, 'waveNetConfig' | 'lr' | 'lrDecay' | 'batchSize' | 'ny' | 'fitMrstft'> | null {
+  const builtIn = BUILT_IN_CAPTURE_PROFILES.find((p) => p.id === profileId)
+  if (builtIn) return builtIn
+  const user = userProfiles.find((p) => p.id === profileId)
+  return user ?? null
+}
 
 function architectureEpochNote(architecture: TrainerArchitecture): string | null {
   if (architecture === 'complex') return 'Official trainer uses its recommended Complex learning settings.'
@@ -98,7 +112,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const [folderRunPath, setFolderRunPath] = useState('')
   const [folderRunProfileId, setFolderRunProfileId] = useState<'custom' | string>('custom')
   const [selectedPresetId, setSelectedPresetId] = useState<string>(CUSTOM_PRESET_ID)
-  const [architectures, setArchitectures] = useState<TrainerArchitecture[]>(['standard'])
+  const [architectures, setArchitectures] = useState<string[]>(['standard'])
+  const [captureProfileEditorOpen, setCaptureProfileEditorOpen] = useState(false)
+  const [captureProfileEditorTarget, setCaptureProfileEditorTarget] = useState<UserCaptureProfile | null>(null)
   const [epochs, setEpochs] = useState('1000')
   const [latency, setLatency] = useState('')
   const [thresholdEsr, setThresholdEsr] = useState('')
@@ -419,11 +435,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       setLaunchError('Target ESR must be blank or a positive number.')
       return
     }
-    const targetArchitectures = activePreset
-      ? activePreset.architectures.filter((item): item is TrainerArchitecture =>
-          TRAINER_ARCHITECTURES.includes(item as TrainerArchitecture)
-        )
-      : architectures
+    const targetArchitectures = activePreset ? activePreset.architectures : architectures
     if (manualRoutingMode === 'root' && !trainPath.trim()) {
       setLaunchError('Choose an output root before queueing captures.')
       return
@@ -446,33 +458,43 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
         const submissionCreatedAt = new Date().toISOString()
         return outputPaths.flatMap((outputPath) => {
           const routing = getManualRoutingForOutput(outputPath.trim())
-          return targetArchitectures.map((architecture) => ({
-            pythonPath: settings.namPythonPath.trim(),
-            inputPath: inputPath.trim(),
-            outputPath: outputPath.trim(),
-            trainPath: routing.finalModelRoot,
-            architecture,
-            epochs: parsedEpochs,
-            latency: parsedLatency,
-            thresholdEsr: parsedThresholdEsr,
-            savePlot: activePreset?.savePlot ?? savePlot,
-            silent: true,
-            ignoreChecks: activePreset?.ignoreChecks ?? ignoreChecks,
-            sourceMode: 'manual-direct',
-            finalModelRoot: routing.finalModelRoot,
-            processedWavRoot: routing.processedWavRoot,
-            graphRoot: routing.graphRoot,
-            sourcePostProcess: routing.sourcePostProcess,
-            namingTemplate: '{basename}',
-            profileId: activePreset?.id ?? null,
-            profileName: activePreset?.name ?? null,
-            modeledBy,
-            inputLevelDbu: Number.isFinite(inputLevelDbu) ? inputLevelDbu : null,
-            outputLevelDbu: Number.isFinite(outputLevelDbu) ? outputLevelDbu : null,
-            submissionId,
-            submissionLabel,
-            submissionCreatedAt,
-          }))
+          return targetArchitectures.map((architecture) => {
+            const profileCfg = lookupProfileConfig(architecture, settings.userCaptureProfiles ?? [])
+            return {
+              pythonPath: settings.namPythonPath.trim(),
+              inputPath: inputPath.trim(),
+              outputPath: outputPath.trim(),
+              trainPath: routing.finalModelRoot,
+              architecture,
+              waveNetConfig: profileCfg?.waveNetConfig ?? null,
+              lr: profileCfg?.lr ?? 0.004,
+              lrDecay: profileCfg?.lrDecay ?? 0.002,
+              batchSize: profileCfg?.batchSize ?? 16,
+              ny: profileCfg?.ny ?? 8192,
+              fitMrstft: profileCfg?.fitMrstft ?? true,
+              captureProfileId: architecture,
+              epochs: parsedEpochs,
+              latency: parsedLatency,
+              thresholdEsr: parsedThresholdEsr,
+              savePlot: activePreset?.savePlot ?? savePlot,
+              silent: true,
+              ignoreChecks: activePreset?.ignoreChecks ?? ignoreChecks,
+              sourceMode: 'manual-direct',
+              finalModelRoot: routing.finalModelRoot,
+              processedWavRoot: routing.processedWavRoot,
+              graphRoot: routing.graphRoot,
+              sourcePostProcess: routing.sourcePostProcess,
+              namingTemplate: '{basename}',
+              profileId: activePreset?.id ?? null,
+              profileName: activePreset?.name ?? null,
+              modeledBy,
+              inputLevelDbu: Number.isFinite(inputLevelDbu) ? inputLevelDbu : null,
+              outputLevelDbu: Number.isFinite(outputLevelDbu) ? outputLevelDbu : null,
+              submissionId,
+              submissionLabel,
+              submissionCreatedAt,
+            }
+          })
         })
       })()
     )
@@ -560,7 +582,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
         enabled: true,
         autoRun: false,
         namingTemplate: '{basename}',
-        architectures: preset.architectures.filter((item): item is TrainerArchitecture => TRAINER_ARCHITECTURES.includes(item as TrainerArchitecture)),
+        architectures: preset.architectures,
         epochs: preset.epochs,
         thresholdEsr: preset.thresholdEsr,
         latencyMode: preset.latencyMode,
@@ -787,6 +809,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   }
 
   return (
+    <>
     <div
       className={`overflow-y-auto ${maximized ? 'fixed inset-4 z-[70] rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 shadow-2xl h-auto' : 'h-full'}`}
       onContextMenu={showNativeTextContextMenu}
@@ -985,13 +1008,33 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 ) : (
                   <>
                     <Field label="Architecture(s)">
-                      <ArchitectureMultiSelect
-                        values={architectures}
+                      <ArchitectureProfilePicker
+                        selectedIds={architectures}
                         onChange={(next) => {
                           setArchitectures(next)
                           if (runMode === 'files') setSelectedPresetId(CUSTOM_PRESET_ID)
                           else setFolderRunProfileId(CUSTOM_PRESET_ID)
                         }}
+                        userProfiles={settings.userCaptureProfiles ?? []}
+                        onClone={(profile) => {
+                          setCaptureProfileEditorTarget(null)
+                          setCaptureProfileEditorOpen(true)
+                          setTimeout(() => {
+                            setCaptureProfileEditorTarget({
+                              id: `profile-${Date.now()}`,
+                              name: `${profile.name} (copy)`,
+                              description: profile.description,
+                              waveNetConfig: { ...profile.waveNetConfig, layers_configs: profile.waveNetConfig.layers_configs.map((l) => ({ ...l })) },
+                              lr: profile.lr, lrDecay: profile.lrDecay, defaultEpochs: profile.defaultEpochs,
+                              batchSize: profile.batchSize, ny: profile.ny, fitMrstft: profile.fitMrstft,
+                            })
+                          }, 0)
+                        }}
+                        onEdit={(profile) => { setCaptureProfileEditorTarget(profile); setCaptureProfileEditorOpen(true) }}
+                        onDelete={(id) => {
+                          onSaveSettings({ ...settings, userCaptureProfiles: (settings.userCaptureProfiles ?? []).filter((p) => p.id !== id) })
+                        }}
+                        onNew={() => { setCaptureProfileEditorTarget(null); setCaptureProfileEditorOpen(true) }}
                       />
                     </Field>
 
@@ -1762,6 +1805,22 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       </div>,
       document.body
     )}
+    {captureProfileEditorOpen && (
+      <CaptureProfileEditor
+        profile={captureProfileEditorTarget}
+        onSave={(saved) => {
+          const existing = settings.userCaptureProfiles ?? []
+          const updated = existing.some((p) => p.id === saved.id)
+            ? existing.map((p) => p.id === saved.id ? saved : p)
+            : [...existing, saved]
+          onSaveSettings({ ...settings, userCaptureProfiles: updated })
+          setCaptureProfileEditorOpen(false)
+          setCaptureProfileEditorTarget(null)
+        }}
+        onCancel={() => { setCaptureProfileEditorOpen(false); setCaptureProfileEditorTarget(null) }}
+      />
+    )}
+    </>
   )
 }
 

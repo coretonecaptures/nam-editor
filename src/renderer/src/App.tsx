@@ -1154,6 +1154,7 @@ export default function App() {
       outputLevelDbu: Number.isFinite(defaultOutputLevel) ? defaultOutputLevel : null,
       retainGraphs: settings.trainingRetainGraphs,
       profiles: settings.enableExperimentalTraining ? resolveTrainingWatcherProfiles(settings) : [],
+      userCaptureProfiles: settings.userCaptureProfiles ?? [],
     })
   }, [
     settings.enableCaptureDefaults,
@@ -1166,6 +1167,7 @@ export default function App() {
     settings.trainingPresets,
     settings.trainingWatchProfiles,
     settings.trainingRetainGraphs,
+    settings.userCaptureProfiles,
   ])
 
   useEffect(() => {

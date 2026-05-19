@@ -1,4 +1,5 @@
 import { GEAR_TYPES, TONE_TYPES } from './nam'
+import type { WaveNetConfig } from './trainer'
 
 export interface FolderOverride {
   manufacturer?: string
@@ -31,6 +32,19 @@ export interface FolderWatchImportEntry {
   sizeBytes: number
   mtimeMs: number
   importedAt: string
+}
+
+export interface UserCaptureProfile {
+  id: string
+  name: string
+  description: string
+  waveNetConfig: WaveNetConfig
+  lr: number
+  lrDecay: number
+  defaultEpochs: number
+  batchSize: number
+  ny: number
+  fitMrstft: boolean
 }
 
 export const TRAINING_SOURCE_MODES = ['watcher', 'manual-folder-run'] as const
@@ -303,6 +317,9 @@ export interface AppSettings {
 
   // WAV coverage check: per-folder comparison WAV folder paths
   folderWavComparisonPaths: Record<string, string>
+
+  // User-defined capture profiles (custom WaveNet architectures)
+  userCaptureProfiles: UserCaptureProfile[]
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -364,6 +381,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   metadataSuggestRuleLibrary: [],
   libraryCleanupIgnoredPaths: [],
   folderWavComparisonPaths: {},
+  userCaptureProfiles: [],
 }
 
 const STORAGE_KEY = 'nam-editor-settings'
@@ -512,6 +530,9 @@ function normalizeSettingsMetadataRules(settings: AppSettings): AppSettings {
       rules: (set.rules ?? []).map((rule, ruleIndex) => normalizeMetadataSuggestRule(rule, setIndex * 1000 + ruleIndex)),
     })),
     metadataSuggestRuleLibrary: (settings.metadataSuggestRuleLibrary ?? []).map((rule, index) => normalizeMetadataSuggestRule(rule, index)),
+    userCaptureProfiles: (settings.userCaptureProfiles ?? []).filter(
+      (p): p is UserCaptureProfile => Boolean(p?.id && p?.name && p?.waveNetConfig?.layers_configs)
+    ),
   }
 }
 

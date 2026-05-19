@@ -114,21 +114,45 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-type TrainerArchitecture = 'standard' | 'complex' | 'lite' | 'feather' | 'nano' | 'revystd' | 'revyhi' | 'revxstd'
+type TrainerArchitecture = string
 type TrainerQueueJobStatus = 'queued' | 'starting' | 'running' | 'success' | 'error' | 'canceled'
+
+interface WaveNetLayerConfig {
+  input_size: number
+  condition_size: number
+  channels: number
+  head_size: number
+  kernel_size: number
+  dilations: number[]
+  activation: string
+  gated: boolean
+  head_bias: boolean
+}
+
+interface WaveNetConfig {
+  layers_configs: WaveNetLayerConfig[]
+  head_scale: number
+}
 
 interface TrainerStartPayload {
   pythonPath: string
   inputPath: string
   outputPath: string
   trainPath: string
-  architecture: TrainerArchitecture
+  architecture: string
   epochs: number
   latency: number | null
   thresholdEsr: number | null
   savePlot: boolean
   silent: boolean
   ignoreChecks: boolean
+  waveNetConfig?: WaveNetConfig | null
+  lr?: number | null
+  lrDecay?: number | null
+  batchSize?: number | null
+  ny?: number | null
+  fitMrstft?: boolean | null
+  captureProfileId?: string | null
   profileId?: string | null
   profileName?: string | null
   modeledBy?: string | null
@@ -152,7 +176,14 @@ interface TrainerQueueJob {
   inputPath: string
   outputPath: string
   trainPath: string
-  architecture: TrainerArchitecture
+  architecture: string
+  waveNetConfig: WaveNetConfig | null
+  lr: number
+  lrDecay: number
+  batchSize: number
+  ny: number
+  fitMrstft: boolean
+  captureProfileId: string | null
   epochs: number
   latency: number | null
   thresholdEsr: number | null
@@ -325,11 +356,76 @@ const TRAINER_IDLE_STATE: TrainerStateSnapshot = {
   },
 }
 
+interface UserCaptureProfile {
+  id: string
+  name: string
+  description: string
+  waveNetConfig: WaveNetConfig
+  lr: number
+  lrDecay: number
+  defaultEpochs: number
+  batchSize: number
+  ny: number
+  fitMrstft: boolean
+}
+
+const BUILT_IN_WAVENET_CONFIGS: Record<string, { waveNetConfig: WaveNetConfig; lr: number; lrDecay: number; batchSize: number; ny: number; fitMrstft: boolean }> = {
+  standard: { lr: 0.004, lrDecay: 0.002, batchSize: 16, ny: 8192, fitMrstft: true, waveNetConfig: { head_scale: 0.02, layers_configs: [
+    { input_size: 1, condition_size: 1, channels: 16, head_size: 8, kernel_size: 3, dilations: [1,2,4,8,16,32,64,128,256,512], activation: 'Tanh', gated: false, head_bias: false },
+    { input_size: 16, condition_size: 1, channels: 8, head_size: 1, kernel_size: 3, dilations: [1,2,4,8,16,32,64,128,256,512], activation: 'Tanh', gated: false, head_bias: true },
+  ] } },
+  lite: { lr: 0.004, lrDecay: 0.002, batchSize: 16, ny: 8192, fitMrstft: true, waveNetConfig: { head_scale: 0.02, layers_configs: [
+    { input_size: 1, condition_size: 1, channels: 12, head_size: 6, kernel_size: 3, dilations: [1,2,4,8,16,32,64], activation: 'Tanh', gated: false, head_bias: false },
+    { input_size: 12, condition_size: 1, channels: 6, head_size: 1, kernel_size: 3, dilations: [128,256,512,1,2,4,8,16,32,64,128,256,512], activation: 'Tanh', gated: false, head_bias: true },
+  ] } },
+  feather: { lr: 0.004, lrDecay: 0.002, batchSize: 16, ny: 8192, fitMrstft: true, waveNetConfig: { head_scale: 0.02, layers_configs: [
+    { input_size: 1, condition_size: 1, channels: 8, head_size: 4, kernel_size: 3, dilations: [1,2,4,8,16,32,64], activation: 'Tanh', gated: false, head_bias: false },
+    { input_size: 8, condition_size: 1, channels: 4, head_size: 1, kernel_size: 3, dilations: [128,256,512,1,2,4,8,16,32,64,128,256,512], activation: 'Tanh', gated: false, head_bias: true },
+  ] } },
+  nano: { lr: 0.004, lrDecay: 0.002, batchSize: 16, ny: 8192, fitMrstft: true, waveNetConfig: { head_scale: 0.02, layers_configs: [
+    { input_size: 1, condition_size: 1, channels: 4, head_size: 2, kernel_size: 3, dilations: [1,2,4,8,16,32,64], activation: 'Tanh', gated: false, head_bias: false },
+    { input_size: 4, condition_size: 1, channels: 2, head_size: 1, kernel_size: 3, dilations: [128,256,512,1,2,4,8,16,32,64,128,256,512], activation: 'Tanh', gated: false, head_bias: true },
+  ] } },
+  complex: { lr: 0.001, lrDecay: 0.001, batchSize: 16, ny: 8192, fitMrstft: true, waveNetConfig: { head_scale: 0.02, layers_configs: [
+    { input_size: 1, condition_size: 1, channels: 32, head_size: 8, kernel_size: 3, dilations: [1,2,4,8,16,32,64,128,256,512,1,2,4,8,16,32,64,128,256,512], activation: 'Tanh', gated: false, head_bias: false },
+    { input_size: 32, condition_size: 1, channels: 8, head_size: 1, kernel_size: 3, dilations: [1,2,4,8,16,32,64,128,256,512,1,2,4,8,16,32,64,128,256,512], activation: 'Tanh', gated: false, head_bias: true },
+  ] } },
+  revystd: { lr: 0.002, lrDecay: 0.0015, batchSize: 16, ny: 8192, fitMrstft: true, waveNetConfig: { head_scale: 0.99, layers_configs: [
+    { input_size: 1, condition_size: 1, channels: 8, head_size: 8, kernel_size: 5, dilations: [1024,256,64,16,4,1], activation: 'Tanh', gated: false, head_bias: false },
+    { input_size: 8, condition_size: 1, channels: 8, head_size: 8, kernel_size: 5, dilations: [1024,256,64,16,4,1], activation: 'Tanh', gated: false, head_bias: false },
+    { input_size: 8, condition_size: 1, channels: 8, head_size: 8, kernel_size: 5, dilations: [1024,256,64,16,4,1], activation: 'Tanh', gated: false, head_bias: false },
+    { input_size: 8, condition_size: 1, channels: 8, head_size: 8, kernel_size: 5, dilations: [1024,256,64,16,4,1], activation: 'Tanh', gated: false, head_bias: false },
+    { input_size: 8, condition_size: 1, channels: 8, head_size: 1, kernel_size: 5, dilations: [1024,256,64,16,4,1], activation: 'Tanh', gated: false, head_bias: true },
+  ] } },
+  revyhi: { lr: 0.002, lrDecay: 0.0015, batchSize: 16, ny: 8192, fitMrstft: true, waveNetConfig: { head_scale: 0.99, layers_configs: [
+    { input_size: 1, condition_size: 1, channels: 10, head_size: 10, kernel_size: 6, dilations: [1024,256,64,16,4,1], activation: 'Tanh', gated: false, head_bias: false },
+    { input_size: 10, condition_size: 1, channels: 10, head_size: 10, kernel_size: 6, dilations: [1024,256,64,16,4,1], activation: 'Tanh', gated: false, head_bias: false },
+    { input_size: 10, condition_size: 1, channels: 10, head_size: 10, kernel_size: 6, dilations: [1024,256,64,16,4,1], activation: 'Tanh', gated: false, head_bias: false },
+    { input_size: 10, condition_size: 1, channels: 10, head_size: 10, kernel_size: 6, dilations: [1024,256,64,16,4,1], activation: 'Tanh', gated: false, head_bias: false },
+    { input_size: 10, condition_size: 1, channels: 10, head_size: 1, kernel_size: 6, dilations: [1024,256,64,16,4,1], activation: 'Tanh', gated: false, head_bias: true },
+  ] } },
+  revxstd: { lr: 0.004, lrDecay: 0.002, batchSize: 16, ny: 8192, fitMrstft: true, waveNetConfig: { head_scale: 0.99, layers_configs: [
+    { input_size: 1, condition_size: 1, channels: 8, head_size: 8, kernel_size: 6, dilations: [729,243,81,27,9,3,1], activation: 'Tanh', gated: false, head_bias: false },
+    { input_size: 8, condition_size: 1, channels: 8, head_size: 8, kernel_size: 6, dilations: [729,243,81,27,9,3,1], activation: 'Tanh', gated: false, head_bias: false },
+    { input_size: 8, condition_size: 1, channels: 8, head_size: 8, kernel_size: 6, dilations: [729,243,81,27,9,3,1], activation: 'Tanh', gated: false, head_bias: false },
+    { input_size: 8, condition_size: 1, channels: 8, head_size: 1, kernel_size: 6, dilations: [729,243,81,27,9,3,1], activation: 'Tanh', gated: false, head_bias: true },
+  ] } },
+}
+
+function lookupCaptureProfileConfig(architectureId: string, userProfiles: UserCaptureProfile[]): { waveNetConfig: WaveNetConfig; lr: number; lrDecay: number; batchSize: number; ny: number; fitMrstft: boolean } | null {
+  const builtIn = BUILT_IN_WAVENET_CONFIGS[architectureId]
+  if (builtIn) return builtIn
+  const user = userProfiles.find((p) => p.id === architectureId)
+  if (user) return { waveNetConfig: user.waveNetConfig, lr: user.lr, lrDecay: user.lrDecay, batchSize: user.batchSize, ny: user.ny, fitMrstft: user.fitMrstft }
+  return null
+}
+
 let trainerState: TrainerStateSnapshot = { ...TRAINER_IDLE_STATE }
 let trainerChild: import('child_process').ChildProcessWithoutNullStreams | null = null
 let trainerQueue: TrainerQueueJob[] = []
 let trainerPauseAfterCurrent = false
 let trainingProfiles: TrainingProfile[] = []
+let trainerUserCaptureProfiles: UserCaptureProfile[] = []
 let trainingRetainGraphs = true
 let trainerHistory: TrainerHistoryEntry[] = []
 let trainerSkipped: TrainerSkippedEntry[] = []
@@ -403,6 +499,23 @@ def main():
     with open(payload_path, "r", encoding="utf-8") as handle:
         payload = json.load(handle)
 
+    import nam.train.core as _core
+
+    _cid = "__namlab__"
+    _inst = object.__new__(_core.Architecture)
+    _inst._value_ = _cid
+    _inst._name_ = "NAMLAB"
+    _core.Architecture._value2member_map_[_cid] = _inst
+    _core.Architecture._member_map_["NAMLAB"] = _inst
+
+    _wncfg = payload["waveNetConfig"]
+    _orig_get_wavenet_config = _core.get_wavenet_config
+    def _patched_get_wavenet_config(arch):
+        if getattr(arch, "_value_", arch) == _cid:
+            return _wncfg
+        return _orig_get_wavenet_config(arch)
+    _core.get_wavenet_config = _patched_get_wavenet_config
+
     result = train(
         input_path=payload["inputPath"],
         output_path=payload["outputPath"],
@@ -411,16 +524,16 @@ def main():
         latency=payload.get("latency"),
         threshold_esr=payload.get("thresholdEsr"),
         model_type="WaveNet",
-        architecture=payload["architecture"],
-        batch_size=16,
-        ny=8192,
-        lr=0.004,
-        lr_decay=0.002,
+        architecture=_core.Architecture(_cid),
+        batch_size=payload.get("batchSize", 16),
+        ny=payload.get("ny", 8192),
+        lr=payload.get("lr", 0.004),
+        lr_decay=payload.get("lrDecay", 0.002),
         save_plot=payload.get("savePlot", True),
         silent=payload.get("silent", False),
         modelname=payload["modelName"],
         ignore_checks=payload.get("ignoreChecks", False),
-        fit_mrstft=True,
+        fit_mrstft=payload.get("fitMrstft", True),
         user_metadata=None,
     )
 
@@ -945,6 +1058,13 @@ function createTrainerJob(payload: TrainerStartPayload): TrainerQueueJob {
     outputPath: payload.outputPath.trim(),
     trainPath: workspacePath,
     architecture: payload.architecture,
+    waveNetConfig: payload.waveNetConfig ?? null,
+    lr: payload.lr ?? 0.004,
+    lrDecay: payload.lrDecay ?? 0.002,
+    batchSize: payload.batchSize ?? 16,
+    ny: payload.ny ?? 8192,
+    fitMrstft: payload.fitMrstft ?? true,
+    captureProfileId: payload.captureProfileId ?? null,
     epochs: payload.epochs,
     latency: payload.latency,
     thresholdEsr: payload.thresholdEsr,
@@ -1146,12 +1266,20 @@ async function buildTrainerPayloadsForProfile(
     for (const architecture of profile.architectures) {
       if (trainerQueueAlreadyHasSource(profile.id, normalizedOutputPath, architecture)) continue
       if (trainerHistoryAlreadyHasSource(profile.id, normalizedOutputPath, architecture, sourceStats.mtimeMs, sourceStats.sizeBytes)) continue
+      const profileCfg = lookupCaptureProfileConfig(architecture, trainerUserCaptureProfiles)
       payloads.push({
         pythonPath,
         inputPath,
         outputPath: normalizedOutputPath,
         trainPath: profile.finalModelRoot,
         architecture,
+        waveNetConfig: profileCfg?.waveNetConfig ?? null,
+        lr: profileCfg?.lr ?? 0.004,
+        lrDecay: profileCfg?.lrDecay ?? 0.002,
+        batchSize: profileCfg?.batchSize ?? 16,
+        ny: profileCfg?.ny ?? 8192,
+        fitMrstft: profileCfg?.fitMrstft ?? true,
+        captureProfileId: architecture,
         epochs: profile.epochs,
         latency: profile.latencyMode === 'manual' ? profile.latencyValue : null,
         thresholdEsr: profile.thresholdEsr,
@@ -1304,6 +1432,12 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     outputPath,
     trainPath,
     architecture: job.architecture,
+    waveNetConfig: job.waveNetConfig,
+    lr: job.lr,
+    lrDecay: job.lrDecay,
+    batchSize: job.batchSize,
+    ny: job.ny,
+    fitMrstft: job.fitMrstft,
     epochs: job.epochs,
     latency: job.latency,
     thresholdEsr: job.thresholdEsr,
@@ -3556,12 +3690,14 @@ app.whenReady().then(async () => {
     outputLevelDbu: number | null
     retainGraphs: boolean
     profiles: TrainingProfile[]
+    userCaptureProfiles?: UserCaptureProfile[]
   }) => {
     trainerConfiguredPythonPath = (payload?.pythonPath ?? '').trim()
     trainerConfiguredInputPath = (payload?.inputPath ?? '').trim()
     trainerConfiguredModeledBy = (payload?.modeledBy ?? '').trim()
     trainerConfiguredInputLevelDbu = Number.isFinite(payload?.inputLevelDbu) ? payload.inputLevelDbu ?? null : null
     trainerConfiguredOutputLevelDbu = Number.isFinite(payload?.outputLevelDbu) ? payload.outputLevelDbu ?? null : null
+    trainerUserCaptureProfiles = Array.isArray(payload?.userCaptureProfiles) ? payload.userCaptureProfiles : []
     resetTrainingWatchProfiles(Array.isArray(payload?.profiles) ? payload.profiles : [], payload?.retainGraphs ?? true)
     return { success: true }
   })

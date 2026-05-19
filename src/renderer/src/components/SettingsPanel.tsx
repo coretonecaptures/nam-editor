@@ -16,14 +16,17 @@ import {
 } from '../types/settings'
 import { MetadataSuggestRuleLibraryModal } from './MetadataSuggestRuleLibraryModal'
 import { FilenameRecipeBuilderModal } from './FilenameRecipeBuilderModal'
-import { TRAINER_ARCHITECTURES } from '../types/trainer'
+import { TRAINER_ARCHITECTURES, BUILT_IN_CAPTURE_PROFILES } from '../types/trainer'
+import type { CaptureProfile, TrainerProfilesStateSnapshot } from '../types/trainer'
+import type { UserCaptureProfile } from '../types/settings'
 import {
   cloneMetadataSuggestRule,
   isMetadataSuggestRuleLibraryCandidate,
   isMetadataSuggestRuleComplete,
   metadataSuggestRuleSignature,
 } from '../utils/metadataSuggestRuleLibrary'
-import type { TrainerProfilesStateSnapshot } from '../types/trainer'
+import { ArchitectureProfilePicker } from './ArchitectureProfilePicker'
+import { CaptureProfileEditor } from './CaptureProfileEditor'
 
 const PACK_DARK_ACCENT_PRESETS = [
   '#f9b966',
@@ -73,6 +76,9 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
   const [trainingWatchersOpen, setTrainingWatchersOpen] = useState(false)
   const [trainingPresetsOpen, setTrainingPresetsOpen] = useState(false)
   const [trainingProfilesState, setTrainingProfilesState] = useState<TrainerProfilesStateSnapshot>({ watchers: [], graphRetentionEnabled: draft.trainingRetainGraphs })
+  const [captureProfilesOpen, setCaptureProfilesOpen] = useState(false)
+  const [captureProfileEditorOpen, setCaptureProfileEditorOpen] = useState(false)
+  const [captureProfileEditorTarget, setCaptureProfileEditorTarget] = useState<UserCaptureProfile | null>(null)
 
   const handleCheckForUpdates = async () => {
     setUpdateState({ status: 'checking' })
@@ -272,6 +278,43 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
     window.alert(result.marked && result.marked > 0
       ? `Marked ${result.marked} watcher item${result.marked === 1 ? '' : 's'} as already seen.`
       : 'No untracked watcher items needed to be marked as seen.')
+  }
+
+  const openNewCaptureProfile = (seedFrom?: CaptureProfile) => {
+    if (seedFrom) {
+      const seed: UserCaptureProfile = {
+        id: `profile-${Date.now()}`,
+        name: `${seedFrom.name} (copy)`,
+        description: seedFrom.description,
+        waveNetConfig: JSON.parse(JSON.stringify(seedFrom.waveNetConfig)),
+        lr: seedFrom.lr,
+        lrDecay: seedFrom.lrDecay,
+        defaultEpochs: seedFrom.defaultEpochs,
+        batchSize: seedFrom.batchSize,
+        ny: seedFrom.ny,
+        fitMrstft: seedFrom.fitMrstft,
+      }
+      setCaptureProfileEditorTarget(seed)
+    } else {
+      setCaptureProfileEditorTarget(null)
+    }
+    setCaptureProfileEditorOpen(true)
+    setCaptureProfilesOpen(true)
+  }
+
+  const saveCaptureProfile = (profile: UserCaptureProfile) => {
+    const existing = (draft.userCaptureProfiles ?? []).findIndex((p) => p.id === profile.id)
+    if (existing >= 0) {
+      update('userCaptureProfiles', (draft.userCaptureProfiles ?? []).map((p) => p.id === profile.id ? profile : p))
+    } else {
+      update('userCaptureProfiles', [...(draft.userCaptureProfiles ?? []), profile])
+    }
+    setCaptureProfileEditorOpen(false)
+    setCaptureProfileEditorTarget(null)
+  }
+
+  const deleteCaptureProfile = (profileId: string) => {
+    update('userCaptureProfiles', (draft.userCaptureProfiles ?? []).filter((p) => p.id !== profileId))
   }
 
   const appendLibraryRulesToGlobal = (selectedRules: MetadataSuggestRule[]) => {
@@ -1838,6 +1881,54 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                     )}
                   </div>
 
+                  {/* Capture Profiles section */}
+                  <div className="space-y-3 pt-2 border-t border-gray-200 dark:border-gray-800">
+                    <div className="flex items-stretch rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
+                      <button
+                        onClick={() => setCaptureProfilesOpen((v) => !v)}
+                        className="flex-1 flex items-center gap-2 px-3 py-2.5 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-left"
+                      >
+                        <svg
+                          className={`w-3.5 h-3.5 flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-150 ${captureProfilesOpen ? 'rotate-90' : ''}`}
+                          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                        </svg>
+                        <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Capture Profiles</span>
+                        {(draft.userCaptureProfiles ?? []).length > 0 && (
+                          <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 tabular-nums">
+                            {(draft.userCaptureProfiles ?? []).length} custom
+                          </span>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => openNewCaptureProfile()}
+                        className="flex items-center gap-1.5 px-3 py-2.5 border-l border-gray-200 dark:border-gray-700 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-300 transition-colors text-xs font-medium"
+                      >
+                        <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                        </svg>
+                        New
+                      </button>
+                    </div>
+                    {captureProfilesOpen && (
+                      <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/50 px-3 py-3">
+                        <p className="text-[11px] text-gray-500 dark:text-gray-500 mb-3">
+                          All 8 built-in architectures run via dynamic registration — no core.py edits needed. Clone any built-in or create a custom profile from scratch.
+                        </p>
+                        <ArchitectureProfilePicker
+                          selectedIds={[]}
+                          onChange={() => {}}
+                          userProfiles={draft.userCaptureProfiles ?? []}
+                          onClone={(profile) => openNewCaptureProfile(profile)}
+                          onEdit={(profile) => { setCaptureProfileEditorTarget(profile); setCaptureProfileEditorOpen(true) }}
+                          onDelete={deleteCaptureProfile}
+                          onNew={() => openNewCaptureProfile()}
+                        />
+                      </div>
+                    )}
+                  </div>
+
                   <div className="space-y-3 pt-2 border-t border-gray-200 dark:border-gray-800">
                     <div className="flex items-stretch rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
                       <button
@@ -1909,13 +2000,18 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                                 </div>
                               )}
                               <div className="px-3 py-3 bg-white dark:bg-gray-900/50 space-y-3">
+                              <SettingsField label="Architecture(s)">
+                                <ArchitectureProfilePicker
+                                  selectedIds={preset.architectures}
+                                  onChange={(next) => updateTrainingPreset(preset.id, { architectures: next })}
+                                  userProfiles={draft.userCaptureProfiles ?? []}
+                                  onClone={(profile) => openNewCaptureProfile(profile)}
+                                  onEdit={(profile) => { setCaptureProfileEditorTarget(profile); setCaptureProfileEditorOpen(true) }}
+                                  onDelete={deleteCaptureProfile}
+                                  onNew={() => openNewCaptureProfile()}
+                                />
+                              </SettingsField>
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                <SettingsField label="Architecture(s)">
-                                  <SettingsArchitectureMultiSelect
-                                    values={preset.architectures}
-                                    onChange={(next) => updateTrainingPreset(preset.id, { architectures: next as TrainingPreset['architectures'] })}
-                                  />
-                                </SettingsField>
                                 <SettingsField label="Epochs">
                                   <input
                                     type="number"
@@ -2010,6 +2106,13 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
           </div>
         </div>
       </div>
+      {captureProfileEditorOpen && (
+        <CaptureProfileEditor
+          profile={captureProfileEditorTarget}
+          onSave={saveCaptureProfile}
+          onCancel={() => { setCaptureProfileEditorOpen(false); setCaptureProfileEditorTarget(null) }}
+        />
+      )}
     </div>
   )
 }
