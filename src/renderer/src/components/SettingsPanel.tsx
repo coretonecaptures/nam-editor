@@ -1966,8 +1966,8 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                           </div>
                         ) : (
                           draft.trainingPresets.map((preset) => (
-                            <div key={preset.id} className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden shadow-sm">
-                              <div className="flex items-center gap-2 px-3 py-2.5 bg-gray-100 dark:bg-gray-800/80 border-b border-gray-200 dark:border-gray-700">
+                            <div key={preset.id} className="rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
+                              <div className="flex items-center gap-2 px-3 py-2.5 bg-gray-100 dark:bg-gray-800/80 border-b border-gray-200 dark:border-gray-700 rounded-t-lg">
                                 <input
                                   type="text"
                                   value={preset.name}

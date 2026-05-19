@@ -436,6 +436,10 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       return
     }
     const targetArchitectures = activePreset ? activePreset.architectures : architectures
+    if (targetArchitectures.length === 0) {
+      setLaunchError('Choose at least one architecture before queueing.')
+      return
+    }
     if (manualRoutingMode === 'root' && !trainPath.trim()) {
       setLaunchError('Choose an output root before queueing captures.')
       return
@@ -1891,8 +1895,7 @@ function ArchitectureMultiSelect({ values, onChange }: { values: TrainerArchitec
                       if (e.target.checked) {
                         onChange([...values, option])
                       } else {
-                        const next = values.filter((item) => item !== option)
-                        if (next.length > 0) onChange(next)
+                        onChange(values.filter((item) => item !== option))
                       }
                     }}
                     className="accent-indigo-600"
