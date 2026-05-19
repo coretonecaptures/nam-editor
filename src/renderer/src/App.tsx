@@ -4453,6 +4453,7 @@ export default function App() {
                       activeEsr={esrFilterOverride}
                       activeRating={ratingFilter}
                       onRemoveWatch={activeFolderPath && activeFolderWatchSource ? () => handleClearWatchSource(activeFolderPath) : undefined}
+                      onSyncWatch={activeFolderWatchSource ? () => { void window.api.folderWatchResync(activeFolderWatchSource) } : undefined}
                       onOpenWatchSource={(path) => { void window.api.revealFile(path) }}
                       onDuplicateClick={(on) => {
                         setFilterModeOverride(on ? 'duplicates' : null)

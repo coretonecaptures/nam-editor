@@ -53,6 +53,8 @@ const api = {
     imports: Record<string, { sourcePath: string; sizeBytes: number; mtimeMs: number; importedAt: string }[]>
   }): Promise<void> =>
     ipcRenderer.invoke('folderWatch:setState', payload),
+  folderWatchResync: (sourceFolder: string): Promise<void> =>
+    ipcRenderer.invoke('folderWatch:resync', sourceFolder),
   onFolderWatchCopied: (cb: (event: {
     sourcePath: string
     destPath: string

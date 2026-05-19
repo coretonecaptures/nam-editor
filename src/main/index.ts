@@ -1895,7 +1895,14 @@ async function copyWatchedFile(rule: FolderWatchRule, filePath: string): Promise
     if (hasImportedWatchedFile(rule, normalizedSource, stat.size, stat.mtimeMs)) return
     const fileName = basename(normalizedSource)
     const destPath = join(rule.destFolder, fileName)
-    if (fs.existsSync(destPath)) return
+    // Skip only if the destination is already identical (same size + mtime).
+    // A plain existsSync check would block re-trained captures from syncing.
+    if (fs.existsSync(destPath)) {
+      try {
+        const destStat = await fs.promises.stat(destPath)
+        if (destStat.size === stat.size && destStat.mtimeMs === stat.mtimeMs) return
+      } catch { /* dest stat failed — proceed with copy */ }
+    }
     suppressWatcher()
     await fs.promises.copyFile(normalizedSource, destPath)
     const importEntry: FolderWatchImportEntry = {
@@ -3212,6 +3219,20 @@ app.whenReady().then(async () => {
     }
     folderWatchImports = nextImports
     resetFolderWatchRules(Array.isArray(payload?.rules) ? payload.rules : [])
+  })
+
+  ipcMain.handle('folderWatch:resync', async (_event, sourceFolder: string) => {
+    const normalized = normalizePath(String(sourceFolder ?? '').trim())
+    const rule = folderWatchRules.find(
+      (r) => normalizePath(r.sourceFolder).toLowerCase() === normalized.toLowerCase()
+    )
+    if (rule) {
+      await syncExistingWatchedFiles({
+        ...rule,
+        sourceFolder: normalizePath(rule.sourceFolder),
+        destFolder: normalizePath(rule.destFolder),
+      })
+    }
   })
 
   // IPC: Create a subfolder

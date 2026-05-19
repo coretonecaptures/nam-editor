@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useRef, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { NamFile } from '../types/nam'
 
 interface Props {
@@ -24,6 +25,17 @@ export function WavCoverageTab({ folderPath, namFiles, comparisonFolder, onSetCo
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showMatched, setShowMatched] = useState(false)
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; text: string } | null>(null)
+  const ctxMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!ctxMenu) return
+    const handler = (e: MouseEvent) => {
+      if (ctxMenuRef.current && !ctxMenuRef.current.contains(e.target as Node)) setCtxMenu(null)
+    }
+    window.addEventListener('mousedown', handler)
+    return () => window.removeEventListener('mousedown', handler)
+  }, [ctxMenu])
 
   useEffect(() => {
     if (!comparisonFolder) { setWavNames([]); return }
@@ -172,17 +184,30 @@ export function WavCoverageTab({ folderPath, namFiles, comparisonFolder, onSetCo
               </div>
               <div className="rounded-lg border border-red-200 dark:border-red-700/30 overflow-hidden">
                 {missing.map((row, i) => (
-                  <div key={row.wavName} className={`flex items-center gap-2 px-3 py-1.5 text-xs ${i % 2 === 0 ? 'bg-white dark:bg-gray-900/20' : 'bg-red-50/40 dark:bg-red-500/[0.03]'}`}>
+                  <div
+                    key={row.wavName}
+                    className={`flex items-center gap-2 px-3 py-1.5 text-xs ${i % 2 === 0 ? 'bg-white dark:bg-gray-900/20' : 'bg-red-50/40 dark:bg-red-500/[0.03]'}`}
+                    onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: Math.min(e.clientX, window.innerWidth - 160), y: e.clientY, text: row.wavName }) }}
+                  >
                     <span className="w-2 h-2 rounded-full bg-red-400 dark:bg-red-500 flex-shrink-0" />
                     <span className="font-mono text-gray-700 dark:text-gray-300 truncate">{row.wavName}</span>
-                    {canTrain && onTrainWavs && (
+                    <div className="ml-auto flex items-center gap-1 flex-shrink-0">
                       <button
-                        onClick={() => onTrainWavs([`${comparisonFolder}/${row.wavName}`])}
-                        className="ml-auto flex-shrink-0 text-[10px] px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors"
+                        onClick={() => void window.api.revealFile(`${comparisonFolder}/${row.wavName}`)}
+                        className="text-[10px] px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors border border-gray-200 dark:border-gray-600"
+                        title="Show in Explorer"
                       >
-                        Train
+                        Show
                       </button>
-                    )}
+                      {canTrain && onTrainWavs && (
+                        <button
+                          onClick={() => onTrainWavs([`${comparisonFolder}/${row.wavName}`])}
+                          className="text-[10px] px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors"
+                        >
+                          Train
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -207,7 +232,11 @@ export function WavCoverageTab({ folderPath, namFiles, comparisonFolder, onSetCo
               {showMatched && (
                 <div className="rounded-lg border border-emerald-200 dark:border-emerald-700/30 overflow-hidden">
                   {matched.map((row, i) => (
-                    <div key={row.wavName} className={`flex items-center gap-2 px-3 py-1.5 text-xs ${i % 2 === 0 ? 'bg-white dark:bg-gray-900/20' : 'bg-emerald-50/40 dark:bg-emerald-500/[0.03]'}`}>
+                    <div
+                      key={row.wavName}
+                      className={`flex items-center gap-2 px-3 py-1.5 text-xs ${i % 2 === 0 ? 'bg-white dark:bg-gray-900/20' : 'bg-emerald-50/40 dark:bg-emerald-500/[0.03]'}`}
+                      onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: Math.min(e.clientX, window.innerWidth - 160), y: e.clientY, text: row.wavName }) }}
+                    >
                       <svg className="w-3 h-3 text-emerald-500 dark:text-emerald-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
                       </svg>
@@ -238,6 +267,22 @@ export function WavCoverageTab({ folderPath, namFiles, comparisonFolder, onSetCo
                 ))}
               </div>
             </div>
+          )}
+
+          {ctxMenu && createPortal(
+            <div
+              ref={ctxMenuRef}
+              className="fixed z-50 min-w-[140px] rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 py-1 text-sm"
+              style={{ left: ctxMenu.x, top: ctxMenu.y }}
+            >
+              <button
+                className="w-full text-left px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 transition-colors"
+                onClick={() => { void navigator.clipboard.writeText(ctxMenu.text); setCtxMenu(null) }}
+              >
+                Copy filename
+              </button>
+            </div>,
+            document.body
           )}
 
           {missing.length === 0 && matched.length > 0 && (

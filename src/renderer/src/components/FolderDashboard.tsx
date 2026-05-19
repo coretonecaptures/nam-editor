@@ -44,6 +44,7 @@ interface Props {
   onEsrClick?: (tier: string | null) => void
   onRatingClick?: (rating: number | null) => void
   onRemoveWatch?: () => void
+  onSyncWatch?: () => void
   onOpenWatchSource?: (path: string) => void
 }
 
@@ -164,7 +165,7 @@ function MiniBar({ label, count, maxCount, color, isActive, onClick }: { label: 
 
 export function FolderDashboard({
   files, checklistSummary, hasPackInfo, hasReadme, hasCoverImage, galleryCount = 0, watchSource, deliverySummary, activeDuplicate, activeGear, activeTone, activePreset, activeMissing, activeEsr, activeRating,
-  onDuplicateClick, onGearClick, onToneClick, onPresetClick, onMissingClick, onEsrClick, onRatingClick, onRemoveWatch, onOpenWatchSource,
+  onDuplicateClick, onGearClick, onToneClick, onPresetClick, onMissingClick, onEsrClick, onRatingClick, onRemoveWatch, onSyncWatch, onOpenWatchSource,
 }: Props) {
   const stats = useMemo(() => {
     const total = files.length
@@ -287,14 +288,27 @@ export function FolderDashboard({
         <div className="rounded-xl bg-white dark:bg-gray-800/40 border border-gray-200 dark:border-gray-700/40 p-3">
           <div className="flex items-center justify-between gap-3 mb-2">
             <h3 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Folder Watch</h3>
-            {watchSource && onRemoveWatch && (
-              <button
-                onClick={onRemoveWatch}
-                className="text-[10px] px-2 py-0.5 rounded border border-red-400/60 dark:border-red-500/30 text-red-600 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
-                title="Remove watch source from this folder"
-              >
-                Remove Watch
-              </button>
+            {watchSource && (
+              <div className="flex items-center gap-1.5">
+                {onSyncWatch && (
+                  <button
+                    onClick={onSyncWatch}
+                    className="text-[10px] px-2 py-0.5 rounded border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                    title="Re-scan source folder and copy any new .nam files now"
+                  >
+                    Sync Now
+                  </button>
+                )}
+                {onRemoveWatch && (
+                  <button
+                    onClick={onRemoveWatch}
+                    className="text-[10px] px-2 py-0.5 rounded border border-red-400/60 dark:border-red-500/30 text-red-600 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
+                    title="Remove watch source from this folder"
+                  >
+                    Remove Watch
+                  </button>
+                )}
+              </div>
             )}
           </div>
           {watchSource ? (
