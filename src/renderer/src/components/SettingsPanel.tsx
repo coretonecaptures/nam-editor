@@ -1565,19 +1565,40 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
 
               {draft.enableExperimentalTraining && (
                 <>
-                  <SettingsField label="NAM Python executable" hint="Point this at the Python executable inside your working NAM environment">
+                  <SettingsField label="NAM A1 Python executable" hint="Python executable for A1 WaveNet training (original NAM, pre-0.10)">
                     <div className="flex items-center gap-2">
                       <input
                         type="text"
                         value={draft.namPythonPath}
                         onChange={(e) => update('namPythonPath', e.target.value)}
-                        placeholder="e.g. C:\\Users\\Admin\\.conda\\envs\\nam\\python.exe"
+                        placeholder="e.g. C:\\Users\\Admin\\.conda\\envs\\nam-a1\\python.exe"
                         className="flex-1 px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono"
                       />
                       <button
                         onClick={async () => {
                           const p = await window.api.browseExecutable()
                           if (p) update('namPythonPath', p)
+                        }}
+                        className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 flex-shrink-0"
+                      >
+                        Browse...
+                      </button>
+                    </div>
+                  </SettingsField>
+
+                  <SettingsField label="NAM A2 Python executable" hint="Python executable for A2 PackedWaveNet training (new NAM ≥ 0.10). Leave blank to use the A1 path — the runner will detect the installed version at runtime.">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={draft.namA2PythonPath ?? ''}
+                        onChange={(e) => update('namA2PythonPath', e.target.value)}
+                        placeholder="Optional — leave blank to use the A1 path"
+                        className="flex-1 px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono"
+                      />
+                      <button
+                        onClick={async () => {
+                          const p = await window.api.browseExecutable()
+                          if (p) update('namA2PythonPath', p)
                         }}
                         className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 flex-shrink-0"
                       >

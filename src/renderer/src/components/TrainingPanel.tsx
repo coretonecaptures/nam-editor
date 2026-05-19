@@ -45,6 +45,11 @@ function lookupProfileConfig(
   return user ?? null
 }
 
+function architectureDisplayLabel(arch: string): string {
+  if (arch === 'a2') return 'A2 PackedWaveNet'
+  return ARCHITECTURE_LABELS[arch as TrainerArchitecture] ?? arch
+}
+
 function architectureEpochNote(architecture: TrainerArchitecture): string | null {
   if (architecture === 'complex') return 'Official trainer uses its recommended Complex learning settings.'
   if (architecture === 'revyhi') return 'Official trainer forces the author-recommended REVyHI defaults, including 1500 epochs.'
@@ -66,7 +71,7 @@ function describePreset(preset: TrainingPreset): string {
   const archText =
     preset.architectures.length === 0
       ? 'No architectures'
-      : preset.architectures.map((item) => ARCHITECTURE_LABELS[item as TrainerArchitecture] ?? item).join(', ')
+      : preset.architectures.map((item) => architectureDisplayLabel(item)).join(', ')
   const esrText = typeof preset.thresholdEsr === 'number' ? `Target ESR ${formatThresholdEsr(preset.thresholdEsr)}` : 'No ESR target'
   return `${archText} · ${preset.epochs} epochs · ${esrText}`
 }
@@ -112,6 +117,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const [folderRunPath, setFolderRunPath] = useState('')
   const [folderRunProfileId, setFolderRunProfileId] = useState<'custom' | string>('custom')
   const [selectedPresetId, setSelectedPresetId] = useState<string>(CUSTOM_PRESET_ID)
+  const [namMode, setNamMode] = useState<'a1' | 'a2'>('a1')
   const [architectures, setArchitectures] = useState<string[]>(['standard'])
   const [captureProfileEditorOpen, setCaptureProfileEditorOpen] = useState(false)
   const [captureProfileEditorTarget, setCaptureProfileEditorTarget] = useState<UserCaptureProfile | null>(null)
@@ -435,8 +441,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       setLaunchError('Target ESR must be blank or a positive number.')
       return
     }
+    const activeNamMode = activePreset?.namMode ?? namMode
     const targetArchitectures = activePreset ? activePreset.architectures : architectures
-    if (targetArchitectures.length === 0) {
+    if (activeNamMode === 'a1' && targetArchitectures.length === 0) {
       setLaunchError('Choose at least one architecture before queueing.')
       return
     }
@@ -454,21 +461,26 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     const outputLevelDbu = captureDefaultsEnabled && settings.defaultOutputLevel.trim() !== ''
       ? Number.parseFloat(settings.defaultOutputLevel.trim())
       : null
+    const resolvedPythonPath = activeNamMode === 'a2' && settings.namA2PythonPath?.trim()
+      ? settings.namA2PythonPath.trim()
+      : settings.namPythonPath.trim()
 
     const result = await window.api.enqueueTrainerRuns(
       (() => {
         const submissionId = `manual-direct-${Date.now()}`
         const submissionLabel = `Run WAVs - ${outputPaths.length} capture${outputPaths.length === 1 ? '' : 's'}`
         const submissionCreatedAt = new Date().toISOString()
+        const jobArchitectures = activeNamMode === 'a2' ? ['a2'] : targetArchitectures
         return outputPaths.flatMap((outputPath) => {
           const routing = getManualRoutingForOutput(outputPath.trim())
-          return targetArchitectures.map((architecture) => {
-            const profileCfg = lookupProfileConfig(architecture, settings.userCaptureProfiles ?? [])
+          return jobArchitectures.map((architecture) => {
+            const profileCfg = activeNamMode === 'a1' ? lookupProfileConfig(architecture, settings.userCaptureProfiles ?? []) : null
             return {
-              pythonPath: settings.namPythonPath.trim(),
+              pythonPath: resolvedPythonPath,
               inputPath: inputPath.trim(),
               outputPath: outputPath.trim(),
               trainPath: routing.finalModelRoot,
+              namMode: activeNamMode,
               architecture,
               waveNetConfig: profileCfg?.waveNetConfig ?? null,
               lr: profileCfg?.lr ?? 0.004,
@@ -476,7 +488,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               batchSize: profileCfg?.batchSize ?? 16,
               ny: profileCfg?.ny ?? 8192,
               fitMrstft: profileCfg?.fitMrstft ?? true,
-              captureProfileId: architecture,
+              captureProfileId: activeNamMode === 'a1' ? architecture : null,
               epochs: parsedEpochs,
               latency: parsedLatency,
               thresholdEsr: parsedThresholdEsr,
@@ -529,7 +541,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     return {
       id: 'manual-folder-run-custom',
       name: 'Custom Folder Run',
-      architectures,
+      namMode,
+      architectures: namMode === 'a2' ? ['a2'] : architectures,
       epochs: parsedEpochs,
       thresholdEsr: parsedThresholdEsr,
       latencyMode: parsedLatency == null ? 'auto' : 'manual',
@@ -603,7 +616,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
         finalModelRoot: routing.finalModelRoot,
       },
       folderPath: folderRunPath.trim(),
-      pythonPath: settings.namPythonPath.trim(),
+      pythonPath: (preset.namMode === 'a2' && settings.namA2PythonPath?.trim())
+        ? settings.namA2PythonPath.trim()
+        : settings.namPythonPath.trim(),
       inputPath: inputPath.trim(),
       submissionId,
       submissionLabel,
@@ -791,7 +806,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       Timestamp: new Date(entry.timestamp).toLocaleString(),
       'Model Name': entry.finalModelName,
       Profile: entry.profileName ?? (entry.sourceMode === 'watcher' ? 'Watcher' : entry.sourceMode === 'manual-folder-run' ? 'Folder run' : 'Manual'),
-      Architecture: ARCHITECTURE_LABELS[entry.architecture as TrainerArchitecture] ?? entry.architecture,
+      Architecture: architectureDisplayLabel(entry.architecture),
       Status: entry.status,
       Epochs: entry.epochs,
       'Validation ESR': entry.validationEsr ?? '',
@@ -1011,6 +1026,30 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   </div>
                 ) : (
                   <>
+                    <Field label="NAM Version">
+                      <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 text-xs">
+                        {(['a1', 'a2'] as const).map((mode) => (
+                          <button
+                            key={mode}
+                            onClick={() => setNamMode(mode)}
+                            className={`flex-1 py-1.5 px-3 font-medium transition-colors ${
+                              namMode === mode
+                                ? 'bg-indigo-600 text-white'
+                                : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+                            }`}
+                          >
+                            {mode === 'a1' ? 'A1 WaveNet' : 'A2 PackedWaveNet'}
+                          </button>
+                        ))}
+                      </div>
+                      {namMode === 'a2' && (
+                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          Trains two outputs simultaneously (3ch nano + 8ch standard). Requires new NAM ≥ 0.10 — set NAM A2 Python path in Settings.
+                        </p>
+                      )}
+                    </Field>
+
+                    {namMode === 'a1' && (
                     <Field label="Architecture(s)">
                       <ArchitectureMultiSelect
                         values={architectures}
@@ -1022,6 +1061,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                         userProfiles={settings.userCaptureProfiles ?? []}
                       />
                     </Field>
+                    )}
 
                     <Field label="Epochs">
                       <input
@@ -1969,7 +2009,7 @@ function HistoryRow({
             <span className="rounded-full border border-sky-300 dark:border-sky-800 bg-sky-500/10 px-1.5 py-0.5 text-sky-700 dark:text-sky-300">
               {entry.profileName ?? (entry.sourceMode === 'watcher' ? 'Watcher' : entry.sourceMode === 'manual-folder-run' ? 'Folder run' : 'Manual queue')}
             </span>
-            <span>{ARCHITECTURE_LABELS[entry.architecture]}</span>
+            <span>{architectureDisplayLabel(entry.architecture)}</span>
             <span>{new Date(entry.timestamp).toLocaleString()}</span>
             <span>Epochs {entry.epochs}</span>
             {typeof entry.validationEsr === 'number' ? (
@@ -2104,7 +2144,7 @@ function QueueRow({
                 <span className="rounded-full border border-sky-300 dark:border-sky-800 bg-sky-500/10 px-1.5 py-0.5 text-sky-700 dark:text-sky-300">
                   {job.profileName ?? (job.sourceMode === 'manual-direct' ? 'Manual queue' : job.sourceMode === 'watcher' ? 'Watcher' : 'Folder run')}
                 </span>
-                <span>{ARCHITECTURE_LABELS[job.architecture]}</span>
+                <span>{architectureDisplayLabel(job.architecture)}</span>
                 <span>Attempt {job.attempts}</span>
                 {typeof job.progressPercent === 'number' && <span>{job.progressPercent.toFixed(1)}%</span>}
                 {typeof job.validationEsr === 'number' && <span className={esrTone.classes}>ESR {esrTone.text}</span>}

@@ -84,6 +84,7 @@ export interface TrainingProfile {
 export interface TrainingPreset {
   id: string
   name: string
+  namMode?: 'a1' | 'a2'
   architectures: string[]
   epochs: number
   thresholdEsr: number | null
@@ -277,6 +278,7 @@ export interface AppSettings {
   // Experimental local NAM training
   enableExperimentalTraining: boolean
   namPythonPath: string
+  namA2PythonPath: string
   namTrainingInputWav: string
   trainingPresets: TrainingPreset[]
   trainingWatchProfiles: TrainingWatchProfile[]
@@ -361,6 +363,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   namStandalonePath: '',
   enableExperimentalTraining: false,
   namPythonPath: '',
+  namA2PythonPath: '',
   namTrainingInputWav: '',
   trainingPresets: [],
   trainingWatchProfiles: [],
@@ -447,6 +450,7 @@ function normalizeTrainingPreset(
   return {
     id: preset?.id || `training-preset-${Date.now()}-${index}`,
     name: preset?.name?.trim() || `Preset ${index + 1}`,
+    namMode: preset?.namMode === 'a2' ? 'a2' : 'a1',
     architectures: rawArchitectures,
     epochs: Number.isFinite(preset?.epochs) && (preset?.epochs ?? 0) > 0 ? Math.floor(preset!.epochs as number) : 1000,
     thresholdEsr: typeof preset?.thresholdEsr === 'number' && Number.isFinite(preset.thresholdEsr) && preset.thresholdEsr > 0

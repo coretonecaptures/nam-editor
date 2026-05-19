@@ -491,14 +491,12 @@ def _promote_output_model_path(train_path, model_name, discovered_path):
     return str(target)
 
 
-def main():
-    if len(sys.argv) < 2:
-        raise RuntimeError("Expected payload JSON path")
+def _detect_nam_version():
+    import nam.train.core as _core
+    return "a1" if hasattr(_core, "Architecture") else "a2"
 
-    payload_path = sys.argv[1]
-    with open(payload_path, "r", encoding="utf-8") as handle:
-        payload = json.load(handle)
 
+def _run_a1(payload):
     import nam.train.core as _core
 
     _cid = "__namlab__"
@@ -510,13 +508,13 @@ def main():
 
     _wncfg = payload["waveNetConfig"]
     _orig_get_wavenet_config = _core.get_wavenet_config
-    def _patched_get_wavenet_config(arch):
+    def _patched(arch):
         if getattr(arch, "_value_", arch) == _cid:
             return _wncfg
         return _orig_get_wavenet_config(arch)
-    _core.get_wavenet_config = _patched_get_wavenet_config
+    _core.get_wavenet_config = _patched
 
-    result = train(
+    return train(
         input_path=payload["inputPath"],
         output_path=payload["outputPath"],
         train_path=payload["trainPath"],
@@ -536,6 +534,52 @@ def main():
         fit_mrstft=payload.get("fitMrstft", True),
         user_metadata=None,
     )
+
+
+def _run_a2(payload):
+    return train(
+        input_path=payload["inputPath"],
+        output_path=payload["outputPath"],
+        train_path=payload["trainPath"],
+        epochs=payload["epochs"],
+        latency=payload.get("latency"),
+        threshold_esr=payload.get("thresholdEsr"),
+        batch_size=payload.get("batchSize", 16),
+        ny=payload.get("ny", 8192),
+        save_plot=payload.get("savePlot", True),
+        silent=payload.get("silent", False),
+        modelname=payload["modelName"],
+        ignore_checks=payload.get("ignoreChecks", False),
+    )
+
+
+def main():
+    if len(sys.argv) < 2:
+        raise RuntimeError("Expected payload JSON path")
+
+    payload_path = sys.argv[1]
+    with open(payload_path, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+
+    detected = _detect_nam_version()
+    requested = payload.get("namMode", "a1")
+    print(f"NAM_LAB_NAM_VERSION:{detected}", flush=True)
+
+    if requested != detected:
+        if requested == "a2":
+            raise RuntimeError(
+                "A2 (PackedWaveNet) training requires the new NAM (>= 0.10). "
+                "Your installed NAM uses the A1 WaveNet architecture. "
+                "Set a separate NAM A2 Python path in NAM Lab Settings, or update your NAM install."
+            )
+        else:
+            raise RuntimeError(
+                "A1 (WaveNet) training requires the original NAM (< 0.10). "
+                "Your installed NAM only supports A2 (PackedWaveNet). "
+                "Set a separate NAM A1 Python path in NAM Lab Settings, or downgrade your NAM install."
+            )
+
+    result = _run_a2(payload) if requested == "a2" else _run_a1(payload)
 
     discovered_output = _find_output_model_path(payload["trainPath"], payload["modelName"])
     promoted_output = _promote_output_model_path(payload["trainPath"], payload["modelName"], discovered_output)
@@ -1057,6 +1101,7 @@ function createTrainerJob(payload: TrainerStartPayload): TrainerQueueJob {
     inputPath: payload.inputPath.trim(),
     outputPath: payload.outputPath.trim(),
     trainPath: workspacePath,
+    namMode: payload.namMode === 'a2' ? 'a2' : 'a1',
     architecture: payload.architecture,
     waveNetConfig: payload.waveNetConfig ?? null,
     lr: payload.lr ?? 0.004,
@@ -1266,12 +1311,14 @@ async function buildTrainerPayloadsForProfile(
     for (const architecture of profile.architectures) {
       if (trainerQueueAlreadyHasSource(profile.id, normalizedOutputPath, architecture)) continue
       if (trainerHistoryAlreadyHasSource(profile.id, normalizedOutputPath, architecture, sourceStats.mtimeMs, sourceStats.sizeBytes)) continue
-      const profileCfg = lookupCaptureProfileConfig(architecture, trainerUserCaptureProfiles)
+      const isA2 = architecture === 'a2'
+      const profileCfg = isA2 ? null : lookupCaptureProfileConfig(architecture, trainerUserCaptureProfiles)
       payloads.push({
         pythonPath,
         inputPath,
         outputPath: normalizedOutputPath,
         trainPath: profile.finalModelRoot,
+        namMode: isA2 ? 'a2' : 'a1',
         architecture,
         waveNetConfig: profileCfg?.waveNetConfig ?? null,
         lr: profileCfg?.lr ?? 0.004,
@@ -1279,7 +1326,7 @@ async function buildTrainerPayloadsForProfile(
         batchSize: profileCfg?.batchSize ?? 16,
         ny: profileCfg?.ny ?? 8192,
         fitMrstft: profileCfg?.fitMrstft ?? true,
-        captureProfileId: architecture,
+        captureProfileId: isA2 ? null : architecture,
         epochs: profile.epochs,
         latency: profile.latencyMode === 'manual' ? profile.latencyValue : null,
         thresholdEsr: profile.thresholdEsr,
@@ -1431,6 +1478,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     inputPath,
     outputPath,
     trainPath,
+    namMode: job.namMode ?? 'a1',
     architecture: job.architecture,
     waveNetConfig: job.waveNetConfig,
     lr: job.lr,

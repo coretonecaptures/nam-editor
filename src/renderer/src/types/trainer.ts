@@ -137,6 +137,7 @@ export interface TrainerStartPayload {
   inputPath: string
   outputPath: string
   trainPath: string
+  namMode?: 'a1' | 'a2'
   architecture: string
   epochs: number
   latency: number | null
@@ -177,6 +178,7 @@ export interface TrainerQueueJob {
   inputPath: string
   outputPath: string
   trainPath: string
+  namMode: 'a1' | 'a2'
   architecture: string
   waveNetConfig: WaveNetConfig | null
   lr: number
@@ -234,6 +236,7 @@ export interface TrainerHistoryEntry {
   sourcePath: string
   sourceSizeBytes: number | null
   sourceMtimeMs: number | null
+  namMode?: 'a1' | 'a2'
   architecture: string
   finalModelPath: string
   processedWavPath: string
