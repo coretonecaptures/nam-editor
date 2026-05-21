@@ -32,6 +32,7 @@ export interface FolderWatchImportEntry {
   sizeBytes: number
   mtimeMs: number
   importedAt: string
+  contentHash?: string
 }
 
 export interface UserCaptureProfile {
@@ -78,6 +79,8 @@ export interface TrainingProfile {
   watchFolder: string
   processedWavRoot: string
   graphRoot: string
+  effectiveOutputFormula?: string
+  effectiveGraphFormula?: string
   finalModelRoot: string
 }
 
@@ -94,6 +97,9 @@ export interface TrainingPreset {
   ignoreChecks: boolean
   normalizeWav?: 'global' | 'on' | 'off'
   normalizeWavTargetDb?: number | null
+  outputFormulaOverride?: string
+  graphOutputFormulaOverride?: string
+  namingTemplate: string
 }
 
 export interface TrainingWatchProfile {
@@ -104,10 +110,10 @@ export interface TrainingWatchProfile {
   initialScanMode: TrainingWatchInitialScanMode
   watchFolder: string
   presetId: string
-  namingTemplate: string
   sourcePostProcess: TrainingSourcePostProcessMode
   processedWavRoot: string
   graphRoot: string
+  graphOutputFormula: string
   finalModelRoot: string
 }
 
@@ -283,6 +289,8 @@ export interface AppSettings {
   namTrainingInputWav: string
   normalizeWavBeforeTraining: boolean
   normalizeWavTargetDb: number
+  trainingOutputFormula: string
+  trainingGraphFormula: string
   trainingPresets: TrainingPreset[]
   trainingWatchProfiles: TrainingWatchProfile[]
   trainingRetainGraphs: boolean
@@ -369,6 +377,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   namTrainingInputWav: '',
   normalizeWavBeforeTraining: false,
   normalizeWavTargetDb: -5.0,
+  trainingOutputFormula: '',
+  trainingGraphFormula: '',
   trainingPresets: [],
   trainingWatchProfiles: [],
   trainingRetainGraphs: true,
@@ -470,6 +480,8 @@ function normalizeTrainingPreset(
     normalizeWavTargetDb: typeof preset?.normalizeWavTargetDb === 'number' && Number.isFinite(preset.normalizeWavTargetDb)
       ? preset.normalizeWavTargetDb
       : null,
+    graphOutputFormulaOverride: preset?.graphOutputFormulaOverride?.trim() || undefined,
+    namingTemplate: (preset as Partial<TrainingPreset> & { namingTemplate?: string })?.namingTemplate?.trim() || '{basename}',
   }
 }
 
@@ -486,14 +498,10 @@ function normalizeTrainingWatchProfile(
     initialScanMode: profile?.initialScanMode === 'new-only' ? 'new-only' : 'process-existing',
     watchFolder: profile?.watchFolder?.trim() || '',
     presetId: profile?.presetId?.trim() || '',
-    namingTemplate: profile?.namingTemplate?.trim() || legacyPreset?.namingTemplate?.trim() || '{basename}',
-    sourcePostProcess: profile?.sourcePostProcess === 'copy' || profile?.sourcePostProcess === 'keep'
-      ? profile.sourcePostProcess
-      : legacyPreset?.sourcePostProcess === 'copy' || legacyPreset?.sourcePostProcess === 'keep'
-        ? legacyPreset.sourcePostProcess
-        : 'move',
+    sourcePostProcess: 'keep',
     processedWavRoot: profile?.processedWavRoot?.trim() || legacyPreset?.processedWavRoot?.trim() || '',
     graphRoot: profile?.graphRoot?.trim() || legacyPreset?.graphRoot?.trim() || '',
+    graphOutputFormula: profile?.graphOutputFormula?.trim() ?? '',
     finalModelRoot: profile?.finalModelRoot?.trim() || legacyPreset?.finalModelRoot?.trim() || '',
   }
 }

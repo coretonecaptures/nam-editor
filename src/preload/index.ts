@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import fs from 'fs'
 import path from 'path'
-import type { TrainerStartPayload, TrainerStateSnapshot } from '../renderer/src/types/trainer'
+import type { TrainerStartPayload, TrainerStateSnapshot, WatcherFileEntry } from '../renderer/src/types/trainer'
 
 // Read settings.json from userData synchronously so the renderer has settings
 // available immediately — no async flash, no re-render on load.
@@ -50,7 +50,7 @@ const api = {
   },
   setFolderWatchState: (payload: {
     rules: { sourceFolder: string; destFolder: string; enabled: boolean }[]
-    imports: Record<string, { sourcePath: string; sizeBytes: number; mtimeMs: number; importedAt: string }[]>
+    imports: Record<string, { sourcePath: string; sizeBytes: number; mtimeMs: number; importedAt: string; contentHash?: string }[]>
   }): Promise<void> =>
     ipcRenderer.invoke('folderWatch:setState', payload),
   folderWatchResync: (sourceFolder: string): Promise<void> =>
@@ -60,17 +60,22 @@ const api = {
     destPath: string
     sourceFolder: string
     destFolder: string
-    importEntry: { sourcePath: string; sizeBytes: number; mtimeMs: number; importedAt: string }
+    importEntry: { sourcePath: string; sizeBytes: number; mtimeMs: number; importedAt: string; contentHash?: string }
   }) => void): (() => void) => {
     const handler = (_event: unknown, payload: {
       sourcePath: string
       destPath: string
       sourceFolder: string
       destFolder: string
-      importEntry: { sourcePath: string; sizeBytes: number; mtimeMs: number; importedAt: string }
+      importEntry: { sourcePath: string; sizeBytes: number; mtimeMs: number; importedAt: string; contentHash?: string }
     }) => cb(payload)
     ipcRenderer.on('folderWatch:copied', handler)
     return () => ipcRenderer.removeListener('folderWatch:copied', handler)
+  },
+  onFolderWatchImportsBackfilled: (cb: (event: { key: string; entries: { sourcePath: string; sizeBytes: number; mtimeMs: number; importedAt: string; contentHash?: string }[] }) => void): (() => void) => {
+    const handler = (_event: unknown, payload: { key: string; entries: { sourcePath: string; sizeBytes: number; mtimeMs: number; importedAt: string; contentHash?: string }[] }) => cb(payload)
+    ipcRenderer.on('folderWatch:importsBackfilled', handler)
+    return () => ipcRenderer.removeListener('folderWatch:importsBackfilled', handler)
   },
   onFolderWatchError: (cb: (event: { sourceFolder: string; destFolder: string; message: string }) => void): (() => void) => {
     const handler = (_event: unknown, payload: { sourceFolder: string; destFolder: string; message: string }) => cb(payload)
@@ -113,6 +118,14 @@ const api = {
   getTrainerProfilesState: (): Promise<unknown> => ipcRenderer.invoke('trainer:getProfilesState'),
   markTrainingWatchCurrentContentsSeen: (profileId: string): Promise<{ success: boolean; error?: string; marked?: number }> =>
     ipcRenderer.invoke('trainer:markWatchCurrentSeen', profileId),
+  clearProfileSkippedAndRescan: (profileId: string): Promise<{ success: boolean; error?: string; cleared?: number }> =>
+    ipcRenderer.invoke('trainer:clearProfileSkippedAndRescan', profileId),
+  getWatcherFilesStatus: (profileId: string, watchFolder: string, architectures: string[]): Promise<{ success: boolean; error?: string; files?: WatcherFileEntry[] }> =>
+    ipcRenderer.invoke('trainer:getWatcherFilesStatus', profileId, watchFolder, architectures),
+  resetWatcherFile: (profileId: string, filePath: string): Promise<{ success: boolean; error?: string; queued?: number }> =>
+    ipcRenderer.invoke('trainer:resetWatcherFile', profileId, filePath),
+  retrainFileAction: (profileId: string, filePath: string, action: 'wipe-retrain' | 'retrain-new' | 'mark-skipped'): Promise<{ success: boolean; error?: string; queued?: number }> =>
+    ipcRenderer.invoke('trainer:retrainFileAction', profileId, filePath, action),
   setTrainerProfileRunning: (profileId: string, running: boolean): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('trainer:setProfileRunning', profileId, running),
   runTrainerFolderOnce: (payload: unknown): Promise<{ success: boolean; error?: string; queued?: number; scanned?: number }> =>

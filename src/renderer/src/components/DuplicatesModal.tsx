@@ -3,6 +3,8 @@ import { NamFile } from '../types/nam'
 
 interface DuplicateGroup {
   key: string
+  displayKey: string
+  architecture: string | null  // set when all files in group share the same arch
   files: NamFile[]
   keepIndex: number
   status: null | 'moved' | 'trashed'
@@ -52,7 +54,7 @@ function compareKeepPreference(a: NamFile, b: NamFile): number {
   return b.fileName.localeCompare(a.fileName)
 }
 
-function buildDuplicateGroup(key: string, grpFiles: NamFile[]): Omit<DuplicateGroup, 'status'> {
+function buildDuplicateGroup(key: string, displayKey: string, grpFiles: NamFile[]): Omit<DuplicateGroup, 'status'> {
   let keepIndex = 0
   grpFiles.forEach((f, i) => {
     const currentKeep = grpFiles[keepIndex]
@@ -60,22 +62,26 @@ function buildDuplicateGroup(key: string, grpFiles: NamFile[]): Omit<DuplicateGr
       keepIndex = i
     }
   })
-  return { key, files: grpFiles, keepIndex }
+  const archs = new Set(grpFiles.map((f) => (f.architecture ?? '').toLowerCase()))
+  const architecture = archs.size === 1 ? (grpFiles[0].architecture ?? null) : null
+  return { key, displayKey, architecture, files: grpFiles, keepIndex }
 }
 
-function buildGroups(files: NamFile[], mode: Exclude<DetectionMode, 'content'>): Omit<DuplicateGroup, 'status'>[] {
-  const map = new Map<string, NamFile[]>()
+function buildGroups(files: NamFile[], mode: Exclude<DetectionMode, 'content' | 'model'>, sameArchOnly: boolean): Omit<DuplicateGroup, 'status'>[] {
+  const map = new Map<string, { displayKey: string; files: NamFile[] }>()
   for (const f of files) {
     const raw = mode === 'filename' ? f.fileName : (f.metadata.name ?? '').trim()
-    const key = raw.toLowerCase()
-    if (!key) continue
-    if (!map.has(key)) map.set(key, [])
-    map.get(key)!.push(f)
+    const nameKey = raw.toLowerCase()
+    if (!nameKey) continue
+    const arch = (f.architecture ?? '').toLowerCase()
+    const groupKey = sameArchOnly ? `${nameKey}\x00${arch}` : nameKey
+    if (!map.has(groupKey)) map.set(groupKey, { displayKey: nameKey, files: [] })
+    map.get(groupKey)!.files.push(f)
   }
   return [...map.entries()]
-    .filter(([, grpFiles]) => grpFiles.length >= 2)
-    .map(([key, grpFiles]) => buildDuplicateGroup(key, grpFiles))
-    .sort((a, b) => a.key.localeCompare(b.key))
+    .filter(([, { files }]) => files.length >= 2)
+    .map(([key, { displayKey, files }]) => buildDuplicateGroup(key, displayKey, files))
+    .sort((a, b) => a.displayKey.localeCompare(b.displayKey))
 }
 
 function getContentHashCandidates(files: NamFile[]): string[] {
@@ -107,7 +113,7 @@ function buildContentGroups(
 
   return [...byHash.entries()]
     .filter(([, grpFiles]) => grpFiles.length >= 2)
-    .map(([hash, grpFiles]) => buildDuplicateGroup(hash, grpFiles))
+    .map(([hash, grpFiles]) => buildDuplicateGroup(hash, hash, grpFiles))
     .sort((a, b) => a.key.localeCompare(b.key))
 }
 
@@ -153,12 +159,22 @@ export function DuplicatesModal({
   getModelHashes,
 }: DuplicatesModalProps) {
   const [mode, setMode] = useState<DetectionMode>('filename')
+  const [sameArchOnly, setSameArchOnly] = useState(true)
   const [groups, setGroups] = useState<DuplicateGroup[]>(() =>
-    buildGroups(files, 'filename').map((g) => ({ ...g, status: null }))
+    buildGroups(files, 'filename', true).map((g) => ({ ...g, status: null }))
   )
   const [working, setWorking] = useState<number | null>(null)
   const [loadingContent, setLoadingContent] = useState(false)
   const [contentHashFailures, setContentHashFailures] = useState(0)
+
+  const rebuildNameGroups = (nextMode: DetectionMode, nextSameArchOnly: boolean) => {
+    setGroups(buildGroups(files, nextMode as Exclude<DetectionMode, 'content' | 'model'>, nextSameArchOnly).map((g) => ({ ...g, status: null })))
+  }
+
+  const toggleSameArchOnly = (val: boolean) => {
+    setSameArchOnly(val)
+    if (mode !== 'content' && mode !== 'model') rebuildNameGroups(mode, val)
+  }
 
   const switchMode = async (nextMode: DetectionMode) => {
     setMode(nextMode)
@@ -166,7 +182,7 @@ export function DuplicatesModal({
 
     if (nextMode !== 'content' && nextMode !== 'model') {
       setLoadingContent(false)
-      setGroups(buildGroups(files, nextMode as Exclude<DetectionMode, 'content' | 'model'>).map((g) => ({ ...g, status: null })))
+      rebuildNameGroups(nextMode, sameArchOnly)
       return
     }
 
@@ -300,28 +316,44 @@ export function DuplicatesModal({
           </button>
         </div>
 
-        <div className="flex items-center gap-1 px-5 pt-3 pb-2 flex-shrink-0 border-b border-gray-100 dark:border-gray-800">
-          <button onClick={() => { void switchMode('filename') }} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mode === 'filename' ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}>
-            By Filename
-          </button>
-          <button onClick={() => { void switchMode('metaname') }} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mode === 'metaname' ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}>
-            By Metadata Name
-          </button>
-          <button onClick={() => { void switchMode('content') }} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mode === 'content' ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}>
-            By Exact Content
-          </button>
-          <button onClick={() => { void switchMode('model') }} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mode === 'model' ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}>
-            Same Model, Metadata Differs
-          </button>
-          <span className="ml-2 text-xs text-gray-400 dark:text-gray-600">
-            {mode === 'filename'
-              ? 'Same .nam filename in different folders'
-              : mode === 'metaname'
-                ? 'Same capture name in metadata field'
-                : mode === 'content'
-                  ? 'Byte-for-byte identical .nam file contents'
-                  : 'Matches when the metadata block is ignored'}
-          </span>
+        <div className="flex flex-col gap-2 px-5 pt-3 pb-2 flex-shrink-0 border-b border-gray-100 dark:border-gray-800">
+          <div className="flex items-center gap-1 flex-wrap">
+            <button onClick={() => { void switchMode('filename') }} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mode === 'filename' ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}>
+              By Filename
+            </button>
+            <button onClick={() => { void switchMode('metaname') }} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mode === 'metaname' ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}>
+              By Metadata Name
+            </button>
+            <button onClick={() => { void switchMode('content') }} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mode === 'content' ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}>
+              By Exact Content
+            </button>
+            <button onClick={() => { void switchMode('model') }} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mode === 'model' ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}>
+              Same Model, Metadata Differs
+            </button>
+            <span className="ml-1 text-xs text-gray-400 dark:text-gray-600">
+              {mode === 'filename'
+                ? 'Same .nam filename in different folders'
+                : mode === 'metaname'
+                  ? 'Same capture name in metadata field'
+                  : mode === 'content'
+                    ? 'Byte-for-byte identical .nam file contents'
+                    : 'Matches when the metadata block is ignored'}
+            </span>
+          </div>
+          {(mode === 'filename' || mode === 'metaname') && (
+            <label className="flex items-center gap-2 cursor-pointer w-fit">
+              <input
+                type="checkbox"
+                checked={sameArchOnly}
+                onChange={(e) => toggleSameArchOnly(e.target.checked)}
+                className="w-3.5 h-3.5 rounded accent-indigo-600"
+              />
+              <span className="text-xs text-gray-600 dark:text-gray-400">
+                Same architecture only
+                <span className="ml-1 text-gray-400 dark:text-gray-600">(uncheck to also flag Standard vs REVxSTD etc. with the same name)</span>
+              </span>
+            </label>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
@@ -353,12 +385,17 @@ export function DuplicatesModal({
               return (
                 <div key={group.key} className={`border rounded-lg overflow-hidden transition-opacity ${isHandled ? 'opacity-50 border-gray-100 dark:border-gray-800' : 'border-gray-200 dark:border-gray-700'}`}>
                   <div className={`flex items-center gap-2 px-3 py-2 ${isHandled ? 'bg-gray-50 dark:bg-gray-800/30' : 'bg-gray-100 dark:bg-gray-800'}`}>
-                    <span className="text-xs font-semibold text-gray-700 dark:text-gray-300 truncate flex-1">
+                    <span className="text-xs font-semibold text-gray-700 dark:text-gray-300 truncate flex-1 flex items-center gap-1.5">
                       {mode === 'content'
                         ? `SHA-256 ${group.key.slice(0, 12)}...`
                         : mode === 'model'
                           ? `Model hash ${group.key.slice(0, 12)}...`
-                          : group.key}
+                          : group.displayKey}
+                      {group.architecture && (mode === 'filename' || mode === 'metaname') && (
+                        <span className="inline-flex px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 flex-shrink-0">
+                          {group.architecture}
+                        </span>
+                      )}
                     </span>
                     <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">{group.files.length} files</span>
 
@@ -414,6 +451,11 @@ export function DuplicatesModal({
                               </span>
                               {isKeep && (
                                 <span className="text-xs px-1.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 font-medium flex-shrink-0">keep</span>
+                              )}
+                              {f.architecture && !sameArchOnly && (mode === 'filename' || mode === 'metaname') && (
+                                <span className="inline-flex px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 flex-shrink-0">
+                                  {f.architecture}
+                                </span>
                               )}
                               {f.isDirty && <span className="text-xs text-amber-500 flex-shrink-0">unsaved</span>}
                             </div>

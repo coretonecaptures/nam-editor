@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react'
+﻿import { useEffect, useRef, useState } from 'react'
 import {
   AppSettings,
   DEFAULT_TARGET_CHECKLIST_TEMPLATES,
@@ -15,6 +15,8 @@ import {
   cloneTargetChecklistTemplates,
 } from '../types/settings'
 import { MetadataSuggestRuleLibraryModal } from './MetadataSuggestRuleLibraryModal'
+import { OutputFormulaField } from './OutputFormulaField'
+import { resolveOutputFormula, effectiveFormula } from '../utils/resolveOutputFormula'
 import { FilenameRecipeBuilderModal } from './FilenameRecipeBuilderModal'
 import { TRAINER_ARCHITECTURES, BUILT_IN_CAPTURE_PROFILES } from '../types/trainer'
 import type { CaptureProfile, TrainerProfilesStateSnapshot } from '../types/trainer'
@@ -27,6 +29,7 @@ import {
 } from '../utils/metadataSuggestRuleLibrary'
 import { ArchitectureProfilePicker } from './ArchitectureProfilePicker'
 import { CaptureProfileEditor } from './CaptureProfileEditor'
+import { WatcherFilesModal } from './WatcherFilesModal'
 
 const PACK_DARK_ACCENT_PRESETS = [
   '#f9b966',
@@ -79,6 +82,15 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
   const [captureProfilesOpen, setCaptureProfilesOpen] = useState(false)
   const [captureProfileEditorOpen, setCaptureProfileEditorOpen] = useState(false)
   const [captureProfileEditorTarget, setCaptureProfileEditorTarget] = useState<UserCaptureProfile | null>(null)
+  const [newItemId, setNewItemId] = useState<string | null>(null)
+  const newItemRef = useRef<HTMLDivElement | null>(null)
+  const [watcherFilesModal, setWatcherFilesModal] = useState<{ profileId: string; profileName: string; watchFolder: string; architectures: string[] } | null>(null)
+
+  useEffect(() => {
+    if (!newItemId || !newItemRef.current) return
+    newItemRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    setNewItemId(null)
+  }, [newItemId])
 
   const handleCheckForUpdates = async () => {
     setUpdateState({ status: 'checking' })
@@ -180,8 +192,9 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
 
   const addTrainingPreset = () => {
     const nextIndex = draft.trainingPresets.length + 1
+    const id = `training-preset-${Date.now()}-${nextIndex}`
     const nextPreset: TrainingPreset = {
-      id: `training-preset-${Date.now()}-${nextIndex}`,
+      id,
       name: `Preset ${nextIndex}`,
       architectures: ['standard'],
       epochs: 1000,
@@ -190,52 +203,60 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
       latencyValue: null,
       savePlot: true,
       ignoreChecks: false,
+      namingTemplate: '{basename}',
     }
     update('trainingPresets', [...draft.trainingPresets, nextPreset])
     setTrainingPresetsOpen(true)
+    setNewItemId(id)
   }
 
   const duplicateTrainingPreset = (presetId: string) => {
     const source = draft.trainingPresets.find((p) => p.id === presetId)
     if (!source) return
-    const clone: TrainingPreset = { ...source, id: `training-preset-${Date.now()}`, name: `${source.name} (copy)` }
+    const id = `training-preset-${Date.now()}`
+    const clone: TrainingPreset = { ...source, id, name: `${source.name} (copy)` }
     update('trainingPresets', [...draft.trainingPresets, clone])
     setTrainingPresetsOpen(true)
+    setNewItemId(id)
   }
 
   const addTrainingWatchProfile = () => {
     const nextIndex = draft.trainingWatchProfiles.length + 1
+    const id = `training-watch-${Date.now()}-${nextIndex}`
     const nextProfile: TrainingWatchProfile = {
-      id: `training-watch-${Date.now()}-${nextIndex}`,
+      id,
       name: `Watcher ${nextIndex}`,
       enabled: true,
       autoRun: true,
       initialScanMode: 'process-existing',
       watchFolder: '',
       presetId: draft.trainingPresets[0]?.id ?? '',
-      namingTemplate: '{basename}',
-      sourcePostProcess: 'move',
+      sourcePostProcess: 'keep',
       processedWavRoot: '',
       graphRoot: '',
+      graphOutputFormula: '',
       finalModelRoot: '',
     }
     update('trainingWatchProfiles', [...draft.trainingWatchProfiles, nextProfile])
     setTrainingWatchersOpen(true)
+    setNewItemId(id)
   }
 
   const duplicateTrainingWatchProfile = (profileId: string) => {
     const source = draft.trainingWatchProfiles.find((p) => p.id === profileId)
     if (!source) return
-    const clone: TrainingWatchProfile = { ...source, id: `training-watch-${Date.now()}`, name: `${source.name} (copy)` }
+    const id = `training-watch-${Date.now()}`
+    const clone: TrainingWatchProfile = { ...source, id, name: `${source.name} (copy)` }
     update('trainingWatchProfiles', [...draft.trainingWatchProfiles, clone])
     setTrainingWatchersOpen(true)
+    setNewItemId(id)
   }
 
   const presetSignature = (p: TrainingPreset) =>
     JSON.stringify({ name: p.name, architectures: p.architectures, epochs: p.epochs, thresholdEsr: p.thresholdEsr, latencyMode: p.latencyMode, latencyValue: p.latencyValue, savePlot: p.savePlot, ignoreChecks: p.ignoreChecks })
 
   const watchProfileSignature = (p: TrainingWatchProfile) =>
-    JSON.stringify({ name: p.name, watchFolder: p.watchFolder, presetId: p.presetId, finalModelRoot: p.finalModelRoot, processedWavRoot: p.processedWavRoot, graphRoot: p.graphRoot, sourcePostProcess: p.sourcePostProcess, namingTemplate: p.namingTemplate, initialScanMode: p.initialScanMode, enabled: p.enabled, autoRun: p.autoRun })
+    JSON.stringify({ name: p.name, watchFolder: p.watchFolder, presetId: p.presetId, finalModelRoot: p.finalModelRoot, graphRoot: p.graphRoot, initialScanMode: p.initialScanMode, enabled: p.enabled, autoRun: p.autoRun })
 
   const duplicatePresetIds = new Set(
     draft.trainingPresets
@@ -257,17 +278,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
     return parts.length <= 4 ? normalized : `.../${parts.slice(-4).join('/')}`
   }
 
-  const fillTrainingWatchProcessedLayout = (watchId: string, watchFolder: string) => {
-    const trimmed = watchFolder.trim()
-    if (!trimmed) return
-    const normalized = trimmed.replace(/\\/g, '/').replace(/\/+$/, '')
-    const processedRoot = `${normalized}/_Processed`
-    updateTrainingWatchProfile(watchId, {
-      finalModelRoot: `${processedRoot}/Models`,
-      processedWavRoot: `${processedRoot}/WAV`,
-      graphRoot: `${processedRoot}/Graphs`,
-    })
-  }
+
 
   const markTrainingWatchCurrentContentsAsSeen = async (watchId: string) => {
     const result = await window.api.markTrainingWatchCurrentContentsSeen(watchId)
@@ -1638,6 +1649,29 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                     )}
                   </div>
 
+                  <SettingsField
+                    label="NAM output path formula"
+                    hint="Derive the .nam output folder from the staging WAV path using tokens. Leave blank to use a fixed path per run."
+                  >
+                    <OutputFormulaField
+                      value={draft.trainingOutputFormula ?? ''}
+                      onChange={(v) => update('trainingOutputFormula', v)}
+                      exampleStagingPath={draft.namTrainingInputWav ? draft.namTrainingInputWav.replace(/\\/g, '/').split('/').slice(0, -1).join('/') : undefined}
+                    />
+                  </SettingsField>
+
+                  <SettingsField
+                    label="Graph output path formula"
+                    hint="Derive the graph output folder from the staging WAV path using tokens. Leave blank to use a fixed path per run."
+                  >
+                    <OutputFormulaField
+                      value={draft.trainingGraphFormula ?? ''}
+                      onChange={(v) => update('trainingGraphFormula', v)}
+                      exampleStagingPath={draft.namTrainingInputWav ? draft.namTrainingInputWav.replace(/\\/g, '/').split('/').slice(0, -1).join('/') : undefined}
+                      suggestionFormula="../../Graphs/{architecture}/{folder}"
+                    />
+                  </SettingsField>
+
                   <div className="space-y-3">
                     <div className="flex items-stretch rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
                       <button
@@ -1668,15 +1702,16 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                       </button>
                     </div>
                     {trainingWatchersOpen && (
-                      <div className="space-y-3">
+                      <div className="ml-3 pl-3 border-l-2 border-gray-200 dark:border-gray-700 space-y-3">
                         {draft.trainingWatchProfiles.length === 0 ? (
                           <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 px-3 py-3 text-xs text-gray-500 dark:text-gray-500">
                             No training watch folders yet. Add one, choose a preset, and it can feed the shared queue whenever new WAVs appear.
                           </div>
                         ) : (
-                          draft.trainingWatchProfiles.map((profile) => (
-                            <div key={profile.id} className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden shadow-sm">
+                          draft.trainingWatchProfiles.map((profile, profileIndex) => (
+                            <div key={profile.id} ref={profile.id === newItemId ? newItemRef : undefined} className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden shadow-sm">
                               <div className="flex items-center gap-2 px-3 py-2.5 bg-gray-100 dark:bg-gray-800/80 border-b border-gray-200 dark:border-gray-700">
+                                <span className="w-5 h-5 flex items-center justify-center rounded text-[10px] font-bold bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 flex-shrink-0 tabular-nums">{profileIndex + 1}</span>
                                 <input
                                   type="text"
                                   value={profile.name}
@@ -1722,9 +1757,26 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                               <div className="grid grid-cols-1 md:grid-cols-[auto_auto_1fr] gap-3 items-start">
                                 <CheckboxField label="Enabled" description="" checked={profile.enabled} onChange={(v) => updateTrainingWatchProfile(profile.id, { enabled: v })} />
                                 <CheckboxField label="Auto-run" description="" checked={profile.autoRun} onChange={(v) => updateTrainingWatchProfile(profile.id, { autoRun: v })} />
-                                <div className="text-xs text-gray-500 dark:text-gray-500 pt-1">
-                                  Runtime: {trainingProfilesState.watchers.find((item) => item.profileId === profile.id)?.running ? 'Watching' : 'Stopped'}
-                                </div>
+                                {(() => {
+                                  const isRunning = trainingProfilesState.watchers.find((item) => item.profileId === profile.id)?.running ?? false
+                                  return (
+                                    <div className="flex items-center gap-2 pt-0.5">
+                                      <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isRunning ? 'bg-emerald-500' : 'bg-gray-400 dark:bg-gray-600'}`} />
+                                      <span className="text-xs text-gray-500 dark:text-gray-400">{isRunning ? 'Watching' : 'Stopped'}</span>
+                                      <button
+                                        onClick={async () => { await window.api.setTrainerProfileRunning(profile.id, !isRunning) }}
+                                        disabled={!profile.enabled}
+                                        className={`ml-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                                          isRunning
+                                            ? 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-400'
+                                            : 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30'
+                                        }`}
+                                      >
+                                        {isRunning ? 'Stop' : 'Start'}
+                                      </button>
+                                    </div>
+                                  )
+                                })()}
                               </div>
                               {(() => {
                                 const linkedPreset = draft.trainingPresets.find((preset) => preset.id === profile.presetId)
@@ -1754,149 +1806,40 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                                   </button>
                                 </div>
                               </SettingsField>
-                              <div className="grid grid-cols-1 md:grid-cols-[minmax(0,220px)_auto] gap-3 items-end">
-                                <SettingsField
-                                  label="Watcher start mode"
-                                  labelTitle="Choose whether this watcher should process older untracked WAVs already in the folder, or only react to new files that appear after the watcher starts."
-                                >
+                              <SettingsField
+                                label="Watcher start mode"
+                                labelTitle="Choose whether this watcher should process older untracked WAVs already in the folder, or only react to new files that appear after the watcher starts."
+                              >
+                                <div className="flex gap-2 items-center flex-wrap">
                                   <select
                                     value={profile.initialScanMode ?? 'process-existing'}
                                     onChange={(e) => updateTrainingWatchProfile(profile.id, { initialScanMode: e.target.value as TrainingWatchProfile['initialScanMode'] })}
-                                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                                    className="flex-1 min-w-[160px] px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
                                   >
                                     <option value="process-existing">Process existing untracked files</option>
                                     <option value="new-only">Watch new files only</option>
                                   </select>
-                                </SettingsField>
-                                <button
-                                  onClick={() => void markTrainingWatchCurrentContentsAsSeen(profile.id)}
-                                  disabled={!profile.watchFolder.trim() || !profile.presetId}
-                                  className="h-10 px-3 py-2 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                                  title="Record the current WAVs in this folder as already seen so the watcher skips them until you explicitly retry them later."
-                                >
-                                  Mark current contents as seen
-                                </button>
-                              </div>
-                              <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-3 items-end">
-                                <SettingsField label="Naming Template" labelTitle="Use {basename}, {architecture}, {profile}, and {esr} in final output names.">
-                                  <input
-                                    type="text"
-                                    value={profile.namingTemplate}
-                                    onChange={(e) => updateTrainingWatchProfile(profile.id, { namingTemplate: e.target.value })}
-                                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 font-mono"
-                                  />
-                                </SettingsField>
-                                <button
-                                  onClick={() => fillTrainingWatchProcessedLayout(profile.id, profile.watchFolder)}
-                                  className="px-3 py-2 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
-                                  title="Auto-fill output folders relative to the watch folder using _Processed/Models, _Processed/WAV, and _Processed/Graphs."
-                                >
-                                  Auto-fill _Processed folders
-                                </button>
-                              </div>
-                              <div className="grid grid-cols-1 gap-3">
-                                <SettingsField label="Model Output Root" labelTitle="Promoted final .nam files land here, in architecture subfolders.">
-                                  <div className="flex gap-2">
-                                    <input
-                                      type="text"
-                                      value={profile.finalModelRoot}
-                                      onChange={(e) => updateTrainingWatchProfile(profile.id, { finalModelRoot: e.target.value })}
-                                      className="flex-1 px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 font-mono"
-                                    />
-                                    <button
-                                      onClick={async () => {
-                                        const picked = await window.api.openFolder(profile.finalModelRoot || profile.watchFolder || undefined)
-                                        if (picked) updateTrainingWatchProfile(profile.id, { finalModelRoot: picked })
-                                      }}
-                                      className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
-                                    >
-                                      Browse...
-                                    </button>
-                                  </div>
-                                </SettingsField>
-                                <SettingsField label="Graph Output Root" labelTitle="Promoted ESR / comparison PNG graphs land here when graph retention is enabled.">
-                                  <div className="flex gap-2">
-                                    <input
-                                      type="text"
-                                      value={profile.graphRoot}
-                                      onChange={(e) => updateTrainingWatchProfile(profile.id, { graphRoot: e.target.value })}
-                                      className="flex-1 px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 font-mono"
-                                    />
-                                    <button
-                                      onClick={async () => {
-                                        const picked = await window.api.openFolder(profile.graphRoot || profile.watchFolder || undefined)
-                                        if (picked) updateTrainingWatchProfile(profile.id, { graphRoot: picked })
-                                      }}
-                                      className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
-                                    >
-                                      Browse...
-                                    </button>
-                                  </div>
-                                </SettingsField>
-                                <SettingsField label="Source WAV handling" labelTitle="Choose whether successful source WAVs are moved, copied, or left in place after training completes.">
-                                  <select
-                                    value={profile.sourcePostProcess}
-                                    onChange={(e) => updateTrainingWatchProfile(profile.id, { sourcePostProcess: e.target.value as TrainingWatchProfile['sourcePostProcess'] })}
-                                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                                  <button
+                                    onClick={() => void markTrainingWatchCurrentContentsAsSeen(profile.id)}
+                                    disabled={!profile.watchFolder.trim() || !profile.presetId}
+                                    className="px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-400 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                                    title="Record the current WAVs in this folder as already seen so the watcher skips them until you explicitly retry them later."
                                   >
-                                    <option value="move">Move source WAV to folder below</option>
-                                    <option value="copy">Copy source WAV to folder below</option>
-                                    <option value="keep">Keep source WAV in place</option>
-                                  </select>
-                                </SettingsField>
-                                <div className={profile.sourcePostProcess === 'keep' ? 'opacity-40 pointer-events-none' : ''}>
-                                  <SettingsField label="Source WAV Destination" labelTitle="Where source WAVs are moved or copied after all selected architectures finish training.">
-                                    <div className="flex gap-2">
-                                      <input
-                                        type="text"
-                                        value={profile.processedWavRoot}
-                                        onChange={(e) => updateTrainingWatchProfile(profile.id, { processedWavRoot: e.target.value })}
-                                        className="flex-1 px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 font-mono"
-                                      />
-                                      <button
-                                        onClick={async () => {
-                                          const picked = await window.api.openFolder(profile.processedWavRoot || profile.watchFolder || undefined)
-                                          if (picked) updateTrainingWatchProfile(profile.id, { processedWavRoot: picked })
-                                        }}
-                                        className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
-                                      >
-                                        Browse...
-                                      </button>
-                                    </div>
-                                  </SettingsField>
+                                    Mark seen
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      const linkedPreset = draft.trainingPresets.find((p) => p.id === profile.presetId)
+                                      setWatcherFilesModal({ profileId: profile.id, profileName: profile.name, watchFolder: profile.watchFolder, architectures: linkedPreset?.architectures ?? [] })
+                                    }}
+                                    disabled={!profile.watchFolder.trim()}
+                                    className="px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 border border-indigo-500/30 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                                    title="View all WAV files in this folder and their queue/history status"
+                                  >
+                                    View Files…
+                                  </button>
                                 </div>
-                              </div>
-                              {/* Live path summary */}
-                              {profile.watchFolder.trim() && (() => {
-                                const sep = typeof process !== 'undefined' && process.platform === 'win32' ? '\\' : '/'
-                                const normSep = (p: string) => sep === '\\' ? p.replace(/\//g, '\\') : p.replace(/\\/g, '/')
-                                const fmtPath = (p: string) => p.trim() ? normSep(p.trim()) : null
-                                return (
-                                  <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40 px-3 py-2.5 text-[11px] text-gray-500 dark:text-gray-400 space-y-1">
-                                    <div className="flex gap-2">
-                                      <span className="w-28 flex-shrink-0 text-gray-400 dark:text-gray-500">Models →</span>
-                                      {fmtPath(profile.finalModelRoot)
-                                        ? <code className="break-all">{fmtPath(profile.finalModelRoot)}</code>
-                                        : <span className="italic text-gray-400 dark:text-gray-600">not set</span>}
-                                    </div>
-                                    <div className="flex gap-2">
-                                      <span className="w-28 flex-shrink-0 text-gray-400 dark:text-gray-500">Graphs →</span>
-                                      {fmtPath(profile.graphRoot)
-                                        ? <code className="break-all">{fmtPath(profile.graphRoot)}</code>
-                                        : <span className="italic text-gray-400 dark:text-gray-600">not set</span>}
-                                    </div>
-                                    <div className="flex gap-2">
-                                      <span className="w-28 flex-shrink-0 text-gray-400 dark:text-gray-500">Source WAVs →</span>
-                                      {profile.sourcePostProcess === 'keep'
-                                        ? <span className="italic">kept in place</span>
-                                        : fmtPath(profile.processedWavRoot)
-                                          ? <><code className="break-all">{fmtPath(profile.processedWavRoot)}</code><span className="ml-1 text-gray-400 dark:text-gray-500">({profile.sourcePostProcess})</span></>
-                                          : <span className="italic text-gray-400 dark:text-gray-600">not set</span>
-                                      }
-                                    </div>
-                                  </div>
-                                )
-                              })()}
+                              </SettingsField>
                               </div>
                             </div>
                           ))
@@ -1939,6 +1882,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                       </button>
                     </div>
                     {captureProfilesOpen && (
+                      <div className="ml-3 pl-3 border-l-2 border-gray-200 dark:border-gray-700">
                       <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/50 px-3 py-3">
                         <p className="text-[11px] text-gray-500 dark:text-gray-500 mb-3">
                           All 8 built-in architectures run via dynamic registration — no core.py edits needed. Clone any built-in or create a custom profile from scratch.
@@ -1952,6 +1896,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                           onDelete={deleteCaptureProfile}
                           onNew={() => openNewCaptureProfile()}
                         />
+                      </div>
                       </div>
                     )}
                   </div>
@@ -1986,15 +1931,16 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                       </button>
                     </div>
                     {trainingPresetsOpen && (
-                      <div className="space-y-3">
+                      <div className="ml-3 pl-3 border-l-2 border-gray-200 dark:border-gray-700 space-y-3">
                         {draft.trainingPresets.length === 0 ? (
                           <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 px-3 py-3 text-xs text-gray-500 dark:text-gray-500">
                             No training presets yet. Add one to store a reusable training recipe for watchers and manual runs.
                           </div>
                         ) : (
-                          draft.trainingPresets.map((preset) => (
-                            <div key={preset.id} className="rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
+                          draft.trainingPresets.map((preset, presetIndex) => (
+                            <div key={preset.id} ref={preset.id === newItemId ? newItemRef : undefined} className="rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
                               <div className="flex items-center gap-2 px-3 py-2.5 bg-gray-100 dark:bg-gray-800/80 border-b border-gray-200 dark:border-gray-700 rounded-t-lg">
+                                <span className="w-5 h-5 flex items-center justify-center rounded text-[10px] font-bold bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 flex-shrink-0 tabular-nums">{presetIndex + 1}</span>
                                 <input
                                   type="text"
                                   value={preset.name}
@@ -2098,7 +2044,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                                     step="0.0001"
                                     value={preset.thresholdEsr ?? ''}
                                     onChange={(e) => updateTrainingPreset(preset.id, { thresholdEsr: e.target.value === '' ? null : Number(e.target.value) })}
-                                    placeholder="e.g. 0.01"
+                                    placeholder="e.g. 0.005"
                                     className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
                                   />
                                 </SettingsField>
@@ -2127,13 +2073,42 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                                         min="-30"
                                         value={preset.normalizeWavTargetDb ?? ''}
                                         onChange={(e) => updateTrainingPreset(preset.id, { normalizeWavTargetDb: e.target.value === '' ? null : Number(e.target.value) })}
-                                        placeholder="Global"
+                                        placeholder={String(draft.normalizeWavTargetDb ?? -5.0)}
                                         className="w-20 px-2 py-1.5 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
                                       />
                                       <span className="text-xs text-gray-500 dark:text-gray-400">dBFS</span>
                                     </>
                                   )}
                                 </div>
+                              </SettingsField>
+                              <SettingsField label="NAM output path formula" hint="Override the global NAM output formula for this preset. Leave blank to inherit global.">
+                                <OutputFormulaField
+                                  value={preset.outputFormulaOverride ?? ''}
+                                  onChange={(v) => updateTrainingPreset(preset.id, { outputFormulaOverride: v })}
+                                  exampleStagingPath={draft.namTrainingInputWav ? draft.namTrainingInputWav.replace(/\\/g, '/').split('/').slice(0, -1).join('/') : undefined}
+                                  exampleArchitecture={preset.architectures[0]}
+                                  isPresetOverride
+                                  globalFormula={draft.trainingOutputFormula ?? ''}
+                                />
+                              </SettingsField>
+                              <SettingsField label="Graph output path formula" hint="Override the global graph output formula for this preset. Leave blank to inherit global.">
+                                <OutputFormulaField
+                                  value={preset.graphOutputFormulaOverride ?? ''}
+                                  onChange={(v) => updateTrainingPreset(preset.id, { graphOutputFormulaOverride: v })}
+                                  exampleStagingPath={draft.namTrainingInputWav ? draft.namTrainingInputWav.replace(/\\/g, '/').split('/').slice(0, -1).join('/') : undefined}
+                                  exampleArchitecture={preset.architectures[0]}
+                                  isPresetOverride
+                                  suggestionFormula="../../Graphs/{architecture}/{folder}"
+                                  globalFormula={draft.trainingGraphFormula ?? ''}
+                                />
+                              </SettingsField>
+                              <SettingsField label="Naming template" hint="Output filename pattern. Use {basename} for the source WAV filename without extension.">
+                                <input
+                                  value={preset.namingTemplate ?? '{basename}'}
+                                  onChange={(e) => updateTrainingPreset(preset.id, { namingTemplate: e.target.value })}
+                                  placeholder="{basename}"
+                                  className="w-full px-3 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-gray-900 dark:text-gray-100 font-mono focus:outline-none focus:border-indigo-500"
+                                />
                               </SettingsField>
                               </div>
                             </div>
@@ -2188,6 +2163,15 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
           profile={captureProfileEditorTarget}
           onSave={saveCaptureProfile}
           onCancel={() => { setCaptureProfileEditorOpen(false); setCaptureProfileEditorTarget(null) }}
+        />
+      )}
+      {watcherFilesModal && (
+        <WatcherFilesModal
+          profileId={watcherFilesModal.profileId}
+          profileName={watcherFilesModal.profileName}
+          watchFolder={watcherFilesModal.watchFolder}
+          architectures={watcherFilesModal.architectures}
+          onClose={() => setWatcherFilesModal(null)}
         />
       )}
     </div>

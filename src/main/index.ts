@@ -70,6 +70,7 @@ interface FolderWatchImportEntry {
   sizeBytes: number
   mtimeMs: number
   importedAt: string
+  contentHash?: string
 }
 
 type TrainingSourceMode = 'watcher' | 'manual-folder-run' | 'manual-direct'
@@ -96,6 +97,8 @@ interface TrainingProfile {
   watchFolder: string
   processedWavRoot: string
   graphRoot: string
+  effectiveOutputFormula?: string
+  effectiveGraphFormula?: string
   finalModelRoot: string
 }
 
@@ -175,6 +178,7 @@ interface TrainerStartPayload {
   finalModelRoot?: string | null
   processedWavRoot?: string | null
   graphRoot?: string | null
+  graphRootResolved?: boolean
   sourcePostProcess?: TrainingSourcePostProcessMode
   namingTemplate?: string | null
   submissionId?: string | null
@@ -227,6 +231,7 @@ interface TrainerQueueJob {
   finalModelRoot: string
   processedWavRoot: string
   graphRoot: string
+  graphRootResolved: boolean
   sourcePostProcess: TrainingSourcePostProcessMode
   workspacePath: string
   graphPath: string
@@ -285,6 +290,7 @@ interface TrainerWatcherRuntime {
   sourceMode: 'watcher' | 'manual-folder-run'
   watchFolder: string
   pendingCount: number
+  skippedCount: number
 }
 
 interface TrainerProfilesStateSnapshot {
@@ -512,18 +518,19 @@ def _normalize_wav_pair(input_path, output_path, target_db, workspace):
     out_data, out_sr = sf.read(output_path, dtype="float32")
     if in_sr != out_sr:
         raise ValueError(f"Sample rate mismatch: input {in_sr} Hz vs output {out_sr} Hz")
-    max_peak = max(float(np.max(np.abs(in_data))), float(np.max(np.abs(out_data))))
-    if max_peak == 0:
+    in_peak = float(np.max(np.abs(in_data)))
+    out_peak = float(np.max(np.abs(out_data)))
+    if in_peak == 0 or out_peak == 0:
         raise ValueError("Cannot normalize: one or both WAV files are silent")
     target_amplitude = 10 ** (target_db / 20.0)
-    gain = target_amplitude / max_peak
-    gain_db = 20.0 * np.log10(gain)
-    print(f"NAM_LAB_NORMALIZE: peak={max_peak:.6f} gain={gain_db:+.2f} dB target={target_db} dBFS", flush=True)
+    in_gain = target_amplitude / in_peak
+    out_gain = target_amplitude / out_peak
+    print(f"NAM_LAB_NORMALIZE: in_peak={in_peak:.6f} ({20*np.log10(in_peak):.2f} dBFS) gain={20*np.log10(in_gain):+.2f} dB | out_peak={out_peak:.6f} ({20*np.log10(out_peak):.2f} dBFS) gain={20*np.log10(out_gain):+.2f} dB | target={target_db} dBFS", flush=True)
     ws = Path(workspace)
     norm_input = str(ws / "input_norm.wav")
     norm_output = str(ws / "output_norm.wav")
-    sf.write(norm_input, in_data * gain, in_sr)
-    sf.write(norm_output, out_data * gain, out_sr)
+    sf.write(norm_input, in_data * in_gain, in_sr, subtype="PCM_24")
+    sf.write(norm_output, out_data * out_gain, out_sr, subtype="PCM_24")
     return norm_input, norm_output
 
 
@@ -708,6 +715,7 @@ function makeTrainerWatcherSnapshot(): TrainerProfilesStateSnapshot {
         sourceMode: profile.sourceMode,
         watchFolder: profile.watchFolder,
         pendingCount: trainingWatcherPendingCounts.get(profile.id) ?? 0,
+        skippedCount: trainerSkipped.filter((e) => e.profileId === profile.id).length,
       })),
     graphRetentionEnabled: trainingRetainGraphs,
   }
@@ -876,14 +884,35 @@ async function ensureUniqueFilePath(targetPath: string): Promise<string> {
   return join(dirPath, `${stem}-${Date.now()}${ext}`)
 }
 
+function resolveGraphFormula(formula: string, watchFolder: string, architecture: string): string | null {
+  if (!formula.trim() || !watchFolder.trim()) return null
+  const usesBackslash = watchFolder.includes('\\')
+  const toNative = (p: string) => usesBackslash ? p.replace(/\//g, '\\') : p
+  const normalized = watchFolder.replace(/\\/g, '/').replace(/\/+$/, '')
+  const parts = normalized.split('/')
+  const folder = parts[parts.length - 1] ?? ''
+  const parent = parts[parts.length - 2] ?? ''
+  const base = [...parts]
+  for (const raw of formula.replace(/\\/g, '/').split('/').filter((s) => s !== '')) {
+    const seg = raw
+      .replace(/\{folder\}/g, folder)
+      .replace(/\{parent\}/g, parent)
+      .replace(/\{architecture\}/g, architecture)
+    if (seg === '..') { if (base.length > 1) base.pop() }
+    else if (seg && seg !== '.') base.push(seg)
+  }
+  return toNative(base.join('/'))
+}
+
 async function promoteTrainerGraph(job: TrainerQueueJob): Promise<string> {
   if (!job.savePlot || !trainingRetainGraphs) return ''
   const graphFiles = await findFilesRecursive(job.workspacePath, (filePath) => /\.png$/i.test(filePath))
   if (graphFiles.length === 0) return ''
   const preferred = graphFiles.find((filePath) => basename(filePath, extname(filePath)) === job.modelName) ?? graphFiles[0]
-  const architectureFolder = getTrainerArchitectureFolderName(job.architecture)
   const graphRoot = job.graphRoot.trim() || join(job.finalModelRoot, '_graphs')
-  const destinationDir = join(graphRoot, architectureFolder)
+  const destinationDir = job.graphRootResolved
+    ? graphRoot
+    : join(graphRoot, getTrainerArchitectureFolderName(job.architecture))
   await fs.promises.mkdir(destinationDir, { recursive: true })
   const destinationPath = await ensureUniqueFilePath(join(destinationDir, `${job.modelName}${extname(preferred) || '.png'}`))
   suppressWatcher()
@@ -1134,7 +1163,8 @@ function getTrainerArchitectureFolderName(architecture: TrainerArchitecture): st
 
 function createTrainerJob(payload: TrainerStartPayload): TrainerQueueJob {
   const jobId = crypto.randomUUID()
-  const modelName = deriveTrainerModelName(payload.outputPath, payload.architecture, payload.namingTemplate, payload.profileName, payload.thresholdEsr)
+  const baseName = deriveTrainerModelName(payload.outputPath, payload.architecture, payload.namingTemplate, payload.profileName, payload.thresholdEsr)
+  const modelName = payload.modelNameSuffix ? `${baseName}${payload.modelNameSuffix}` : baseName
   const architectureFolder = getTrainerArchitectureFolderName(payload.architecture)
   const finalModelRoot = (payload.finalModelRoot ?? payload.trainPath).trim()
   const architectureFinalRoot = join(finalModelRoot, architectureFolder)
@@ -1187,6 +1217,7 @@ function createTrainerJob(payload: TrainerStartPayload): TrainerQueueJob {
     finalModelRoot,
     processedWavRoot: (payload.processedWavRoot ?? '').trim(),
     graphRoot: (payload.graphRoot ?? '').trim(),
+    graphRootResolved: payload.graphRootResolved ?? false,
     sourcePostProcess: payload.sourcePostProcess ?? 'keep',
     workspacePath,
     graphPath: '',
@@ -1196,6 +1227,16 @@ function createTrainerJob(payload: TrainerStartPayload): TrainerQueueJob {
     submissionLabel: payload.submissionLabel ?? null,
     submissionCreatedAt: payload.submissionCreatedAt ?? null,
   }
+}
+
+function findNextModelNameSuffix(baseModelName: string, architectureFinalRoot: string): string {
+  const candidate = join(architectureFinalRoot, `${baseModelName}.nam`)
+  if (!fs.existsSync(candidate)) return ''
+  for (let i = 2; i <= 99; i++) {
+    const suffix = ` (${i})`
+    if (!fs.existsSync(join(architectureFinalRoot, `${baseModelName}${suffix}.nam`))) return suffix
+  }
+  return ` (${Date.now()})`
 }
 
 function getActiveTrainerJob(): TrainerQueueJob | null {
@@ -1345,7 +1386,10 @@ async function buildTrainerPayloadsForProfile(
   submissionMeta?: { id: string; label: string; createdAt: string }
 ): Promise<TrainerStartPayload[]> {
   const payloads: TrainerStartPayload[] = []
-  if (!pythonPath.trim() || !inputPath.trim() || !profile.finalModelRoot.trim()) return payloads
+  if (!pythonPath.trim()) { log(`[payload builder "${profile.name}"] skipped: python path empty`); return payloads }
+  if (!inputPath.trim()) { log(`[payload builder "${profile.name}"] skipped: input WAV path empty`); return payloads }
+  if (!profile.finalModelRoot.trim() && !profile.effectiveOutputFormula?.trim()) { log(`[payload builder "${profile.name}"] skipped: no output root and no output formula`); return payloads }
+  if (profile.architectures.length === 0) { log(`[payload builder "${profile.name}"] skipped: no architectures selected in preset`); return payloads }
   for (const outputPath of sourceWavPaths) {
     const normalizedOutputPath = outputPath.trim()
     if (!normalizedOutputPath) continue
@@ -1353,18 +1397,24 @@ async function buildTrainerPayloadsForProfile(
     try {
       sourceStats = await statTrainingSource(normalizedOutputPath)
     } catch {
+      log(`[payload builder "${profile.name}"] could not stat "${outputPath}" — skipping`)
       continue
     }
     for (const architecture of profile.architectures) {
-      if (trainerQueueAlreadyHasSource(profile.id, normalizedOutputPath, architecture)) continue
-      if (trainerHistoryAlreadyHasSource(profile.id, normalizedOutputPath, architecture, sourceStats.mtimeMs, sourceStats.sizeBytes)) continue
+      if (trainerQueueAlreadyHasSource(profile.id, normalizedOutputPath, architecture)) { log(`[payload builder "${profile.name}"] already in queue: "${outputPath}" / ${architecture}`); continue }
+      if (trainerHistoryAlreadyHasSource(profile.id, normalizedOutputPath, architecture, sourceStats.mtimeMs, sourceStats.sizeBytes)) { log(`[payload builder "${profile.name}"] already in history/skipped: "${outputPath}" / ${architecture}`); continue }
       const isA2 = architecture === 'a2'
       const profileCfg = isA2 ? null : lookupCaptureProfileConfig(architecture, trainerUserCaptureProfiles)
+      const graphFormula = profile.effectiveGraphFormula?.trim() ?? ''
+      const resolvedGraphRoot = graphFormula ? resolveGraphFormula(graphFormula, profile.watchFolder, architecture) : null
+      const outputFormula = profile.effectiveOutputFormula?.trim() ?? ''
+      const resolvedOutputRoot = outputFormula ? resolveGraphFormula(outputFormula, profile.watchFolder, architecture) : null
+      const finalModelRoot = resolvedOutputRoot ?? profile.finalModelRoot
       payloads.push({
         pythonPath,
         inputPath,
         outputPath: normalizedOutputPath,
-        trainPath: profile.finalModelRoot,
+        trainPath: finalModelRoot,
         namMode: isA2 ? 'a2' : 'a1',
         normalizeWav: trainerConfiguredNormalizeWav,
         normalizeWavTargetDb: trainerConfiguredNormalizeWavTargetDb,
@@ -1388,10 +1438,11 @@ async function buildTrainerPayloadsForProfile(
         profileId: profile.id,
         profileName: profile.name,
         sourceMode: sourceModeOverride ?? profile.sourceMode,
-        finalModelRoot: profile.finalModelRoot,
+        finalModelRoot,
         processedWavRoot: profile.processedWavRoot,
-        graphRoot: profile.graphRoot,
-        sourcePostProcess: profile.sourcePostProcess,
+        graphRoot: resolvedGraphRoot ?? profile.graphRoot,
+        graphRootResolved: !!resolvedGraphRoot,
+        sourcePostProcess: 'keep',
         namingTemplate: profile.namingTemplate,
         submissionId: submissionMeta?.id ?? null,
         submissionLabel: submissionMeta?.label ?? null,
@@ -1764,9 +1815,12 @@ async function scanWavFilesInFolder(folderPath: string): Promise<string[]> {
 
 async function enqueueExistingTrainingWatcherFiles(profile: TrainingProfile): Promise<void> {
   const sourceFolder = profile.watchFolder.trim()
-  if (!sourceFolder || !trainerConfiguredPythonPath || !trainerConfiguredInputPath) return
+  if (!sourceFolder) { log(`[watcher "${profile.name}"] skipping initial scan: watch folder not set`); return }
+  if (!trainerConfiguredPythonPath) { log(`[watcher "${profile.name}"] skipping initial scan: Python path not configured`); return }
+  if (!trainerConfiguredInputPath) { log(`[watcher "${profile.name}"] skipping initial scan: Training input WAV not configured`); return }
   try {
     const files = await scanWavFilesInFolder(sourceFolder)
+    log(`[watcher "${profile.name}"] initial scan found ${files.length} WAV(s) in "${sourceFolder}"`)
     if (files.length === 0) return
     const submissionMeta = {
       id: crypto.randomUUID(),
@@ -1781,6 +1835,7 @@ async function enqueueExistingTrainingWatcherFiles(profile: TrainingProfile): Pr
       'watcher',
       submissionMeta
     )
+    log(`[watcher "${profile.name}"] built ${payloads.length} payload(s) from ${files.length} file(s)`)
     if (payloads.length === 0) return
     await enqueueTrainingPayloads(payloads)
     await ensureTrainingWatcherAutoStart(profile)
@@ -2026,8 +2081,18 @@ function getFolderWatchImports(rule: FolderWatchRule): FolderWatchImportEntry[] 
   return folderWatchImports.get(makeFolderWatchKey(rule.sourceFolder, rule.destFolder)) ?? []
 }
 
-function hasImportedWatchedFile(rule: FolderWatchRule, sourcePath: string, sizeBytes: number, mtimeMs: number): boolean {
-  return getFolderWatchImports(rule).some((entry) =>
+async function hashFile(filePath: string): Promise<string> {
+  const { createHash } = await import('crypto')
+  const data = await fs.promises.readFile(filePath)
+  return createHash('sha256').update(data).digest('hex')
+}
+
+function hasImportedWatchedFile(rule: FolderWatchRule, sourcePath: string, sizeBytes: number, mtimeMs: number, contentHash?: string): boolean {
+  const imports = getFolderWatchImports(rule)
+  if (contentHash) {
+    if (imports.some((entry) => entry.contentHash === contentHash)) return true
+  }
+  return imports.some((entry) =>
     normalizePath(entry.sourcePath) === normalizePath(sourcePath) &&
     entry.sizeBytes === sizeBytes &&
     entry.mtimeMs === mtimeMs
@@ -2132,16 +2197,15 @@ async function copyWatchedFile(rule: FolderWatchRule, filePath: string): Promise
     }
     const stat = await fs.promises.stat(normalizedSource)
     if (!stat.isFile()) return
-    if (hasImportedWatchedFile(rule, normalizedSource, stat.size, stat.mtimeMs)) return
+    const contentHash = await hashFile(normalizedSource)
+    if (hasImportedWatchedFile(rule, normalizedSource, stat.size, stat.mtimeMs, contentHash)) return
     const fileName = basename(normalizedSource)
     const destPath = join(rule.destFolder, fileName)
-    // Skip only if the destination is already identical (same size + mtime).
-    // A plain existsSync check would block re-trained captures from syncing.
     if (fs.existsSync(destPath)) {
       try {
         const destStat = await fs.promises.stat(destPath)
         if (destStat.size === stat.size && destStat.mtimeMs === stat.mtimeMs) return
-      } catch { /* dest stat failed — proceed with copy */ }
+      } catch { /* proceed */ }
     }
     suppressWatcher()
     await fs.promises.copyFile(normalizedSource, destPath)
@@ -2150,6 +2214,7 @@ async function copyWatchedFile(rule: FolderWatchRule, filePath: string): Promise
       sizeBytes: stat.size,
       mtimeMs: stat.mtimeMs,
       importedAt: new Date().toISOString(),
+      contentHash,
     }
     rememberImportedWatchedFile(rule, importEntry)
     mainWindow?.webContents.send('folderWatch:copied', {
@@ -2170,7 +2235,26 @@ async function copyWatchedFile(rule: FolderWatchRule, filePath: string): Promise
   }
 }
 
+async function backfillImportHashes(rule: FolderWatchRule): Promise<void> {
+  const key = makeFolderWatchKey(rule.sourceFolder, rule.destFolder)
+  const entries = folderWatchImports.get(key)
+  if (!entries) return
+  let changed = false
+  for (const entry of entries) {
+    if (entry.contentHash) continue
+    try {
+      entry.contentHash = await hashFile(entry.sourcePath)
+      changed = true
+    } catch { /* source may no longer exist — leave entry as-is */ }
+  }
+  if (changed) {
+    folderWatchImports.set(key, entries)
+    mainWindow?.webContents.send('folderWatch:importsBackfilled', { key, entries })
+  }
+}
+
 async function syncExistingWatchedFiles(rule: FolderWatchRule): Promise<void> {
+  await backfillImportHashes(rule)
   try {
     const entries = await fs.promises.readdir(rule.sourceFolder, { withFileTypes: true })
     for (const entry of entries) {
@@ -3542,6 +3626,7 @@ app.whenReady().then(async () => {
                 sizeBytes: Number(entry?.sizeBytes ?? 0),
                 mtimeMs: Number(entry?.mtimeMs ?? 0),
                 importedAt: String(entry?.importedAt ?? ''),
+                ...(entry?.contentHash ? { contentHash: String(entry.contentHash) } : {}),
               }))
               .filter((entry) => entry.sourcePath && entry.sizeBytes >= 0 && entry.mtimeMs > 0)
           : []
@@ -3835,6 +3920,113 @@ app.whenReady().then(async () => {
     const marked = await markExistingTrainingWatcherFilesAsSeen(target)
     emitTrainerState()
     return { success: true, marked }
+  })
+
+  ipcMain.handle('trainer:clearProfileSkippedAndRescan', async (_event, profileId: string) => {
+    const target = trainingProfiles.find((profile) => profile.id === profileId && profile.sourceMode === 'watcher')
+    if (!target) return { success: false, error: 'Training watcher profile not found.' }
+    const before = trainerSkipped.filter((e) => e.profileId === profileId).length
+    trainerSkipped = trainerSkipped.filter((e) => e.profileId !== profileId)
+    saveTrainerSkipped()
+    log(`[watcher "${target.name}"] cleared ${before} skipped entry/entries, forcing re-scan`)
+    await enqueueExistingTrainingWatcherFiles(target)
+    await ensureTrainingWatcherAutoStart(target)
+    emitTrainerState()
+    return { success: true, cleared: before }
+  })
+
+  ipcMain.handle('trainer:getWatcherFilesStatus', async (_event, profileId: string, watchFolder: string, architectures: string[]) => {
+    const sourceFolder = (watchFolder ?? '').trim()
+    if (!sourceFolder) return { success: true, files: [] }
+    let wavFiles: string[] = []
+    try {
+      wavFiles = await scanWavFilesInFolder(sourceFolder)
+    } catch (e) {
+      return { success: false, error: `Could not scan folder: ${String(e)}` }
+    }
+    const activeJobId = trainerState.activeJobId
+    const files = await Promise.all(wavFiles.map(async (filePath) => {
+      let sizeBytes = 0, mtimeMs = 0
+      try { const s = await fs.promises.stat(filePath); sizeBytes = s.size; mtimeMs = s.mtimeMs } catch { /* ignore */ }
+      const statuses = (architectures ?? []).map((arch) => {
+        const normFile = normalizePath(filePath)
+        const activeJob = activeJobId ? trainerQueue.find((j) => j.jobId === activeJobId) : null
+        if (activeJob && normalizePath(activeJob.outputPath) === normFile && activeJob.profileId === profileId && activeJob.architecture === arch) return { architecture: arch, status: 'running' as const }
+        if (trainerQueue.some((j) => normalizePath(j.outputPath) === normFile && j.profileId === profileId && j.architecture === arch && j.status === 'queued')) return { architecture: arch, status: 'queued' as const }
+        if (trainerSkipped.some((e) => normalizePath(e.sourcePath) === normFile && e.profileId === profileId && e.architecture === arch)) return { architecture: arch, status: 'skipped' as const }
+        const hist = trainerHistory.find((e) => normalizePath(e.sourcePath) === normFile && e.profileId === profileId && e.architecture === arch)
+        if (hist) return { architecture: arch, status: hist.status as 'done' | 'failed' | 'canceled' | 'skipped' }
+        return { architecture: arch, status: 'pending' as const }
+      })
+      return { filePath, fileName: basename(filePath), sizeBytes, mtimeMs, statuses }
+    }))
+    return { success: true, files }
+  })
+
+  ipcMain.handle('trainer:resetWatcherFile', async (_event, profileId: string, filePath: string) => {
+    const profile = trainingProfiles.find((p) => p.id === profileId && p.sourceMode === 'watcher')
+    if (!profile) return { success: false, error: 'Profile not found.' }
+    const norm = normalizePath(filePath)
+    trainerSkipped = trainerSkipped.filter((e) => !(e.profileId === profileId && normalizePath(e.sourcePath) === norm))
+    trainerHistory = trainerHistory.filter((e) => !(e.profileId === profileId && normalizePath(e.sourcePath) === norm))
+    saveTrainerSkipped()
+    saveTrainerHistory()
+    const payloads = await buildTrainerPayloadsForProfile(profile, trainerConfiguredPythonPath, trainerConfiguredInputPath, [filePath], 'watcher', { id: crypto.randomUUID(), label: `Watcher - ${profile.name}`, createdAt: new Date().toISOString() })
+    if (payloads.length > 0) {
+      await enqueueTrainingPayloads(payloads)
+      await ensureTrainingWatcherAutoStart(profile)
+    }
+    emitTrainerState()
+    return { success: true, queued: payloads.length }
+  })
+
+  ipcMain.handle('trainer:retrainFileAction', async (_event, profileId: string, filePath: string, action: 'wipe-retrain' | 'retrain-new' | 'mark-skipped') => {
+    const profile = trainingProfiles.find((p) => p.id === profileId && p.sourceMode === 'watcher')
+    if (!profile) return { success: false, error: 'Profile not found.' }
+    const norm = normalizePath(filePath)
+
+    if (action === 'mark-skipped') {
+      for (const arch of profile.architectures) {
+        if (!trainerSkipped.some((e) => e.profileId === profileId && normalizePath(e.sourcePath) === norm && e.architecture === arch)) {
+          appendTrainerSkipped({ skipId: crypto.randomUUID(), profileId, profileName: profile.name, sourcePath: filePath, architecture: arch as TrainerArchitecture, sourceSizeBytes: null, sourceMtimeMs: null, skippedAt: new Date().toISOString(), reason: 'manually skipped' })
+        }
+      }
+      trainerQueue = trainerQueue.filter((j) => !(j.profileId === profileId && normalizePath(j.outputPath) === norm && j.status === 'queued'))
+      emitTrainerState()
+      return { success: true }
+    }
+
+    if (action === 'wipe-retrain') {
+      const toDelete = trainerHistory.filter((e) => e.profileId === profileId && normalizePath(e.sourcePath) === norm)
+      for (const entry of toDelete) {
+        if (entry.finalModelPath) { try { fs.unlinkSync(entry.finalModelPath) } catch { /* ignore */ } }
+      }
+    }
+
+    // Both wipe-retrain and retrain-new: clear history + skipped, re-enqueue
+    trainerSkipped = trainerSkipped.filter((e) => !(e.profileId === profileId && normalizePath(e.sourcePath) === norm))
+    trainerHistory = trainerHistory.filter((e) => !(e.profileId === profileId && normalizePath(e.sourcePath) === norm))
+    saveTrainerSkipped()
+    saveTrainerHistory()
+
+    const payloads = await buildTrainerPayloadsForProfile(profile, trainerConfiguredPythonPath, trainerConfiguredInputPath, [filePath], 'watcher', { id: crypto.randomUUID(), label: `Watcher - ${profile.name}`, createdAt: new Date().toISOString() })
+
+    if (action === 'retrain-new') {
+      for (const payload of payloads) {
+        const architectureFolder = getTrainerArchitectureFolderName(payload.architecture as TrainerArchitecture)
+        const finalRoot = (payload.finalModelRoot ?? payload.trainPath).trim()
+        const architectureFinalRoot = join(finalRoot, architectureFolder)
+        const baseName = deriveTrainerModelName(payload.outputPath, payload.architecture as TrainerArchitecture, payload.namingTemplate, payload.profileName, payload.thresholdEsr)
+        payload.modelNameSuffix = findNextModelNameSuffix(baseName, architectureFinalRoot)
+      }
+    }
+
+    if (payloads.length > 0) {
+      await enqueueTrainingPayloads(payloads)
+      await ensureTrainingWatcherAutoStart(profile)
+    }
+    emitTrainerState()
+    return { success: true, queued: payloads.length }
   })
 
   ipcMain.handle('trainer:setProfileRunning', async (_event, profileId: string, running: boolean) => {

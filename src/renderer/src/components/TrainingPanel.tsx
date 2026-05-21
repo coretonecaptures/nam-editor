@@ -14,6 +14,8 @@ import {
 } from '../types/trainer'
 import { ArchitectureProfilePicker } from './ArchitectureProfilePicker'
 import { CaptureProfileEditor } from './CaptureProfileEditor'
+import { WatcherFilesModal } from './WatcherFilesModal'
+import { effectiveFormula, resolveOutputFormula } from '../utils/resolveOutputFormula'
 
 interface Props {
   settings: AppSettings
@@ -110,10 +112,14 @@ function showNativeTextContextMenu(event: MouseEvent<HTMLElement>) {
 export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMode }: Props) {
   const [inputPath, setInputPath] = useState(settings.namTrainingInputWav || '')
   const [runMode, setRunMode] = useState<'files' | 'folder' | 'queue' | 'history'>(initialRunMode ?? 'files')
+  const [watchFoldersExpanded, setWatchFoldersExpanded] = useState(false)
+  const [watcherFilesModal, setWatcherFilesModal] = useState<{ profileId: string; profileName: string; watchFolder: string; architectures: string[] } | null>(null)
   const [maximized, setMaximized] = useState(false)
   const [outputPaths, setOutputPaths] = useState<string[]>([])
   const [trainPath, setTrainPath] = useState('')
   const [manualRoutingMode, setManualRoutingMode] = useState<'root' | 'sibling_processed'>('root')
+  const [formulaOverrideActive, setFormulaOverrideActive] = useState(false)
+  const [graphFormulaOverrideActive, setGraphFormulaOverrideActive] = useState(false)
   const [folderRunPath, setFolderRunPath] = useState('')
   const [folderRunProfileId, setFolderRunProfileId] = useState<'custom' | string>('custom')
   const [selectedPresetId, setSelectedPresetId] = useState<string>(CUSTOM_PRESET_ID)
@@ -229,6 +235,47 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   )
   const filesPreset = runMode === 'files' ? activePreset : null
   const manualFolderPresets = availablePresets
+
+  // Output formula: global setting overridable per preset
+  const activeFormula = useMemo(
+    () => effectiveFormula(settings.trainingOutputFormula ?? '', activePreset?.outputFormulaOverride),
+    [settings.trainingOutputFormula, activePreset]
+  )
+  // Graph formula: global setting overridable per preset
+  const activeGraphFormula = useMemo(
+    () => effectiveFormula(settings.trainingGraphFormula ?? '', activePreset?.graphOutputFormulaOverride),
+    [settings.trainingGraphFormula, activePreset]
+  )
+  // Staging dir for files mode = parent directory of the first selected WAV
+  const filesStagingDir = useMemo(() => {
+    if (outputPaths.length === 0) return ''
+    return outputPaths[0].replace(/\\/g, '/').split('/').slice(0, -1).join('/')
+  }, [outputPaths])
+  // Pre-resolve formula for files mode preview (uses first arch)
+  const formulaPreviewPath = useMemo(() => {
+    if (!activeFormula || !filesStagingDir) return null
+    const arch = (activePreset?.architectures[0] ?? architectures[0]) || 'Standard'
+    return resolveOutputFormula(activeFormula, filesStagingDir, arch)
+  }, [activeFormula, filesStagingDir, activePreset, architectures])
+  const graphFormulaPreviewPath = useMemo(() => {
+    if (!activeGraphFormula || !filesStagingDir) return null
+    const arch = (activePreset?.architectures[0] ?? architectures[0]) || 'Standard'
+    return resolveOutputFormula(activeGraphFormula, filesStagingDir, arch)
+  }, [activeGraphFormula, filesStagingDir, activePreset, architectures])
+
+  // Pre-resolve formula for folder run mode preview
+  const folderFormulaPreviewPath = useMemo(() => {
+    if (!activeFormula || !folderRunPath.trim()) return null
+    const stagingDir = folderRunPath.trim().replace(/\\/g, '/').replace(/\/+$/, '')
+    const arch = (activePreset?.architectures[0] ?? architectures[0]) || 'Standard'
+    return resolveOutputFormula(activeFormula, stagingDir, arch)
+  }, [activeFormula, folderRunPath, activePreset, architectures])
+  const folderGraphFormulaPreviewPath = useMemo(() => {
+    if (!activeGraphFormula || !folderRunPath.trim()) return null
+    const stagingDir = folderRunPath.trim().replace(/\\/g, '/').replace(/\/+$/, '')
+    const arch = (activePreset?.architectures[0] ?? architectures[0]) || 'Standard'
+    return resolveOutputFormula(activeGraphFormula, stagingDir, arch)
+  }, [activeGraphFormula, folderRunPath, activePreset, architectures])
   const queueProfileOptions = useMemo(
     () => Array.from(new Map(trainerState.queue.filter((job) => job.profileId || job.profileName).map((job) => [job.profileId ?? job.profileName ?? 'manual', job.profileName ?? 'Manual'])).entries()),
     [trainerState.queue]
@@ -323,8 +370,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     outputPaths.length > 0 &&
     (
       activePreset
-        ? !!trainPath.trim()
-        : (architectures.length > 0 && !!trainPath.trim() && Number.isFinite(Number(epochs)) && Number(epochs) > 0)
+        ? (!!trainPath.trim() || (!!activeFormula && !formulaOverrideActive && !!filesStagingDir))
+        : (architectures.length > 0 && (!!trainPath.trim() || (!!activeFormula && !formulaOverrideActive && !!filesStagingDir)) && Number.isFinite(Number(epochs)) && Number(epochs) > 0)
     )
   const exampleFinalModelPath = useMemo(() => {
     const architectureFolder = 'Standard'
@@ -348,7 +395,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     return root ? `${root}/${resolvedModelName}.png` : `${resolvedModelName}.png`
   }, [manualRoutingMode, manualRoutingSourceFolder, resolvedModelName, trainPath])
 
-  const getManualRoutingForOutput = (outputPath: string) => {
+  const getManualRoutingForOutput = (outputPath: string, architectureName?: string) => {
     if (manualRoutingMode === 'sibling_processed') {
       const sourceDir = outputPath.replace(/\\/g, '/').split('/').slice(0, -1).join('/')
       const processedRoot = `${sourceDir.replace(/\/+$/, '')}/_Processed`
@@ -356,18 +403,39 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
         finalModelRoot: `${processedRoot}/Models`,
         processedWavRoot: '',
         graphRoot: `${processedRoot}/Graphs`,
+        graphRootResolved: false,
         sourcePostProcess: 'keep' as const,
+      }
+    }
+    // Formula mode: derive output from staging dir + architecture (unless user explicitly overrode)
+    if ((activeFormula && !formulaOverrideActive) || (activeGraphFormula && !graphFormulaOverrideActive)) {
+      const stagingDir = outputPath.replace(/\\/g, '/').split('/').slice(0, -1).join('/')
+      const resolvedNam = (activeFormula && !formulaOverrideActive && architectureName)
+        ? resolveOutputFormula(activeFormula, stagingDir, architectureName)
+        : null
+      const resolvedGraph = (activeGraphFormula && !graphFormulaOverrideActive && architectureName)
+        ? resolveOutputFormula(activeGraphFormula, stagingDir, architectureName)
+        : null
+      if (resolvedNam || resolvedGraph) {
+        return {
+          finalModelRoot: resolvedNam ?? trainPath.trim(),
+          processedWavRoot: '',
+          graphRoot: resolvedGraph ?? trainPath.trim(),
+          graphRootResolved: !!resolvedGraph,
+          sourcePostProcess: 'keep' as const,
+        }
       }
     }
     return {
       finalModelRoot: trainPath.trim(),
       processedWavRoot: '',
       graphRoot: trainPath.trim(),
+      graphRootResolved: false,
       sourcePostProcess: 'keep' as const,
     }
   }
 
-  const getManualFolderRouting = () => {
+  const getManualFolderRouting = (architectureName?: string) => {
     if (manualRoutingMode === 'sibling_processed') {
       const sourceDir = folderRunPath.trim().replace(/\\/g, '/').replace(/\/+$/, '')
       const processedRoot = `${sourceDir}/_Processed`
@@ -375,13 +443,33 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
         finalModelRoot: `${processedRoot}/Models`,
         processedWavRoot: '',
         graphRoot: `${processedRoot}/Graphs`,
+        graphRootResolved: false,
         sourcePostProcess: 'keep' as const,
+      }
+    }
+    if ((activeFormula && !formulaOverrideActive) || (activeGraphFormula && !graphFormulaOverrideActive)) {
+      const stagingDir = folderRunPath.trim().replace(/\\/g, '/').replace(/\/+$/, '')
+      const resolvedNam = (activeFormula && !formulaOverrideActive && architectureName)
+        ? resolveOutputFormula(activeFormula, stagingDir, architectureName)
+        : null
+      const resolvedGraph = (activeGraphFormula && !graphFormulaOverrideActive && architectureName)
+        ? resolveOutputFormula(activeGraphFormula, stagingDir, architectureName)
+        : null
+      if (resolvedNam || resolvedGraph) {
+        return {
+          finalModelRoot: resolvedNam ?? trainPath.trim(),
+          processedWavRoot: '',
+          graphRoot: resolvedGraph ?? trainPath.trim(),
+          graphRootResolved: !!resolvedGraph,
+          sourcePostProcess: 'keep' as const,
+        }
       }
     }
     return {
       finalModelRoot: trainPath.trim(),
       processedWavRoot: '',
       graphRoot: trainPath.trim(),
+      graphRootResolved: false,
       sourcePostProcess: 'keep' as const,
     }
   }
@@ -457,8 +545,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       setLaunchError('Choose at least one architecture before queueing.')
       return
     }
-    if (manualRoutingMode === 'root' && !trainPath.trim()) {
-      setLaunchError('Choose an output root before queueing captures.')
+    if (manualRoutingMode === 'root' && !trainPath.trim() && (!activeFormula || formulaOverrideActive)) {
+      setLaunchError('Choose an output root or set an output formula in Settings before queueing.')
       return
     }
     const captureDefaultsEnabled = settings.enableCaptureDefaults
@@ -486,8 +574,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
         const submissionCreatedAt = new Date().toISOString()
         const jobArchitectures = activeNamMode === 'a2' ? ['a2'] : targetArchitectures
         return outputPaths.flatMap((outputPath) => {
-          const routing = getManualRoutingForOutput(outputPath.trim())
           return jobArchitectures.map((architecture) => {
+            const routing = getManualRoutingForOutput(outputPath.trim(), architecture)
             const profileCfg = activeNamMode === 'a1' ? lookupProfileConfig(architecture, settings.userCaptureProfiles ?? []) : null
             return {
               pythonPath: resolvedPythonPath,
@@ -515,6 +603,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               finalModelRoot: routing.finalModelRoot,
               processedWavRoot: routing.processedWavRoot,
               graphRoot: routing.graphRoot,
+              graphRootResolved: routing.graphRootResolved,
               sourcePostProcess: routing.sourcePostProcess,
               namingTemplate: '{basename}',
               profileId: activePreset?.id ?? null,
@@ -591,11 +680,12 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       setLaunchError('Select a saved training profile or use the current custom settings.')
       return
     }
-    if (manualRoutingMode === 'root' && !trainPath.trim()) {
-      setLaunchError('Choose an output root before running a folder.')
+    if (manualRoutingMode === 'root' && !trainPath.trim() && (!activeFormula || formulaOverrideActive)) {
+      setLaunchError('Choose an output root or set an output formula in Settings before running a folder.')
       return
     }
-    const routing = getManualFolderRouting()
+    const firstArch = preset.architectures[0] ?? 'Standard'
+    const routing = getManualFolderRouting(firstArch)
     const captureDefaultsEnabled = settings.enableCaptureDefaults
     const modeledBy = captureDefaultsEnabled && settings.defaultModeledBy.trim() !== ''
       ? settings.defaultModeledBy.trim()
@@ -631,6 +721,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
         watchFolder: '',
         processedWavRoot: routing.processedWavRoot,
         graphRoot: routing.graphRoot,
+        graphRootResolved: routing.graphRootResolved,
         finalModelRoot: routing.finalModelRoot,
       },
       folderPath: folderRunPath.trim(),
@@ -938,8 +1029,97 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               </div>
             )}
             {runMode === 'queue' ? (
-              <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 px-3 py-3 text-sm text-gray-700 dark:text-gray-300">
-                Monitor the active training queue here. This is useful when watch folders are feeding jobs in the background and you just want to watch progress, errors, and history.
+              <div className="space-y-2">
+                <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 px-3 py-3 text-sm text-gray-700 dark:text-gray-300">
+                  Monitor the active training queue here. This is useful when watch folders are feeding jobs in the background and you just want to watch progress, errors, and history.
+                </div>
+                {settings.trainingWatchProfiles.length > 0 && (
+                  <div className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+                    <button
+                      onClick={() => setWatchFoldersExpanded((v) => !v)}
+                      className="w-full flex items-center gap-2 px-3 py-2 bg-gray-100 dark:bg-gray-800/80 hover:bg-gray-150 dark:hover:bg-gray-800 transition-colors text-left"
+                    >
+                      <svg className={`w-3 h-3 text-gray-400 transition-transform ${watchFoldersExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                      </svg>
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 flex-1">Watch Folders</span>
+                      <span className="text-[10px] text-gray-400 dark:text-gray-600 tabular-nums">{settings.trainingWatchProfiles.length}</span>
+                      {trainerState.watcherState.watchers.some((w) => w.skippedCount > 0) && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-amber-500/15 text-amber-700 dark:text-amber-400">skipped files</span>
+                      )}
+                    </button>
+                    {watchFoldersExpanded && <div className="divide-y divide-gray-100 dark:divide-gray-800">
+                      {settings.trainingWatchProfiles.map((profile, i) => {
+                        const watcherRuntime = trainerState.watcherState.watchers.find((w) => w.profileId === profile.id)
+                        const isRunning = watcherRuntime?.running ?? false
+                        const skippedCount = watcherRuntime?.skippedCount ?? 0
+                        const linkedPreset = settings.trainingPresets.find((p) => p.id === profile.presetId)
+                        const issues: string[] = []
+                        if (!profile.enabled) issues.push('Disabled')
+                        if (!profile.watchFolder.trim()) issues.push('No watch folder set')
+                        if (!profile.presetId || !linkedPreset) issues.push('No preset linked — preset may have been deleted')
+                        if (linkedPreset && linkedPreset.architectures.length === 0) issues.push('Preset has no architectures selected')
+                        if (!settings.namPythonPath?.trim()) issues.push('Python path not set in Settings')
+                        if (!settings.namTrainingInputWav?.trim()) issues.push('Training input WAV not set in Settings')
+                        const hasOutputRoot = profile.finalModelRoot.trim()
+                        const hasOutputFormula = effectiveFormula(settings.trainingOutputFormula ?? '', linkedPreset?.outputFormulaOverride).trim()
+                        if (!hasOutputRoot && !hasOutputFormula) issues.push('No output root or formula configured (check global formula or preset override in Settings)')
+                        if (!watcherRuntime && profile.enabled) issues.push('Not registered with main process — watch folder may not exist on disk')
+                        return (
+                          <div key={profile.id} className="px-3 py-2 space-y-1.5">
+                            <div className="flex items-center gap-2">
+                              <span className="w-4 h-4 flex items-center justify-center rounded text-[9px] font-bold bg-gray-100 dark:bg-gray-700 text-gray-400 flex-shrink-0 tabular-nums">{i + 1}</span>
+                              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isRunning ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600'}`} />
+                              <div className="flex-1 min-w-0">
+                                <div className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{profile.name}</div>
+                                {linkedPreset && (
+                                  <div className="text-[10px] text-gray-500 dark:text-gray-500 truncate">{linkedPreset.name} · {linkedPreset.architectures.map((a) => a.toUpperCase()).join(', ') || 'no architectures'}</div>
+                                )}
+                              </div>
+                              {skippedCount > 0 && (
+                                <button
+                                  onClick={async () => { await window.api.clearProfileSkippedAndRescan(profile.id) }}
+                                  className="px-2 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 hover:bg-amber-500/25 text-amber-700 dark:text-amber-400 border border-amber-500/30 flex-shrink-0"
+                                  title={`${skippedCount} file(s) are being blocked by the skip list. Click to clear and re-scan.`}
+                                >
+                                  {skippedCount} skipped — clear &amp; rescan
+                                </button>
+                              )}
+                              <button
+                                onClick={() => setWatcherFilesModal({ profileId: profile.id, profileName: profile.name, watchFolder: profile.watchFolder, architectures: linkedPreset?.architectures ?? [] })}
+                                className="px-2.5 py-1 rounded text-[10px] font-medium bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 transition-colors flex-shrink-0"
+                                title="View and manage WAV files in this watch folder"
+                              >
+                                Files…
+                              </button>
+                              <button
+                                onClick={async () => { await window.api.setTrainerProfileRunning(profile.id, !isRunning) }}
+                                disabled={!profile.enabled}
+                                className={`px-2.5 py-1 rounded text-[10px] font-medium transition-colors flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed ${
+                                  isRunning
+                                    ? 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300'
+                                    : 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30'
+                                }`}
+                              >
+                                {isRunning ? 'Stop' : 'Start'}
+                              </button>
+                            </div>
+                            {issues.length > 0 && (
+                              <div className="ml-6 space-y-0.5">
+                                {issues.map((issue) => (
+                                  <div key={issue} className="flex items-center gap-1.5 text-[10px] text-amber-700 dark:text-amber-400">
+                                    <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+                                    {issue}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>}
+                  </div>
+                )}
               </div>
             ) : runMode === 'history' ? (
               <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 px-3 py-3 text-sm text-gray-700 dark:text-gray-300">
@@ -1106,7 +1286,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                       <input
                         value={thresholdEsr}
                         onChange={(e) => setThresholdEsr(e.target.value)}
-                        placeholder="Optional — e.g. 0.01"
+                        placeholder="Optional — e.g. 0.005"
                         title="Optional early-stop target. NAM training will stop once validation ESR reaches or beats this value."
                         className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
                       />
@@ -1167,19 +1347,129 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
             {/* ── Output Routing ── */}
             <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-4 space-y-3">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Output Routing</span>
-              <div className="grid grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)] gap-4 items-end">
+
+              {/* NAM formula banner */}
+              {activeFormula && manualRoutingMode === 'root' ? (() => {
+                const previewPath = runMode === 'folder' ? folderFormulaPreviewPath : formulaPreviewPath
+                const hasSource = runMode === 'folder' ? !!folderRunPath.trim() : !!filesStagingDir
+                const archCount = activePreset?.architectures.length ?? architectures.length
+                return (
+                  <div className="rounded-lg border border-emerald-300 dark:border-emerald-700/60 bg-emerald-50/60 dark:bg-emerald-900/10 px-3 py-2.5 space-y-1.5">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <svg className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">NAM output formula active</span>
+                      <code className="text-[10px] font-mono text-emerald-600 dark:text-emerald-500 bg-emerald-100/60 dark:bg-emerald-900/30 px-1 rounded">{activeFormula}</code>
+                    </div>
+                    {previewPath && hasSource ? (
+                      <div className="pl-5 text-[11px] text-emerald-700 dark:text-emerald-400 font-mono break-all">
+                        → {previewPath}
+                        {archCount > 1 && (
+                          <span className="ml-2 text-[10px] text-emerald-500 dark:text-emerald-600 not-italic font-sans">
+                            (each architecture resolves separately)
+                          </span>
+                        )}
+                      </div>
+                    ) : !hasSource ? (
+                      <div className="pl-5 text-[11px] text-emerald-600 dark:text-emerald-500 italic">
+                        {runMode === 'folder' ? 'Choose a folder to preview the resolved path' : 'Select output WAVs to preview resolved path'}
+                      </div>
+                    ) : null}
+                    {!formulaOverrideActive && (
+                      <div className="pl-5 flex items-center gap-2">
+                        <span className="text-[10px] text-gray-500 dark:text-gray-500">Override for this run:</span>
+                        <button
+                          onClick={() => setFormulaOverrideActive(true)}
+                          className="text-[10px] text-gray-400 dark:text-gray-500 hover:text-amber-600 dark:hover:text-amber-400 transition-colors border border-gray-300 dark:border-gray-700 hover:border-amber-400 dark:hover:border-amber-600 rounded px-1.5 py-0.5"
+                        >
+                          Use fixed path…
+                        </button>
+                      </div>
+                    )}
+                    {formulaOverrideActive && (
+                      <div className="pl-5 flex items-center gap-2">
+                        <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">Override active — using fixed path</span>
+                        <button
+                          onClick={() => { setFormulaOverrideActive(false); setTrainPath('') }}
+                          className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors underline underline-offset-2"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )
+              })() : null}
+
+              {/* Graph formula banner */}
+              {activeGraphFormula && manualRoutingMode === 'root' ? (() => {
+                const previewPath = runMode === 'folder' ? folderGraphFormulaPreviewPath : graphFormulaPreviewPath
+                const hasSource = runMode === 'folder' ? !!folderRunPath.trim() : !!filesStagingDir
+                const archCount = activePreset?.architectures.length ?? architectures.length
+                return (
+                  <div className="rounded-lg border border-violet-300 dark:border-violet-700/60 bg-violet-50/60 dark:bg-violet-900/10 px-3 py-2.5 space-y-1.5">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <svg className="w-3.5 h-3.5 text-violet-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span className="text-[11px] font-semibold text-violet-700 dark:text-violet-400">Graph output formula active</span>
+                      <code className="text-[10px] font-mono text-violet-600 dark:text-violet-500 bg-violet-100/60 dark:bg-violet-900/30 px-1 rounded">{activeGraphFormula}</code>
+                    </div>
+                    {previewPath && hasSource ? (
+                      <div className="pl-5 text-[11px] text-violet-700 dark:text-violet-400 font-mono break-all">
+                        → {previewPath}
+                        {archCount > 1 && (
+                          <span className="ml-2 text-[10px] text-violet-500 dark:text-violet-600 not-italic font-sans">
+                            (each architecture resolves separately)
+                          </span>
+                        )}
+                      </div>
+                    ) : !hasSource ? (
+                      <div className="pl-5 text-[11px] text-violet-600 dark:text-violet-500 italic">
+                        {runMode === 'folder' ? 'Choose a folder to preview the resolved path' : 'Select output WAVs to preview resolved path'}
+                      </div>
+                    ) : null}
+                    {!graphFormulaOverrideActive && (
+                      <div className="pl-5 flex items-center gap-2">
+                        <span className="text-[10px] text-gray-500 dark:text-gray-500">Override for this run:</span>
+                        <button
+                          onClick={() => setGraphFormulaOverrideActive(true)}
+                          className="text-[10px] text-gray-400 dark:text-gray-500 hover:text-amber-600 dark:hover:text-amber-400 transition-colors border border-gray-300 dark:border-gray-700 hover:border-amber-400 dark:hover:border-amber-600 rounded px-1.5 py-0.5"
+                        >
+                          Use fixed path…
+                        </button>
+                      </div>
+                    )}
+                    {graphFormulaOverrideActive && (
+                      <div className="pl-5 flex items-center gap-2">
+                        <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">Override active — using fixed path</span>
+                        <button
+                          onClick={() => setGraphFormulaOverrideActive(false)}
+                          className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors underline underline-offset-2"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )
+              })() : null}
+
+              <div className={`grid grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)] gap-4 items-end transition-opacity ${activeFormula && !formulaOverrideActive ? 'opacity-40 pointer-events-none select-none' : ''}`}>
                 <Field label="Routing Mode">
                   <select
                     value={manualRoutingMode}
                     onChange={(e) => setManualRoutingMode(e.target.value as 'root' | 'sibling_processed')}
-                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                    disabled={!!(activeFormula && !formulaOverrideActive)}
+                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 disabled:cursor-not-allowed"
                   >
                     <option value="root">Choose output root</option>
                     <option value="sibling_processed">Use sibling _Processed</option>
                   </select>
                 </Field>
                 {manualRoutingMode === 'root' ? (
-                  <Field label="Output Root">
+                  <Field label="NAM Output Root">
                     <PathPicker
                       value={trainPath}
                       placeholder="Select a destination folder"
@@ -1851,6 +2141,16 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       </div>
     </div>
     </div>
+    {watcherFilesModal && createPortal(
+      <WatcherFilesModal
+        profileId={watcherFilesModal.profileId}
+        profileName={watcherFilesModal.profileName}
+        watchFolder={watcherFilesModal.watchFolder}
+        architectures={watcherFilesModal.architectures}
+        onClose={() => setWatcherFilesModal(null)}
+      />,
+      document.body
+    )}
     {graphModalSrc && createPortal(
       <div
         className="fixed inset-0 z-[200] flex items-center justify-center bg-black/75"

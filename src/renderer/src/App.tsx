@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import beakerTransparent from './assets/images/beaker.only.transparent.png'
 import { NamFile, NamMetadata, TONE_TYPES, GEAR_TYPES } from './types/nam'
 import { AppSettings, FolderWatchImportEntry, FolderWatchRule, MetadataSuggestRule, TrainingProfile, loadSettings, saveSettings } from './types/settings'
+import { effectiveFormula } from './utils/resolveOutputFormula'
 import { loadLayout, saveLayout } from './types/layout'
 import { LibrarianState } from './types/librarian'
 import { FileList, ALL_GRID_COLUMNS, doExportCSV, doExportXLSX } from './components/FileList'
@@ -240,6 +241,8 @@ function makeFolderWatchKey(sourceFolder: string, destFolder: string): string {
 
 function resolveTrainingWatcherProfiles(settings: AppSettings): TrainingProfile[] {
   const presetMap = new Map(settings.trainingPresets.map((preset) => [preset.id, preset]))
+  const globalOutputFormula = settings.trainingOutputFormula ?? ''
+  const globalGraphFormula = settings.trainingGraphFormula ?? ''
   return settings.trainingWatchProfiles
     .map((watchProfile) => {
       const preset = presetMap.get(watchProfile.presetId)
@@ -251,7 +254,7 @@ function resolveTrainingWatcherProfiles(settings: AppSettings): TrainingProfile[
         enabled: watchProfile.enabled,
         autoRun: watchProfile.autoRun,
         initialScanMode: watchProfile.initialScanMode,
-        namingTemplate: watchProfile.namingTemplate,
+        namingTemplate: preset.namingTemplate,
         architectures: preset.architectures,
         epochs: preset.epochs,
         thresholdEsr: preset.thresholdEsr,
@@ -263,6 +266,8 @@ function resolveTrainingWatcherProfiles(settings: AppSettings): TrainingProfile[
         watchFolder: watchProfile.watchFolder,
         processedWavRoot: watchProfile.processedWavRoot,
         graphRoot: watchProfile.graphRoot,
+        effectiveOutputFormula: effectiveFormula(globalOutputFormula, preset.outputFormulaOverride),
+        effectiveGraphFormula: effectiveFormula(globalGraphFormula, preset.graphOutputFormulaOverride),
         finalModelRoot: watchProfile.finalModelRoot,
       }
     })
@@ -1247,6 +1252,19 @@ export default function App() {
       }, 1500)
       folderWatchBatchTimersRef.current.set(batchKey, timer)
     })
+    const unsubBackfilled = window.api.onFolderWatchImportsBackfilled(({ key, entries }) => {
+      setSettings((prev) => {
+        const existing = prev.folderWatchImports[key] ?? []
+        const backfilledByPath = new Map(entries.map((e) => [e.sourcePath, e]))
+        // Merge: update existing entries that gained a contentHash, keep entries not in backfill
+        const merged = existing.map((e) => backfilledByPath.get(e.sourcePath) ?? e)
+        const existingPaths = new Set(existing.map((e) => e.sourcePath))
+        for (const e of entries) { if (!existingPaths.has(e.sourcePath)) merged.push(e) }
+        const next = { ...prev, folderWatchImports: { ...prev.folderWatchImports, [key]: merged } }
+        saveSettings(next)
+        return next
+      })
+    })
     const unsubError = window.api.onFolderWatchError(({ destFolder, message }) => {
       setStatus({
         message: `Folder watch for ${formatPathLabel(destFolder)} failed: ${message}`,
@@ -1257,6 +1275,7 @@ export default function App() {
       for (const timer of folderWatchBatchTimersRef.current.values()) clearTimeout(timer)
       folderWatchBatchTimersRef.current.clear()
       unsubCopied()
+      unsubBackfilled()
       unsubError()
     }
   }, [librarian.rootFolder, showTransientStatus])

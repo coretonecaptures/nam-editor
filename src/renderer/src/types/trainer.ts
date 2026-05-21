@@ -163,8 +163,10 @@ export interface TrainerStartPayload {
   finalModelRoot?: string | null
   processedWavRoot?: string | null
   graphRoot?: string | null
+  graphRootResolved?: boolean
   sourcePostProcess?: 'move' | 'copy' | 'keep'
   namingTemplate?: string | null
+  modelNameSuffix?: string | null
   submissionId?: string | null
   submissionLabel?: string | null
   submissionCreatedAt?: string | null
@@ -221,6 +223,7 @@ export interface TrainerQueueJob {
   finalModelRoot: string
   processedWavRoot: string
   graphRoot: string
+  graphRootResolved: boolean
   sourcePostProcess: 'move' | 'copy' | 'keep'
   workspacePath: string
   graphPath: string
@@ -259,6 +262,16 @@ export interface TrainerHistoryEntry {
   submissionCreatedAt: string | null
 }
 
+export type WatcherFileStatus = 'pending' | 'queued' | 'running' | 'done' | 'failed' | 'canceled' | 'skipped'
+
+export interface WatcherFileEntry {
+  filePath: string
+  fileName: string
+  sizeBytes: number
+  mtimeMs: number
+  statuses: Array<{ architecture: string; status: WatcherFileStatus }>
+}
+
 export interface TrainerWatcherRuntime {
   profileId: string
   profileName: string
@@ -268,6 +281,7 @@ export interface TrainerWatcherRuntime {
   sourceMode: 'watcher' | 'manual-folder-run'
   watchFolder: string
   pendingCount: number
+  skippedCount: number
 }
 
 export interface TrainerProfilesStateSnapshot {
