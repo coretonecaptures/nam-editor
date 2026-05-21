@@ -292,6 +292,18 @@ export function FilenameRecipeBuilderModal({
                   </button>
                 </div>
 
+                {segment.index === 1 && (
+                  <div className="grid grid-cols-1 md:grid-cols-[110px_minmax(0,0.95fr)_90px_minmax(0,1fr)_120px_auto_auto] gap-2 mb-1 px-0.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-600 select-none">
+                    <span>Mode</span>
+                    <span>Field</span>
+                    <span>Token</span>
+                    <span>Value</span>
+                    <span>Look in</span>
+                    <span />
+                    <span />
+                  </div>
+                )}
+
                 <div className="space-y-2">
                   {segment.mappings.map((mapping) => (
                     <div key={mapping.id} className="space-y-1.5">
