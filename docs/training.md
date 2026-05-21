@@ -129,28 +129,55 @@ Use **Sync Now** (in the Folder Dashboard or Settings) to force a rescan of the 
 
 ### Re-training protection
 
-The watcher tracks every successfully trained file by path, size, and modification time. A file will only be re-queued if its content has changed since the last successful run. Moving a trained WAV into a subfolder of the watch folder does not cause it to be re-trained because the watcher only scans the top level of the watch folder — subfolders are never picked up automatically.
+The watcher tracks every successfully trained file using a **SHA-256 content hash** plus path, size, and modification time. A file is only re-queued if its actual content has changed since the last successful run.
 
-Use **Mark current contents as seen** to tell the watcher to skip all existing files in the folder and only react to new ones going forward.
+Key behaviors:
+- renaming a trained WAV does not cause it to be re-queued — the hash still matches
+- copying a file to a new path does not produce a duplicate training job
+- moving a trained WAV into a subfolder does not trigger a re-run — the watcher only scans the top level of the watch folder
+
+Use **Mark current contents as seen** to tell the watcher to skip all existing files and only react to new additions going forward.
+
+### Watcher Files Modal
+
+Click the file count in a watcher profile's status row to open the **Watcher Files** view. This shows every file the watcher knows about with:
+- file name
+- current status (pending / training / done / failed / skipped)
+- modified date
+- sort controls (newest / oldest / by status / by name)
+
+Each file row has a **⋮ action menu** with:
+- **Wipe output & retrain** — deletes the trained `.nam` output for that file and re-queues it from scratch
+- **Retrain as new file** — leaves the existing output in place and trains a new copy with an auto-incremented filename suffix such as `(2)`, `(3)`, etc., to avoid overwriting the original
+- **Mark as skipped** — records the file as intentionally skipped so the watcher does not queue it in future sync passes
 
 ---
 
-## Architectures
+## Capture Profiles (Architectures)
 
-NAM Lab supports the following built-in architecture types:
+NAM Lab uses **Capture Profiles** to define training architectures. All 8 built-in profiles run via dynamic Python registration — no edits to `core.py` are required.
 
-| Architecture | Description |
+**Built-in profiles:**
+
+| Profile | Description |
 | --- | --- |
-| `standard` | Full WaveNet — highest quality, largest file, slowest training |
-| `complex` | Extended variant — richer frequency detail |
-| `lite` | Lighter WaveNet — good balance of quality and speed |
-| `feather` | Very lightweight — fastest training, smallest file |
-| `nano` | Minimal footprint — lowest resource use |
-| `revystd` | Revy standard variant |
-| `revyhi` | Revy high-fidelity variant |
-| `revxstd` | RevX standard variant |
+| `Standard` | Full WaveNet — highest quality, largest file, slowest training |
+| `Complex` | Extended 32-channel variant — richer frequency detail |
+| `Lite` | Lighter WaveNet — good balance of quality and speed |
+| `Feather` | Very lightweight — fastest training, smallest file |
+| `Nano` | Minimal footprint — lowest resource use |
+| `REVySTD` | 5-layer reverb-capable variant, 1500 epoch default |
+| `REVyHI` | 5-layer high-fidelity reverb variant |
+| `REVxSTD` | 4-layer power-of-3 dilations variant |
 
-Not all architectures may be available depending on your NAM installation. Custom architecture support requires corresponding entries in your local `core.py`.
+**Custom profiles:**
+- Create your own profiles with a form-based layer editor
+- Clone any built-in as a starting point
+- Import a `layers_configs` JSON block from a NAM-BOT preset export
+- Custom profiles also run via dynamic registration — no `core.py` modifications needed
+- Custom profiles are stored in app settings and available in both the Training panel and watcher presets
+
+Each profile stores its own training parameters (LR, LR decay, epochs, batch size, NY, fit MRSTFT) so the trainer respects profile-specific values rather than hardcoded defaults.
 
 ---
 
@@ -222,6 +249,22 @@ To clone an existing watcher profile for a different folder or preset:
 2. The clone appears with `(copy)` appended to the name
 3. Edit the name, watch folder, and any other fields you want to change
 4. Saving is blocked if the clone is still identical to the original
+
+---
+
+## WAV Normalization
+
+NAM Lab can normalize WAV files before sending them to the trainer.
+
+**How it works:**
+- each WAV in a training pair (input DI and output amp) is normalized **independently** to a target peak of **-5 dBFS**
+- normalization is per-file: the DI and amp WAVs receive separate gain adjustments based on their own peak levels
+- output is written as **24-bit PCM** to preserve quality
+- the original source files are not modified — normalized copies are written to a temp location for the training run
+
+This matches the behavior of "normalize each file separately" at -5 dBFS, similar to DAW export normalization workflows.
+
+Normalization can be enabled globally in **Settings → Training** or per-preset.
 
 ---
 

@@ -210,9 +210,10 @@ Current behavior:
 - supports removing watches from dashboard or Settings
 
 Important safety behavior:
-- watch import history is stored in NAM Lab app state
+- watch import history uses **SHA-256 content hashes** for deduplication — a file is not re-copied if the same content has already been imported, even if the filename or destination changes
+- content hashes are retroactively backfilled for existing import history on startup so older entries also benefit from hash-based protection
 - watch rules use **import-once semantics**
-- renaming a copied file in the destination will not cause the original source filename to be re-added
+- renaming a copied file in the destination will not cause a re-copy because the hash still matches
 
 ---
 
@@ -242,6 +243,12 @@ Same-model mode is intentionally different:
 - this is useful for spotting cases where one file still has placeholders like `tz-make` / `tz-model` and another has already been cleaned up
 
 When NAM Lab picks a default file to keep inside a duplicate group, it still prefers the file with richer core metadata first. If two files tie on metadata completeness, it now prefers cleaner filenames over obvious duplicate suffixes such as `(2)` or `- Copy`.
+
+### Architecture-aware grouping
+
+In filename and capture-name duplicate modes, NAM Lab defaults to **same-architecture-only grouping**. This means a `Standard` and a `REVxSTD` capture with the same name are not flagged as duplicates by default — they are different model formats and are typically kept together intentionally.
+
+To also catch cross-architecture matches (for example finding that you trained the same WAV with multiple architectures and want to thin them out), toggle **Include cross-architecture** in the duplicate scan controls. When enabled, architecture badges appear on each file row in the results so you can tell which format each file is.
 
 ---
 
