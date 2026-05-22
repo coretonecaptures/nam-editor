@@ -36,6 +36,9 @@ interface ToolbarProps {
   onOpenHelp?: () => void
   onOpenFeatureHelp?: () => void
   onOpenAbout?: () => void
+  cardViewActive?: boolean
+  cardViewEnabled?: boolean
+  onToggleCardView?: () => void
 }
 
 export function Toolbar({
@@ -74,6 +77,9 @@ export function Toolbar({
   onOpenHelp,
   onOpenFeatureHelp,
   onOpenAbout,
+  cardViewActive = false,
+  cardViewEnabled = false,
+  onToggleCardView,
 }: ToolbarProps) {
   const [showFileMenu, setShowFileMenu] = useState(false)
   const [showActionsMenu, setShowActionsMenu] = useState(false)
@@ -321,6 +327,30 @@ export function Toolbar({
       )}
 
       <div className="flex-1" />
+
+      {onToggleCardView && (
+        <button
+          onClick={cardViewEnabled ? onToggleCardView : undefined}
+          title={cardViewEnabled ? 'Toggle folder card view' : 'Open a folder to use card view'}
+          disabled={!cardViewEnabled}
+          className={`relative flex items-center justify-center w-9 h-9 rounded-md transition-colors ${
+            !cardViewEnabled
+              ? 'opacity-40 cursor-not-allowed bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-600'
+              : cardViewActive
+              ? 'bg-teal-600 hover:bg-teal-500 text-white'
+              : 'bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
+          }`}
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        >
+          {/* 2×2 grid squares icon */}
+          <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
+            <rect x="1" y="1" width="6" height="6" rx="1" />
+            <rect x="9" y="1" width="6" height="6" rx="1" />
+            <rect x="1" y="9" width="6" height="6" rx="1" />
+            <rect x="9" y="9" width="6" height="6" rx="1" />
+          </svg>
+        </button>
+      )}
 
       {showExperimentalTraining && onOpenTrainingQueue && (
         <button

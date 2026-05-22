@@ -29,6 +29,7 @@ import { TrainingPanel } from './components/TrainingPanel'
 import { FolderSuggestRulesModal } from './components/FolderSuggestRulesModal'
 import { BundleEditor } from './components/BundleEditor'
 import { NamDashboard } from './components/NamDashboard'
+import { FolderCardView } from './components/FolderCardView'
 import { SessionHistoryPanel } from './components/SessionHistoryPanel'
 import { LibraryCleanupModal, type LibraryCleanupFolderEntry, type LibraryCleanupLayout, type LibraryCleanupPreviewRow } from './components/LibraryCleanupModal'
 import { HelpModal, type HelpModalTab } from './components/HelpModal'
@@ -525,6 +526,7 @@ export default function App() {
   const [namPlayerDetected, setNamPlayerDetected] = useState(false)
   const [librarian, setLibrarian] = useState<LibrarianState>(EMPTY_LIBRARIAN)
   const [libraryFilter, setLibraryFilter] = useState<Set<string> | null>(null)
+  const [cardView, setCardView] = useState(false)
   const initialLayout = loadLayout()
   const initialSettings = loadSettings()
   const [treeWidth, setTreeWidth] = useState(initialLayout.treeWidth)
@@ -1510,6 +1512,7 @@ export default function App() {
   // Shared logic for opening a folder by path (used by Open Folder and Refresh)
   const loadFolderByPath = useCallback(async (folder: string) => {
     const gen = ++loadGenRef.current
+    setCardView(false)
     setStatus({ message: 'Scanning folder... (large or network folders may take a minute)', type: 'info' })
     setFolderChanged(false)
     // Stop watcher during reload so the scan itself doesn't re-trigger the banner
@@ -1610,6 +1613,7 @@ export default function App() {
     setBatchFolder(null)
     setShowSettings(false)
     setLibrarian(EMPTY_LIBRARIAN)
+    setCardView(false)
     setStatus({ message: 'Open .nam files or a folder to get started', type: 'info' })
     // Don't reopen on next launch Ã¢â‚¬â€ user explicitly closed
     setSettings((prev) => {
@@ -3893,10 +3897,28 @@ export default function App() {
         onOpenHelp={() => setHelpView('workflows')}
         onOpenFeatureHelp={() => setHelpView('features')}
         onOpenAbout={() => setHelpView('about')}
+        cardViewActive={cardView}
+        cardViewEnabled={!!librarian.rootFolder && !!(librarian.folderTree?.children?.length)}
+        onToggleCardView={() => setCardView((v) => !v)}
       />
 
-      <div className="flex flex-1 overflow-hidden relative">
-        {/* Folder tree Ã¢â‚¬â€ only shown when a folder is open */}
+      {/* Folder card view — replaces 3-panel layout when active */}
+      {cardView && librarian.folderTree?.children && librarian.rootFolder && (
+        <FolderCardView
+          rootNode={librarian.folderTree}
+          rootFolder={librarian.rootFolder}
+          files={files}
+          packInfoFolders={packInfoFolders}
+          isDark={settings.theme !== 'light'}
+          onOpenFolder={(path) => {
+            setCardView(false)
+            setLibrarian((prev) => ({ ...prev, selectedFolders: [path] }))
+          }}
+        />
+      )}
+
+      <div className="flex flex-1 overflow-hidden relative" style={cardView ? { display: 'none' } : undefined}>
+        {/* Folder tree — only shown when a folder is open */}
         {hasTree && (
           <>
             <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: (treeCollapsed || gridMaximized) ? 0 : treeWidth, overflow: 'hidden' }}>
