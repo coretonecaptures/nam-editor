@@ -100,28 +100,6 @@ function computeStats(files: NamFile[]) {
   return { total, missing, duplicateGroups, presets, maxPreset, esrGood, esrOk, esrReview, esrNone, gearRows, maxGear, toneRows, maxTone }
 }
 
-// ── Bar row (same visual as FolderDashboard's BudgetRow) ────────────────────
-
-function BarRow({ label, count, maxCount, color }: { label: string; count: number; maxCount: number; color: string }) {
-  const pct = maxCount > 0 ? count / maxCount : 0
-  return (
-    <div className="flex items-center gap-2 min-h-[24px]">
-      <span className="text-[9px] leading-none" style={{ color }}>●</span>
-      <div className="flex-1 relative rounded overflow-hidden">
-        <div className="absolute inset-y-0 left-0 rounded" style={{ width: `${Math.max(pct * 100, 6)}%`, backgroundColor: color + '2e' }} />
-        <span className="relative block px-1.5 py-0.5 text-[10px] font-semibold truncate" style={{ color, opacity: 0.9 }}>{label}</span>
-      </div>
-      <span className="text-[10px] text-gray-500 dark:text-gray-400 w-6 text-right flex-shrink-0 tabular-nums">{count}</span>
-    </div>
-  )
-}
-
-// ── Section header ───────────────────────────────────────────────────────────
-
-function SectionLabel({ label }: { label: string }) {
-  return <div className="text-[9px] font-semibold uppercase tracking-widest text-gray-500 dark:text-gray-600 pt-1">{label}</div>
-}
-
 // ── Context menu ─────────────────────────────────────────────────────────────
 
 interface CtxMenu { x: number; y: number; node: FolderNode }
