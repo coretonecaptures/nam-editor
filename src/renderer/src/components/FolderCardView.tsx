@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { FolderNode } from '../types/librarian'
 import { NamFile } from '../types/nam'
+import { detectPreset } from '../utils/detectPreset'
 
 const COVER_RE = /^ampcover\.(png|jpe?g|webp|gif|avif)$/i
 
@@ -22,7 +23,110 @@ async function findCoverForNode(node: FolderNode): Promise<string | null> {
   return null
 }
 
+// ── Stats computation (mirrors FolderDashboard) ─────────────────────────────
+
+const CORE_FIELDS = ['name', 'modeled_by', 'gear_make', 'gear_model', 'gear_type', 'tone_type', 'input_level_dbu'] as const
+
+const GEAR_COLORS: Record<string, string> = {
+  amp: '#f97316', amp_cab: '#3b82f6', pedal: '#22c55e',
+  pedal_amp: '#eab308', amp_pedal_cab: '#a855f7', preamp: '#f43f5e', studio: '#14b8a6',
+}
+const GEAR_LABELS: Record<string, string> = {
+  amp: 'Amp', amp_cab: 'Amp + Cab', pedal: 'Pedal',
+  pedal_amp: 'Pedal + Amp', amp_pedal_cab: 'Amp + Pedal + Cab', preamp: 'Preamp', studio: 'Studio',
+}
+const TONE_COLORS: Record<string, string> = {
+  clean: '#0ea5e9', crunch: '#f59e0b', hi_gain: '#dc2626',
+  fuzz: '#9333ea', overdrive: '#16a34a', distortion: '#f43f5e', other: '#6b7280',
+}
+const TONE_LABELS: Record<string, string> = {
+  clean: 'Clean', crunch: 'Crunch', hi_gain: 'Hi Gain',
+  fuzz: 'Fuzz', overdrive: 'Overdrive', distortion: 'Distortion', other: 'Other',
+}
+const PRESET_COLORS: Record<string, string> = {
+  Complex: '#a855f7', Standard: '#3b82f6', Lite: '#22c55e', Feather: '#f59e0b',
+  Nano: '#f97316', REVySTD: '#06b6d4', REVyHI: '#0ea5e9', REVxSTD: '#8b5cf6', Unknown: '#6b7280',
+}
+
+function getEsr(file: NamFile): number | null {
+  const esr = (file.metadata.training as Record<string, unknown> | undefined)?.validation_esr
+  return typeof esr === 'number' ? esr : null
+}
+
+function computeStats(files: NamFile[]) {
+  const total = files.length
+  const missing = files.filter((f) => CORE_FIELDS.some((field) => !f.metadata[field] && f.metadata[field] !== 0)).length
+
+  const dupCounts = new Map<string, number>()
+  for (const f of files) {
+    const k = f.fileName.trim().toLowerCase()
+    if (k) dupCounts.set(k, (dupCounts.get(k) ?? 0) + 1)
+  }
+  const duplicateGroups = [...dupCounts.values()].filter((c) => c > 1).length
+
+  const presetCounts = new Map<string, number>()
+  for (const f of files) {
+    const p = detectPreset(f.config) ?? 'Unknown'
+    presetCounts.set(p, (presetCounts.get(p) ?? 0) + 1)
+  }
+  const presets = [...presetCounts.entries()].map(([key, count]) => ({ key, count })).sort((a, b) => b.count - a.count)
+  const maxPreset = Math.max(...presets.map((r) => r.count), 1)
+
+  let esrGood = 0, esrOk = 0, esrReview = 0, esrNone = 0
+  for (const f of files) {
+    const esr = getEsr(f)
+    if (esr == null) esrNone++
+    else if (esr < 0.01) esrGood++
+    else if (esr <= 0.05) esrOk++
+    else esrReview++
+  }
+
+  const gearCounts = new Map<string, number>()
+  for (const f of files) {
+    const g = f.metadata.gear_type
+    if (g) gearCounts.set(g, (gearCounts.get(g) ?? 0) + 1)
+  }
+  const gearRows = [...gearCounts.entries()].map(([key, count]) => ({ key, count })).sort((a, b) => b.count - a.count)
+  const maxGear = Math.max(...gearRows.map((r) => r.count), 1)
+
+  const toneCounts = new Map<string, number>()
+  for (const f of files) {
+    const t = f.metadata.tone_type
+    if (t) toneCounts.set(t, (toneCounts.get(t) ?? 0) + 1)
+  }
+  const toneRows = [...toneCounts.entries()].map(([key, count]) => ({ key, count })).sort((a, b) => b.count - a.count)
+  const maxTone = Math.max(...toneRows.map((r) => r.count), 1)
+
+  return { total, missing, duplicateGroups, presets, maxPreset, esrGood, esrOk, esrReview, esrNone, gearRows, maxGear, toneRows, maxTone }
+}
+
+// ── Bar row (same visual as FolderDashboard's BudgetRow) ────────────────────
+
+function BarRow({ label, count, maxCount, color }: { label: string; count: number; maxCount: number; color: string }) {
+  const pct = maxCount > 0 ? count / maxCount : 0
+  return (
+    <div className="flex items-center gap-2 min-h-[24px]">
+      <span className="text-[9px] leading-none" style={{ color }}>●</span>
+      <div className="flex-1 relative rounded overflow-hidden">
+        <div className="absolute inset-y-0 left-0 rounded" style={{ width: `${Math.max(pct * 100, 6)}%`, backgroundColor: color + '2e' }} />
+        <span className="relative block px-1.5 py-0.5 text-[10px] font-semibold truncate" style={{ color, opacity: 0.9 }}>{label}</span>
+      </div>
+      <span className="text-[10px] text-gray-500 dark:text-gray-400 w-6 text-right flex-shrink-0 tabular-nums">{count}</span>
+    </div>
+  )
+}
+
+// ── Section header ───────────────────────────────────────────────────────────
+
+function SectionLabel({ label }: { label: string }) {
+  return <div className="text-[9px] font-semibold uppercase tracking-widest text-gray-500 dark:text-gray-600 pt-1">{label}</div>
+}
+
+// ── Context menu ─────────────────────────────────────────────────────────────
+
 interface CtxMenu { x: number; y: number; node: FolderNode }
+
+// ── Main component ───────────────────────────────────────────────────────────
 
 interface FolderCardViewProps {
   rootNode: FolderNode
@@ -34,7 +138,6 @@ interface FolderCardViewProps {
 }
 
 export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, onOpenFolder, isDark }: FolderCardViewProps) {
-  // Drill-down stack: array of ancestor FolderNodes we've navigated into
   const [stack, setStack] = useState<FolderNode[]>([])
   const currentNode = stack.length > 0 ? stack[stack.length - 1] : rootNode
   const folders = currentNode.children
@@ -44,28 +147,22 @@ export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, o
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null)
   const [previewWidth, setPreviewWidth] = useState<number>(() => {
     const saved = localStorage.getItem('folderCardPreviewWidth')
-    return saved ? Math.max(220, Math.min(600, Number(saved))) : 320
+    return saved ? Math.max(260, Math.min(600, Number(saved))) : 320
   })
   const draggingRef = useRef(false)
   const startXRef = useRef(0)
   const startWRef = useRef(0)
 
-  // Reload covers whenever the displayed folder list changes
+  // Reload covers when the displayed folder changes
   useEffect(() => {
     let cancelled = false
-    setCovers(new Map()) // clear stale covers immediately
+    setCovers(new Map())
     setSelected(null)
     const load = async () => {
       for (const node of folders) {
         if (cancelled) break
         const cover = await findCoverForNode(node)
-        if (!cancelled) {
-          setCovers((prev) => {
-            const next = new Map(prev)
-            next.set(node.path, cover)
-            return next
-          })
-        }
+        if (!cancelled) setCovers((prev) => { const m = new Map(prev); m.set(node.path, cover); return m })
       }
     }
     load()
@@ -81,7 +178,6 @@ export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, o
     return () => { window.removeEventListener('click', close); window.removeEventListener('contextmenu', close) }
   }, [ctxMenu])
 
-  // Resize drag handle
   const onResizeMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     draggingRef.current = true
@@ -89,66 +185,38 @@ export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, o
     startWRef.current = previewWidth
     const onMove = (ev: MouseEvent) => {
       if (!draggingRef.current) return
-      const delta = startXRef.current - ev.clientX
-      const next = Math.max(220, Math.min(600, startWRef.current + delta))
+      const next = Math.max(260, Math.min(600, startWRef.current - (ev.clientX - startXRef.current)))
       setPreviewWidth(next)
       localStorage.setItem('folderCardPreviewWidth', String(next))
     }
-    const onUp = () => {
-      draggingRef.current = false
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-    }
+    const onUp = () => { draggingRef.current = false; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
   }, [previewWidth])
 
-  const drillInto = (node: FolderNode) => {
-    if (node.children.length === 0) return
-    setStack((s) => [...s, node])
-    setCtxMenu(null)
-  }
-
-  const navigateTo = (index: number) => {
-    // index -1 = root, 0 = first item in stack, etc.
-    setStack((s) => index < 0 ? [] : s.slice(0, index + 1))
-    setSelected(null)
-  }
+  const drillInto = (node: FolderNode) => { if (node.children.length > 0) { setStack((s) => [...s, node]); setCtxMenu(null) } }
+  const navigateTo = (index: number) => { setStack((s) => index < 0 ? [] : s.slice(0, index + 1)); setSelected(null) }
 
   const selectedNode = selected ? folders.find((f) => f.path === selected) ?? null : null
   const selectedCover = selected ? (covers.get(selected) ?? null) : null
   const relPath = selected ? selected.replace(rootFolder, '').replace(/^[\\/]/, '') : ''
 
-  // Per-folder helpers
   const normalizedPath = (p: string) => p.replace(/\\/g, '/')
   const dirtyForFolder = (path: string) =>
     files.filter((f) => f.isDirty && normalizedPath(f.filePath).startsWith(normalizedPath(path) + '/')).length
-  const completenessForFolder = (path: string) => {
-    const all = files.filter((f) => normalizedPath(f.filePath).startsWith(normalizedPath(path) + '/'))
-    if (all.length === 0) return null
-    const complete = all.filter((f) => {
-      const m = f.metadata
-      return m.name && m.gear_make && m.gear_model && m.gear_type && m.tone_type && m.modeled_by
-    }).length
-    return Math.round((complete / all.length) * 100)
-  }
+  const filesForFolder = (path: string) =>
+    files.filter((f) => normalizedPath(f.filePath).startsWith(normalizedPath(path) + '/'))
 
   const rootName = rootFolder.split(/[\\/]/).pop() ?? rootFolder
 
   return (
-    <div
-      className={`flex flex-col flex-1 overflow-hidden ${isDark ? 'bg-gray-950 text-gray-100' : 'bg-gray-50 text-gray-900'}`}
-      onClick={() => setCtxMenu(null)}
-    >
+    <div className={`flex flex-col flex-1 overflow-hidden ${isDark ? 'bg-gray-950 text-gray-100' : 'bg-gray-50 text-gray-900'}`} onClick={() => setCtxMenu(null)}>
+
       {/* Breadcrumb bar */}
       <div className={`flex items-center gap-1 px-4 py-2 border-b shrink-0 text-sm ${isDark ? 'border-gray-800 bg-gray-900/50' : 'border-gray-200 bg-white/70'}`}>
         <button
           onClick={() => navigateTo(-1)}
-          className={`flex items-center gap-1 hover:underline truncate max-w-[140px] ${
-            stack.length === 0
-              ? isDark ? 'text-gray-300 font-medium cursor-default' : 'text-gray-700 font-medium cursor-default'
-              : isDark ? 'text-gray-500 hover:text-gray-200' : 'text-gray-400 hover:text-gray-700'
-          }`}
+          className={`flex items-center gap-1 truncate max-w-[160px] ${stack.length === 0 ? isDark ? 'text-gray-300 font-medium' : 'text-gray-700 font-medium' : isDark ? 'text-gray-500 hover:text-gray-200 hover:underline' : 'text-gray-400 hover:text-gray-700 hover:underline'}`}
           title={rootFolder}
         >
           <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -161,15 +229,9 @@ export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, o
             <span className={isDark ? 'text-gray-700' : 'text-gray-300'}>›</span>
             <button
               onClick={() => navigateTo(i)}
-              className={`truncate max-w-[140px] hover:underline ${
-                i === stack.length - 1
-                  ? isDark ? 'text-gray-300 font-medium cursor-default' : 'text-gray-700 font-medium cursor-default'
-                  : isDark ? 'text-gray-500 hover:text-gray-200' : 'text-gray-400 hover:text-gray-700'
-              }`}
+              className={`truncate max-w-[160px] ${i === stack.length - 1 ? isDark ? 'text-gray-300 font-medium' : 'text-gray-700 font-medium' : isDark ? 'text-gray-500 hover:text-gray-200 hover:underline' : 'text-gray-400 hover:text-gray-700 hover:underline'}`}
               title={node.path}
-            >
-              {node.name}
-            </button>
+            >{node.name}</button>
           </span>
         ))}
         <span className={`ml-auto shrink-0 text-xs ${isDark ? 'text-gray-600' : 'text-gray-400'}`}>
@@ -177,14 +239,11 @@ export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, o
         </span>
       </div>
 
-      {/* Main content: card grid + preview panel */}
       <div className="flex flex-1 overflow-hidden">
         {/* Card grid */}
         <div className="flex-1 overflow-y-auto p-5">
           {folders.length === 0 ? (
-            <div className="flex items-center justify-center h-full text-gray-500 text-sm">
-              No subfolders in this folder.
-            </div>
+            <div className="flex items-center justify-center h-full text-gray-500 text-sm">No subfolders in this folder.</div>
           ) : (
             <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))' }}>
               {folders.map((node) => {
@@ -196,19 +255,13 @@ export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, o
                     key={node.path}
                     onClick={(e) => { e.stopPropagation(); setSelected(isSelected ? null : node.path) }}
                     onDoubleClick={() => onOpenFolder(node.path)}
-                    onContextMenu={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      setSelected(node.path)
-                      setCtxMenu({ x: e.clientX, y: e.clientY, node })
-                    }}
+                    onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setSelected(node.path); setCtxMenu({ x: e.clientX, y: e.clientY, node }) }}
                     className={`rounded-xl border cursor-pointer transition-all select-none overflow-hidden ${
                       isSelected
                         ? isDark ? 'border-teal-500 ring-1 ring-teal-500/40 bg-gray-900' : 'border-teal-500 ring-1 ring-teal-500/30 bg-white'
                         : isDark ? 'border-gray-800 bg-gray-900 hover:border-gray-600' : 'border-gray-200 bg-white hover:border-gray-400'
                     }`}
                   >
-                    {/* Image area */}
                     <div className={`w-full aspect-video overflow-hidden flex items-center justify-center ${isDark ? 'bg-gray-800' : 'bg-gray-100'}`}>
                       {c !== undefined && c !== null ? (
                         <img src={toFileUrl(c)} alt={node.name} className="w-full h-full object-cover" draggable={false} />
@@ -223,15 +276,10 @@ export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, o
                         <div className={`w-full h-full ${isDark ? 'bg-gray-800/60' : 'bg-gray-100'}`} />
                       )}
                     </div>
-                    {/* Metadata */}
                     <div className="px-3 py-2.5">
                       <div className="flex items-start justify-between gap-1">
-                        <div className={`text-sm font-medium leading-tight truncate ${isDark ? 'text-gray-100' : 'text-gray-900'}`} title={node.name}>
-                          {node.name}
-                        </div>
-                        {dirty > 0 && (
-                          <span className="shrink-0 text-[10px] font-semibold px-1 py-0.5 rounded bg-amber-500/20 text-amber-400 leading-none">{dirty}✎</span>
-                        )}
+                        <div className={`text-sm font-medium leading-tight truncate ${isDark ? 'text-gray-100' : 'text-gray-900'}`} title={node.name}>{node.name}</div>
+                        {dirty > 0 && <span className="shrink-0 text-[10px] font-semibold px-1 py-0.5 rounded bg-amber-500/20 text-amber-400 leading-none">{dirty}✎</span>}
                       </div>
                       <div className={`text-xs mt-0.5 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
                         {node.totalCount} capture{node.totalCount !== 1 ? 's' : ''}
@@ -266,7 +314,7 @@ export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, o
                 node={selectedNode}
                 cover={selectedCover}
                 relPath={relPath}
-                completeness={completenessForFolder(selectedNode.path)}
+                folderFiles={filesForFolder(selectedNode.path)}
                 hasPackInfo={packInfoFolders.has(selectedNode.path)}
                 canDrillDown={selectedNode.children.length > 0}
                 onOpen={() => onOpenFolder(selectedNode.path)}
@@ -286,17 +334,11 @@ export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, o
           style={{ left: ctxMenu.x, top: ctxMenu.y }}
           onClick={(e) => e.stopPropagation()}
         >
-          <button
-            onClick={() => { onOpenFolder(ctxMenu.node.path); setCtxMenu(null) }}
-            className={`w-full text-left px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2`}
-          >
+          <button onClick={() => { onOpenFolder(ctxMenu.node.path); setCtxMenu(null) }} className="w-full text-left px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2">
             <span>→</span> Open folder
           </button>
           {ctxMenu.node.children.length > 0 && (
-            <button
-              onClick={() => drillInto(ctxMenu.node)}
-              className={`w-full text-left px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2`}
-            >
+            <button onClick={() => drillInto(ctxMenu.node)} className="w-full text-left px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2">
               <span>⊞</span> Browse inside
             </button>
           )}
@@ -306,14 +348,16 @@ export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, o
   )
 }
 
+// ── Preview panel ────────────────────────────────────────────────────────────
+
 function FolderPreviewPanel({
-  node, cover, relPath, completeness, hasPackInfo, canDrillDown,
+  node, cover, relPath, folderFiles, hasPackInfo, canDrillDown,
   onOpen, onDrillDown, onClose, isDark,
 }: {
   node: FolderNode
   cover: string | null
   relPath: string
-  completeness: number | null
+  folderFiles: NamFile[]
   hasPackInfo: boolean
   canDrillDown: boolean
   onOpen: () => void
@@ -321,13 +365,19 @@ function FolderPreviewPanel({
   onClose: () => void
   isDark: boolean
 }) {
+  const stats = useMemo(() => computeStats(folderFiles), [folderFiles])
+  const esrMaxCount = Math.max(stats.esrGood, stats.esrOk, stats.esrReview, stats.esrNone, 1)
+  const esrCovered = stats.esrGood + stats.esrOk + stats.esrReview
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
+      {/* Header */}
       <div className={`flex items-center justify-between px-3 py-2 border-b shrink-0 ${isDark ? 'border-gray-800' : 'border-gray-200'}`}>
         <span className={`text-xs font-semibold uppercase tracking-wide ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>Folder</span>
         <button onClick={onClose} className={`text-sm leading-none transition ${isDark ? 'text-gray-500 hover:text-gray-200' : 'text-gray-400 hover:text-gray-700'}`}>×</button>
       </div>
 
+      {/* Cover image */}
       <div className={`w-full aspect-video shrink-0 overflow-hidden ${isDark ? 'bg-gray-800' : 'bg-gray-100'}`}>
         {cover
           ? <img src={toFileUrl(cover)} alt={node.name} className="w-full h-full object-cover" draggable={false} />
@@ -335,7 +385,9 @@ function FolderPreviewPanel({
         }
       </div>
 
+      {/* Scrollable stats body */}
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
+        {/* Name + path */}
         <div>
           <div className={`font-semibold text-sm leading-tight ${isDark ? 'text-gray-100' : 'text-gray-900'}`}>{node.name}</div>
           {relPath && relPath !== node.name && (
@@ -343,35 +395,85 @@ function FolderPreviewPanel({
           )}
         </div>
 
-        <div className="space-y-1">
-          <Row label="Captures" value={String(node.totalCount)} isDark={isDark} />
-          <Row label="Direct" value={String(node.fileCount)} isDark={isDark} />
-          {node.children.length > 0 && <Row label="Subfolders" value={String(node.children.length)} isDark={isDark} />}
-          {hasPackInfo && <Row label="Pack info" value="✓" isDark={isDark} highlight />}
+        {/* Top stat boxes */}
+        <div className="flex gap-2">
+          <StatBox value={stats.total} label="captures" isDark={isDark} />
+          <StatBox
+            value={stats.duplicateGroups}
+            label="duplicates"
+            warn={stats.duplicateGroups > 0}
+            isDark={isDark}
+          />
+          <StatBox
+            value={stats.missing}
+            label="missing meta"
+            warn={stats.missing > 0}
+            isDark={isDark}
+          />
         </div>
 
-        {completeness !== null && (
+        {/* Pack info badge */}
+        {hasPackInfo && (
+          <div className="flex items-center gap-1.5">
+            <div className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+            <span className={`text-xs ${isDark ? 'text-blue-400' : 'text-blue-500'}`}>Pack info present</span>
+          </div>
+        )}
+
+        {/* Formats */}
+        {stats.presets.length > 0 && (
           <div>
-            <div className={`text-xs mb-1 flex justify-between ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-              <span>Completeness</span><span>{completeness}%</span>
-            </div>
-            <div className={`h-1.5 rounded-full overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}>
-              <div
-                className={`h-full rounded-full transition-all ${completeness >= 90 ? 'bg-emerald-500' : completeness >= 60 ? 'bg-amber-400' : 'bg-red-400'}`}
-                style={{ width: `${completeness}%` }}
-              />
-            </div>
+            <SectionLabel label="Formats" />
+            {stats.presets.slice(0, 6).map((r) => (
+              <BarRow key={r.key} label={r.key} count={r.count} maxCount={stats.maxPreset} color={PRESET_COLORS[r.key] ?? '#6b7280'} />
+            ))}
+          </div>
+        )}
+
+        {/* ESR Quality */}
+        {stats.total > 0 && (
+          <div>
+            <SectionLabel label="ESR Quality" />
+            {esrCovered === 0 ? (
+              <div className={`text-xs py-1 ${isDark ? 'text-gray-600' : 'text-gray-400'}`}>No ESR data</div>
+            ) : (
+              <>
+                {stats.esrGood > 0 && <BarRow label="Excellent < 0.01" count={stats.esrGood} maxCount={esrMaxCount} color="#22c55e" />}
+                {stats.esrOk > 0 && <BarRow label="OK 0.01–0.05" count={stats.esrOk} maxCount={esrMaxCount} color="#f59e0b" />}
+                {stats.esrReview > 0 && <BarRow label="Review > 0.05" count={stats.esrReview} maxCount={esrMaxCount} color="#dc2626" />}
+              </>
+            )}
+            {stats.esrNone > 0 && <BarRow label="No data" count={stats.esrNone} maxCount={esrMaxCount} color="#4b5563" />}
+          </div>
+        )}
+
+        {/* Gear Type */}
+        {stats.gearRows.length > 0 && (
+          <div>
+            <SectionLabel label="Gear Type" />
+            {stats.gearRows.slice(0, 5).map((r) => (
+              <BarRow key={r.key} label={GEAR_LABELS[r.key] ?? r.key} count={r.count} maxCount={stats.maxGear} color={GEAR_COLORS[r.key] ?? '#6b7280'} />
+            ))}
+          </div>
+        )}
+
+        {/* Tone Type */}
+        {stats.toneRows.length > 0 && (
+          <div>
+            <SectionLabel label="Tone Type" />
+            {stats.toneRows.slice(0, 6).map((r) => (
+              <BarRow key={r.key} label={TONE_LABELS[r.key] ?? r.key} count={r.count} maxCount={stats.maxTone} color={TONE_COLORS[r.key] ?? '#6b7280'} />
+            ))}
           </div>
         )}
       </div>
 
+      {/* Action buttons */}
       <div className={`px-3 py-3 border-t shrink-0 space-y-2 ${isDark ? 'border-gray-800' : 'border-gray-200'}`}>
         {canDrillDown && (
           <button
             onClick={onDrillDown}
-            className={`w-full px-3 py-2 rounded-lg border text-sm font-medium transition flex items-center justify-center gap-1.5 ${
-              isDark ? 'border-gray-700 text-gray-300 hover:bg-gray-800' : 'border-gray-300 text-gray-700 hover:bg-gray-50'
-            }`}
+            className={`w-full px-3 py-2 rounded-lg border text-sm font-medium transition flex items-center justify-center gap-1.5 ${isDark ? 'border-gray-700 text-gray-300 hover:bg-gray-800' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
           >
             Browse inside <span>⊞</span>
           </button>
@@ -387,11 +489,32 @@ function FolderPreviewPanel({
   )
 }
 
-function Row({ label, value, isDark, highlight }: { label: string; value: string; isDark: boolean; highlight?: boolean }) {
+// ── Shared sub-components ────────────────────────────────────────────────────
+
+function StatBox({ value, label, isDark, warn }: { value: number; label: string; isDark: boolean; warn?: boolean }) {
+  const isEmpty = value === 0
   return (
-    <div className="flex items-center justify-between">
-      <span className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>{label}</span>
-      <span className={`text-xs font-medium ${highlight ? (isDark ? 'text-teal-400' : 'text-teal-600') : isDark ? 'text-gray-300' : 'text-gray-700'}`}>{value}</span>
+    <div className={`flex-1 rounded-xl border px-2 py-2 text-center ${isDark ? 'bg-gray-800/60 border-gray-700/40' : 'bg-gray-50 border-gray-200'}`}>
+      <div className={`text-xl font-bold leading-none ${warn ? 'text-amber-400' : isEmpty ? isDark ? 'text-gray-500' : 'text-gray-400' : isDark ? 'text-white' : 'text-gray-900'}`}>{value}</div>
+      <div className={`text-[9px] mt-1 leading-tight ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>{label}</div>
     </div>
   )
+}
+
+function BarRow({ label, count, maxCount, color }: { label: string; count: number; maxCount: number; color: string }) {
+  const pct = maxCount > 0 ? count / maxCount : 0
+  return (
+    <div className="flex items-center gap-2 min-h-[24px]">
+      <span className="text-[9px] leading-none shrink-0" style={{ color }}>●</span>
+      <div className="flex-1 relative rounded overflow-hidden">
+        <div className="absolute inset-y-0 left-0 rounded" style={{ width: `${Math.max(pct * 100, 6)}%`, backgroundColor: color + '2e' }} />
+        <span className="relative block px-1.5 py-0.5 text-[10px] font-semibold truncate" style={{ color, opacity: 0.9 }}>{label}</span>
+      </div>
+      <span className="text-[10px] text-gray-500 dark:text-gray-400 w-6 text-right flex-shrink-0 tabular-nums">{count}</span>
+    </div>
+  )
+}
+
+function SectionLabel({ label }: { label: string }) {
+  return <div className="text-[9px] font-semibold uppercase tracking-widest text-gray-500 dark:text-gray-600 pt-1 pb-0.5">{label}</div>
 }
