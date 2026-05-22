@@ -54,6 +54,7 @@ interface FolderTreeProps {
   onSetWatchSource?: (folderPath: string) => void
   onClearWatchSource?: (folderPath: string) => void
   foldersWithSuggestRules?: Set<string>
+  onBrowseCards?: (folderPath: string) => void
 }
 
 function matchesFilter(
@@ -84,7 +85,7 @@ export function FolderTree({
   onCopySuggestRules, onPasteSuggestRules,
   onSelectAllInFolder, onCoverageReport, onFindDuplicates, onCleanThisFolder, onDeleteEmptyFolder, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor,
   onCompareFolders, onDeletePackInfo, bundleFolders, onCreateBundle, onDeleteBundle
-  , watchSourceByDest, onSetWatchSource, onClearWatchSource, foldersWithSuggestRules
+  , watchSourceByDest, onSetWatchSource, onClearWatchSource, foldersWithSuggestRules, onBrowseCards
 }: FolderTreeProps) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [expandSeq, setExpandSeq] = useState(0)
@@ -280,6 +281,7 @@ export function FolderTree({
           onFindDuplicates={onFindDuplicates ? () => onFindDuplicates(tree.path) : undefined}
           onCleanThisFolder={onCleanThisFolder ? () => onCleanThisFolder(tree.path) : undefined}
           onDeleteEmptyFolder={onDeleteEmptyFolder ? () => onDeleteEmptyFolder(tree.path) : undefined}
+          onBrowseCards={onBrowseCards ? () => onBrowseCards(tree.path) : undefined}
           onToggleSubtree={(expand) => setSubtreeToggle({ path: tree.path, expand, seq: Date.now() })}
           hasSuggestRules={foldersWithSuggestRules?.has(tree.path.replace(/\\/g, '/')) ?? false}
         />
@@ -328,6 +330,7 @@ export function FolderTree({
             onSetWatchSource={onSetWatchSource}
             onClearWatchSource={onClearWatchSource}
             foldersWithSuggestRules={foldersWithSuggestRules}
+            onBrowseCards={onBrowseCards}
             subtreeToggle={subtreeToggle}
             onToggleSubtreeRequest={(path, expand) => setSubtreeToggle({ path, expand, seq: Date.now() })}
           />
@@ -344,7 +347,7 @@ function TreeNode({
   onCopySuggestRules, onPasteSuggestRules,
   onSelectAllInFolder, onCoverageReport, onFindDuplicates, onCleanThisFolder, expandSeq, collapseSeq, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor,
   onCompareFolders, onDeletePackInfo, bundleFolders, onCreateBundle, onDeleteBundle
-  , onDeleteEmptyFolder
+  , onDeleteEmptyFolder, onBrowseCards
   , watchSourceByDest, onSetWatchSource, onClearWatchSource, foldersWithSuggestRules
   , subtreeToggle
   , onToggleSubtreeRequest
@@ -390,6 +393,7 @@ function TreeNode({
   onSetWatchSource?: (folderPath: string) => void
   onClearWatchSource?: (folderPath: string) => void
   foldersWithSuggestRules?: Set<string>
+  onBrowseCards?: (folderPath: string) => void
   subtreeToggle?: { path: string; expand: boolean; seq: number } | null
   onToggleSubtreeRequest?: (path: string, expand: boolean) => void
 }) {
@@ -471,6 +475,7 @@ function TreeNode({
         onFindDuplicates={onFindDuplicates ? () => onFindDuplicates(node.path) : undefined}
         onCleanThisFolder={onCleanThisFolder ? () => onCleanThisFolder(node.path) : undefined}
         onDeleteEmptyFolder={onDeleteEmptyFolder ? () => onDeleteEmptyFolder(node.path) : undefined}
+        onBrowseCards={onBrowseCards ? () => onBrowseCards(node.path) : undefined}
         onToggleSubtree={(expand) => onToggleSubtreeRequest ? onToggleSubtreeRequest(node.path, expand) : setExpanded(expand)}
         isDraggableFolder
         hasPackInfo={packInfoFolders?.has(node.path.replace(/\\/g, '/')) ?? false}
@@ -534,6 +539,7 @@ function TreeNode({
               onSetWatchSource={onSetWatchSource}
               onClearWatchSource={onClearWatchSource}
               foldersWithSuggestRules={foldersWithSuggestRules}
+              onBrowseCards={onBrowseCards}
               subtreeToggle={subtreeToggle}
               onToggleSubtreeRequest={onToggleSubtreeRequest}
             />
@@ -551,7 +557,7 @@ function FolderRow({
   hasChildren, expanded, onToggleExpand, onClick, onSave, onRevert,
   onBatchEdit, onReveal, isFiltered, isHighlighted, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSuggestMetadata, onEditSuggestRules, onCopySuggestRules, onPasteSuggestRules, onSelectAll, onCoverageReport, onFindDuplicates, isDraggableFolder, hasPackInfo, hasSuggestRules = false, hasBundle, folderColor, onSetFolderColor, isMultiSelect, onCompareFolders, onDeletePackInfo, onCreateBundle, onDeleteBundle
   , watchSource, onSetWatchSource, onClearWatchSource, onCleanThisFolder, onDeleteEmptyFolder
-  , onToggleSubtree
+  , onToggleSubtree, onBrowseCards
 }: {
   label: string
   folderPath: string
@@ -601,6 +607,7 @@ function FolderRow({
   onSetWatchSource?: () => void
   onClearWatchSource?: () => void
   onToggleSubtree?: (expand: boolean) => void
+  onBrowseCards?: () => void
 }) {
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -933,6 +940,14 @@ function FolderRow({
               >
                 Reveal in Explorer
               </button>
+              {onBrowseCards && (
+                <button
+                  className="w-full text-left px-3 py-1.5 text-teal-700 dark:text-teal-400 hover:bg-indigo-600/40 transition-colors"
+                  onClick={() => { setMenu(null); onBrowseCards() }}
+                >
+                  Browse cards
+                </button>
+              )}
 
               {(onGenerateTemplate || onImportMetadata || onSuggestMetadata || onEditSuggestRules || onCopySuggestRules || onPasteSuggestRules) && (
                 <>

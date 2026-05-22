@@ -527,6 +527,7 @@ export default function App() {
   const [librarian, setLibrarian] = useState<LibrarianState>(EMPTY_LIBRARIAN)
   const [libraryFilter, setLibraryFilter] = useState<Set<string> | null>(null)
   const [cardView, setCardView] = useState(false)
+  const [cardViewInitialPath, setCardViewInitialPath] = useState<string | null>(null)
   const initialLayout = loadLayout()
   const initialSettings = loadSettings()
   const [treeWidth, setTreeWidth] = useState(initialLayout.treeWidth)
@@ -3899,7 +3900,7 @@ export default function App() {
         onOpenAbout={() => setHelpView('about')}
         cardViewActive={cardView}
         cardViewEnabled={!!librarian.rootFolder && !!(librarian.folderTree?.children?.length)}
-        onToggleCardView={() => setCardView((v) => !v)}
+        onToggleCardView={() => { setCardViewInitialPath(null); setCardView((v) => !v) }}
       />
 
       {/* Folder card view — replaces 3-panel layout when active */}
@@ -3910,8 +3911,10 @@ export default function App() {
           files={files}
           packInfoFolders={packInfoFolders}
           isDark={settings.theme !== 'light'}
+          initialPath={cardViewInitialPath}
           onOpenFolder={(path) => {
             setCardView(false)
+            setCardViewInitialPath(null)
             setLibrarian((prev) => ({ ...prev, selectedFolders: [path] }))
           }}
         />
@@ -4045,6 +4048,10 @@ export default function App() {
                 onPasteSuggestRules={suggestRulesClipboard ? handlePasteScopedSuggestRules : undefined}
                 onFindDuplicates={handleFindDuplicatesInFolder}
                 onCleanThisFolder={(folderPath) => { void handleOpenFolderCleanup(folderPath) }}
+                onBrowseCards={(folderPath) => {
+                  setCardViewInitialPath(folderPath)
+                  setCardView(true)
+                }}
               />
             </div>
             {!gridMaximized && <DragHandle onMouseDown={(e) => onDragStart('tree', e)} onCollapse={() => setTreeCollapsed((v) => !v)} collapsed={treeCollapsed} />}

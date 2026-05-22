@@ -106,6 +106,25 @@ interface CtxMenu { x: number; y: number; node: FolderNode }
 
 // ── Main component ───────────────────────────────────────────────────────────
 
+function buildStackToPath(root: FolderNode, targetPath: string): FolderNode[] {
+  const norm = (p: string) => p.replace(/\\/g, '/')
+  const target = norm(targetPath)
+  function search(node: FolderNode, path: FolderNode[]): FolderNode[] | null {
+    if (norm(node.path) === target) return path
+    for (const child of node.children) {
+      const result = search(child, [...path, child])
+      if (result) return result
+    }
+    return null
+  }
+  for (const child of root.children) {
+    if (norm(child.path) === target) return [child]
+    const result = search(child, [child])
+    if (result) return result
+  }
+  return []
+}
+
 interface FolderCardViewProps {
   rootNode: FolderNode
   rootFolder: string
@@ -113,10 +132,13 @@ interface FolderCardViewProps {
   packInfoFolders: Set<string>
   onOpenFolder: (path: string) => void
   isDark: boolean
+  initialPath?: string | null
 }
 
-export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, onOpenFolder, isDark }: FolderCardViewProps) {
-  const [stack, setStack] = useState<FolderNode[]>([])
+export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, onOpenFolder, isDark, initialPath }: FolderCardViewProps) {
+  const [stack, setStack] = useState<FolderNode[]>(() =>
+    initialPath ? buildStackToPath(rootNode, initialPath) : []
+  )
   const currentNode = stack.length > 0 ? stack[stack.length - 1] : rootNode
   const folders = currentNode.children
 
@@ -130,6 +152,13 @@ export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, o
   const draggingRef = useRef(false)
   const startXRef = useRef(0)
   const startWRef = useRef(0)
+
+  // Navigate to initialPath when it changes
+  useEffect(() => {
+    if (!initialPath) return
+    setStack(buildStackToPath(rootNode, initialPath))
+    setSelected(null)
+  }, [initialPath]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reload covers when the displayed folder changes
   useEffect(() => {

@@ -39,6 +39,11 @@
 
 - Metadata header path display: consider a second muted/grey full-path presentation or alternate layout that shows more of the real file path without stealing too much editor real estate.
 
+## Keyboard shortcuts
+
+- Define logical shortcut keys for card view navigation (open card view, browse into folder, open folder, back) and common file operations (save, revert, batch edit, next/previous file)
+- Add a Keyboard Shortcuts section in Settings for discovering and customizing key bindings
+
 ## Checklist and release workflow
 
 - Checklist row sync button is tiny and too far away
