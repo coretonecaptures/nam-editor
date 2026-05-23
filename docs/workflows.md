@@ -264,7 +264,47 @@ This tends to be the least stressful path and gives you easy checkpoints if some
 
 ---
 
-## 10. Tone3000-assisted intake workflow
+## 10. Browse your library in card view
+
+Use card view when you want a visual gallery overview instead of a folder tree.
+
+Open it:
+- click the **Cards** (grid) icon in the toolbar (disabled when no folder is loaded)
+- click again to return to the three-panel view
+
+Typical use cases:
+- visually confirm all your packs have amp cover images
+- quickly navigate into a specific folder without scrolling the tree
+- find something by cover art rather than by name
+
+Drill-down navigation:
+- **Double-click** a card to go one level deeper (stays in card view)
+- Use the **breadcrumb bar** to go back up
+- Use **Refresh** in the breadcrumb bar to rescan the current level without leaving card view
+
+Preview panel:
+- **Single-click** a card to open the preview panel on the right
+- Shows amp cover, folder name, counts, and pack info
+- Panel is resizable by dragging the handle; width persists between sessions
+
+Getting cover images:
+1. Right-click a folder card
+2. Choose **Get Cover Image**
+3. Options:
+   - paste an image URL
+   - drag-drop from a browser or Windows Explorer
+   - click **Browse** for a native file picker
+   - click the Google Images button to open a browser search
+
+Downloading from Tone3000 inside card view:
+1. Right-click a card
+2. Choose **Find on Tone3000**
+3. Tone3000 opens in the right panel — browse and download without leaving card view
+4. When the download completes the new folder card appears automatically
+
+---
+
+## 11. Tone3000-assisted intake workflow
 
 ![Tone3000 browser inside NAM Lab](images/tone3000-browser.png)
 

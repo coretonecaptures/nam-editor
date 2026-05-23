@@ -157,7 +157,7 @@ export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, o
   const CARD_PX = cardSize === 'small' ? 180 : cardSize === 'large' ? 336 : 264
   const [previewWidth, setPreviewWidth] = useState<number>(() => {
     const saved = localStorage.getItem('folderCardPreviewWidth')
-    return saved ? Math.max(260, Math.min(600, Number(saved))) : 320
+    return saved ? Math.max(260, Math.min(600, Number(saved))) : 368
   })
   const draggingRef = useRef(false)
   const startXRef = useRef(0)

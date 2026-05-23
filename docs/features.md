@@ -94,6 +94,30 @@ Custom NAM Lab fields are stored under `metadata.nam_lab`.
 
 ---
 
+## Capture Defaults
+
+Capture defaults supply baseline values for training and manual re-apply.
+
+Settings:
+- **Default Modeled By** — your creator / studio name
+- **Default Input Level (dBu)**
+- **Default Output Level (dBu)**
+
+Each field has two separate uses, controlled independently:
+
+| Use | When it applies |
+|-----|-----------------|
+| Training / re-apply | Always used when you queue a training job or hit re-apply defaults |
+| Auto-fill on load | Only if the "Auto-fill blank captures on load" checkbox is checked for that field |
+
+The **Auto-fill on load** checkboxes are off by default. This matters if you open other creators' captures — loading them will not overwrite their existing metadata or silently inject your defaults into blank fields.
+
+When auto-fill is enabled for a field, NAM Lab only fills that field if it is completely blank in the loaded file; it never overwrites an existing value.
+
+Use **Clear suggestions** (per-file) or **Clear Suggestions** (toolbar) to remove auto-filled values without writing to disk.
+
+---
+
 ## NAM-BOT Support
 
 NAM Lab understands both current and legacy NAM-BOT metadata locations.
@@ -488,6 +512,39 @@ NAM Lab can generate folder-scoped coverage reports showing:
 Exports:
 - CSV
 - Excel
+
+---
+
+## Folder Card View
+
+The card view gives a gallery-style overview of your library at the folder level.
+
+Entry point:
+- click the **Cards** (grid) icon in the toolbar (enabled only when a root folder is loaded)
+- clicking again returns to the normal three-panel view
+
+Cards:
+- one card per first-level subfolder
+- shows `ampcover.*` image if present in that folder, or the first cover found one level deeper (up to 5 children checked)
+- folders without any cover show a dark placeholder
+- displays folder name and total `.nam` count badge
+- card size is switchable between **Small / Medium / Large** via a picker in the breadcrumb bar; choice persists between sessions
+
+Interactions:
+- **Single click** — select the card; a resizable preview panel slides in on the right showing the amp cover, folder name, path, counts, and pack title/subtitle if available; panel width persists between sessions
+- **Double click** — drill into that folder's subfolders (stays in card view)
+- **Breadcrumb bar** — shows the current drill path; click any crumb to go back up
+
+Right-click menu:
+- **Open folder** — exits card view and loads the folder in the three-panel view
+- **Find on Tone3000** — opens Tone3000 search in the right preview panel slot without leaving card view; downloads flow through the normal queue and the new folder card appears automatically when done
+- **Get Cover Image** — fetch or set an `ampcover` image for the folder:
+  - paste an image URL
+  - drag-drop an image from a browser or Windows Explorer
+  - click **Browse** to pick a local file via the native file picker
+  - click the Google Images button to open a ready-to-search browser window
+
+Breadcrumb bar also includes a **Refresh** button to rescan the current folder without leaving card view.
 
 ---
 
