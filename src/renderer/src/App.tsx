@@ -527,7 +527,11 @@ export default function App() {
   const [librarian, setLibrarian] = useState<LibrarianState>(EMPTY_LIBRARIAN)
   const [libraryFilter, setLibraryFilter] = useState<Set<string> | null>(null)
   const [cardView, setCardView] = useState(false)
+  const cardViewRef = useRef(false)
+  useEffect(() => { cardViewRef.current = cardView }, [cardView])
   const [cardViewInitialPath, setCardViewInitialPath] = useState<string | null>(null)
+  const [toneStoreDefaultDir, setToneStoreDefaultDir] = useState<string | null>(null)
+  const [cardRescanSignal, setCardRescanSignal] = useState(0)
   const initialLayout = loadLayout()
   const initialSettings = loadSettings()
   const [treeWidth, setTreeWidth] = useState(initialLayout.treeWidth)
@@ -3887,6 +3891,7 @@ export default function App() {
         }}
         toneStoreActive={showToneStorePanel}
         onToggleToneStore={() => {
+          setToneStoreDefaultDir(null)
           setShowToneStore((v) => !v)
           setShowDashboard(false)
           setHistoryOpen(false)
@@ -3903,32 +3908,58 @@ export default function App() {
         onToggleCardView={() => { setCardViewInitialPath(null); setCardView((v) => !v) }}
       />
 
-      {/* Folder card view — replaces 3-panel layout when active */}
-      {cardView && librarian.folderTree?.children && librarian.rootFolder && (
-        <FolderCardView
-          rootNode={librarian.folderTree}
-          rootFolder={librarian.rootFolder}
-          files={files}
-          packInfoFolders={packInfoFolders}
-          isDark={settings.theme !== 'light'}
-          initialPath={cardViewInitialPath}
-          onOpenFolder={(path) => {
-            setCardView(false)
-            setCardViewInitialPath(null)
-            setLibrarian((prev) => ({ ...prev, selectedFolders: [path] }))
-          }}
-          onSearchTone3000={(query) => {
-            setToneStoreSearchRequest({ key: Date.now(), query })
-            setShowToneStore(true)
-            setShowSettings(false)
-            setBatchFolder(null)
-            setShowDashboard(false)
-            setCardView(false)
-          }}
-        />
-      )}
+      <div className="relative flex-1 overflow-hidden flex flex-col">
+        {/* ToneStore overlay — covers card view and 3-panel when open */}
+        {toneStoreMounted && (
+          <div
+            className={showToneStorePanel ? 'absolute inset-0 z-20 flex flex-col' : 'absolute inset-0 opacity-0 pointer-events-none -z-10'}
+            aria-hidden={!showToneStorePanel}
+          >
+            <ToneStore
+              onClose={() => { setShowToneStore(false); setToneStoreDefaultDir(null) }}
+              onDownloaded={(paths) => {
+                void loadFiles(paths, 'append')
+                if (cardViewRef.current) setCardRescanSignal((s) => s + 1)
+              }}
+              onFilterLocalCreator={handleFilterLocalCreator}
+              savedTone3000Username={settings.tone3000Username}
+              searchRequest={toneStoreSearchRequest}
+              queueJob={toneStoreQueueJob}
+              onStartQueue={handleStartToneStoreQueue}
+              onCancelQueue={handleCancelToneStoreQueue}
+              defaultDownloadDir={toneStoreDefaultDir}
+            />
+          </div>
+        )}
 
-      <div className="flex flex-1 overflow-hidden relative" style={cardView ? { display: 'none' } : undefined}>
+        {/* Folder card view */}
+        {cardView && librarian.folderTree?.children && librarian.rootFolder && (
+          <FolderCardView
+            rootNode={librarian.folderTree}
+            rootFolder={librarian.rootFolder}
+            files={files}
+            packInfoFolders={packInfoFolders}
+            isDark={settings.theme !== 'light'}
+            initialPath={cardViewInitialPath}
+            rescanSignal={cardRescanSignal}
+            onOpenFolder={(path) => {
+              setCardView(false)
+              setCardViewInitialPath(null)
+              setLibrarian((prev) => ({ ...prev, selectedFolders: [path] }))
+            }}
+            onSearchTone3000={(query, folderPath) => {
+              setToneStoreDefaultDir(folderPath)
+              setToneStoreSearchRequest({ key: Date.now(), query })
+              setShowToneStore(true)
+              setShowSettings(false)
+              setBatchFolder(null)
+              setShowDashboard(false)
+            }}
+          />
+        )}
+
+        {/* 3-panel layout */}
+        <div className="flex flex-1 overflow-hidden relative" style={cardView ? { display: 'none' } : undefined}>
         {/* Folder tree — only shown when a folder is open */}
         {hasTree && (
           <>
@@ -4198,23 +4229,6 @@ export default function App() {
 
         {/* Main content */}
         <div ref={mainContentRef} tabIndex={-1} className={`flex-1 overflow-hidden flex flex-col focus:outline-none${gridMaximized ? ' hidden' : ''}`} style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-          {toneStoreMounted && (
-            <div
-              className={showToneStorePanel ? 'flex-1 min-h-0 flex flex-col' : 'absolute inset-0 opacity-0 pointer-events-none -z-10'}
-              aria-hidden={!showToneStorePanel}
-            >
-              <ToneStore
-                onClose={() => setShowToneStore(false)}
-                onDownloaded={(paths) => loadFiles(paths, 'append')}
-                onFilterLocalCreator={handleFilterLocalCreator}
-                savedTone3000Username={settings.tone3000Username}
-                searchRequest={toneStoreSearchRequest}
-                queueJob={toneStoreQueueJob}
-                onStartQueue={handleStartToneStoreQueue}
-                onCancelQueue={handleCancelToneStoreQueue}
-              />
-            </div>
-          )}
           {showSettings ? (
             <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} />
           ) : showToneStorePanel ? null : showTrainingWorkspace ? (
@@ -4755,6 +4769,7 @@ export default function App() {
             ) : null}
           </div>
         )}
+      </div>
       </div>
 
       {helpView && (

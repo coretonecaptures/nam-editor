@@ -118,6 +118,7 @@ export function ToneStore({
   queueJob,
   onStartQueue,
   onCancelQueue,
+  defaultDownloadDir,
 }: {
   onClose: () => void
   onDownloaded: (paths: string[]) => void
@@ -127,6 +128,7 @@ export function ToneStore({
   queueJob: ToneStoreDownloadQueueJob | null
   onStartQueue: (job: ToneStoreDownloadQueueJob) => void
   onCancelQueue: () => void
+  defaultDownloadDir?: string | null
 }) {
   // Auth state
   const [connected, setConnected] = useState(false)
@@ -342,8 +344,14 @@ export function ToneStore({
       if (!ok) return
     }
 
-    const destDir = await window.api.openFolder()
-    if (!destDir) return
+    let destDir: string
+    if (defaultDownloadDir) {
+      destDir = defaultDownloadDir
+    } else {
+      const picked = await window.api.openFolder()
+      if (!picked) return
+      destDir = picked
+    }
 
     const folderName = destDir.replace(/\\/g, '/').split('/').pop() ?? destDir
     setDownloadError(null)
@@ -623,9 +631,12 @@ export function ToneStore({
               <button
                 onClick={handleBatchDownload}
                 disabled={checkedCount === 0 || queueLocked}
-                className="w-full py-2 text-sm font-medium rounded-md bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors"
+                className="w-full py-2 text-sm font-medium rounded-md bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors flex flex-col items-center gap-0.5"
               >
-                More Info / Download {checkedCount > 0 ? `${checkedCount} file${checkedCount !== 1 ? 's' : ''}` : '(none selected)'}
+                <span>More Info / Download {checkedCount > 0 ? `${checkedCount} file${checkedCount !== 1 ? 's' : ''}` : '(none selected)'}</span>
+                {defaultDownloadDir && (
+                  <span className="text-xs opacity-75 font-normal">→ {defaultDownloadDir.replace(/\\/g, '/').split('/').pop()}</span>
+                )}
               </button>
             )}
           </div>
