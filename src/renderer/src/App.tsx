@@ -414,7 +414,9 @@ declare global {
 }
 
 
-function applyDefaults(meta: NamFile['metadata'], baseName: string, settings: AppSettings): NamFile['metadata'] {
+// onLoad=true: per-field fillOnLoad flags are enforced (auto-fill on open)
+// onLoad=false: manual re-apply / training — always apply if enableCaptureDefaults is on
+function applyDefaults(meta: NamFile['metadata'], baseName: string, settings: AppSettings, onLoad = false): NamFile['metadata'] {
   const m = { ...meta }
 
   // Name from filename
@@ -423,15 +425,15 @@ function applyDefaults(meta: NamFile['metadata'], baseName: string, settings: Ap
 
   // Capture Defaults section
   if (settings.enableCaptureDefaults) {
-    if (!m.modeled_by && settings.defaultModeledBy)
+    if (!m.modeled_by && settings.defaultModeledBy && (!onLoad || settings.fillOnLoadModeledBy))
       m.modeled_by = settings.defaultModeledBy
 
-    if (m.input_level_dbu == null && settings.defaultInputLevel !== '') {
+    if (m.input_level_dbu == null && settings.defaultInputLevel !== '' && (!onLoad || settings.fillOnLoadInputLevel)) {
       const n = parseFloat(settings.defaultInputLevel)
       if (!isNaN(n)) m.input_level_dbu = n
     }
 
-    if (m.output_level_dbu == null && settings.defaultOutputLevel !== '') {
+    if (m.output_level_dbu == null && settings.defaultOutputLevel !== '' && (!onLoad || settings.fillOnLoadOutputLevel)) {
       const n = parseFloat(settings.defaultOutputLevel)
       if (!isNaN(n)) m.output_level_dbu = n
     }
@@ -1300,12 +1302,12 @@ export default function App() {
   }, [showSettings, batchFolder])
 
   useEffect(() => {
-    if (selectedIds.size > 0) {
+    if (selectedIds.size > 0 && !cardView) {
       setShowDashboard(false)
       setHistoryOpen(false)
       setShowToneStore(false)
     }
-  }, [selectedIds])
+  }, [selectedIds, cardView])
 
   const onDragStart = (panel: 'tree' | 'list', e: React.MouseEvent) => {
     e.preventDefault()
@@ -1443,7 +1445,7 @@ export default function App() {
         if (typeof workingMeta.output_level_dbu === 'string') workingMeta.output_level_dbu = parseFloat(workingMeta.output_level_dbu as unknown as string)
         if (workingMeta.tone_type && !(TONE_TYPES as readonly string[]).includes(workingMeta.tone_type)) workingMeta.tone_type = null
         if (workingMeta.gear_type && !(GEAR_TYPES as readonly string[]).includes(workingMeta.gear_type)) workingMeta.gear_type = null
-        const meta = applyDefaults(workingMeta, baseName, settings)
+        const meta = applyDefaults(workingMeta, baseName, settings, true)
         const wasChanged = JSON.stringify(meta) !== JSON.stringify(rawMeta)
         const autoFilledFields = (Object.keys(meta) as (keyof NamFile['metadata'])[]).filter(
           (k) => meta[k] != null && (workingMeta[k] == null || workingMeta[k] === '')
@@ -3936,6 +3938,10 @@ export default function App() {
               setBatchFolder(null)
               setShowDashboard(false)
               setHistoryOpen(false)
+            }}
+            onRefresh={async () => {
+              await refreshFolderTree()
+              setCardRescanSignal((s) => s + 1)
             }}
           />
         )}

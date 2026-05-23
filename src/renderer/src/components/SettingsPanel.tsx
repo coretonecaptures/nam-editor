@@ -518,9 +518,9 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
             title="Capture Defaults"
             enabled={draft.enableCaptureDefaults}
             onToggle={(v) => update('enableCaptureDefaults', v)}
-            description="When enabled, these values populate any file you open where the matching field is empty. For more granular control, use folder metadata."
+            description="Default values used for training and manual re-apply. Check 'Auto-fill on load' to also populate blank fields automatically when opening captures."
           >
-            <SettingsField label="Default Modeled By" hint="Applied if file has no modeled_by value">
+            <SettingsField label="Default Modeled By" hint="Used for training; optionally auto-fills blank modeled_by on load">
               <input
                 type="text"
                 value={draft.defaultModeledBy}
@@ -529,8 +529,17 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                 placeholder="e.g. Core Tone Captures"
                 className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               />
+              <label className={`flex items-center gap-2 mt-1.5 cursor-pointer select-none ${!draft.enableCaptureDefaults ? 'opacity-40 pointer-events-none' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={draft.fillOnLoadModeledBy}
+                  onChange={(e) => update('fillOnLoadModeledBy', e.target.checked)}
+                  className="rounded"
+                />
+                <span className="text-xs text-gray-500 dark:text-gray-400">Auto-fill blank captures on load</span>
+              </label>
             </SettingsField>
-            <SettingsField label="Default Input Level (dBu)" hint="Applied if file has no input_level_dbu value">
+            <SettingsField label="Default Input Level (dBu)" hint="Used for training; optionally auto-fills blank input_level_dbu on load">
               <input
                 type="number"
                 value={draft.defaultInputLevel}
@@ -540,8 +549,17 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                 step={0.5}
                 className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               />
+              <label className={`flex items-center gap-2 mt-1.5 cursor-pointer select-none ${!draft.enableCaptureDefaults ? 'opacity-40 pointer-events-none' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={draft.fillOnLoadInputLevel}
+                  onChange={(e) => update('fillOnLoadInputLevel', e.target.checked)}
+                  className="rounded"
+                />
+                <span className="text-xs text-gray-500 dark:text-gray-400">Auto-fill blank captures on load</span>
+              </label>
             </SettingsField>
-            <SettingsField label="Default Output Level (dBu)" hint="Applied if file has no output_level_dbu value">
+            <SettingsField label="Default Output Level (dBu)" hint="Used for training; optionally auto-fills blank output_level_dbu on load">
               <input
                 type="number"
                 value={draft.defaultOutputLevel}
@@ -551,6 +569,15 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                 step={0.5}
                 className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               />
+              <label className={`flex items-center gap-2 mt-1.5 cursor-pointer select-none ${!draft.enableCaptureDefaults ? 'opacity-40 pointer-events-none' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={draft.fillOnLoadOutputLevel}
+                  onChange={(e) => update('fillOnLoadOutputLevel', e.target.checked)}
+                  className="rounded"
+                />
+                <span className="text-xs text-gray-500 dark:text-gray-400">Auto-fill blank captures on load</span>
+              </label>
             </SettingsField>
           </Section>
           )}

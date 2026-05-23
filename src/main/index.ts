@@ -4781,6 +4781,111 @@ app.whenReady().then(async () => {
       } catch (e) { return { error: String(e) } }
     })
 
+  // Download any public image URL and save as ampcover.{ext}, replacing existing cover
+  ipcMain.handle('cover:downloadFromUrl', async (_event, imageUrl: string, destDir: string) => {
+    try {
+      const coverPattern = /^ampcover\.(png|jpe?g|webp|gif|avif)$/i
+      try {
+        const entries = await fs.promises.readdir(destDir, { withFileTypes: true })
+        for (const entry of entries) {
+          if (entry.isFile() && coverPattern.test(entry.name)) {
+            await fs.promises.unlink(join(destDir, entry.name))
+          }
+        }
+      } catch { /* dir may not exist yet */ }
+
+      const res = await fetch(imageUrl, { headers: { 'User-Agent': 'NAM-Lab' } })
+      if (!res.ok) return { success: false, error: `Download failed (HTTP ${res.status})` }
+
+      const contentType = (res.headers.get('content-type') ?? '').toLowerCase()
+      if (!contentType.startsWith('image/')) {
+        return { success: false, error: `URL does not point to an image (got: ${contentType || 'unknown content type'}). Try right-clicking the image in your browser and choosing "Copy image address".` }
+      }
+
+      const extFromType =
+        contentType.includes('jpeg') ? '.jpg' :
+        contentType.includes('png') ? '.png' :
+        contentType.includes('webp') ? '.webp' :
+        contentType.includes('gif') ? '.gif' :
+        contentType.includes('avif') ? '.avif' : ''
+      const rawExt = extname(imageUrl.split('?')[0]).toLowerCase()
+      const allowed = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif'])
+      const chosenExt = extFromType || (allowed.has(rawExt) ? (rawExt === '.jpeg' ? '.jpg' : rawExt) : '') || '.jpg'
+
+      const buffer = Buffer.from(await res.arrayBuffer())
+      const destPath = join(destDir, `ampcover${chosenExt}`)
+      await fs.promises.writeFile(destPath, buffer)
+      return { success: true, destPath }
+    } catch (e: unknown) {
+      return { success: false, error: String(e) }
+    }
+  })
+
+  // Save ampcover from raw base64 bytes (FileReader fallback for drag-drop without .path)
+  ipcMain.handle('cover:saveFromBase64', async (_event, base64: string, mimeType: string, destDir: string) => {
+    try {
+      const coverPattern = /^ampcover\.(png|jpe?g|webp|gif|avif)$/i
+      try {
+        const entries = await fs.promises.readdir(destDir, { withFileTypes: true })
+        for (const entry of entries) {
+          if (entry.isFile() && coverPattern.test(entry.name)) {
+            await fs.promises.unlink(join(destDir, entry.name))
+          }
+        }
+      } catch { /* ignore */ }
+
+      const ext =
+        mimeType.includes('jpeg') ? '.jpg' :
+        mimeType.includes('png') ? '.png' :
+        mimeType.includes('webp') ? '.webp' :
+        mimeType.includes('gif') ? '.gif' :
+        mimeType.includes('avif') ? '.avif' : '.jpg'
+      const buffer = Buffer.from(base64, 'base64')
+      const destPath = join(destDir, `ampcover${ext}`)
+      await fs.promises.writeFile(destPath, buffer)
+      return { success: true, destPath }
+    } catch (e: unknown) {
+      return { success: false, error: String(e) }
+    }
+  })
+
+  // Open a native image file picker and return the selected path
+  ipcMain.handle('cover:openImagePicker', async () => {
+    const win = BrowserWindow.getFocusedWindow()
+    if (!win) return null
+    const result = await dialog.showOpenDialog(win, {
+      title: 'Select cover image',
+      filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif'] }],
+      properties: ['openFile'],
+    })
+    return result.canceled ? null : result.filePaths[0] ?? null
+  })
+
+  // Copy a local file (e.g. dragged from Explorer) and save as ampcover.{ext}
+  ipcMain.handle('cover:copyLocalFile', async (_event, srcPath: string, destDir: string) => {
+    try {
+      const coverPattern = /^ampcover\.(png|jpe?g|webp|gif|avif)$/i
+      try {
+        const entries = await fs.promises.readdir(destDir, { withFileTypes: true })
+        for (const entry of entries) {
+          if (entry.isFile() && coverPattern.test(entry.name)) {
+            await fs.promises.unlink(join(destDir, entry.name))
+          }
+        }
+      } catch { /* ignore */ }
+
+      const allowed = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif'])
+      const rawExt = extname(srcPath).toLowerCase()
+      if (!allowed.has(rawExt)) return { success: false, error: 'Unsupported image type' }
+      const chosenExt = rawExt === '.jpeg' ? '.jpg' : rawExt
+      const destPath = join(destDir, `ampcover${chosenExt}`)
+      await fs.promises.copyFile(srcPath, destPath)
+      return { success: true, destPath }
+    } catch (e: unknown) {
+      return { success: false, error: String(e) }
+    }
+  })
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

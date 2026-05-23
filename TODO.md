@@ -38,6 +38,8 @@
 ## Grid and UI
 
 - Metadata header path display: consider a second muted/grey full-path presentation or alternate layout that shows more of the real file path without stealing too much editor real estate.
+- Card view right-click "Get Cover Image": for folders without an ampcover, let the user fetch one from the web and save it as `ampcover.jpg`. See implementation notes below.
+- Card view size picker: add a small/medium/large toggle (or slider) in the card view toolbar so the user can adjust card size to suit their display/resolution without leaving the view.
 
 ## Keyboard shortcuts
 

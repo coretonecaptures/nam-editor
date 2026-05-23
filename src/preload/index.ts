@@ -205,6 +205,14 @@ const api = {
   tone3000FileExists: (destDir: string, name: string): Promise<{ exists: boolean; destPath?: string }> => ipcRenderer.invoke('tone3000:fileExists', destDir, name),
   tone3000SaveCoverImage: (imageUrl: string, destDir: string): Promise<{ ok?: boolean; skipped?: boolean; destPath?: string; error?: string }> =>
     ipcRenderer.invoke('tone3000:saveCoverImage', imageUrl, destDir),
+  downloadCoverFromUrl: (imageUrl: string, destDir: string): Promise<{ success: boolean; destPath?: string; error?: string }> =>
+    ipcRenderer.invoke('cover:downloadFromUrl', imageUrl, destDir),
+  copyLocalCoverFile: (srcPath: string, destDir: string): Promise<{ success: boolean; destPath?: string; error?: string }> =>
+    ipcRenderer.invoke('cover:copyLocalFile', srcPath, destDir),
+  saveLocalCoverFromBase64: (base64: string, mimeType: string, destDir: string): Promise<{ success: boolean; destPath?: string; error?: string }> =>
+    ipcRenderer.invoke('cover:saveFromBase64', base64, mimeType, destDir),
+  openImagePicker: (): Promise<string | null> =>
+    ipcRenderer.invoke('cover:openImagePicker'),
   showTextContextMenu: (params: { hasSelection: boolean; isEditable: boolean }): Promise<void> =>
     ipcRenderer.invoke('app:showTextContextMenu', params),
   platform: process.platform,

@@ -237,6 +237,10 @@ export interface AppSettings {
   defaultModeledBy: string
   defaultInputLevel: string
   defaultOutputLevel: string
+  // Per-field "fill blank on load" — when false the value is only used for training/manual re-apply
+  fillOnLoadModeledBy: boolean
+  fillOnLoadInputLevel: boolean
+  fillOnLoadOutputLevel: boolean
 
   // Behavior
   populateNameFromFilename: boolean
@@ -344,6 +348,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultModeledBy: '',
   defaultInputLevel: '',
   defaultOutputLevel: '',
+  fillOnLoadModeledBy: false,
+  fillOnLoadInputLevel: false,
+  fillOnLoadOutputLevel: false,
 
   populateNameFromFilename: true,
   ampSuffix: '',
