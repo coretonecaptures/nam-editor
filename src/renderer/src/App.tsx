@@ -530,7 +530,6 @@ export default function App() {
   const [cardViewInitialPath, setCardViewInitialPath] = useState<string | null>(null)
   const [toneStoreDefaultDir, setToneStoreDefaultDir] = useState<string | null>(null)
   const [cardRescanSignal, setCardRescanSignal] = useState(0)
-  const toneStoreReturnToCardViewRef = useRef(false)
   const initialLayout = loadLayout()
   const initialSettings = loadSettings()
   const [treeWidth, setTreeWidth] = useState(initialLayout.treeWidth)
@@ -3907,39 +3906,44 @@ export default function App() {
         onToggleCardView={() => { setCardViewInitialPath(null); setCardView((v) => !v) }}
       />
 
-      {/* Folder card view — replaces 3-panel layout when active */}
-      {cardView && librarian.folderTree?.children && librarian.rootFolder && (
-        <FolderCardView
-          rootNode={librarian.folderTree}
-          rootFolder={librarian.rootFolder}
-          files={files}
-          packInfoFolders={packInfoFolders}
-          isDark={settings.theme !== 'light'}
-          initialPath={cardViewInitialPath}
-          rescanSignal={cardRescanSignal}
-          onOpenFolder={(path) => {
-            setCardView(false)
-            setCardViewInitialPath(null)
-            setLibrarian((prev) => ({ ...prev, selectedFolders: [path] }))
-          }}
-          onSearchTone3000={(query, folderPath) => {
-            toneStoreReturnToCardViewRef.current = true
-            setCardView(false)
-            setToneStoreDefaultDir(folderPath)
-            setToneStoreSearchRequest({ key: Date.now(), query })
-            setShowToneStore(true)
-            setShowSettings(false)
-            setBatchFolder(null)
-            setShowDashboard(false)
-          }}
-        />
-      )}
+      {/* Content area: card view (left) + 3-panel / ToneStore (right) */}
+      <div className="flex flex-1 overflow-hidden">
+        {cardView && librarian.folderTree?.children && librarian.rootFolder && (
+          <FolderCardView
+            rootNode={librarian.folderTree}
+            rootFolder={librarian.rootFolder}
+            files={files}
+            packInfoFolders={packInfoFolders}
+            isDark={settings.theme !== 'light'}
+            initialPath={cardViewInitialPath}
+            rescanSignal={cardRescanSignal}
+            hidePreviewPanel={showToneStorePanel}
+            onOpenFolder={(path) => {
+              setCardView(false)
+              setCardViewInitialPath(null)
+              setLibrarian((prev) => ({ ...prev, selectedFolders: [path] }))
+            }}
+            onSearchTone3000={(query, folderPath) => {
+              setToneStoreDefaultDir(folderPath)
+              setToneStoreSearchRequest({ key: Date.now(), query })
+              setShowToneStore(true)
+              setShowSettings(false)
+              setBatchFolder(null)
+              setShowDashboard(false)
+            }}
+          />
+        )}
 
-      <div className="flex flex-1 overflow-hidden relative" style={cardView ? { display: 'none' } : undefined}>
+      {/* 3-panel layout — hidden in card view unless ToneStore is open (then right-panel only) */}
+      <div className="flex flex-1 overflow-hidden relative" style={
+        cardView && showToneStorePanel ? { width: 380, flexShrink: 0, flexGrow: 0 }
+        : cardView ? { display: 'none' }
+        : undefined
+      }>
         {/* Folder tree — only shown when a folder is open */}
         {hasTree && (
           <>
-            <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: (treeCollapsed || gridMaximized) ? 0 : treeWidth, overflow: 'hidden' }}>
+            <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: (treeCollapsed || gridMaximized || (cardView && showToneStorePanel)) ? 0 : treeWidth, overflow: 'hidden' }}>
               <FolderTree
                 tree={librarian.folderTree!}
                 files={files}
@@ -4075,7 +4079,7 @@ export default function App() {
 
         {/* File list Ã¢â‚¬â€ only shown when files are loaded */}
         {files.length > 0 && <>
-          <div className={gridMaximized ? 'flex-1 flex flex-col overflow-hidden' : 'flex-shrink-0 flex flex-col overflow-hidden'} style={gridMaximized ? undefined : { width: listCollapsed ? 0 : listWidth }}>
+          <div className={gridMaximized ? 'flex-1 flex flex-col overflow-hidden' : 'flex-shrink-0 flex flex-col overflow-hidden'} style={gridMaximized ? undefined : { width: (listCollapsed || (cardView && showToneStorePanel)) ? 0 : listWidth }}>
             <FileList
               files={visibleFiles}
               selectedIds={selectedIds}
@@ -4214,11 +4218,7 @@ export default function App() {
                 onClose={() => {
                   setShowToneStore(false)
                   setToneStoreDefaultDir(null)
-                  if (toneStoreReturnToCardViewRef.current) {
-                    toneStoreReturnToCardViewRef.current = false
-                    setCardView(true)
-                    setCardRescanSignal((s) => s + 1)
-                  }
+                  if (cardView) setCardRescanSignal((s) => s + 1)
                 }}
                 onDownloaded={(paths) => loadFiles(paths, 'append')}
                 onFilterLocalCreator={handleFilterLocalCreator}
@@ -4772,6 +4772,7 @@ export default function App() {
           </div>
         )}
       </div>
+      </div>{/* end content area wrapper */}
 
       {helpView && (
         <HelpModal initialTab={helpView} onClose={() => setHelpView(null)} />

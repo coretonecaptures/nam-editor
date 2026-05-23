@@ -135,9 +135,10 @@ interface FolderCardViewProps {
   initialPath?: string | null
   onSearchTone3000?: (query: string, folderPath: string) => void
   rescanSignal?: number
+  hidePreviewPanel?: boolean
 }
 
-export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, onOpenFolder, isDark, initialPath, onSearchTone3000, rescanSignal }: FolderCardViewProps) {
+export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, onOpenFolder, isDark, initialPath, onSearchTone3000, rescanSignal, hidePreviewPanel }: FolderCardViewProps) {
   const [stack, setStack] = useState<FolderNode[]>(() =>
     initialPath ? buildStackToPath(rootNode, initialPath) : []
   )
@@ -324,7 +325,7 @@ export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, o
         </div>
 
         {/* Drag handle + preview panel */}
-        {selected && selectedNode && (
+        {!hidePreviewPanel && selected && selectedNode && (
           <>
             <div
               onMouseDown={onResizeMouseDown}
