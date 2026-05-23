@@ -3912,7 +3912,7 @@ export default function App() {
         {/* ToneStore overlay — covers card view and 3-panel when open */}
         {toneStoreMounted && (
           <div
-            className={showToneStorePanel ? 'absolute inset-0 z-20 flex flex-col' : 'absolute inset-0 opacity-0 pointer-events-none -z-10'}
+            className={showToneStorePanel ? 'absolute inset-0 z-20 overflow-hidden bg-white dark:bg-gray-950' : 'absolute inset-0 opacity-0 pointer-events-none -z-10'}
             aria-hidden={!showToneStorePanel}
           >
             <ToneStore
