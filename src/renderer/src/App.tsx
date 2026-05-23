@@ -3917,6 +3917,14 @@ export default function App() {
             setCardViewInitialPath(null)
             setLibrarian((prev) => ({ ...prev, selectedFolders: [path] }))
           }}
+          onSearchTone3000={(query) => {
+            setToneStoreSearchRequest({ key: Date.now(), query })
+            setShowToneStore(true)
+            setShowSettings(false)
+            setBatchFolder(null)
+            setShowDashboard(false)
+            setCardView(false)
+          }}
         />
       )}
 

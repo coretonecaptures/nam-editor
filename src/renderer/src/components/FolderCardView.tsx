@@ -133,9 +133,10 @@ interface FolderCardViewProps {
   onOpenFolder: (path: string) => void
   isDark: boolean
   initialPath?: string | null
+  onSearchTone3000?: (query: string) => void
 }
 
-export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, onOpenFolder, isDark, initialPath }: FolderCardViewProps) {
+export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, onOpenFolder, isDark, initialPath, onSearchTone3000 }: FolderCardViewProps) {
   const [stack, setStack] = useState<FolderNode[]>(() =>
     initialPath ? buildStackToPath(rootNode, initialPath) : []
   )
@@ -348,6 +349,14 @@ export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, o
             <button onClick={() => drillInto(ctxMenu.node)} className="w-full text-left px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2">
               <span>⊞</span> Browse inside
             </button>
+          )}
+          {onSearchTone3000 && (
+            <>
+              <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
+              <button onClick={() => { onSearchTone3000(ctxMenu.node.name); setCtxMenu(null) }} className="w-full text-left px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2 text-teal-700 dark:text-teal-400">
+                <span>🔍</span> Find on Tone3000
+              </button>
+            </>
           )}
         </div>
       )}
