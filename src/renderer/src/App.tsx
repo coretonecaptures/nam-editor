@@ -530,6 +530,10 @@ export default function App() {
   const [cardViewInitialPath, setCardViewInitialPath] = useState<string | null>(null)
   const [toneStoreDefaultDir, setToneStoreDefaultDir] = useState<string | null>(null)
   const [cardRescanSignal, setCardRescanSignal] = useState(0)
+  const [toneStorePanelWidth, setToneStorePanelWidth] = useState(() => {
+    const saved = localStorage.getItem('toneStorePanelWidth')
+    return saved ? Math.max(300, Math.min(700, Number(saved))) : 380
+  })
   const initialLayout = loadLayout()
   const initialSettings = loadSettings()
   const [treeWidth, setTreeWidth] = useState(initialLayout.treeWidth)
@@ -844,6 +848,7 @@ export default function App() {
       setToneStoreQueueJob((prev) => prev ? { ...prev, items, downloadedPaths, skipped, nextIndex: items.length, status: 'done', message: msg } : prev)
       setStatus({ message: `Tone3000 download complete: ${msg}`, type: 'success' })
       if (downloadedPaths.length > 0) await loadFilesRef.current?.(downloadedPaths, 'append')
+      setCardRescanSignal((s) => s + 1)
       await refreshFolderTreeRef.current?.()
     }
 
@@ -3930,18 +3935,39 @@ export default function App() {
               setShowSettings(false)
               setBatchFolder(null)
               setShowDashboard(false)
+              setHistoryOpen(false)
             }}
           />
         )}
 
+      {/* Drag handle between card grid and ToneStore panel */}
+      {cardView && showToneStorePanel && (
+        <div
+          className="w-1 cursor-col-resize shrink-0 bg-gray-200 dark:bg-gray-800 hover:bg-teal-500/60 active:bg-teal-500 transition-colors"
+          onMouseDown={(e) => {
+            e.preventDefault()
+            const startX = e.clientX
+            const startW = toneStorePanelWidth
+            const onMove = (ev: MouseEvent) => {
+              const next = Math.max(300, Math.min(700, startW - (ev.clientX - startX)))
+              setToneStorePanelWidth(next)
+              localStorage.setItem('toneStorePanelWidth', String(next))
+            }
+            const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+            window.addEventListener('mousemove', onMove)
+            window.addEventListener('mouseup', onUp)
+          }}
+        />
+      )}
+
       {/* 3-panel layout — hidden in card view unless ToneStore is open (then right-panel only) */}
       <div className="flex flex-1 overflow-hidden relative" style={
-        cardView && showToneStorePanel ? { width: 380, flexShrink: 0, flexGrow: 0 }
+        cardView && showToneStorePanel ? { width: toneStorePanelWidth, flexBasis: toneStorePanelWidth, flexShrink: 0, flexGrow: 0 }
         : cardView ? { display: 'none' }
         : undefined
       }>
         {/* Folder tree — only shown when a folder is open */}
-        {hasTree && (
+        {hasTree && !(cardView && showToneStorePanel) && (
           <>
             <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: (treeCollapsed || gridMaximized || (cardView && showToneStorePanel)) ? 0 : treeWidth, overflow: 'hidden' }}>
               <FolderTree
@@ -4078,8 +4104,8 @@ export default function App() {
         )}
 
         {/* File list Ã¢â‚¬â€ only shown when files are loaded */}
-        {files.length > 0 && <>
-          <div className={gridMaximized ? 'flex-1 flex flex-col overflow-hidden' : 'flex-shrink-0 flex flex-col overflow-hidden'} style={gridMaximized ? undefined : { width: (listCollapsed || (cardView && showToneStorePanel)) ? 0 : listWidth }}>
+        {files.length > 0 && !(cardView && showToneStorePanel) && <>
+          <div className={gridMaximized ? 'flex-1 flex flex-col overflow-hidden' : 'flex-shrink-0 flex flex-col overflow-hidden'} style={gridMaximized ? undefined : { width: listCollapsed ? 0 : listWidth }}>
             <FileList
               files={visibleFiles}
               selectedIds={selectedIds}
@@ -4208,7 +4234,7 @@ export default function App() {
         </>}
 
         {/* Main content */}
-        <div ref={mainContentRef} tabIndex={-1} className={`flex-1 overflow-hidden flex flex-col focus:outline-none${gridMaximized ? ' hidden' : ''}`} style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        <div ref={mainContentRef} tabIndex={-1} className={`flex-1 overflow-hidden flex flex-col focus:outline-none${gridMaximized && !cardView ? ' hidden' : ''}`} style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           {toneStoreMounted && (
             <div
               className={showToneStorePanel ? 'flex-1 min-h-0 flex flex-col' : 'absolute inset-0 opacity-0 pointer-events-none -z-10'}
@@ -4220,7 +4246,7 @@ export default function App() {
                   setToneStoreDefaultDir(null)
                   if (cardView) setCardRescanSignal((s) => s + 1)
                 }}
-                onDownloaded={(paths) => loadFiles(paths, 'append')}
+                onDownloaded={(paths) => { loadFiles(paths, 'append'); if (cardView) setCardRescanSignal((s) => s + 1) }}
                 onFilterLocalCreator={handleFilterLocalCreator}
                 savedTone3000Username={settings.tone3000Username}
                 searchRequest={toneStoreSearchRequest}
