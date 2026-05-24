@@ -26,6 +26,7 @@ import { WavCoverageTab } from './components/WavCoverageTab'
 import { PackInfoEditor, type DeliveryMatrixData, type PackInfo, type PackChecklistItem } from './components/PackInfoEditor'
 import { PackTargetsEditor } from './components/PackTargetsEditor'
 import { TrainingPanel } from './components/TrainingPanel'
+import { TrainingSetupGuide } from './components/TrainingSetupGuide'
 import { FolderSuggestRulesModal } from './components/FolderSuggestRulesModal'
 import { BundleEditor } from './components/BundleEditor'
 import { NamDashboard } from './components/NamDashboard'
@@ -607,6 +608,8 @@ export default function App() {
   const [historyOpen, setHistoryOpen] = useState(false)
   const [showToneStore, setShowToneStore] = useState(false)
   const [showTrainingWorkspace, setShowTrainingWorkspace] = useState(false)
+  const [showTrainingSetupGuide, setShowTrainingSetupGuide] = useState(false)
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'training' | undefined>(undefined)
   const [trainingWorkspaceMode, setTrainingWorkspaceMode] = useState<'files' | 'folder' | 'queue' | 'history'>('files')
   const [globalTrainerState, setGlobalTrainerState] = useState<TrainerStateSnapshot>(IDLE_TRAINER_STATE)
   const trainerWatcherAutoStartRecoveryRef = useRef('')
@@ -4264,13 +4267,14 @@ export default function App() {
             </div>
           )}
           {showSettings ? (
-            <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} />
+            <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => { setShowSettings(false); setSettingsInitialTab(undefined) }} initialTab={settingsInitialTab} />
           ) : showToneStorePanel ? null : showTrainingWorkspace ? (
             <TrainingPanel
               settings={settings}
               onSaveSettings={handleSaveSettings}
               initialRunMode={trainingWorkspaceMode}
               onClose={() => setShowTrainingWorkspace(false)}
+              onOpenSetupGuide={() => setShowTrainingSetupGuide(true)}
             />
           ) : showDashboard ? (
             <NamDashboard
@@ -4382,6 +4386,7 @@ export default function App() {
                     <TrainingPanel
                       settings={settings}
                       onSaveSettings={handleSaveSettings}
+                      onOpenSetupGuide={() => setShowTrainingSetupGuide(true)}
                     />
                   ) : (
                     <MetadataEditor
@@ -4739,7 +4744,7 @@ export default function App() {
               </button>
             </div>
             {showSettings ? (
-              <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => { setShowSettings(false); setGridSlideOpen(false) }} />
+              <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => { setShowSettings(false); setGridSlideOpen(false); setSettingsInitialTab(undefined) }} initialTab={settingsInitialTab} />
             ) : batchFolder !== null ? (
               <BatchEditor
                 folderName={batchFolder.name}
@@ -4808,6 +4813,25 @@ export default function App() {
 
       {helpView && (
         <HelpModal initialTab={helpView} onClose={() => setHelpView(null)} />
+      )}
+
+      {showTrainingSetupGuide && (
+        <TrainingSetupGuide
+          settings={settings}
+          trainerState={globalTrainerState}
+          rootFolder={librarian.rootFolder}
+          onClose={() => setShowTrainingSetupGuide(false)}
+          onOpenSettings={(tab) => {
+            setShowTrainingSetupGuide(false)
+            setSettingsInitialTab(tab as typeof settingsInitialTab)
+            setShowSettings(true)
+          }}
+          onOpenTraining={() => {
+            setShowTrainingSetupGuide(false)
+            setShowTrainingWorkspace(true)
+            setTrainingWorkspaceMode('files')
+          }}
+        />
       )}
 
       <DefaultsPill settings={settings} />

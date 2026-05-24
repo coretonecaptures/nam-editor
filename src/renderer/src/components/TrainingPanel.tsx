@@ -15,6 +15,7 @@ import {
 import { ArchitectureProfilePicker } from './ArchitectureProfilePicker'
 import { CaptureProfileEditor } from './CaptureProfileEditor'
 import { WatcherFilesModal } from './WatcherFilesModal'
+import { HelpPopover } from './HelpPopover'
 import { effectiveFormula, resolveOutputFormula } from '../utils/resolveOutputFormula'
 
 interface Props {
@@ -22,6 +23,7 @@ interface Props {
   onSaveSettings: (settings: AppSettings) => void
   onClose?: () => void
   initialRunMode?: 'files' | 'folder' | 'queue' | 'history'
+  onOpenSetupGuide?: () => void
 }
 
 const ARCHITECTURE_LABELS: Record<TrainerArchitecture, string> = {
@@ -109,7 +111,7 @@ function showNativeTextContextMenu(event: MouseEvent<HTMLElement>) {
   void window.api.showTextContextMenu({ hasSelection: !!selection, isEditable })
 }
 
-export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMode }: Props) {
+export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMode, onOpenSetupGuide }: Props) {
   const [inputPath, setInputPath] = useState(settings.namTrainingInputWav || '')
   const [runMode, setRunMode] = useState<'files' | 'folder' | 'queue' | 'history'>(initialRunMode ?? 'files')
   const [watchFoldersExpanded, setWatchFoldersExpanded] = useState(false)
@@ -1042,8 +1044,21 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                       <svg className={`w-3 h-3 text-gray-400 transition-transform ${watchFoldersExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
                       </svg>
-                      <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 flex-1">Watch Folders</span>
-                      <span className="text-[10px] text-gray-400 dark:text-gray-600 tabular-nums">{settings.trainingWatchProfiles.length}</span>
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Watch Folders</span>
+                      <span className="flex-1" />
+                      {onOpenSetupGuide && (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); onOpenSetupGuide() }}
+                          className="text-[10px] text-indigo-500 dark:text-indigo-400 hover:underline mr-1"
+                        >
+                          Routing setup guide
+                        </button>
+                      )}
+                      <HelpPopover side="left">
+                        Drop WAV files in a watch folder and NAM Lab trains them automatically using the linked preset. Finished <code>.nam</code> files land in the output path configured for that preset. Use the Routing setup guide to wire up the full pipeline.
+                      </HelpPopover>
+                      <span className="text-[10px] text-gray-400 dark:text-gray-600 tabular-nums ml-1">{settings.trainingWatchProfiles.length}</span>
                       {trainerState.watcherState.watchers.some((w) => w.skippedCount > 0) && (
                         <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-amber-500/15 text-amber-700 dark:text-amber-400">skipped files</span>
                       )}
@@ -1202,7 +1217,14 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
 
             {/* ── Training Settings ── */}
             <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/[0.05] dark:bg-indigo-500/[0.04] p-4 space-y-4">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-indigo-500 dark:text-indigo-400">Training Settings</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-indigo-500 dark:text-indigo-400">Training Settings</span>
+                <HelpPopover title="Training Settings" side="right">
+                  Configure the architecture, epochs, and model type for this run. Choose a saved <strong>Preset</strong> to load a full configuration in one click, or set <strong>Custom</strong> to adjust each field individually.
+                  <br /><br />
+                  The <strong>Architecture(s)</strong> picker includes built-in WaveNet sizes and any <strong>Capture Profiles</strong> you have saved in Settings → Training. A Capture Profile lets you store a custom layer config (e.g. from a NAM-BOT preset) alongside an epoch count so you can reuse it without re-entering it each time.
+                </HelpPopover>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_minmax(110px,0.6fr)_minmax(110px,0.6fr)_minmax(120px,0.7fr)] gap-4">
                 <Field label="Preset">
                   <select
@@ -1251,7 +1273,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     </Field>
 
                     {namMode === 'a1' && (
-                    <Field label="Architecture(s)">
+                    <Field label="Architecture(s)" help={<>Each architecture produces a <code>.nam</code> of different size and quality. <strong>Standard</strong> = best quality, more CPU. <strong>Lite / Feather / Nano</strong> = faster but lower fidelity. <strong>REVx / REVy</strong> = tuned for reverb captures. Selecting multiple trains them all in one session.</>}>
                       <ArchitectureMultiSelect
                         values={architectures}
                         onChange={(next) => {
@@ -1282,7 +1304,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                       />
                     </Field>
 
-                    <Field label="Target ESR" labelTitle="Stops training early once this ESR is reached. Quality guide: <0.01 = Great · <0.035 = Good · <0.1 = Acceptable">
+                    <Field label="Target ESR" labelTitle="Stops training early once this ESR is reached. Quality guide: <0.01 = Great · <0.035 = Good · <0.1 = Acceptable" help={<>Error-to-Signal Ratio — lower is better. Setting a target stops training early once this quality level is reached, saving time. Leave blank to run the full epoch count.<br /><br /><strong>Quality tiers:</strong> &lt;0.01 = great · &lt;0.035 = good · &lt;0.1 = acceptable.</>}>
                       <input
                         value={thresholdEsr}
                         onChange={(e) => setThresholdEsr(e.target.value)}
@@ -1307,6 +1329,11 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     <ToggleRow label="Ignore checks" checked={ignoreChecks} onChange={setIgnoreChecks} />
                     <div className="flex items-center gap-1.5">
                       <span className="text-xs text-gray-500 dark:text-gray-400">Normalize</span>
+                      <HelpPopover title="Input normalization" side="right">
+                        Applies a matched peak-gain to the input and output WAVs before training so both hit the same target level (default −5 dBFS). NAM trains better when levels are consistent across sessions.
+                        <br /><br />
+                        Normalization copies are made in the run workspace — your original WAV files are never modified. The global default is set in Settings → Training.
+                      </HelpPopover>
                       <select
                         value={normalizeWavOverride}
                         onChange={(e) => setNormalizeWavOverride(e.target.value as 'global' | 'on' | 'off')}
@@ -1346,7 +1373,14 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
 
             {/* ── Output Routing ── */}
             <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-4 space-y-3">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Output Routing</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Output Routing</span>
+                <HelpPopover title="Output Routing" side="right">
+                  Controls where finished <code>.nam</code> files land after training. When a <strong>NAM output formula</strong> is active (configured in Settings → Training), the path is built automatically from tokens like <code>{'{folder}'}</code>, <code>{'{architecture}'}</code>, and <code>{'{filename}'}</code>.
+                  <br /><br />
+                  If no formula is set, choose a root folder directly or type a specific path. The folder tree on the left will pick up new <code>.nam</code> files automatically once they appear.
+                </HelpPopover>
+              </div>
 
               {/* NAM formula banner */}
               {activeFormula && manualRoutingMode === 'root' ? (() => {
@@ -2197,14 +2231,17 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   )
 }
 
-function Field({ label, hint, labelTitle, children }: { label: string; hint?: string; labelTitle?: string; children: React.ReactNode }) {
+function Field({ label, hint, labelTitle, help, children }: { label: string; hint?: string; labelTitle?: string; help?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div>
-      <label title={labelTitle} className={`block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 ${labelTitle ? 'cursor-help' : ''}`}>
-        {label}
-        {labelTitle && <span className="ml-1 text-gray-400 dark:text-gray-600">ⓘ</span>}
-        {hint && <span className="ml-2 text-gray-500 dark:text-gray-500 font-normal">{hint}</span>}
-      </label>
+      <div className="flex items-center gap-1 mb-1.5">
+        <label title={labelTitle} className={`text-xs font-medium text-gray-500 dark:text-gray-400 ${labelTitle ? 'cursor-help' : ''}`}>
+          {label}
+          {labelTitle && <span className="ml-1 text-gray-400 dark:text-gray-600">ⓘ</span>}
+          {hint && <span className="ml-2 text-gray-500 dark:text-gray-500 font-normal">{hint}</span>}
+        </label>
+        {help && <HelpPopover>{help}</HelpPopover>}
+      </div>
       {children}
     </div>
   )

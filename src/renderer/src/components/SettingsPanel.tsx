@@ -15,6 +15,7 @@ import {
   cloneTargetChecklistTemplates,
 } from '../types/settings'
 import { MetadataSuggestRuleLibraryModal } from './MetadataSuggestRuleLibraryModal'
+import { HelpPopover } from './HelpPopover'
 import { OutputFormulaField } from './OutputFormulaField'
 import { resolveOutputFormula, effectiveFormula } from '../utils/resolveOutputFormula'
 import { FilenameRecipeBuilderModal } from './FilenameRecipeBuilderModal'
@@ -61,11 +62,12 @@ interface SettingsPanelProps {
   settings: AppSettings
   onSave: (settings: AppSettings) => void
   onClose: () => void
+  initialTab?: 'global' | 'defaults' | 'metadata' | 'pack' | 'training'
 }
 
-export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps) {
+export function SettingsPanel({ settings, onSave, onClose, initialTab }: SettingsPanelProps) {
   const [draft, setDraft] = useState<AppSettings>({ ...settings })
-  const [settingsTab, setSettingsTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'training'>('global')
+  const [settingsTab, setSettingsTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'training'>(initialTab ?? 'global')
   const [maximized, setMaximized] = useState(false)
   const [saved, setSaved] = useState(false)
   const [updateState, setUpdateState] = useState<UpdateState>({ status: 'idle' })
@@ -1603,7 +1605,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
 
               {draft.enableExperimentalTraining && (
                 <>
-                  <SettingsField label="NAM Python executable" hint="Python executable with neural-amp-modeler installed (≥ 0.12.3 recommended)">
+                  <SettingsField label="NAM Python executable" hint="Python executable with neural-amp-modeler installed (≥ 0.12.3 recommended)" help={<>Point this to the <code>python.exe</code> (Windows) or <code>python</code> binary inside your NAM conda or venv environment — <em>not</em> your system Python.<br /><br />Example: <code className="break-all">C:\Users\you\.conda\envs\nam\python.exe</code><br /><br />Requires <strong>neural-amp-modeler ≥ 0.12.3</strong> installed in that environment.</>}>
                     <div className="flex items-center gap-2">
                       <input
                         type="text"
@@ -1679,6 +1681,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                   <SettingsField
                     label="NAM output path formula"
                     hint="Derive the .nam output folder from the staging WAV path using tokens. Leave blank to use a fixed path per run."
+                    help={<>Tokens derive the output path from your input WAV's location:<br /><br /><code>{'{folder}'}</code> — parent folder name<br /><code>{'{filename}'}</code> — WAV filename without extension<br /><code>{'{architecture}'}</code> — e.g. standard, lite<br /><code>{'{date}'}</code> — YYYY-MM-DD<br /><br />Example: <code>../../Captures/{'{folder}'}/{'{architecture}'}</code></>}
                   >
                     <OutputFormulaField
                       value={draft.trainingOutputFormula ?? ''}
@@ -1690,6 +1693,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
                   <SettingsField
                     label="Graph output path formula"
                     hint="Derive the graph output folder from the staging WAV path using tokens. Leave blank to use a fixed path per run."
+                    help={<>Same tokens as the NAM output formula. Training graphs are PNG charts of ESR over time — useful for diagnosing under/overtraining.<br /><br />Suggested: <code>../../Graphs/{'{architecture}'}/{'{folder}'}</code></>}
                   >
                     <OutputFormulaField
                       value={draft.trainingGraphFormula ?? ''}
@@ -2279,19 +2283,24 @@ function SettingsField({
   label,
   hint,
   labelTitle,
+  help,
   children
 }: {
   label: string
   hint?: string
   labelTitle?: string
+  help?: React.ReactNode
   children: React.ReactNode
 }) {
   return (
     <div>
-      <label title={labelTitle} className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">
-        {label}
-        {hint && <span className="ml-2 text-gray-500 dark:text-gray-500 font-normal">{hint}</span>}
-      </label>
+      <div className="flex items-center gap-1 mb-1.5">
+        <label title={labelTitle} className="text-xs font-medium text-gray-500 dark:text-gray-400">
+          {label}
+          {hint && <span className="ml-2 text-gray-500 dark:text-gray-500 font-normal">{hint}</span>}
+        </label>
+        {help && <HelpPopover>{help}</HelpPopover>}
+      </div>
       {children}
     </div>
   )

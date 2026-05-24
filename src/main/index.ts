@@ -631,6 +631,8 @@ def main():
         )
 
     norm_payload = {**payload, "inputPath": active_input, "outputPath": active_output}
+    if payload.get("normalizeWav", False):
+        norm_payload["ignoreChecks"] = True  # normalized WAV amplitude won't match NAM version fingerprint
     result = _run_a2(norm_payload) if requested == "a2" else _run_a1(norm_payload)
 
     discovered_output = _find_output_model_path(payload["trainPath"], payload["modelName"])
