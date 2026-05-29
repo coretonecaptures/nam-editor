@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net, Menu } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net, Menu, safeStorage } from 'electron'
 import { join, dirname, basename, extname, normalize as normalizePath } from 'path'
 import fs from 'fs'
 import os from 'os'
@@ -3061,6 +3061,92 @@ app.whenReady().then(async () => {
       fs.writeFileSync(join(app.getPath('userData'), 'settings.json'), json, 'utf-8')
     } catch (err) {
       log(`settings:save error: ${String(err)}`)
+    }
+  })
+
+  // ── AI key helpers (safeStorage) ──────────────────────────────────────────
+  function aiKeyPath(provider: string): string {
+    return join(app.getPath('userData'), `ai-key-${provider}.bin`)
+  }
+
+  function storeAiKey(provider: string, key: string): void {
+    const p = aiKeyPath(provider)
+    if (safeStorage.isEncryptionAvailable()) {
+      fs.writeFileSync(p, safeStorage.encryptString(key))
+    } else {
+      fs.writeFileSync(p, key, 'utf-8')
+    }
+  }
+
+  function readAiKey(provider: string): string | null {
+    const p = aiKeyPath(provider)
+    try {
+      const buf = fs.readFileSync(p)
+      return safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(buf) : buf.toString('utf-8')
+    } catch {
+      return null
+    }
+  }
+
+  function clearAiKey(provider: string): void {
+    try { fs.unlinkSync(aiKeyPath(provider)) } catch { /* already gone */ }
+  }
+
+  // IPC: Save AI key (key never travels back to renderer)
+  ipcMain.handle('app:saveAiKey', async (_event, provider: string, key: string) => {
+    try {
+      storeAiKey(provider, key.trim())
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  })
+
+  // IPC: Clear AI key
+  ipcMain.handle('app:clearAiKey', async (_event, provider: string) => {
+    clearAiKey(provider)
+    return { success: true }
+  })
+
+  // IPC: AI enrich — sends a prompt to the configured provider, returns text
+  ipcMain.handle('app:aiEnrich', async (_event, payload: { prompt: string; provider: string; model: string }) => {
+    const key = readAiKey(payload.provider)
+    if (!key) return { success: false, error: 'No API key stored for ' + payload.provider }
+    try {
+      if (payload.provider === 'anthropic') {
+        const res = await net.fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'x-api-key': key,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: payload.model || 'claude-haiku-4-5-20251001',
+            max_tokens: 1024,
+            messages: [{ role: 'user', content: payload.prompt }],
+          }),
+        })
+        if (!res.ok) return { success: false, error: `Anthropic ${res.status}: ${await res.text()}` }
+        const data = await res.json() as { content?: { text?: string }[] }
+        return { success: true, text: data.content?.[0]?.text ?? '' }
+      } else if (payload.provider === 'openai') {
+        const res = await net.fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${key}`, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            model: payload.model || 'gpt-4o-mini',
+            messages: [{ role: 'user', content: payload.prompt }],
+            max_tokens: 1024,
+          }),
+        })
+        if (!res.ok) return { success: false, error: `OpenAI ${res.status}: ${await res.text()}` }
+        const data = await res.json() as { choices?: { message?: { content?: string } }[] }
+        return { success: true, text: data.choices?.[0]?.message?.content ?? '' }
+      }
+      return { success: false, error: 'Unknown provider: ' + payload.provider }
+    } catch (err) {
+      return { success: false, error: String(err) }
     }
   })
 

@@ -62,12 +62,12 @@ interface SettingsPanelProps {
   settings: AppSettings
   onSave: (settings: AppSettings) => void
   onClose: () => void
-  initialTab?: 'global' | 'defaults' | 'metadata' | 'pack' | 'training'
+  initialTab?: 'global' | 'defaults' | 'metadata' | 'pack' | 'training' | 'ai'
 }
 
 export function SettingsPanel({ settings, onSave, onClose, initialTab }: SettingsPanelProps) {
   const [draft, setDraft] = useState<AppSettings>({ ...settings })
-  const [settingsTab, setSettingsTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'training'>(initialTab ?? 'global')
+  const [settingsTab, setSettingsTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'training' | 'ai'>(initialTab ?? 'global')
   const [maximized, setMaximized] = useState(false)
   const [saved, setSaved] = useState(false)
   const [updateState, setUpdateState] = useState<UpdateState>({ status: 'idle' })
@@ -87,6 +87,39 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
   const [newItemId, setNewItemId] = useState<string | null>(null)
   const newItemRef = useRef<HTMLDivElement | null>(null)
   const [watcherFilesModal, setWatcherFilesModal] = useState<{ profileId: string; profileName: string; watchFolder: string; architectures: string[] } | null>(null)
+  const [aiKeyDraft, setAiKeyDraft] = useState({ anthropic: '', openai: '' })
+  const [aiKeySaving, setAiKeySaving] = useState<'anthropic' | 'openai' | null>(null)
+  const [aiKeyError, setAiKeyError] = useState<string | null>(null)
+  const [aiKeySaved, setAiKeySaved] = useState<'anthropic' | 'openai' | null>(null)
+
+  const saveAiKey = async (provider: 'anthropic' | 'openai') => {
+    const key = aiKeyDraft[provider].trim()
+    if (!key) return
+    setAiKeySaving(provider)
+    setAiKeyError(null)
+    setAiKeySaved(null)
+    const res = await window.api.saveAiKey(provider, key)
+    setAiKeySaving(null)
+    if (res.success) {
+      setAiKeyDraft(prev => ({ ...prev, [provider]: '' }))
+      setAiKeySaved(provider)
+      const flag = provider === 'anthropic' ? 'hasAnthropicKey' : 'hasOpenAiKey'
+      const saved = { ...draft, [flag]: true }
+      setDraft(saved)
+      onSave(saved)
+      setTimeout(() => setAiKeySaved(null), 2500)
+    } else {
+      setAiKeyError(res.error ?? 'Failed to save key')
+    }
+  }
+
+  const handleClearAiKey = async (provider: 'anthropic' | 'openai') => {
+    await window.api.clearAiKey(provider)
+    const flag = provider === 'anthropic' ? 'hasAnthropicKey' : 'hasOpenAiKey'
+    const saved = { ...draft, [flag]: false }
+    setDraft(saved)
+    onSave(saved)
+  }
 
   useEffect(() => {
     if (!newItemId || !newItemRef.current) return
@@ -420,6 +453,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
             ['metadata', 'Metadata'],
             ['pack', 'Pack'],
             ['training', 'Training'],
+            ['ai', 'AI'],
           ] as const).map(([value, label]) => (
             <button
               key={value}
@@ -2156,6 +2190,138 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
               )}
             </div>
           </div>
+          )}
+
+          {/* ── AI tab ────────────────────────────────────────────────── */}
+          {settingsTab === 'ai' && (
+            <div className="space-y-8">
+              <div>
+                <div className="flex items-center gap-2 mb-4">
+                  <span className="text-sm">✨</span>
+                  <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">AI Enrichment</h3>
+                  <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
+                </div>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mb-5 leading-relaxed">
+                  API keys are stored encrypted on your machine via Electron safeStorage — they are never written to settings.json or sent anywhere except the provider's API.
+                </p>
+
+                {/* Provider preference */}
+                <div className="mb-6">
+                  <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Default provider</div>
+                  <div className="flex gap-2">
+                    {(['anthropic', 'openai'] as const).map((p) => (
+                      <button
+                        key={p}
+                        onClick={() => { update('aiProvider', p) }}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${draft.aiProvider === p ? 'border-cyan-500 text-cyan-400 bg-cyan-500/10' : 'border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-gray-400 dark:hover:border-gray-600'}`}
+                      >
+                        {p === 'anthropic' ? 'Anthropic (Claude)' : 'OpenAI (GPT)'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Anthropic */}
+                <div className="rounded-xl border border-gray-200 dark:border-gray-800 p-4 mb-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-medium text-gray-800 dark:text-gray-200">Anthropic (Claude)</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-500 mt-0.5">console.anthropic.com → API Keys</div>
+                    </div>
+                    {draft.hasAnthropicKey && (
+                      <span className="inline-flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">
+                        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 00-1.414 0L8 12.586 4.707 9.293a1 1 0 00-1.414 1.414l4 4a1 1 0 001.414 0l8-8a1 1 0 000-1.414z" clipRule="evenodd"/></svg>
+                        Key saved
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="password"
+                      placeholder={draft.hasAnthropicKey ? '••••••••  (replace to update)' : 'sk-ant-…'}
+                      value={aiKeyDraft.anthropic}
+                      onChange={e => { setAiKeyDraft(prev => ({ ...prev, anthropic: e.target.value })); setAiKeyError(null); setAiKeySaved(null) }}
+                      className="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-cyan-500"
+                    />
+                    <button
+                      onClick={() => void saveAiKey('anthropic')}
+                      disabled={!aiKeyDraft.anthropic.trim() || aiKeySaving === 'anthropic'}
+                      className="px-3 py-2 rounded-lg text-xs font-medium bg-cyan-600 text-white hover:bg-cyan-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {aiKeySaving === 'anthropic' ? 'Saving…' : aiKeySaved === 'anthropic' ? '✓ Saved' : 'Save'}
+                    </button>
+                    {draft.hasAnthropicKey && (
+                      <button onClick={() => void handleClearAiKey('anthropic')} className="px-3 py-2 rounded-lg text-xs text-red-500 border border-red-500/30 hover:bg-red-500/10 transition-colors">
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Model</div>
+                    <input
+                      type="text"
+                      value={draft.aiAnthropicModel}
+                      onChange={e => update('aiAnthropicModel', e.target.value)}
+                      placeholder="claude-haiku-4-5-20251001"
+                      className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-600 font-mono focus:outline-none focus:border-cyan-500"
+                    />
+                    <p className="text-[10px] text-gray-400 dark:text-gray-600 mt-1">Haiku = fast &amp; cheap · Sonnet = more accurate</p>
+                  </div>
+                </div>
+
+                {/* OpenAI */}
+                <div className="rounded-xl border border-gray-200 dark:border-gray-800 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-medium text-gray-800 dark:text-gray-200">OpenAI (GPT)</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-500 mt-0.5">platform.openai.com → API Keys</div>
+                    </div>
+                    {draft.hasOpenAiKey && (
+                      <span className="inline-flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">
+                        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 00-1.414 0L8 12.586 4.707 9.293a1 1 0 00-1.414 1.414l4 4a1 1 0 001.414 0l8-8a1 1 0 000-1.414z" clipRule="evenodd"/></svg>
+                        Key saved
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="password"
+                      placeholder={draft.hasOpenAiKey ? '••••••••  (replace to update)' : 'sk-…'}
+                      value={aiKeyDraft.openai}
+                      onChange={e => { setAiKeyDraft(prev => ({ ...prev, openai: e.target.value })); setAiKeyError(null); setAiKeySaved(null) }}
+                      className="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-cyan-500"
+                    />
+                    <button
+                      onClick={() => void saveAiKey('openai')}
+                      disabled={!aiKeyDraft.openai.trim() || aiKeySaving === 'openai'}
+                      className="px-3 py-2 rounded-lg text-xs font-medium bg-cyan-600 text-white hover:bg-cyan-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {aiKeySaving === 'openai' ? 'Saving…' : aiKeySaved === 'openai' ? '✓ Saved' : 'Save'}
+                    </button>
+                    {draft.hasOpenAiKey && (
+                      <button onClick={() => void handleClearAiKey('openai')} className="px-3 py-2 rounded-lg text-xs text-red-500 border border-red-500/30 hover:bg-red-500/10 transition-colors">
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Model</div>
+                    <input
+                      type="text"
+                      value={draft.aiOpenAiModel}
+                      onChange={e => update('aiOpenAiModel', e.target.value)}
+                      placeholder="gpt-4o-mini"
+                      className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-600 font-mono focus:outline-none focus:border-cyan-500"
+                    />
+                    <p className="text-[10px] text-gray-400 dark:text-gray-600 mt-1">gpt-4o-mini = fast &amp; cheap · gpt-4o = more accurate</p>
+                  </div>
+                </div>
+
+                {aiKeyError && (
+                  <p className="mt-3 text-xs text-red-500">{aiKeyError}</p>
+                )}
+              </div>
+            </div>
           )}
 
         </div>

@@ -337,6 +337,13 @@ export interface AppSettings {
 
   // User-defined capture profiles (custom WaveNet architectures)
   userCaptureProfiles: UserCaptureProfile[]
+
+  // AI enrichment (keys stored in main via safeStorage — never in settings JSON)
+  hasAnthropicKey: boolean
+  hasOpenAiKey: boolean
+  aiProvider: 'anthropic' | 'openai'
+  aiAnthropicModel: string
+  aiOpenAiModel: string
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -406,6 +413,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   libraryCleanupIgnoredPaths: [],
   folderWavComparisonPaths: {},
   userCaptureProfiles: [],
+  hasAnthropicKey: false,
+  hasOpenAiKey: false,
+  aiProvider: 'anthropic',
+  aiAnthropicModel: 'claude-haiku-4-5-20251001',
+  aiOpenAiModel: 'gpt-4o-mini',
 }
 
 const STORAGE_KEY = 'nam-editor-settings'

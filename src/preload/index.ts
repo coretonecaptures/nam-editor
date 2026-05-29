@@ -217,7 +217,13 @@ const api = {
     ipcRenderer.invoke('app:showTextContextMenu', params),
   platform: process.platform,
   initialSettings,
-  saveSettingsToFile: (json: string) => ipcRenderer.send('settings:save', json)
+  saveSettingsToFile: (json: string) => ipcRenderer.send('settings:save', json),
+  saveAiKey: (provider: string, key: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('app:saveAiKey', provider, key),
+  clearAiKey: (provider: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('app:clearAiKey', provider),
+  aiEnrich: (payload: { prompt: string; provider: string; model: string }): Promise<{ success: boolean; text?: string; error?: string }> =>
+    ipcRenderer.invoke('app:aiEnrich', payload)
 }
 
 if (process.contextIsolated) {
