@@ -415,7 +415,7 @@ function parsePackNotes(rawText: string): PackNotesParseResult {
       continue
     }
 
-    const glossaryMatch = trimmed.match(/^(?:[-*•]\s*)?([A-Za-z0-9@.+/\- ]{1,40})\s*=\s*(.+)$/)
+    const glossaryMatch = trimmed.match(/^(?:[-*•]\s*)?([A-Za-z0-9@.+/\-# ]{1,40})\s*(?:=|:)\s*(.+)$/)
     if (glossaryMatch) {
       const term = glossaryMatch[1].trim()
       const description = glossaryMatch[2].trim()
@@ -567,7 +567,7 @@ interface Props {
   onCurrentFolderSuggestRulesChange?: (rules: MetadataSuggestRule[]) => void
   onOpenCurrentFolderSuggestRulesEditor?: () => void
   hasAiKey?: boolean
-  onGenerateAbout?: () => Promise<string | null>
+  onGenerateAbout?: (ctx: { existingDescription: string; capturedBy: string }) => Promise<string | null>
 }
 
 function CopyFolderPicker({
@@ -1807,7 +1807,7 @@ export function PackInfoEditor({
                   setAboutGenerating(true)
                   setAboutError(null)
                   try {
-                    const text = await onGenerateAbout()
+                    const text = await onGenerateAbout({ existingDescription: pack.description, capturedBy: pack.capturedBy })
                     if (text) update('about', text)
                     else setAboutError('No content returned')
                   } catch (e) {

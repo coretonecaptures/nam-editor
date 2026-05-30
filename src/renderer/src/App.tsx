@@ -1886,24 +1886,67 @@ export default function App() {
     throw new Error(res.error ?? 'No response')
   }
 
-  const makeGenerateAboutForFolder = (folderFiles: NamFile[]) => async (): Promise<string | null> => {
-    const freq = (key: 'gear_make' | 'gear_model' | 'gear_type') => {
+  const makeGenerateAboutForFolder = (folderFiles: NamFile[]) => async (ctx: { existingDescription: string; capturedBy: string }): Promise<string | null> => {
+    const mostCommon = (key: 'gear_make' | 'gear_model' | 'gear_type') => {
       const counts = new Map<string, number>()
       for (const f of folderFiles) {
         const v = f.metadata[key]
         if (v) counts.set(v, (counts.get(v) ?? 0) + 1)
       }
-      let best = ''
-      let max = 0
+      let best = ''; let max = 0
       for (const [v, n] of counts) if (n > max) { best = v; max = n }
       return best
     }
-    const gear_make = freq('gear_make')
-    const gear_model = freq('gear_model')
-    const gear_type = freq('gear_type')
+    const gear_make = mostCommon('gear_make')
+    const gear_model = mostCommon('gear_model')
+    const gear_type = mostCommon('gear_type')
     if (!gear_make || !gear_model) return null
-    const gearLabel = gear_type ? `${gear_type.replace(/_/g, ' ')} ` : ''
-    const prompt = `You are an expert in guitar amplifiers, pedals, and audio gear. Write exactly 2–3 sentences describing the ${gearLabel}"${gear_make} ${gear_model}". Cover its tonal character, gain range or key modes/channels, and what genres or playing styles it's best known for. Be factual and specific. Write in present tense. Do not start with "The".`
+
+    // Build capture context from metadata
+    const totalCaptures = folderFiles.length
+
+    // Tone type breakdown
+    const toneCounts = new Map<string, number>()
+    for (const f of folderFiles) { const t = f.metadata.tone_type; if (t) toneCounts.set(t, (toneCounts.get(t) ?? 0) + 1) }
+    const toneBreakdown = [...toneCounts.entries()].sort((a, b) => b[1] - a[1]).map(([t, n]) => `${n} ${t.replace(/_/g, ' ')}`).join(', ')
+
+    // Unique channel names from nl_amp_channel and capture names (top 12, deduplicated)
+    const channelNames = [...new Set(folderFiles.map(f => f.metadata.nl_amp_channel).filter(Boolean) as string[])].slice(0, 8)
+    const captureNames = [...new Set(folderFiles.map(f => f.metadata.name).filter(Boolean) as string[])].slice(0, 12)
+
+    // Unique boost pedals, mics, cabinet, settings
+    const boostPedals = [...new Set(folderFiles.map(f => f.metadata.nl_boost_pedal).filter(Boolean) as string[])]
+    const mics = [...new Set(folderFiles.map(f => f.metadata.nl_mics).filter(Boolean) as string[])]
+    const cabinets = [...new Set(folderFiles.map(f => f.metadata.nl_cabinet).filter(Boolean) as string[])]
+    const ampSettings = [...new Set(folderFiles.map(f => f.metadata.nl_amp_settings).filter(Boolean) as string[])].slice(0, 4)
+
+    const lines: string[] = []
+    lines.push(`Gear: ${gear_make} ${gear_model}${gear_type ? ` (${gear_type.replace(/_/g, ' ')})` : ''}`)
+    lines.push(`Total captures in this pack: ${totalCaptures}`)
+    if (toneBreakdown) lines.push(`Tone breakdown: ${toneBreakdown}`)
+    if (channelNames.length) lines.push(`Amp channels captured: ${channelNames.join(', ')}`)
+    if (captureNames.length) lines.push(`Capture names: ${captureNames.join(', ')}`)
+    if (boostPedals.length) lines.push(`Boost/pedal used: ${boostPedals.join(', ')}`)
+    if (cabinets.length) lines.push(`Cabinet: ${cabinets.join(', ')}`)
+    if (mics.length) lines.push(`Mic setup: ${mics.join(', ')}`)
+    if (ampSettings.length) lines.push(`Amp settings noted: ${ampSettings.join(' | ')}`)
+    if (ctx.capturedBy) lines.push(`Captured by: ${ctx.capturedBy}`)
+    if (ctx.existingDescription.trim()) lines.push(`Pack description (use as context): ${ctx.existingDescription.trim()}`)
+
+    const captureContext = lines.join('\n')
+
+    const prompt = `You are writing a factual "About this gear" blurb for a neural amp modeler (NAM) capture pack library. The blurb should describe the real piece of gear and what was captured in this specific pack.
+
+CAPTURE PACK DATA:
+${captureContext}
+
+INSTRUCTIONS:
+- Write 3–5 sentences total.
+- Paragraph 1 (2–3 sentences): Describe the real ${gear_make} ${gear_model} — its character, key specs, notable channels or modes, and what it's known for. Draw on accurate knowledge of this specific piece of gear. If you are NOT familiar with this exact model or it appears to be a custom/boutique/fictional piece of gear, say so honestly (e.g. "This appears to be a boutique or custom design...") rather than inventing facts.
+- Paragraph 2 (1–2 sentences): Summarize what was captured in this pack — number of captures, tone types covered, channels captured, any pedals or special setups used. Ground this in the capture data above.
+- Be specific and factual. Do not use filler phrases like "This amp is renowned for" or "This versatile unit". Do not start with "The".
+- Write in present tense. Plain text only, no markdown.`
+
     const provider = settings.aiProvider ?? 'anthropic'
     const model = provider === 'anthropic' ? (settings.aiAnthropicModel || 'claude-haiku-4-5-20251001') : (settings.aiOpenAiModel || 'gpt-4o-mini')
     const res = await window.api.aiEnrich({ prompt, provider, model })
