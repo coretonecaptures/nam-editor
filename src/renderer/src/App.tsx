@@ -605,6 +605,8 @@ export default function App() {
   // Suppress auto-selection of the first file on startup when the dashboard is shown on launch,
   // so the dashboard stays visible after the default folder loads.
   const suppressStartupAutoSelectRef = useRef(settings.showDashboardOnLaunch)
+  const showDashboardRef = useRef(showDashboard)
+  useEffect(() => { showDashboardRef.current = showDashboard }, [showDashboard])
   const [historyOpen, setHistoryOpen] = useState(false)
   const [showToneStore, setShowToneStore] = useState(false)
   const [showTrainingWorkspace, setShowTrainingWorkspace] = useState(false)
@@ -1474,6 +1476,7 @@ export default function App() {
     setSelectedIds((prev) => {
       if (loaded.length === 0) return prev
       if (shouldSuppressSelect) return prev
+      if (showDashboardRef.current && mode === 'replace') return prev
       if (mode === 'replace') return new Set([loaded[0].filePath])
       if (mode === 'append-passive') return prev
       if (prev.size === 0) return new Set([loaded[0].filePath])
