@@ -3731,6 +3731,7 @@ INSTRUCTIONS:
     setHistoryOpen(false)
     setShowToneStore(false)
     setBatchFolder(null)
+    setCardView(false)
     setTrainingWorkspaceMode(mode)
     skipNextTrainingWorkspaceSelectionCloseRef.current = true
     setShowTrainingWorkspace(true)
@@ -3970,6 +3971,7 @@ INSTRUCTIONS:
           setBatchFolder(null)
           setShowToneStore(false)
           setShowTrainingWorkspace(false)
+          setCardView(false)
           if (gridMaximized) setGridSlideOpen(true)
         }}
         unnamedCount={unnamedCount}
@@ -3996,6 +3998,7 @@ INSTRUCTIONS:
           setShowToneStore(false)
           setShowTrainingWorkspace(false)
           setBatchFolder(null)
+          setCardView(false)
         }}
         historyOpen={historyOpen}
         onHistoryToggle={() => {
@@ -4005,6 +4008,7 @@ INSTRUCTIONS:
           setShowToneStore(false)
           setShowTrainingWorkspace(false)
           setBatchFolder(null)
+          setCardView(false)
         }}
         toneStoreActive={showToneStorePanel}
         onToggleToneStore={() => {
@@ -4015,6 +4019,7 @@ INSTRUCTIONS:
           setShowSettings(false)
           setShowTrainingWorkspace(false)
           setBatchFolder(null)
+          setCardView(false)
         }}
         helpOpen={helpView !== null}
         onOpenHelp={() => setHelpView('workflows')}

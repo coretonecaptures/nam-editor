@@ -1039,9 +1039,12 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 </div>
                 {settings.trainingWatchProfiles.length > 0 && (
                   <div className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
-                    <button
+                    <div
+                      role="button"
+                      tabIndex={0}
                       onClick={() => setWatchFoldersExpanded((v) => !v)}
-                      className="w-full flex items-center gap-2 px-3 py-2 bg-gray-100 dark:bg-gray-800/80 hover:bg-gray-150 dark:hover:bg-gray-800 transition-colors text-left"
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setWatchFoldersExpanded((v) => !v) }}
+                      className="w-full flex items-center gap-2 px-3 py-2 bg-gray-100 dark:bg-gray-800/80 hover:bg-gray-150 dark:hover:bg-gray-800 transition-colors cursor-pointer select-none"
                     >
                       <svg className={`w-3 h-3 text-gray-400 transition-transform ${watchFoldersExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
@@ -1064,7 +1067,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                       {trainerState.watcherState.watchers.some((w) => w.skippedCount > 0) && (
                         <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-amber-500/15 text-amber-700 dark:text-amber-400">skipped files</span>
                       )}
-                    </button>
+                    </div>
                     {watchFoldersExpanded && <div className="divide-y divide-gray-100 dark:divide-gray-800">
                       {settings.trainingWatchProfiles.map((profile, i) => {
                         const watcherRuntime = trainerState.watcherState.watchers.find((w) => w.profileId === profile.id)
