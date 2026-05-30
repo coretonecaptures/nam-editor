@@ -531,6 +531,7 @@ export default function App() {
   const [libraryFilter, setLibraryFilter] = useState<Set<string> | null>(null)
   const [cardView, setCardView] = useState(false)
   const [cardViewInitialPath, setCardViewInitialPath] = useState<string | null>(null)
+  const [overviewMaximized, setOverviewMaximized] = useState(false)
   const [toneStoreDefaultDir, setToneStoreDefaultDir] = useState<string | null>(null)
   const [cardRescanSignal, setCardRescanSignal] = useState(0)
   const [toneStorePanelWidth, setToneStorePanelWidth] = useState(() => {
@@ -875,6 +876,12 @@ export default function App() {
       setShowTrainingWorkspace(false)
     }
   }, [settings.enableExperimentalTraining, showTrainingWorkspace])
+
+  // Collapse overview maximize when neither dashboard is visible
+  useEffect(() => {
+    const folderOverviewVisible = !showDashboard && selectedIds.size === 0 && folderPanelTab === 'overview'
+    if (!showDashboard && !folderOverviewVisible) setOverviewMaximized(false)
+  }, [showDashboard, selectedIds.size, folderPanelTab])
 
   // Reset folder panel tab and check for pack-owning ancestor when selected folder changes
   useEffect(() => {
@@ -4228,7 +4235,7 @@ INSTRUCTIONS:
 
         {/* File list Ã¢â‚¬â€ only shown when files are loaded */}
         {files.length > 0 && !(cardView && showToneStorePanel) && <>
-          <div className={gridMaximized ? 'flex-1 flex flex-col overflow-hidden' : 'flex-shrink-0 flex flex-col overflow-hidden'} style={gridMaximized ? undefined : { width: listCollapsed ? 0 : listWidth }}>
+          <div className={gridMaximized ? 'flex-1 flex flex-col overflow-hidden' : 'flex-shrink-0 flex flex-col overflow-hidden'} style={gridMaximized ? undefined : { width: overviewMaximized ? 0 : (listCollapsed ? 0 : listWidth), overflow: 'hidden' }}>
             <FileList
               files={visibleFiles}
               selectedIds={selectedIds}
@@ -4353,7 +4360,7 @@ INSTRUCTIONS:
               onDirectFilesOnlyChange={setDirectFilesOnly}
             />
           </div>
-          {!gridMaximized && <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} onCollapse={() => setListCollapsed((v) => !v)} collapsed={listCollapsed} />}
+          {!gridMaximized && !overviewMaximized && <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} onCollapse={() => setListCollapsed((v) => !v)} collapsed={listCollapsed} />}
         </>}
 
         {/* Main content */}
@@ -4391,11 +4398,29 @@ INSTRUCTIONS:
               onOpenSetupGuide={() => setShowTrainingSetupGuide(true)}
             />
           ) : showDashboard ? (
-            <NamDashboard
-              files={files}
-              packChecklistRollup={dashboardChecklistEntries}
-              activeCreator={creatorFilter ?? undefined}
-              onCreatorClick={(creator) => {
+            <div className="relative h-full flex flex-col">
+              <button
+                onClick={() => setOverviewMaximized((v) => !v)}
+                title={overviewMaximized ? 'Restore panels' : 'Maximize overview'}
+                className="absolute top-2 right-2 z-10 p-1.5 rounded text-gray-400 hover:text-gray-100 hover:bg-gray-700/60 transition-colors"
+              >
+                {overviewMaximized ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/>
+                    <line x1="10" y1="14" x2="3" y2="21"/><line x1="21" y1="3" x2="14" y2="10"/>
+                  </svg>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
+                    <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+                  </svg>
+                )}
+              </button>
+              <NamDashboard
+                files={files}
+                packChecklistRollup={dashboardChecklistEntries}
+                activeCreator={creatorFilter ?? undefined}
+                onCreatorClick={(creator) => {
                 setCreatorFilter(creator)
                 setGearTypeFilter(null)
                 setToneTypeFilter(null)
@@ -4457,6 +4482,7 @@ INSTRUCTIONS:
                 setShowDashboard(false)
               }}
             />
+            </div>
           ) : historyOpen ? (
             <SessionHistoryPanel
               entries={sessionHistory}
@@ -4638,7 +4664,8 @@ INSTRUCTIONS:
               .filter((tab) => (tab !== 'gallery' || showGalleryTab) && (tab !== 'checklist' || hasPack) && (tab !== 'targets' || hasPack))
             return (
               <div className="h-full flex flex-col">
-                <div className="flex border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+                <div className="flex items-stretch border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+                  <div className="flex flex-1">
                   {availableTabs.map((tab) => (
                       <button
                         key={tab}
@@ -4664,6 +4691,26 @@ INSTRUCTIONS:
                                     : 'Read Me'}
                       </button>
                     ))}
+                  </div>
+                  {folderPanelTab === 'overview' && (
+                    <button
+                      onClick={() => setOverviewMaximized((v) => !v)}
+                      title={overviewMaximized ? 'Restore panels' : 'Maximize overview'}
+                      className="px-2 text-gray-400 hover:text-gray-100 hover:bg-gray-700/40 transition-colors flex items-center"
+                    >
+                      {overviewMaximized ? (
+                        <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/>
+                          <line x1="10" y1="14" x2="3" y2="21"/><line x1="21" y1="3" x2="14" y2="10"/>
+                        </svg>
+                      ) : (
+                        <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
+                          <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+                        </svg>
+                      )}
+                    </button>
+                  )}
                 </div>
                 <div className="flex-1 overflow-hidden">
                   {folderPanelTab === 'overview' ? (
