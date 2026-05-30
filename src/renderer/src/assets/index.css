@@ -42,8 +42,16 @@ input, textarea {
   background: #4b5563;
 }
 
+.dark {
+  --chart-track: #1f2937;
+}
+
 /* ── Charcoal theme — warm dark grey with brighter subtext ───────────────── */
 /* Applied when html has both .dark and .charcoal classes */
+
+html.charcoal {
+  --chart-track: #2f2f2f;
+}
 
 html.charcoal body {
   background: #1e1e1e !important;
