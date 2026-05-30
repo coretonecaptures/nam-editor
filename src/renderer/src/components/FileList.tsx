@@ -1597,8 +1597,7 @@ function GridView({
                 )}
                 <div
                   className={`flex items-center gap-1 px-3 py-2 whitespace-nowrap overflow-hidden ${col.key !== 'name' ? 'pl-8 cursor-pointer' : 'cursor-pointer'}`}
-                  style={{ color: 'inherit' }}
-                  style={{ paddingRight: 28 }}
+                  style={{ color: 'inherit', paddingRight: 28 }}
                   onDragStart={(e) => e.preventDefault()}
                   onClick={() => {
                     onSortClick(col.key)
