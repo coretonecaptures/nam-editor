@@ -127,30 +127,38 @@ export function Toolbar({
   }, [showHelpMenu])
   return (
     <div
-      className="h-12 flex items-center gap-2 px-4 bg-gray-100 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex-shrink-0"
-      style={{ paddingLeft: isMac ? '80px' : '16px', paddingRight: isMac ? '16px' : '150px', WebkitAppRegion: 'drag' } as React.CSSProperties}
+      className="h-12 flex items-center gap-1 flex-shrink-0 border-b"
+      style={{
+        paddingLeft: isMac ? '80px' : '10px',
+        paddingRight: isMac ? '10px' : '155px',
+        WebkitAppRegion: 'drag',
+        background: 'var(--panel-2, #171c22)',
+        borderColor: 'var(--border, #242b34)',
+      } as React.CSSProperties}
     >
-      {/* App title */}
-      <div className="flex items-center gap-2 mr-4">
-        <svg className="w-4 h-4 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12h2m0 0V9m0 3v3m4-7v8m0-8v8m4-11v14m0-14v14m4-9v4m0-4v4m4-7v10" />
-        </svg>
-        <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">NAM Lab</span>
+      {/* NAM Lab logo chip */}
+      <div className="nam-logo-chip flex items-center gap-2 mr-3" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        <div className="nam-logo-icon">
+          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M3 12h2m0 0V9m0 3v3m4-7v8m0-8v8m4-11v14m0-14v14m4-9v4m0-4v4m4-7v10" />
+          </svg>
+        </div>
+        <span className="nam-logo-name">NAM Lab</span>
       </div>
 
-      <div className="w-px h-5 bg-gray-300 dark:bg-gray-700" />
+      <div className="tb-sep-v" />
 
       <div ref={fileMenuRef} className="relative" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
         <button
           onClick={() => setShowFileMenu((v) => !v)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+          className="tb-menu-btn"
           title="Open files, folders, and recent locations"
         >
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
           </svg>
           File
-          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className="cv w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
           </svg>
         </button>
@@ -206,7 +214,7 @@ export function Toolbar({
       {rootFolder && (
         <button
           onClick={onRefresh}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+          className="tb-menu-btn"
           title="Refresh the current library folder"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
@@ -221,14 +229,14 @@ export function Toolbar({
         <div ref={libraryToolsRef} className="relative" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           <button
             onClick={() => setShowLibraryTools((v) => !v)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+            className="tb-menu-btn"
             title="Library maintenance tools"
           >
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M7 12h10M10 18h4" />
             </svg>
             Library Tools
-            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="cv w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
             </svg>
           </button>
@@ -266,13 +274,13 @@ export function Toolbar({
         </div>
       )}
 
-      <div className="w-px h-5 bg-gray-300 dark:bg-gray-700" />
+      <div className="tb-sep-v" />
 
       <button
         onClick={onSaveAll}
         disabled={dirtyCount === 0}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-indigo-700 hover:bg-indigo-600 disabled:hover:bg-indigo-700 text-white"
-        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-white"
+        style={{ WebkitAppRegion: 'no-drag', background: 'var(--accent)', opacity: dirtyCount === 0 ? 0.4 : undefined } as React.CSSProperties}
       >
         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
@@ -288,15 +296,15 @@ export function Toolbar({
 
       {(unnamedCount > 0 || (autoFilledCount > 0 && onClearSuggestionsAll)) && (
         <>
-          <div className="w-px h-5 bg-gray-300 dark:bg-gray-700" />
+          <div className="tb-sep-v" />
           <div ref={actionsMenuRef} className="relative" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
             <button
               onClick={() => setShowActionsMenu((v) => !v)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+              className="tb-menu-btn"
               title="Loaded-file cleanup and helper actions"
             >
               Actions
-              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="cv w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
               </svg>
             </button>
@@ -333,16 +341,9 @@ export function Toolbar({
           onClick={cardViewEnabled ? onToggleCardView : undefined}
           title={cardViewEnabled ? 'Toggle folder card view' : 'Open a folder to use card view'}
           disabled={!cardViewEnabled}
-          className={`relative flex items-center justify-center w-9 h-9 rounded-md transition-colors ${
-            !cardViewEnabled
-              ? 'opacity-40 cursor-not-allowed bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-600'
-              : cardViewActive
-              ? 'bg-teal-600 hover:bg-teal-500 text-white'
-              : 'bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
-          }`}
+          className={`tb-menu-btn relative ${!cardViewEnabled ? 'opacity-40 cursor-not-allowed' : ''} ${cardViewActive ? 'active' : ''}`}
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
-          {/* 2×2 grid squares icon */}
           <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
             <rect x="1" y="1" width="6" height="6" rx="1" />
             <rect x="9" y="1" width="6" height="6" rx="1" />
@@ -356,11 +357,7 @@ export function Toolbar({
         <button
           onClick={onOpenTrainingQueue}
           title={trainingQueueCount > 0 ? `${trainingQueueCount} training queue item${trainingQueueCount === 1 ? '' : 's'}` : 'Open training queue'}
-          className={`relative flex items-center justify-center w-9 h-9 rounded-md transition-colors ${
-            trainingQueueActive
-              ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
-              : 'bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
-          }`}
+          className={`tb-menu-btn relative ${trainingQueueActive ? 'active' : ''}`}
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
@@ -376,15 +373,11 @@ export function Toolbar({
 
       {showDashboard && onToggleDashboard && (
         <>
-          <div className="w-px h-5 bg-gray-300 dark:bg-gray-700" />
+          <div className="tb-sep-v" />
           <button
             onClick={onToggleDashboard}
             title="Library overview"
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-              dashboardActive
-                ? 'bg-teal-600 hover:bg-teal-500 text-white'
-                : 'bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
-            }`}
+            className={`tb-menu-btn ${dashboardActive ? 'active' : ''}`}
             style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
           >
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -399,11 +392,7 @@ export function Toolbar({
         <button
           onClick={onHistoryToggle}
           title="Session history"
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-            historyOpen
-              ? 'bg-amber-700 hover:bg-amber-600 text-white'
-              : 'bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
-          }`}
+          className={`tb-menu-btn ${historyOpen ? 'active' : ''}`}
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -417,11 +406,7 @@ export function Toolbar({
         <button
           onClick={onToggleToneStore}
           title="Browse and download tones from tone3000"
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-            toneStoreActive
-              ? 'bg-violet-600 hover:bg-violet-500 text-white'
-              : 'bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
-          }`}
+          className={`tb-menu-btn ${toneStoreActive ? 'active' : ''}`}
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -436,11 +421,7 @@ export function Toolbar({
           <button
             onClick={() => setShowHelpMenu((v) => !v)}
             title="Help, guides, and about NAM Lab"
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-              helpOpen
-                ? 'bg-sky-600 hover:bg-sky-500 text-white'
-                : 'bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
-            }`}
+            className={`tb-menu-btn ${helpOpen ? 'active' : ''}`}
           >
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <circle cx="12" cy="12" r="9" strokeWidth="1.8" />
@@ -448,7 +429,7 @@ export function Toolbar({
               <circle cx="12" cy="17.2" r="0.7" fill="currentColor" stroke="none" />
             </svg>
             Help
-            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="cv w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
             </svg>
           </button>
@@ -489,14 +470,10 @@ export function Toolbar({
         </div>
       )}
 
-      <div className="w-px h-5 bg-gray-300 dark:bg-gray-700" />
+      <div className="tb-sep-v" />
       <button
         onClick={onToggleSettings}
-        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-          showSettings
-            ? 'bg-gray-400 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 text-gray-900 dark:text-white'
-            : 'bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
-        }`}
+        className={`tb-menu-btn ${showSettings ? 'active' : ''}`}
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

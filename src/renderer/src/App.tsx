@@ -1113,19 +1113,28 @@ export default function App() {
     return () => { cancelled = true }
   }, [files, librarian.selectedFolders, librarian.rootFolder])
 
-  // Apply dark/light/charcoal class to <html> whenever theme setting changes
+  // Apply theme data-attributes and Tailwind dark class to <html>
   useEffect(() => {
     const html = document.documentElement
-    html.classList.remove('charcoal')
-    if (settings.theme === 'dark') {
-      html.classList.add('dark')
-    } else if (settings.theme === 'charcoal') {
-      html.classList.add('dark')
-      html.classList.add('charcoal')
-    } else {
-      html.classList.remove('dark')
-    }
-  }, [settings.theme])
+    const theme = settings.uiTheme ?? (settings.theme === 'dark' ? 'dark' : settings.theme === 'charcoal' ? 'charcoal' : 'light')
+    const accent = settings.uiAccent ?? 'indigo'
+    const chip = settings.chipStyle ?? (settings.solidPillColors ? 'solid' : 'soft')
+
+    // Suppress transitions during theme switch to prevent CSS-var freeze
+    html.classList.add('theme-switching')
+    void html.offsetHeight
+
+    html.setAttribute('data-theme', theme)
+    html.setAttribute('data-accent', accent)
+    html.setAttribute('data-chip', chip)
+
+    // Keep .dark class for backward-compat with Tailwind dark: variants
+    const isDark = theme !== 'light'
+    html.classList.toggle('dark', isDark)
+    html.classList.toggle('charcoal', theme === 'charcoal')
+
+    html.classList.remove('theme-switching')
+  }, [settings.uiTheme, settings.theme, settings.uiAccent, settings.chipStyle, settings.solidPillColors])
 
   // Watch folder for new .nam files when watchFolder setting is on.
   // watcherKey increments after each refresh so the effect re-runs even when rootFolder stays the same.
@@ -3981,7 +3990,7 @@ export default function App() {
             rootFolder={librarian.rootFolder}
             files={files}
             packInfoFolders={packInfoFolders}
-            isDark={settings.theme !== 'light'}
+            isDark={(settings.uiTheme ?? settings.theme) !== 'light'}
             initialPath={cardViewInitialPath}
             rescanSignal={cardRescanSignal}
             hidePreviewPanel={showToneStorePanel}

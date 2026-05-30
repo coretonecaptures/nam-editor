@@ -142,9 +142,9 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
   return (
     <div className="flex flex-col h-full overflow-hidden" onKeyDown={handleKeyDown} onContextMenu={showNativeTextContextMenu}>
       {/* File header */}
-      <div className="flex items-start justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 flex-shrink-0 flex-wrap gap-3">
-        <div className="flex items-center gap-4 min-w-0">
-          <div className="min-w-0">
+      <div className="px-6 pt-4 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
+        <div className="flex items-start gap-4 min-w-0 mb-2">
+          <div className="min-w-0 flex-1">
             {isEditingName ? (
               <input
                 ref={nameInputRef}
@@ -167,7 +167,7 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
                 {m.name || file.fileName}
               </h2>
             )}
-            <div className="flex items-center gap-3 mt-1">
+            <div className="flex items-center gap-3 mt-0.5">
               <button
                 onClick={onRevealInFinder}
                 className="text-xs text-gray-500 dark:text-gray-500 hover:text-indigo-400 transition-colors text-left flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
@@ -176,7 +176,7 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
                 {file.filePath}
               </button>
             </div>
-            <div className="flex items-center gap-2 mt-1">
+            <div className="flex items-center gap-2 mt-0.5">
               <span className="text-xs text-gray-400 dark:text-gray-600">v{file.version}</span>
               <span className="text-xs text-gray-400 dark:text-gray-600">·</span>
               <span className="text-xs text-gray-400 dark:text-gray-600">{file.architecture}</span>
@@ -200,9 +200,11 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
             <GearImage gearType={m.gear_type} size="header" />
           )}
         </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
+
+        {/* Action row — left-spread, Save right-justified */}
+        <div className="flex items-center gap-1.5 pb-3">
           {file.isDirty && (
-            <span className="text-xs text-amber-400 font-medium">Unsaved</span>
+            <span className="text-xs text-amber-400 font-medium mr-1">Unsaved</span>
           )}
           {onRenameFile && renameTemplate && (
             <button
@@ -213,7 +215,7 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
                 )
                 if (confirmed) onRenameFile(file.filePath, newBaseName)
               }}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-300 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 whitespace-nowrap"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap"
               title={`Rename to: ${buildRenamePreview(renameTemplate, m, file.fileName)}.nam`}
             >
               Rename
@@ -222,7 +224,7 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
           {hasActiveDefaults && onReapplyDefaults && (
             <button
               onClick={onReapplyDefaults}
-              className="flex items-center gap-1 px-2 py-2 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap"
               title="Re-apply auto-fill rules from Settings to empty fields"
             >
               ↺ Defaults
@@ -231,7 +233,7 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
           {file.autoFilledFields.length > 0 && onClearSuggestions && (
             <button
               onClick={onClearSuggestions}
-              className="flex items-center gap-1 px-2 py-2 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap"
               title="Clear auto-filled suggestion/default values for this file and restore the on-disk values for those fields"
             >
               Clear suggestions
@@ -240,10 +242,10 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
           <button
             onClick={onRevert}
             disabled={!file.isDirty}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-gray-300 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
+            className="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-200"
             title="Discard changes and revert to saved values"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
             </svg>
             Revert
@@ -251,9 +253,9 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
           <button
             onClick={onSave}
             disabled={!file.isDirty}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-indigo-600 hover:bg-indigo-500 text-white"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-indigo-600 hover:bg-indigo-500 text-white ml-auto"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
             </svg>
             Save

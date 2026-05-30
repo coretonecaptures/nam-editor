@@ -184,9 +184,29 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
     update('targetChecklistTemplates', cloneTargetChecklistTemplates(DEFAULT_TARGET_CHECKLIST_TEMPLATES))
   }
 
-  // Theme applies immediately without requiring Save
+  // Theme/accent/chip apply immediately without requiring Save
   const handleThemeChange = (theme: 'dark' | 'light' | 'charcoal') => {
     const updated = { ...draft, theme }
+    setDraft(updated)
+    onSave(updated)
+    setSaved(false)
+  }
+  const handleUiThemeChange = (uiTheme: 'dark' | 'midnight' | 'blue' | 'charcoal' | 'light') => {
+    const legacyTheme = uiTheme === 'midnight' || uiTheme === 'blue' ? 'dark' : uiTheme as 'dark' | 'light' | 'charcoal'
+    const updated = { ...draft, uiTheme, theme: legacyTheme }
+    setDraft(updated)
+    onSave(updated)
+    setSaved(false)
+  }
+  const handleUiAccentChange = (uiAccent: 'indigo' | 'violet' | 'sky' | 'emerald' | 'orange') => {
+    const updated = { ...draft, uiAccent }
+    setDraft(updated)
+    onSave(updated)
+    setSaved(false)
+  }
+  const handleChipStyleChange = (chipStyle: 'soft' | 'solid' | 'minimal') => {
+    const solidPillColors = chipStyle === 'solid'
+    const updated = { ...draft, chipStyle, solidPillColors }
     setDraft(updated)
     onSave(updated)
     setSaved(false)
@@ -481,27 +501,87 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
               <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Appearance</h3>
               <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
             </div>
-            <div className="space-y-3">
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-gray-500 dark:text-gray-400 font-medium w-20">Theme</span>
-                <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-gray-700">
-                  {(['dark', 'charcoal', 'light'] as const).map((t) => (
-                    <button
-                      key={t}
-                      onClick={() => handleThemeChange(t)}
-                      className={`px-4 py-1.5 text-xs font-medium transition-colors capitalize ${
-                        draft.theme === t
-                          ? 'bg-indigo-600 text-white'
-                          : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200'
-                      }`}
-                    >
-                      {t}
-                    </button>
-                  ))}
+            <div className="space-y-5">
+
+              {/* Theme cards */}
+              <div>
+                <div className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-3">Theme</div>
+                <div className="theme-card-row">
+                  {([
+                    { id: 'dark',     label: 'Dark',     bg: '#0c0f13', panel: '#12161b', text: '#e7eaef' },
+                    { id: 'midnight', label: 'Midnight', bg: '#050608', panel: '#101317', text: '#e9ebee' },
+                    { id: 'blue',     label: 'Blue',     bg: '#081225', panel: '#11203c', text: '#e4ecfb' },
+                    { id: 'charcoal', label: 'Charcoal', bg: '#1e1e1e', panel: '#2a2a2a', text: '#e4e3e1' },
+                    { id: 'light',    label: 'Light',    bg: '#eef0f3', panel: '#ffffff', text: '#131820' },
+                  ] as const).map((tc) => {
+                    const active = (draft.uiTheme ?? (draft.theme === 'dark' ? 'dark' : draft.theme === 'charcoal' ? 'charcoal' : 'light')) === tc.id
+                    return (
+                      <button key={tc.id} className={`theme-card ${active ? 'selected' : ''}`}
+                        onClick={() => handleUiThemeChange(tc.id)}>
+                        <div className="theme-card-preview" style={{ background: tc.bg }}>
+                          <span style={{ background: tc.panel, color: tc.text }}>Aa</span>
+                        </div>
+                        <div className="theme-card-label">{tc.label}</div>
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
+
+              {/* Accent swatches */}
+              <div>
+                <div className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-3">Accent color</div>
+                <div className="accent-swatch-row">
+                  {([
+                    { id: 'indigo',  label: 'Indigo',  hex: '#6366f1' },
+                    { id: 'violet',  label: 'Purple',  hex: '#8b5cf6' },
+                    { id: 'sky',     label: 'Blue',    hex: '#3b82f6' },
+                    { id: 'emerald', label: 'Emerald', hex: '#10b981' },
+                    { id: 'orange',  label: 'Orange',  hex: '#f97316' },
+                  ] as const).map((ac) => {
+                    const active = (draft.uiAccent ?? 'indigo') === ac.id
+                    return (
+                      <button key={ac.id} className={`accent-swatch ${active ? 'selected' : ''}`} title={ac.label}
+                        onClick={() => handleUiAccentChange(ac.id)}
+                        style={{ '--c': ac.hex } as React.CSSProperties}>
+                        <div className="accent-swatch-dot" style={{ background: ac.hex }}>
+                          {active && (
+                            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="#fff" strokeWidth={3}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                        </div>
+                        <div className="accent-swatch-label">{ac.label}</div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Chip style */}
+              <div>
+                <div className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-3">Label style</div>
+                <div className="chip-style-row">
+                  {([
+                    { id: 'soft',    label: 'Soft',    desc: 'Tinted background' },
+                    { id: 'solid',   label: 'Solid',   desc: 'Filled color' },
+                    { id: 'minimal', label: 'Minimal', desc: 'Dot + label' },
+                  ] as const).map((cc) => {
+                    const active = (draft.chipStyle ?? (draft.solidPillColors ? 'solid' : 'soft')) === cc.id
+                    return (
+                      <button key={cc.id} className={`chip-style-card ${active ? 'selected' : ''}`}
+                        onClick={() => handleChipStyleChange(cc.id)}>
+                        <div className="chip-style-label">{cc.label}</div>
+                        <div className="chip-style-desc">{cc.desc}</div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Default View */}
               <div className="flex items-center gap-3">
-                <span className="text-xs text-gray-500 dark:text-gray-400 font-medium w-20">Default View</span>
+                <span className="text-xs text-gray-500 dark:text-gray-400 font-medium w-24">Default View</span>
                 <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-gray-700">
                   {(['list', 'grid'] as const).map((v) => (
                     <button
@@ -518,24 +598,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                   ))}
                 </div>
               </div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-gray-500 dark:text-gray-400 font-medium w-20">Label Style</span>
-                <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-gray-700">
-                  {([false, true] as const).map((solid) => (
-                    <button
-                      key={String(solid)}
-                      onClick={() => update('solidPillColors', solid)}
-                      className={`px-4 py-1.5 text-xs font-medium transition-colors ${
-                        draft.solidPillColors === solid
-                          ? 'bg-indigo-600 text-white'
-                          : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200'
-                      }`}
-                    >
-                      {solid ? 'Solid Colors' : 'Subtle'}
-                    </button>
-                  ))}
-                </div>
-              </div>
+
             </div>
           </div>
           )}

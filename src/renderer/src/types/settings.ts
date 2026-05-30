@@ -261,6 +261,9 @@ export interface AppSettings {
 
   // Appearance
   theme: 'dark' | 'light' | 'charcoal'
+  uiTheme: 'dark' | 'midnight' | 'blue' | 'charcoal' | 'light'
+  uiAccent: 'indigo' | 'violet' | 'sky' | 'emerald' | 'orange'
+  chipStyle: 'soft' | 'solid' | 'minimal'
   defaultView: 'list' | 'grid'
   solidPillColors: boolean
 
@@ -374,6 +377,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   folderOverrides: {},
 
   theme: 'dark',
+  uiTheme: 'dark',
+  uiAccent: 'indigo',
+  chipStyle: 'solid',
   defaultView: 'list',
   solidPillColors: true,
 

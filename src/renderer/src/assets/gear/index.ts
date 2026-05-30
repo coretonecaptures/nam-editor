@@ -27,11 +27,13 @@ export const gearImages: Record<string, { dark: string; light?: string }> = {
 export function getGearImageSrc(gearType: string): string | null {
   const imgs = gearImages[gearType]
   if (!imgs) return null
-  const isDark = document.documentElement.classList.contains('dark')
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light'
   return isDark ? imgs.dark : (imgs.light ?? imgs.dark)
 }
 
 // ---- Gear type chip classes ----
+// Used for legacy Tailwind-based chip rendering (chipStyle soft/solid).
+// For minimal style, use nam-chip CSS classes instead.
 
 const GEAR_SUBTLE: Record<string, string> = {
   amp:           'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400',
@@ -56,6 +58,22 @@ const GEAR_SOLID: Record<string, string> = {
 export function gearChipClass(gearType: string, solid = false): string {
   if (solid) return GEAR_SOLID[gearType] ?? 'bg-gray-500 text-white'
   return GEAR_SUBTLE[gearType] ?? 'bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400'
+}
+
+/** Returns CSS classes for a nam-chip element (all 3 chip styles via CSS vars).
+ *  Usage: <span className={`nam-chip ${namGearChipClass(gearType)}`}>...</span>
+ */
+export function namGearChipClass(gearType: string): string {
+  const map: Record<string, string> = {
+    amp:           'chip-amp',
+    amp_cab:       'chip-amp_cab',
+    pedal:         'chip-pedal',
+    pedal_amp:     'chip-pedal_amp',
+    amp_pedal_cab: 'chip-amp_pedal_cab',
+    preamp:        'chip-preamp',
+    studio:        'chip-studio',
+  }
+  return map[gearType] ?? ''
 }
 
 // ---- Tone type chip classes ----
@@ -83,4 +101,20 @@ const TONE_SOLID: Record<string, string> = {
 export function toneChipClass(toneType: string, solid = false): string {
   if (solid) return TONE_SOLID[toneType] ?? 'bg-gray-500 text-white'
   return TONE_SUBTLE[toneType] ?? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400'
+}
+
+export function namCreatorChipClass(): string { return 'chip-creator' }
+
+/** Returns CSS classes for a nam-chip element (all 3 chip styles via CSS vars). */
+export function namToneChipClass(toneType: string): string {
+  const map: Record<string, string> = {
+    clean:      'chip-clean',
+    crunch:     'chip-crunch',
+    hi_gain:    'chip-hi_gain',
+    fuzz:       'chip-fuzz',
+    overdrive:  'chip-overdrive',
+    distortion: 'chip-distortion',
+    other:      'chip-other',
+  }
+  return map[toneType] ?? 'chip-other'
 }

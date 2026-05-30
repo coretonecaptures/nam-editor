@@ -2,7 +2,7 @@ import { useRef, useState, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
 import { NamFile, GEAR_TYPES, TONE_TYPES } from '../types/nam'
-import { gearChipClass, toneChipClass, getGearImageSrc } from '../assets/gear'
+import { gearChipClass, toneChipClass, getGearImageSrc, namGearChipClass, namToneChipClass, namCreatorChipClass } from '../assets/gear'
 import { detectPreset } from '../utils/detectPreset'
 import { BatchRenameModal } from './BatchRenameModal'
 
@@ -1564,8 +1564,8 @@ function GridView({
         <div ref={bottomScrollRef} className="flex-1 overflow-auto relative">
         <table className="border-collapse text-xs" style={{ tableLayout: 'fixed', width: tableWidth }}>
           <thead className="sticky top-0 z-10">
-            <tr className="bg-gray-100 dark:bg-gray-900 border-b-2 border-gray-300 dark:border-gray-700">
-              <th className="border-r border-gray-200 dark:border-gray-700" style={{ width: 24 }} />
+            <tr className="border-b-2" style={{ background: 'var(--panel-2, #171c22)', borderColor: 'var(--border, #242b34)' }}>
+              <th className="border-r" style={{ width: 24, borderColor: 'var(--border, #242b34)' }} />
             {activeColumns.map((col) => {
               const hasFilter = !!(columnFilters[col.key]?.text || columnFilters[col.key]?.selected?.length)
               const isFilterOpen = openFilterCol === col.key
@@ -1575,8 +1575,8 @@ function GridView({
               <th
                 key={col.key}
                 ref={(el) => { headerRefs.current[col.key] = el }}
-                className={`relative text-left font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-r border-gray-200 dark:border-gray-700 select-none transition-colors ${columnDrag?.over === col.key ? 'bg-indigo-100 dark:bg-indigo-900/40' : ''} ${isDraggedColumn ? 'opacity-60' : ''}`}
-                style={{ width: colWidths[col.key] }}
+                className={`nam-th relative text-left select-none transition-colors border-r ${columnDrag?.over === col.key ? 'bg-indigo-100 dark:bg-indigo-900/40' : ''} ${isDraggedColumn ? 'opacity-60' : ''}`}
+                style={{ width: colWidths[col.key], borderColor: 'var(--border, #242b34)' }}
                 onDragStart={(e) => e.preventDefault()}
               >
                 {col.key !== 'name' && (
@@ -1587,7 +1587,8 @@ function GridView({
                     onMouseDown={(e) => handleColumnGripMouseDown(e, col.key)}
                     onDragStart={(e) => e.preventDefault()}
                     title={`Drag to reorder ${col.label}`}
-                    className="absolute left-0 top-0 z-20 flex h-full w-6 items-center justify-center border-r border-gray-200/70 dark:border-gray-700/70 bg-gray-50/70 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-900/30 dark:hover:text-indigo-300 cursor-grab active:cursor-grabbing"
+                    className="absolute left-0 top-0 z-20 flex h-full w-6 items-center justify-center border-r cursor-grab active:cursor-grabbing hover:text-indigo-300"
+                    style={{ borderColor: 'var(--border-soft)', background: 'var(--panel-2)', color: 'var(--text-3)' }}
                   >
                     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" draggable={false}>
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01" />
@@ -1595,7 +1596,8 @@ function GridView({
                   </button>
                 )}
                 <div
-                  className={`flex items-center gap-1 px-3 py-2 whitespace-nowrap overflow-hidden hover:text-gray-800 dark:hover:text-gray-200 ${col.key !== 'name' ? 'pl-8 cursor-pointer' : 'cursor-pointer'}`}
+                  className={`flex items-center gap-1 px-3 py-2 whitespace-nowrap overflow-hidden ${col.key !== 'name' ? 'pl-8 cursor-pointer' : 'cursor-pointer'}`}
+                  style={{ color: 'inherit' }}
                   style={{ paddingRight: 28 }}
                   onDragStart={(e) => e.preventDefault()}
                   onClick={() => {
@@ -1771,9 +1773,9 @@ function GridView({
                     return (
                       <td key={col.key} className="px-3 py-2 border-r border-gray-200 dark:border-gray-700/60 overflow-hidden" style={{ width: colWidths[col.key], maxWidth: colWidths[col.key] }}>
                         {col.key === 'tone_type' && val ? (
-                          <span className={`px-1.5 py-0.5 rounded text-xs ${toneChipClass(val, solidPills)}`}>{val}</span>
+                          <span className={`nam-chip ${namToneChipClass(val)}`}><span className="nam-dot" />{val}</span>
                         ) : col.key === 'gear_type' && val ? (
-                          <span className={`px-1.5 py-0.5 rounded text-xs ${gearChipClass(val, solidPills)}`}>{val}</span>
+                          <span className={`nam-chip ${namGearChipClass(val)}`}><span className="nam-dot" />{val}</span>
                         ) : col.key === 'name' ? (
                           <span className={`truncate block text-sm font-semibold ${val ? 'text-gray-900 dark:text-gray-100' : 'text-gray-400 dark:text-gray-600'}`}>
                             {val || '-'}
@@ -1844,10 +1846,6 @@ function FileItem({
   ]
   const missingFields = TRACKED.filter((f) => !meta[f.key])
   const missing = missingFields.length
-  const creatorChipClass = solidPills
-    ? 'bg-sky-500 text-white border border-sky-600/30'
-    : 'bg-sky-50 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800/60'
-
   return (
     <div
       className={`group flex items-start gap-2 px-3 py-2.5 cursor-pointer border-b border-gray-200/80 dark:border-gray-800/50 hover:bg-gray-100/80 dark:hover:bg-gray-800/50 transition-colors ${
@@ -1883,17 +1881,17 @@ function FileItem({
         <div className="flex items-center gap-1.5 mt-1.5">
           {meta.modeled_by && (
             <span
-              className={`text-xs px-1.5 py-0.5 rounded ${creatorChipClass}`}
+              className={`nam-chip ${namCreatorChipClass()}`}
               title={`Creator: ${meta.modeled_by}`}
             >
-              {meta.modeled_by}
+              <span className="nam-dot" />{meta.modeled_by}
             </span>
           )}
           {meta.gear_type && (
-            <span className={`text-xs px-1.5 py-0.5 rounded ${gearChipClass(meta.gear_type, solidPills)}`}>{meta.gear_type}</span>
+            <span className={`nam-chip ${namGearChipClass(meta.gear_type)}`}><span className="nam-dot" />{meta.gear_type}</span>
           )}
           {meta.tone_type && (
-            <span className={`text-xs px-1.5 py-0.5 rounded ${toneChipClass(meta.tone_type, solidPills)}`}>{meta.tone_type}</span>
+            <span className={`nam-chip ${namToneChipClass(meta.tone_type)}`}><span className="nam-dot" />{meta.tone_type}</span>
           )}
           {missing > 0 && !file.isDirty && (
             <span
