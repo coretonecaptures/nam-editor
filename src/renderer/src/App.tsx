@@ -1111,12 +1111,17 @@ export default function App() {
     return () => { cancelled = true }
   }, [files, librarian.selectedFolders, librarian.rootFolder])
 
-  // Apply dark/light class to <html> whenever theme setting changes
+  // Apply dark/light/charcoal class to <html> whenever theme setting changes
   useEffect(() => {
+    const html = document.documentElement
+    html.classList.remove('charcoal')
     if (settings.theme === 'dark') {
-      document.documentElement.classList.add('dark')
+      html.classList.add('dark')
+    } else if (settings.theme === 'charcoal') {
+      html.classList.add('dark')
+      html.classList.add('charcoal')
     } else {
-      document.documentElement.classList.remove('dark')
+      html.classList.remove('dark')
     }
   }, [settings.theme])
 

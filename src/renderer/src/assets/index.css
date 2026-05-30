@@ -41,3 +41,48 @@ input, textarea {
 .dark ::-webkit-scrollbar-thumb:hover {
   background: #4b5563;
 }
+
+/* ── Charcoal theme — warm dark grey with brighter subtext ───────────────── */
+/* Applied when html has both .dark and .charcoal classes */
+
+html.charcoal body {
+  background: #1e1e1e !important;
+  color: #efefef !important;
+}
+
+/* Backgrounds */
+html.charcoal .dark\:bg-gray-950 { background-color: #1e1e1e !important; }
+html.charcoal .dark\:bg-gray-900 { background-color: #252525 !important; }
+html.charcoal .dark\:bg-gray-800 { background-color: #303030 !important; }
+html.charcoal .dark\:bg-gray-700 { background-color: #3c3c3c !important; }
+html.charcoal .hover\:dark\:bg-gray-800:hover { background-color: #303030 !important; }
+html.charcoal .hover\:dark\:bg-gray-700:hover { background-color: #3c3c3c !important; }
+
+/* Text — boosted brightness for subtext */
+html.charcoal .dark\:text-gray-100 { color: #f0f0f0 !important; }
+html.charcoal .dark\:text-gray-200 { color: #e0e0e0 !important; }
+html.charcoal .dark\:text-gray-300 { color: #cccccc !important; }
+html.charcoal .dark\:text-gray-400 { color: #aaaaaa !important; }
+html.charcoal .dark\:text-gray-500 { color: #848484 !important; }
+html.charcoal .dark\:text-gray-600 { color: #6a6a6a !important; }
+html.charcoal .hover\:dark\:text-gray-200:hover { color: #e0e0e0 !important; }
+html.charcoal .hover\:dark\:text-gray-300:hover { color: #cccccc !important; }
+
+/* Borders */
+html.charcoal .dark\:border-gray-800 { border-color: #363636 !important; }
+html.charcoal .dark\:border-gray-700 { border-color: #424242 !important; }
+html.charcoal .dark\:border-gray-600 { border-color: #505050 !important; }
+
+/* Inputs & form elements */
+html.charcoal .dark\:bg-gray-900 input,
+html.charcoal .dark\:bg-gray-800 input,
+html.charcoal input.dark\:bg-gray-900,
+html.charcoal input.dark\:bg-gray-800 {
+  background-color: #252525 !important;
+  color: #efefef !important;
+}
+
+/* Scrollbars */
+html.charcoal ::-webkit-scrollbar-thumb { background: #3c3c3c; }
+html.charcoal ::-webkit-scrollbar-thumb:hover { background: #4c4c4c; }
+html.charcoal * { scrollbar-color: #3c3c3c transparent; }

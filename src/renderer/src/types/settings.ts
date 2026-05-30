@@ -260,7 +260,7 @@ export interface AppSettings {
   folderOverrides: Record<string, FolderOverride>
 
   // Appearance
-  theme: 'dark' | 'light'
+  theme: 'dark' | 'light' | 'charcoal'
   defaultView: 'list' | 'grid'
   solidPillColors: boolean
 
