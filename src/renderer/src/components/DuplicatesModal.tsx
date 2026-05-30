@@ -15,11 +15,12 @@ interface DuplicatesModalProps {
   rootFolder: string | null
   scopeLabel?: string | null
   onClose: () => void
-  onMoveDuplicates: (moves: { filePath: string; destName: string }[]) => Promise<void>
+  onMoveDuplicates: (moves: { filePath: string; destName: string }[], destFolder?: string) => Promise<void>
   onTrashDuplicates: (filePaths: string[]) => Promise<void>
   getDeleteBehavior: (filePaths: string[]) => Promise<{ permanentOnly: boolean; reason?: string }>
   getContentHashes: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
   getModelHashes: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
+  onPickDestFolder?: () => Promise<string | null>
 }
 
 type DetectionMode = 'filename' | 'metaname' | 'content' | 'model'
@@ -157,9 +158,17 @@ export function DuplicatesModal({
   getDeleteBehavior,
   getContentHashes,
   getModelHashes,
+  onPickDestFolder,
 }: DuplicatesModalProps) {
   const [mode, setMode] = useState<DetectionMode>('filename')
   const [sameArchOnly, setSameArchOnly] = useState(true)
+  const [destFolder, setDestFolder] = useState<string | null>(null)
+
+  const handlePickDestFolder = async () => {
+    if (!onPickDestFolder) return
+    const picked = await onPickDestFolder()
+    if (picked) setDestFolder(picked)
+  }
   const [groups, setGroups] = useState<DuplicateGroup[]>(() =>
     buildGroups(files, 'filename', true).map((g) => ({ ...g, status: null }))
   )
@@ -222,7 +231,7 @@ export function DuplicatesModal({
     const allPaths = pendingDupeFiles.map((f) => f.filePath)
     const moves = dupeFiles.map((fp) => ({ filePath: fp, destName: buildDestName(fp, allPaths) }))
     setWorking(gi)
-    await onMoveDuplicates(moves)
+    await onMoveDuplicates(moves, destFolder ?? undefined)
     setGroups((prev) => prev.map((g, i) => i === gi ? { ...g, status: 'moved' } : g))
     setWorking(null)
   }
@@ -251,7 +260,7 @@ export function DuplicatesModal({
     const allPaths = pendingDupeFiles.map((f) => f.filePath)
     const moves = pendingDupeFiles.map((f) => ({ filePath: f.filePath, destName: buildDestName(f.filePath, allPaths) }))
     setWorking(-1)
-    await onMoveDuplicates(moves)
+    await onMoveDuplicates(moves, destFolder ?? undefined)
     setGroups((prev) => prev.map((g) => g.status === null ? { ...g, status: 'moved' } : g))
     setWorking(null)
   }
@@ -409,7 +418,7 @@ export function DuplicatesModal({
                           <button
                             onClick={() => handleGroupMove(gi)}
                             disabled={isWorking || working === -1}
-                            title={`Move ${dupesInGroup} non-kept file${dupesInGroup !== 1 ? 's' : ''} to _Duplicates`}
+                            title={`Move ${dupesInGroup} non-kept file${dupesInGroup !== 1 ? 's' : ''} to ${destFolder ? destFolder.replace(/\\/g, '/').split('/').pop() : '_Duplicates'}`}
                             className="px-2 py-1 text-xs font-medium rounded bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white transition-colors"
                           >
                             {isWorking ? '...' : `Move ${dupesInGroup} ->`}
@@ -495,13 +504,25 @@ export function DuplicatesModal({
             {pendingGroups.length > 1 && (
               <>
                 {rootFolder && (
-                  <button
-                    onClick={handleAllMove}
-                    disabled={working !== null || loadingContent}
-                    className="px-3 py-1.5 text-xs font-medium rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white transition-colors"
-                  >
-                    {working === -1 ? 'Working...' : `Move all ${pendingDupeFiles.length} to _Duplicates`}
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={handleAllMove}
+                      disabled={working !== null || loadingContent}
+                      className="px-3 py-1.5 text-xs font-medium rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white transition-colors"
+                    >
+                      {working === -1 ? 'Working...' : `Move all ${pendingDupeFiles.length} to ${destFolder ? destFolder.replace(/\\/g, '/').split('/').pop() : '_Duplicates'}`}
+                    </button>
+                    {onPickDestFolder && (
+                      <button
+                        onClick={() => void handlePickDestFolder()}
+                        disabled={working !== null}
+                        className="px-2 py-1.5 text-xs rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-amber-500 hover:text-amber-600 dark:hover:text-amber-400 disabled:opacity-40 transition-colors"
+                        title={destFolder ? `Destination: ${destFolder}` : 'Change destination folder (default: _Duplicates in root)'}
+                      >
+                        {destFolder ? '📁 ' + destFolder.replace(/\\/g, '/').split('/').pop() : 'Change folder…'}
+                      </button>
+                    )}
+                  </div>
                 )}
                 <button
                   onClick={handleAllTrash}

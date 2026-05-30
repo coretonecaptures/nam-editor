@@ -748,7 +748,7 @@ function SortableChecklistRow({
           {parentPackPath && (
             <button
               onClick={onSync}
-              className="text-[10px] px-1.5 py-0.5 rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-300 hover:border-teal-500 hover:text-teal-600 dark:hover:text-teal-300 transition-colors"
+              className="text-xs px-2 py-0.5 rounded border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-teal-500 hover:text-teal-600 dark:hover:text-teal-300 transition-colors"
               title="Sync this row with Parent Pack"
             >
               Sync
@@ -1211,6 +1211,25 @@ export function PackInfoEditor({
       )
     )
     setStatus(`Synced "${item.label}" from Parent Pack`)
+    setTimeout(() => setStatus(null), 2000)
+  }, [pack.checklistItems, parentChecklistItems, updateChecklistItems])
+
+  const syncAllChecklistFromParent = useCallback(() => {
+    if (parentChecklistItems.length === 0) {
+      setStatus('Parent Pack has no checklist items to sync from.')
+      return
+    }
+    let synced = 0
+    const updated = pack.checklistItems.map((item) => {
+      const label = normalizeChecklistLabel(item.label)
+      if (!label) return item
+      const parentItem = parentChecklistItems.find((c) => normalizeChecklistLabel(c.label) === label)
+      if (!parentItem) return item
+      synced++
+      return { ...item, completed: parentItem.completed, completedDate: parentItem.completedDate, notes: parentItem.notes }
+    })
+    updateChecklistItems(updated)
+    setStatus(synced > 0 ? `Synced ${synced} item${synced !== 1 ? 's' : ''} from Parent Pack` : 'No matching items found in Parent Pack')
     setTimeout(() => setStatus(null), 2000)
   }, [pack.checklistItems, parentChecklistItems, updateChecklistItems])
 
@@ -1696,6 +1715,14 @@ export function PackInfoEditor({
               )}
               <div className="flex items-center gap-3 flex-wrap">
                 <button onClick={addChecklistItem} className="text-xs text-teal-600 dark:text-teal-400 hover:text-teal-700 dark:hover:text-teal-300 font-medium transition-colors">+ Add step</button>
+                {parentPackPath && pack.checklistItems.length > 0 && (
+                  <button
+                    onClick={syncAllChecklistFromParent}
+                    className="text-xs px-2 py-0.5 rounded border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-teal-500 hover:text-teal-600 dark:hover:text-teal-300 font-medium transition-colors"
+                  >
+                    Sync All from Parent
+                  </button>
+                )}
                 {checklistTemplate.length > 0 && (
                   <button
                     onClick={() => {

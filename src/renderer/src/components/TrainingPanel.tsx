@@ -1021,8 +1021,10 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
             {(isRunning || queuedCount > 0) && (
               <div className={`text-sm font-medium ${isRunning ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
                 {isRunning
-                  ? `Queue running - ${queuedCount} queued${activeJob ? `, active: ${ARCHITECTURE_LABELS[activeJob.architecture]}` : ''}.`
-                  : `Queue waiting - ${queuedCount} queued item${queuedCount === 1 ? '' : 's'}.`}
+                  ? (queuedCount > 0
+                      ? `Training — ${queuedCount} queued, active: ${activeJob ? ARCHITECTURE_LABELS[activeJob.architecture] : '…'}`
+                      : `Training — active: ${activeJob ? ARCHITECTURE_LABELS[activeJob.architecture] : '…'}`)
+                  : `Queue waiting — ${queuedCount} queued item${queuedCount === 1 ? '' : 's'}`}
               </div>
             )}
             {presetSaveNotice && (

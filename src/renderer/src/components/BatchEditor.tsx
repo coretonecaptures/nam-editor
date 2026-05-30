@@ -12,6 +12,7 @@ interface BatchFieldDef {
 
 export interface BatchApplyOptions {
   revertToFilename?: boolean
+  appendFields?: Set<keyof NamMetadata>
 }
 
 interface BatchEditorProps {
@@ -28,6 +29,7 @@ export function BatchEditor({ folderName, fileCount, onApply, onClose, skipConfi
   const [fields, setFields] = useState<Partial<NamMetadata>>({})
   const [enabled, setEnabled] = useState<Set<keyof NamMetadata>>(new Set())
   const [revertToFilename, setRevertToFilename] = useState(false)
+  const [appendMode, setAppendMode] = useState<Set<keyof NamMetadata>>(new Set())
 
   const toggle = (key: keyof NamMetadata) => {
     setEnabled((prev) => {
@@ -60,7 +62,8 @@ export function BatchEditor({ folderName, fileCount, onApply, onClose, skipConfi
     for (const key of enabled) {
       ;(toApply as Record<string, unknown>)[key] = (fields as Record<string, unknown>)[key] ?? null
     }
-    onApply(toApply, { revertToFilename })
+    const effectiveAppendFields = new Set([...appendMode].filter((k) => enabled.has(k)))
+    onApply(toApply, { revertToFilename, appendFields: effectiveAppendFields.size > 0 ? effectiveAppendFields : undefined })
   }
 
   return (
@@ -120,7 +123,46 @@ export function BatchEditor({ folderName, fileCount, onApply, onClose, skipConfi
             <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Capture Details</span>
             <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
           </div>
-          {renderBatchFields(namLabFields, fields, enabled, toggle, update, [], [])}
+          {renderBatchFields(namLabFields.filter((f) => f.key !== 'nl_comments'), fields, enabled, toggle, update, [], [])}
+          {/* Comments row with Append toggle */}
+          {(() => {
+            const def = namLabFields.find((f) => f.key === 'nl_comments')!
+            const isEnabled = enabled.has('nl_comments')
+            const isAppend = appendMode.has('nl_comments')
+            return (
+              <div key="nl_comments" className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={isEnabled}
+                  onChange={() => toggle('nl_comments')}
+                  className="w-4 h-4 rounded border-gray-400 dark:border-gray-600 bg-gray-200 dark:bg-gray-800 text-indigo-500 focus:ring-indigo-500/50 cursor-pointer flex-shrink-0"
+                />
+                <label className="w-32 text-sm text-gray-700 dark:text-gray-300 flex-shrink-0">{def.label}</label>
+                <input
+                  type="text"
+                  disabled={!isEnabled}
+                  value={(fields.nl_comments as string | undefined) ?? ''}
+                  onChange={(e) => update('nl_comments', e.target.value)}
+                  placeholder={isAppend ? 'Text to append…' : def.placeholder}
+                  className="flex-1 min-w-0 px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 disabled:opacity-40"
+                />
+                <button
+                  type="button"
+                  disabled={!isEnabled}
+                  onClick={() => setAppendMode((prev) => {
+                    const next = new Set(prev)
+                    if (next.has('nl_comments')) next.delete('nl_comments')
+                    else next.add('nl_comments')
+                    return next
+                  })}
+                  title={isAppend ? 'Append mode — text will be added after existing content' : 'Overwrite mode — existing content will be replaced'}
+                  className={`flex-shrink-0 text-xs px-2 py-1 rounded border transition-colors disabled:opacity-40 ${isAppend ? 'border-teal-500 text-teal-600 dark:text-teal-400 bg-teal-50 dark:bg-teal-900/20' : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-gray-400'}`}
+                >
+                  {isAppend ? 'Append' : 'Overwrite'}
+                </button>
+              </div>
+            )
+          })()}
 
           {/* Advanced / override fields */}
           <div className="flex items-center gap-2 pt-4 pb-1">

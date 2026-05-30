@@ -1902,7 +1902,15 @@ export default function App() {
         ;(newMeta as Record<string, unknown>)['name'] = nameFromFile
       }
       for (const [k, v] of Object.entries(batchFields)) {
-        const val = v === '' ? null : v
+        let val: unknown
+        if (options?.appendFields?.has(k as keyof NamFile['metadata']) && v && v !== '') {
+          const existing = (f.originalMetadata as Record<string, unknown>)[k]
+          val = existing && typeof existing === 'string' && existing.trim() !== ''
+            ? `${existing.trim()} ${v}`
+            : v
+        } else {
+          val = v === '' ? null : v
+        }
         ;(toWrite as Record<string, unknown>)[k] = val
         ;(newMeta as Record<string, unknown>)[k] = val
       }
@@ -3484,11 +3492,15 @@ export default function App() {
     setStatus({ message, type: failed > 0 ? 'error' : 'success' })
   }
 
-  const handleMoveDuplicates = async (moves: { filePath: string; destName: string }[]) => {
+  const handleMoveDuplicates = async (moves: { filePath: string; destName: string }[], destFolder?: string) => {
     if (!librarian.rootFolder) return
-    // Create _Duplicates folder (ignore error if already exists)
-    await window.api.createFolder(librarian.rootFolder, '_Duplicates')
-    const destDir = librarian.rootFolder + '/_Duplicates'
+    let destDir: string
+    if (destFolder) {
+      destDir = destFolder
+    } else {
+      await window.api.createFolder(librarian.rootFolder, '_Duplicates')
+      destDir = librarian.rootFolder + '/_Duplicates'
+    }
 
     // Move each file; if destName differs from original basename, rename after move via the rename API
     const movedPairs: { oldPath: string; newPath: string }[] = []
@@ -4886,6 +4898,7 @@ export default function App() {
             getDeleteBehavior={(filePaths) => window.api.getDeleteBehavior(filePaths)}
             getContentHashes={(filePaths) => window.api.hashFiles(filePaths)}
             getModelHashes={(filePaths) => window.api.hashFilesWithoutMetadata(filePaths)}
+            onPickDestFolder={() => window.api.openFolder()}
           />
         )}
 
