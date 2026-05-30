@@ -1877,6 +1877,31 @@ export default function App() {
     throw new Error(res.error ?? 'No response')
   }
 
+  const makeGenerateAboutForFolder = (folderFiles: NamFile[]) => async (): Promise<string | null> => {
+    const freq = (key: 'gear_make' | 'gear_model' | 'gear_type') => {
+      const counts = new Map<string, number>()
+      for (const f of folderFiles) {
+        const v = f.metadata[key]
+        if (v) counts.set(v, (counts.get(v) ?? 0) + 1)
+      }
+      let best = ''
+      let max = 0
+      for (const [v, n] of counts) if (n > max) { best = v; max = n }
+      return best
+    }
+    const gear_make = freq('gear_make')
+    const gear_model = freq('gear_model')
+    const gear_type = freq('gear_type')
+    if (!gear_make || !gear_model) return null
+    const gearLabel = gear_type ? `${gear_type.replace(/_/g, ' ')} ` : ''
+    const prompt = `You are an expert in guitar amplifiers, pedals, and audio gear. Write exactly 2–3 sentences describing the ${gearLabel}"${gear_make} ${gear_model}". Cover its tonal character, gain range or key modes/channels, and what genres or playing styles it's best known for. Be factual and specific. Write in present tense. Do not start with "The".`
+    const provider = settings.aiProvider ?? 'anthropic'
+    const model = provider === 'anthropic' ? (settings.aiAnthropicModel || 'claude-haiku-4-5-20251001') : (settings.aiOpenAiModel || 'gpt-4o-mini')
+    const res = await window.api.aiEnrich({ prompt, provider, model })
+    if (res.success && res.text) return res.text.trim()
+    throw new Error(res.error ?? 'No response')
+  }
+
   const handleBatchApply = async (batchFields: Partial<NamFile['metadata']>, options?: BatchApplyOptions) => {
     const folderPath = batchFolder?.path ?? null
     const batchPaths = batchFolder?.filePaths
@@ -2099,7 +2124,7 @@ export default function App() {
       'name', 'modeled_by', 'gear_type', 'gear_make', 'gear_model',
       'tone_type', 'input_level_dbu', 'output_level_dbu', 'nb_trained_epochs',
       'nl_mics', 'nl_cabinet', 'nl_cabinet_config', 'nl_amp_channel',
-      'nl_boost_pedal', 'nl_amp_settings', 'nl_pedal_settings', 'nl_amp_switches', 'nl_comments', 'nl_about'
+      'nl_boost_pedal', 'nl_amp_settings', 'nl_pedal_settings', 'nl_amp_switches', 'nl_comments'
     ]
 
     const saved = new Map<string, { newBaseName: string; newPath: string }>()
@@ -2323,7 +2348,7 @@ export default function App() {
       const clearedSet = new Set(cleared)
       const nlKeys: (keyof NamFile['metadata'])[] = [
         'nl_mics', 'nl_amp_channel', 'nl_cabinet', 'nl_cabinet_config',
-        'nl_amp_settings', 'nl_boost_pedal', 'nl_pedal_settings', 'nl_amp_switches', 'nl_comments', 'nl_about',
+        'nl_amp_settings', 'nl_boost_pedal', 'nl_pedal_settings', 'nl_amp_switches', 'nl_comments',
       ]
       setFiles((prev) => prev.map((f) => {
         if (!clearedSet.has(f.filePath)) return f
@@ -2459,7 +2484,7 @@ export default function App() {
     'modeled_by', 'gear_type', 'gear_make', 'gear_model', 'tone_type',
     'input_level_dbu', 'output_level_dbu', 'nb_trained_epochs',
     'nl_mics', 'nl_amp_channel', 'nl_cabinet', 'nl_cabinet_config',
-    'nl_amp_settings', 'nl_boost_pedal', 'nl_pedal_settings', 'nl_amp_switches', 'nl_comments', 'nl_about',
+    'nl_amp_settings', 'nl_boost_pedal', 'nl_pedal_settings', 'nl_amp_switches', 'nl_comments',
   ]
 
   const handleCopyMetadata = (filePath: string) => {
@@ -2485,7 +2510,7 @@ export default function App() {
       nl_mics: 'Mics', nl_amp_channel: 'Amp Channel', nl_cabinet: 'Cabinet',
       nl_cabinet_config: 'Cabinet Config', nl_amp_settings: 'Amp Settings',
       nl_boost_pedal: 'Boost Pedal(s)', nl_pedal_settings: 'Pedal Settings',
-      nl_amp_switches: 'Amp Switches', nl_comments: 'Comments', nl_about: 'About',
+      nl_amp_switches: 'Amp Switches', nl_comments: 'Comments',
     }
     const fieldSummary = Object.entries(metadata)
       .filter(([, v]) => v != null && v !== '')
@@ -4466,8 +4491,6 @@ export default function App() {
                         ))
                       }}
                       onClearSuggestions={() => handleClearSuggestionsForFile(selectedFiles[0].filePath)}
-                      hasAiKey={settings.hasAnthropicKey || settings.hasOpenAiKey}
-                      onGenerateAbout={makeGenerateAbout(selectedFiles[0])}
                     />
                   )}
                 </div>
@@ -4688,6 +4711,8 @@ export default function App() {
                       }
                       onCurrentFolderSuggestRulesChange={(rules) => handleSaveScopedSuggestRulesAndStayOpen(activeFolderPath, rules)}
                       onOpenCurrentFolderSuggestRulesEditor={() => handleOpenSuggestRulesEditor(activeFolderPath)}
+                      hasAiKey={settings.hasAnthropicKey || settings.hasOpenAiKey}
+                      onGenerateAbout={makeGenerateAboutForFolder(visibleFiles)}
                       allFolderPaths={(() => {
                         const paths: string[] = []
                         const walk = (node: typeof librarian.folderTree) => {
@@ -4838,8 +4863,6 @@ export default function App() {
                       : x
                   ))
                 }}
-                hasAiKey={settings.hasAnthropicKey || settings.hasOpenAiKey}
-                onGenerateAbout={makeGenerateAbout(selectedFiles[0])}
               />
             ) : null}
           </div>

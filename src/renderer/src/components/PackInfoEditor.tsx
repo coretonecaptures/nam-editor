@@ -100,6 +100,7 @@ export interface PackInfo {
   title: string
   subtitle: string
   capturedBy: string
+  about: string
   description: string
   equipment: { label: string; value: string }[]
   pedals: { label: string; value: string }[]
@@ -150,6 +151,7 @@ const EMPTY_PACK: PackInfo = {
   title: '',
   subtitle: '',
   capturedBy: '',
+  about: '',
   description: '',
   equipment: [],
   pedals: [],
@@ -175,6 +177,7 @@ function hasMeaningfulPackInfoData(pack: PackInfo): boolean {
     pack.title.trim() ||
     pack.subtitle.trim() ||
     pack.capturedBy.trim() ||
+    pack.about.trim() ||
     pack.description.trim() ||
     pack.footer.trim() ||
     pack.recommendedInputGain.trim() ||
@@ -563,6 +566,8 @@ interface Props {
   currentFolderSuggestRules?: MetadataSuggestRule[]
   onCurrentFolderSuggestRulesChange?: (rules: MetadataSuggestRule[]) => void
   onOpenCurrentFolderSuggestRulesEditor?: () => void
+  hasAiKey?: boolean
+  onGenerateAbout?: () => Promise<string | null>
 }
 
 function CopyFolderPicker({
@@ -1027,6 +1032,8 @@ export function PackInfoEditor({
   currentFolderSuggestRules = [],
   onCurrentFolderSuggestRulesChange,
   onOpenCurrentFolderSuggestRulesEditor,
+  hasAiKey = false,
+  onGenerateAbout,
 }: Props) {
   const [pack, setPack] = useState<PackInfo>(EMPTY_PACK)
   const savedPackRef = useRef<PackInfo>(EMPTY_PACK)
@@ -1048,6 +1055,7 @@ export function PackInfoEditor({
   const [copyPickerOpen, setCopyPickerOpen] = useState(false)
   const [copyStatus, setCopyStatus] = useState<string | null>(null)
   const [parentChecklistItems, setParentChecklistItems] = useState<PackChecklistItem[]>([])
+  const [parentAbout, setParentAbout] = useState<string>('')
   const [parseNotesOpen, setParseNotesOpen] = useState(false)
   const [parseNotesText, setParseNotesText] = useState('')
   const [parseToDescription, setParseToDescription] = useState(true)
@@ -1057,6 +1065,8 @@ export function PackInfoEditor({
   const [selectedSwitchIndices, setSelectedSwitchIndices] = useState<Set<number>>(new Set())
   const [glossaryRuleTarget, setGlossaryRuleTarget] = useState<PackRuleSeedTarget>('auto_guess')
   const [switchRuleTarget, setSwitchRuleTarget] = useState<MetadataSuggestField>('nl_amp_switches')
+  const [aboutGenerating, setAboutGenerating] = useState(false)
+  const [aboutError, setAboutError] = useState<string | null>(null)
   const descriptionRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
@@ -1070,6 +1080,7 @@ export function PackInfoEditor({
               title: normalizeText(d.title),
               subtitle: normalizeText(d.subtitle),
               capturedBy: normalizeText(d.capturedBy, defaultCapturedBy),
+              about: normalizeText(d.about),
               description: normalizeText(d.description),
               equipment: Array.isArray(d.equipment)
                 ? d.equipment.map((item) => ({
@@ -1098,7 +1109,7 @@ export function PackInfoEditor({
               footer: normalizeText(d.footer),
               exportExcludedSubfolders: d.exportExcludedSubfolders ?? [],
               exportExcludedCaptures: d.exportExcludedCaptures ?? [],
-              exportColumns: d.exportColumns ?? DEFAULT_EXPORT_COLUMNS,
+              exportColumns: (d.exportColumns ?? DEFAULT_EXPORT_COLUMNS).filter((id) => PACK_CAPTURE_COLUMNS.some((c) => c.id === id)),
               recommendedInputGain: d.recommendedInputGain ?? '',
               checklistItems: Array.isArray(d.checklistItems)
                 ? d.checklistItems.map((item) => normalizeChecklistItem(item))
@@ -1130,6 +1141,7 @@ export function PackInfoEditor({
   useEffect(() => {
     if (!parentPackPath) {
       setParentChecklistItems([])
+      setParentAbout('')
       return
     }
     let cancelled = false
@@ -1140,8 +1152,9 @@ export function PackInfoEditor({
         ? data.checklistItems.map((item) => normalizeChecklistItem(item))
         : []
       setParentChecklistItems(items)
+      setParentAbout(normalizeText(data?.about))
     }).catch(() => {
-      if (!cancelled) setParentChecklistItems([])
+      if (!cancelled) { setParentChecklistItems([]); setParentAbout('') }
     })
     return () => { cancelled = true }
   }, [parentPackPath])
@@ -1771,6 +1784,62 @@ export function PackInfoEditor({
           </div>
         </div>
 
+        {/* About this gear */}
+        <div className="pb-1">
+          <div className="flex items-center justify-between gap-3 mb-1">
+            <label className={labelCls}>About this gear</label>
+            <div className="flex items-center gap-2">
+            {parentAbout && parentAbout !== pack.about && (
+              <button
+                type="button"
+                onClick={() => update('about', parentAbout)}
+                title="Copy from parent pack"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border border-gray-400/30 text-gray-400 hover:text-gray-200 hover:border-gray-400/60 transition-colors"
+              >
+                ↓ Sync from parent
+              </button>
+            )}
+            {hasAiKey && onGenerateAbout && (
+              <button
+                type="button"
+                disabled={aboutGenerating}
+                onClick={async () => {
+                  setAboutGenerating(true)
+                  setAboutError(null)
+                  try {
+                    const text = await onGenerateAbout()
+                    if (text) update('about', text)
+                    else setAboutError('No content returned')
+                  } catch (e) {
+                    setAboutError(e instanceof Error ? e.message : 'Error')
+                  } finally {
+                    setAboutGenerating(false)
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border border-violet-500/40 text-violet-400 hover:bg-violet-500/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                {aboutGenerating
+                  ? <><svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg> Generating…</>
+                  : <>✨ Generate</>
+                }
+              </button>
+            )}
+            </div>
+          </div>
+          {aboutError && <p className="mb-1 text-xs text-red-400">{aboutError}</p>}
+          <textarea
+            value={pack.about}
+            onChange={(e) => { update('about', e.target.value); setAboutError(null) }}
+            placeholder={hasAiKey ? 'Click ✨ Generate to fill with AI, or type manually…' : 'A short description of what this gear is and its tonal character…'}
+            rows={4}
+            maxLength={1000}
+            className={`${inputCls('about')} resize-y leading-relaxed font-mono text-xs`}
+          />
+          <p className="mt-1 px-1 text-[10px] text-gray-400 dark:text-gray-500">
+            Saved with this pack — not included in the exported pack sheet.
+          </p>
+        </div>
+
         {/* Description */}
         <div className="pb-1">
           <div className="flex items-center justify-between gap-3">
@@ -2074,7 +2143,8 @@ export function PackInfoEditor({
                 })}
                 {/* Inactive columns - click to add at end */}
                 {PACK_CAPTURE_COLUMNS.filter((c) => !pack.exportColumns.includes(c.id)).map((col) => {
-                  const atMax = pack.exportColumns.length >= 6
+                  const validCount = pack.exportColumns.filter((id) => PACK_CAPTURE_COLUMNS.some((c) => c.id === id)).length
+                  const atMax = validCount >= 6
                   return (
                     <label key={col.id} className={`flex items-center gap-1 px-2 py-0.5 cursor-pointer select-none hover:bg-gray-50 dark:hover:bg-gray-700/50 ${atMax ? 'opacity-40 pointer-events-none' : ''}`}>
                       <div className="w-3.5 flex-shrink-0" />
