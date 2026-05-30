@@ -23,6 +23,8 @@ interface MetadataEditorProps {
   gearMakeSuggestions?: string[]
   gearModelSuggestions?: string[]
   showNamLabFields?: boolean
+  hasAiKey?: boolean
+  onGenerateAbout?: () => Promise<string | null>
 }
 
 function toFileUrl(p: string): string {
@@ -39,22 +41,22 @@ function showNativeTextContextMenu(event: MouseEvent<HTMLElement>) {
 }
 
 type NlKey = 'nl_mics' | 'nl_amp_channel' | 'nl_cabinet' | 'nl_cabinet_config' |
-             'nl_amp_settings' | 'nl_boost_pedal' | 'nl_pedal_settings' | 'nl_amp_switches' | 'nl_comments'
+             'nl_amp_settings' | 'nl_boost_pedal' | 'nl_pedal_settings' | 'nl_amp_switches' | 'nl_comments' | 'nl_about'
 
-// Fields relevant to each gear type. nl_comments always shown regardless.
+// Fields relevant to each gear type. nl_comments and nl_about always shown regardless.
 const NL_RELEVANT: Record<string, NlKey[]> = {
-  amp:          ['nl_amp_channel', 'nl_amp_settings', 'nl_amp_switches', 'nl_comments'],
-  pedal:        ['nl_boost_pedal', 'nl_pedal_settings', 'nl_comments'],
-  pedal_amp:    ['nl_amp_channel', 'nl_amp_settings', 'nl_amp_switches', 'nl_boost_pedal', 'nl_pedal_settings', 'nl_comments'],
-  amp_cab:      ['nl_mics', 'nl_amp_channel', 'nl_cabinet', 'nl_cabinet_config', 'nl_amp_settings', 'nl_amp_switches', 'nl_comments'],
-  amp_pedal_cab:['nl_mics', 'nl_amp_channel', 'nl_cabinet', 'nl_cabinet_config', 'nl_amp_settings', 'nl_amp_switches', 'nl_boost_pedal', 'nl_pedal_settings', 'nl_comments'],
-  preamp:       ['nl_amp_channel', 'nl_amp_settings', 'nl_amp_switches', 'nl_comments'],
-  studio:       ['nl_comments'],
+  amp:          ['nl_amp_channel', 'nl_amp_settings', 'nl_amp_switches', 'nl_comments', 'nl_about'],
+  pedal:        ['nl_boost_pedal', 'nl_pedal_settings', 'nl_comments', 'nl_about'],
+  pedal_amp:    ['nl_amp_channel', 'nl_amp_settings', 'nl_amp_switches', 'nl_boost_pedal', 'nl_pedal_settings', 'nl_comments', 'nl_about'],
+  amp_cab:      ['nl_mics', 'nl_amp_channel', 'nl_cabinet', 'nl_cabinet_config', 'nl_amp_settings', 'nl_amp_switches', 'nl_comments', 'nl_about'],
+  amp_pedal_cab:['nl_mics', 'nl_amp_channel', 'nl_cabinet', 'nl_cabinet_config', 'nl_amp_settings', 'nl_amp_switches', 'nl_boost_pedal', 'nl_pedal_settings', 'nl_comments', 'nl_about'],
+  preamp:       ['nl_amp_channel', 'nl_amp_settings', 'nl_amp_switches', 'nl_comments', 'nl_about'],
+  studio:       ['nl_comments', 'nl_about'],
 }
 
 const NL_ALL: NlKey[] = [
   'nl_mics', 'nl_amp_channel', 'nl_cabinet', 'nl_cabinet_config',
-  'nl_amp_settings', 'nl_boost_pedal', 'nl_pedal_settings', 'nl_amp_switches', 'nl_comments',
+  'nl_amp_settings', 'nl_boost_pedal', 'nl_pedal_settings', 'nl_amp_switches', 'nl_comments', 'nl_about',
 ]
 
 function buildRenamePreview(template: string, meta: NamMetadata, fileName: string): string {
@@ -85,13 +87,15 @@ function formatBytes(bytes?: number): string | null {
   return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`
 }
 
-export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, onRevert, onRevealInFinder, onReapplyDefaults, onClearSuggestions, hasActiveDefaults, renameTemplate, onRenameFile, onSaveAndAdvance, gearMakeSuggestions = [], gearModelSuggestions = [], showNamLabFields = true }: MetadataEditorProps) {
+export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, onRevert, onRevealInFinder, onReapplyDefaults, onClearSuggestions, hasActiveDefaults, renameTemplate, onRenameFile, onSaveAndAdvance, gearMakeSuggestions = [], gearModelSuggestions = [], showNamLabFields = true, hasAiKey = false, onGenerateAbout }: MetadataEditorProps) {
   const m = file.metadata
   const orig = file.originalMetadata
   const [nlShowAll, setNlShowAll] = useState(false)
   const [latencyUnlocked, setLatencyUnlocked] = useState(false)
   const [isEditingName, setIsEditingName] = useState(false)
   const [nameEditValue, setNameEditValue] = useState('')
+  const [aboutGenerating, setAboutGenerating] = useState(false)
+  const [aboutError, setAboutError] = useState<string | null>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -700,6 +704,50 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
                         maxLength={500}
                         className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none transition-colors resize-none ${inputClass(isManuallyChanged('nl_comments'))}`}
                       />
+                    </Field>
+                  )}
+
+                  {show('nl_about') && (
+                    <Field label="About this gear">
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          {hasAiKey && onGenerateAbout && (
+                            <button
+                              type="button"
+                              disabled={aboutGenerating || !m.gear_make || !m.gear_model}
+                              onClick={async () => {
+                                setAboutGenerating(true)
+                                setAboutError(null)
+                                try {
+                                  const text = await onGenerateAbout()
+                                  if (text) update('nl_about', text)
+                                  else setAboutError('No content returned')
+                                } catch (e) {
+                                  setAboutError(String(e))
+                                } finally {
+                                  setAboutGenerating(false)
+                                }
+                              }}
+                              title={!m.gear_make || !m.gear_model ? 'Set Gear Make and Model first' : 'Generate a description with AI'}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border border-violet-500/40 text-violet-400 hover:bg-violet-500/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                            >
+                              {aboutGenerating
+                                ? <><svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg> Generating…</>
+                                : <>✨ Generate</>
+                              }
+                            </button>
+                          )}
+                          {aboutError && <span className="text-xs text-red-400">{aboutError}</span>}
+                        </div>
+                        <textarea
+                          value={m.nl_about ?? ''}
+                          onChange={(e) => { update('nl_about', e.target.value); setAboutError(null) }}
+                          placeholder={hasAiKey ? 'Click ✨ Generate to fill with AI, or type manually…' : 'A short description of what this gear is and its tonal character…'}
+                          rows={4}
+                          maxLength={1000}
+                          className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none transition-colors resize-none ${inputClass(isManuallyChanged('nl_about'))}`}
+                        />
+                      </div>
                     </Field>
                   )}
 

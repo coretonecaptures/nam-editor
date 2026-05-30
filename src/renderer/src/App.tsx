@@ -1857,6 +1857,18 @@ export default function App() {
     })
   }
 
+  const makeGenerateAbout = (file: NamFile) => async (): Promise<string | null> => {
+    const { gear_make, gear_model, gear_type } = file.metadata
+    if (!gear_make || !gear_model) return null
+    const gearLabel = gear_type ? `${gear_type.replace(/_/g, ' ')} ` : ''
+    const prompt = `You are an expert in guitar amplifiers, pedals, and audio gear. Write exactly 2–3 sentences describing the ${gearLabel}"${gear_make} ${gear_model}". Cover its tonal character, gain range or key modes/channels, and what genres or playing styles it's best known for. Be factual and specific. Write in present tense. Do not start with "The".`
+    const provider = settings.aiProvider ?? 'anthropic'
+    const model = provider === 'anthropic' ? (settings.aiAnthropicModel || 'claude-haiku-4-5-20251001') : (settings.aiOpenAiModel || 'gpt-4o-mini')
+    const res = await window.api.aiEnrich({ prompt, provider, model })
+    if (res.success && res.text) return res.text.trim()
+    throw new Error(res.error ?? 'No response')
+  }
+
   const handleBatchApply = async (batchFields: Partial<NamFile['metadata']>, options?: BatchApplyOptions) => {
     const folderPath = batchFolder?.path ?? null
     const batchPaths = batchFolder?.filePaths
@@ -2071,7 +2083,7 @@ export default function App() {
       'name', 'modeled_by', 'gear_type', 'gear_make', 'gear_model',
       'tone_type', 'input_level_dbu', 'output_level_dbu', 'nb_trained_epochs',
       'nl_mics', 'nl_cabinet', 'nl_cabinet_config', 'nl_amp_channel',
-      'nl_boost_pedal', 'nl_amp_settings', 'nl_pedal_settings', 'nl_amp_switches', 'nl_comments'
+      'nl_boost_pedal', 'nl_amp_settings', 'nl_pedal_settings', 'nl_amp_switches', 'nl_comments', 'nl_about'
     ]
 
     const saved = new Map<string, { newBaseName: string; newPath: string }>()
@@ -2295,7 +2307,7 @@ export default function App() {
       const clearedSet = new Set(cleared)
       const nlKeys: (keyof NamFile['metadata'])[] = [
         'nl_mics', 'nl_amp_channel', 'nl_cabinet', 'nl_cabinet_config',
-        'nl_amp_settings', 'nl_boost_pedal', 'nl_pedal_settings', 'nl_amp_switches', 'nl_comments',
+        'nl_amp_settings', 'nl_boost_pedal', 'nl_pedal_settings', 'nl_amp_switches', 'nl_comments', 'nl_about',
       ]
       setFiles((prev) => prev.map((f) => {
         if (!clearedSet.has(f.filePath)) return f
@@ -2431,7 +2443,7 @@ export default function App() {
     'modeled_by', 'gear_type', 'gear_make', 'gear_model', 'tone_type',
     'input_level_dbu', 'output_level_dbu', 'nb_trained_epochs',
     'nl_mics', 'nl_amp_channel', 'nl_cabinet', 'nl_cabinet_config',
-    'nl_amp_settings', 'nl_boost_pedal', 'nl_pedal_settings', 'nl_amp_switches', 'nl_comments',
+    'nl_amp_settings', 'nl_boost_pedal', 'nl_pedal_settings', 'nl_amp_switches', 'nl_comments', 'nl_about',
   ]
 
   const handleCopyMetadata = (filePath: string) => {
@@ -2457,7 +2469,7 @@ export default function App() {
       nl_mics: 'Mics', nl_amp_channel: 'Amp Channel', nl_cabinet: 'Cabinet',
       nl_cabinet_config: 'Cabinet Config', nl_amp_settings: 'Amp Settings',
       nl_boost_pedal: 'Boost Pedal(s)', nl_pedal_settings: 'Pedal Settings',
-      nl_amp_switches: 'Amp Switches', nl_comments: 'Comments',
+      nl_amp_switches: 'Amp Switches', nl_comments: 'Comments', nl_about: 'About',
     }
     const fieldSummary = Object.entries(metadata)
       .filter(([, v]) => v != null && v !== '')
@@ -4434,6 +4446,8 @@ export default function App() {
                         ))
                       }}
                       onClearSuggestions={() => handleClearSuggestionsForFile(selectedFiles[0].filePath)}
+                      hasAiKey={settings.hasAnthropicKey || settings.hasOpenAiKey}
+                      onGenerateAbout={makeGenerateAbout(selectedFiles[0])}
                     />
                   )}
                 </div>
@@ -4804,6 +4818,8 @@ export default function App() {
                       : x
                   ))
                 }}
+                hasAiKey={settings.hasAnthropicKey || settings.hasOpenAiKey}
+                onGenerateAbout={makeGenerateAbout(selectedFiles[0])}
               />
             ) : null}
           </div>

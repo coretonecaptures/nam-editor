@@ -32,6 +32,7 @@ export interface NamMetadata {
   nl_pedal_settings?: string | null
   nl_amp_switches?: string | null
   nl_comments?: string | null
+  nl_about?: string | null
   nl_rating?: number | null
   // Latency calibration — stored at metadata.training.data.latency.calibration.recommended
   // Normally auto-set by the NAM trainer; editable here for pedal/plugin calibration workarounds

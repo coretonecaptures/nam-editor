@@ -2574,7 +2574,7 @@ function liftUiMetadata(meta: Record<string, unknown>): Record<string, unknown> 
   if (nl) {
     if (meta.nb_trained_epochs == null && nl.trained_epochs != null) meta.nb_trained_epochs = nl.trained_epochs
     if (meta.nb_preset_name == null && nl.preset_name != null) meta.nb_preset_name = nl.preset_name
-    const nlKeys = ['mics','cabinet','cabinet_config','amp_channel','boost_pedal','amp_settings','pedal_settings','amp_switches','comments','rating'] as const
+    const nlKeys = ['mics','cabinet','cabinet_config','amp_channel','boost_pedal','amp_settings','pedal_settings','amp_switches','comments','about','rating'] as const
     for (const k of nlKeys) {
       if (nl[k] != null) meta[`nl_${k}`] = nl[k]
     }
@@ -3351,7 +3351,7 @@ app.whenReady().then(async () => {
 
       // Handle NAM Lab extended fields â€” stored at metadata.nam_lab.*
       const origNl = (orig.nam_lab ?? {}) as Record<string, unknown>
-      const nlKeys = ['mics','cabinet','cabinet_config','amp_channel','boost_pedal','amp_settings','pedal_settings','amp_switches','comments','rating'] as const
+      const nlKeys = ['mics','cabinet','cabinet_config','amp_channel','boost_pedal','amp_settings','pedal_settings','amp_switches','comments','about','rating'] as const
       for (const k of nlKeys) {
         const rendererKey = `nl_${k}`
         if (!Object.prototype.hasOwnProperty.call(incoming, rendererKey)) continue
