@@ -68,7 +68,7 @@
 - Training panel container usage: reduce the forced-feeling outer padding / dead margins so the trainer uses more of its available width and height, especially as the panel is resized.
 - Training entry-point cleanup (partially done): standalone Training workspace exists and is the main surface now; finish retiring or simplifying the old file-level `Metadata | Training` pairing so metadata stays the file editor surface and Training lives as its own standalone workspace/tool.
 - Training comparison test: run the same capture through a full `1000 epoch REVxSTD` build in both NAM-BOT and NAM Lab, then compare the resulting `.nam` files directly and also do a listening check to confirm they sound the same (or understand why they do not).
-- Training queue controls/icons: replace the temporary plain-text queue controls (`^`, `v`, `x`) with nicer stable icons/SVGs that cannot regress into mojibake.
+- ~~Training queue controls/icons~~: already SVGs — done.
 - Training panel layout (partially done): a first cleanup pass happened, but the Training section still needs a dedicated neatening pass so Run WAVs / Run Folder / Queue, routing, and custom controls use space more gracefully and read more cleanly.
 - Training architecture picker UX: validate on queue that at least one profile is selected, since the new card grid allows the selection to go empty.
 - Training queue status line: fix the green running summary so it reports active/running work accurately (for example, a single active run should not say `Queue Running - 0 queued` in a misleading way).
