@@ -1157,13 +1157,15 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               </svg>
               <span className="text-[10px] font-semibold uppercase tracking-wider flex-1 text-left">Watch Folders</span>
               {onOpenSetupGuide && (
-                <button
-                  type="button"
+                <span
+                  role="button"
+                  tabIndex={0}
                   onClick={e => { e.stopPropagation(); onOpenSetupGuide() }}
-                  className="text-[9px] text-nm-accent hover:underline"
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); onOpenSetupGuide() } }}
+                  className="text-[9px] text-nm-accent hover:underline cursor-pointer"
                 >
                   Setup guide
-                </button>
+                </span>
               )}
               {trainerState.watcherState.watchers.some(w => w.skippedCount > 0) && (
                 <span className="text-[9px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-400 font-medium">skipped</span>
@@ -1793,7 +1795,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                     ? <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
                                     : entry.status === 'error'
                                     ? <svg className="w-4 h-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
-                                    : <svg className="w-4 h-4 text-nm-text-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 7.5A2.25 2.25 0 017.5 5.25h9a2.25 2.25 0 012.25 2.25v9a2.25 2.25 0 01-2.25 2.25h-9a2.25 2.25 0 01-2.25-2.25v-9z" /></svg>
+                                    : <svg className="w-4 h-4 text-nm-text-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg>
                                   }
                                 </div>
                                 <div className="flex-1 min-w-0">
