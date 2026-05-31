@@ -3613,6 +3613,7 @@ INSTRUCTIONS:
       }
     }
 
+    const destLabel = destDir.replace(/\\/g, '/').split('/').pop() ?? '_Duplicates'
     if (movedPairs.length > 0) {
       const movedMap = new Map(movedPairs.map((m) => [m.oldPath, m.newPath]))
       setFiles((prev) => prev.map((f) => {
@@ -3621,12 +3622,11 @@ INSTRUCTIONS:
         const newBaseName = newPath.replace(/\\/g, '/').split('/').pop()?.replace(/\.nam$/i, '') ?? f.fileName
         return { ...f, filePath: newPath, fileName: newBaseName, isDirty: false, autoFilledFields: [] }
       }))
-      // _Duplicates is hardcoded-hidden in scan, so no need to rescan tree
     }
     if (failed > 0) {
-      setStatus({ message: `Moved ${movedPairs.length} to _Duplicates, failed ${failed}`, type: 'error' })
+      setStatus({ message: `Moved ${movedPairs.length} to ${destLabel}, failed ${failed}`, type: 'error' })
     } else {
-      setStatus({ message: `Moved ${movedPairs.length} duplicate${movedPairs.length !== 1 ? 's' : ''} to _Duplicates`, type: 'success' })
+      setStatus({ message: `Moved ${movedPairs.length} duplicate${movedPairs.length !== 1 ? 's' : ''} to ${destLabel}`, type: 'success' })
     }
   }
 
