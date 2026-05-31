@@ -217,6 +217,19 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     return () => window.clearTimeout(timer)
   }, [presetSaveNotice])
 
+  // Auto-collapse fully-finished batches (no queued/running items)
+  useEffect(() => {
+    setCollapsedBatches(prev => {
+      const next = new Set(prev)
+      for (const group of groupedQueue) {
+        const hasActive = group.jobs.some(j => j.status === 'queued' || j.status === 'running' || j.status === 'starting')
+        if (!hasActive) next.add(group.key)
+      }
+      return next
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupedQueue.length])
+
   useEffect(() => {
     if (!queueContextMenu) return
     const close = () => setQueueContextMenu(null)
@@ -1142,6 +1155,15 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
               </svg>
               <span className="text-[10px] font-semibold uppercase tracking-wider flex-1 text-left">Watch Folders</span>
+              {onOpenSetupGuide && (
+                <button
+                  type="button"
+                  onClick={e => { e.stopPropagation(); onOpenSetupGuide() }}
+                  className="text-[9px] text-nm-accent hover:underline"
+                >
+                  Setup guide
+                </button>
+              )}
               {trainerState.watcherState.watchers.some(w => w.skippedCount > 0) && (
                 <span className="text-[9px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-400 font-medium">skipped</span>
               )}
@@ -1930,6 +1952,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                             else setFolderRunProfileId(CUSTOM_PRESET_ID)
                           }}
                           userProfiles={settings.userCaptureProfiles ?? []}
+                          onCreateProfile={() => { setCaptureProfileEditorTarget(null); setCaptureProfileEditorOpen(true) }}
+                          onEditProfile={profile => { setCaptureProfileEditorTarget(profile); setCaptureProfileEditorOpen(true) }}
                         />
                       </Field>
                     )}
@@ -2223,7 +2247,7 @@ function Field({ label, hint, labelTitle, help, children }: { label: string; hin
   )
 }
 
-function ArchitectureMultiSelect({ values, onChange, userProfiles = [] }: { values: string[]; onChange: (next: string[]) => void; userProfiles?: import('../types/settings').UserCaptureProfile[] }) {
+function ArchitectureMultiSelect({ values, onChange, userProfiles = [], onCreateProfile, onEditProfile }: { values: string[]; onChange: (next: string[]) => void; userProfiles?: import('../types/settings').UserCaptureProfile[]; onCreateProfile?: () => void; onEditProfile?: (profile: import('../types/settings').UserCaptureProfile) => void }) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement | null>(null)
 
@@ -2280,12 +2304,22 @@ function ArchitectureMultiSelect({ values, onChange, userProfiles = [] }: { valu
             {userProfiles.map((profile) => {
               const checked = values.includes(profile.id)
               return (
-                <label key={profile.id} className={`flex items-center gap-2 rounded-lg px-2.5 py-2 cursor-pointer text-sm ${checked ? 'bg-indigo-500/10 text-indigo-700 dark:text-indigo-200' : 'text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'}`}>
-                  <input type="checkbox" checked={checked} onChange={(e) => { if (e.target.checked) onChange([...values, profile.id]); else onChange(values.filter((item) => item !== profile.id)) }} className="accent-indigo-600" />
-                  <span>{profile.name}</span>
-                </label>
+                <div key={profile.id} className={`flex items-center gap-1 rounded-lg px-2.5 py-1.5 ${checked ? 'bg-indigo-500/10' : 'hover:bg-gray-100 dark:hover:bg-gray-800'}`}>
+                  <label className="flex items-center gap-2 flex-1 cursor-pointer text-sm">
+                    <input type="checkbox" checked={checked} onChange={(e) => { if (e.target.checked) onChange([...values, profile.id]); else onChange(values.filter((item) => item !== profile.id)) }} className="accent-indigo-600" />
+                    <span className={checked ? 'text-indigo-700 dark:text-indigo-200' : 'text-gray-800 dark:text-gray-200'}>{profile.name}</span>
+                  </label>
+                  {onEditProfile && (
+                    <button onClick={() => { onEditProfile(profile); setOpen(false) }} className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-1">Edit</button>
+                  )}
+                </div>
               )
             })}
+            {onCreateProfile && (
+              <button onClick={() => { onCreateProfile(); setOpen(false) }} className="w-full text-left px-2.5 py-1.5 text-[11px] text-indigo-500 dark:text-indigo-400 hover:bg-gray-100 dark:hover:bg-gray-800 border-t border-gray-100 dark:border-gray-800 mt-1">
+                + New capture profile…
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -2337,222 +2371,4 @@ function ToggleRow({ label, checked, onChange }: { label: string; checked: boole
     </label>
   )
 }
-
-function HistoryRow({
-  entry,
-  onContextMenu,
-}: {
-  entry: TrainerHistoryEntry
-  onContextMenu?: (context: { entry: TrainerHistoryEntry; x: number; y: number }) => void
-}) {
-  const esrTone = getEsrTone(entry.validationEsr)
-  const statusClasses =
-    entry.status === 'success'
-      ? 'text-emerald-700 dark:text-emerald-300'
-      : entry.status === 'error'
-        ? 'text-red-700 dark:text-red-300'
-        : entry.status === 'skipped'
-          ? 'text-yellow-700 dark:text-yellow-300'
-          : 'text-amber-700 dark:text-amber-300'
-  return (
-    <div
-      className="px-3 py-2 text-xs rounded-lg border border-gray-300 dark:border-gray-700/90 bg-gray-50 dark:bg-gray-900/50 shadow-sm"
-      onContextMenu={onContextMenu ? (event) => {
-        event.preventDefault()
-        event.stopPropagation()
-        onContextMenu({ entry, x: event.clientX, y: event.clientY })
-      } : undefined}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="font-medium text-gray-800 dark:text-gray-200 truncate">{entry.finalModelName}</div>
-          <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-500 dark:text-gray-500">
-            <span className="rounded-full border border-sky-300 dark:border-sky-800 bg-sky-500/10 px-1.5 py-0.5 text-sky-700 dark:text-sky-300">
-              {entry.profileName ?? (entry.sourceMode === 'watcher' ? 'Watcher' : entry.sourceMode === 'manual-folder-run' ? 'Folder run' : 'Manual queue')}
-            </span>
-            <span>{architectureDisplayLabel(entry.architecture)}</span>
-            <span>{new Date(entry.timestamp).toLocaleString()}</span>
-            <span>Epochs {entry.epochs}</span>
-            {typeof entry.validationEsr === 'number' ? (
-              typeof entry.thresholdEsr === 'number' ? (
-                entry.validationEsr <= entry.thresholdEsr
-                  ? <span className="rounded-full border border-emerald-400/60 dark:border-emerald-700/60 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-700 dark:text-emerald-300">ESR {esrTone.text} — stopped early ✓</span>
-                  : <span className={esrTone.classes}>ESR {esrTone.text} (target {entry.thresholdEsr})</span>
-              ) : (
-                <span className={esrTone.classes}>ESR {esrTone.text}</span>
-              )
-            ) : (
-              typeof entry.thresholdEsr === 'number' && <span className="text-gray-400 dark:text-gray-600">Target ESR {entry.thresholdEsr}</span>
-            )}
-          </div>
-          <div className="mt-1 text-[11px] text-gray-500 dark:text-gray-500 break-all">
-            {entry.finalModelPath || entry.sourcePath}
-          </div>
-          {!!entry.failureReason && (
-            <div className="mt-1 text-[11px] text-red-700 dark:text-red-300 break-words">{entry.failureReason}</div>
-          )}
-        </div>
-        <div className="flex flex-col items-end gap-1 text-right">
-          <div className={`font-semibold whitespace-nowrap ${statusClasses}`}>
-            {entry.status.toUpperCase()}
-          </div>
-          <div className="text-[11px] font-medium text-gray-700 dark:text-gray-200 whitespace-nowrap">
-            {new Date(entry.timestamp).toLocaleString()}
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function StatusPill({ status }: { status: TrainerStateSnapshot['status'] }) {
-  const classes =
-    status === 'success'
-      ? 'bg-green-500/15 text-green-300 border-green-500/30'
-      : status === 'error'
-        ? 'bg-red-500/15 text-red-300 border-red-500/30'
-        : status === 'canceled'
-          ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-          : status === 'running' || status === 'starting'
-            ? 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30'
-            : 'bg-gray-500/15 text-gray-300 border-gray-500/30'
-  return (
-    <span className={`px-2 py-1 rounded-full border text-[11px] font-medium ${classes}`}>
-      {status === 'idle' ? 'Idle' : status === 'starting' ? 'Starting' : status === 'running' ? 'Running' : status === 'success' ? 'Success' : status === 'error' ? 'Failed' : 'Canceled'}
-    </span>
-  )
-}
-
-function QueueRow({
-  batchIndex,
-  job,
-  isActive,
-  onRemove,
-  onMove,
-  onMakeNext,
-  onContextMenu,
-}: {
-  batchIndex: number
-  job: TrainerQueueJob
-  isActive: boolean
-  onRemove: (job: TrainerQueueJob) => void | Promise<void>
-  onMove: (job: TrainerQueueJob, direction: 'up' | 'down') => void | Promise<void>
-  onMakeNext: (job: TrainerQueueJob) => void | Promise<void>
-  onContextMenu: (context: { job: TrainerQueueJob; x: number; y: number }) => void
-}) {
-  const esrTone = getEsrTone(job.validationEsr)
-  const isQueued = job.status === 'queued'
-  const statusClasses =
-    job.status === 'success'
-      ? 'text-emerald-700 dark:text-emerald-300'
-      : job.status === 'error'
-        ? 'text-red-700 dark:text-red-300'
-        : job.status === 'canceled'
-          ? 'text-amber-700 dark:text-amber-300'
-          : job.status === 'running' || job.status === 'starting'
-            ? 'text-indigo-700 dark:text-indigo-300'
-            : 'text-gray-700 dark:text-gray-300'
-
-  return (
-    <div
-      className={`px-3 py-2 rounded-lg border text-xs shadow-sm ${
-        isActive
-          ? 'bg-indigo-500/10 border-indigo-400/70 dark:border-indigo-600/80'
-          : 'bg-gray-50 dark:bg-gray-900/55 border-gray-300 dark:border-gray-700/90'
-      }`}
-      onContextMenu={(event) => {
-        event.preventDefault()
-        event.stopPropagation()
-        onContextMenu({ job, x: event.clientX, y: event.clientY })
-      }}
-    >
-      <div className="flex items-center gap-3">
-        <div className="flex flex-col gap-1">
-          <button
-            onClick={() => { void onMove(job, 'up') }}
-            disabled={!isQueued}
-            title="Move up"
-            className="w-6 h-6 flex items-center justify-center rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5" />
-            </svg>
-          </button>
-          <button
-            onClick={() => { void onMove(job, 'down') }}
-            disabled={!isQueued}
-            title="Move down"
-            className="w-6 h-6 flex items-center justify-center rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-            </svg>
-          </button>
-        </div>
-
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-1.5 text-[10px] font-semibold text-gray-600 dark:text-gray-300">
-                  {batchIndex}
-                </span>
-                <div className="font-medium text-gray-800 dark:text-gray-200 truncate">
-                {job.outputPath.replace(/\\/g, '/').split('/').pop()}
-                </div>
-              </div>
-              <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-500 dark:text-gray-500">
-                <span className="rounded-full border border-sky-300 dark:border-sky-800 bg-sky-500/10 px-1.5 py-0.5 text-sky-700 dark:text-sky-300">
-                  {job.profileName ?? (job.sourceMode === 'manual-direct' ? 'Manual queue' : job.sourceMode === 'watcher' ? 'Watcher' : 'Folder run')}
-                </span>
-                <span>{architectureDisplayLabel(job.architecture)}</span>
-                <span>Attempt {job.attempts}</span>
-                {typeof job.progressPercent === 'number' && <span>{job.progressPercent.toFixed(1)}%</span>}
-                {typeof job.validationEsr === 'number' && <span className={esrTone.classes}>ESR {esrTone.text}</span>}
-                {typeof job.thresholdEsr === 'number' && <span>Target {job.thresholdEsr}</span>}
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className={`font-semibold whitespace-nowrap ${statusClasses}`}>
-                {job.status.toUpperCase()}
-              </div>
-              {isQueued && (
-                <button
-                  onClick={() => { void onMakeNext(job) }}
-                  className="px-2 py-1 rounded-md border border-indigo-300 dark:border-indigo-700 text-[11px] text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 whitespace-nowrap"
-                >
-                  Next
-                </button>
-              )}
-              {job.status === 'success' && !!job.outputModelPath && (
-                <button
-                  onClick={() => window.api.revealFile(job.outputModelPath)}
-                  className="px-2 py-1 rounded-md border border-gray-300 dark:border-gray-700 text-[11px] text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 whitespace-nowrap"
-                >
-                  Show
-                </button>
-              )}
-              {!isActive && (
-                <button
-                  onClick={() => { void onRemove(job) }}
-                  title="Remove from queue"
-                  className="w-6 h-6 flex items-center justify-center rounded-md border border-red-300/60 dark:border-red-800/60 bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 transition-colors"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-      {!!job.error && (
-        <div className="mt-1 text-[11px] text-red-700 dark:text-red-300 break-words">
-          {job.error}
-        </div>
-      )}
-    </div>
-  )
-}
-
+
