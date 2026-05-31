@@ -217,6 +217,38 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     return () => window.clearTimeout(timer)
   }, [presetSaveNotice])
 
+  const queueProfileOptions = useMemo(
+    () => Array.from(new Map(trainerState.queue.filter((job) => job.profileId || job.profileName).map((job) => [job.profileId ?? job.profileName ?? 'manual', job.profileName ?? 'Manual'])).entries()),
+    [trainerState.queue]
+  )
+  const filteredQueue = useMemo(
+    () => trainerState.queue.filter((job) => {
+      if (queueProfileFilter !== 'all' && (job.profileId ?? 'manual') !== queueProfileFilter) return false
+      if (queueStatusFilter !== 'all' && job.status !== queueStatusFilter) return false
+      if (queueArchitectureFilter !== 'all' && job.architecture !== queueArchitectureFilter) return false
+      return true
+    }),
+    [queueArchitectureFilter, queueProfileFilter, queueStatusFilter, trainerState.queue]
+  )
+  const groupedQueue = useMemo(() => {
+    const groups: Array<{ key: string; label: string; createdAt: string | null; jobs: TrainerQueueJob[] }> = []
+    for (const job of filteredQueue) {
+      const key = job.submissionId ?? `ungrouped:${job.jobId}`
+      const existing = groups[groups.length - 1]
+      if (existing && existing.key === key) {
+        existing.jobs.push(job)
+      } else {
+        groups.push({
+          key,
+          label: job.submissionLabel ?? (job.profileName ?? (job.sourceMode === 'watcher' ? 'Watcher' : job.sourceMode === 'manual-folder-run' ? 'Folder run' : 'Run WAVs')),
+          createdAt: job.submissionCreatedAt ?? null,
+          jobs: [job],
+        })
+      }
+    }
+    return groups
+  }, [filteredQueue])
+
   // Auto-collapse fully-finished batches (no queued/running items)
   useEffect(() => {
     setCollapsedBatches(prev => {
@@ -319,37 +351,6 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     const arch = (activePreset?.architectures[0] ?? architectures[0]) || 'Standard'
     return resolveOutputFormula(activeGraphFormula, stagingDir, arch)
   }, [activeGraphFormula, folderRunPath, activePreset, architectures])
-  const queueProfileOptions = useMemo(
-    () => Array.from(new Map(trainerState.queue.filter((job) => job.profileId || job.profileName).map((job) => [job.profileId ?? job.profileName ?? 'manual', job.profileName ?? 'Manual'])).entries()),
-    [trainerState.queue]
-  )
-  const filteredQueue = useMemo(
-    () => trainerState.queue.filter((job) => {
-      if (queueProfileFilter !== 'all' && (job.profileId ?? 'manual') !== queueProfileFilter) return false
-      if (queueStatusFilter !== 'all' && job.status !== queueStatusFilter) return false
-      if (queueArchitectureFilter !== 'all' && job.architecture !== queueArchitectureFilter) return false
-      return true
-    }),
-    [queueArchitectureFilter, queueProfileFilter, queueStatusFilter, trainerState.queue]
-  )
-  const groupedQueue = useMemo(() => {
-    const groups: Array<{ key: string; label: string; createdAt: string | null; jobs: TrainerQueueJob[] }> = []
-    for (const job of filteredQueue) {
-      const key = job.submissionId ?? `ungrouped:${job.jobId}`
-      const existing = groups[groups.length - 1]
-      if (existing && existing.key === key) {
-        existing.jobs.push(job)
-      } else {
-        groups.push({
-          key,
-          label: job.submissionLabel ?? (job.profileName ?? (job.sourceMode === 'watcher' ? 'Watcher' : job.sourceMode === 'manual-folder-run' ? 'Folder run' : 'Run WAVs')),
-          createdAt: job.submissionCreatedAt ?? null,
-          jobs: [job],
-        })
-      }
-    }
-    return groups
-  }, [filteredQueue])
   const filteredHistory = useMemo(
     () => trainerState.history.filter((entry) => {
       if (historyProfileFilter !== 'all' && (entry.profileId ?? 'manual') !== historyProfileFilter) return false
