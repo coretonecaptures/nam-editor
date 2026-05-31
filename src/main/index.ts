@@ -1307,6 +1307,36 @@ function makeQueuedTrainerJobNext(jobId: string): boolean {
   return true
 }
 
+function reorderQueuedTrainerJob(jobId: string, beforeJobId: string): boolean {
+  const queuedJobs = trainerQueue.filter((j) => j.status === 'queued')
+  const fromIdx = trainerQueue.findIndex((j) => j.jobId === jobId)
+  const toIdx = trainerQueue.findIndex((j) => j.jobId === beforeJobId)
+  if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return false
+  if (trainerQueue[fromIdx].status !== 'queued') return false
+  const next = [...trainerQueue]
+  const [moved] = next.splice(fromIdx, 1)
+  const insertAt = next.findIndex((j) => j.jobId === beforeJobId)
+  next.splice(insertAt === -1 ? next.length : insertAt, 0, moved)
+  trainerQueue = next
+  void queuedJobs // suppress lint
+  return true
+}
+
+function moveSubmissionBeforeSubmission(submissionId: string, beforeSubmissionId: string): boolean {
+  if (submissionId === beforeSubmissionId) return false
+  const queued = trainerQueue.filter((j) => j.status === 'queued' && j.submissionId === submissionId)
+  if (queued.length === 0) return false
+  const beforeFirst = trainerQueue.findIndex((j) => j.status === 'queued' && j.submissionId === beforeSubmissionId)
+  if (beforeFirst === -1) return false
+  // Remove queued jobs of submissionId from queue
+  let next = trainerQueue.filter((j) => !(j.status === 'queued' && j.submissionId === submissionId))
+  // Find the insert point (before the first queued job of beforeSubmissionId)
+  const insertAt = next.findIndex((j) => j.status === 'queued' && j.submissionId === beforeSubmissionId)
+  next.splice(insertAt === -1 ? next.length : insertAt, 0, ...queued)
+  trainerQueue = next
+  return true
+}
+
 function isTrainingProfileActive(profile: TrainingProfile): boolean {
   return profile.enabled && profile.sourceMode === 'watcher' && (profile.autoRun || trainingWatcherRunning.has(profile.id))
 }
@@ -4306,6 +4336,20 @@ app.whenReady().then(async () => {
   ipcMain.handle('trainer:makeNext', async (_event, jobId: string) => {
     const moved = makeQueuedTrainerJobNext(jobId)
     if (!moved) return { success: false, error: 'Could not make that queue item next.' }
+    emitTrainerState()
+    return { success: true }
+  })
+
+  ipcMain.handle('trainer:reorderJob', async (_event, jobId: string, beforeJobId: string) => {
+    const moved = reorderQueuedTrainerJob(jobId, beforeJobId)
+    if (!moved) return { success: false, error: 'Could not reorder that queue item.' }
+    emitTrainerState()
+    return { success: true }
+  })
+
+  ipcMain.handle('trainer:moveSubmissionBefore', async (_event, submissionId: string, beforeSubmissionId: string) => {
+    const moved = moveSubmissionBeforeSubmission(submissionId, beforeSubmissionId)
+    if (!moved) return { success: false, error: 'Could not reorder that batch.' }
     emitTrainerState()
     return { success: true }
   })

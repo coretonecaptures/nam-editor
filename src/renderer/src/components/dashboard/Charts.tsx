@@ -243,3 +243,142 @@ export function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace('#', '')
   return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
 }
+
+/* EsrCurve — ESR-vs-epoch, log scale, descending. Optional target line. */
+export function EsrCurve({
+  data, color = 'var(--nm-accent,#6366f1)', width = 640, height = 240, target = null,
+  labels = true, variant = 'area' as 'area' | 'line' | 'minimal', logScale = true,
+}: {
+  data: { epoch: number; esr: number }[]
+  color?: string; width?: number; height?: number; target?: number | null
+  labels?: boolean; variant?: 'area' | 'line' | 'minimal'; logScale?: boolean
+}) {
+  const id = React.useId()
+  const pad = { t: 16, r: 16, b: 26, l: 44 }
+  const w = width - pad.l - pad.r, h = height - pad.t - pad.b
+  const vals = data.map((d) => logScale ? Math.log10(Math.max(d.esr, 1e-5)) : d.esr)
+  const allRef = target != null && logScale ? [...vals, Math.log10(target)] : [...vals, ...(target != null ? [target] : [])]
+  const vmax = allRef.length ? Math.max(...allRef) : 0
+  const vmin = allRef.length ? Math.min(...allRef) : -2
+  const range = (vmax - vmin) || 1
+  const padFrac = 0.12
+  const lo = vmin - range * padFrac, hi = vmax + range * padFrac
+  const span = hi - lo || 1
+  const n = data.length
+  const X = (i: number) => pad.l + (n <= 1 ? 0 : (i / (n - 1)) * w)
+  const Y = (v: number) => pad.t + h - ((v - lo) / span) * h
+  const pts = vals.map((v, i) => [X(i), Y(v)] as const)
+  const line = pts.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(' ')
+  const area = `${line} L${X(n - 1)} ${pad.t + h} L${pad.l} ${pad.t + h} Z`
+  const ticks = logScale
+    ? [0.001, 0.005, 0.01, 0.05, 0.1].filter((t) => Math.log10(t) >= lo && Math.log10(t) <= hi)
+    : Array.from({ length: 4 }, (_, i) => vmin + (range * (i + 1)) / 4)
+  const tgtY = target != null ? Y(logScale ? Math.log10(target) : target) : null
+  const last = pts[pts.length - 1]
+  if (n === 0) {
+    return (
+      <svg width={width} height={height} style={{ display: 'block', overflow: 'visible' }}>
+        <text x={width / 2} y={height / 2} fill="currentColor" opacity={0.3} fontSize="12" textAnchor="middle">No data yet</text>
+      </svg>
+    )
+  }
+  return (
+    <svg width={width} height={height} style={{ display: 'block', overflow: 'visible' }}>
+      <defs>
+        <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.28" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      {ticks.map((t, i) => {
+        const yy = Y(logScale ? Math.log10(t) : t)
+        return (
+          <g key={i}>
+            <line x1={pad.l} y1={yy} x2={pad.l + w} y2={yy} stroke="currentColor" opacity={0.1} strokeWidth="1" strokeDasharray="2 4" />
+            {labels && <text x={pad.l - 8} y={yy + 3} fill="currentColor" opacity={0.42} fontSize="10" textAnchor="end" fontFamily="var(--font-mono,'IBM Plex Mono',monospace)">{t < 0.01 ? t.toFixed(3) : t.toFixed(2)}</text>}
+          </g>
+        )
+      })}
+      {tgtY != null && (
+        <g>
+          <line x1={pad.l} y1={tgtY} x2={pad.l + w} y2={tgtY} stroke="#10b981" opacity={0.7} strokeWidth="1.5" strokeDasharray="5 4" />
+          <text x={pad.l + w} y={tgtY - 6} fill="#10b981" fontSize="10" textAnchor="end" fontFamily="var(--font-mono,'IBM Plex Mono',monospace)">target {target}</text>
+        </g>
+      )}
+      {variant === 'area' && <path d={area} fill={`url(#${id})`} />}
+      <path d={line} fill="none" stroke={color} strokeWidth={variant === 'minimal' ? 1.75 : 2.25} strokeLinejoin="round" strokeLinecap="round" />
+      {variant !== 'minimal' && last && (
+        <>
+          <circle cx={last[0]} cy={last[1]} r={4.5} fill={color} />
+          <circle cx={last[0]} cy={last[1]} r={9} fill={color} opacity={0.18}>
+            <animate attributeName="r" values="6;11;6" dur="1.8s" repeatCount="indefinite" />
+          </circle>
+        </>
+      )}
+      {labels && <text x={pad.l} y={height - 4} fill="currentColor" opacity={0.4} fontSize="10">epoch 0</text>}
+      {labels && data[n - 1] && <text x={pad.l + w} y={height - 4} fill="currentColor" opacity={0.4} fontSize="10" textAnchor="end">{`epoch ${data[n - 1].epoch}`}</text>}
+    </svg>
+  )
+}
+
+/* QualityBars — ESR quality distribution: vertical green/amber/red bars per session/day. */
+export function QualityBars({
+  groups, width = 360, height = 150,
+}: { groups: { label: string; green: number; amber: number; red: number }[]; width?: number; height?: number }) {
+  const pad = { t: 10, b: 22 }
+  const h = height - pad.t - pad.b
+  const m = Math.max(...groups.map((g) => g.green + g.amber + g.red), 1)
+  const bw = groups.length ? width / groups.length : width
+  const colW = Math.min(bw * 0.5, 26)
+  const segs: [keyof typeof groups[0], string][] = [['green', '#10b981'], ['amber', '#f59e0b'], ['red', '#ef4444']]
+  return (
+    <svg width={width} height={height} style={{ display: 'block' }}>
+      {groups.map((g, i) => {
+        const cx = i * bw + bw / 2
+        let yTop = pad.t + h
+        return (
+          <g key={i}>
+            {segs.map(([k, c]) => {
+              const v = g[k] as number
+              if (!v) return null
+              const segH = (v / m) * h
+              yTop -= segH
+              return <rect key={k} x={cx - colW / 2} y={yTop} width={colW} height={Math.max(segH - 1.5, 0)} rx="2" fill={c} />
+            })}
+            <text x={cx} y={height - 7} fill="currentColor" opacity={0.5} fontSize="9.5" textAnchor="middle">{g.label}</text>
+          </g>
+        )
+      })}
+    </svg>
+  )
+}
+
+/* Burndown — remaining queue vs done, two stacked-ish lines over time. */
+export function Burndown({
+  remaining, done, color = 'var(--nm-accent,#6366f1)', width = 360, height = 130,
+}: { remaining: number[]; done: number[]; color?: string; width?: number; height?: number }) {
+  const id = React.useId()
+  const pad = { t: 12, b: 18, l: 8, r: 8 }
+  const w = width - pad.l - pad.r, h = height - pad.t - pad.b
+  const n = remaining.length
+  const max = Math.max(...remaining, ...done, 1)
+  const X = (i: number) => pad.l + (n <= 1 ? 0 : (i / (n - 1)) * w)
+  const Y = (v: number) => pad.t + h - (v / max) * h
+  const mk = (arr: number[]) => arr.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join(' ')
+  const remLine = mk(remaining)
+  const remArea = `${remLine} L${X(n - 1)} ${pad.t + h} L${pad.l} ${pad.t + h} Z`
+  if (n === 0) return null
+  return (
+    <svg width={width} height={height} style={{ display: 'block', overflow: 'visible' }}>
+      <defs>
+        <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.24" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={remArea} fill={`url(#${id})`} />
+      <path d={mk(done)} fill="none" stroke="#10b981" strokeWidth="2" strokeDasharray="4 3" strokeLinejoin="round" strokeLinecap="round" opacity={0.85} />
+      <path d={remLine} fill="none" stroke={color} strokeWidth="2.25" strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  )
+}

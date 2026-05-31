@@ -378,6 +378,8 @@ declare global {
       watcherQueueAction: (jobId: string, action: 'remove' | 'skip' | 'move-canceled' | 'retry-now') => Promise<{ success: boolean; error?: string }>
       moveTrainerJob: (jobId: string, direction: 'up' | 'down') => Promise<{ success: boolean; error?: string }>
       makeTrainerJobNext: (jobId: string) => Promise<{ success: boolean; error?: string }>
+      reorderTrainerJob: (jobId: string, beforeJobId: string) => Promise<{ success: boolean; error?: string }>
+      moveSubmissionBefore: (submissionId: string, beforeSubmissionId: string) => Promise<{ success: boolean; error?: string }>
       retryTrainerHistoryEntry: (historyId: string) => Promise<{ success: boolean; error?: string; queued?: number }>
       onTrainerUpdate: (cb: (state: TrainerStateSnapshot) => void) => () => void
       openInNam: (filePath: string, standalonePath: string) => Promise<{ success: boolean; error?: string }>
@@ -4099,7 +4101,7 @@ INSTRUCTIONS:
         {/* Folder tree — only shown when a folder is open */}
         {hasTree && !(cardView && showToneStorePanel) && (
           <>
-            <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: (treeCollapsed || gridMaximized || (cardView && showToneStorePanel)) ? 0 : treeWidth, overflow: 'hidden' }}>
+            <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: (treeCollapsed || gridMaximized || showTrainingWorkspace || (cardView && showToneStorePanel)) ? 0 : treeWidth, overflow: 'hidden' }}>
               <FolderTree
                 tree={librarian.folderTree!}
                 files={files}
@@ -4235,7 +4237,7 @@ INSTRUCTIONS:
 
         {/* File list Ã¢â‚¬â€ only shown when files are loaded */}
         {files.length > 0 && !(cardView && showToneStorePanel) && <>
-          <div className={gridMaximized ? 'flex-1 flex flex-col overflow-hidden' : 'flex-shrink-0 flex flex-col overflow-hidden'} style={gridMaximized ? undefined : { width: overviewMaximized ? 0 : (listCollapsed ? 0 : listWidth), overflow: 'hidden' }}>
+          <div className={gridMaximized ? 'flex-1 flex flex-col overflow-hidden' : 'flex-shrink-0 flex flex-col overflow-hidden'} style={gridMaximized ? undefined : { width: (overviewMaximized || showTrainingWorkspace) ? 0 : (listCollapsed ? 0 : listWidth), overflow: 'hidden' }}>
             <FileList
               files={visibleFiles}
               selectedIds={selectedIds}

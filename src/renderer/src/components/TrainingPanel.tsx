@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState, useCallback, type MouseEvent } from 'react'
+﻿import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
 import type { AppSettings, TrainingPreset, UserCaptureProfile } from '../types/settings'
@@ -12,11 +12,11 @@ import {
   type TrainerStateSnapshot,
   type CaptureProfile,
 } from '../types/trainer'
-import { ArchitectureProfilePicker } from './ArchitectureProfilePicker'
 import { CaptureProfileEditor } from './CaptureProfileEditor'
 import { WatcherFilesModal } from './WatcherFilesModal'
 import { HelpPopover } from './HelpPopover'
 import { effectiveFormula, resolveOutputFormula } from '../utils/resolveOutputFormula'
+import { EsrCurve, QualityBars, Sparkline, StackedMeter } from './dashboard/Charts'
 
 interface Props {
   settings: AppSettings
@@ -113,10 +113,16 @@ function showNativeTextContextMenu(event: MouseEvent<HTMLElement>) {
 
 export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMode, onOpenSetupGuide }: Props) {
   const [inputPath, setInputPath] = useState(settings.namTrainingInputWav || '')
-  const [runMode, setRunMode] = useState<'files' | 'folder' | 'queue' | 'history'>(initialRunMode ?? 'files')
+  const [section, setSection] = useState<'live' | 'queue' | 'history' | 'new'>('new')
+  const [newRunMode, setNewRunMode] = useState<'files' | 'folder'>(
+    initialRunMode === 'folder' ? 'folder' : 'files'
+  )
+  const [collapsedBatches, setCollapsedBatches] = useState<Set<string>>(new Set())
+  const [esrSeries, setEsrSeries] = useState<{ epoch: number; esr: number }[]>([])
+  const [queueView, setQueueView] = useState<'batches' | 'compact' | 'board'>('batches')
+  const [logExpanded, setLogExpanded] = useState(true)
   const [watchFoldersExpanded, setWatchFoldersExpanded] = useState(false)
   const [watcherFilesModal, setWatcherFilesModal] = useState<{ profileId: string; profileName: string; watchFolder: string; architectures: string[] } | null>(null)
-  const [maximized, setMaximized] = useState(false)
   const [outputPaths, setOutputPaths] = useState<string[]>([])
   const [trainPath, setTrainPath] = useState('')
   const [manualRoutingMode, setManualRoutingMode] = useState<'root' | 'sibling_processed'>('root')
@@ -162,15 +168,37 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   }, [settings.namTrainingInputWav, inputPath])
 
   useEffect(() => {
-    if (initialRunMode) setRunMode(initialRunMode)
+    if (!initialRunMode) return
+    if (initialRunMode === 'queue') setSection('queue')
+    else if (initialRunMode === 'history') setSection('history')
+    else if (initialRunMode === 'folder') { setSection('new'); setNewRunMode('folder') }
+    else { setSection('new'); setNewRunMode('files') }
   }, [initialRunMode])
 
   useEffect(() => {
     let disposed = false
+    let lastActiveJobId: string | null = null
     void window.api.getTrainerState().then((state) => {
-      if (!disposed) setTrainerState(state)
+      if (!disposed) {
+        setTrainerState(state)
+        if (state.status === 'running' || state.status === 'starting') setSection('live')
+        else if (state.queue.some(j => j.status === 'queued')) setSection('queue')
+      }
     })
-    const off = window.api.onTrainerUpdate((state) => setTrainerState(state))
+    const off = window.api.onTrainerUpdate((state) => {
+      setTrainerState(state)
+      if (state.activeJobId !== lastActiveJobId) {
+        lastActiveJobId = state.activeJobId ?? null
+        if (state.activeJobId) setEsrSeries([])
+      }
+      if ((state.status === 'running' || state.status === 'starting') && state.progressEpochCurrent && typeof state.validationEsr === 'number') {
+        setEsrSeries(prev => {
+          const epoch = state.progressEpochCurrent!
+          if (prev.length > 0 && prev[prev.length - 1].epoch === epoch) return prev
+          return [...prev, { epoch, esr: state.validationEsr as number }]
+        })
+      }
+    })
     return () => {
       disposed = true
       off()
@@ -221,11 +249,11 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   }, [outputPaths])
 
   const manualRoutingSourceFolder = useMemo(() => {
-    if (runMode === 'folder') return folderRunPath.trim()
+    if (newRunMode === 'folder') return folderRunPath.trim()
     const first = outputPaths[0]?.trim() ?? ''
     if (!first) return ''
     return first.replace(/\\/g, '/').split('/').slice(0, -1).join('/')
-  }, [folderRunPath, outputPaths, runMode])
+  }, [folderRunPath, outputPaths, newRunMode])
 
   const availablePresets = useMemo(
     () => settings.trainingPresets.filter((preset) => preset.architectures.length > 0),
@@ -235,7 +263,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     () => selectedPresetId === CUSTOM_PRESET_ID ? null : availablePresets.find((preset) => preset.id === selectedPresetId) ?? null,
     [availablePresets, selectedPresetId]
   )
-  const filesPreset = runMode === 'files' ? activePreset : null
+  const filesPreset = newRunMode === 'files' ? activePreset : null
   const manualFolderPresets = availablePresets
 
   // Output formula: global setting overridable per preset
@@ -747,9 +775,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const folderRunPreset = folderRunProfileId === 'custom'
     ? null
     : manualFolderPresets.find((item) => item.id === folderRunProfileId) ?? null
-  const currentPresetId = runMode === 'files' ? selectedPresetId : folderRunProfileId
-  const currentRunPreset = runMode === 'files' ? filesPreset : folderRunPreset
-  const showsCustomSettings = runMode !== 'queue' && currentPresetId === CUSTOM_PRESET_ID
+  const currentPresetId = newRunMode === 'files' ? selectedPresetId : folderRunProfileId
+  const currentRunPreset = newRunMode === 'files' ? filesPreset : folderRunPreset
+  const showsCustomSettings = currentPresetId === CUSTOM_PRESET_ID
 
   const handleRemoveJob = async (job: TrainerQueueJob) => {
     const result = await window.api.removeTrainerJob(job.jobId)
@@ -827,7 +855,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     } else {
       setQueueActionError('')
       setHistoryContextMenu(null)
-      setRunMode('queue')
+      setSection('queue')
     }
   }
 
@@ -908,7 +936,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       trainingPresets: [...settings.trainingPresets, preset],
     })
     setSelectedPresetId(preset.id)
-    if (runMode === 'folder') setFolderRunProfileId(preset.id)
+    if (newRunMode === 'folder') setFolderRunProfileId(preset.id)
     setShowSavePresetModal(false)
     setPresetNameDraft('')
     setPresetSaveError('')
@@ -942,269 +970,900 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     XLSX.writeFile(wb, `training-history-${date}.xlsx`)
   }
 
+  // ── "This Session" stats ──────────────────────────────────────────────────
+  const todayStats = useMemo(() => {
+    const d = new Date(); d.setHours(0, 0, 0, 0)
+    const todayMs = d.getTime()
+    const today = trainerState.history.filter(e => new Date(e.timestamp).getTime() >= todayMs)
+    const completed = today.filter(e => e.status === 'success').length
+    const failed = today.filter(e => e.status === 'error').length
+    const esrs = today.filter(e => typeof e.validationEsr === 'number').map(e => e.validationEsr as number)
+    const avgEsr = esrs.length > 0 ? esrs.reduce((a, b) => a + b, 0) / esrs.length : null
+    const oneHrAgo = Date.now() - 3_600_000
+    const throughput = trainerState.history.filter(e => new Date(e.timestamp).getTime() >= oneHrAgo && e.status === 'success').length
+    return { completed, failed, avgEsr, throughput }
+  }, [trainerState.history])
+
+  const qualityBarsData = useMemo(() => {
+    const now = Date.now()
+    return Array.from({ length: 7 }, (_, i) => {
+      const dayStart = now - (6 - i) * 86_400_000
+      const d = new Date(dayStart); d.setHours(0, 0, 0, 0)
+      const ds = d.getTime()
+      const de = ds + 86_400_000
+      const entries = trainerState.history.filter(e => {
+        const t = new Date(e.timestamp).getTime()
+        return t >= ds && t < de && e.status === 'success'
+      })
+      return {
+        label: new Date(ds).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+        green: entries.filter(e => typeof e.validationEsr === 'number' && (e.validationEsr as number) < 0.01).length,
+        amber: entries.filter(e => typeof e.validationEsr === 'number' && (e.validationEsr as number) >= 0.01 && (e.validationEsr as number) < 0.05).length,
+        red: entries.filter(e => typeof e.validationEsr === 'number' && (e.validationEsr as number) >= 0.05).length,
+      }
+    })
+  }, [trainerState.history])
+
+  const throughputData = useMemo(() => {
+    const now = Date.now()
+    return Array.from({ length: 12 }, (_, i) => {
+      const hrStart = now - (11 - i) * 3_600_000
+      return trainerState.history.filter(e => {
+        const t = new Date(e.timestamp).getTime()
+        return t >= hrStart && t < hrStart + 3_600_000 && e.status === 'success'
+      }).length
+    })
+  }, [trainerState.history])
+
+  const esrSparkline = useMemo(() =>
+    esrSeries.map(pt => -Math.log10(Math.max(pt.esr, 1e-5))),
+    [esrSeries]
+  )
+
+  const eta = useMemo(() => {
+    if (!isRunning || !trainerState.startedAt || typeof trainerState.progressPercent !== 'number' || trainerState.progressPercent <= 0) return null
+    const elapsed = Date.now() - new Date(trainerState.startedAt).getTime()
+    const remaining = elapsed / (trainerState.progressPercent / 100) - elapsed
+    if (remaining <= 0) return null
+    const mins = Math.ceil(remaining / 60_000)
+    return mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${mins % 60}m`
+  }, [isRunning, trainerState.startedAt, trainerState.progressPercent])
+
+  const activeJobName = activeJob
+    ? activeJob.outputPath.replace(/\\/g, '/').split('/').pop() ?? 'Unknown'
+    : 'No active run'
+  const activeJobIdx = activeJob
+    ? trainerState.queue.findIndex(j => j.jobId === activeJob.jobId) + 1
+    : 0
+  const totalJobs = trainerState.queue.length
+
+  // drag refs for queue reordering
+  const dragJobRef = useRef<string | null>(null)
+  const dragBatchRef = useRef<string | null>(null)
+
+  const toggleBatchCollapse = (key: string) => {
+    setCollapsedBatches(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const navItem = (
+    id: 'live' | 'queue' | 'history' | 'new',
+    label: string,
+    count: number | null,
+    icon: React.ReactNode,
+    accent = false
+  ) => (
+    <button
+      key={id}
+      onClick={() => setSection(id)}
+      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-[9px] text-[13px] font-medium transition-colors relative text-left ${
+        section === id
+          ? 'bg-active-bg text-nm-accent font-semibold'
+          : 'text-nm-text-2 hover:bg-hov hover:text-nm-text'
+      }`}
+    >
+      {section === id && (
+        <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2.5px] h-5 rounded-r bg-nm-accent" />
+      )}
+      <span className={`w-4 h-4 flex-shrink-0 ${section === id ? 'text-nm-accent' : 'text-nm-text-3'}`}>{icon}</span>
+      <span className="flex-1 truncate">{label}</span>
+      {count !== null && count > 0 && (
+        <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none ${
+          accent ? 'bg-nm-accent text-accent-text' : 'bg-panel-2 text-nm-text-2 border border-nm-border-s'
+        }`}>
+          {count}
+        </span>
+      )}
+    </button>
+  )
+
   return (
     <>
-    <div
-      className={`overflow-y-auto ${maximized ? 'fixed inset-4 z-[70] rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 shadow-2xl h-auto' : 'h-full'}`}
-      onContextMenu={showNativeTextContextMenu}
-    >
-      <div className="max-w-5xl mx-auto px-6 py-5 space-y-5">
-        <div className="rounded-xl border border-violet-300/60 dark:border-violet-500/30 bg-violet-50 dark:bg-violet-500/10 px-4 py-3">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold text-violet-800 dark:text-violet-200">Local Training</div>
-              <p className="mt-1 text-xs text-violet-700/80 dark:text-violet-200/85">
-                Queue one input DI with multiple reamped WAVs. NAM Lab runs them serially, keeps a local queue, and promotes the final
-                .nam back to your chosen destination folder beside the ESR plot. If you have not configured the local trainer yet, refer to the
-                official NAM trainer install guide first.
-              </p>
+    <div className="flex h-full overflow-hidden bg-app-bg text-nm-text" onContextMenu={showNativeTextContextMenu}>
+      {/* ── Left Rail ─────────────────────────────────────────────────────── */}
+      <div className="w-[220px] flex-shrink-0 flex flex-col border-r border-nm-border bg-panel overflow-y-auto">
+        <div className="px-4 pt-4 pb-3 border-b border-nm-border">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-nm-text-3 mb-1">NAM Lab</div>
+          <div className="flex items-center gap-2">
+            <svg className="w-4 h-4 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23-.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" />
+            </svg>
+            <span className="text-[16px] font-[680] text-nm-text leading-tight">Local Training</span>
+          </div>
+        </div>
+
+        <nav className="px-2 py-2 space-y-0.5">
+          {navItem('live', 'Live Run', isRunning ? 1 : null, (
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" /></svg>
+          ), isRunning)}
+          {navItem('queue', 'Queue', trainerState.queue.length, (
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z" /></svg>
+          ))}
+          {navItem('history', 'History', trainerState.history.length, (
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+          ))}
+          {navItem('new', 'New Run', null, (
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+          ))}
+        </nav>
+
+        <div className="mx-3 my-1 border-t border-nm-border-s" />
+
+        {/* This Session */}
+        <div className="px-3 py-2 space-y-1.5">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-nm-text-3 px-1 mb-2">This Session</div>
+          {[
+            { label: 'Completed', value: String(todayStats.completed), color: 'text-emerald-400' },
+            { label: 'Avg ESR', value: todayStats.avgEsr != null ? todayStats.avgEsr.toFixed(5) : '—', color: 'text-nm-text font-mono' },
+            { label: 'Throughput', value: `${todayStats.throughput}/hr`, color: 'text-nm-text font-mono' },
+            { label: 'Failed', value: String(todayStats.failed), color: todayStats.failed > 0 ? 'text-red-400' : 'text-nm-text-3' },
+          ].map(({ label, value, color }) => (
+            <div key={label} className="flex items-center justify-between gap-2 rounded-[10px] border border-nm-border-s bg-panel-2 px-2.5 py-1.5">
+              <span className="text-[11px] text-nm-text-3">{label}</span>
+              <span className={`text-[13px] font-semibold tabular-nums ${color}`}>{value}</span>
             </div>
-            <div className="flex items-center gap-2">
+          ))}
+        </div>
+
+        <div className="mx-3 my-1 border-t border-nm-border-s" />
+
+        {/* Watch Folders */}
+        {settings.trainingWatchProfiles.length > 0 && (
+          <div className="px-2 py-2">
+            <button
+              onClick={() => setWatchFoldersExpanded(v => !v)}
+              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-hov text-nm-text-2 transition-colors"
+            >
+              <svg className={`w-3 h-3 transition-transform ${watchFoldersExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+              </svg>
+              <span className="text-[10px] font-semibold uppercase tracking-wider flex-1 text-left">Watch Folders</span>
+              {trainerState.watcherState.watchers.some(w => w.skippedCount > 0) && (
+                <span className="text-[9px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-400 font-medium">skipped</span>
+              )}
+              <span className="text-[10px] text-nm-text-3">{settings.trainingWatchProfiles.length}</span>
+            </button>
+            {watchFoldersExpanded && (
+              <div className="mt-1 space-y-1">
+                {settings.trainingWatchProfiles.map((profile) => {
+                  const runtime = trainerState.watcherState.watchers.find(w => w.profileId === profile.id)
+                  const running = runtime?.running ?? false
+                  const skipped = runtime?.skippedCount ?? 0
+                  return (
+                    <div key={profile.id} className="px-2 py-1.5 rounded-lg border border-nm-border-s bg-panel-2 text-[11px]">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${running ? 'bg-emerald-400' : 'bg-nm-text-3'}`} />
+                        <span className="flex-1 truncate text-nm-text">{profile.name}</span>
+                        {skipped > 0 && <span className="text-amber-400 tabular-nums">{skipped}s</span>}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex-1" />
+        {onClose && (
+          <div className="px-3 py-3 border-t border-nm-border-s">
+            <button onClick={onClose} className="w-full py-1.5 rounded-lg text-[12px] font-medium bg-panel-2 hover:bg-hov text-nm-text-2 border border-nm-border-s transition-colors">
+              Close Training
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* ── Main Column ───────────────────────────────────────────────────── */}
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+
+        {/* Now-Training strip */}
+        <div className="flex-shrink-0 border-b border-nm-border bg-panel-2 px-5 py-3 space-y-2.5">
+          {/* Top row */}
+          <div className="flex items-center gap-3 min-w-0">
+            {/* Model thumbnail */}
+            <div className="w-10 h-10 rounded-[9px] border border-nm-border bg-panel flex items-center justify-center flex-shrink-0">
+              <svg className="w-5 h-5 text-nm-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z" />
+              </svg>
+            </div>
+            {/* Model name + sub */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-[16px] font-[660] text-nm-text truncate">{activeJobName}</span>
+                {isRunning && (
+                  <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-nm-accent/15 border border-nm-accent/30 text-nm-accent text-[11px] font-semibold flex-shrink-0">
+                    <span className="w-1.5 h-1.5 rounded-full bg-nm-accent animate-pulse" />
+                    Running
+                  </span>
+                )}
+                {!isRunning && trainerState.pauseAfterCurrent && (
+                  <span className="px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-[11px] font-semibold flex-shrink-0">Paused</span>
+                )}
+                {!isRunning && !trainerState.pauseAfterCurrent && (
+                  <span className="px-2 py-0.5 rounded-full bg-panel border border-nm-border-s text-nm-text-3 text-[11px] flex-shrink-0">Idle</span>
+                )}
+              </div>
+              <div className="mt-0.5 flex items-center gap-2 text-[11px] text-nm-text-3 truncate">
+                {activeJob && (
+                  <>
+                    <span className="px-1.5 py-0.5 rounded-full border border-nm-border-s bg-panel text-nm-text-2">{architectureDisplayLabel(activeJob.architecture)}</span>
+                    {activeJob.profileName && (
+                      <span className="px-1.5 py-0.5 rounded-full border border-sky-700/50 bg-sky-500/10 text-sky-400">{activeJob.profileName}</span>
+                    )}
+                    <span>model {activeJobIdx} of {totalJobs}</span>
+                    <span className="font-mono truncate">{activeJob.outputPath.replace(/\\/g, '/').split('/').slice(-2).join('/')}</span>
+                  </>
+                )}
+                {!activeJob && <span>No active run</span>}
+              </div>
+            </div>
+            {/* Control bar */}
+            <div className="flex items-center gap-1.5 flex-shrink-0">
               <button
-                onClick={() => setMaximized((v) => !v)}
-                title={maximized ? 'Restore training panel' : 'Maximize training panel'}
-                className={`p-2 rounded-lg transition-colors ${
-                  maximized
-                    ? 'bg-indigo-600 text-white'
-                    : 'bg-violet-100 dark:bg-violet-950/40 hover:bg-violet-200 dark:hover:bg-violet-900/60 text-violet-700 dark:text-violet-200 border border-violet-300/60 dark:border-violet-400/20'
+                onClick={async () => {
+                  const r = await window.api.cancelTrainerRun()
+                  if (!r.success) setQueueActionError(r.error ?? 'Could not cancel.')
+                }}
+                disabled={!isRunning}
+                title="Hard-stop the current run"
+                className="h-[34px] inline-flex items-center gap-1.5 px-2.5 rounded-[9px] text-xs font-medium border bg-red-500/10 hover:bg-red-500/20 disabled:opacity-35 disabled:cursor-not-allowed text-red-400 border-red-500/40 transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><rect x="4" y="4" width="12" height="12" rx="2" /></svg>
+                Stop
+              </button>
+              <button
+                onClick={async () => { await window.api.setTrainerPauseAfterCurrent(!trainerState.pauseAfterCurrent) }}
+                className={`h-[34px] inline-flex items-center gap-1.5 px-2.5 rounded-[9px] text-xs font-medium border transition-colors ${
+                  trainerState.pauseAfterCurrent
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                    : 'bg-panel text-nm-text-2 border-nm-border hover:bg-hov'
                 }`}
               >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  {maximized
-                    ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
-                    : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-                  }
-                </svg>
+                {trainerState.pauseAfterCurrent ? 'Pause: On' : 'Pause'}
               </button>
-              {onClose && (
+              {(trainerState.pauseAfterCurrent && !isRunning) && (
                 <button
-                  onClick={onClose}
-                  className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-violet-100 dark:bg-violet-950/40 hover:bg-violet-200 dark:hover:bg-violet-900/60 text-violet-700 dark:text-violet-200 border border-violet-300/60 dark:border-violet-400/20"
+                  onClick={async () => { await window.api.setTrainerPauseAfterCurrent(false) }}
+                  disabled={queuedCount === 0}
+                  className="h-[34px] inline-flex items-center gap-1.5 px-2.5 rounded-[9px] text-xs font-semibold border bg-nm-accent hover:opacity-90 disabled:opacity-35 disabled:cursor-not-allowed text-accent-text border-transparent transition-colors"
                 >
-                  Close
+                  Resume
+                </button>
+              )}
+              <div className="w-px h-5 bg-nm-border-s mx-0.5" />
+              <button
+                onClick={async () => { await window.api.retryFailedTrainerRuns() }}
+                disabled={!trainerState.queue.some(j => j.status === 'error')}
+                className="h-[34px] inline-flex items-center gap-1.5 px-2.5 rounded-[9px] text-xs font-medium border bg-panel text-nm-text-2 border-nm-border hover:bg-hov disabled:opacity-35 disabled:cursor-not-allowed transition-colors"
+              >
+                Retry failed
+              </button>
+              {queuedCount > 0 && !isRunning && (
+                <button
+                  onClick={async () => { await window.api.startQueuedTrainerRuns() }}
+                  className="h-[34px] inline-flex items-center gap-1.5 px-3 rounded-[9px] text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white border-transparent border transition-colors"
+                >
+                  Start queue
                 </button>
               )}
             </div>
           </div>
-        </div>
 
-        <div className="space-y-5">
-          <div className="space-y-4">
-            <div className="border-b border-gray-200 dark:border-gray-800">
-              <div className="flex flex-wrap gap-6 -mb-px">
-                <button
-                  onClick={() => setRunMode('files')}
-                  className={`border-b-2 px-1 py-3 text-sm font-medium transition-colors ${runMode === 'files' ? 'border-cyan-400 text-cyan-400' : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'}`}
-                >
-                  Run WAVs
-                </button>
-                <button
-                  onClick={() => setRunMode('folder')}
-                  className={`border-b-2 px-1 py-3 text-sm font-medium transition-colors ${runMode === 'folder' ? 'border-cyan-400 text-cyan-400' : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'}`}
-                >
-                  Run Folder
-                </button>
-                <button
-                  onClick={() => setRunMode('queue')}
-                  className={`border-b-2 px-1 py-3 text-sm font-medium transition-colors ${runMode === 'queue' ? 'border-cyan-400 text-cyan-400' : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'}`}
-                >
-                  View Queue
-                </button>
-                <button
-                  onClick={() => setRunMode('history')}
-                  className={`border-b-2 px-1 py-3 text-sm font-medium transition-colors ${runMode === 'history' ? 'border-cyan-400 text-cyan-400' : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'}`}
-                >
-                  History
-                </button>
+          {/* Progress row */}
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between text-[11px] text-nm-text-3 mb-1">
+                <span className="font-semibold text-nm-text-2">{trainerState.progressPhase || (isRunning ? 'Starting…' : 'Idle')}</span>
+                <span className="font-mono">{trainerState.progressEpochCurrent && progressEpochTotal ? `Epoch ${trainerState.progressEpochCurrent} / ${progressEpochTotal}` : ''}</span>
+                <span className="font-mono tabular-nums">{typeof trainerState.progressPercent === 'number' ? `${trainerState.progressPercent.toFixed(1)}%` : '—'}</span>
+              </div>
+              <div className="h-2 rounded-full bg-field overflow-hidden">
+                <div
+                  className="h-full bg-nm-accent rounded-full transition-all"
+                  style={{ width: `${Math.max(0, Math.min(100, trainerState.progressPercent ?? (trainerState.status === 'success' ? 100 : 0)))}%` }}
+                />
               </div>
             </div>
-            {(isRunning || queuedCount > 0) && (
-              <div className={`text-sm font-medium ${isRunning ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
-                {isRunning
-                  ? (queuedCount > 0
-                      ? `Training — ${queuedCount} queued, active: ${activeJob ? ARCHITECTURE_LABELS[activeJob.architecture] : '…'}`
-                      : `Training — active: ${activeJob ? ARCHITECTURE_LABELS[activeJob.architecture] : '…'}`)
-                  : `Queue waiting — ${queuedCount} queued item${queuedCount === 1 ? '' : 's'}`}
-              </div>
-            )}
-            {presetSaveNotice && (
-              <div className="text-sm font-medium text-emerald-600 dark:text-emerald-400">
-                {presetSaveNotice}
-              </div>
-            )}
-            {runMode === 'queue' ? (
-              <div className="space-y-2">
-                <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 px-3 py-3 text-sm text-gray-700 dark:text-gray-300">
-                  Monitor the active training queue here. This is useful when watch folders are feeding jobs in the background and you just want to watch progress, errors, and history.
+            {/* Mini-stats */}
+            <div className="flex items-center gap-3 flex-shrink-0 text-[10px] text-nm-text-3 uppercase font-medium">
+              {[
+                { label: 'Rate', value: typeof trainerState.progressRate === 'number' ? `${trainerState.progressRate.toFixed(2)} it/s` : '—' },
+                { label: 'Batch', value: trainerState.progressBatchCurrent && trainerState.progressBatchTotal ? `${trainerState.progressBatchCurrent}/${trainerState.progressBatchTotal}` : '—' },
+                { label: 'Val ESR', value: validationEsrTone.text, extra: validationEsrTone.classes },
+                { label: 'ETA', value: eta ?? '—' },
+              ].map(({ label, value, extra }) => (
+                <div key={label} className="text-center">
+                  <div>{label}</div>
+                  <div className={`text-[13px] font-semibold font-mono tabular-nums mt-0.5 normal-case ${extra ?? 'text-nm-text'}`}>{value}</div>
                 </div>
-                {settings.trainingWatchProfiles.length > 0 && (
-                  <div className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => setWatchFoldersExpanded((v) => !v)}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setWatchFoldersExpanded((v) => !v) }}
-                      className="w-full flex items-center gap-2 px-3 py-2 bg-gray-100 dark:bg-gray-800/80 hover:bg-gray-150 dark:hover:bg-gray-800 transition-colors cursor-pointer select-none"
-                    >
-                      <svg className={`w-3 h-3 text-gray-400 transition-transform ${watchFoldersExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-                      </svg>
-                      <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Watch Folders</span>
-                      <span className="flex-1" />
-                      {onOpenSetupGuide && (
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); onOpenSetupGuide() }}
-                          className="text-[10px] text-indigo-500 dark:text-indigo-400 hover:underline mr-1"
-                        >
-                          Routing setup guide
-                        </button>
-                      )}
-                      <HelpPopover side="left">
-                        Drop WAV files in a watch folder and NAM Lab trains them automatically using the linked preset. Finished <code>.nam</code> files land in the output path configured for that preset. Use the Routing setup guide to wire up the full pipeline.
-                      </HelpPopover>
-                      <span className="text-[10px] text-gray-400 dark:text-gray-600 tabular-nums ml-1">{settings.trainingWatchProfiles.length}</span>
-                      {trainerState.watcherState.watchers.some((w) => w.skippedCount > 0) && (
-                        <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-amber-500/15 text-amber-700 dark:text-amber-400">skipped files</span>
-                      )}
-                    </div>
-                    {watchFoldersExpanded && <div className="divide-y divide-gray-100 dark:divide-gray-800">
-                      {settings.trainingWatchProfiles.map((profile, i) => {
-                        const watcherRuntime = trainerState.watcherState.watchers.find((w) => w.profileId === profile.id)
-                        const isRunning = watcherRuntime?.running ?? false
-                        const skippedCount = watcherRuntime?.skippedCount ?? 0
-                        const linkedPreset = settings.trainingPresets.find((p) => p.id === profile.presetId)
-                        const issues: string[] = []
-                        if (!profile.enabled) issues.push('Disabled')
-                        if (!profile.watchFolder.trim()) issues.push('No watch folder set')
-                        if (!profile.presetId || !linkedPreset) issues.push('No preset linked — preset may have been deleted')
-                        if (linkedPreset && linkedPreset.architectures.length === 0) issues.push('Preset has no architectures selected')
-                        if (!settings.namPythonPath?.trim()) issues.push('Python path not set in Settings')
-                        if (!settings.namTrainingInputWav?.trim()) issues.push('Training input WAV not set in Settings')
-                        const hasOutputRoot = profile.finalModelRoot.trim()
-                        const hasOutputFormula = effectiveFormula(settings.trainingOutputFormula ?? '', linkedPreset?.outputFormulaOverride).trim()
-                        if (!hasOutputRoot && !hasOutputFormula) issues.push('No output root or formula configured (check global formula or preset override in Settings)')
-                        if (!watcherRuntime && profile.enabled) issues.push('Not registered with main process — watch folder may not exist on disk')
-                        return (
-                          <div key={profile.id} className="px-3 py-2 space-y-1.5">
-                            <div className="flex items-center gap-2">
-                              <span className="w-4 h-4 flex items-center justify-center rounded text-[9px] font-bold bg-gray-100 dark:bg-gray-700 text-gray-400 flex-shrink-0 tabular-nums">{i + 1}</span>
-                              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isRunning ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600'}`} />
-                              <div className="flex-1 min-w-0">
-                                <div className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{profile.name}</div>
-                                {linkedPreset && (
-                                  <div className="text-[10px] text-gray-500 dark:text-gray-500 truncate">{linkedPreset.name} · {linkedPreset.architectures.map((a) => a.toUpperCase()).join(', ') || 'no architectures'}</div>
-                                )}
-                              </div>
-                              {skippedCount > 0 && (
-                                <button
-                                  onClick={async () => { await window.api.clearProfileSkippedAndRescan(profile.id) }}
-                                  className="px-2 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 hover:bg-amber-500/25 text-amber-700 dark:text-amber-400 border border-amber-500/30 flex-shrink-0"
-                                  title={`${skippedCount} file(s) are being blocked by the skip list. Click to clear and re-scan.`}
-                                >
-                                  {skippedCount} skipped — clear &amp; rescan
-                                </button>
-                              )}
-                              <button
-                                onClick={() => setWatcherFilesModal({ profileId: profile.id, profileName: profile.name, watchFolder: profile.watchFolder, architectures: linkedPreset?.architectures ?? [] })}
-                                className="px-2.5 py-1 rounded text-[10px] font-medium bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 transition-colors flex-shrink-0"
-                                title="View and manage WAV files in this watch folder"
-                              >
-                                Files…
-                              </button>
-                              <button
-                                onClick={async () => { await window.api.setTrainerProfileRunning(profile.id, !isRunning) }}
-                                disabled={!profile.enabled}
-                                className={`px-2.5 py-1 rounded text-[10px] font-medium transition-colors flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed ${
-                                  isRunning
-                                    ? 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300'
-                                    : 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30'
-                                }`}
-                              >
-                                {isRunning ? 'Stop' : 'Start'}
-                              </button>
-                            </div>
-                            {issues.length > 0 && (
-                              <div className="ml-6 space-y-0.5">
-                                {issues.map((issue) => (
-                                  <div key={issue} className="flex items-center gap-1.5 text-[10px] text-amber-700 dark:text-amber-400">
-                                    <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
-                                    {issue}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>}
+              ))}
+            </div>
+            {/* ESR sparkline */}
+            {esrSparkline.length > 1 && (
+              <div className="flex-shrink-0">
+                <Sparkline data={esrSparkline} width={80} height={24} color="var(--nm-accent,#6366f1)" strokeWidth={1.5} fill={true} />
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Section content */}
+        <div className="flex-1 min-h-0 overflow-y-auto">
+
+          {/* ── LIVE RUN ───────────────────────────────────────────────────── */}
+          {section === 'live' && (
+            <div className="p-5 space-y-4">
+              <div className="flex items-baseline justify-between">
+                <div>
+                  <h2 className="text-[18px] font-[680] text-nm-text">Live Run</h2>
+                  <p className="text-[12px] text-nm-text-3 mt-0.5">Real-time training telemetry for the active model</p>
+                </div>
+              </div>
+
+              {!isRunning && trainerState.status === 'idle' && (
+                <div className="rounded-2xl border border-nm-border bg-panel p-8 text-center text-nm-text-3">
+                  <svg className="w-10 h-10 mx-auto mb-3 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
+                  </svg>
+                  <p className="text-[13px]">No run in progress. Start from the Queue or New Run tab.</p>
+                </div>
+              )}
+
+              {(isRunning || esrSeries.length > 0) && (
+                <div className="rounded-2xl border border-nm-border bg-panel/60 p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-[13px] font-semibold text-nm-text">ESR over epochs</span>
+                    <span className="text-[11px] text-nm-text-3">log scale · lower is better</span>
+                  </div>
+                  <EsrCurve
+                    data={esrSeries}
+                    width={600}
+                    height={220}
+                    target={typeof trainerState.thresholdEsr === 'number' ? trainerState.thresholdEsr : 0.01}
+                    labels={true}
+                    variant="area"
+                    logScale={true}
+                  />
+                </div>
+              )}
+
+              {/* Stat cells */}
+              <div className="grid grid-cols-4 gap-3">
+                {[
+                  {
+                    label: 'Epoch',
+                    value: trainerState.progressEpochCurrent && progressEpochTotal
+                      ? `${trainerState.progressEpochCurrent} / ${progressEpochTotal}`
+                      : '—'
+                  },
+                  { label: 'Rate', value: typeof trainerState.progressRate === 'number' ? `${trainerState.progressRate.toFixed(2)} it/s` : '—' },
+                  { label: 'Validation ESR', value: validationEsrTone.text, extra: validationEsrTone.classes },
+                  { label: 'Started', value: trainerState.startedAt ? new Date(trainerState.startedAt).toLocaleTimeString() : '—' },
+                ].map(({ label, value, extra }) => (
+                  <div key={label} className="rounded-xl border border-nm-border-s bg-panel-2 px-3 py-2.5">
+                    <div className="text-[11px] text-nm-text-3 uppercase font-medium">{label}</div>
+                    <div className={`mt-1 font-semibold font-mono tabular-nums ${extra ?? 'text-nm-text'}`}>{value}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Output paths */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-xl border border-nm-border-s bg-panel-2 px-3 py-2.5">
+                  <div className="text-[11px] text-nm-text-3">Final output</div>
+                  <div className="mt-1 text-[12px] font-mono text-nm-text break-all">{trainerState.outputModelPath || '—'}</div>
+                </div>
+                <div className="rounded-xl border border-nm-border-s bg-panel-2 px-3 py-2.5">
+                  <div className="text-[11px] text-nm-text-3">Checkpoint</div>
+                  <div className="mt-1 text-[12px] font-mono text-nm-text break-all">{trainerState.checkpointModelPath || 'Appears after training starts'}</div>
+                </div>
+              </div>
+
+              {/* Up next */}
+              {groupedQueue.filter(g => g.jobs.some(j => j.status === 'queued')).length > 0 && (
+                <div className="rounded-2xl border border-nm-border bg-panel/60 p-4">
+                  <div className="text-[12px] font-semibold text-nm-text mb-2">
+                    Up next · {groupedQueue.reduce((n, g) => n + g.jobs.filter(j => j.status === 'queued').length, 0)} queued
+                  </div>
+                  <div className="space-y-1">
+                    {groupedQueue.flatMap(g => g.jobs.filter(j => j.status === 'queued')).slice(0, 4).map(job => (
+                      <div key={job.jobId} className="flex items-center gap-2 text-[12px] text-nm-text-2">
+                        <span className="flex-1 truncate font-mono">{job.outputPath.replace(/\\/g, '/').split('/').pop()}</span>
+                        <span className="px-1.5 py-0.5 rounded border border-nm-border-s text-[10px] text-nm-text-3">{architectureDisplayLabel(job.architecture)}</span>
+                        <span className="text-nm-text-3 tabular-nums">{job.epochs}ep</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Raw log */}
+              <div className="rounded-2xl border border-nm-border bg-field overflow-hidden">
+                <button
+                  onClick={() => setLogExpanded(v => !v)}
+                  className="w-full flex items-center gap-2 px-4 py-2.5 text-[12px] font-semibold text-nm-text-2 hover:bg-hov transition-colors"
+                >
+                  <svg className={`w-3 h-3 transition-transform ${logExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                  </svg>
+                  Raw trainer log
+                </button>
+                {logExpanded && (
+                  <div ref={rawLogRef} className="border-t border-nm-border p-3 h-[280px] overflow-y-auto whitespace-pre-wrap break-words text-[11px] font-mono text-nm-text-2">
+                    {trainerState.logs.length === 0
+                      ? <span className="text-nm-text-3">Training logs will appear here.</span>
+                      : trainerState.logs.join('\n')}
                   </div>
                 )}
               </div>
-            ) : runMode === 'history' ? (
-              <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 px-3 py-3 text-sm text-gray-700 dark:text-gray-300">
-                Review completed, failed, and canceled training runs here without crowding the live queue and output view.
+
+              {!!trainerState.error && (
+                <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{trainerState.error}</div>
+              )}
+            </div>
+          )}
+
+          {/* ── QUEUE ──────────────────────────────────────────────────────── */}
+          {section === 'queue' && (
+            <div className="p-5 space-y-4">
+              <div className="flex items-baseline justify-between">
+                <h2 className="text-[18px] font-[680] text-nm-text">Queue</h2>
+                <div className="flex items-center gap-1 rounded-lg border border-nm-border-s bg-panel-2 p-0.5">
+                  {(['batches', 'compact', 'board'] as const).map(v => (
+                    <button
+                      key={v}
+                      onClick={() => setQueueView(v)}
+                      className={`px-2.5 py-1 rounded-md text-[11px] font-medium capitalize transition-colors ${queueView === v ? 'bg-active-bg text-nm-accent' : 'text-nm-text-3 hover:text-nm-text'}`}
+                    >
+                      {v}
+                    </button>
+                  ))}
+                </div>
               </div>
-            ) : (
-            <>
-            {/* ── Captures ── */}
-            <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/[0.05] dark:bg-cyan-500/[0.04] p-4 space-y-4">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-cyan-600 dark:text-cyan-400">Captures</span>
-              {runMode === 'files' ? (
-                <div className="space-y-4">
-                  <Field label="Input DI" hint="Trainer reference / DI file">
-                    <PathPicker
-                      value={inputPath}
-                      placeholder="Select the trainer input WAV"
-                      onChange={setInputPath}
-                      onBrowse={handleBrowseInput}
-                    />
-                  </Field>
-                  <Field label="Output WAVs">
-                    <div className="space-y-2">
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => { void handleBrowseOutputs() }}
-                          className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
-                        >
-                          Choose WAVs...
-                        </button>
-                        {outputPaths.length > 0 && (
-                          <button
-                            onClick={() => setOutputPaths([])}
-                            className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
-                          >
-                            Clear
-                          </button>
-                        )}
+
+              {/* Metric tiles */}
+              <div className="grid grid-cols-4 gap-3">
+                {[
+                  { label: 'Queued', count: queuedCount, color: 'border-l-amber-500/70 text-amber-400' },
+                  { label: 'Running', count: isRunning ? 1 : 0, color: 'border-l-nm-accent text-nm-accent' },
+                  { label: 'Done', count: successCount, color: 'border-l-emerald-500/70 text-emerald-400' },
+                  { label: 'Failed', count: failedCount, color: 'border-l-red-500/70 text-red-400' },
+                ].map(({ label, count, color }) => (
+                  <div key={label} className={`rounded-xl border border-nm-border-s bg-panel-2 px-3 py-2.5 border-l-[3px] ${color}`}>
+                    <div className="text-[28px] font-[700] tabular-nums leading-none">{count}</div>
+                    <div className="text-[10px] uppercase font-medium text-nm-text-3 mt-1">{label}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Filter bar */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <select
+                  value={queueProfileFilter}
+                  onChange={e => setQueueProfileFilter(e.target.value)}
+                  className="h-[34px] px-2.5 bg-field border border-field-bd rounded-[9px] text-[12px] text-nm-text focus:outline-none"
+                >
+                  <option value="all">All profiles</option>
+                  {queueProfileOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                </select>
+                <select
+                  value={queueStatusFilter}
+                  onChange={e => setQueueStatusFilter(e.target.value)}
+                  className="h-[34px] px-2.5 bg-field border border-field-bd rounded-[9px] text-[12px] text-nm-text focus:outline-none"
+                >
+                  <option value="all">All statuses</option>
+                  {['queued', 'running', 'success', 'error', 'canceled'].map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <select
+                  value={queueArchitectureFilter}
+                  onChange={e => setQueueArchitectureFilter(e.target.value)}
+                  className="h-[34px] px-2.5 bg-field border border-field-bd rounded-[9px] text-[12px] text-nm-text focus:outline-none"
+                >
+                  <option value="all">All architectures</option>
+                  {TRAINER_ARCHITECTURES.map(a => <option key={a} value={a}>{ARCHITECTURE_LABELS[a]}</option>)}
+                </select>
+                <span className="text-[11px] text-nm-text-3">drag to reorder · click ▸ to collapse</span>
+              </div>
+
+              {!!queueActionError && (
+                <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{queueActionError}</div>
+              )}
+
+              {/* Batch cards */}
+              {groupedQueue.length === 0 ? (
+                <div className="rounded-2xl border border-nm-border bg-panel p-8 text-center text-nm-text-3 text-[13px]">
+                  Queue is empty. Add runs from the New Run tab.
+                </div>
+              ) : queueView === 'board' ? (
+                <div className="grid grid-cols-4 gap-3">
+                  {(['queued', 'running', 'success', 'error'] as const).map(status => (
+                    <div key={status} className="rounded-xl border border-nm-border-s bg-panel-2 p-3 space-y-2">
+                      <div className="text-[11px] font-semibold uppercase text-nm-text-3">{status}</div>
+                      {filteredQueue.filter(j => j.status === status).map(job => (
+                        <div key={job.jobId} className="rounded-lg border border-nm-border-s bg-panel p-2 text-[11px]">
+                          <div className="font-mono truncate text-nm-text">{job.outputPath.replace(/\\/g, '/').split('/').pop()}</div>
+                          <div className="text-nm-text-3 mt-0.5">{architectureDisplayLabel(job.architecture)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              ) : queueView === 'compact' ? (
+                <div className="space-y-1">
+                  {filteredQueue.map((job, idx) => {
+                    const esrTone = getEsrTone(job.validationEsr)
+                    return (
+                      <div key={job.jobId} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12px] border ${job.jobId === trainerState.activeJobId ? 'border-nm-accent/40 bg-nm-accent/5' : 'border-nm-border-s bg-panel-2'}`}>
+                        <span className="w-5 text-center text-nm-text-3 font-mono tabular-nums">{idx + 1}</span>
+                        <span className="flex-1 font-mono truncate text-nm-text">{job.outputPath.replace(/\\/g, '/').split('/').pop()}</span>
+                        <span className="text-nm-text-3">{architectureDisplayLabel(job.architecture)}</span>
+                        {typeof job.validationEsr === 'number' && <span className={`font-mono ${esrTone.classes}`}>{esrTone.text}</span>}
+                        <span className={`font-semibold uppercase text-[10px] ${job.status === 'success' ? 'text-emerald-400' : job.status === 'error' ? 'text-red-400' : job.status === 'running' ? 'text-nm-accent' : 'text-nm-text-3'}`}>
+                          {job.status}
+                        </span>
                       </div>
-                      <div className="rounded-lg border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 min-h-[88px] max-h-[180px] overflow-y-auto font-mono">
-                        {outputPaths.length === 0 ? (
-                          <span className="italic text-gray-400 dark:text-gray-500">No output WAVs selected yet.</span>
-                        ) : (
-                          <div className="space-y-1">
-                            {outputPaths.map((path) => (
-                              <div key={path} className="break-all">{path}</div>
-                            ))}
+                    )
+                  })}
+                </div>
+              ) : (
+                /* Batches view */
+                <div className="space-y-3">
+                  {groupedQueue.map((group) => {
+                    const isCollapsed = collapsedBatches.has(group.key)
+                    const hasActive = group.jobs.some(j => j.jobId === trainerState.activeJobId)
+                    const doneCount = group.jobs.filter(j => j.status === 'success').length
+                    const failCount = group.jobs.filter(j => j.status === 'error' || j.status === 'canceled').length
+                    const runCount = group.jobs.filter(j => j.status === 'running' || j.status === 'starting').length
+                    const queueCount = group.jobs.filter(j => j.status === 'queued').length
+                    const total = group.jobs.length
+                    const meterSegs = [
+                      { value: doneCount, color: '#10b981', label: 'done' },
+                      { value: failCount, color: '#ef4444', label: 'failed' },
+                      { value: runCount, color: 'var(--nm-accent,#6366f1)', label: 'running' },
+                      { value: queueCount, color: 'var(--field,#1e2433)', label: 'queued' },
+                    ]
+                    const isWatcher = group.jobs[0]?.sourceMode === 'watcher'
+                    return (
+                      <div
+                        key={group.key}
+                        className={`rounded-[13px] border ${hasActive ? 'border-nm-accent/50' : 'border-nm-border-s'} bg-panel overflow-hidden`}
+                        draggable={queueCount > 0}
+                        onDragStart={() => { dragBatchRef.current = group.jobs[0]?.submissionId ?? null }}
+                        onDragOver={e => { e.preventDefault() }}
+                        onDrop={async () => {
+                          const fromId = dragBatchRef.current
+                          const toId = group.jobs[0]?.submissionId ?? null
+                          if (fromId && toId && fromId !== toId) {
+                            await window.api.moveSubmissionBefore(fromId, toId)
+                          }
+                          dragBatchRef.current = null
+                        }}
+                      >
+                        {/* Batch header */}
+                        <div className={`flex items-center gap-2 px-3.5 py-3 bg-panel-2 border-b border-nm-border-s cursor-pointer select-none`}
+                          onClick={() => toggleBatchCollapse(group.key)}
+                        >
+                          <svg className="w-3.5 h-3.5 text-nm-text-3 cursor-grab flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9h16.5m-16.5 6.75h16.5" />
+                          </svg>
+                          <svg className={`w-3 h-3 text-nm-text-3 flex-shrink-0 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                          </svg>
+                          <svg className={`w-3.5 h-3.5 flex-shrink-0 ${isWatcher ? 'text-amber-400' : 'text-nm-accent'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            {isWatcher
+                              ? <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                              : <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z" />
+                            }
+                          </svg>
+                          <span className="flex-1 min-w-0 text-[13px] font-semibold text-nm-text truncate">{group.label}</span>
+                          {hasActive && (
+                            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-nm-accent/15 text-nm-accent text-[10px] font-semibold flex-shrink-0">
+                              <span className="w-1 h-1 rounded-full bg-nm-accent animate-pulse" />active
+                            </span>
+                          )}
+                          <div className="flex items-center gap-1.5 text-[10px] text-nm-text-3 flex-shrink-0">
+                            {doneCount > 0 && <span className="text-emerald-400">{doneCount} done</span>}
+                            {failCount > 0 && <span className="text-red-400">{failCount} failed</span>}
+                            {queueCount > 0 && <span>{queueCount} queued</span>}
+                          </div>
+                        </div>
+                        {/* Progress meter */}
+                        <div className="px-3.5 pt-2 pb-1">
+                          <StackedMeter segments={meterSegs} height={6} radius={3} gap={1} />
+                          <div className="text-[10px] text-nm-text-3 mt-1">{doneCount}/{total} finished {total > 0 ? `· ${Math.round(doneCount/total*100)}%` : ''}</div>
+                        </div>
+                        {/* Items */}
+                        {!isCollapsed && (
+                          <div className="px-3 pb-3 space-y-1 mt-1">
+                            {isWatcher && (
+                              <div className="text-[11px] text-nm-text-3 font-mono px-2 py-1">{group.jobs[0]?.outputPath.replace(/\\/g, '/').split('/').slice(0, -1).join('/')} · auto-queues new files as they appear</div>
+                            )}
+                            {group.jobs.map((job, idx) => {
+                              const esrTone = getEsrTone(job.validationEsr)
+                              const isActive = job.jobId === trainerState.activeJobId
+                              const isQueued = job.status === 'queued'
+                              return (
+                                <div
+                                  key={job.jobId}
+                                  draggable={isQueued}
+                                  onDragStart={() => { if (isQueued) dragJobRef.current = job.jobId }}
+                                  onDragOver={e => { if (isQueued) e.preventDefault() }}
+                                  onDrop={async () => {
+                                    const fromId = dragJobRef.current
+                                    if (fromId && fromId !== job.jobId && isQueued) {
+                                      await window.api.reorderTrainerJob(fromId, job.jobId)
+                                    }
+                                    dragJobRef.current = null
+                                  }}
+                                  className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-[12px] border transition-colors ${
+                                    isActive ? 'border-nm-accent/40 bg-nm-accent/5' : 'border-nm-border-s bg-panel-2 hover:bg-hov'
+                                  }`}
+                                  onContextMenu={e => {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                    setQueueContextMenu({ job, x: e.clientX, y: e.clientY })
+                                  }}
+                                >
+                                  <svg className={`w-3 h-3 flex-shrink-0 ${isQueued ? 'text-nm-text-3 cursor-grab' : 'opacity-30 text-nm-text-3'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9h16.5m-16.5 6.75h16.5" />
+                                  </svg>
+                                  <span className="w-5 text-center text-nm-text-3 font-mono tabular-nums text-[10px]">{idx + 1}</span>
+                                  {/* Status icon */}
+                                  {job.status === 'success' && <svg className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
+                                  {job.status === 'error' && <svg className="w-3.5 h-3.5 text-red-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>}
+                                  {job.status === 'canceled' && <svg className="w-3.5 h-3.5 text-nm-text-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 7.5A2.25 2.25 0 017.5 5.25h9a2.25 2.25 0 012.25 2.25v9a2.25 2.25 0 01-2.25 2.25h-9a2.25 2.25 0 01-2.25-2.25v-9z" /></svg>}
+                                  {(job.status === 'running' || job.status === 'starting') && <span className="w-3.5 h-3.5 flex-shrink-0 rounded-full bg-nm-accent/30 flex items-center justify-center"><span className="w-1.5 h-1.5 rounded-full bg-nm-accent animate-pulse" /></span>}
+                                  {job.status === 'queued' && <svg className="w-3.5 h-3.5 text-nm-text-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>}
+                                  <div className="flex-1 min-w-0">
+                                    <div className="font-mono truncate text-nm-text">{job.outputPath.replace(/\\/g, '/').split('/').pop()}</div>
+                                    {job.status === 'error' && job.error && <div className="text-red-400 text-[11px] truncate">{job.error} · attempt {job.attempts}</div>}
+                                    {(job.status === 'running' || job.status === 'starting') && <div className="text-[11px] text-nm-text-3 font-mono">Epoch {trainerState.progressEpochCurrent ?? '?'}/{progressEpochTotal ?? '?'} · {typeof trainerState.progressRate === 'number' ? `${trainerState.progressRate.toFixed(2)} it/s` : '—'}</div>}
+                                    {job.status === 'success' && <div className="text-[11px] text-nm-text-3">{architectureDisplayLabel(job.architecture)}</div>}
+                                    {job.status === 'queued' && <div className="text-[11px] text-nm-text-3">Waiting in queue</div>}
+                                  </div>
+                                  {(job.status === 'running' || job.status === 'starting') && typeof job.progressPercent === 'number' && (
+                                    <div className="w-16 h-1 rounded-full bg-field overflow-hidden flex-shrink-0">
+                                      <div className="h-full bg-nm-accent rounded-full" style={{ width: `${job.progressPercent}%` }} />
+                                    </div>
+                                  )}
+                                  {typeof job.validationEsr === 'number' && (
+                                    <span className={`text-[11px] font-mono font-semibold flex-shrink-0 ${esrTone.classes}`}>{esrTone.text}</span>
+                                  )}
+                                  {/* Actions */}
+                                  <div className="flex items-center gap-1 flex-shrink-0">
+                                    {job.status === 'queued' && job.jobId !== trainerState.queue.find(j => j.status === 'queued')?.jobId && (
+                                      <button onClick={() => { void handleMakeNext(job) }} className="px-1.5 py-0.5 rounded text-[10px] border border-nm-border-s text-nm-text-2 hover:bg-hov">Next</button>
+                                    )}
+                                    {job.status === 'error' && <button onClick={() => { void handleRetryQueueItem(job) }} className="px-1.5 py-0.5 rounded text-[10px] border border-nm-border-s text-nm-text-2 hover:bg-hov">Retry</button>}
+                                    {job.status === 'success' && job.outputModelPath && <button onClick={() => window.api.revealFile(job.outputModelPath)} className="px-1.5 py-0.5 rounded text-[10px] border border-nm-border-s text-nm-text-2 hover:bg-hov">Show</button>}
+                                    {!isActive && <button onClick={() => { void handleRemoveJob(job) }} className="w-5 h-5 flex items-center justify-center rounded text-red-400 hover:bg-red-500/10 flex-shrink-0"><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg></button>}
+                                  </div>
+                                </div>
+                              )
+                            })}
                           </div>
                         )}
                       </div>
-                    </div>
-                  </Field>
+                    )
+                  })}
                 </div>
+              )}
+            </div>
+          )}
+
+          {/* ── HISTORY ────────────────────────────────────────────────────── */}
+          {section === 'history' && (
+            <div className="p-5 space-y-4">
+              <div className="flex items-baseline justify-between">
+                <div>
+                  <h2 className="text-[18px] font-[680] text-nm-text">History</h2>
+                  <p className="text-[12px] text-nm-text-3 mt-0.5">{filteredHistory.length} completed, failed &amp; canceled runs</p>
+                </div>
+                <button
+                  onClick={handleExportHistory}
+                  disabled={filteredHistory.length === 0}
+                  className="h-8 inline-flex items-center gap-1.5 px-3 rounded-[9px] text-[12px] font-medium border border-nm-border-s bg-panel-2 hover:bg-hov disabled:opacity-40 disabled:cursor-not-allowed text-nm-text-2 transition-colors"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+                  Export
+                </button>
+              </div>
+
+              {/* Charts */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="rounded-2xl border border-nm-border bg-panel/60 p-4">
+                  <div className="text-[12px] font-semibold text-nm-text mb-1">ESR quality · last 7 days</div>
+                  <div className="text-[10px] text-nm-text-3 mb-2 flex gap-3">
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-emerald-400 inline-block" /> {'<0.01'}</span>
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-amber-400 inline-block" /> {'<0.05'}</span>
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-red-400 inline-block" /> {'≥0.05'}</span>
+                  </div>
+                  <QualityBars groups={qualityBarsData} width={300} height={100} />
+                </div>
+                <div className="rounded-2xl border border-nm-border bg-panel/60 p-4">
+                  <div className="text-[12px] font-semibold text-nm-text mb-3">Throughput · models/hour</div>
+                  <Sparkline data={throughputData.map(v => Math.max(v, 0))} width={280} height={80} fill={true} />
+                </div>
+              </div>
+
+              {/* Filter bar */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <input
+                  value={historySearch}
+                  onChange={e => setHistorySearch(e.target.value)}
+                  placeholder="Search…"
+                  className="h-[34px] px-3 flex-1 min-w-[160px] bg-field border border-field-bd rounded-[9px] text-[12px] text-nm-text placeholder-nm-text-3 focus:outline-none"
+                />
+                <select value={historyStatusFilter} onChange={e => setHistoryStatusFilter(e.target.value)} className="h-[34px] px-2.5 bg-field border border-field-bd rounded-[9px] text-[12px] text-nm-text focus:outline-none">
+                  <option value="all">All statuses</option>
+                  {['success', 'error', 'skipped', 'canceled'].map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <select value={historyProfileFilter} onChange={e => setHistoryProfileFilter(e.target.value)} className="h-[34px] px-2.5 bg-field border border-field-bd rounded-[9px] text-[12px] text-nm-text focus:outline-none">
+                  <option value="all">All profiles</option>
+                  {Array.from(new Map(trainerState.history.filter(e => e.profileId || e.profileName).map(e => [e.profileId ?? e.profileName ?? 'manual', e.profileName ?? 'Manual'])).entries()).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+                <select value={historyTimeFilter} onChange={e => setHistoryTimeFilter(e.target.value as typeof historyTimeFilter)} className="h-[34px] px-2.5 bg-field border border-field-bd rounded-[9px] text-[12px] text-nm-text focus:outline-none">
+                  {[['all','All time'],['day','Today'],['week','This week'],['month','This month'],['quarter','This quarter']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+                <select value={historyEsrFilter} onChange={e => setHistoryEsrFilter(e.target.value as typeof historyEsrFilter)} className="h-[34px] px-2.5 bg-field border border-field-bd rounded-[9px] text-[12px] text-nm-text focus:outline-none">
+                  {[['all','All ESR'],['green','Green (<0.01)'],['amber','Amber (<0.05)'],['red','Red (≥0.05)'],['none','No ESR']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+              </div>
+
+              {/* Grouped history list */}
+              {groupedHistory.length === 0 ? (
+                <div className="rounded-2xl border border-nm-border bg-panel p-8 text-center text-nm-text-3 text-[13px]">No history entries match the current filters.</div>
               ) : (
                 <div className="space-y-4">
-                  <Field label="Input DI" hint="Trainer reference / DI file">
-                    <PathPicker
-                      value={inputPath}
-                      placeholder="Select the trainer input WAV"
-                      onChange={setInputPath}
-                      onBrowse={handleBrowseInput}
-                    />
+                  {groupedHistory.map(group => {
+                    const doneN = group.entries.filter(e => e.status === 'success').length
+                    const failN = group.entries.filter(e => e.status === 'error').length
+                    return (
+                      <div key={group.key}>
+                        <div className="flex items-center gap-2 px-1 mb-2">
+                          <span className="text-[13px] font-semibold text-nm-text">{group.label}</span>
+                          {doneN > 0 && <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">{doneN} done</span>}
+                          {failN > 0 && <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-400 border border-red-500/20">{failN} failed</span>}
+                          <span className="flex-1" />
+                          <span className="text-[11px] text-nm-text-3 font-mono">{group.createdAt ? new Date(group.createdAt).toLocaleString() : ''}</span>
+                        </div>
+                        <div className="rounded-xl border border-nm-border-s bg-panel overflow-hidden divide-y divide-nm-border-s">
+                          {group.entries.map(entry => {
+                            const esrTone = getEsrTone(entry.validationEsr)
+                            return (
+                              <div
+                                key={entry.historyId}
+                                className="flex items-center gap-3 px-3 py-2.5 hover:bg-hov transition-colors"
+                                onContextMenu={e => {
+                                  e.preventDefault()
+                                  setHistoryContextMenu({ entry, x: e.clientX, y: e.clientY })
+                                }}
+                              >
+                                {/* Thumbnail */}
+                                <div className="w-11 h-8 rounded-lg border border-nm-border-s bg-panel-2 flex items-center justify-center flex-shrink-0">
+                                  {entry.status === 'success'
+                                    ? <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
+                                    : entry.status === 'error'
+                                    ? <svg className="w-4 h-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+                                    : <svg className="w-4 h-4 text-nm-text-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 7.5A2.25 2.25 0 017.5 5.25h9a2.25 2.25 0 012.25 2.25v9a2.25 2.25 0 01-2.25 2.25h-9a2.25 2.25 0 01-2.25-2.25v-9z" /></svg>
+                                  }
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-medium text-nm-text truncate text-[13px]">{entry.finalModelName}</span>
+                                    <span className="flex-shrink-0 px-1.5 py-0.5 rounded border border-nm-border-s text-[10px] text-nm-text-3">{architectureDisplayLabel(entry.architecture)}</span>
+                                    {entry.profileName && <span className="flex-shrink-0 px-1.5 py-0.5 rounded border border-sky-700/40 bg-sky-500/10 text-[10px] text-sky-400">{entry.profileName}</span>}
+                                  </div>
+                                  {entry.status === 'error' && entry.failureReason && (
+                                    <div className="text-[11px] text-red-400 mt-0.5 truncate">{entry.failureReason}</div>
+                                  )}
+                                  {entry.status !== 'error' && (
+                                    <div className="text-[11px] text-nm-text-3 font-mono mt-0.5">{entry.epochs} epochs · {entry.sourcePath.replace(/\\/g, '/').split('/').pop()}</div>
+                                  )}
+                                </div>
+                                {typeof entry.validationEsr === 'number' && (
+                                  <span className={`text-[12px] font-mono font-semibold flex-shrink-0 ${esrTone.classes}`}>{esrTone.text}</span>
+                                )}
+                                <span className="text-[11px] font-mono text-nm-text-3 flex-shrink-0">{new Date(entry.timestamp).toLocaleTimeString()}</span>
+                                {/* Hover actions */}
+                                <div className="flex items-center gap-1 flex-shrink-0">
+                                  {entry.graphPath && (
+                                    <button onClick={() => { void handleShowGraphModal(entry.graphPath) }} className="w-7 h-7 flex items-center justify-center rounded-lg border border-nm-border-s hover:bg-hov text-nm-text-3 transition-colors" title="View ESR plot">
+                                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941" /></svg>
+                                    </button>
+                                  )}
+                                  <button onClick={() => { void handleRetryHistoryEntry(entry) }} className="w-7 h-7 flex items-center justify-center rounded-lg border border-nm-border-s hover:bg-hov text-nm-text-3 transition-colors" title="Retry">
+                                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                                  </button>
+                                  {entry.finalModelPath && (
+                                    <button onClick={() => { void window.api.revealFile(entry.finalModelPath) }} className="w-7 h-7 flex items-center justify-center rounded-lg border border-nm-border-s hover:bg-hov text-nm-text-3 transition-colors" title="Reveal in folder">
+                                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" /></svg>
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── NEW RUN ────────────────────────────────────────────────────── */}
+          {section === 'new' && (
+            <div className="p-5 space-y-4 max-w-3xl">
+              <div className="flex items-baseline justify-between">
+                <h2 className="text-[18px] font-[680] text-nm-text">New Run</h2>
+                {presetSaveNotice && <span className="text-[12px] text-emerald-400">{presetSaveNotice}</span>}
+              </div>
+
+              {/* Sub-toggle */}
+              <div className="flex rounded-xl border border-nm-border-s bg-panel-2 overflow-hidden">
+                {(['files', 'folder'] as const).map(mode => (
+                  <button
+                    key={mode}
+                    onClick={() => setNewRunMode(mode)}
+                    className={`flex-1 py-2.5 px-4 text-[13px] font-medium transition-colors ${newRunMode === mode ? 'bg-active-bg text-nm-accent' : 'text-nm-text-2 hover:bg-hov'}`}
+                  >
+                    {mode === 'files' ? 'Run WAVs' : 'Run Folder'}
+                  </button>
+                ))}
+              </div>
+
+              {/* Captures card */}
+              <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/[0.05] p-4 space-y-4">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-cyan-500">Captures</span>
+                <Field label="Input DI" hint="Trainer reference / DI file">
+                  <PathPicker value={inputPath} placeholder="Select the trainer input WAV" onChange={setInputPath} onBrowse={handleBrowseInput} />
+                </Field>
+                {newRunMode === 'files' ? (
+                  <Field label="Output WAVs">
+                    <div className="space-y-2">
+                      <div className="flex gap-2">
+                        <button onClick={() => { void handleBrowseOutputs() }} className="px-3 py-2 rounded-lg text-[13px] font-medium bg-field border border-field-bd hover:bg-hov text-nm-text transition-colors">Choose WAVs…</button>
+                        {outputPaths.length > 0 && <button onClick={() => setOutputPaths([])} className="px-3 py-2 rounded-lg text-[13px] font-medium bg-field border border-field-bd hover:bg-hov text-nm-text transition-colors">Clear</button>}
+                      </div>
+                      <div className="rounded-lg border border-field-bd bg-field px-3 py-2 text-[12px] text-nm-text font-mono min-h-[72px] max-h-[160px] overflow-y-auto">
+                        {outputPaths.length === 0
+                          ? <span className="text-nm-text-3 italic">No output WAVs selected yet.</span>
+                          : <div className="space-y-0.5">{outputPaths.map(p => <div key={p} className="break-all">{p}</div>)}</div>
+                        }
+                      </div>
+                    </div>
                   </Field>
+                ) : (
                   <div>
-                    <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Folder</div>
-                    <div className="text-[11px] text-gray-500 dark:text-gray-500 mb-2">Queue every WAV in a folder using a saved preset or custom settings below.</div>
+                    <div className="text-[12px] font-medium text-nm-text-3 mb-1">Folder</div>
+                    <div className="text-[11px] text-nm-text-3 mb-2">Queue every WAV in a folder using a saved preset or custom settings.</div>
                     <PathPicker
                       value={folderRunPath}
                       placeholder="Choose a folder containing WAV files"
@@ -1213,1017 +1872,329 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                         const path = await window.api.openFolder(folderRunPath || trainPath || undefined)
                         if (path) setFolderRunPath(path)
                       }}
-                      browseLabel="Folder..."
+                      browseLabel="Folder…"
                     />
                   </div>
-                </div>
-              )}
-            </div>
-
-            {/* ── Training Settings ── */}
-            <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/[0.05] dark:bg-indigo-500/[0.04] p-4 space-y-4">
-              <div className="flex items-center gap-1.5">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-indigo-500 dark:text-indigo-400">Training Settings</span>
-                <HelpPopover title="Training Settings" side="right">
-                  Configure the architecture, epochs, and model type for this run. Choose a saved <strong>Preset</strong> to load a full configuration in one click, or set <strong>Custom</strong> to adjust each field individually.
-                  <br /><br />
-                  The <strong>Architecture(s)</strong> picker includes built-in WaveNet sizes and any <strong>Capture Profiles</strong> you have saved in Settings → Training. A Capture Profile lets you store a custom layer config (e.g. from a NAM-BOT preset) alongside an epoch count so you can reuse it without re-entering it each time.
-                </HelpPopover>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_minmax(110px,0.6fr)_minmax(110px,0.6fr)_minmax(120px,0.7fr)] gap-4">
-                <Field label="Preset">
-                  <select
-                    value={currentPresetId}
-                    onChange={(e) => {
-                      if (runMode === 'files') applyPreset(e.target.value)
-                      else setFolderRunProfileId(e.target.value)
-                    }}
-                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                  >
-                    <option value={CUSTOM_PRESET_ID}>Custom</option>
-                    {availablePresets.map((preset) => (
-                      <option key={preset.id} value={preset.id}>
-                        {preset.name}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-
-                {currentRunPreset ? (
-                  <div className="md:col-span-4 rounded-lg border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-xs text-sky-800 dark:text-sky-200">
-                    {describePreset(currentRunPreset)}
-                  </div>
-                ) : (
-                  <>
-                    <Field label="NAM Version">
-                      <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 text-xs">
-                        <button
-                          onClick={() => setNamMode('a1')}
-                          className={`flex-1 py-1.5 px-3 font-medium transition-colors ${
-                            namMode === 'a1'
-                              ? 'bg-indigo-600 text-white'
-                              : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
-                          }`}
-                        >
-                          A1 WaveNet
-                        </button>
-                        <button
-                          disabled
-                          title="A2 (PackedWaveNet) training is not yet available in the released NAM package. Expected when NAM ships A2 training support."
-                          className="flex-1 py-1.5 px-3 font-medium opacity-40 cursor-not-allowed bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400"
-                        >
-                          A2 — Coming Soon
-                        </button>
-                      </div>
-                    </Field>
-
-                    {namMode === 'a1' && (
-                    <Field label="Architecture(s)" help={<>Each architecture produces a <code>.nam</code> of different size and quality. <strong>Standard</strong> = best quality, more CPU. <strong>Lite / Feather / Nano</strong> = faster but lower fidelity. <strong>REVx / REVy</strong> = tuned for reverb captures. Selecting multiple trains them all in one session.</>}>
-                      <ArchitectureMultiSelect
-                        values={architectures}
-                        onChange={(next) => {
-                          setArchitectures(next)
-                          if (runMode === 'files') setSelectedPresetId(CUSTOM_PRESET_ID)
-                          else setFolderRunProfileId(CUSTOM_PRESET_ID)
-                        }}
-                        userProfiles={settings.userCaptureProfiles ?? []}
-                      />
-                    </Field>
-                    )}
-
-                    <Field label="Epochs">
-                      <input
-                        value={epochs}
-                        onChange={(e) => setEpochs(e.target.value)}
-                        className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                      />
-                    </Field>
-
-                    <Field label="Latency">
-                      <input
-                        value={latency}
-                        onChange={(e) => setLatency(e.target.value)}
-                        placeholder="Auto"
-                        title="Leave blank to let NAM auto-detect the sample offset between the DI and the captured output."
-                        className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                      />
-                    </Field>
-
-                    <Field label="Target ESR" labelTitle="Stops training early once this ESR is reached. Quality guide: <0.01 = Great · <0.035 = Good · <0.1 = Acceptable" help={<>Error-to-Signal Ratio — lower is better. Setting a target stops training early once this quality level is reached, saving time. Leave blank to run the full epoch count.<br /><br /><strong>Quality tiers:</strong> &lt;0.01 = great · &lt;0.035 = good · &lt;0.1 = acceptable.</>}>
-                      <input
-                        value={thresholdEsr}
-                        onChange={(e) => setThresholdEsr(e.target.value)}
-                        placeholder="Optional — e.g. 0.005"
-                        title="Optional early-stop target. NAM training will stop once validation ESR reaches or beats this value."
-                        className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                      />
-                    </Field>
-                  </>
                 )}
               </div>
 
-              {showsCustomSettings && (
-                <>
-                  {epochNote && (
-                    <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                      {epochNote}
+              {/* Training settings card */}
+              <div className="rounded-2xl border border-indigo-500/20 bg-indigo-500/[0.05] p-4 space-y-4">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-indigo-400">Training Settings</span>
+                  <HelpPopover title="Training Settings" side="right">
+                    Configure the architecture, epochs, and model type for this run. Choose a saved <strong>Preset</strong> to load a full configuration in one click, or set <strong>Custom</strong> to adjust each field individually.
+                    <br /><br />
+                    The <strong>Architecture(s)</strong> picker includes built-in WaveNet sizes and any <strong>Capture Profiles</strong> you have saved in Settings → Training. A Capture Profile lets you store a custom layer config alongside an epoch count so you can reuse it.
+                  </HelpPopover>
+                </div>
+
+                <div className="grid grid-cols-[1fr_1fr] gap-3">
+                  <Field label="Preset">
+                    <select
+                      value={currentPresetId}
+                      onChange={e => {
+                        if (newRunMode === 'files') applyPreset(e.target.value)
+                        else setFolderRunProfileId(e.target.value)
+                      }}
+                      className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none"
+                    >
+                      <option value={CUSTOM_PRESET_ID}>Custom</option>
+                      {availablePresets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </Field>
+
+                  {currentRunPreset ? (
+                    <div className="rounded-lg border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-[12px] text-sky-300 flex items-center">
+                      {describePreset(currentRunPreset)}
                     </div>
+                  ) : (
+                    <Field label="NAM Version">
+                      <div className="flex rounded-lg overflow-hidden border border-field-bd text-[12px]">
+                        <button onClick={() => setNamMode('a1')} className={`flex-1 py-2 px-3 font-medium transition-colors ${namMode === 'a1' ? 'bg-nm-accent text-accent-text' : 'bg-field text-nm-text-2 hover:bg-hov'}`}>A1 WaveNet</button>
+                        <button disabled title="A2 training coming soon" className="flex-1 py-2 px-3 font-medium opacity-40 cursor-not-allowed bg-field text-nm-text-2">A2 — Soon</button>
+                      </div>
+                    </Field>
                   )}
-                  <div className="flex flex-wrap items-center gap-3 pt-1 border-t border-indigo-500/15">
-                    <ToggleRow label="Save ESR plot" checked={savePlot} onChange={setSavePlot} />
-                    <ToggleRow label="Ignore checks" checked={ignoreChecks} onChange={setIgnoreChecks} />
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs text-gray-500 dark:text-gray-400">Normalize</span>
-                      <HelpPopover title="Input normalization" side="right">
-                        Applies a matched peak-gain to the input and output WAVs before training so both hit the same target level (default −5 dBFS). NAM trains better when levels are consistent across sessions.
-                        <br /><br />
-                        Normalization copies are made in the run workspace — your original WAV files are never modified. The global default is set in Settings → Training.
-                      </HelpPopover>
-                      <select
-                        value={normalizeWavOverride}
-                        onChange={(e) => setNormalizeWavOverride(e.target.value as 'global' | 'on' | 'off')}
-                        className="px-2 py-1 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                      >
-                        <option value="global">Default ({(settings.normalizeWavBeforeTraining ?? true) ? 'on' : 'off'})</option>
-                        <option value="on">On</option>
-                        <option value="off">Off</option>
-                      </select>
-                      {normalizeWavOverride !== 'off' && (
-                        <div className="flex items-center gap-1">
+                </div>
+
+                {showsCustomSettings && (
+                  <div className="grid grid-cols-[1fr_100px_140px_100px] gap-3">
+                    {namMode === 'a1' && (
+                      <Field label="Architecture(s)" help={<>Each architecture produces a <code>.nam</code> of different size and quality. <strong>Standard</strong> = best quality, more CPU. <strong>Lite/Feather/Nano</strong> = faster but lower fidelity.</>}>
+                        <ArchitectureMultiSelect
+                          values={architectures}
+                          onChange={next => {
+                            setArchitectures(next)
+                            if (newRunMode === 'files') setSelectedPresetId(CUSTOM_PRESET_ID)
+                            else setFolderRunProfileId(CUSTOM_PRESET_ID)
+                          }}
+                          userProfiles={settings.userCaptureProfiles ?? []}
+                        />
+                      </Field>
+                    )}
+                    <Field label="Epochs">
+                      <input value={epochs} onChange={e => setEpochs(e.target.value)} className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none" />
+                    </Field>
+                    <Field label="Latency" hint="blank = auto">
+                      <input value={latency} onChange={e => setLatency(e.target.value)} className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none" placeholder="Auto" />
+                    </Field>
+                    <Field label="Target ESR" hint="blank = off">
+                      <input value={thresholdEsr} onChange={e => setThresholdEsr(e.target.value)} className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none" placeholder="—" />
+                    </Field>
+                  </div>
+                )}
+                {showsCustomSettings && epochNote && (
+                  <div className="text-[11px] text-amber-400">{epochNote}</div>
+                )}
+                {showsCustomSettings && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field
+                      label="Normalize"
+                      help={<>Normalize the output WAV to a target dBFS before training. <strong>Global</strong> uses the setting in the Training Settings page. On/Off overrides for this run only.</>}
+                    >
+                      <div className="flex gap-2">
+                        <select
+                          value={normalizeWavOverride}
+                          onChange={e => setNormalizeWavOverride(e.target.value as typeof normalizeWavOverride)}
+                          className="flex-1 h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none"
+                        >
+                          <option value="global">Global ({(settings.normalizeWavBeforeTraining ?? true) ? 'on' : 'off'})</option>
+                          <option value="on">On</option>
+                          <option value="off">Off</option>
+                        </select>
+                        {normalizeWavOverride !== 'off' && (
                           <input
-                            type="number"
-                            step="0.5"
-                            max="0"
-                            min="-30"
                             value={normalizeWavTargetDb}
-                            onChange={(e) => setNormalizeWavTargetDb(e.target.value)}
+                            onChange={e => setNormalizeWavTargetDb(e.target.value)}
                             placeholder={String(settings.normalizeWavTargetDb ?? -5.0)}
-                            className="w-16 px-2 py-1 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                            className="w-20 h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none font-mono"
                           />
-                          <span className="text-xs text-gray-500 dark:text-gray-400">dBFS</span>
+                        )}
+                      </div>
+                    </Field>
+                    <div className="flex flex-col gap-2">
+                      <ToggleRow label="Save ESR plot" checked={savePlot} onChange={setSavePlot} />
+                      <ToggleRow label="Ignore checks" checked={ignoreChecks} onChange={setIgnoreChecks} />
+                    </div>
+                  </div>
+                )}
+                {showsCustomSettings && (
+                  <button onClick={handleSaveAsPreset} className="text-[12px] text-nm-accent hover:underline">Save as preset…</button>
+                )}
+              </div>
+
+              {/* Output routing card */}
+              <div className="rounded-2xl border border-violet-500/20 bg-violet-500/[0.04] p-4 space-y-4">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-violet-400">Output Routing</span>
+                  <HelpPopover side="right">
+                    NAM Lab routes the final .nam and ESR graph to the configured destination. You can use a <strong>formula</strong> (from Settings → Training → Output Formula) for automatic token-based routing, or specify a fixed folder manually.
+                  </HelpPopover>
+                </div>
+
+                {activeFormula && manualRoutingMode === 'root' && (() => {
+                  const previewPath = newRunMode === 'folder' ? folderFormulaPreviewPath : formulaPreviewPath
+                  const hasSource = newRunMode === 'folder' ? !!folderRunPath.trim() : !!filesStagingDir
+                  return (
+                    <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 space-y-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <svg className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        <span className="text-[11px] font-semibold text-emerald-400">NAM output formula active</span>
+                        <code className="text-[10px] font-mono text-emerald-500 bg-emerald-900/30 px-1 rounded">{activeFormula}</code>
+                      </div>
+                      {previewPath && hasSource && <div className="pl-5 text-[11px] text-emerald-400 font-mono break-all">→ {previewPath}</div>}
+                      {!hasSource && <div className="pl-5 text-[11px] text-emerald-500 italic">{newRunMode === 'folder' ? 'Choose a folder to preview' : 'Select WAVs to preview'}</div>}
+                      {!formulaOverrideActive && (
+                        <div className="pl-5 flex items-center gap-2">
+                          <span className="text-[10px] text-nm-text-3">Override for this run:</span>
+                          <button onClick={() => setFormulaOverrideActive(true)} className="text-[10px] text-nm-text-3 hover:text-amber-400 border border-nm-border-s hover:border-amber-500/60 rounded px-1.5 py-0.5 transition-colors">Use fixed path…</button>
+                        </div>
+                      )}
+                      {formulaOverrideActive && (
+                        <div className="pl-5 flex items-center gap-2">
+                          <span className="text-[11px] text-amber-400 font-medium">Override active</span>
+                          <button onClick={() => { setFormulaOverrideActive(false); setTrainPath('') }} className="text-[10px] text-nm-text-3 hover:text-nm-text underline">Cancel</button>
                         </div>
                       )}
                     </div>
-                    <div className="flex-1" />
-                    <button
-                      onClick={handleSaveAsPreset}
-                      className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
+                  )
+                })()}
+
+                {activeGraphFormula && manualRoutingMode === 'root' && (() => {
+                  const previewPath = newRunMode === 'folder' ? folderGraphFormulaPreviewPath : graphFormulaPreviewPath
+                  const hasSource = newRunMode === 'folder' ? !!folderRunPath.trim() : !!filesStagingDir
+                  return (
+                    <div className="rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2.5 space-y-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <svg className="w-3.5 h-3.5 text-violet-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        <span className="text-[11px] font-semibold text-violet-400">Graph formula active</span>
+                        <code className="text-[10px] font-mono text-violet-500 bg-violet-900/30 px-1 rounded">{activeGraphFormula}</code>
+                      </div>
+                      {previewPath && hasSource && <div className="pl-5 text-[11px] text-violet-400 font-mono break-all">→ {previewPath}</div>}
+                      {!hasSource && <div className="pl-5 text-[11px] text-violet-500 italic">{newRunMode === 'folder' ? 'Choose a folder to preview' : 'Select WAVs to preview'}</div>}
+                    </div>
+                  )
+                })()}
+
+                <div className={`grid grid-cols-[200px_1fr] gap-3 items-end ${activeFormula && !formulaOverrideActive ? 'opacity-40 pointer-events-none select-none' : ''}`}>
+                  <Field label="Routing Mode">
+                    <select
+                      value={manualRoutingMode}
+                      onChange={e => setManualRoutingMode(e.target.value as typeof manualRoutingMode)}
+                      disabled={!!(activeFormula && !formulaOverrideActive)}
+                      className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none"
                     >
-                      Save as Preset
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-
-            {/* ── Output Routing ── */}
-            <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-4 space-y-3">
-              <div className="flex items-center gap-1.5">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Output Routing</span>
-                <HelpPopover title="Output Routing" side="right">
-                  Controls where finished <code>.nam</code> files land after training. When a <strong>NAM output formula</strong> is active (configured in Settings → Training), the path is built automatically from tokens like <code>{'{folder}'}</code>, <code>{'{architecture}'}</code>, and <code>{'{filename}'}</code>.
-                  <br /><br />
-                  If no formula is set, choose a root folder directly or type a specific path. The folder tree on the left will pick up new <code>.nam</code> files automatically once they appear.
-                </HelpPopover>
-              </div>
-
-              {/* NAM formula banner */}
-              {activeFormula && manualRoutingMode === 'root' ? (() => {
-                const previewPath = runMode === 'folder' ? folderFormulaPreviewPath : formulaPreviewPath
-                const hasSource = runMode === 'folder' ? !!folderRunPath.trim() : !!filesStagingDir
-                const archCount = activePreset?.architectures.length ?? architectures.length
-                return (
-                  <div className="rounded-lg border border-emerald-300 dark:border-emerald-700/60 bg-emerald-50/60 dark:bg-emerald-900/10 px-3 py-2.5 space-y-1.5">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <svg className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">NAM output formula active</span>
-                      <code className="text-[10px] font-mono text-emerald-600 dark:text-emerald-500 bg-emerald-100/60 dark:bg-emerald-900/30 px-1 rounded">{activeFormula}</code>
-                    </div>
-                    {previewPath && hasSource ? (
-                      <div className="pl-5 text-[11px] text-emerald-700 dark:text-emerald-400 font-mono break-all">
-                        → {previewPath}
-                        {archCount > 1 && (
-                          <span className="ml-2 text-[10px] text-emerald-500 dark:text-emerald-600 not-italic font-sans">
-                            (each architecture resolves separately)
-                          </span>
-                        )}
-                      </div>
-                    ) : !hasSource ? (
-                      <div className="pl-5 text-[11px] text-emerald-600 dark:text-emerald-500 italic">
-                        {runMode === 'folder' ? 'Choose a folder to preview the resolved path' : 'Select output WAVs to preview resolved path'}
-                      </div>
-                    ) : null}
-                    {!formulaOverrideActive && (
-                      <div className="pl-5 flex items-center gap-2">
-                        <span className="text-[10px] text-gray-500 dark:text-gray-500">Override for this run:</span>
-                        <button
-                          onClick={() => setFormulaOverrideActive(true)}
-                          className="text-[10px] text-gray-400 dark:text-gray-500 hover:text-amber-600 dark:hover:text-amber-400 transition-colors border border-gray-300 dark:border-gray-700 hover:border-amber-400 dark:hover:border-amber-600 rounded px-1.5 py-0.5"
-                        >
-                          Use fixed path…
-                        </button>
-                      </div>
-                    )}
-                    {formulaOverrideActive && (
-                      <div className="pl-5 flex items-center gap-2">
-                        <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">Override active — using fixed path</span>
-                        <button
-                          onClick={() => { setFormulaOverrideActive(false); setTrainPath('') }}
-                          className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors underline underline-offset-2"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )
-              })() : null}
-
-              {/* Graph formula banner */}
-              {activeGraphFormula && manualRoutingMode === 'root' ? (() => {
-                const previewPath = runMode === 'folder' ? folderGraphFormulaPreviewPath : graphFormulaPreviewPath
-                const hasSource = runMode === 'folder' ? !!folderRunPath.trim() : !!filesStagingDir
-                const archCount = activePreset?.architectures.length ?? architectures.length
-                return (
-                  <div className="rounded-lg border border-violet-300 dark:border-violet-700/60 bg-violet-50/60 dark:bg-violet-900/10 px-3 py-2.5 space-y-1.5">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <svg className="w-3.5 h-3.5 text-violet-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      <span className="text-[11px] font-semibold text-violet-700 dark:text-violet-400">Graph output formula active</span>
-                      <code className="text-[10px] font-mono text-violet-600 dark:text-violet-500 bg-violet-100/60 dark:bg-violet-900/30 px-1 rounded">{activeGraphFormula}</code>
-                    </div>
-                    {previewPath && hasSource ? (
-                      <div className="pl-5 text-[11px] text-violet-700 dark:text-violet-400 font-mono break-all">
-                        → {previewPath}
-                        {archCount > 1 && (
-                          <span className="ml-2 text-[10px] text-violet-500 dark:text-violet-600 not-italic font-sans">
-                            (each architecture resolves separately)
-                          </span>
-                        )}
-                      </div>
-                    ) : !hasSource ? (
-                      <div className="pl-5 text-[11px] text-violet-600 dark:text-violet-500 italic">
-                        {runMode === 'folder' ? 'Choose a folder to preview the resolved path' : 'Select output WAVs to preview resolved path'}
-                      </div>
-                    ) : null}
-                    {!graphFormulaOverrideActive && (
-                      <div className="pl-5 flex items-center gap-2">
-                        <span className="text-[10px] text-gray-500 dark:text-gray-500">Override for this run:</span>
-                        <button
-                          onClick={() => setGraphFormulaOverrideActive(true)}
-                          className="text-[10px] text-gray-400 dark:text-gray-500 hover:text-amber-600 dark:hover:text-amber-400 transition-colors border border-gray-300 dark:border-gray-700 hover:border-amber-400 dark:hover:border-amber-600 rounded px-1.5 py-0.5"
-                        >
-                          Use fixed path…
-                        </button>
-                      </div>
-                    )}
-                    {graphFormulaOverrideActive && (
-                      <div className="pl-5 flex items-center gap-2">
-                        <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">Override active — using fixed path</span>
-                        <button
-                          onClick={() => setGraphFormulaOverrideActive(false)}
-                          className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors underline underline-offset-2"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )
-              })() : null}
-
-              <div className={`grid grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)] gap-4 items-end transition-opacity ${activeFormula && !formulaOverrideActive ? 'opacity-40 pointer-events-none select-none' : ''}`}>
-                <Field label="Routing Mode">
-                  <select
-                    value={manualRoutingMode}
-                    onChange={(e) => setManualRoutingMode(e.target.value as 'root' | 'sibling_processed')}
-                    disabled={!!(activeFormula && !formulaOverrideActive)}
-                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 disabled:cursor-not-allowed"
-                  >
-                    <option value="root">Choose output root</option>
-                    <option value="sibling_processed">Use sibling _Processed</option>
-                  </select>
-                </Field>
-                {manualRoutingMode === 'root' ? (
-                  <Field label="NAM Output Root">
-                    <PathPicker
-                      value={trainPath}
-                      placeholder="Select a destination folder"
-                      onChange={setTrainPath}
-                      onBrowse={async () => {
-                        const path = await window.api.openFolder(trainPath || undefined)
-                        if (path) setTrainPath(path)
-                      }}
-                      browseLabel="Folder..."
-                    />
+                      <option value="root">Choose output root</option>
+                      <option value="sibling_processed">Use sibling _Processed</option>
+                    </select>
                   </Field>
-                ) : (
-                  <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-950/20 px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
-                    Outputs will be promoted relative to the source location using <code>_Processed/Models</code> and <code>_Processed/Graphs</code>.
-                  </div>
-                )}
-              </div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">
-                Example model: <code>{exampleFinalModelPath}</code>
-                <span className="mx-2">·</span>
-                Example graph: <code>{exampleGraphPath}</code>
-              </div>
-            </div>
-
-            <button
-              onClick={runMode === 'files' ? handleQueue : () => { void handleRunFolderOnce() }}
-              disabled={runMode === 'files' ? !canQueue : false}
-              className={`w-full py-3 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-white ${
-                runMode === 'files'
-                  ? 'bg-indigo-600 hover:bg-indigo-500'
-                  : 'bg-emerald-600 hover:bg-emerald-500'
-              }`}
-            >
-              {runMode === 'files'
-                ? (() => {
-                    const totalJobs = outputPaths.length * (activePreset ? activePreset.architectures.length : architectures.length)
-                    return totalJobs === 1 ? 'Queue capture' : `Queue ${totalJobs} captures`
-                  })()
-                : 'Queue folder'}
-            </button>
-            </>
-            )}
-
-          {runMode === 'history' ? (
-            <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-              <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-800 space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-xs font-medium text-gray-700 dark:text-gray-300">
-                    Training History{filteredHistory.length > 0 ? ` (${filteredHistory.length})` : ''}
-                  </div>
-                  <button
-                    onClick={handleExportHistory}
-                    disabled={filteredHistory.length === 0}
-                    title="Export filtered history to Excel"
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors border bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600"
-                  >
-                    <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                    </svg>
-                    Export filtered
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
-                  <select
-                    value={historyProfileFilter}
-                    onChange={(e) => setHistoryProfileFilter(e.target.value)}
-                    className="px-2.5 py-1.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                  >
-                    <option value="all">All profiles</option>
-                    {Array.from(new Map(trainerState.history.filter((entry) => entry.profileId || entry.profileName).map((entry) => [entry.profileId ?? entry.profileName ?? 'manual', entry.profileName ?? 'Manual'])).entries()).map(([value, label]) => (
-                      <option key={value} value={value}>{label}</option>
-                    ))}
-                  </select>
-                  <select
-                    value={historyStatusFilter}
-                    onChange={(e) => setHistoryStatusFilter(e.target.value)}
-                    className="px-2.5 py-1.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                  >
-                    <option value="all">All statuses</option>
-                    <option value="success">Success</option>
-                    <option value="error">Failed</option>
-                    <option value="skipped">Skipped</option>
-                    <option value="canceled">Canceled</option>
-                  </select>
-                  <select
-                    value={historyArchitectureFilter}
-                    onChange={(e) => setHistoryArchitectureFilter(e.target.value)}
-                    className="px-2.5 py-1.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                  >
-                    <option value="all">All architectures</option>
-                    {TRAINER_ARCHITECTURES.map((architecture) => (
-                      <option key={architecture} value={architecture}>{ARCHITECTURE_LABELS[architecture]}</option>
-                    ))}
-                  </select>
-                  <select
-                    value={historyEsrFilter}
-                    onChange={(e) => setHistoryEsrFilter(e.target.value as 'all' | 'green' | 'amber' | 'red' | 'none')}
-                    className={`px-2.5 py-1.5 rounded text-xs focus:outline-none bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 border-2 ${
-                      historyEsrFilter === 'green' ? 'border-emerald-500'
-                      : historyEsrFilter === 'amber' ? 'border-amber-500'
-                      : historyEsrFilter === 'red' ? 'border-red-500'
-                      : historyEsrFilter === 'none' ? 'border-gray-400 dark:border-gray-500'
-                      : 'border-gray-300 dark:border-gray-700'
-                    }`}
-                  >
-                    <option value="all">All ESR</option>
-                    <option value="green">Good — &lt; 0.01</option>
-                    <option value="amber">Fair — 0.01–0.05</option>
-                    <option value="red">Poor — ≥ 0.05</option>
-                    <option value="none">No ESR result</option>
-                  </select>
-                  <select
-                    value={historyTimeFilter}
-                    onChange={(e) => setHistoryTimeFilter(e.target.value as 'all' | 'day' | 'week' | 'month' | 'quarter')}
-                    className="px-2.5 py-1.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                  >
-                    <option value="all">All time</option>
-                    <option value="day">Last day</option>
-                    <option value="week">Last week</option>
-                    <option value="month">Last month</option>
-                    <option value="quarter">Last 3 months</option>
-                  </select>
-                  <input
-                    value={historySearch}
-                    onChange={(e) => setHistorySearch(e.target.value)}
-                    placeholder="Search name or path"
-                    className="px-2.5 py-1.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-              </div>
-              <div className="p-2 space-y-2">
-                {filteredHistory.length === 0 ? (
-                  <div className="px-3 py-3 text-xs text-gray-500 dark:text-gray-500">Completed, failed, and canceled runs will persist here.</div>
-                ) : (
-                  groupedHistory.map((group) => (
-                    <div key={group.key} className="space-y-1.5">
-                      <div className="px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 text-[11px] text-gray-600 dark:text-gray-300 flex items-center justify-between gap-3">
-                        <span className="font-medium">{group.label}</span>
-                        <span className="text-gray-500 dark:text-gray-400">
-                          {group.entries.length} item{group.entries.length === 1 ? '' : 's'}
-                          {group.createdAt ? ` · ${new Date(group.createdAt).toLocaleString()}` : ''}
-                        </span>
-                      </div>
-                      {group.entries.map((entry) => (
-                        <div key={entry.historyId} className="ml-3">
-                          <HistoryRow
-                            entry={entry}
-                            onContextMenu={(context) => setHistoryContextMenu(context)}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          ) : (
-          <div className="space-y-4">
-          {runMode !== 'queue' && (
-          <details className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30">
-            <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-gray-700 dark:text-gray-300">
-              Training details
-            </summary>
-            <div className="border-t border-gray-200 dark:border-gray-800 px-3 py-3 text-xs text-gray-600 dark:text-gray-400 space-y-1 select-text">
-              <div><span className="font-medium text-gray-700 dark:text-gray-300">Selected WAVs:</span> <code>{runMode === 'files' ? outputPaths.length : 'Folder run'}</code></div>
-              <div><span className="font-medium text-gray-700 dark:text-gray-300">Selected architectures:</span> <code>{currentRunPreset ? currentRunPreset.architectures.length : architectures.length}</code></div>
-              <div><span className="font-medium text-gray-700 dark:text-gray-300">Target ESR:</span> <code>{currentRunPreset ? (formatThresholdEsr(currentRunPreset.thresholdEsr) || 'Off') : (thresholdEsr.trim() || 'Off')}</code></div>
-              <div><span className="font-medium text-gray-700 dark:text-gray-300">Example output model name:</span> <code>{resolvedModelName}</code></div>
-              <div><span className="font-medium text-gray-700 dark:text-gray-300">Example final file:</span> <code>{exampleFinalModelPath}</code></div>
-              <div className="text-[11px] text-gray-500 dark:text-gray-500">
-                The official trainer still creates Lightning logs and checkpoint artifacts underneath this folder. NAM Lab promotes the final
-                .nam and graph into the routing destination shown above.
-              </div>
-            </div>
-          </details>
-          )}
-
-          {launchError && (
-            <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
-              {launchError}
-            </div>
-          )}
-
-          <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 px-3 py-2.5 flex flex-wrap items-center gap-2">
-            <button
-              onClick={async () => {
-                const result = await window.api.cancelTrainerRun()
-                if (!result.success) setLaunchError(result.error ?? 'Could not cancel the active training run.')
-              }}
-              disabled={!isRunning}
-              title="Hard-stop the current training run. NAM Lab will avoid promoting the final .nam when this is used."
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border bg-red-500/10 hover:bg-red-500/20 disabled:opacity-40 disabled:cursor-not-allowed text-red-700 dark:text-red-300 border-red-300/50 dark:border-red-800/60"
-            >
-              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                <rect x="4" y="4" width="12" height="12" rx="2" />
-              </svg>
-              Emergency stop
-            </button>
-            <button
-              onClick={async () => { await window.api.setTrainerPauseAfterCurrent(!trainerState.pauseAfterCurrent) }}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
-                trainerState.pauseAfterCurrent
-                  ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300 border-amber-400/50 dark:border-amber-700/60'
-                  : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-300 dark:hover:bg-gray-600'
-              }`}
-            >
-              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                <rect x="5" y="4" width="3.5" height="12" rx="1" />
-                <rect x="11.5" y="4" width="3.5" height="12" rx="1" />
-              </svg>
-              {trainerState.pauseAfterCurrent ? 'Pause: On' : 'Pause after current'}
-            </button>
-            <button
-              onClick={async () => { await window.api.setTrainerPauseAfterCurrent(false) }}
-              disabled={!trainerState.pauseAfterCurrent || queuedCount === 0 || isRunning}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600"
-            >
-              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
-              </svg>
-              Resume
-            </button>
-
-            <div className="w-px h-5 bg-gray-300 dark:bg-gray-700 mx-0.5 self-center" />
-
-            <button
-              onClick={async () => { await window.api.retryFailedTrainerRuns() }}
-              disabled={!trainerState.queue.some((job) => job.status === 'error')}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600"
-            >
-              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
-              </svg>
-              Retry failed
-            </button>
-            <button
-              onClick={async () => { await window.api.removeQueuedTrainerRuns() }}
-              disabled={!trainerState.queue.some((job) => job.status === 'queued')}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600"
-            >
-              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-              Remove queued
-            </button>
-            <button
-              onClick={async () => { await window.api.clearFinishedTrainerRuns() }}
-              disabled={!trainerState.queue.some((job) => ['success', 'error', 'canceled'].includes(job.status))}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600"
-            >
-              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-              </svg>
-              Clear finished
-            </button>
-            {!!trainerState.outputModelPath && (trainerState.status === 'success' || trainerState.status === 'error' || trainerState.status === 'canceled') && (
-              <button
-                onClick={() => window.api.revealFile(trainerState.outputModelPath || trainPath)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600"
-              >
-                <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
-                </svg>
-                Reveal output
-              </button>
-            )}
-            <div className="flex-1" />
-            <button
-              onClick={async () => { await window.api.startQueuedTrainerRuns() }}
-              disabled={queuedCount === 0 || isRunning}
-              className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition-colors bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white"
-            >
-              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
-              </svg>
-              Start queue
-            </button>
-          </div>
-
-          <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">Run Status</div>
-                <StatusPill status={trainerState.status} />
-              </div>
-              <div className="grid grid-cols-4 gap-2">
-                <div className="flex items-center gap-3 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2.5">
-                  <svg className="w-7 h-7 flex-shrink-0 text-amber-500 dark:text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z" />
-                  </svg>
-                  <div>
-                    <div className="text-xl font-bold text-amber-600 dark:text-amber-400 tabular-nums leading-none">{queuedCount}</div>
-                    <div className="text-[10px] font-medium text-amber-700/80 dark:text-amber-400/70 mt-0.5">Queued</div>
-                  </div>
-                </div>
-                <div className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 ${isRunning ? 'border-indigo-400/40 bg-indigo-500/10' : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/50'}`}>
-                  <svg className={`w-7 h-7 flex-shrink-0 ${isRunning ? 'text-indigo-500 dark:text-indigo-400' : 'text-gray-300 dark:text-gray-600'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
-                  </svg>
-                  <div>
-                    <div className={`text-xl font-bold tabular-nums leading-none ${isRunning ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-300 dark:text-gray-600'}`}>{isRunning ? 1 : 0}</div>
-                    <div className={`text-[10px] font-medium mt-0.5 truncate ${isRunning && activeJob ? 'text-indigo-700/80 dark:text-indigo-400/70' : 'text-gray-400 dark:text-gray-600'}`}>
-                      {isRunning && activeJob ? ARCHITECTURE_LABELS[activeJob.architecture] : 'Active'}
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-2.5">
-                  <svg className="w-7 h-7 flex-shrink-0 text-emerald-500 dark:text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <div>
-                    <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400 tabular-nums leading-none">{successCount}</div>
-                    <div className="text-[10px] font-medium text-emerald-700/80 dark:text-emerald-400/70 mt-0.5">Done</div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 rounded-xl border border-red-400/30 bg-red-500/10 px-3 py-2.5">
-                  <svg className="w-7 h-7 flex-shrink-0 text-red-500 dark:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-                  </svg>
-                  <div>
-                    <div className="text-xl font-bold text-red-600 dark:text-red-400 tabular-nums leading-none">{failedCount}</div>
-                    <div className="text-[10px] font-medium text-red-700/80 dark:text-red-400/70 mt-0.5">Failed</div>
-                  </div>
-                </div>
-              </div>
-              {!!trainerState.startedAt && (
-                <div className="mt-2 text-[11px] text-gray-500 dark:text-gray-500 space-y-0.5">
-                  <div>Started: {new Date(trainerState.startedAt).toLocaleString()}</div>
-                  {trainerState.finishedAt && <div>Finished: {new Date(trainerState.finishedAt).toLocaleString()}</div>}
-                  {typeof trainerState.validationEsr === 'number' && (
-                    <div>
-                      Validation ESR:{' '}
-                      <span className={`font-semibold ${validationEsrTone.classes}`}>
-                        {validationEsrTone.text}
-                      </span>
-                    </div>
-                  )}
-                  {typeof trainerState.thresholdEsr === 'number' && (
-                    <div>Target ESR: {trainerState.thresholdEsr}</div>
-                  )}
-                </div>
-              )}
-            </div>
-            <div className="px-4 py-3 space-y-3">
-              <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-950/60 px-3 py-3 space-y-3">
-                <div>
-                  <div className="flex items-center justify-between gap-3 text-xs">
-                    <span className="font-medium text-gray-700 dark:text-gray-300">Phase</span>
-                    <span className="text-gray-600 dark:text-gray-400">{trainerState.progressPhase || (trainerState.status === 'idle' ? 'Waiting to start' : 'Starting')}</span>
-                  </div>
-                  <div className="mt-2 h-2 rounded-full bg-gray-300 dark:bg-gray-800 overflow-hidden">
-                    <div
-                      className="h-full bg-indigo-500 transition-all"
-                      style={{ width: `${Math.max(0, Math.min(100, trainerState.progressPercent ?? (trainerState.status === 'success' ? 100 : 0)))}%` }}
-                    />
-                  </div>
-                  <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-gray-500 dark:text-gray-500">
-                    <span>
-                      {trainerState.progressEpochCurrent && progressEpochTotal
-                        ? `Epoch ${trainerState.progressEpochCurrent} / ${progressEpochTotal}`
-                        : trainerState.progressEpochCurrent
-                          ? `Epoch ${trainerState.progressEpochCurrent}`
-                          : 'Epoch progress will appear once training starts'}
-                    </span>
-                    <span>
-                      {typeof trainerState.progressPercent === 'number'
-                        ? `${trainerState.progressPercent.toFixed(1)}%`
-                        : trainerState.status === 'success'
-                          ? '100%'
-                          : '-'}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-3 gap-3 text-[11px]">
-                  <div className="rounded-md border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-3 py-2">
-                    <div className="text-gray-500 dark:text-gray-500">Batches</div>
-                    <div className="mt-1 font-medium text-gray-800 dark:text-gray-200">
-                      {trainerState.progressBatchCurrent && trainerState.progressBatchTotal
-                        ? `${trainerState.progressBatchCurrent} / ${trainerState.progressBatchTotal}`
-                        : '-'}
-                    </div>
-                  </div>
-                  <div className="rounded-md border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-3 py-2">
-                    <div className="text-gray-500 dark:text-gray-500">Rate</div>
-                    <div className="mt-1 font-medium text-gray-800 dark:text-gray-200">
-                      {typeof trainerState.progressRate === 'number' ? `${trainerState.progressRate.toFixed(2)} it/s` : '-'}
-                    </div>
-                  </div>
-                  <div className="rounded-md border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-3 py-2">
-                    <div className="text-gray-500 dark:text-gray-500">Validation ESR</div>
-                    <div className={`mt-1 font-medium ${validationEsrTone.classes}`}>
-                      {validationEsrTone.text}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 text-[11px]">
-                  <div className="rounded-md border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-3 py-2">
-                    <div className="text-gray-500 dark:text-gray-500">Final output</div>
-                    <div className="mt-1 font-mono text-gray-800 dark:text-gray-200 break-all">
-                      {trainerState.outputModelPath || 'Will land in the train destination root'}
-                    </div>
-                  </div>
-                  <div className="rounded-md border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-3 py-2">
-                    <div className="text-gray-500 dark:text-gray-500">Checkpoint export</div>
-                    <div className="mt-1 font-mono text-gray-800 dark:text-gray-200 break-all">
-                      {trainerState.checkpointModelPath || 'Lightning checkpoint copy will appear here after training starts'}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="rounded-md border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-3 py-2">
-                  <div className="text-[11px] text-gray-500 dark:text-gray-500">Latest trainer line</div>
-                  <div className="mt-1 text-xs font-mono text-gray-800 dark:text-gray-200 break-words">
-                    {trainerState.progressLatestLine || 'No structured progress line yet.'}
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-                <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-800 space-y-3">
-                  <div className="text-xs font-medium text-gray-700 dark:text-gray-300">Queue ({trainerState.queue.length})</div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                    <select
-                      value={queueProfileFilter}
-                      onChange={(e) => setQueueProfileFilter(e.target.value)}
-                      className="px-2.5 py-1.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                    >
-                      <option value="all">All profiles</option>
-                      {queueProfileOptions.map(([value, label]) => (
-                        <option key={value} value={value}>{label}</option>
-                      ))}
-                    </select>
-                    <select
-                      value={queueStatusFilter}
-                      onChange={(e) => setQueueStatusFilter(e.target.value)}
-                      className="px-2.5 py-1.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                    >
-                      <option value="all">All statuses</option>
-                      <option value="queued">Queued</option>
-                      <option value="starting">Starting</option>
-                      <option value="running">Running</option>
-                      <option value="success">Success</option>
-                      <option value="error">Failed</option>
-                      <option value="canceled">Canceled</option>
-                    </select>
-                    <select
-                      value={queueArchitectureFilter}
-                      onChange={(e) => setQueueArchitectureFilter(e.target.value)}
-                      className="px-2.5 py-1.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                    >
-                      <option value="all">All architectures</option>
-                      {TRAINER_ARCHITECTURES.map((architecture) => (
-                        <option key={architecture} value={architecture}>{ARCHITECTURE_LABELS[architecture]}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                {!!queueActionError && (
-                  <div className="px-3 py-2 border-b border-red-500/20 bg-red-500/10 text-xs text-red-700 dark:text-red-300">
-                    {queueActionError}
-                  </div>
-                )}
-                <div>
-                  {filteredQueue.length === 0 ? (
-                    <div className="px-3 py-3 text-xs text-gray-500 dark:text-gray-500">Queued jobs will show up here.</div>
+                  {manualRoutingMode === 'root' ? (
+                    <Field label="NAM Output Root">
+                      <PathPicker value={trainPath} placeholder="Select a destination folder" onChange={setTrainPath} onBrowse={async () => { const p = await window.api.openFolder(trainPath || undefined); if (p) setTrainPath(p) }} browseLabel="Folder…" />
+                    </Field>
                   ) : (
-                    <div className="p-2 space-y-2">
-                      {groupedQueue.map((group) => (
-                        <div key={group.key} className="space-y-1.5">
-                          <div className="px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 text-[11px] text-gray-600 dark:text-gray-300 flex items-center justify-between gap-3">
-                            <span className="font-medium">{group.label}</span>
-                            <span className="text-gray-500 dark:text-gray-400">
-                              {group.jobs.length} item{group.jobs.length === 1 ? '' : 's'}
-                              {group.createdAt ? ` · ${new Date(group.createdAt).toLocaleString()}` : ''}
-                            </span>
-                          </div>
-                          {group.jobs.map((job, index) => (
-                            <div key={job.jobId} className="ml-3">
-                              <QueueRow
-                                batchIndex={index + 1}
-                                job={job}
-                                isActive={job.jobId === trainerState.activeJobId}
-                                onRemove={handleRemoveJob}
-                                onMove={handleMoveJob}
-                                onMakeNext={handleMakeNext}
-                                onContextMenu={(context) => setQueueContextMenu(context)}
-                              />
-                            </div>
-                          ))}
-                        </div>
-                      ))}
+                    <div className="rounded-lg border border-nm-border-s bg-field px-3 py-2 text-[12px] text-nm-text-3">
+                      Outputs promoted to <code>_Processed/Models</code> and <code>_Processed/Graphs</code> relative to the source.
                     </div>
                   )}
                 </div>
-              </div>
-
-              {queueContextMenu && (
-                <div
-                  className="fixed z-50 min-w-[220px] rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-xl overflow-hidden"
-                  style={{ left: queueContextMenu.x, top: queueContextMenu.y }}
-                  onMouseDown={(e) => e.stopPropagation()}
-                >
-                  {queueContextMenu.job.sourceMode === 'watcher' && queueContextMenu.job.status === 'queued' ? (
-                    <>
-                      <button
-                        onClick={() => { void handleWatcherQueueAction(queueContextMenu.job, 'remove') }}
-                        className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
-                      >
-                        Remove from queue
-                      </button>
-                      <button
-                        onClick={() => { void handleWatcherQueueAction(queueContextMenu.job, 'skip') }}
-                        className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
-                      >
-                        Skip until manually retried
-                      </button>
-                      <button
-                        onClick={() => { void handleWatcherQueueAction(queueContextMenu.job, 'move-canceled') }}
-                        className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
-                      >
-                        Move source to _Canceled and remove
-                      </button>
-                      <button
-                        onClick={() => { void handleWatcherQueueAction(queueContextMenu.job, 'retry-now') }}
-                        className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
-                      >
-                        Retry now
-                      </button>
-                    </>
-                  ) : null}
-                  <button
-                    onClick={() => handleShowQueueItemInFolder(queueContextMenu.job)}
-                    disabled={queueContextMenu.job.status !== 'success' || !queueContextMenu.job.outputModelPath}
-                    className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    Show in folder
-                  </button>
-                  <button
-                    onClick={() => { void handleRetryQueueItem(queueContextMenu.job) }}
-                    disabled={!['error', 'canceled'].includes(queueContextMenu.job.status)}
-                    className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    Retry
-                  </button>
-                </div>
-              )}
-
-              <details open className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-950 text-gray-100">
-                <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-gray-200">
-                  Raw trainer log
-                </summary>
-                <div ref={rawLogRef} className="border-t border-gray-800 p-3 h-[320px] overflow-y-auto whitespace-pre-wrap break-words text-[11px] font-mono">
-                  {trainerState.logs.length === 0 ? (
-                    <span className="text-gray-500">Training logs will appear here.</span>
-                  ) : (
-                    trainerState.logs.join('\n')
-                  )}
-                </div>
-              </details>
-
-              {!!trainerState.error && (
-                <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
-                  {trainerState.error}
-                </div>
-              )}
-            </div>
-          </div>
-          </div>
-          )}
-          {showSavePresetModal && (
-            <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 px-4">
-              <div className="w-full max-w-md rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 shadow-2xl">
-                <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
-                  <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">Save Preset</div>
-                  <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    Save the current training recipe so you can reuse it later for Run WAVs, Run Folder, or watch folders.
-                  </div>
-                </div>
-                <div className="px-5 py-4 space-y-4">
-                  <Field label="Preset Name">
-                    <input
-                      value={presetNameDraft}
-                      onChange={(e) => {
-                        setPresetNameDraft(e.target.value)
-                        if (presetSaveError) setPresetSaveError('')
-                      }}
-                      placeholder="e.g. REVxSTD 1000 epoch"
-                      autoFocus
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault()
-                          handleConfirmSavePreset()
-                        } else if (e.key === 'Escape') {
-                          setShowSavePresetModal(false)
-                          setPresetSaveError('')
-                        }
-                      }}
-                      className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                    />
-                  </Field>
-                  <div className="rounded-lg border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-xs text-sky-800 dark:text-sky-200">
-                    {architectures.map((item) => ARCHITECTURE_LABELS[item]).join(', ')} · {epochs} epochs · {thresholdEsr.trim() ? `Target ESR ${thresholdEsr.trim()}` : 'No ESR target'}
-                  </div>
-                  {presetSaveError && (
-                    <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
-                      {presetSaveError}
-                    </div>
-                  )}
-                </div>
-                <div className="px-5 py-4 border-t border-gray-200 dark:border-gray-800 flex items-center justify-end gap-3">
-                  <button
-                    onClick={() => {
-                      setShowSavePresetModal(false)
-                      setPresetSaveError('')
-                    }}
-                    className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleConfirmSavePreset}
-                    className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-indigo-600 hover:bg-indigo-500 text-white"
-                  >
-                    Save Preset
-                  </button>
+                <div className="text-[11px] text-nm-text-3">
+                  Example model: <code className="font-mono">{exampleFinalModelPath}</code>
+                  <span className="mx-2">·</span>
+                  Example graph: <code className="font-mono">{exampleGraphPath}</code>
                 </div>
               </div>
-            </div>
-          )}
-          {historyContextMenu && (
-            <div
-              className="fixed z-50 min-w-[200px] rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-xl overflow-hidden"
-              style={{ left: historyContextMenu.x, top: historyContextMenu.y }}
-              onMouseDown={(e) => e.stopPropagation()}
-            >
+
+              {launchError && (
+                <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-400">{launchError}</div>
+              )}
+
+              {/* CTA */}
               <button
-                onClick={() => handleShowHistoryPath(historyContextMenu.entry.finalModelPath)}
-                disabled={!historyContextMenu.entry.finalModelPath}
-                className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                onClick={newRunMode === 'files' ? () => { void handleQueue() } : () => { void handleRunFolderOnce() }}
+                disabled={newRunMode === 'files' ? !canQueue : false}
+                className="w-full py-3 rounded-xl text-[14px] font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-white bg-nm-accent hover:opacity-90"
               >
-                Show .nam
-              </button>
-              <button
-                onClick={() => { void handleShowGraphModal(historyContextMenu.entry.graphPath) }}
-                disabled={!historyContextMenu.entry.graphPath}
-                className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                View graph
-              </button>
-              <button
-                onClick={() => handleShowHistoryPath(historyContextMenu.entry.processedWavPath || historyContextMenu.entry.sourcePath)}
-                disabled={!(historyContextMenu.entry.processedWavPath || historyContextMenu.entry.sourcePath)}
-                className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                Show WAV
-              </button>
-              <button
-                onClick={() => { void handleRetryHistoryEntry(historyContextMenu.entry) }}
-                disabled={!(historyContextMenu.entry.profileId && ['error', 'canceled', 'skipped'].includes(historyContextMenu.entry.status))}
-                className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                Retry run
+                {newRunMode === 'files' ? (() => {
+                  const total = outputPaths.length * (activePreset ? activePreset.architectures.length : architectures.length)
+                  return total === 1 ? 'Queue capture' : `Queue ${total} captures`
+                })() : 'Queue folder'}
               </button>
             </div>
           )}
+
         </div>
       </div>
     </div>
-    </div>
-    {watcherFilesModal && createPortal(
+
+    {/* ── Context menus ─────────────────────────────────────────────────────── */}
+    {queueContextMenu && (
+      <div
+        className="fixed z-50 min-w-[220px] rounded-xl border border-nm-border bg-panel shadow-xl overflow-hidden"
+        style={{ left: queueContextMenu.x, top: queueContextMenu.y }}
+        onMouseDown={e => e.stopPropagation()}
+      >
+        {queueContextMenu.job.sourceMode === 'watcher' && queueContextMenu.job.status === 'queued' && (
+          <>
+            <button onClick={() => { void handleWatcherQueueAction(queueContextMenu.job, 'remove') }} className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov">Remove from queue</button>
+            <button onClick={() => { void handleWatcherQueueAction(queueContextMenu.job, 'skip') }} className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov">Skip until manually retried</button>
+            <button onClick={() => { void handleWatcherQueueAction(queueContextMenu.job, 'move-canceled') }} className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov">Move to _Canceled and remove</button>
+            <button onClick={() => { void handleWatcherQueueAction(queueContextMenu.job, 'retry-now') }} className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov">Retry now</button>
+          </>
+        )}
+        <button
+          onClick={() => handleShowQueueItemInFolder(queueContextMenu.job)}
+          disabled={queueContextMenu.job.status !== 'success' || !queueContextMenu.job.outputModelPath}
+          className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Show in folder
+        </button>
+        <button
+          onClick={() => { void handleRetryQueueItem(queueContextMenu.job) }}
+          disabled={!['error', 'canceled'].includes(queueContextMenu.job.status)}
+          className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Retry
+        </button>
+      </div>
+    )}
+
+    {historyContextMenu && (
+      <div
+        className="fixed z-50 min-w-[200px] rounded-xl border border-nm-border bg-panel shadow-xl overflow-hidden"
+        style={{ left: historyContextMenu.x, top: historyContextMenu.y }}
+        onMouseDown={e => e.stopPropagation()}
+      >
+        {historyContextMenu.entry.graphPath && (
+          <button onClick={() => { void handleShowGraphModal(historyContextMenu.entry.graphPath) }} className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov">View ESR plot</button>
+        )}
+        <button onClick={() => { void handleRetryHistoryEntry(historyContextMenu.entry) }} className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov">Retry</button>
+        {historyContextMenu.entry.finalModelPath && (
+          <button onClick={() => handleShowHistoryPath(historyContextMenu.entry.finalModelPath)} className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov">Reveal in folder</button>
+        )}
+      </div>
+    )}
+
+    {/* Graph modal */}
+    {graphModalSrc && createPortal(
+      <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70" onClick={() => setGraphModalSrc(null)}>
+        <div className="relative" onClick={e => e.stopPropagation()}>
+          <img src={graphModalSrc} alt="Training graph" className="block max-w-[90vw] max-h-[88vh] object-contain rounded-xl" />
+          <button onClick={() => setGraphModalSrc(null)} className="absolute top-2 right-2 p-1.5 rounded-full bg-black/50 hover:bg-black/70 text-white transition-colors" title="Close">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+      </div>,
+      document.body
+    )}
+
+    {/* Save preset modal */}
+    {showSavePresetModal && (
+      <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 px-4">
+        <div className="w-full max-w-md rounded-2xl border border-nm-border bg-panel shadow-2xl">
+          <div className="px-5 py-4 border-b border-nm-border">
+            <div className="text-[14px] font-semibold text-nm-text">Save Preset</div>
+            <div className="mt-1 text-[12px] text-nm-text-3">Save the current training recipe so you can reuse it later.</div>
+          </div>
+          <div className="px-5 py-4 space-y-4">
+            <Field label="Preset Name">
+              <input
+                value={presetNameDraft}
+                onChange={e => { setPresetNameDraft(e.target.value); if (presetSaveError) setPresetSaveError('') }}
+                onKeyDown={e => { if (e.key === 'Enter') handleConfirmSavePreset() }}
+                autoFocus
+                className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none"
+              />
+            </Field>
+            {presetSaveError && <div className="text-[12px] text-red-400">{presetSaveError}</div>}
+          </div>
+          <div className="px-5 py-4 border-t border-nm-border flex justify-end gap-2">
+            <button onClick={() => { setShowSavePresetModal(false); setPresetSaveError('') }} className="px-4 py-2 rounded-lg text-[13px] font-medium bg-field border border-field-bd hover:bg-hov text-nm-text transition-colors">Cancel</button>
+            <button onClick={handleConfirmSavePreset} className="px-4 py-2 rounded-lg text-[13px] font-semibold bg-nm-accent hover:opacity-90 text-accent-text transition-colors">Save preset</button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Watcher files modal */}
+    {watcherFilesModal && (
       <WatcherFilesModal
         profileId={watcherFilesModal.profileId}
         profileName={watcherFilesModal.profileName}
         watchFolder={watcherFilesModal.watchFolder}
         architectures={watcherFilesModal.architectures}
         onClose={() => setWatcherFilesModal(null)}
-      />,
-      document.body
+      />
     )}
-    {graphModalSrc && createPortal(
-      <div
-        className="fixed inset-0 z-[200] flex items-center justify-center bg-black/75"
-        onClick={() => setGraphModalSrc(null)}
-      >
-        <div
-          className="relative max-w-[90vw] max-h-[90vh] rounded-lg overflow-hidden shadow-2xl bg-gray-950"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <img
-            src={graphModalSrc}
-            alt="Training graph"
-            className="block max-w-[90vw] max-h-[88vh] object-contain"
-          />
-          <button
-            onClick={() => setGraphModalSrc(null)}
-            className="absolute top-2 right-2 p-1.5 rounded-full bg-black/50 hover:bg-black/70 text-white transition-colors"
-            title="Close"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-      </div>,
-      document.body
-    )}
+
     {captureProfileEditorOpen && (
       <CaptureProfileEditor
         profile={captureProfileEditorTarget}
-        onSave={(saved) => {
+        onSave={saved => {
           const existing = settings.userCaptureProfiles ?? []
-          const updated = existing.some((p) => p.id === saved.id)
-            ? existing.map((p) => p.id === saved.id ? saved : p)
+          const updated = existing.some(p => p.id === saved.id)
+            ? existing.map(p => p.id === saved.id ? saved : p)
             : [...existing, saved]
           onSaveSettings({ ...settings, userCaptureProfiles: updated })
           setCaptureProfileEditorOpen(false)
