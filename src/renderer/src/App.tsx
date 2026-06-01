@@ -3977,6 +3977,7 @@ INSTRUCTIONS:
         showSettings={showSettings}
         onToggleSettings={() => {
           setShowSettings((s) => !s)
+          setShowDashboard(false)
           setBatchFolder(null)
           setShowToneStore(false)
           setShowTrainingWorkspace(false)
@@ -4509,75 +4510,70 @@ INSTRUCTIONS:
             settings.enableExperimentalTraining ? (
               <div className="h-full flex flex-col">
                 <div className="flex border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
-                  {(['metadata', 'training'] as const).map((tab) => (
-                    <button
-                      key={tab}
-                      onClick={() => setSelectedFilePanelTab(tab)}
-                      className={`px-4 py-2 text-xs font-medium transition-colors border-b-2 -mb-px ${
-                        selectedFilePanelTab === tab
-                          ? 'border-teal-500 text-teal-600 dark:text-teal-400'
-                          : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-                      }`}
-                    >
-                      {tab === 'metadata' ? 'Metadata' : 'Training'}
-                    </button>
-                  ))}
+                  <button
+                    onClick={() => setSelectedFilePanelTab('metadata')}
+                    className={`px-4 py-2 text-xs font-medium transition-colors border-b-2 -mb-px ${
+                      selectedFilePanelTab === 'metadata'
+                        ? 'border-teal-500 text-teal-600 dark:text-teal-400'
+                        : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                    }`}
+                  >
+                    Metadata
+                  </button>
+                  <button
+                    onClick={() => handleOpenExperimentalTraining('files')}
+                    className="px-4 py-2 text-xs font-medium transition-colors border-b-2 -mb-px border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                  >
+                    Training ↗
+                  </button>
                 </div>
                 <div className="flex-1 overflow-hidden">
-                  {selectedFilePanelTab === 'training' ? (
-                    <TrainingPanel
-                      settings={settings}
-                      onSaveSettings={handleSaveSettings}
-                      onOpenSetupGuide={() => setShowTrainingSetupGuide(true)}
-                    />
-                  ) : (
-                    <MetadataEditor
-                      key={selectedFiles[0].filePath}
-                      file={selectedFiles[0]}
-                      coverImagePath={metadataCoverPath}
-                      onChange={(m) => handleMetadataChange(selectedFiles[0].filePath, m)}
-                      onSave={() => handleSave(selectedFiles[0].filePath)}
-                      onSaveAndAdvance={() => handleSaveAndAdvance(selectedFiles[0].filePath)}
-                      onRevert={() => {
-                        const f = selectedFiles[0]
-                        setFiles((prev) => prev.map((x) =>
-                          x.filePath === f.filePath
-                            ? { ...x, metadata: { ...x.originalMetadata }, isDirty: false, autoFilledFields: [] }
-                            : x
-                        ))
-                      }}
-                      onRevealInFinder={() => window.api.revealFile(selectedFiles[0].filePath)}
-                      renameTemplate={settings.renameTemplate}
-                      onRenameFile={handleRenameFile}
-                      gearMakeSuggestions={gearMakeSuggestions}
-                      gearModelSuggestions={gearModelSuggestions}
-                      showNamLabFields={settings.showNamLabFields}
-                      hasActiveDefaults={
-                        settings.enableAmpInfo ||
-                        settings.enableCaptureDefaults ||
-                        settings.populateNameFromFilename ||
-                        settings.autoDetectToneType ||
-                        !!settings.ampSuffix
-                      }
-                      onReapplyDefaults={() => {
-                        const f = selectedFiles[0]
-                        const baseName = f.fileName.replace(/\.nam$/i, '')
-                        const currentMeta = f.metadata
-                        const newMeta = applyDefaults(currentMeta, baseName, settings)
-                        const newAutoFilled = (Object.keys(newMeta) as (keyof NamFile['metadata'])[]).filter(
-                          (k) => newMeta[k] != null && (currentMeta[k] == null || currentMeta[k] === '') && !f.autoFilledFields.includes(k)
-                        )
-                        const allAutoFilled = [...f.autoFilledFields, ...newAutoFilled]
-                        const wasChanged = JSON.stringify(newMeta) !== JSON.stringify(f.originalMetadata)
-                        setFiles((prev) => prev.map((x) =>
-                          x.filePath === f.filePath
-                            ? { ...x, metadata: newMeta, isDirty: wasChanged, autoFilledFields: allAutoFilled }
-                            : x
-                        ))
-                      }}
-                      onClearSuggestions={() => handleClearSuggestionsForFile(selectedFiles[0].filePath)}
-                    />
-                  )}
+                  <MetadataEditor
+                    key={selectedFiles[0].filePath}
+                    file={selectedFiles[0]}
+                    coverImagePath={metadataCoverPath}
+                    onChange={(m) => handleMetadataChange(selectedFiles[0].filePath, m)}
+                    onSave={() => handleSave(selectedFiles[0].filePath)}
+                    onSaveAndAdvance={() => handleSaveAndAdvance(selectedFiles[0].filePath)}
+                    onRevert={() => {
+                      const f = selectedFiles[0]
+                      setFiles((prev) => prev.map((x) =>
+                        x.filePath === f.filePath
+                          ? { ...x, metadata: { ...x.originalMetadata }, isDirty: false, autoFilledFields: [] }
+                          : x
+                      ))
+                    }}
+                    onRevealInFinder={() => window.api.revealFile(selectedFiles[0].filePath)}
+                    renameTemplate={settings.renameTemplate}
+                    onRenameFile={handleRenameFile}
+                    gearMakeSuggestions={gearMakeSuggestions}
+                    gearModelSuggestions={gearModelSuggestions}
+                    showNamLabFields={settings.showNamLabFields}
+                    hasActiveDefaults={
+                      settings.enableAmpInfo ||
+                      settings.enableCaptureDefaults ||
+                      settings.populateNameFromFilename ||
+                      settings.autoDetectToneType ||
+                      !!settings.ampSuffix
+                    }
+                    onReapplyDefaults={() => {
+                      const f = selectedFiles[0]
+                      const baseName = f.fileName.replace(/\.nam$/i, '')
+                      const currentMeta = f.metadata
+                      const newMeta = applyDefaults(currentMeta, baseName, settings)
+                      const newAutoFilled = (Object.keys(newMeta) as (keyof NamFile['metadata'])[]).filter(
+                        (k) => newMeta[k] != null && (currentMeta[k] == null || currentMeta[k] === '') && !f.autoFilledFields.includes(k)
+                      )
+                      const allAutoFilled = [...f.autoFilledFields, ...newAutoFilled]
+                      const wasChanged = JSON.stringify(newMeta) !== JSON.stringify(f.originalMetadata)
+                      setFiles((prev) => prev.map((x) =>
+                        x.filePath === f.filePath
+                          ? { ...x, metadata: newMeta, isDirty: wasChanged, autoFilledFields: allAutoFilled }
+                          : x
+                      ))
+                    }}
+                    onClearSuggestions={() => handleClearSuggestionsForFile(selectedFiles[0].filePath)}
+                  />
                 </div>
               </div>
             ) : (
