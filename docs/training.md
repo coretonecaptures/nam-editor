@@ -23,9 +23,28 @@ Open **Settings → Training**.
 
 - **NAM Python Executable** — paste the full path to your NAM environment's Python
 - **Default Input WAV** — optional default DI reference. Individual runs can override this.
-- **Enable experimental training** — must be on for the Training tab to appear
+- **Enable experimental training** — must be on for the Training workspace to appear
 
 Use the **Test Python** button to verify the path loads NAM correctly before trying a real run.
+
+---
+
+## Training Workspace Layout
+
+The training workspace uses a **Mission Control** layout with a left-rail navigator and a main content area.
+
+**Left-rail sections:**
+
+| Section | What it shows |
+| --- | --- |
+| Live Run | The currently running job, live output log, and progress |
+| Queue | All pending jobs — add, remove, reorder |
+| History | Every completed job with ESR and status |
+| New Run | Configure and start a new training job |
+
+Below the main sections, a collapsible **Watch Folders** item shows your active watcher profiles with start/stop controls. Watch profiles themselves are configured in **Settings → Training**.
+
+A **This Session** stats panel in the left rail tracks completed runs, average ESR, throughput, and failures for the current app session.
 
 ---
 
@@ -51,7 +70,7 @@ Presets store a named training recipe you can reuse across manual runs and watch
 
 ## Running Training Manually
 
-The **Training** tab lets you queue individual WAV files for training.
+Go to the **New Run** section to configure and queue individual WAV files.
 
 ### Single run
 
@@ -66,7 +85,7 @@ You can queue multiple WAVs before starting. Each WAV × architecture combinatio
 
 Example: one WAV queued against `standard` and `revxstd` = two jobs.
 
-**Queue controls:**
+Navigate to the **Queue** section to see pending jobs. Controls:
 - **Pause after current** — lets the active job finish, then holds
 - **Cancel current** — stops the running job immediately
 - **Retry failed** — requeues failed jobs
@@ -76,7 +95,7 @@ Jobs run serially one at a time.
 
 ### Inline settings override
 
-If you are not using a preset, you can configure:
+If you are not using a preset, you can configure directly in New Run:
 - architecture(s)
 - epochs
 - latency
@@ -123,7 +142,7 @@ Click **Auto-fill \_Processed folders** to set all three output paths to subfold
 
 ### Starting and stopping
 
-Each profile has an **Enabled** toggle and an **Auto-run** toggle. The watcher must also be started from the Training tab.
+Each profile has an **Enabled** toggle and an **Auto-run** toggle. Active profiles appear in the **Watch Folders** section of the training workspace left rail, where you can start and stop them without going back to Settings.
 
 Use **Sync Now** (in the Folder Dashboard or Settings) to force a rescan of the watch folder without waiting for the next file event.
 
@@ -175,7 +194,7 @@ NAM Lab uses **Capture Profiles** to define training architectures. All 8 built-
 - Clone any built-in as a starting point
 - Import a `layers_configs` JSON block from a NAM-BOT preset export
 - Custom profiles also run via dynamic registration — no `core.py` modifications needed
-- Custom profiles are stored in app settings and available in both the Training panel and watcher presets
+- Custom profiles are stored in app settings and available in both the training workspace and watcher presets
 
 Each profile stores its own training parameters (LR, LR decay, epochs, batch size, NY, fit MRSTFT) so the trainer respects profile-specific values rather than hardcoded defaults.
 
@@ -205,7 +224,7 @@ In the training history, runs that stopped early because the target was met are 
 
 ## Training History
 
-Every completed job is recorded in the training history.
+Every completed job is recorded in the **History** section.
 
 Each history row shows:
 - model name and source WAV
@@ -226,9 +245,9 @@ History can be exported to Excel or CSV from the history toolbar.
 
 ---
 
-## WAV Check Tab
+## WAV Check (Folder Panel Tab)
 
-The **WAV Check** tab helps verify training coverage when you have a folder of reference WAVs and a folder of trained captures.
+The **WAV Check** tab appears in the **folder panel** — the right side panel when a folder is selected in the main view (not inside the training workspace).
 
 It compares the WAV staging folder against the current `.nam` folder and shows:
 - which WAVs have a matching `.nam` (trained)
