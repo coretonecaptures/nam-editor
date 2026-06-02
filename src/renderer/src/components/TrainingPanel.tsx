@@ -2010,28 +2010,32 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     <Field label="Target ESR" labelTitle="blank = off">
                       <input value={thresholdEsr} onChange={e => setThresholdEsr(e.target.value)} className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none" placeholder="—" />
                     </Field>
-                    <div className="flex flex-row items-center gap-2 pb-0.5 self-end flex-wrap">
+                    <div className="flex flex-row items-end gap-2 pb-0.5 flex-wrap">
                       <ToggleRow label="Save ESR plot" checked={savePlot} onChange={setSavePlot} />
                       <ToggleRow label="Ignore checks" checked={ignoreChecks} onChange={setIgnoreChecks} />
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">Normalize</span>
-                        <select
-                          value={normalizeWavOverride}
-                          onChange={e => setNormalizeWavOverride(e.target.value as typeof normalizeWavOverride)}
-                          className="h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none"
-                        >
-                          <option value="global">Global ({(settings.normalizeWavBeforeTraining ?? true) ? 'on' : 'off'})</option>
-                          <option value="on">On</option>
-                          <option value="off">Off</option>
-                        </select>
-                        {normalizeWavOverride !== 'off' && (
-                          <input
-                            value={normalizeWavTargetDb}
-                            onChange={e => setNormalizeWavTargetDb(e.target.value)}
-                            placeholder={String(settings.normalizeWavTargetDb ?? -5.0)}
-                            className="w-20 h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none font-mono"
-                          />
-                        )}
+                      <div>
+                        <div className="flex items-center gap-1 mb-1.5">
+                          <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Normalize</label>
+                        </div>
+                        <div className="flex gap-2">
+                          <select
+                            value={normalizeWavOverride}
+                            onChange={e => setNormalizeWavOverride(e.target.value as typeof normalizeWavOverride)}
+                            className="h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none"
+                          >
+                            <option value="global">Global ({(settings.normalizeWavBeforeTraining ?? true) ? 'on' : 'off'})</option>
+                            <option value="on">On</option>
+                            <option value="off">Off</option>
+                          </select>
+                          {normalizeWavOverride !== 'off' && (
+                            <input
+                              value={normalizeWavTargetDb}
+                              onChange={e => setNormalizeWavTargetDb(e.target.value)}
+                              placeholder={String(settings.normalizeWavTargetDb ?? -5.0)}
+                              className="w-20 h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none font-mono"
+                            />
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
