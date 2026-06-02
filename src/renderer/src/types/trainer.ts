@@ -43,6 +43,23 @@ export interface CaptureProfile {
   fitMrstft: boolean
 }
 
+// A2 (PackedWaveNet) is a fixed architecture — no WaveNet layer config applies.
+// Training uses nam.train.core.train() with the built-in config_model_packed.json.
+// One run produces a SlimmableContainer .nam with both channels_3 (lite) and channels_8 (standard).
+export const A2_CAPTURE_PROFILE: CaptureProfile = {
+  id: 'a2',
+  name: 'A2 (PackedWaveNet)',
+  description: 'NAM Architecture 2 — fixed packed config, produces lite + standard in one run. Requires NAM ≥ 0.13.0.',
+  builtIn: true,
+  waveNetConfig: null,
+  lr: 0.004,
+  lrDecay: 0.006,
+  defaultEpochs: 1000,
+  batchSize: 16,
+  ny: 8192,
+  fitMrstft: true,
+}
+
 export const BUILT_IN_CAPTURE_PROFILES: CaptureProfile[] = [
   {
     id: 'standard', name: 'Standard', description: 'Full WaveNet — highest quality, largest file, slowest training', builtIn: true,
@@ -118,23 +135,6 @@ export const BUILT_IN_CAPTURE_PROFILES: CaptureProfile[] = [
   },
   A2_CAPTURE_PROFILE,
 ]
-
-// A2 (PackedWaveNet) is a fixed architecture — no WaveNet layer config applies.
-// Training uses nam.train.core.train() with the built-in config_model_packed.json.
-// One run produces a SlimmableContainer .nam with both channels_3 (lite) and channels_8 (standard).
-export const A2_CAPTURE_PROFILE = {
-  id: 'a2' as const,
-  name: 'A2 (PackedWaveNet)',
-  description: 'NAM Architecture 2 — fixed packed config, produces lite + standard in one run. Requires NAM ≥ 0.13.0.',
-  builtIn: true,
-  waveNetConfig: null,
-  lr: 0.004,
-  lrDecay: 0.006,       // 1 - gamma(0.994) mapped to our lrDecay convention
-  defaultEpochs: 1000,
-  batchSize: 16,
-  ny: 8192,
-  fitMrstft: true,
-}
 
 export function isA2Architecture(arch: string): boolean {
   return arch === 'a2'
