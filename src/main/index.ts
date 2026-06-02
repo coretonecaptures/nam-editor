@@ -1286,6 +1286,8 @@ function getTrainerArchitectureFolderName(architecture: TrainerArchitecture): st
       return 'REVyHI'
     case 'revxstd':
       return 'REVxSTD'
+    case 'a2':
+      return 'A2'
     default:
       return architecture
   }

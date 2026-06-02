@@ -9,10 +9,12 @@
 //   REVyHI =5 layers, 10ch, kernel 6
 //   REVxSTD=4 layers, 8ch, kernel 6
 //
-// A2 / PackedWaveNet (NAM >= 0.13.0):
-//   Top-level .nam "architecture" field = "PackedWaveNet"
-//   config.net.name = "PackedWaveNet" with submodels channels_3 + channels_8
-//   SlimmableContainer — one file, two submodels, Slim param selects between them
+// A2 / SlimmableContainer (NAM >= 0.13.0):
+//   Top-level .nam "architecture" field = "SlimmableContainer"
+//   config.submodels = [{max_value, model}, {max_value, model}] (channels_3 + channels_8)
+//   One file, two submodels, Slim param selects between them.
+//   NOTE: config.net.name = "PackedWaveNet" only appears in the training-time config dict,
+//   NOT in the exported .nam file. Exported files use config.submodels.
 
 function isA2LayerConfig(l0: Record<string, unknown>): boolean {
   return 'bottleneck' in l0 || 'gating_mode' in l0 || 'conv_pre_film' in l0 || 'secondary_activation' in l0
@@ -22,7 +24,10 @@ export function detectPreset(config: unknown): string | null {
   const cfg = config as Record<string, unknown> | undefined
   if (!cfg) return null
 
-  // A2 PackedWaveNet: top-level net.name field (from config_model_packed.json structure)
+  // A2 SlimmableContainer: exported .nam has config.submodels (list of 2 packed submodels)
+  if (Array.isArray(cfg.submodels)) return 'A2'
+
+  // A2 PackedWaveNet: training-time config dict has net.name (our monkey-patch path, not exported)
   const netName = (cfg.net as Record<string, unknown> | undefined)?.name
   if (netName === 'PackedWaveNet') return 'A2'
 
