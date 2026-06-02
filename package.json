@@ -54,15 +54,18 @@
       }
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "build/icon.ico"
     },
     "mac": {
       "target": "dmg",
-      "category": "public.app-category.music"
+      "category": "public.app-category.music",
+      "icon": "build/icon.icns"
     },
     "linux": {
       "target": "AppImage",
-      "category": "Audio"
+      "category": "Audio",
+      "icon": "build/icon.png"
     },
     "nsis": {
       "oneClick": false,
