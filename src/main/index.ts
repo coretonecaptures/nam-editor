@@ -351,6 +351,7 @@ interface TrainerStateSnapshot {
   logs: string[]
   error: string
   validationEsr: number | null
+  replicateEsr: number | null
   progressPhase: string
   progressPercent: number | null
   progressEpochCurrent: number | null
@@ -388,6 +389,7 @@ const TRAINER_IDLE_STATE: TrainerStateSnapshot = {
   logs: [],
   error: '',
   validationEsr: null,
+  replicateEsr: null,
   progressPhase: '',
   progressPercent: null,
   progressEpochCurrent: null,
@@ -1154,7 +1156,19 @@ function parseTrainerProgressLine(line: string): boolean {
     return false
   }
 
-  if (/^Validating data/i.test(clean) || /^V[23] checks/i.test(clean) || /^Checking blips/i.test(clean) || /^Replicate ESR/i.test(clean) || /^-Checks passed/i.test(clean) || /^Failed checks!/i.test(clean)) {
+  const replicateEsrMatch = clean.match(/^Replicate ESR is ([0-9.]+)/i)
+  if (replicateEsrMatch) {
+    trainerState = {
+      ...trainerState,
+      replicateEsr: Number.parseFloat(replicateEsrMatch[1]),
+      progressPhase: 'Validation / checks',
+      progressLatestLine: clean,
+    }
+    emitTrainerState()
+    return false
+  }
+
+  if (/^Validating data/i.test(clean) || /^V[23] checks/i.test(clean) || /^Checking blips/i.test(clean) || /^-Checks passed/i.test(clean) || /^Failed checks!/i.test(clean)) {
     trainerState = {
       ...trainerState,
       progressPhase: 'Validation / checks',
@@ -1164,7 +1178,7 @@ function parseTrainerProgressLine(line: string): boolean {
     return false
   }
 
-  if (/^Delay /i.test(clean) || /^After aplying safety factor/i.test(clean) || /^Plotting the latency/i.test(clean) || /^Cannot automatically analyze the latency/i.test(clean)) {
+  if (/^Delay /i.test(clean) || /^After aplying safety factor/i.test(clean) || /^Plotting the latency/i.test(clean) || /^Cannot automatically analyze the latency/i.test(clean) || /^Cannot use the user latency/i.test(clean)) {
     trainerState = {
       ...trainerState,
       progressPhase: 'Analyzing latency',
@@ -1688,6 +1702,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     logs: [],
     error: '',
     validationEsr: null,
+    replicateEsr: null,
     progressPhase: 'Preparing',
     progressPercent: null,
     progressEpochCurrent: null,

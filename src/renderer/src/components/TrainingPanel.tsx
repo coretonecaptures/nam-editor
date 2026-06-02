@@ -294,6 +294,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     trainerState.progressEpochTotal ?? trainerState.epochs
   )
   const validationEsrTone = getEsrTone(trainerState.validationEsr)
+  const replicateEsrTone = getEsrTone(trainerState.replicateEsr)
 
   const resolvedModelName = useMemo(() => {
     const first = outputPaths[0] ?? ''
@@ -1327,6 +1328,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               {[
                 { label: 'Rate', value: typeof trainerState.progressRate === 'number' ? `${trainerState.progressRate.toFixed(2)} it/s` : '—' },
                 { label: 'Batch', value: trainerState.progressBatchCurrent && trainerState.progressBatchTotal ? `${trainerState.progressBatchCurrent}/${trainerState.progressBatchTotal}` : '—' },
+                { label: 'Rep ESR', value: replicateEsrTone.text, extra: replicateEsrTone.classes },
                 { label: 'Val ESR', value: validationEsrTone.text, extra: validationEsrTone.classes },
                 { label: 'ETA', value: eta ?? '—' },
               ].map(({ label, value, extra }) => (
@@ -1396,6 +1398,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   },
                   { label: 'Rate', value: typeof trainerState.progressRate === 'number' ? `${trainerState.progressRate.toFixed(2)} it/s` : '—' },
                   { label: 'Validation ESR', value: validationEsrTone.text, extra: validationEsrTone.classes },
+                  { label: 'Replicate ESR', value: replicateEsrTone.text, extra: replicateEsrTone.classes },
                   { label: 'Started', value: trainerState.startedAt ? new Date(trainerState.startedAt).toLocaleTimeString() : '—' },
                 ].map(({ label, value, extra }) => (
                   <div key={label} className="rounded-xl border border-nm-border-s bg-panel-2 px-3 py-2.5">

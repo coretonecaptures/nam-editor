@@ -334,6 +334,7 @@ export interface TrainerStateSnapshot {
   logs: string[]
   error: string
   validationEsr: number | null
+  replicateEsr: number | null
   progressPhase: string
   progressPercent: number | null
   progressEpochCurrent: number | null
@@ -371,6 +372,7 @@ export const IDLE_TRAINER_STATE: TrainerStateSnapshot = {
   logs: [],
   error: '',
   validationEsr: null,
+  replicateEsr: null,
   progressPhase: '',
   progressPercent: null,
   progressEpochCurrent: null,
