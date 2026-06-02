@@ -162,6 +162,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const [presetNameDraft, setPresetNameDraft] = useState('')
   const [presetSaveError, setPresetSaveError] = useState('')
   const [presetSaveNotice, setPresetSaveNotice] = useState('')
+  const [cancelBatchConfirm, setCancelBatchConfirm] = useState<{ submissionId: string; label: string } | null>(null)
   const rawLogRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -809,6 +810,16 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     } else {
       setQueueActionError('')
     }
+  }
+
+  const handleCancelBatch = async (submissionId: string) => {
+    const result = await window.api.cancelTrainerBatch(submissionId)
+    if (!result.success) {
+      setQueueActionError(result.error ?? 'Could not cancel that batch.')
+    } else {
+      setQueueActionError('')
+    }
+    setCancelBatchConfirm(null)
   }
 
   const handleMoveJob = async (job: TrainerQueueJob, direction: 'up' | 'down') => {
@@ -1629,6 +1640,16 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                             {failCount > 0 && <span className="text-red-400">{failCount} failed</span>}
                             {queueCount > 0 && <span>{queueCount} queued</span>}
                           </div>
+                          {queueCount > 0 && (
+                            <button
+                              onClick={e => { e.stopPropagation(); setCancelBatchConfirm({ submissionId: group.jobs[0]?.submissionId ?? '', label: group.label }) }}
+                              className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border border-red-500/30 text-red-400 hover:bg-red-500/10 flex-shrink-0 transition-colors"
+                              title="Cancel all queued jobs in this batch"
+                            >
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                              Cancel batch
+                            </button>
+                          )}
                         </div>
                         {/* Progress meter */}
                         <div className="px-3.5 pt-2 pb-1">
@@ -2249,6 +2270,31 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
         }}
         onCancel={() => { setCaptureProfileEditorOpen(false); setCaptureProfileEditorTarget(null) }}
       />
+    )}
+
+    {/* Cancel batch confirmation */}
+    {cancelBatchConfirm && (
+      <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 px-4">
+        <div className="w-full max-w-sm rounded-2xl border border-nm-border bg-panel shadow-2xl">
+          <div className="px-5 py-4 border-b border-nm-border">
+            <div className="text-[14px] font-semibold text-nm-text">Cancel batch?</div>
+            <div className="mt-1 text-[12px] text-nm-text-3 break-all">{cancelBatchConfirm.label}</div>
+          </div>
+          <div className="px-5 py-4 text-[13px] text-nm-text-2">
+            All queued jobs in this batch will be canceled. Any currently running job in this batch will also be stopped. Completed jobs are unaffected.
+          </div>
+          <div className="px-5 pb-4 flex justify-end gap-2">
+            <button
+              onClick={() => setCancelBatchConfirm(null)}
+              className="h-9 px-4 rounded-xl text-[13px] border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2 transition-colors"
+            >Keep</button>
+            <button
+              onClick={() => { void handleCancelBatch(cancelBatchConfirm.submissionId) }}
+              className="h-9 px-4 rounded-xl text-[13px] bg-red-500 hover:bg-red-600 text-white font-medium transition-colors"
+            >Cancel batch</button>
+          </div>
+        </div>
+      </div>
     )}
     </>
   )

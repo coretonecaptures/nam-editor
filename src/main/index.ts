@@ -2642,12 +2642,23 @@ function createWindow(): void {
   }
 }
 
+// Returns the LAST match of /"metadata"\s*:\s*\{/ in content.
+// A2 (SlimmableContainer) files embed "metadata" inside each submodel before the outer
+// top-level metadata block. All patchers must target the outer (last) occurrence.
+function findOuterMetadataMatch(content: string): RegExpExecArray | null {
+  const re = /"metadata"\s*:\s*\{/g
+  let last: RegExpExecArray | null = null
+  let m: RegExpExecArray | null
+  while ((m = re.exec(content)) !== null) last = m
+  return last
+}
+
 // Surgically patch only the changed metadata fields in the raw file text.
 // All original formatting, whitespace, field order, and non-metadata content
 // (weights, config, etc.) are preserved byte-for-byte.
 function patchMetadataFields(content: string, patches: Record<string, unknown>): string {
-  // Find the "metadata": { block
-  const metaKeyMatch = /"metadata"\s*:\s*\{/.exec(content)
+  // Find the "metadata": { block (use last match for A2 compatibility)
+  const metaKeyMatch = findOuterMetadataMatch(content)
   if (!metaKeyMatch) throw new Error('No "metadata" block found in file')
 
   const openBrace = metaKeyMatch.index + metaKeyMatch[0].length - 1
@@ -2756,7 +2767,7 @@ function patchMetadataField(content: string, field: string, value: unknown): str
   const fieldRe = new RegExp(
     `("${escapeRe(field)}")(\\s*:\\s*)(null|true|false|"(?:[^"\\\\]|\\\\.)*"|-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)`
   )
-  const metaKeyMatch = /"metadata"\s*:\s*\{/.exec(content)
+  const metaKeyMatch = findOuterMetadataMatch(content)
   if (!metaKeyMatch) return content
   const openBrace = metaKeyMatch.index + metaKeyMatch[0].length - 1
   const closeBrace = findMatchingBrace(content, openBrace)
@@ -2806,7 +2817,7 @@ function patchTrainingField(content: string, field: string, value: unknown): str
   }
 
   if (value === null || value === undefined) return content
-  const metaKeyMatch = /"metadata"\s*:\s*\{/.exec(content)
+  const metaKeyMatch = findOuterMetadataMatch(content)
   if (!metaKeyMatch) return content
   const openBrace = metaKeyMatch.index + metaKeyMatch[0].length - 1
   const closeBrace = findMatchingBrace(content, openBrace)
@@ -2917,9 +2928,9 @@ function patchNamLabField(content: string, field: string, value: unknown): strin
     }
   }
 
-  // No nam_lab block â€” inject it directly into the metadata block
+  // No nam_lab block — inject it directly into the metadata block
   if (value === null || value === undefined) return content
-  const metaKeyMatch = /"metadata"\s*:\s*\{/.exec(content)
+  const metaKeyMatch = findOuterMetadataMatch(content)
   if (!metaKeyMatch) return content
   const openBrace = metaKeyMatch.index + metaKeyMatch[0].length - 1
   const closeBrace = findMatchingBrace(content, openBrace)
@@ -2987,8 +2998,8 @@ function patchLegacyNamBotField(content: string, field: string, value: unknown):
     }
   }
 
-  // No training block at all â€” inject training.nam_bot into the metadata block
-  const metaKeyMatch = /"metadata"\s*:\s*\{/.exec(content)
+  // No training block at all — inject training.nam_bot into the metadata block
+  const metaKeyMatch = findOuterMetadataMatch(content)
   if (!metaKeyMatch) return content
   const openBrace = metaKeyMatch.index + metaKeyMatch[0].length - 1
   const closeBrace = findMatchingBrace(content, openBrace)
@@ -3012,7 +3023,7 @@ function patchTopLevelNamBotField(content: string, field: string, value: unknown
   )
 
   const namBotRe = /"nam_bot"\s*:\s*\{/
-  const metaKeyMatch = /"metadata"\s*:\s*\{/.exec(content)
+  const metaKeyMatch = findOuterMetadataMatch(content)
   if (!metaKeyMatch) return content
   const metaOpenBrace = metaKeyMatch.index + metaKeyMatch[0].length - 1
   const metaCloseBrace = findMatchingBrace(content, metaOpenBrace)
@@ -3071,7 +3082,7 @@ function patchLatencyRecommended(content: string, value: unknown): string {
     return close === -1 ? null : { open, close }
   }
 
-  const metaMatch = /"metadata"\s*:\s*\{/.exec(content)
+  const metaMatch = findOuterMetadataMatch(content)
   if (!metaMatch) return content
   const metaOpen = metaMatch.index + metaMatch[0].length - 1
   const training = navigate(content, /"training"\s*:\s*\{/, metaOpen)
@@ -4505,6 +4516,30 @@ app.whenReady().then(async () => {
   ipcMain.handle('trainer:reorderJob', async (_event, jobId: string, beforeJobId: string) => {
     const moved = reorderQueuedTrainerJob(jobId, beforeJobId)
     if (!moved) return { success: false, error: 'Could not reorder that queue item.' }
+    emitTrainerState()
+    return { success: true }
+  })
+
+  ipcMain.handle('trainer:cancelBatch', async (_event, submissionId: string) => {
+    const canceledAt = new Date().toISOString()
+    let found = false
+    const activeIsInBatch = trainerState.activeJobId != null &&
+      trainerQueue.find(j => j.jobId === trainerState.activeJobId)?.submissionId === submissionId
+    // Cancel all queued jobs in this submission
+    trainerQueue = trainerQueue.map((job) => {
+      if (job.submissionId !== submissionId) return job
+      if (job.status === 'queued') {
+        found = true
+        return { ...job, status: 'canceled', finishedAt: canceledAt, error: 'Batch canceled.' }
+      }
+      return job
+    })
+    // Also kill the active run if it belongs to this submission
+    if (activeIsInBatch && trainerChild && (trainerState.status === 'running' || trainerState.status === 'starting')) {
+      found = true
+      trainerChild.kill()
+    }
+    if (!found) return { success: false, error: 'No queued jobs found for that batch.' }
     emitTrainerState()
     return { success: true }
   })
