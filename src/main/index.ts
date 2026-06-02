@@ -578,7 +578,7 @@ def _build_user_metadata(payload):
     except ImportError:
         return None
     fields = {
-        "name": payload.get("modeledBy") or None,  # use modeled_by as fallback name hint
+        "name": payload.get("modelName") or None,
         "modeled_by": payload.get("modeledBy") or None,
         "gear_type": payload.get("gearType") or None,
         "gear_make": payload.get("gearMake") or None,
