@@ -1,5 +1,5 @@
 import React from 'react'
-import { BUILT_IN_CAPTURE_PROFILES, type CaptureProfile } from '../types/trainer'
+import { BUILT_IN_CAPTURE_PROFILES, isA2Architecture, type CaptureProfile } from '../types/trainer'
 import type { UserCaptureProfile } from '../types/settings'
 
 interface ArchitectureProfilePickerProps {
@@ -14,6 +14,7 @@ interface ArchitectureProfilePickerProps {
 
 const STOCK_IDS = ['standard', 'lite', 'feather', 'nano']
 const EXTENDED_IDS = ['complex', 'revystd', 'revyhi', 'revxstd']
+const A2_IDS = ['a2']
 
 // Accent colors per built-in profile ID
 const PROFILE_ACCENT: Record<string, { topBorder: string; dot: string }> = {
@@ -25,6 +26,7 @@ const PROFILE_ACCENT: Record<string, { topBorder: string; dot: string }> = {
   revystd:  { topBorder: 'border-t-violet-500 dark:border-t-violet-400',   dot: 'bg-violet-500 dark:bg-violet-400' },
   revyhi:   { topBorder: 'border-t-purple-500 dark:border-t-purple-400',   dot: 'bg-purple-500 dark:bg-purple-400' },
   revxstd:  { topBorder: 'border-t-fuchsia-500 dark:border-t-fuchsia-400', dot: 'bg-fuchsia-500 dark:bg-fuchsia-400' },
+  a2:       { topBorder: 'border-t-rose-500 dark:border-t-rose-400',       dot: 'bg-rose-500 dark:bg-rose-400' },
 }
 
 function ProfileCard({
@@ -134,6 +136,7 @@ export function ArchitectureProfilePicker({
 }: ArchitectureProfilePickerProps) {
   const stockProfiles = BUILT_IN_CAPTURE_PROFILES.filter((p) => STOCK_IDS.includes(p.id))
   const extendedProfiles = BUILT_IN_CAPTURE_PROFILES.filter((p) => EXTENDED_IDS.includes(p.id))
+  const a2Profiles = BUILT_IN_CAPTURE_PROFILES.filter((p) => A2_IDS.includes(p.id))
 
   const toggle = (id: string) => {
     if (selectedIds.includes(id)) {
@@ -180,18 +183,19 @@ export function ArchitectureProfilePicker({
           />
         ))}
       </div>
-      {sectionLabel('A2 PackedWaveNet')}
+      {sectionLabel('A2 — PackedWaveNet')}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        <div
-          className="rounded-lg border border-dashed border-pink-300 dark:border-pink-700/50 bg-pink-50/30 dark:bg-pink-900/10 px-3 py-2.5 opacity-60 cursor-not-allowed"
-          title="A2 (PackedWaveNet) training is not yet available in the NAM trainer. Coming soon."
-        >
-          <div className="flex items-center gap-1.5 mb-1">
-            <span className="text-[11px] font-semibold text-pink-500 dark:text-pink-400">A2</span>
-            <span className="text-[9px] uppercase tracking-wider font-medium text-pink-400 dark:text-pink-500 bg-pink-100 dark:bg-pink-900/40 px-1 py-px rounded">Soon</span>
-          </div>
-          <div className="text-[10px] text-gray-400 dark:text-gray-500 leading-snug">PackedWaveNet — not yet released in trainer</div>
-        </div>
+        {a2Profiles.map((profile) => (
+          <ProfileCard
+            key={profile.id}
+            profile={profile}
+            selected={selectedIds.includes(profile.id)}
+            onToggle={() => toggle(profile.id)}
+            // A2 has no WaveNet layer config to clone — suppress clone button
+            onClone={onClone && !isA2Architecture(profile.id) ? () => handleClone(profile) : undefined}
+            accent={PROFILE_ACCENT[profile.id]}
+          />
+        ))}
       </div>
       {sectionLabel('Custom Profiles')}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">

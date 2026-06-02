@@ -567,10 +567,38 @@ def _normalize_wav_pair(input_path, output_path, target_db, workspace):
 
 def _detect_nam_version():
     import nam.train.core as _core
+    # v0.13.0+ removed the Architecture enum — its absence means PackedWaveNet (A2) support
     return "a1" if hasattr(_core, "Architecture") else "a2"
 
 
+def _build_user_metadata(payload):
+    """Build a UserMetadata object from payload fields, or return None if nothing is set."""
+    try:
+        from nam.models.metadata import UserMetadata
+    except ImportError:
+        return None
+    fields = {
+        "name": payload.get("modeledBy") or None,  # use modeled_by as fallback name hint
+        "modeled_by": payload.get("modeledBy") or None,
+        "gear_type": payload.get("gearType") or None,
+        "gear_make": payload.get("gearMake") or None,
+        "gear_model": payload.get("gearModel") or None,
+        "tone_type": payload.get("toneType") or None,
+        "input_level_dbu": payload.get("inputLevelDbu"),
+        "output_level_dbu": payload.get("outputLevelDbu"),
+    }
+    # Only construct if at least one field has a value
+    if not any(v is not None for v in fields.values()):
+        return None
+    try:
+        return UserMetadata(**{k: v for k, v in fields.items() if v is not None})
+    except Exception:
+        return None
+
+
 def _run_a1(payload):
+    """A1 WaveNet training for NAM < 0.13.0 (Architecture enum present).
+    Injects custom WaveNet config via Architecture enum + get_wavenet_config monkey-patch."""
     import nam.train.core as _core
 
     _cid = "__namlab__"
@@ -606,11 +634,58 @@ def _run_a1(payload):
         modelname=payload["modelName"],
         ignore_checks=payload.get("ignoreChecks", False),
         fit_mrstft=payload.get("fitMrstft", True),
-        user_metadata=None,
+        user_metadata=_build_user_metadata(payload),
     )
 
 
+def _run_a1_v13(payload):
+    """A1 WaveNet training for NAM >= 0.13.0 (no Architecture enum).
+    Injects custom WaveNet config by monkey-patching _get_packed_model_config so
+    core.train() picks up LightningModule (not PackedLightningModule) with our layers."""
+    import nam.train.core as _core
+
+    wncfg = payload["waveNetConfig"]
+    lr = payload.get("lr", 0.004)
+    # lrDecay in NAM Lab is absolute decay (e.g. 0.002); ExponentialLR uses gamma = 1 - decay
+    gamma = max(0.001, 1.0 - payload.get("lrDecay", 0.002))
+    mrstft = 0.0005 if payload.get("fitMrstft", True) else 0.0
+
+    custom_model_config = {
+        "net": {
+            "name": "WaveNet",
+            "config": wncfg,
+        },
+        "optimizer": {"lr": lr, "weight_decay": 3.17e-7},
+        "lr_scheduler": {"class": "ExponentialLR", "kwargs": {"gamma": gamma}},
+        "loss": {"val_loss": "esr", "mrstft_weight": mrstft},
+    }
+
+    _orig = _core._get_packed_model_config
+    _core._get_packed_model_config = lambda: custom_model_config
+    try:
+        return train(
+            input_path=payload["inputPath"],
+            output_path=payload["outputPath"],
+            train_path=payload["trainPath"],
+            epochs=payload["epochs"],
+            latency=payload.get("latency"),
+            threshold_esr=payload.get("thresholdEsr"),
+            batch_size=payload.get("batchSize", 16),
+            ny=payload.get("ny", 8192),
+            save_plot=payload.get("savePlot", True),
+            silent=payload.get("silent", False),
+            modelname=payload["modelName"],
+            ignore_checks=payload.get("ignoreChecks", False),
+            user_metadata=_build_user_metadata(payload),
+        )
+    finally:
+        _core._get_packed_model_config = _orig
+
+
 def _run_a2(payload):
+    """A2 PackedWaveNet training for NAM >= 0.13.0.
+    core.train() loads config_model_packed.json internally — no config injection needed.
+    Produces a SlimmableContainer .nam with channels_3 (lite) + channels_8 (standard)."""
     return train(
         input_path=payload["inputPath"],
         output_path=payload["outputPath"],
@@ -624,6 +699,7 @@ def _run_a2(payload):
         silent=payload.get("silent", False),
         modelname=payload["modelName"],
         ignore_checks=payload.get("ignoreChecks", False),
+        user_metadata=_build_user_metadata(payload),
     )
 
 
@@ -664,7 +740,14 @@ def main():
     norm_payload = {**payload, "inputPath": active_input, "outputPath": active_output}
     if payload.get("normalizeWav", False):
         norm_payload["ignoreChecks"] = True  # normalized WAV amplitude won't match NAM version fingerprint
-    result = _run_a2(norm_payload) if requested == "a2" else _run_a1(norm_payload)
+    if requested == "a2":
+        result = _run_a2(norm_payload)
+    elif detected == "a2":
+        # NAM >= 0.13.0 install but A1 (WaveNet) job — use v13 path
+        result = _run_a1_v13(norm_payload)
+    else:
+        # NAM < 0.13.0 install — classic Architecture enum path
+        result = _run_a1(norm_payload)
 
     discovered_output = _find_output_model_path(payload["trainPath"], payload["modelName"])
     promoted_output = _promote_output_model_path(payload["trainPath"], payload["modelName"], discovered_output)
@@ -1658,6 +1741,10 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     silent: job.silent,
     ignoreChecks: job.ignoreChecks,
     modelName: job.modelName,
+    // user_metadata fields — embedded into the .nam by the trainer
+    modeledBy: job.modeledBy ?? null,
+    inputLevelDbu: job.inputLevelDbu ?? null,
+    outputLevelDbu: job.outputLevelDbu ?? null,
   }
   await fs.promises.writeFile(payloadPath, JSON.stringify(runnerPayload, null, 2), 'utf-8')
 
