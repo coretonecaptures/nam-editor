@@ -5,6 +5,17 @@
 - App icon files for Windows and macOS (`.ico` / `.icns`)
 - Code signing and notarization
 
+## Security and hardening
+
+- Move Tone3000 OAuth token storage from plain `userData/tone3000-tokens.json` to `safeStorage` with migration from the old plain JSON file.
+- Add external URL validation in main process (`openExternal`, `window.open` handling) and allow only expected schemes such as `https:`, `mailto:`, and app-internal `file:` use where intentionally needed.
+- Standardize renderer links on `window.api.openExternal(...)` instead of raw `window.open(...)`.
+- Add URL guardrails for remote download helpers:
+  - Tone3000 model / cover URLs should be restricted to expected `tone3000.com` hosts / schemes.
+  - Generic cover download should accept only `http:` / `https:` URLs and continue validating image content type.
+- Review the broad preload / IPC surface and plan a narrower permission model before any store-distribution push.
+- Evaluate whether `sandbox: false` can be tightened without breaking file management, trainer flows, or local image rendering. Do this as a separate test-heavy pass.
+
 ## Pack Info and export
 
 - Pack Info export markdown: add support for indented / nested bullet lists in the PDF export parser
@@ -18,7 +29,7 @@
 - Per-capture images
 - OS `Open folder in NAM Lab`
 - Append to comments (batch)
-- High priority: when moving duplicates, let the user choose the destination folder at move time instead of always using the root `_Duplicates` folder
+- ~~**Duplicate move destination picker**~~ ✓ — Already implemented; "Change folder…" button in DuplicatesModal lets user pick destination before moving.
 
 ## Import and performance
 
@@ -72,7 +83,7 @@
 - Training panel layout (partially done): a first cleanup pass happened, but the Training section still needs a dedicated neatening pass so Run WAVs / Run Folder / Queue, routing, and custom controls use space more gracefully and read more cleanly.
 - Training architecture picker UX: validate on queue that at least one profile is selected, since the new card grid allows the selection to go empty.
 - Training queue status line: fix the green running summary so it reports active/running work accurately (for example, a single active run should not say `Queue Running - 0 queued` in a misleading way).
-- Training history graph preview: make `Show graph` open an in-app modal/lightbox that loads the PNG inside NAM Lab instead of only bouncing out to the OS.
+- ~~**Training history graph preview**~~ — Stale; training page redesigned.
 - Training watch presets: support more than one preset per watch folder, so one watched source can fan out into multiple training recipes such as `REVxSTD 1000 epoch` and `Standard 500 epoch`.
 - Queue UX: support drag-and-drop queue reordering in addition to move up / move down controls.
 - Queue grouping (partially done): queue/history rows already carry submission grouping for `Run WAVs`, `Run Folder`, and `Watcher`; remaining work is to deepen the batch/session UX where it helps without complicating the serial executor.

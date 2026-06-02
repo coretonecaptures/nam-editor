@@ -55,6 +55,28 @@ function compareVersions(a: string, b: string): number {
   return 0
 }
 
+function parseAllowedUrl(raw: string, allowedProtocols: string[]): URL | null {
+  try {
+    const url = new URL(raw)
+    return allowedProtocols.includes(url.protocol) ? url : null
+  } catch {
+    return null
+  }
+}
+
+function isAllowedTone3000Url(raw: string): boolean {
+  const url = parseAllowedUrl(raw, ['https:'])
+  if (!url) return false
+  return url.hostname === 'www.tone3000.com' || url.hostname === 'tone3000.com'
+}
+
+function openExternalSafe(raw: string, allowedProtocols = ['https:', 'mailto:']): boolean {
+  const url = parseAllowedUrl(raw, allowedProtocols)
+  if (!url) return false
+  void shell.openExternal(url.toString())
+  return true
+}
+
 // Module-level reference so IPC handlers can always reach the window
 let mainWindow: BrowserWindow | null = null
 
@@ -2477,7 +2499,11 @@ function createWindow(): void {
   mainWindow.on('close', saveWinState)
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    try {
+      openExternalSafe(details.url, ['https:', 'mailto:'])
+    } catch {
+      /* ignore blocked URLs */
+    }
     return { action: 'deny' }
   })
 
@@ -3037,18 +3063,41 @@ interface Tone3kTokens {
 
 let tone3kTokens: Tone3kTokens | null = null
 
+function tone3kSecureTokensPath(): string {
+  return join(app.getPath('userData'), 'tone3000-tokens.bin')
+}
+
+function tone3kLegacyTokensPath(): string {
+  return join(app.getPath('userData'), 'tone3000-tokens.json')
+}
+
 async function loadTone3kTokens(): Promise<void> {
   try {
-    const p = join(app.getPath('userData'), 'tone3000-tokens.json')
-    tone3kTokens = JSON.parse(await fs.promises.readFile(p, 'utf-8')) as Tone3kTokens
+    const securePath = tone3kSecureTokensPath()
+    const buf = await fs.promises.readFile(securePath)
+    const json = safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(buf) : buf.toString('utf-8')
+    tone3kTokens = JSON.parse(json) as Tone3kTokens
+    return
+  } catch { /* fall through to legacy */ }
+  try {
+    const legacyPath = tone3kLegacyTokensPath()
+    tone3kTokens = JSON.parse(await fs.promises.readFile(legacyPath, 'utf-8')) as Tone3kTokens
+    await saveTone3kTokens()
+    try { await fs.promises.unlink(legacyPath) } catch { /* ok */ }
   } catch { /* no saved tokens */ }
 }
 
 async function saveTone3kTokens(): Promise<void> {
   if (!tone3kTokens) return
   try {
-    const p = join(app.getPath('userData'), 'tone3000-tokens.json')
-    await fs.promises.writeFile(p, JSON.stringify(tone3kTokens), 'utf-8')
+    const payload = JSON.stringify(tone3kTokens)
+    const securePath = tone3kSecureTokensPath()
+    if (safeStorage.isEncryptionAvailable()) {
+      await fs.promises.writeFile(securePath, safeStorage.encryptString(payload))
+    } else {
+      await fs.promises.writeFile(securePath, payload, 'utf-8')
+    }
+    try { await fs.promises.unlink(tone3kLegacyTokensPath()) } catch { /* ok */ }
   } catch { /* non-critical */ }
 }
 
@@ -3870,7 +3919,7 @@ app.whenReady().then(async () => {
 
   // IPC: Open URL in default browser
   ipcMain.handle('app:openExternal', (_event, url: string) => {
-    shell.openExternal(url)
+    openExternalSafe(url, ['https:', 'mailto:'])
   })
 
   ipcMain.handle('app:showMessageBox', async (_event, options: {
@@ -4705,7 +4754,8 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('tone3000:disconnect', async () => {
     tone3kTokens = null
-    try { await fs.promises.unlink(join(app.getPath('userData'), 'tone3000-tokens.json')) } catch { /* ok */ }
+    try { await fs.promises.unlink(tone3kSecureTokensPath()) } catch { /* ok */ }
+    try { await fs.promises.unlink(tone3kLegacyTokensPath()) } catch { /* ok */ }
     return { ok: true }
   })
 
@@ -4743,6 +4793,7 @@ app.whenReady().then(async () => {
       const valid = await ensureValidToken()
       if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
     try {
+      if (!isAllowedTone3000Url(modelUrl)) return { error: 'Blocked download URL' }
       let lastStatus: number | null = null
       let res: Response | null = null
       for (let attempt = 0; attempt < 4; attempt++) {
@@ -4789,6 +4840,7 @@ app.whenReady().then(async () => {
       const valid = await ensureValidToken()
       if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
       try {
+        if (!isAllowedTone3000Url(imageUrl)) return { error: 'Blocked image URL' }
         const coverPattern = /^ampcover\.(png|jpe?g|webp|gif|avif)$/i
         let existingCoverPath: string | null = null
         try {
@@ -4925,6 +4977,8 @@ app.whenReady().then(async () => {
   // Download any public image URL and save as ampcover.{ext}, replacing existing cover
   ipcMain.handle('cover:downloadFromUrl', async (_event, imageUrl: string, destDir: string) => {
     try {
+      const parsed = parseAllowedUrl(imageUrl, ['https:', 'http:'])
+      if (!parsed) return { success: false, error: 'Only http/https image URLs are allowed.' }
       const coverPattern = /^ampcover\.(png|jpe?g|webp|gif|avif)$/i
       try {
         const entries = await fs.promises.readdir(destDir, { withFileTypes: true })
@@ -4935,7 +4989,7 @@ app.whenReady().then(async () => {
         }
       } catch { /* dir may not exist yet */ }
 
-      const res = await fetch(imageUrl, { headers: { 'User-Agent': 'NAM-Lab' } })
+      const res = await fetch(parsed.toString(), { headers: { 'User-Agent': 'NAM-Lab' } })
       if (!res.ok) return { success: false, error: `Download failed (HTTP ${res.status})` }
 
       const contentType = (res.headers.get('content-type') ?? '').toLowerCase()
@@ -4949,7 +5003,7 @@ app.whenReady().then(async () => {
         contentType.includes('webp') ? '.webp' :
         contentType.includes('gif') ? '.gif' :
         contentType.includes('avif') ? '.avif' : ''
-      const rawExt = extname(imageUrl.split('?')[0]).toLowerCase()
+      const rawExt = extname(parsed.pathname).toLowerCase()
       const allowed = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif'])
       const chosenExt = extFromType || (allowed.has(rawExt) ? (rawExt === '.jpeg' ? '.jpg' : rawExt) : '') || '.jpg'
 

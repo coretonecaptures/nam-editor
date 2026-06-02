@@ -2390,7 +2390,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
           <div className="text-xs text-gray-400 dark:text-gray-600">
             Built by{' '}
             <button
-              onClick={() => window.open('https://coretonecaptures.com/', '_blank')}
+              onClick={() => { void window.api.openExternal('https://coretonecaptures.com/') }}
               className="text-indigo-400 hover:text-indigo-300 transition-colors underline"
             >
               Core Tone Captures
