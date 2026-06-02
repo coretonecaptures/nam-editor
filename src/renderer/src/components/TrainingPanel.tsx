@@ -1577,10 +1577,12 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     const runCount = group.jobs.filter(j => j.status === 'running' || j.status === 'starting').length
                     const queueCount = group.jobs.filter(j => j.status === 'queued').length
                     const total = group.jobs.length
+                    const activeProgress = hasActive && typeof trainerState.progressPercent === 'number' ? trainerState.progressPercent / 100 : 0
                     const meterSegs = [
                       { value: doneCount, color: '#10b981', label: 'done' },
                       { value: failCount, color: '#ef4444', label: 'failed' },
-                      { value: runCount, color: 'var(--nm-accent,#6366f1)', label: 'running' },
+                      { value: runCount * activeProgress, color: 'var(--nm-accent,#6366f1)', label: 'training' },
+                      { value: runCount * (1 - activeProgress), color: 'rgba(99,102,241,0.18)', label: 'running' },
                       { value: queueCount, color: 'var(--field,#1e2433)', label: 'queued' },
                     ]
                     const isWatcher = group.jobs[0]?.sourceMode === 'watcher'
@@ -1941,8 +1943,10 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   </Field>
 
                   {currentRunPreset ? (
-                    <div className="rounded-lg border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-[12px] text-sky-300 flex items-center">
-                      {describePreset(currentRunPreset)}
+                    <div className="self-end">
+                      <div className="h-10 rounded-lg border border-sky-500/25 bg-sky-500/10 px-3 text-[12px] text-sky-300 flex items-center">
+                        {describePreset(currentRunPreset)}
+                      </div>
                     </div>
                   ) : (
                     <Field label="NAM Version">
@@ -1960,7 +1964,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 </div>
 
                 {showsCustomSettings && (
-                  <div className="grid grid-cols-[1fr_100px_140px_100px] gap-3">
+                  <div className={`grid gap-3 ${namMode === 'a2' ? 'grid-cols-[160px_100px_140px]' : 'grid-cols-[1fr_100px_140px_100px]'}`}>
                     {namMode === 'a1' && (
                       <Field label="Architecture(s)" help={<>Each architecture produces a <code>.nam</code> of different size and quality. <strong>Standard</strong> = best quality, more CPU. <strong>Lite/Feather/Nano</strong> = faster but lower fidelity.</>}>
                         <ArchitectureMultiSelect
