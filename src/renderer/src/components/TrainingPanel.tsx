@@ -2004,7 +2004,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     <Field label="Epochs">
                       <input value={epochs} onChange={e => setEpochs(e.target.value)} className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none" />
                     </Field>
-                    <Field label="Latency" hint="blank = auto">
+                    <Field label="Latency" labelTitle="blank = auto">
                       <input value={latency} onChange={e => setLatency(e.target.value)} className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none" placeholder="Auto" />
                     </Field>
                     <Field label="Target ESR" labelTitle="blank = off">
