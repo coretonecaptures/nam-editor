@@ -132,6 +132,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const [folderRunProfileId, setFolderRunProfileId] = useState<'custom' | string>('custom')
   const [selectedPresetId, setSelectedPresetId] = useState<string>(CUSTOM_PRESET_ID)
   const [namMode, setNamMode] = useState<'a1' | 'a2'>('a1')
+  const [detectedNamVersion, setDetectedNamVersion] = useState<'a1' | 'a2' | 'unknown'>('unknown')
   const [architectures, setArchitectures] = useState<string[]>(['standard'])
   const [normalizeWavOverride, setNormalizeWavOverride] = useState<'global' | 'on' | 'off'>('off')
   const [normalizeWavTargetDb, setNormalizeWavTargetDb] = useState('')
@@ -166,6 +167,13 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   useEffect(() => {
     if (settings.namTrainingInputWav && !inputPath) setInputPath(settings.namTrainingInputWav)
   }, [settings.namTrainingInputWav, inputPath])
+
+  useEffect(() => {
+    const py = settings.namPythonPath.trim()
+    if (!py) { setDetectedNamVersion('unknown'); return }
+    setDetectedNamVersion('unknown')
+    void window.api.detectNamVersion(py).then(({ version }) => setDetectedNamVersion(version))
+  }, [settings.namPythonPath])
 
   useEffect(() => {
     if (!initialRunMode) return
@@ -1937,7 +1945,12 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     <Field label="NAM Version">
                       <div className="flex rounded-lg overflow-hidden border border-field-bd text-[12px]">
                         <button onClick={() => setNamMode('a1')} className={`flex-1 py-2 px-3 font-medium transition-colors ${namMode === 'a1' ? 'bg-nm-accent text-accent-text' : 'bg-field text-nm-text-2 hover:bg-hov'}`}>A1 WaveNet</button>
-                        <button disabled title="A2 training coming soon" className="flex-1 py-2 px-3 font-medium opacity-40 cursor-not-allowed bg-field text-nm-text-2">A2 — Soon</button>
+                        <button
+                          onClick={() => setNamMode('a2')}
+                          disabled={detectedNamVersion !== 'a2'}
+                          title={detectedNamVersion === 'a1' ? 'A2 requires NAM ≥ 0.13.0 — your install is A1 only' : detectedNamVersion === 'unknown' ? 'Set a Python path to check A2 support' : undefined}
+                          className={`flex-1 py-2 px-3 font-medium transition-colors ${detectedNamVersion !== 'a2' ? 'opacity-40 cursor-not-allowed bg-field text-nm-text-2' : namMode === 'a2' ? 'bg-nm-accent text-accent-text' : 'bg-field text-nm-text-2 hover:bg-hov'}`}
+                        >A2 PackedWaveNet</button>
                       </div>
                     </Field>
                   )}

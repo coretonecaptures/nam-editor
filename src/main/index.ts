@@ -4531,6 +4531,31 @@ app.whenReady().then(async () => {
     return { success: queued > 0, queued, error: queued > 0 ? undefined : 'That retry did not add a new queue item.' }
   })
 
+  const namVersionCache = new Map<string, 'a1' | 'a2'>()
+  ipcMain.handle('trainer:detectNamVersion', async (_event, pythonPath: string) => {
+    const key = (pythonPath ?? '').trim()
+    if (!key) return { version: 'unknown' }
+    if (namVersionCache.has(key)) return { version: namVersionCache.get(key) }
+    try {
+      const { execFile } = await import('child_process')
+      const version = await new Promise<'a1' | 'a2'>((resolve, reject) => {
+        execFile(
+          key,
+          ['-c', 'import nam.train.core as c; print("a2" if not hasattr(c, "Architecture") else "a1")'],
+          { timeout: 10000 },
+          (err, stdout) => {
+            if (err) return reject(err)
+            resolve(stdout.trim() === 'a2' ? 'a2' : 'a1')
+          }
+        )
+      })
+      namVersionCache.set(key, version)
+      return { version }
+    } catch {
+      return { version: 'unknown' }
+    }
+  })
+
   // IPC: Open a .nam file in NAM standalone (via explicit path or OS default)
   ipcMain.handle('app:openInNam', async (_event, filePath: string, standalonePath: string) => {
     try {

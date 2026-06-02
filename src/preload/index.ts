@@ -107,6 +107,7 @@ const api = {
     ipcRenderer.invoke('app:showMessageBox', options),
   scanImages: (folderPath: string): Promise<{ success: boolean; images: string[] }> => ipcRenderer.invoke('folder:scanImages', folderPath),
   detectNamPlayer: (): Promise<boolean> => ipcRenderer.invoke('app:detectNamPlayer'),
+  detectNamVersion: (pythonPath: string): Promise<{ version: 'a1' | 'a2' | 'unknown' }> => ipcRenderer.invoke('trainer:detectNamVersion', pythonPath),
   browseExecutable: (): Promise<string | null> => ipcRenderer.invoke('dialog:browseExecutable'),
   getTrainerState: (): Promise<TrainerStateSnapshot> => ipcRenderer.invoke('trainer:getState'),
   startTrainerRun: (payload: TrainerStartPayload): Promise<{ success: boolean; error?: string }> =>
