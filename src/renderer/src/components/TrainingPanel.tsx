@@ -1879,7 +1879,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
 
           {/* ── NEW RUN ────────────────────────────────────────────────────── */}
           {section === 'new' && (
-            <div className="p-5 space-y-4 max-w-3xl">
+            <div className="p-5 space-y-4">
               <div className="flex items-baseline justify-between">
                 <h2 className="text-[18px] font-[680] text-nm-text">New Run</h2>
                 {presetSaveNotice && <span className="text-[12px] text-emerald-400">{presetSaveNotice}</span>}
