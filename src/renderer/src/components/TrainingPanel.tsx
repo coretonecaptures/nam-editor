@@ -1985,7 +1985,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 </div>
 
                 {showsCustomSettings && (
-                  <div className={`grid gap-3 ${namMode === 'a2' ? 'grid-cols-[160px_100px_140px]' : 'grid-cols-[1fr_100px_140px_100px]'}`}>
+                  <div className={`grid gap-3 ${namMode === 'a2' ? 'grid-cols-[160px_100px_140px_auto]' : 'grid-cols-[1fr_100px_140px_100px_auto]'}`}>
                     {namMode === 'a1' && (
                       <Field label="Architecture(s)" help={<>Each architecture produces a <code>.nam</code> of different size and quality. <strong>Standard</strong> = best quality, more CPU. <strong>Lite/Feather/Nano</strong> = faster but lower fidelity.</>}>
                         <ArchitectureMultiSelect
@@ -2010,42 +2010,40 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     <Field label="Target ESR" labelTitle="blank = off">
                       <input value={thresholdEsr} onChange={e => setThresholdEsr(e.target.value)} className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none" placeholder="—" />
                     </Field>
+                    <div className="flex flex-col justify-end gap-2 pb-0.5">
+                      <ToggleRow label="Save ESR plot" checked={savePlot} onChange={setSavePlot} />
+                      <ToggleRow label="Ignore checks" checked={ignoreChecks} onChange={setIgnoreChecks} />
+                    </div>
                   </div>
                 )}
                 {showsCustomSettings && epochNote && (
                   <div className="text-[11px] text-amber-400">{epochNote}</div>
                 )}
                 {showsCustomSettings && (
-                  <div className="grid grid-cols-2 gap-3">
-                    <Field
-                      label="Normalize"
-                      help={<>Normalize the output WAV to a target dBFS before training. <strong>Global</strong> uses the setting in the Training Settings page. On/Off overrides for this run only.</>}
-                    >
-                      <div className="flex gap-2">
-                        <select
-                          value={normalizeWavOverride}
-                          onChange={e => setNormalizeWavOverride(e.target.value as typeof normalizeWavOverride)}
-                          className="flex-1 h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none"
-                        >
-                          <option value="global">Global ({(settings.normalizeWavBeforeTraining ?? true) ? 'on' : 'off'})</option>
-                          <option value="on">On</option>
-                          <option value="off">Off</option>
-                        </select>
-                        {normalizeWavOverride !== 'off' && (
-                          <input
-                            value={normalizeWavTargetDb}
-                            onChange={e => setNormalizeWavTargetDb(e.target.value)}
-                            placeholder={String(settings.normalizeWavTargetDb ?? -5.0)}
-                            className="w-20 h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none font-mono"
-                          />
-                        )}
-                      </div>
-                    </Field>
-                    <div className="flex flex-col gap-2">
-                      <ToggleRow label="Save ESR plot" checked={savePlot} onChange={setSavePlot} />
-                      <ToggleRow label="Ignore checks" checked={ignoreChecks} onChange={setIgnoreChecks} />
+                  <Field
+                    label="Normalize"
+                    help={<>Normalize the output WAV to a target dBFS before training. <strong>Global</strong> uses the setting in the Training Settings page. On/Off overrides for this run only.</>}
+                  >
+                    <div className="flex gap-2">
+                      <select
+                        value={normalizeWavOverride}
+                        onChange={e => setNormalizeWavOverride(e.target.value as typeof normalizeWavOverride)}
+                        className="h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none"
+                      >
+                        <option value="global">Global ({(settings.normalizeWavBeforeTraining ?? true) ? 'on' : 'off'})</option>
+                        <option value="on">On</option>
+                        <option value="off">Off</option>
+                      </select>
+                      {normalizeWavOverride !== 'off' && (
+                        <input
+                          value={normalizeWavTargetDb}
+                          onChange={e => setNormalizeWavTargetDb(e.target.value)}
+                          placeholder={String(settings.normalizeWavTargetDb ?? -5.0)}
+                          className="w-20 h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none font-mono"
+                        />
+                      )}
                     </div>
-                  </div>
+                  </Field>
                 )}
                 {showsCustomSettings && (
                   <button onClick={handleSaveAsPreset} className="text-[12px] text-nm-accent hover:underline">Save as preset…</button>
