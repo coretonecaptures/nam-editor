@@ -43,13 +43,13 @@ export interface CaptureProfile {
   fitMrstft: boolean
 }
 
-// A2 (PackedWaveNet) is a fixed architecture — no WaveNet layer config applies.
+// A2 is a fixed architecture — no WaveNet layer config applies.
 // Training uses nam.train.core.train() with the built-in config_model_packed.json.
 // One run produces a SlimmableContainer .nam with both channels_3 (lite) and channels_8 (standard).
 export const A2_CAPTURE_PROFILE: CaptureProfile = {
   id: 'a2',
-  name: 'A2 (PackedWaveNet)',
-  description: 'NAM Architecture 2 — fixed packed config, produces lite + standard in one run. Requires NAM ≥ 0.13.0.',
+  name: 'A2',
+  description: 'NAM Architecture 2 — produces a single .nam file containing both lite and standard submodels (SlimmableContainer). Requires NAM ≥ 0.13.0.',
   builtIn: true,
   waveNetConfig: null,
   lr: 0.004,

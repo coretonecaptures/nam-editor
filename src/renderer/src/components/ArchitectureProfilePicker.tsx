@@ -183,7 +183,7 @@ export function ArchitectureProfilePicker({
           />
         ))}
       </div>
-      {sectionLabel('A2 — PackedWaveNet')}
+      {sectionLabel('A2')}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {a2Profiles.map((profile) => (
           <ProfileCard

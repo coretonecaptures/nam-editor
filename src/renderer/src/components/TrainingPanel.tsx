@@ -50,7 +50,7 @@ function lookupProfileConfig(
 }
 
 function architectureDisplayLabel(arch: string): string {
-  if (arch === 'a2') return 'A2 PackedWaveNet'
+  if (arch === 'a2') return 'A2'
   return ARCHITECTURE_LABELS[arch as TrainerArchitecture] ?? arch
 }
 
@@ -914,7 +914,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       return
     }
     const autoName = namMode === 'a2'
-      ? `A2 PackedWaveNet ${parsedEpochs} epoch`
+      ? `A2 ${parsedEpochs} epoch`
       : `${architectures.map((item) => architectureDisplayLabel(item)).join(' + ')} ${parsedEpochs} epoch`
     setPresetNameDraft(autoName)
     setPresetSaveError('')
@@ -1978,7 +1978,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                           disabled={detectedNamVersion !== 'a2'}
                           title={detectedNamVersion === 'a1' ? 'A2 requires NAM ≥ 0.13.0 — your install is A1 only' : detectedNamVersion === 'unknown' ? 'Set a Python path to check A2 support' : undefined}
                           className={`flex-1 py-2 px-3 font-medium transition-colors ${detectedNamVersion !== 'a2' ? 'opacity-40 cursor-not-allowed bg-field text-nm-text-2' : namMode === 'a2' ? 'bg-nm-accent text-accent-text' : 'bg-field text-nm-text-2 hover:bg-hov'}`}
-                        >A2 PackedWaveNet</button>
+                        >A2</button>
                       </div>
                     </Field>
                   )}
@@ -2007,7 +2007,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     <Field label="Latency" hint="blank = auto">
                       <input value={latency} onChange={e => setLatency(e.target.value)} className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none" placeholder="Auto" />
                     </Field>
-                    <Field label="Target ESR" hint="blank = off">
+                    <Field label="Target ESR" labelTitle="blank = off">
                       <input value={thresholdEsr} onChange={e => setThresholdEsr(e.target.value)} className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none" placeholder="—" />
                     </Field>
                   </div>

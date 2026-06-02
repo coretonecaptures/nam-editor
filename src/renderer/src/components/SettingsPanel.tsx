@@ -2112,7 +2112,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                                     </button>
                                     <button
                                       disabled
-                                      title="A2 (PackedWaveNet) training is not yet available in the NAM trainer. Coming soon."
+                                      title="A2 training is not yet available in the NAM trainer. Coming soon."
                                       className="flex-1 py-1.5 px-3 font-medium bg-white dark:bg-gray-800 text-gray-300 dark:text-gray-600 cursor-not-allowed"
                                     >
                                       A2 — Coming Soon
