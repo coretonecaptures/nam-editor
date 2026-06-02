@@ -2010,7 +2010,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     <Field label="Target ESR" labelTitle="blank = off">
                       <input value={thresholdEsr} onChange={e => setThresholdEsr(e.target.value)} className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none" placeholder="—" />
                     </Field>
-                    <div className="flex flex-col justify-end gap-2 pb-0.5">
+                    <div className="flex flex-row items-center gap-2 pb-0.5 self-end">
                       <ToggleRow label="Save ESR plot" checked={savePlot} onChange={setSavePlot} />
                       <ToggleRow label="Ignore checks" checked={ignoreChecks} onChange={setIgnoreChecks} />
                     </div>
