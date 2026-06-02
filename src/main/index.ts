@@ -20,7 +20,7 @@ if (!gotLock) {
   })
 }
 
-// Compares two semver strings (e.g. "0.5.5" > "0.5.4", "0.5.5" > "0.5.5-rc1")
+// Compares two semver strings; pre-release order: alpha < beta < rc < release
 // Returns positive if a > b, negative if a < b, 0 if equal
 function compareVersions(a: string, b: string): number {
   const parse = (v: string) => {
@@ -37,8 +37,17 @@ function compareVersions(a: string, b: string): number {
   // Same numeric version: release (no pre) beats RC
   if (va.pre === null && vb.pre !== null) return 1
   if (va.pre !== null && vb.pre === null) return -1
-  // Both are RC: compare the numeric suffix (rc2 > rc1)
+  // Both have pre-release: compare label weight first, then numeric suffix
+  // alpha < beta < rc
   if (va.pre !== null && vb.pre !== null) {
+    const labelWeight = (pre: string) => {
+      if (/^rc/i.test(pre)) return 3
+      if (/^beta/i.test(pre)) return 2
+      if (/^alpha/i.test(pre)) return 1
+      return 0
+    }
+    const lw = labelWeight(va.pre) - labelWeight(vb.pre)
+    if (lw !== 0) return lw
     const na = parseInt(va.pre.replace(/\D/g, ''), 10) || 0
     const nb = parseInt(vb.pre.replace(/\D/g, ''), 10) || 0
     return na - nb
