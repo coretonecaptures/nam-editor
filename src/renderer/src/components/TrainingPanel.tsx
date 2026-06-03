@@ -537,6 +537,58 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     }
   }
 
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null)
+
+  const handleInputDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDropTargetId(null)
+    const files = Array.from(e.dataTransfer.files)
+    const wavs = files.filter(f => f.name.toLowerCase().endsWith('.wav'))
+    if (wavs.length === 0) return
+    const p = window.api.getPathForFile(wavs[0])
+    if (!p) return
+    setInputPath(p)
+    if (p !== settings.namTrainingInputWav) onSaveSettings({ ...settings, namTrainingInputWav: p })
+  }
+
+  const handleOutputWavDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDropTargetId(null)
+    const files = Array.from(e.dataTransfer.files)
+    const wavs = files.filter(f => f.name.toLowerCase().endsWith('.wav'))
+    const paths = wavs.map(f => window.api.getPathForFile(f)).filter(Boolean) as string[]
+    if (paths.length === 0) return
+    setOutputPaths(prev => {
+      const next = [...prev, ...paths.filter(p => !prev.includes(p))]
+      if (!trainPath) {
+        const normalized = next[0].replace(/\\/g, '/')
+        setTrainPath(normalized.split('/').slice(0, -1).join('/'))
+      }
+      return next
+    })
+  }
+
+  const handleFolderDrop = async (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDropTargetId(null)
+    const files = Array.from(e.dataTransfer.files)
+    if (files.length === 0) return
+    const p = window.api.getPathForFile(files[0])
+    if (!p) return
+    // Check if it's a directory; also accept a WAV file's parent folder
+    const stat = await window.api.statPath(p)
+    if (stat.isDirectory) {
+      setFolderRunPath(p)
+    } else if (p.toLowerCase().endsWith('.wav')) {
+      // Dropped a WAV — use its parent folder
+      const parent = p.replace(/\\/g, '/').split('/').slice(0, -1).join('/')
+      setFolderRunPath(parent)
+    }
+  }
+
   const handleBrowseOutputs = async () => {
     const paths = await window.api.openAudioFiles()
     if (!paths || paths.length === 0) return
@@ -1903,7 +1955,14 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/[0.05] p-4 space-y-4">
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-cyan-500">Captures</span>
                 <Field label="Input DI" hint="Trainer reference / DI file">
-                  <PathPicker value={inputPath} placeholder="Select the trainer input WAV" onChange={setInputPath} onBrowse={handleBrowseInput} />
+                  <div
+                    onDragOver={e => { e.preventDefault(); setDropTargetId('input-di') }}
+                    onDragLeave={() => setDropTargetId(null)}
+                    onDrop={handleInputDrop}
+                    className={`rounded-lg transition-colors ${dropTargetId === 'input-di' ? 'ring-2 ring-cyan-400 bg-cyan-500/10' : ''}`}
+                  >
+                    <PathPicker value={inputPath} placeholder="Select or drop DI WAV here" onChange={setInputPath} onBrowse={handleBrowseInput} />
+                  </div>
                 </Field>
                 {newRunMode === 'files' ? (
                   <Field label="Output WAVs">
@@ -1912,9 +1971,14 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                         <button onClick={() => { void handleBrowseOutputs() }} className="px-3 py-2 rounded-lg text-[13px] font-medium bg-field border border-field-bd hover:bg-hov text-nm-text transition-colors">Choose WAVs…</button>
                         {outputPaths.length > 0 && <button onClick={() => setOutputPaths([])} className="px-3 py-2 rounded-lg text-[13px] font-medium bg-field border border-field-bd hover:bg-hov text-nm-text transition-colors">Clear</button>}
                       </div>
-                      <div className="rounded-lg border border-field-bd bg-field px-3 py-2 text-[12px] text-nm-text font-mono min-h-[72px] max-h-[160px] overflow-y-auto">
+                      <div
+                        onDragOver={e => { e.preventDefault(); setDropTargetId('output-wavs') }}
+                        onDragLeave={() => setDropTargetId(null)}
+                        onDrop={handleOutputWavDrop}
+                        className={`rounded-lg border px-3 py-2 text-[12px] text-nm-text font-mono min-h-[72px] max-h-[160px] overflow-y-auto transition-colors ${dropTargetId === 'output-wavs' ? 'border-cyan-400 bg-cyan-500/10 ring-2 ring-cyan-400' : 'border-field-bd bg-field'}`}
+                      >
                         {outputPaths.length === 0
-                          ? <span className="text-nm-text-3 italic">No output WAVs selected yet.</span>
+                          ? <span className="text-nm-text-3 italic">{dropTargetId === 'output-wavs' ? 'Drop WAVs here…' : 'No output WAVs selected — choose or drop WAVs here.'}</span>
                           : <div className="space-y-0.5">{outputPaths.map(p => <div key={p} className="break-all">{p}</div>)}</div>
                         }
                       </div>
@@ -1924,16 +1988,23 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   <div>
                     <div className="text-[12px] font-medium text-nm-text-3 mb-1">Folder</div>
                     <div className="text-[11px] text-nm-text-3 mb-2">Queue every WAV in a folder using a saved preset or custom settings.</div>
-                    <PathPicker
-                      value={folderRunPath}
-                      placeholder="Choose a folder containing WAV files"
-                      onChange={setFolderRunPath}
-                      onBrowse={async () => {
-                        const path = await window.api.openFolder(folderRunPath || trainPath || undefined)
-                        if (path) setFolderRunPath(path)
-                      }}
-                      browseLabel="Folder…"
-                    />
+                    <div
+                      onDragOver={e => { e.preventDefault(); setDropTargetId('folder-run') }}
+                      onDragLeave={() => setDropTargetId(null)}
+                      onDrop={e => { void handleFolderDrop(e) }}
+                      className={`rounded-lg transition-colors ${dropTargetId === 'folder-run' ? 'ring-2 ring-cyan-400 bg-cyan-500/10' : ''}`}
+                    >
+                      <PathPicker
+                        value={folderRunPath}
+                        placeholder="Choose or drop a folder containing WAV files"
+                        onChange={setFolderRunPath}
+                        onBrowse={async () => {
+                          const path = await window.api.openFolder(folderRunPath || trainPath || undefined)
+                          if (path) setFolderRunPath(path)
+                        }}
+                        browseLabel="Folder…"
+                      />
+                    </div>
                   </div>
                 )}
               </div>
