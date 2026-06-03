@@ -112,8 +112,12 @@ const api = {
   getTrainerState: (): Promise<TrainerStateSnapshot> => ipcRenderer.invoke('trainer:getState'),
   startTrainerRun: (payload: TrainerStartPayload): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('trainer:start', payload),
-  enqueueTrainerRuns: (payloads: TrainerStartPayload[]): Promise<{ success: boolean; error?: string; queued?: number }> =>
-    ipcRenderer.invoke('trainer:enqueue', payloads),
+  enqueueTrainerRuns: (payloads: TrainerStartPayload[], opts?: { staged?: boolean }): Promise<{ success: boolean; error?: string; queued?: number }> =>
+    ipcRenderer.invoke('trainer:enqueue', payloads, opts),
+  unstageTrainerSubmission: (submissionId: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('trainer:unstageSubmission', submissionId),
+  stageTrainerJob: (jobId: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('trainer:stageJob', jobId),
   setTrainerProfilesState: (payload: unknown): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('trainer:setProfilesState', payload),
   getTrainerProfilesState: (): Promise<unknown> => ipcRenderer.invoke('trainer:getProfilesState'),

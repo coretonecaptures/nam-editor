@@ -1299,7 +1299,7 @@ function getTrainerArchitectureFolderName(architecture: TrainerArchitecture): st
   }
 }
 
-function createTrainerJob(payload: TrainerStartPayload): TrainerQueueJob {
+function createTrainerJob(payload: TrainerStartPayload, staged = false): TrainerQueueJob {
   const jobId = crypto.randomUUID()
   const baseName = deriveTrainerModelName(payload.outputPath, payload.architecture, payload.namingTemplate, payload.profileName, payload.thresholdEsr)
   const modelName = payload.modelNameSuffix ? `${baseName}${payload.modelNameSuffix}` : baseName
@@ -1309,7 +1309,7 @@ function createTrainerJob(payload: TrainerStartPayload): TrainerQueueJob {
   const workspacePath = getTrainerRunWorkspacePath(jobId, modelName, payload.architecture)
   return {
     jobId,
-    status: 'queued',
+    status: staged ? 'staged' : 'queued',
     pythonPath: payload.pythonPath.trim(),
     inputPath: payload.inputPath.trim(),
     outputPath: payload.outputPath.trim(),
@@ -1622,7 +1622,7 @@ async function buildTrainerPayloadsForProfile(
   return payloads
 }
 
-async function enqueueTrainingPayloads(payloads: TrainerStartPayload[]): Promise<number> {
+async function enqueueTrainingPayloads(payloads: TrainerStartPayload[], staged = false): Promise<number> {
   if (payloads.length === 0) return 0
   const existingKeys = new Set(
     trainerQueue
@@ -1646,7 +1646,7 @@ async function enqueueTrainingPayloads(payloads: TrainerStartPayload[]): Promise
     emitTrainerState()
     return 0
   }
-  const jobs = uniquePayloads.map((payload) => createTrainerJob(payload))
+  const jobs = uniquePayloads.map((payload) => createTrainerJob(payload, staged))
   trainerQueue.push(...jobs)
   emitTrainerState()
   for (const job of jobs) {
@@ -1659,7 +1659,7 @@ async function enqueueTrainingPayloads(payloads: TrainerStartPayload[]): Promise
     }
   }
   emitTrainerState()
-  await pumpTrainerQueue()
+  if (!staged) await pumpTrainerQueue()
   return jobs.length
 }
 
@@ -4170,7 +4170,7 @@ app.whenReady().then(async () => {
     return { success: true }
   })
 
-  ipcMain.handle('trainer:enqueue', async (_event, payloads: TrainerStartPayload[]) => {
+  ipcMain.handle('trainer:enqueue', async (_event, payloads: TrainerStartPayload[], opts?: { staged?: boolean }) => {
     const validPayloads = payloads
       .map((payload) => ({
         ...payload,
@@ -4183,7 +4183,7 @@ app.whenReady().then(async () => {
     if (validPayloads.length === 0) {
       return { success: false, error: 'No valid training jobs were provided.' }
     }
-    await enqueueTrainingPayloads(validPayloads)
+    await enqueueTrainingPayloads(validPayloads, opts?.staged ?? false)
     return { success: true, queued: validPayloads.length }
   })
 
@@ -4538,10 +4538,10 @@ app.whenReady().then(async () => {
     let found = false
     const activeIsInBatch = trainerState.activeJobId != null &&
       trainerQueue.find(j => j.jobId === trainerState.activeJobId)?.submissionId === submissionId
-    // Cancel all queued jobs in this submission
+    // Cancel all queued/staged jobs in this submission
     trainerQueue = trainerQueue.map((job) => {
       if (job.submissionId !== submissionId) return job
-      if (job.status === 'queued') {
+      if (job.status === 'queued' || job.status === 'staged') {
         found = true
         return { ...job, status: 'canceled', finishedAt: canceledAt, error: 'Batch canceled.' }
       }
@@ -4553,6 +4553,28 @@ app.whenReady().then(async () => {
       trainerChild.kill()
     }
     if (!found) return { success: false, error: 'No queued jobs found for that batch.' }
+    emitTrainerState()
+    return { success: true }
+  })
+
+  ipcMain.handle('trainer:unstageSubmission', async (_event, submissionId: string) => {
+    let found = false
+    trainerQueue = trainerQueue.map((job) => {
+      if (job.submissionId !== submissionId || job.status !== 'staged') return job
+      found = true
+      return { ...job, status: 'queued' }
+    })
+    if (!found) return { success: false, error: 'No staged jobs found for that batch.' }
+    emitTrainerState()
+    await pumpTrainerQueue()
+    return { success: true }
+  })
+
+  ipcMain.handle('trainer:stageJob', async (_event, jobId: string) => {
+    const job = trainerQueue.find((j) => j.jobId === jobId)
+    if (!job) return { success: false, error: 'Job not found.' }
+    if (job.status !== 'queued') return { success: false, error: 'Only queued jobs can be moved to staged.' }
+    trainerQueue = trainerQueue.map((j) => j.jobId === jobId ? { ...j, status: 'staged' } : j)
     emitTrainerState()
     return { success: true }
   })

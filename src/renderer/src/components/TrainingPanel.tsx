@@ -18,6 +18,8 @@ import { HelpPopover } from './HelpPopover'
 import { effectiveFormula, resolveOutputFormula } from '../utils/resolveOutputFormula'
 import { EsrCurve, QualityBars, Sparkline, StackedMeter } from './dashboard/Charts'
 
+type BatchWavItem = { id: string; path: string; name: string; fromFolder?: string }
+
 interface Props {
   settings: AppSettings
   onSaveSettings: (settings: AppSettings) => void
@@ -126,23 +128,20 @@ function showNativeTextContextMenu(event: MouseEvent<HTMLElement>) {
 
 export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMode, onOpenSetupGuide }: Props) {
   const [inputPath, setInputPath] = useState(settings.namTrainingInputWav || '')
-  const [section, setSection] = useState<'live' | 'queue' | 'history' | 'new'>('new')
-  const [newRunMode, setNewRunMode] = useState<'files' | 'folder'>(
-    initialRunMode === 'folder' ? 'folder' : 'files'
-  )
+  const [section, setSection] = useState<'live' | 'queue' | 'batches' | 'history' | 'new'>('new')
+  const [batchWavList, setBatchWavList] = useState<BatchWavItem[]>([])
+  const [separateBatches, setSeparateBatches] = useState(false)
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set())
   const [collapsedBatches, setCollapsedBatches] = useState<Set<string>>(new Set())
   const [esrSeries, setEsrSeries] = useState<{ epoch: number; esr: number }[]>([])
   const [queueView, setQueueView] = useState<'batches' | 'compact' | 'board'>('batches')
   const [logExpanded, setLogExpanded] = useState(true)
   const [watchFoldersExpanded, setWatchFoldersExpanded] = useState(false)
   const [watcherFilesModal, setWatcherFilesModal] = useState<{ profileId: string; profileName: string; watchFolder: string; architectures: string[] } | null>(null)
-  const [outputPaths, setOutputPaths] = useState<string[]>([])
   const [trainPath, setTrainPath] = useState('')
   const [manualRoutingMode, setManualRoutingMode] = useState<'root' | 'sibling_processed'>('root')
   const [formulaOverrideActive, setFormulaOverrideActive] = useState(false)
   const [graphFormulaOverrideActive, setGraphFormulaOverrideActive] = useState(false)
-  const [folderRunPath, setFolderRunPath] = useState('')
-  const [folderRunProfileId, setFolderRunProfileId] = useState<'custom' | string>('custom')
   const [selectedPresetId, setSelectedPresetId] = useState<string>(CUSTOM_PRESET_ID)
   const [namMode, setNamMode] = useState<'a1' | 'a2'>('a1')
   const [detectedNamVersion, setDetectedNamVersion] = useState<'a1' | 'a2' | 'unknown'>('unknown')
@@ -194,8 +193,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     if (!initialRunMode) return
     if (initialRunMode === 'queue') setSection('queue')
     else if (initialRunMode === 'history') setSection('history')
-    else if (initialRunMode === 'folder') { setSection('new'); setNewRunMode('folder') }
-    else { setSection('new'); setNewRunMode('files') }
+    else setSection('new')
   }, [initialRunMode])
 
   useEffect(() => {
@@ -246,6 +244,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   )
   const filteredQueue = useMemo(
     () => trainerState.queue.filter((job) => {
+      if (job.status === 'staged') return false  // staged jobs shown in Batches section only
       if (queueProfileFilter !== 'all' && (job.profileId ?? 'manual') !== queueProfileFilter) return false
       if (queueStatusFilter !== 'all' && job.status !== queueStatusFilter) return false
       if (queueArchitectureFilter !== 'all' && job.architecture !== queueArchitectureFilter) return false
@@ -253,6 +252,25 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     }),
     [queueArchitectureFilter, queueProfileFilter, queueStatusFilter, trainerState.queue]
   )
+  const groupedStagedQueue = useMemo(() => {
+    const staged = trainerState.queue.filter((job) => job.status === 'staged')
+    const groups: Array<{ key: string; label: string; createdAt: string | null; jobs: TrainerQueueJob[] }> = []
+    for (const job of staged) {
+      const key = job.submissionId ?? `ungrouped:${job.jobId}`
+      const existing = groups[groups.length - 1]
+      if (existing && existing.key === key) {
+        existing.jobs.push(job)
+      } else {
+        groups.push({
+          key,
+          label: job.submissionLabel ?? (job.profileName ?? 'Batch'),
+          createdAt: job.submissionCreatedAt ?? null,
+          jobs: [job],
+        })
+      }
+    }
+    return groups
+  }, [trainerState.queue])
   const groupedQueue = useMemo(() => {
     const groups: Array<{ key: string; label: string; createdAt: string | null; jobs: TrainerQueueJob[] }> = []
     for (const job of filteredQueue) {
@@ -321,17 +339,16 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const replicateEsrTone = getEsrTone(trainerState.replicateEsr)
 
   const resolvedModelName = useMemo(() => {
-    const first = outputPaths[0] ?? ''
+    const first = batchWavList[0]?.path ?? ''
     const base = first.replace(/\\/g, '/').split('/').pop()?.replace(/\.[^.]+$/, '').trim() || 'model'
     return base
-  }, [outputPaths])
+  }, [batchWavList])
 
   const manualRoutingSourceFolder = useMemo(() => {
-    if (newRunMode === 'folder') return folderRunPath.trim()
-    const first = outputPaths[0]?.trim() ?? ''
+    const first = batchWavList[0]?.path ?? ''
     if (!first) return ''
     return first.replace(/\\/g, '/').split('/').slice(0, -1).join('/')
-  }, [folderRunPath, outputPaths, newRunMode])
+  }, [batchWavList])
 
   const availablePresets = useMemo(
     () => settings.trainingPresets.filter((preset) => preset.architectures.length > 0),
@@ -341,8 +358,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     () => selectedPresetId === CUSTOM_PRESET_ID ? null : availablePresets.find((preset) => preset.id === selectedPresetId) ?? null,
     [availablePresets, selectedPresetId]
   )
-  const filesPreset = newRunMode === 'files' ? activePreset : null
-  const manualFolderPresets = availablePresets
+
 
   // Output formula: global setting overridable per preset
   const activeFormula = useMemo(
@@ -354,11 +370,11 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     () => effectiveFormula(settings.trainingGraphFormula ?? '', activePreset?.graphOutputFormulaOverride),
     [settings.trainingGraphFormula, activePreset]
   )
-  // Staging dir for files mode = parent directory of the first selected WAV
+  // Staging dir = parent directory of the first WAV in the batch list
   const filesStagingDir = useMemo(() => {
-    if (outputPaths.length === 0) return ''
-    return outputPaths[0].replace(/\\/g, '/').split('/').slice(0, -1).join('/')
-  }, [outputPaths])
+    if (batchWavList.length === 0) return ''
+    return batchWavList[0].path.replace(/\\/g, '/').split('/').slice(0, -1).join('/')
+  }, [batchWavList])
   // Pre-resolve formula for files mode preview (uses first arch)
   const formulaPreviewPath = useMemo(() => {
     if (!activeFormula || !filesStagingDir) return null
@@ -371,19 +387,6 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     return resolveOutputFormula(activeGraphFormula, filesStagingDir, arch)
   }, [activeGraphFormula, filesStagingDir, activePreset, architectures])
 
-  // Pre-resolve formula for folder run mode preview
-  const folderFormulaPreviewPath = useMemo(() => {
-    if (!activeFormula || !folderRunPath.trim()) return null
-    const stagingDir = folderRunPath.trim().replace(/\\/g, '/').replace(/\/+$/, '')
-    const arch = (activePreset?.architectures[0] ?? architectures[0]) || 'Standard'
-    return resolveOutputFormula(activeFormula, stagingDir, arch)
-  }, [activeFormula, folderRunPath, activePreset, architectures])
-  const folderGraphFormulaPreviewPath = useMemo(() => {
-    if (!activeGraphFormula || !folderRunPath.trim()) return null
-    const stagingDir = folderRunPath.trim().replace(/\\/g, '/').replace(/\/+$/, '')
-    const arch = (activePreset?.architectures[0] ?? architectures[0]) || 'Standard'
-    return resolveOutputFormula(activeGraphFormula, stagingDir, arch)
-  }, [activeGraphFormula, folderRunPath, activePreset, architectures])
   const filteredHistory = useMemo(
     () => trainerState.history.filter((entry) => {
       if (historyProfileFilter !== 'all' && (entry.profileId ?? 'manual') !== historyProfileFilter) return false
@@ -444,7 +447,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const canQueue =
     !!settings.namPythonPath.trim() &&
     !!inputPath.trim() &&
-    outputPaths.length > 0 &&
+    batchWavList.length > 0 &&
     (
       activePreset
         ? (!!trainPath.trim() || (!!activeFormula && !formulaOverrideActive && !!filesStagingDir))
@@ -512,44 +515,6 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     }
   }
 
-  const getManualFolderRouting = (architectureName?: string) => {
-    if (manualRoutingMode === 'sibling_processed') {
-      const sourceDir = folderRunPath.trim().replace(/\\/g, '/').replace(/\/+$/, '')
-      const processedRoot = `${sourceDir}/_Processed`
-      return {
-        finalModelRoot: `${processedRoot}/Models`,
-        processedWavRoot: '',
-        graphRoot: `${processedRoot}/Graphs`,
-        graphRootResolved: false,
-        sourcePostProcess: 'keep' as const,
-      }
-    }
-    if ((activeFormula && !formulaOverrideActive) || (activeGraphFormula && !graphFormulaOverrideActive)) {
-      const stagingDir = folderRunPath.trim().replace(/\\/g, '/').replace(/\/+$/, '')
-      const resolvedNam = (activeFormula && !formulaOverrideActive && architectureName)
-        ? resolveOutputFormula(activeFormula, stagingDir, architectureName)
-        : null
-      const resolvedGraph = (activeGraphFormula && !graphFormulaOverrideActive && architectureName)
-        ? resolveOutputFormula(activeGraphFormula, stagingDir, architectureName)
-        : null
-      if (resolvedNam || resolvedGraph) {
-        return {
-          finalModelRoot: resolvedNam ?? trainPath.trim(),
-          processedWavRoot: '',
-          graphRoot: resolvedGraph ?? trainPath.trim(),
-          graphRootResolved: !!resolvedGraph,
-          sourcePostProcess: 'keep' as const,
-        }
-      }
-    }
-    return {
-      finalModelRoot: trainPath.trim(),
-      processedWavRoot: '',
-      graphRoot: trainPath.trim(),
-      graphRootResolved: false,
-      sourcePostProcess: 'keep' as const,
-    }
-  }
 
   const handleBrowseInput = async () => {
     const path = await window.api.openAudioFile()
@@ -575,6 +540,21 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     if (p !== settings.namTrainingInputWav) onSaveSettings({ ...settings, namTrainingInputWav: p })
   }
 
+  const addWavsToBatchList = (paths: string[], fromFolder?: string) => {
+    setBatchWavList(prev => {
+      const existingPaths = new Set(prev.map(item => item.path))
+      const newItems = paths
+        .filter(p => !existingPaths.has(p))
+        .map(p => ({
+          id: `${Date.now()}-${Math.random()}`,
+          path: p,
+          name: p.replace(/\\/g, '/').split('/').pop() ?? p,
+          fromFolder,
+        }))
+      return [...prev, ...newItems]
+    })
+  }
+
   const handleOutputWavDrop = (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
@@ -583,14 +563,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     const wavs = files.filter(f => f.name.toLowerCase().endsWith('.wav'))
     const paths = wavs.map(f => window.api.getPathForFile(f)).filter(Boolean) as string[]
     if (paths.length === 0) return
-    setOutputPaths(prev => {
-      const next = [...prev, ...paths.filter(p => !prev.includes(p))]
-      if (!trainPath) {
-        const normalized = next[0].replace(/\\/g, '/')
-        setTrainPath(normalized.split('/').slice(0, -1).join('/'))
-      }
-      return next
-    })
+    addWavsToBatchList(paths)
   }
 
   const handleFolderDrop = async (e: React.DragEvent) => {
@@ -601,25 +574,26 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     if (files.length === 0) return
     const p = window.api.getPathForFile(files[0])
     if (!p) return
-    // Check if it's a directory; also accept a WAV file's parent folder
     const stat = await window.api.statPath(p)
     if (stat.isDirectory) {
-      setFolderRunPath(p)
+      const wavPaths = await window.api.listWavFiles(p)
+      addWavsToBatchList(wavPaths, p)
     } else if (p.toLowerCase().endsWith('.wav')) {
-      // Dropped a WAV — use its parent folder
-      const parent = p.replace(/\\/g, '/').split('/').slice(0, -1).join('/')
-      setFolderRunPath(parent)
+      addWavsToBatchList([p])
     }
   }
 
   const handleBrowseOutputs = async () => {
     const paths = await window.api.openAudioFiles()
     if (!paths || paths.length === 0) return
-    setOutputPaths(paths)
-    if (!trainPath) {
-      const normalized = paths[0].replace(/\\/g, '/')
-      setTrainPath(normalized.split('/').slice(0, -1).join('/'))
-    }
+    addWavsToBatchList(paths)
+  }
+
+  const handleBrowseFolder = async () => {
+    const p = await window.api.openFolder(trainPath || undefined)
+    if (!p) return
+    const wavPaths = await window.api.listWavFiles(p)
+    addWavsToBatchList(wavPaths, p)
   }
 
   const applyPreset = (presetId: string) => {
@@ -647,7 +621,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     return { normalizeWav: on, normalizeWavTargetDb: Number.isFinite(db) ? db : globalDb }
   }
 
-  const handleQueue = async () => {
+  const handleQueue = async (staged = false) => {
     setLaunchError('')
     const parsedEpochs = activePreset ? activePreset.epochs : Number.parseInt(epochs, 10)
     const parsedLatency = activePreset
@@ -678,6 +652,10 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       setLaunchError('Choose an output root or set an output formula in Settings before queueing.')
       return
     }
+    if (batchWavList.length === 0) {
+      setLaunchError('Add at least one WAV file before queueing.')
+      return
+    }
     const captureDefaultsEnabled = settings.enableCaptureDefaults
     const modeledBy = captureDefaultsEnabled && settings.defaultModeledBy.trim() !== ''
       ? settings.defaultModeledBy.trim()
@@ -696,187 +674,76 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     const { normalizeWav: resolvedNormalizeWav, normalizeWavTargetDb: resolvedNormalizeDb } =
       resolveNormalize(activeNormalizeOverride as 'global' | 'on' | 'off', activeNormalizeTargetDb)
 
-    const result = await window.api.enqueueTrainerRuns(
-      (() => {
-        const submissionId = `manual-direct-${Date.now()}`
-        const submissionLabel = `Run WAVs - ${outputPaths.length} capture${outputPaths.length === 1 ? '' : 's'}`
-        const submissionCreatedAt = new Date().toISOString()
-        const jobArchitectures = activeNamMode === 'a2' ? ['a2'] : targetArchitectures
-        return outputPaths.flatMap((outputPath) => {
-          return jobArchitectures.map((architecture) => {
-            const routing = getManualRoutingForOutput(outputPath.trim(), architecture)
-            const profileCfg = activeNamMode === 'a1' ? lookupProfileConfig(architecture, settings.userCaptureProfiles ?? []) : null
-            return {
-              pythonPath: resolvedPythonPath,
-              inputPath: inputPath.trim(),
-              outputPath: outputPath.trim(),
-              trainPath: routing.finalModelRoot,
-              namMode: activeNamMode,
-              architecture,
-              waveNetConfig: profileCfg?.waveNetConfig ?? null,
-              lr: profileCfg?.lr ?? 0.004,
-              lrDecay: profileCfg?.lrDecay ?? 0.002,
-              batchSize: profileCfg?.batchSize ?? 16,
-              ny: profileCfg?.ny ?? 8192,
-              fitMrstft: profileCfg?.fitMrstft ?? true,
-              normalizeWav: resolvedNormalizeWav,
-              normalizeWavTargetDb: resolvedNormalizeDb,
-              captureProfileId: activeNamMode === 'a1' ? architecture : null,
-              epochs: parsedEpochs,
-              latency: parsedLatency,
-              thresholdEsr: parsedThresholdEsr,
-              savePlot: activePreset?.savePlot ?? savePlot,
-              silent: true,
-              ignoreChecks: activePreset?.ignoreChecks ?? ignoreChecks,
-              sourceMode: 'manual-direct',
-              finalModelRoot: routing.finalModelRoot,
-              processedWavRoot: routing.processedWavRoot,
-              graphRoot: routing.graphRoot,
-              graphRootResolved: routing.graphRootResolved,
-              sourcePostProcess: routing.sourcePostProcess,
-              namingTemplate: '{basename}',
-              profileId: activePreset?.id ?? null,
-              profileName: activePreset?.name ?? null,
-              modeledBy,
-              inputLevelDbu: Number.isFinite(inputLevelDbu) ? inputLevelDbu : null,
-              outputLevelDbu: Number.isFinite(outputLevelDbu) ? outputLevelDbu : null,
-              submissionId,
-              submissionLabel,
-              submissionCreatedAt,
-            }
-          })
-        })
-      })()
-    )
+    const now = Date.now()
+    const sharedSubmissionId = separateBatches ? null : `manual-direct-${now}`
+    const sharedLabel = `Batch - ${batchWavList.length} capture${batchWavList.length === 1 ? '' : 's'}`
+    const sharedCreatedAt = new Date().toISOString()
+    const jobArchitectures = activeNamMode === 'a2' ? ['a2'] : targetArchitectures
+
+    const payloads = batchWavList.flatMap((wavItem, idx) => {
+      const submissionId = separateBatches ? `manual-direct-${now}-${idx}` : sharedSubmissionId!
+      const submissionLabel = separateBatches ? wavItem.name : sharedLabel
+      return jobArchitectures.map((architecture) => {
+        const routing = getManualRoutingForOutput(wavItem.path, architecture)
+        const profileCfg = activeNamMode === 'a1' ? lookupProfileConfig(architecture, settings.userCaptureProfiles ?? []) : null
+        return {
+          pythonPath: resolvedPythonPath,
+          inputPath: inputPath.trim(),
+          outputPath: wavItem.path,
+          trainPath: routing.finalModelRoot,
+          namMode: activeNamMode,
+          architecture,
+          waveNetConfig: profileCfg?.waveNetConfig ?? null,
+          lr: profileCfg?.lr ?? 0.004,
+          lrDecay: profileCfg?.lrDecay ?? 0.002,
+          batchSize: profileCfg?.batchSize ?? 16,
+          ny: profileCfg?.ny ?? 8192,
+          fitMrstft: profileCfg?.fitMrstft ?? true,
+          normalizeWav: resolvedNormalizeWav,
+          normalizeWavTargetDb: resolvedNormalizeDb,
+          captureProfileId: activeNamMode === 'a1' ? architecture : null,
+          epochs: parsedEpochs,
+          latency: parsedLatency,
+          thresholdEsr: parsedThresholdEsr,
+          savePlot: activePreset?.savePlot ?? savePlot,
+          silent: true,
+          ignoreChecks: activePreset?.ignoreChecks ?? ignoreChecks,
+          sourceMode: 'manual-direct' as const,
+          finalModelRoot: routing.finalModelRoot,
+          processedWavRoot: routing.processedWavRoot,
+          graphRoot: routing.graphRoot,
+          graphRootResolved: routing.graphRootResolved,
+          sourcePostProcess: routing.sourcePostProcess,
+          namingTemplate: '{basename}',
+          profileId: activePreset?.id ?? null,
+          profileName: activePreset?.name ?? null,
+          modeledBy,
+          inputLevelDbu: Number.isFinite(inputLevelDbu) ? inputLevelDbu : null,
+          outputLevelDbu: Number.isFinite(outputLevelDbu) ? outputLevelDbu : null,
+          submissionId,
+          submissionLabel,
+          submissionCreatedAt: sharedCreatedAt,
+        }
+      })
+    })
+
+    const result = await window.api.enqueueTrainerRuns(payloads, { staged })
     if (!result.success) {
       setLaunchError(result.error ?? 'Training jobs could not be queued.')
       return
     }
     setLaunchError('')
     setQueueActionError('')
+    if (staged) setSection('batches')
   }
 
-  const buildCustomFolderRunPreset = (): TrainingPreset | null => {
-    const parsedEpochs = Number.parseInt(epochs, 10)
-    const parsedLatency = latency.trim() === '' ? null : Number.parseInt(latency.trim(), 10)
-    const parsedThresholdEsr = thresholdEsr.trim() === '' ? null : Number.parseFloat(thresholdEsr.trim())
-    if (!Number.isFinite(parsedEpochs) || parsedEpochs <= 0) {
-      setLaunchError('Epochs must be a positive whole number.')
-      return null
-    }
-    if (latency.trim() !== '' && (!Number.isFinite(parsedLatency) || parsedLatency! < 0)) {
-      setLaunchError('Latency must be blank or a non-negative integer sample offset.')
-      return null
-    }
-    if (thresholdEsr.trim() !== '' && (!Number.isFinite(parsedThresholdEsr) || parsedThresholdEsr! <= 0)) {
-      setLaunchError('Target ESR must be blank or a positive number.')
-      return null
-    }
-    return {
-      id: 'manual-folder-run-custom',
-      name: 'Custom Folder Run',
-      namMode,
-      architectures: namMode === 'a2' ? ['a2'] : architectures,
-      epochs: parsedEpochs,
-      thresholdEsr: parsedThresholdEsr,
-      latencyMode: parsedLatency == null ? 'auto' : 'manual',
-      latencyValue: parsedLatency,
-      savePlot,
-      ignoreChecks,
-      normalizeWav: normalizeWavOverride,
-      normalizeWavTargetDb: normalizeWavTargetDb.trim() !== '' ? Number.parseFloat(normalizeWavTargetDb) : null,
-    }
-  }
-
-  const handleRunFolderOnce = async () => {
-    setLaunchError('')
-    if (!settings.namPythonPath.trim()) {
-      setLaunchError('Set the NAM Python executable in Settings first.')
-      return
-    }
-    if (!inputPath.trim()) {
-      setLaunchError('Choose the trainer input WAV before running a folder.')
-      return
-    }
-    if (!folderRunPath.trim()) {
-      setLaunchError('Choose a folder of WAV files to run once.')
-      return
-    }
-    const preset = folderRunProfileId === 'custom'
-      ? buildCustomFolderRunPreset()
-      : manualFolderPresets.find((item) => item.id === folderRunProfileId) ?? null
-    if (!preset) {
-      setLaunchError('Select a saved training profile or use the current custom settings.')
-      return
-    }
-    if (manualRoutingMode === 'root' && !trainPath.trim() && (!activeFormula || formulaOverrideActive)) {
-      setLaunchError('Choose an output root or set an output formula in Settings before running a folder.')
-      return
-    }
-    const firstArch = preset.architectures[0] ?? 'Standard'
-    const routing = getManualFolderRouting(firstArch)
-    const captureDefaultsEnabled = settings.enableCaptureDefaults
-    const modeledBy = captureDefaultsEnabled && settings.defaultModeledBy.trim() !== ''
-      ? settings.defaultModeledBy.trim()
-      : null
-    const inputLevelDbu = captureDefaultsEnabled && settings.defaultInputLevel.trim() !== ''
-      ? Number.parseFloat(settings.defaultInputLevel.trim())
-      : null
-    const outputLevelDbu = captureDefaultsEnabled && settings.defaultOutputLevel.trim() !== ''
-      ? Number.parseFloat(settings.defaultOutputLevel.trim())
-      : null
-    const submissionId = `manual-folder-${Date.now()}`
-    const submissionLabel = `Folder Run - ${folderRunPath.trim().replace(/\\/g, '/').split('/').pop() || 'Folder'}`
-    const submissionCreatedAt = new Date().toISOString()
-    const result = await window.api.runTrainerFolderOnce({
-      profile: {
-        id: preset.id,
-        name: preset.name,
-        sourceMode: 'manual-folder-run',
-        enabled: true,
-        autoRun: false,
-        namingTemplate: '{basename}',
-        architectures: preset.architectures,
-        epochs: preset.epochs,
-        thresholdEsr: preset.thresholdEsr,
-        latencyMode: preset.latencyMode,
-        latencyValue: preset.latencyValue,
-        savePlot: preset.savePlot,
-        ignoreChecks: preset.ignoreChecks,
-        modeledBy,
-        inputLevelDbu: Number.isFinite(inputLevelDbu) ? inputLevelDbu : null,
-        outputLevelDbu: Number.isFinite(outputLevelDbu) ? outputLevelDbu : null,
-        sourcePostProcess: routing.sourcePostProcess,
-        watchFolder: '',
-        processedWavRoot: routing.processedWavRoot,
-        graphRoot: routing.graphRoot,
-        graphRootResolved: routing.graphRootResolved,
-        finalModelRoot: routing.finalModelRoot,
-      },
-      folderPath: folderRunPath.trim(),
-      pythonPath: settings.namPythonPath.trim(),
-      inputPath: inputPath.trim(),
-      ...resolveNormalize(normalizeWavOverride, normalizeWavTargetDb),
-      submissionId,
-      submissionLabel,
-      submissionCreatedAt,
-    })
-    if (!result.success) {
-      setLaunchError(result.error ?? 'Folder run could not be queued.')
-      return
-    }
-    setLaunchError('')
-    setQueueActionError('')
-  }
 
   const queuedCount = trainerState.queue.filter((job) => job.status === 'queued').length
+  const stagedCount = trainerState.queue.filter((job) => job.status === 'staged').length
   const successCount = trainerState.queue.filter((job) => job.status === 'success').length
   const failedCount = trainerState.queue.filter((job) => job.status === 'error').length
-  const folderRunPreset = folderRunProfileId === 'custom'
-    ? null
-    : manualFolderPresets.find((item) => item.id === folderRunProfileId) ?? null
-  const currentPresetId = newRunMode === 'files' ? selectedPresetId : folderRunProfileId
-  const currentRunPreset = newRunMode === 'files' ? filesPreset : folderRunPreset
+  const currentPresetId = selectedPresetId
+  const currentRunPreset = activePreset
   const showsCustomSettings = currentPresetId === CUSTOM_PRESET_ID
 
   const handleRemoveJob = async (job: TrainerQueueJob) => {
@@ -896,6 +763,25 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       setQueueActionError('')
     }
     setCancelBatchConfirm(null)
+  }
+
+  const handleUnstageSubmission = async (submissionId: string) => {
+    const result = await window.api.unstageTrainerSubmission(submissionId)
+    if (!result.success) {
+      setQueueActionError(result.error ?? 'Could not queue that batch.')
+    } else {
+      setQueueActionError('')
+      setSection('queue')
+    }
+  }
+
+  const handleStageJob = async (job: TrainerQueueJob) => {
+    const result = await window.api.stageTrainerJob(job.jobId)
+    if (!result.success) {
+      setQueueActionError(result.error ?? 'Could not move that job to staged batches.')
+    } else {
+      setQueueActionError('')
+    }
   }
 
   const handleMoveJob = async (job: TrainerQueueJob, direction: 'up' | 'down') => {
@@ -1046,7 +932,6 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       trainingPresets: [...settings.trainingPresets, preset],
     })
     setSelectedPresetId(preset.id)
-    if (newRunMode === 'folder') setFolderRunProfileId(preset.id)
     setShowSavePresetModal(false)
     setPresetNameDraft('')
     setPresetSaveError('')
@@ -1161,7 +1046,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   }
 
   const navItem = (
-    id: 'live' | 'queue' | 'history' | 'new',
+    id: 'live' | 'queue' | 'batches' | 'history' | 'new',
     label: string,
     count: number | null,
     icon: React.ReactNode,
@@ -1210,8 +1095,11 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
           {navItem('live', 'Live Run', isRunning ? 1 : null, (
             <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" /></svg>
           ), isRunning)}
-          {navItem('queue', 'Queue', trainerState.queue.length, (
+          {navItem('queue', 'Queue', trainerState.queue.filter(j => j.status !== 'staged').length, (
             <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z" /></svg>
+          ))}
+          {navItem('batches', 'Batches', stagedCount > 0 ? stagedCount : null, (
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6.429 9.75L2.25 12l4.179 2.25m0-4.5l5.571 3 5.571-3m-11.142 0L2.25 7.5 12 2.25l9.75 5.25-4.179 2.25m0 0L21.75 12l-4.179 2.25m0 0l4.179 2.25L12 21.75 2.25 16.5l4.179-2.25m11.142 0l-5.571 3-5.571-3" /></svg>
           ))}
           {navItem('history', 'History', trainerState.history.length, (
             <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
@@ -1795,6 +1683,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                     {job.status === 'queued' && job.jobId !== trainerState.queue.find(j => j.status === 'queued')?.jobId && (
                                       <button onClick={() => { void handleMakeNext(job) }} className="px-1.5 py-0.5 rounded text-[10px] border border-nm-border-s text-nm-text-2 hover:bg-hov">Next</button>
                                     )}
+                                    {job.status === 'queued' && job.sourceMode !== 'watcher' && (
+                                      <button onClick={() => { void handleStageJob(job) }} title="Move to Batches (staged)" className="px-1.5 py-0.5 rounded text-[10px] border border-nm-border-s text-nm-text-2 hover:bg-hov">⇦</button>
+                                    )}
                                     {job.status === 'error' && <button onClick={() => { void handleRetryQueueItem(job) }} className="px-1.5 py-0.5 rounded text-[10px] border border-nm-border-s text-nm-text-2 hover:bg-hov">Retry</button>}
                                     {job.status === 'success' && job.outputModelPath && <button onClick={() => window.api.revealFile(job.outputModelPath)} className="px-1.5 py-0.5 rounded text-[10px] border border-nm-border-s text-nm-text-2 hover:bg-hov">Show</button>}
                                     {!isActive && <button onClick={() => { void handleRemoveJob(job) }} className="w-5 h-5 flex items-center justify-center rounded text-red-400 hover:bg-red-500/10 flex-shrink-0"><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg></button>}
@@ -1802,6 +1693,87 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                 </div>
                               )
                             })}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── BATCHES ────────────────────────────────────────────────────── */}
+          {section === 'batches' && (
+            <div className="p-5 space-y-4">
+              <div className="flex items-baseline justify-between">
+                <div>
+                  <h2 className="text-[18px] font-[680] text-nm-text">Batches</h2>
+                  <p className="text-[12px] text-nm-text-2 mt-0.5">Staged batches ready to queue — add to queue when ready</p>
+                </div>
+                <button
+                  onClick={() => setSection('new')}
+                  className="h-8 inline-flex items-center gap-1.5 px-3 rounded-[9px] text-[12px] font-medium border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2 transition-colors"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                  New batch
+                </button>
+              </div>
+              {!!queueActionError && (
+                <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{queueActionError}</div>
+              )}
+              {groupedStagedQueue.length === 0 ? (
+                <div className="rounded-2xl border border-nm-border bg-panel p-8 text-center text-nm-text-3 text-[13px]">
+                  No staged batches. Create a batch from New Run and click "Stage".
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {groupedStagedQueue.map((group) => {
+                    const isCollapsed = collapsedBatches.has(`staged:${group.key}`)
+                    return (
+                      <div key={group.key} className="rounded-[13px] border border-nm-border-s bg-panel overflow-hidden">
+                        <div
+                          className="flex items-center gap-2 px-3.5 py-3 bg-panel-2 border-b border-nm-border-s cursor-pointer select-none"
+                          onClick={() => setCollapsedBatches(prev => {
+                            const next = new Set(prev)
+                            const k = `staged:${group.key}`
+                            if (next.has(k)) { next.delete(k) } else { next.add(k) }
+                            return next
+                          })}
+                        >
+                          <svg className={`w-3 h-3 text-nm-text-3 flex-shrink-0 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                          </svg>
+                          <svg className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M6.429 9.75L2.25 12l4.179 2.25m0-4.5l5.571 3 5.571-3m-11.142 0L2.25 7.5 12 2.25l9.75 5.25-4.179 2.25m0 0L21.75 12l-4.179 2.25m0 0l4.179 2.25L12 21.75 2.25 16.5l4.179-2.25m11.142 0l-5.571 3-5.571-3" />
+                          </svg>
+                          <span className="flex-1 min-w-0 text-[13px] font-semibold text-nm-text truncate">{group.label}</span>
+                          <span className="text-[11px] text-nm-text-3 flex-shrink-0">{group.jobs.length} capture{group.jobs.length === 1 ? '' : 's'}</span>
+                          {group.createdAt && <span className="text-[10px] text-nm-text-3 flex-shrink-0 font-mono">{new Date(group.createdAt).toLocaleTimeString()}</span>}
+                          <button
+                            onClick={e => { e.stopPropagation(); void handleUnstageSubmission(group.jobs[0]?.submissionId ?? '') }}
+                            className="h-7 inline-flex items-center gap-1 px-2.5 rounded-lg text-[11px] font-semibold bg-emerald-600 hover:bg-emerald-500 text-white border-transparent border transition-colors flex-shrink-0"
+                          >
+                            Queue
+                          </button>
+                          <button
+                            onClick={e => { e.stopPropagation(); setCancelBatchConfirm({ submissionId: group.jobs[0]?.submissionId ?? '', label: group.label }) }}
+                            className="w-6 h-6 flex items-center justify-center rounded text-red-400 hover:bg-red-500/10 flex-shrink-0"
+                            title="Delete staged batch"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                          </button>
+                        </div>
+                        {!isCollapsed && (
+                          <div className="px-3 pb-3 pt-1 space-y-1">
+                            {group.jobs.map((job) => (
+                              <div key={job.jobId} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-[12px] border border-nm-border-s bg-panel-2">
+                                <svg className="w-3 h-3 text-nm-text-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                <span className="flex-1 font-mono truncate text-nm-text">{job.outputPath.replace(/\\/g, '/').split('/').pop()}</span>
+                                <span className="text-nm-text-3 text-[11px]">{architectureDisplayLabel(job.architecture)}</span>
+                                <span className="text-nm-text-3 tabular-nums text-[11px]">{job.epochs}ep</span>
+                              </div>
+                            ))}
                           </div>
                         )}
                       </div>
@@ -1956,23 +1928,10 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
 
           {/* ── NEW RUN ────────────────────────────────────────────────────── */}
           {section === 'new' && (
-            <div className="p-5 space-y-4">
+            <div className="px-8 py-5 space-y-4">
               <div className="flex items-baseline justify-between">
-                <h2 className="text-[18px] font-[680] text-nm-text">New Run</h2>
+                <h2 className="text-[18px] font-[680] text-nm-text">Create Batch</h2>
                 {presetSaveNotice && <span className="text-[12px] text-emerald-400">{presetSaveNotice}</span>}
-              </div>
-
-              {/* Sub-toggle */}
-              <div className="flex rounded-xl border border-nm-border-s bg-panel-2 overflow-hidden">
-                {(['files', 'folder'] as const).map(mode => (
-                  <button
-                    key={mode}
-                    onClick={() => setNewRunMode(mode)}
-                    className={`flex-1 py-2.5 px-4 text-[13px] font-medium transition-colors ${newRunMode === mode ? 'bg-active-bg text-nm-accent' : 'text-nm-text-2 hover:bg-hov'}`}
-                  >
-                    {mode === 'files' ? 'Run WAVs' : 'Run Folder'}
-                  </button>
-                ))}
               </div>
 
               {/* Captures card */}
@@ -1988,49 +1947,114 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     <PathPicker value={inputPath} placeholder="Select or drop DI WAV here" onChange={setInputPath} onBrowse={handleBrowseInput} />
                   </div>
                 </Field>
-                {newRunMode === 'files' ? (
-                  <Field label="Output WAVs">
-                    <div className="space-y-2">
-                      <div className="flex gap-2">
-                        <button onClick={() => { void handleBrowseOutputs() }} className="px-3 py-2 rounded-lg text-[13px] font-medium bg-field border border-field-bd hover:bg-hov text-nm-text transition-colors">Choose WAVs…</button>
-                        {outputPaths.length > 0 && <button onClick={() => setOutputPaths([])} className="px-3 py-2 rounded-lg text-[13px] font-medium bg-field border border-field-bd hover:bg-hov text-nm-text transition-colors">Clear</button>}
-                      </div>
-                      <div
-                        onDragOver={e => { e.preventDefault(); setDropTargetId('output-wavs') }}
-                        onDragLeave={() => setDropTargetId(null)}
-                        onDrop={handleOutputWavDrop}
-                        className={`rounded-lg border px-3 py-2 text-[12px] text-nm-text font-mono min-h-[72px] max-h-[160px] overflow-y-auto transition-colors ${dropTargetId === 'output-wavs' ? 'border-cyan-400 bg-cyan-500/10 ring-2 ring-cyan-400' : 'border-field-bd bg-field'}`}
-                      >
-                        {outputPaths.length === 0
-                          ? <span className="text-nm-text-3 italic">{dropTargetId === 'output-wavs' ? 'Drop WAVs here…' : 'No output WAVs selected — choose or drop WAVs here.'}</span>
-                          : <div className="space-y-0.5">{outputPaths.map(p => <div key={p} className="break-all">{p}</div>)}</div>
-                        }
-                      </div>
-                    </div>
-                  </Field>
-                ) : (
-                  <div>
-                    <div className="text-[12px] font-medium text-nm-text-3 mb-1">Folder</div>
-                    <div className="text-[11px] text-nm-text-3 mb-2">Queue every WAV in a folder using a saved preset or custom settings.</div>
-                    <div
-                      onDragOver={e => { e.preventDefault(); setDropTargetId('folder-run') }}
-                      onDragLeave={() => setDropTargetId(null)}
-                      onDrop={e => { void handleFolderDrop(e) }}
-                      className={`rounded-lg transition-colors ${dropTargetId === 'folder-run' ? 'ring-2 ring-cyan-400 bg-cyan-500/10' : ''}`}
-                    >
-                      <PathPicker
-                        value={folderRunPath}
-                        placeholder="Choose or drop a folder containing WAV files"
-                        onChange={setFolderRunPath}
-                        onBrowse={async () => {
-                          const path = await window.api.openFolder(folderRunPath || trainPath || undefined)
-                          if (path) setFolderRunPath(path)
-                        }}
-                        browseLabel="Folder…"
-                      />
+
+                {/* Unified WAV list */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Output WAVs</label>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { void handleBrowseOutputs() }}
+                        className="h-7 px-2.5 rounded-lg text-[12px] font-medium bg-field border border-field-bd hover:bg-hov text-nm-text transition-colors"
+                      >+ Add Files</button>
+                      <button
+                        onClick={() => { void handleBrowseFolder() }}
+                        className="h-7 px-2.5 rounded-lg text-[12px] font-medium bg-field border border-field-bd hover:bg-hov text-nm-text transition-colors"
+                      >+ Add Folder</button>
+                      {batchWavList.length > 0 && (
+                        <button
+                          onClick={() => setBatchWavList([])}
+                          className="h-7 px-2.5 rounded-lg text-[12px] font-medium bg-field border border-field-bd hover:bg-hov text-nm-text-3 transition-colors"
+                        >Clear</button>
+                      )}
                     </div>
                   </div>
-                )}
+                  <div
+                    onDragOver={e => { e.preventDefault(); setDropTargetId('output-wavs') }}
+                    onDragLeave={() => setDropTargetId(null)}
+                    onDrop={async e => {
+                      e.preventDefault(); e.stopPropagation(); setDropTargetId(null)
+                      const files = Array.from(e.dataTransfer.files)
+                      if (files.length === 0) return
+                      const wavFiles = files.filter(f => f.name.toLowerCase().endsWith('.wav'))
+                      const otherFiles = files.filter(f => !f.name.toLowerCase().endsWith('.wav'))
+                      // WAV files — add directly
+                      if (wavFiles.length > 0) {
+                        const paths = wavFiles.map(f => window.api.getPathForFile(f)).filter(Boolean) as string[]
+                        addWavsToBatchList(paths)
+                      }
+                      // Non-WAV / unknown — check if it's a folder
+                      for (const f of otherFiles) {
+                        const p = window.api.getPathForFile(f)
+                        if (!p) continue
+                        const stat = await window.api.statPath(p)
+                        if (stat.isDirectory) {
+                          const wavPaths = await window.api.listWavFiles(p)
+                          addWavsToBatchList(wavPaths, p)
+                        }
+                      }
+                    }}
+                    className={`rounded-lg border min-h-[80px] max-h-[220px] overflow-y-auto transition-colors ${dropTargetId === 'output-wavs' ? 'border-cyan-400 bg-cyan-500/10 ring-2 ring-cyan-400' : 'border-field-bd bg-field'}`}
+                  >
+                    {batchWavList.length === 0 ? (
+                      <div className="px-3 py-4 text-[12px] text-nm-text-3 italic text-center">
+                        {dropTargetId === 'output-wavs' ? 'Drop WAVs or a folder here…' : 'No WAVs — choose files, add a folder, or drop here.'}
+                      </div>
+                    ) : (
+                      (() => {
+                        // Group by fromFolder, then ungrouped individuals
+                        const folders = Array.from(new Set(batchWavList.map(i => i.fromFolder).filter(Boolean))) as string[]
+                        const ungrouped = batchWavList.filter(i => !i.fromFolder)
+                        return (
+                          <div className="p-1 space-y-0.5">
+                            {ungrouped.map(item => (
+                              <div key={item.id} className="flex items-center gap-2 px-2 py-1 rounded text-[12px] hover:bg-hov">
+                                <svg className="w-3 h-3 text-nm-text-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19.114 5.636a9 9 0 010 12.728M16.463 8.288a5.25 5.25 0 010 7.424M6.75 8.25l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z" /></svg>
+                                <span className="flex-1 font-mono truncate text-nm-text">{item.name}</span>
+                                <span className="text-[10px] text-nm-text-3 truncate max-w-[140px]">{item.path.replace(/\\/g, '/').split('/').slice(0, -1).join('/').split('/').pop()}</span>
+                                <button onClick={() => setBatchWavList(prev => prev.filter(i => i.id !== item.id))} className="w-5 h-5 flex items-center justify-center rounded text-nm-text-3 hover:text-red-400 hover:bg-red-500/10 flex-shrink-0">
+                                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                              </div>
+                            ))}
+                            {folders.map(folder => {
+                              const items = batchWavList.filter(i => i.fromFolder === folder)
+                              const folderName = folder.replace(/\\/g, '/').split('/').pop() ?? folder
+                              const isExpanded = !collapsedFolders.has(folder)
+                              return (
+                                <div key={folder}>
+                                  <div className="flex items-center gap-2 px-2 py-1 rounded hover:bg-hov cursor-pointer select-none"
+                                    onClick={() => setCollapsedFolders(prev => { const n = new Set(prev); if (n.has(folder)) n.delete(folder); else n.add(folder); return n })}>
+                                    <svg className={`w-3 h-3 text-nm-text-3 flex-shrink-0 transition-transform ${isExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>
+                                    <svg className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" /></svg>
+                                    <span className="flex-1 text-[12px] font-medium text-nm-text truncate">{folderName}</span>
+                                    <span className="text-[10px] text-nm-text-3">{items.length} file{items.length === 1 ? '' : 's'}</span>
+                                    <button
+                                      onClick={e => { e.stopPropagation(); setBatchWavList(prev => prev.filter(i => i.fromFolder !== folder)) }}
+                                      className="w-5 h-5 flex items-center justify-center rounded text-nm-text-3 hover:text-red-400 hover:bg-red-500/10 flex-shrink-0"
+                                      title="Remove all files from this folder"
+                                    >
+                                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                    </button>
+                                  </div>
+                                  {isExpanded && items.map(item => (
+                                    <div key={item.id} className="flex items-center gap-2 pl-7 pr-2 py-0.5 rounded text-[12px] hover:bg-hov">
+                                      <span className="text-nm-text-3 flex-shrink-0">·</span>
+                                      <span className="flex-1 font-mono truncate text-nm-text-2">{item.name}</span>
+                                      <button onClick={() => setBatchWavList(prev => prev.filter(i => i.id !== item.id))} className="w-5 h-5 flex items-center justify-center rounded text-nm-text-3 hover:text-red-400 hover:bg-red-500/10 flex-shrink-0">
+                                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )
+                      })()
+                    )}
+                  </div>
+                </div>
               </div>
 
               {/* Training settings card */}
@@ -2048,10 +2072,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   <Field label="Preset">
                     <select
                       value={currentPresetId}
-                      onChange={e => {
-                        if (newRunMode === 'files') applyPreset(e.target.value)
-                        else setFolderRunProfileId(e.target.value)
-                      }}
+                      onChange={e => { applyPreset(e.target.value) }}
                       className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none"
                     >
                       <option value={CUSTOM_PRESET_ID}>Custom</option>
@@ -2088,8 +2109,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                           values={architectures}
                           onChange={next => {
                             setArchitectures(next)
-                            if (newRunMode === 'files') setSelectedPresetId(CUSTOM_PRESET_ID)
-                            else setFolderRunProfileId(CUSTOM_PRESET_ID)
+                            setSelectedPresetId(CUSTOM_PRESET_ID)
                           }}
                           userProfiles={settings.userCaptureProfiles ?? []}
                           onCreateProfile={() => { setCaptureProfileEditorTarget(null); setCaptureProfileEditorOpen(true) }}
@@ -2154,8 +2174,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 </div>
 
                 {activeFormula && manualRoutingMode === 'root' && (() => {
-                  const previewPath = newRunMode === 'folder' ? folderFormulaPreviewPath : formulaPreviewPath
-                  const hasSource = newRunMode === 'folder' ? !!folderRunPath.trim() : !!filesStagingDir
+                  const previewPath = formulaPreviewPath
+                  const hasSource = !!filesStagingDir
                   return (
                     <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 space-y-1.5">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -2164,7 +2184,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                         <code className="text-[10px] font-mono text-emerald-500 bg-emerald-900/30 px-1 rounded">{activeFormula}</code>
                       </div>
                       {previewPath && hasSource && <div className="pl-5 text-[11px] text-emerald-400 font-mono break-all">→ {previewPath}</div>}
-                      {!hasSource && <div className="pl-5 text-[11px] text-emerald-500 italic">{newRunMode === 'folder' ? 'Choose a folder to preview' : 'Select WAVs to preview'}</div>}
+                      {!hasSource && <div className="pl-5 text-[11px] text-emerald-500 italic">Add WAVs to preview output path</div>}
                       {!formulaOverrideActive && (
                         <div className="pl-5 flex items-center gap-2">
                           <span className="text-[10px] text-nm-text-3">Override for this run:</span>
@@ -2182,8 +2202,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 })()}
 
                 {activeGraphFormula && manualRoutingMode === 'root' && (() => {
-                  const previewPath = newRunMode === 'folder' ? folderGraphFormulaPreviewPath : graphFormulaPreviewPath
-                  const hasSource = newRunMode === 'folder' ? !!folderRunPath.trim() : !!filesStagingDir
+                  const previewPath = graphFormulaPreviewPath
+                  const hasSource = !!filesStagingDir
                   return (
                     <div className="rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2.5 space-y-1.5">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -2192,7 +2212,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                         <code className="text-[10px] font-mono text-violet-500 bg-violet-900/30 px-1 rounded">{activeGraphFormula}</code>
                       </div>
                       {previewPath && hasSource && <div className="pl-5 text-[11px] text-violet-400 font-mono break-all">→ {previewPath}</div>}
-                      {!hasSource && <div className="pl-5 text-[11px] text-violet-500 italic">{newRunMode === 'folder' ? 'Choose a folder to preview' : 'Select WAVs to preview'}</div>}
+                      {!hasSource && <div className="pl-5 text-[11px] text-violet-500 italic">Add WAVs to preview graph path</div>}
                     </div>
                   )
                 })()}
@@ -2230,17 +2250,38 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-400">{launchError}</div>
               )}
 
-              {/* CTA */}
-              <button
-                onClick={newRunMode === 'files' ? () => { void handleQueue() } : () => { void handleRunFolderOnce() }}
-                disabled={newRunMode === 'files' ? !canQueue : false}
-                className="w-full py-3 rounded-xl text-[14px] font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-white bg-nm-accent hover:opacity-90"
-              >
-                {newRunMode === 'files' ? (() => {
-                  const total = outputPaths.length * (activePreset ? activePreset.architectures.length : architectures.length)
-                  return total === 1 ? 'Queue capture' : `Queue ${total} captures`
-                })() : 'Queue folder'}
-              </button>
+              {/* "Create as separate batches" checkbox */}
+              <label className="flex items-center gap-2.5 cursor-pointer select-none text-[13px] text-nm-text-2">
+                <input
+                  type="checkbox"
+                  checked={separateBatches}
+                  onChange={e => setSeparateBatches(e.target.checked)}
+                  className="w-4 h-4 rounded accent-nm-accent"
+                />
+                Create all files as separate batches
+              </label>
+
+              {/* CTA buttons */}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => { void handleQueue(true) }}
+                  disabled={!canQueue}
+                  className="flex-1 py-3 rounded-xl text-[14px] font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2"
+                >
+                  Stage (save, don't run)
+                </button>
+                <button
+                  onClick={() => { void handleQueue(false) }}
+                  disabled={!canQueue}
+                  className="flex-1 py-3 rounded-xl text-[14px] font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-white bg-nm-accent hover:opacity-90"
+                >
+                  {(() => {
+                    const jobArchCount = activePreset ? activePreset.architectures.length : architectures.length
+                    const total = batchWavList.length * (namMode === 'a2' ? 1 : Math.max(jobArchCount, 1))
+                    return total <= 1 ? 'Queue + Start' : `Queue ${total} · Start`
+                  })()}
+                </button>
+              </div>
             </div>
           )}
 

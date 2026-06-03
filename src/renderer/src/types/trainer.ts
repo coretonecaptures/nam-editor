@@ -196,7 +196,7 @@ export interface TrainerStartPayload {
 }
 
 export type TrainerStatus = 'idle' | 'starting' | 'running' | 'success' | 'error' | 'canceled'
-export type TrainerQueueJobStatus = 'queued' | 'starting' | 'running' | 'success' | 'error' | 'canceled'
+export type TrainerQueueJobStatus = 'staged' | 'queued' | 'starting' | 'running' | 'success' | 'error' | 'canceled'
 
 export interface TrainerQueueJob {
   jobId: string
