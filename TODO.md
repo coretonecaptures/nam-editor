@@ -96,6 +96,7 @@
 - Training settings IA (partially done): training already has its own Settings tab; revisit once watcher folders, presets, history, and verification need more room or more specialized navigation inside Training itself.
 - Training watch/preset UX: redesign watch folders and presets into a cleaner expandable master-detail style, so the user first sees a compact list with key summary fields and only expands/drills into one item at a time to edit the full details.
 - Training drag-and-drop WAV intake: support dragging WAV files from Windows Explorer/Finder into the Training page’s WAV input area so the dropped files populate the selected capture list.
+- **[HIGH PRIORITY]** OS drag-and-drop from Explorer/Finder into app windows: NAM Lab has this wired for the main file/folder area (App.tsx `handleOsDrop`), but verify it actually works end-to-end on Windows (Electron `webContents` drop events + `e.dataTransfer.files` path extraction). Also wire drag-drop intake in gear-locker and expense-tracker.
 
 ## Metadata suggestions and organization
 
