@@ -352,6 +352,7 @@ interface TrainerStateSnapshot {
   error: string
   validationEsr: number | null
   replicateEsr: number | null
+  epochValidationEsr: number | null
   progressPhase: string
   progressPercent: number | null
   progressEpochCurrent: number | null
@@ -390,6 +391,7 @@ const TRAINER_IDLE_STATE: TrainerStateSnapshot = {
   error: '',
   validationEsr: null,
   replicateEsr: null,
+  epochValidationEsr: null,
   progressPhase: '',
   progressPercent: null,
   progressEpochCurrent: null,
@@ -1131,6 +1133,9 @@ function parseTrainerProgressLine(line: string): boolean {
     const overallPercent = epochTotal && epochTotal > 0
       ? Math.max(0, Math.min(100, (((epochIndex) + (batchTotal > 0 ? batchCurrent / batchTotal : epochPercent / 100)) / epochTotal) * 100))
       : epochPercent
+    // Extract per-epoch validation ESR from tqdm postfix (val_loss=, ESR=, esr=, val_esr=)
+    const esrInBar = clean.match(/\b(?:val_loss|val_esr|ESR|esr)\s*=\s*([0-9.]+(?:e[+-]?\d+)?)/i)
+    const epochEsr = esrInBar ? Number.parseFloat(esrInBar[1]) : null
     trainerState = {
       ...trainerState,
       progressPhase: 'Training',
@@ -1141,6 +1146,7 @@ function parseTrainerProgressLine(line: string): boolean {
       progressBatchTotal: batchTotal,
       progressRate: rate ?? trainerState.progressRate,
       progressLatestLine: clean,
+      ...(epochEsr !== null ? { epochValidationEsr: epochEsr } : {}),
     }
     emitTrainerState()
     return true
@@ -1706,6 +1712,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     error: '',
     validationEsr: null,
     replicateEsr: null,
+    epochValidationEsr: null,
     progressPhase: 'Preparing',
     progressPercent: null,
     progressEpochCurrent: null,

@@ -71,6 +71,19 @@ function formatThresholdEsr(value: number | null): string {
   return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '') : ''
 }
 
+function formatDuration(sec: number): string {
+  if (sec < 60) return `${sec}s`
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  return `${h}h ${m}m`
+}
+
+function jobDurationSec(job: { startedAt: string | null; finishedAt: string | null }): number | null {
+  if (!job.startedAt || !job.finishedAt) return null
+  return Math.floor((new Date(job.finishedAt).getTime() - new Date(job.startedAt).getTime()) / 1000)
+}
+
 function describePreset(preset: TrainingPreset): string {
   const archText =
     preset.architectures.length === 0
@@ -163,6 +176,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const [presetSaveError, setPresetSaveError] = useState('')
   const [presetSaveNotice, setPresetSaveNotice] = useState('')
   const [cancelBatchConfirm, setCancelBatchConfirm] = useState<{ submissionId: string; label: string } | null>(null)
+  const [elapsedSec, setElapsedSec] = useState(0)
   const rawLogRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -200,11 +214,11 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
         lastActiveJobId = state.activeJobId ?? null
         if (state.activeJobId) setEsrSeries([])
       }
-      if ((state.status === 'running' || state.status === 'starting') && state.progressEpochCurrent && typeof state.validationEsr === 'number') {
+      if (state.status === 'running' && state.progressEpochCurrent && typeof state.epochValidationEsr === 'number') {
         setEsrSeries(prev => {
           const epoch = state.progressEpochCurrent!
           if (prev.length > 0 && prev[prev.length - 1].epoch === epoch) return prev
-          return [...prev, { epoch, esr: state.validationEsr as number }]
+          return [...prev, { epoch, esr: state.epochValidationEsr as number }]
         })
       }
     })
@@ -219,6 +233,15 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     if (!node) return
     node.scrollTop = node.scrollHeight
   }, [trainerState.logs.length])
+
+  useEffect(() => {
+    if (!isRunning || !trainerState.startedAt) { setElapsedSec(0); return }
+    const start = new Date(trainerState.startedAt).getTime()
+    const tick = () => setElapsedSec(Math.floor((Date.now() - start) / 1000))
+    tick()
+    const id = window.setInterval(tick, 1000)
+    return () => window.clearInterval(id)
+  }, [isRunning, trainerState.startedAt])
 
   useEffect(() => {
     if (!presetSaveNotice) return
@@ -1388,7 +1411,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               </div>
             </div>
             {/* Mini-stats */}
-            <div className="flex items-center gap-3 flex-shrink-0 text-[10px] text-nm-text-3 uppercase font-medium">
+            <div className="flex items-center gap-3 flex-shrink-0 text-[10px] text-nm-text-2 uppercase font-medium">
               {[
                 { label: 'Rate', value: typeof trainerState.progressRate === 'number' ? `${trainerState.progressRate.toFixed(2)} it/s` : '—' },
                 { label: 'Batch', value: trainerState.progressBatchCurrent && trainerState.progressBatchTotal ? `${trainerState.progressBatchCurrent}/${trainerState.progressBatchTotal}` : '—' },
@@ -1420,7 +1443,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               <div className="flex items-baseline justify-between">
                 <div>
                   <h2 className="text-[18px] font-[680] text-nm-text">Live Run</h2>
-                  <p className="text-[12px] text-nm-text-3 mt-0.5">Real-time training telemetry for the active model</p>
+                  <p className="text-[12px] text-nm-text-2 mt-0.5">Real-time training telemetry for the active model</p>
                 </div>
               </div>
 
@@ -1461,12 +1484,13 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                       : '—'
                   },
                   { label: 'Rate', value: typeof trainerState.progressRate === 'number' ? `${trainerState.progressRate.toFixed(2)} it/s` : '—' },
-                  { label: 'Validation ESR', value: validationEsrTone.text, extra: validationEsrTone.classes },
+                  { label: 'Val ESR (live)', value: validationEsrTone.text, extra: validationEsrTone.classes },
                   { label: 'Replicate ESR', value: replicateEsrTone.text, extra: replicateEsrTone.classes },
+                  { label: 'Elapsed', value: isRunning && elapsedSec > 0 ? formatDuration(elapsedSec) : (trainerState.startedAt && trainerState.finishedAt ? formatDuration(Math.floor((new Date(trainerState.finishedAt).getTime() - new Date(trainerState.startedAt).getTime()) / 1000)) : '—') },
                   { label: 'Started', value: trainerState.startedAt ? new Date(trainerState.startedAt).toLocaleTimeString() : '—' },
                 ].map(({ label, value, extra }) => (
                   <div key={label} className="rounded-xl border border-nm-border-s bg-panel-2 px-3 py-2.5">
-                    <div className="text-[11px] text-nm-text-3 uppercase font-medium">{label}</div>
+                    <div className="text-[11px] text-nm-text-2 uppercase font-medium">{label}</div>
                     <div className={`mt-1 font-semibold font-mono tabular-nums ${extra ?? 'text-nm-text'}`}>{value}</div>
                   </div>
                 ))}
@@ -1475,11 +1499,11 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               {/* Output paths */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-xl border border-nm-border-s bg-panel-2 px-3 py-2.5">
-                  <div className="text-[11px] text-nm-text-3">Final output</div>
+                  <div className="text-[11px] text-nm-text-2">Final output</div>
                   <div className="mt-1 text-[12px] font-mono text-nm-text break-all">{trainerState.outputModelPath || '—'}</div>
                 </div>
                 <div className="rounded-xl border border-nm-border-s bg-panel-2 px-3 py-2.5">
-                  <div className="text-[11px] text-nm-text-3">Checkpoint</div>
+                  <div className="text-[11px] text-nm-text-2">Checkpoint</div>
                   <div className="mt-1 text-[12px] font-mono text-nm-text break-all">{trainerState.checkpointModelPath || 'Appears after training starts'}</div>
                 </div>
               </div>
@@ -1754,9 +1778,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                   <div className="flex-1 min-w-0">
                                     <div className="font-mono truncate text-nm-text">{job.outputPath.replace(/\\/g, '/').split('/').pop()}</div>
                                     {job.status === 'error' && job.error && <div className="text-red-400 text-[11px] truncate">{job.error} · attempt {job.attempts}</div>}
-                                    {(job.status === 'running' || job.status === 'starting') && <div className="text-[11px] text-nm-text-3 font-mono">Epoch {trainerState.progressEpochCurrent ?? '?'}/{progressEpochTotal ?? '?'} · {typeof trainerState.progressRate === 'number' ? `${trainerState.progressRate.toFixed(2)} it/s` : '—'}</div>}
-                                    {job.status === 'success' && <div className="text-[11px] text-nm-text-3">{architectureDisplayLabel(job.architecture)}</div>}
-                                    {job.status === 'queued' && <div className="text-[11px] text-nm-text-3">Waiting in queue</div>}
+                                    {(job.status === 'running' || job.status === 'starting') && <div className="text-[11px] text-nm-text-2 font-mono">Epoch {trainerState.progressEpochCurrent ?? '?'}/{progressEpochTotal ?? '?'} · {typeof trainerState.progressRate === 'number' ? `${trainerState.progressRate.toFixed(2)} it/s` : '—'} · {formatDuration(elapsedSec)}</div>}
+                                    {job.status === 'success' && <div className="text-[11px] text-nm-text-2">{architectureDisplayLabel(job.architecture)}{(() => { const d = jobDurationSec(job); return d ? ` · ${formatDuration(d)}` : '' })()}</div>}
+                                    {job.status === 'queued' && <div className="text-[11px] text-nm-text-2">Waiting in queue</div>}
                                   </div>
                                   {(job.status === 'running' || job.status === 'starting') && typeof job.progressPercent === 'number' && (
                                     <div className="w-16 h-1 rounded-full bg-field overflow-hidden flex-shrink-0">
