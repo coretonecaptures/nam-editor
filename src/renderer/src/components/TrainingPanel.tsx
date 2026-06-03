@@ -235,15 +235,6 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   }, [trainerState.logs.length])
 
   useEffect(() => {
-    if (!isRunning || !trainerState.startedAt) { setElapsedSec(0); return }
-    const start = new Date(trainerState.startedAt).getTime()
-    const tick = () => setElapsedSec(Math.floor((Date.now() - start) / 1000))
-    tick()
-    const id = window.setInterval(tick, 1000)
-    return () => window.clearInterval(id)
-  }, [isRunning, trainerState.startedAt])
-
-  useEffect(() => {
     if (!presetSaveNotice) return
     const timer = window.setTimeout(() => setPresetSaveNotice(''), 2500)
     return () => window.clearTimeout(timer)
@@ -311,6 +302,15 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   }, [queueContextMenu])
 
   const isRunning = trainerState.status === 'starting' || trainerState.status === 'running'
+
+  useEffect(() => {
+    if (!isRunning || !trainerState.startedAt) { setElapsedSec(0); return }
+    const start = new Date(trainerState.startedAt).getTime()
+    const tick = () => setElapsedSec(Math.floor((Date.now() - start) / 1000))
+    tick()
+    const id = window.setInterval(tick, 1000)
+    return () => window.clearInterval(id)
+  }, [isRunning, trainerState.startedAt])
   const activeJob = trainerState.activeJobId ? trainerState.queue.find((job) => job.jobId === trainerState.activeJobId) ?? null : null
   const epochNote = architectures.length === 1 ? architectureEpochNote(architectures[0]) : null
   const progressEpochTotal = effectiveEpochTotal(
