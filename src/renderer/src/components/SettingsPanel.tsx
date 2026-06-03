@@ -1744,6 +1744,52 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                     onChange={(v) => update('trainingRetainGraphs', v)}
                   />
 
+                  {/* Dashboard Simple Mode favorites */}
+                  <div className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+                    <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700">
+                      <svg className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
+                      <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Dashboard Simple Mode — Favorites</span>
+                      <span className="text-[10px] text-gray-400 dark:text-gray-500 ml-1">Used by Quick Add on the Dashboard</span>
+                    </div>
+                    <div className="p-3 space-y-3">
+                      <SettingsField label="Favorite preset" hint="Used for every Quick Add batch — no per-run setup">
+                        <select
+                          value={draft.trainingFavoritePresetId ?? ''}
+                          onChange={(e) => update('trainingFavoritePresetId', e.target.value)}
+                          className="w-full h-9 px-2.5 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
+                        >
+                          <option value="">— not set —</option>
+                          {draft.trainingPresets.filter(p => p.architectures.length > 0).map((preset) => (
+                            <option key={preset.id} value={preset.id}>{preset.name}</option>
+                          ))}
+                        </select>
+                      </SettingsField>
+                      <SettingsField label="Favorite output routing" hint="Supports formulas like ../../NAM/{architecture}/{folder} or a fixed absolute path">
+                        <OutputFormulaField
+                          value={draft.trainingFavoriteRouting ?? ''}
+                          onChange={(v) => update('trainingFavoriteRouting', v)}
+                          exampleStagingPath={draft.namTrainingInputWav ? draft.namTrainingInputWav.replace(/\\/g, '/').split('/').slice(0, -1).join('/') : undefined}
+                          suggestionFormula="../../NAM/{architecture}/{folder}"
+                        />
+                      </SettingsField>
+                      <SettingsField label="Default Input DI" hint="Skip the DI picker in Quick Add — always use this WAV as the reference capture">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={draft.trainingDefaultInputDi ?? ''}
+                            onChange={(e) => update('trainingDefaultInputDi', e.target.value)}
+                            placeholder="e.g. C:\DI\input.wav"
+                            className="flex-1 px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono"
+                          />
+                          <button
+                            onClick={async () => { const p = await window.api.openAudioFile(); if (p) update('trainingDefaultInputDi', p) }}
+                            className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 flex-shrink-0"
+                          >Browse</button>
+                        </div>
+                      </SettingsField>
+                    </div>
+                  </div>
+
                   <div className="flex items-center gap-3 flex-wrap">
                     <CheckboxField
                       label="Normalize WAV pair before training"

@@ -4399,6 +4399,7 @@ INSTRUCTIONS:
               initialRunMode={trainingWorkspaceMode}
               onClose={() => setShowTrainingWorkspace(false)}
               onOpenSetupGuide={() => setShowTrainingSetupGuide(true)}
+              onOpenSettings={(tab) => { setSettingsInitialTab(tab); setShowSettings(true) }}
             />
           ) : showDashboard ? (
             <div className="relative h-full flex flex-col">

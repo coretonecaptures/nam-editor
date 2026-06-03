@@ -20,7 +20,7 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 }/*EDITMODE-END*/;
 
 /* ---------- toolbar / status chrome ---------- */
-function Toolbar() {
+function Toolbar({ onSettings }) {
   return (
     <div className="toolbar">
       <div className="brand"><span className="brand-logo"><Icon name="wave" size={16} stroke={2.2} /></span><span className="brand-name">NAM Lab</span></div>
@@ -33,7 +33,7 @@ function Toolbar() {
         <button className="tb-btn on"><Icon name="flask" size={15} /> Training</button>
         <button className="tb-btn"><Icon name="search" size={15} /> Find Tones</button>
         <button className="tb-btn"><Icon name="help" size={15} /> Help</button>
-        <button className="tb-btn"><Icon name="settings" size={15} /> Settings</button>
+        <button className="tb-btn" onClick={onSettings}><Icon name="settings" size={15} /> Settings</button>
         <div className="win-ctrls">
           <span className="wc"><Icon name="win_min" size={14} /></span>
           <span className="wc"><Icon name="win_max" size={12} /></span>
@@ -71,15 +71,20 @@ function FauxList() {
 }
 
 /* ---------- the workspace ---------- */
-function Workspace({ section, setSection, sim, ctrl, t, setTweak, onPlot }) {
+function Workspace({ section, setSection, sim, ctrl, t, setTweak, onPlot, openSettings, addedBatches, onQuickAdd }) {
+  const simple = section === 'dashboard';
   return (
     <div className="ws">
       <Rail section={section} setSection={setSection} t={t} sim={sim} />
       <div className="ws-main">
-        {t.nowStrip && <NowStrip sim={sim} ctrl={ctrl} />}
+        {simple
+          ? <SimpleControlBar sim={sim} ctrl={ctrl} />
+          : (t.nowStrip && <NowStrip sim={sim} ctrl={ctrl} />)}
         <div className="ws-content">
+          {section === 'dashboard' && <Dashboard sim={sim} ctrl={ctrl} openSettings={openSettings} addedBatches={addedBatches} onQuickAdd={onQuickAdd} setSection={setSection} />}
           {section === 'live' && <LiveRun sim={sim} t={t} />}
           {section === 'queue' && <QueueView t={t} setTweak={setTweak} />}
+          {section === 'batches' && <BatchesView setSection={setSection} />}
           {section === 'history' && <HistoryView t={t} onPlot={onPlot} />}
           {section === 'new' && <NewRun t={t} />}
         </div>
@@ -90,8 +95,11 @@ function Workspace({ section, setSection, sim, ctrl, t, setTweak, onPlot }) {
 
 function App() {
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
-  const [section, setSection] = useState('live');
+  const [section, setSection] = useState('dashboard');
   const [plot, setPlot] = useState(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const [addedBatches, setAddedBatches] = useState([]);
 
   // live simulation state
   const [sim, setSim] = useState(() => ({
@@ -139,11 +147,13 @@ function App() {
     retry: () => {},
   };
 
-  const wsProps = { section, setSection, sim, ctrl, t, setTweak, onPlot: setPlot };
+  const wsProps = { section, setSection, sim, ctrl, t, setTweak, onPlot: setPlot,
+    openSettings: () => setShowSettings(true), addedBatches,
+    onQuickAdd: () => setShowQuickAdd(true) };
 
   return (
     <div className="app">
-      <Toolbar />
+      <Toolbar onSettings={() => setShowSettings(true)} />
       <div className="app-body" data-density={t.density}>
         {t.footprint === 'workspace' && <Workspace {...wsProps} />}
         {t.footprint === 'panel2' && <><FauxTree /><Workspace {...wsProps} /></>}
@@ -166,6 +176,9 @@ function App() {
           </div>
         </div>
       )}
+
+      {showQuickAdd && <QuickAddModal onClose={() => setShowQuickAdd(false)} onConfirm={(n) => { setAddedBatches(a => [...a, { count: n, name: `Quick Batch · ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` }]); setShowQuickAdd(false); }} />}
+      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
 
       <TweaksPanel>
         <TweakSection label="Layout" />

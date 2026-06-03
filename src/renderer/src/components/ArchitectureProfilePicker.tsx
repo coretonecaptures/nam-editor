@@ -54,8 +54,8 @@ function ProfileCard({
         accent ? `border-t-2 ${accent.topBorder}` : ''
       } ${
         selected
-          ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-500/10 ring-1 ring-indigo-500/40'
-          : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 hover:border-indigo-400 dark:hover:border-indigo-500/60'
+          ? 'border-nm-accent bg-nm-accent/10 ring-1 ring-nm-accent/40'
+          : 'border-nm-border-s bg-panel hover:border-nm-accent/60'
       }`}
       onClick={onToggle}
     >
@@ -64,21 +64,21 @@ function ProfileCard({
           <div className="min-w-0 flex items-start gap-1.5 flex-1">
             {accent && <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 mt-[3px] ${accent.dot}`} />}
             <div className="min-w-0">
-              <div className={`text-xs font-semibold truncate ${selected ? 'text-indigo-700 dark:text-indigo-200' : 'text-gray-900 dark:text-gray-100'}`}>
+              <div className={`text-xs font-semibold truncate ${selected ? 'text-nm-accent' : 'text-nm-text'}`}>
                 {profile.name}
               </div>
-              <div className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 leading-tight line-clamp-2">
+              <div className="text-[10px] text-nm-text-3 mt-0.5 leading-tight line-clamp-2">
                 {profile.description}
               </div>
             </div>
           </div>
           {selected && (
-            <svg className="w-3.5 h-3.5 flex-shrink-0 text-indigo-600 dark:text-indigo-400 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+            <svg className="w-3.5 h-3.5 flex-shrink-0 text-nm-accent mt-0.5" fill="currentColor" viewBox="0 0 20 20">
               <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
             </svg>
           )}
         </div>
-        <div className="mt-1.5 text-[10px] text-gray-400 dark:text-gray-500">
+        <div className="mt-1.5 text-[10px] text-nm-text-3">
           {profile.lr} LR · {(profile as CaptureProfile).defaultEpochs ?? (profile as UserCaptureProfile).defaultEpochs} ep
         </div>
       </div>
@@ -91,7 +91,7 @@ function ProfileCard({
           <button
             title="Clone to custom profile"
             onClick={onClone}
-            className="p-1 rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors shadow-sm"
+            className="p-1 rounded bg-field border border-nm-border-s text-nm-text-3 hover:text-nm-accent transition-colors shadow-sm"
           >
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
@@ -102,7 +102,7 @@ function ProfileCard({
           <button
             title="Edit profile"
             onClick={onEdit}
-            className="p-1 rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors shadow-sm"
+            className="p-1 rounded bg-field border border-nm-border-s text-nm-text-3 hover:text-nm-accent transition-colors shadow-sm"
           >
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -113,7 +113,7 @@ function ProfileCard({
           <button
             title="Delete profile"
             onClick={onDelete}
-            className="p-1 rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors shadow-sm"
+            className="p-1 rounded bg-field border border-nm-border-s text-nm-text-3 hover:text-red-500 transition-colors shadow-sm"
           >
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -151,7 +151,7 @@ export function ArchitectureProfilePicker({
   }
 
   const sectionLabel = (label: string) => (
-    <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-1.5 mt-3 first:mt-0">
+    <div className="text-[10px] font-semibold uppercase tracking-wider text-nm-text-3 mb-1.5 mt-3 first:mt-0">
       {label}
     </div>
   )
@@ -212,9 +212,9 @@ export function ArchitectureProfilePicker({
         {onNew && (
           <button
             onClick={onNew}
-            className="rounded-lg border border-dashed border-gray-300 dark:border-gray-600 hover:border-indigo-400 dark:hover:border-indigo-500 bg-transparent hover:bg-indigo-50/50 dark:hover:bg-indigo-500/5 px-3 py-2.5 text-left transition-colors"
+            className="rounded-lg border border-dashed border-nm-border-s hover:border-nm-accent bg-transparent hover:bg-nm-accent/5 px-3 py-2.5 text-left transition-colors group"
           >
-            <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400">
+            <div className="flex items-center gap-1.5 text-xs text-nm-text-3 group-hover:text-nm-accent">
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
               </svg>
@@ -223,7 +223,7 @@ export function ArchitectureProfilePicker({
           </button>
         )}
         {userProfiles.length === 0 && !onNew && (
-          <div className="col-span-4 text-xs text-gray-400 dark:text-gray-500 italic py-1">
+          <div className="col-span-4 text-xs text-nm-text-3 italic py-1">
             No custom profiles yet.
           </div>
         )}

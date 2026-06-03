@@ -502,6 +502,45 @@ import soundfile as sf
 
 from nam.train.core import train
 
+import pytorch_lightning as pl
+
+
+class _NamLabEsrReporter(pl.Callback):
+    """Emit one line per validation epoch with the ESR (val_loss is configured to esr).
+
+    Renderer parses NAM_LAB_EPOCH_ESR:{json} lines to build the live curve.
+    """
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        metrics = trainer.callback_metrics or {}
+        val = metrics.get("val_loss", metrics.get("ESR", metrics.get("val_esr")))
+        if val is None:
+            return
+        try:
+            esr = float(val.item() if hasattr(val, "item") else val)
+        except Exception:
+            return
+        payload = {"epoch": int(trainer.current_epoch) + 1, "esr": esr}
+        print("NAM_LAB_EPOCH_ESR:" + json.dumps(payload), flush=True)
+
+
+def _install_esr_reporter():
+    """Patch pl.Trainer.__init__ to append _NamLabEsrReporter to callbacks.
+
+    Returns the original Trainer class so callers can restore it.
+    """
+    _Orig = pl.Trainer
+
+    class _Patched(_Orig):
+        def __init__(self, *a, **kw):
+            cbs = list(kw.get("callbacks") or [])
+            cbs.append(_NamLabEsrReporter())
+            kw["callbacks"] = cbs
+            super().__init__(*a, **kw)
+
+    pl.Trainer = _Patched
+    return _Orig
+
 
 def _extract_validation_esr(result):
     try:
@@ -744,14 +783,18 @@ def main():
     norm_payload = {**payload, "inputPath": active_input, "outputPath": active_output}
     if payload.get("normalizeWav", False):
         norm_payload["ignoreChecks"] = True  # normalized WAV amplitude won't match NAM version fingerprint
-    if requested == "a2":
-        result = _run_a2(norm_payload)
-    elif detected == "a2":
-        # NAM >= 0.13.0 install but A1 (WaveNet) job — use v13 path
-        result = _run_a1_v13(norm_payload)
-    else:
-        # NAM < 0.13.0 install — classic Architecture enum path
-        result = _run_a1(norm_payload)
+    _orig_trainer = _install_esr_reporter()
+    try:
+        if requested == "a2":
+            result = _run_a2(norm_payload)
+        elif detected == "a2":
+            # NAM >= 0.13.0 install but A1 (WaveNet) job — use v13 path
+            result = _run_a1_v13(norm_payload)
+        else:
+            # NAM < 0.13.0 install — classic Architecture enum path
+            result = _run_a1(norm_payload)
+    finally:
+        pl.Trainer = _orig_trainer
 
     discovered_output = _find_output_model_path(payload["trainPath"], payload["modelName"])
     promoted_output = _promote_output_model_path(payload["trainPath"], payload["modelName"], discovered_output)
@@ -1084,12 +1127,37 @@ function emitTrainerState(): void {
   mainWindow?.webContents.send('trainer:update', trainerState)
 }
 
+const TRAINER_LOG_NOISE_RE = /^\s*(Validation(?:\s+DataLoader\s+\d+)?|Sanity Checking(?:\s+DataLoader\s+\d+)?|Training):\s*0%\|.*0\/\d+\s*\[00:00<\?,?\s*\?it\/s\]/i
+const TRAINER_LOG_EMPTY_TQDM_RE = /^\s*(Validation|Sanity Checking|Training):\s*0it\s*\[00:00,?\s*\?it\/s\]/i
+const TRAINER_TQDM_BAR_RE = /^\s*(Epoch\s+\d+|Validation(?:\s+DataLoader\s+\d+)?|Sanity Checking(?:\s+DataLoader\s+\d+)?|Training|Testing):\s+\d+%/i
+
+function tqdmBarKey(line: string): string | null {
+  const m = line.match(/^\s*(Epoch\s+\d+|Validation(?:\s+DataLoader\s+\d+)?|Sanity Checking(?:\s+DataLoader\s+\d+)?|Training|Testing):/i)
+  return m ? m[1].replace(/\s+/g, ' ').toLowerCase() : null
+}
+
 function appendTrainerLog(line: string): void {
   const trimmed = line.replace(/\r/g, '').trimEnd()
   if (!trimmed) return
+  if (TRAINER_LOG_NOISE_RE.test(trimmed) || TRAINER_LOG_EMPTY_TQDM_RE.test(trimmed)) return
+  const logs = trainerState.logs
+  const lastLine = logs[logs.length - 1]
+  if (lastLine === trimmed) return
+  // Collapse consecutive tqdm refreshes of the SAME bar (same "Epoch N:" or "Validation:" prefix) into one rolling line — same effect as a TTY rewriting in place.
+  if (TRAINER_TQDM_BAR_RE.test(trimmed)) {
+    const newKey = tqdmBarKey(trimmed)
+    const lastKey = lastLine ? tqdmBarKey(lastLine) : null
+    if (newKey && lastKey && newKey === lastKey) {
+      const next = logs.slice(0, -1)
+      next.push(trimmed)
+      trainerState = { ...trainerState, logs: next.slice(-600) }
+      emitTrainerState()
+      return
+    }
+  }
   trainerState = {
     ...trainerState,
-    logs: [...trainerState.logs, trimmed].slice(-600),
+    logs: [...logs, trimmed].slice(-600),
   }
   emitTrainerState()
 }
@@ -1118,6 +1186,22 @@ function parseTrainerProgressLine(line: string): boolean {
       progressLatestLine: clean,
     }
     emitTrainerState()
+    return true
+  }
+
+  const esrReport = clean.match(/NAM_LAB_EPOCH_ESR:(\{.*\})\s*$/)
+  if (esrReport) {
+    try {
+      const parsed = JSON.parse(esrReport[1]) as { epoch?: number; esr?: number }
+      if (typeof parsed.epoch === 'number' && typeof parsed.esr === 'number') {
+        trainerState = {
+          ...trainerState,
+          progressEpochCurrent: parsed.epoch,
+          epochValidationEsr: parsed.esr,
+        }
+        emitTrainerState()
+      }
+    } catch {}
     return true
   }
 
@@ -1647,6 +1731,13 @@ async function enqueueTrainingPayloads(payloads: TrainerStartPayload[], staged =
     return 0
   }
   const jobs = uniquePayloads.map((payload) => createTrainerJob(payload, staged))
+  if (!staged) {
+    // Auto-clear finished/failed/canceled jobs from the Queue when fresh work arrives — the history file is the authoritative record.
+    for (let i = trainerQueue.length - 1; i >= 0; i--) {
+      const status = trainerQueue[i].status
+      if (status === 'success' || status === 'error' || status === 'canceled') trainerQueue.splice(i, 1)
+    }
+  }
   trainerQueue.push(...jobs)
   emitTrainerState()
   for (const job of jobs) {
@@ -1778,6 +1869,14 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     cwd: trainPath,
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      PYTHONUNBUFFERED: '1',
+      PYTHONIOENCODING: 'utf-8',
+      // Throttle tqdm to one refresh every 10s and force ASCII bars — mirrors Anaconda-shell behavior in a non-TTY pipe.
+      TQDM_MININTERVAL: '10',
+      TQDM_ASCII: '1',
+    },
   })
   trainerState = { ...trainerState, status: 'running', progressPhase: 'Launching trainer' }
   emitTrainerState()

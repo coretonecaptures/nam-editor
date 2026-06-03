@@ -6,8 +6,10 @@ function Rail({ section, setSection, t, sim }) {
   const D = window.TRAINER;
   const s = D.session;
   const nav = [
+    { id: 'dashboard', label: 'Dashboard', icon: 'gauge', count: null, accent: true },
     { id: 'live', label: 'Live Run', icon: 'activity', count: sim.running ? 1 : 0, run: sim.running },
     { id: 'queue', label: 'Queue', icon: 'list', count: s.queuedCount },
+    { id: 'batches', label: 'Batches', icon: 'layers', count: D.stagedBatches.length },
     { id: 'history', label: 'History', icon: 'clock', count: D.hist.reduce((a, g) => a + g.entries.length, 0) },
     { id: 'new', label: 'New Run', icon: 'plus', count: null },
   ];
@@ -18,12 +20,16 @@ function Rail({ section, setSection, t, sim }) {
         <div className="rail-title"><Icon name="flask" size={18} className="flask" />Local Training</div>
       </div>
       <div className="rail-nav">
-        {nav.map(n => (
-          <button key={n.id} className={`rail-item${section === n.id ? ' on' : ''}`} onClick={() => setSection(n.id)}>
-            <Icon name={n.icon} size={16} className="ri-ic" />
-            <span className="ri-label">{n.label}</span>
-            {n.count != null && n.count > 0 && <span className={`rail-count${n.run ? ' run' : ''}`}>{n.count}</span>}
-          </button>
+        {nav.map((n, i) => (
+          <React.Fragment key={n.id}>
+            <button className={`rail-item${section === n.id ? ' on' : ''}${n.accent ? ' home' : ''}`} onClick={() => setSection(n.id)}>
+              <Icon name={n.icon} size={16} className="ri-ic" />
+              <span className="ri-label">{n.label}</span>
+              {n.id === 'dashboard' && <span className="rail-tag-simple">Simple</span>}
+              {n.count != null && n.count > 0 && <span className={`rail-count${n.run ? ' run' : ''}`}>{n.count}</span>}
+            </button>
+            {i === 0 && <div className="rail-divider-soft" />}
+          </React.Fragment>
         ))}
       </div>
       <div className="rail-sep" />

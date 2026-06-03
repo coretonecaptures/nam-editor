@@ -121,8 +121,36 @@
   const throughput = [3.2, 3.8, 3.6, 4.1, 3.9, 4.4, 4.2, 4.6, 4.3, 4.8, 4.69];
   const rateHistory = liveCurve.map((_, i) => 33 + Math.sin(i * 0.7) * 2.5 + (i % 3));
 
+  // ---- STAGED batches (saved via "Stage", waiting to be queued) ----
+  const stagedBatches = [
+    {
+      id: 'sb-friedman', label: 'Friedman BE 100', type: 'wavs', profile: 'STANDARD', arch: 'standard',
+      epochs: 1000, normalize: 'Off', createdAt: 'Today · 2:58 PM', savePlot: true,
+      inputDi: 'F:/NAM To Process/v3_0_0.wav',
+      routing: '../../NAM/{architecture}/{folder}',
+      items: [
+        { name: 'Friedman BE Clean DIR', tone: 'clean' },
+        { name: 'Friedman BE Crunch DIR', tone: 'crunch' },
+        { name: 'Friedman BE Lead Bright DIR', tone: 'hi_gain' },
+        { name: 'Friedman BE Lead Deep DIR', tone: 'hi_gain' },
+        { name: 'Friedman BE Sat DIR', tone: 'hi_gain' },
+      ],
+    },
+    {
+      id: 'sb-vox', label: 'Vox AC30 Pack', type: 'folder', profile: 'LITE', arch: 'lite',
+      epochs: 500, normalize: 'On', createdAt: 'Today · 1:12 PM', savePlot: true,
+      inputDi: 'F:/NAM To Process/v3_0_0.wav',
+      routing: '../../NAM/{architecture}/{folder}',
+      items: [
+        { name: 'Vox AC30 Chime DIR', tone: 'clean' },
+        { name: 'Vox AC30 Top Boost DIR', tone: 'crunch' },
+        { name: 'Vox AC30 Cranked DIR', tone: 'crunch' },
+      ],
+    },
+  ];
+
   window.TRAINER = {
-    liveJob, queued, batches, liveCurve, hist, quality, burndown, throughput, rateHistory, PRINCE,
+    liveJob, queued, batches, stagedBatches, liveCurve, hist, quality, burndown, throughput, rateHistory, PRINCE,
     session: {
       doneToday: 5, failedToday: 2, avgEsr: 0.0094, bestEsr: 0.0064,
       modelsPerHour: 4.69, activeSince: '3:24:02 PM', queuedCount: 9, totalInSubmission: 13,
@@ -131,5 +159,17 @@
       { name: 'Jose CAB REVxSTD', path: 'F:/NAM To Process/Jose/V2/WAV/CAB', pending: 0, skipped: 2, running: false },
       { name: 'Prince DI Standard', path: 'F:/NAM To Process/70s Silver Prince/_WAV/DI', pending: 12, skipped: 0, running: true },
     ],
+    presets: [
+      { id: 'std1000', name: 'Standard 1000', arch: 'standard', epochs: 1000, favorite: true },
+      { id: 'rev1000', name: 'REVxSTD 1000', arch: 'revxstd', epochs: 1000, favorite: false },
+      { id: 'lite500', name: 'Lite 500 (fast)', arch: 'lite', epochs: 500, favorite: false },
+      { id: 'feather', name: 'Feather Live', arch: 'feather', epochs: 800, favorite: false },
+    ],
+    favorites: {
+      presetId: 'std1000',
+      routing: '../../NAM/{architecture}/{folder}',
+      graphRouting: '../../Graphs/{architecture}/{folder}',
+      inputDi: 'F:/NAM To Process/v3_0_0.wav',
+    },
   };
 })();

@@ -301,6 +301,12 @@ export interface AppSettings {
   trainingPresets: TrainingPreset[]
   trainingWatchProfiles: TrainingWatchProfile[]
   trainingRetainGraphs: boolean
+  // Training Dashboard (Simple mode) favorites
+  trainingFavoritePresetId: string
+  trainingFavoriteRouting: string
+  trainingDefaultInputDi: string
+  // Last-used preset in Create Batch — persisted across restarts; falls back to trainingFavoritePresetId
+  trainingLastSelectedPresetId?: string
 
   // Import: comma-separated suffix words that trigger prefix matching (e.g. "DI,DI2")
   importPrefixSuffixes: string
@@ -402,6 +408,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   trainingPresets: [],
   trainingWatchProfiles: [],
   trainingRetainGraphs: true,
+  trainingFavoritePresetId: '',
+  trainingFavoriteRouting: '',
+  trainingDefaultInputDi: '',
   importPrefixSuffixes: 'DI',
   packGearCatalog: [],
   packChecklistTemplate: cloneChecklistTemplate(DEFAULT_PACK_CHECKLIST_TEMPLATE),

@@ -74,6 +74,15 @@
 - A2 NAM Lab support: the current `__namlab__` Architecture enum trick is not applicable — the new `core.py` has no `Architecture` enum and no `get_wavenet_config()`. Supporting A2 requires a separate Python runner mode that calls `PackedLightningModule` directly with the packed config JSON. Doable as a new runner branch; should be treated as a separate feature once A2 stabilizes in the official NAM release.
 - A2 config reference: packed config is at `nam/train/_resources/config_model_packed.json` in the NAM source; `lr=0.004`, `weight_decay=3.17e-7`, `ExponentialLR(gamma=0.994)`, `mrstft_weight=0.0005`. Two submodels: `channels_3` (nano-class) and `channels_8` (standard-class).
 
+## Remote training (future / exploratory)
+
+- **Remote training agent**: allow NAM Lab on one machine to dispatch training jobs to a separate, more powerful machine on the local network — e.g. a dedicated GPU workstation — while the user continues editing on their laptop. NAM Lab on the host machine would run a lightweight agent/server that accepts jobs from any NAM Lab instance on the same network.
+- **Shared-drive workflow**: the simplest form of remote training would be shared-drive coordination — the submitting machine writes WAV pairs and a job manifest to a network path; the remote machine watches that path (via the existing Watch Folders mechanism), trains, and writes `.nam` outputs back. No custom protocol needed; just documenting the pattern and making the UX easy.
+- **Remote job monitor**: a "Remote" section or dashboard card that shows live status (epoch, ESR, ETA) streamed from a remote agent, so the user can monitor a GPU workstation run without switching machines.
+- **Remote queue dispatch**: extend the existing queue IPC so a job can be marked as `remote`, serialized, and sent to a remote NAM Lab agent over a local network socket (e.g. WebSocket or lightweight REST). The remote agent queues and executes it, streams back progress events, and sends the finished `.nam` back or writes it to a shared path.
+- **Agent discovery**: mDNS/Bonjour-based local service discovery so NAM Lab instances can find each other on the network without manual IP entry — similar to how AirPlay or local dev servers advertise themselves.
+- **Auth / trust model**: for any network-facing agent, define a simple shared-secret or pairing handshake so random machines on the same network cannot submit arbitrary training jobs to an exposed agent.
+
 ## Experimental training
 
 - Training panel container usage: reduce the forced-feeling outer padding / dead margins so the trainer uses more of its available width and height, especially as the panel is resized.
