@@ -1316,7 +1316,7 @@ function createTrainerJob(payload: TrainerStartPayload): TrainerQueueJob {
     batchSize: payload.batchSize ?? 16,
     ny: payload.ny ?? 8192,
     fitMrstft: payload.fitMrstft ?? true,
-    normalizeWav: payload.normalizeWav ?? true,
+    normalizeWav: payload.normalizeWav ?? false,
     normalizeWavTargetDb: payload.normalizeWavTargetDb ?? -5.0,
     captureProfileId: payload.captureProfileId ?? null,
     epochs: payload.epochs,
@@ -1545,7 +1545,8 @@ async function buildTrainerPayloadsForProfile(
   inputPath: string,
   sourceWavPaths: string[],
   sourceModeOverride?: TrainingSourceMode,
-  submissionMeta?: { id: string; label: string; createdAt: string }
+  submissionMeta?: { id: string; label: string; createdAt: string },
+  normalizeOverride?: { normalizeWav: boolean; normalizeWavTargetDb: number }
 ): Promise<TrainerStartPayload[]> {
   const payloads: TrainerStartPayload[] = []
   if (!pythonPath.trim()) { log(`[payload builder "${profile.name}"] skipped: python path empty`); return payloads }
@@ -1578,8 +1579,8 @@ async function buildTrainerPayloadsForProfile(
         outputPath: normalizedOutputPath,
         trainPath: finalModelRoot,
         namMode: isA2 ? 'a2' : 'a1',
-        normalizeWav: trainerConfiguredNormalizeWav,
-        normalizeWavTargetDb: trainerConfiguredNormalizeWavTargetDb,
+        normalizeWav: normalizeOverride?.normalizeWav ?? trainerConfiguredNormalizeWav,
+        normalizeWavTargetDb: normalizeOverride?.normalizeWavTargetDb ?? trainerConfiguredNormalizeWavTargetDb,
         architecture,
         waveNetConfig: profileCfg?.waveNetConfig ?? null,
         lr: profileCfg?.lr ?? 0.004,
@@ -2104,7 +2105,7 @@ let trainerConfiguredInputPath = ''
 let trainerConfiguredModeledBy = ''
 let trainerConfiguredInputLevelDbu: number | null = null
 let trainerConfiguredOutputLevelDbu: number | null = null
-let trainerConfiguredNormalizeWav = true
+let trainerConfiguredNormalizeWav = false
 let trainerConfiguredNormalizeWavTargetDb = -5.0
 
 function resetTrainingWatchProfiles(profiles: TrainingProfile[], retainGraphs: boolean): void {
@@ -4196,7 +4197,7 @@ app.whenReady().then(async () => {
     trainerConfiguredModeledBy = (payload?.modeledBy ?? '').trim()
     trainerConfiguredInputLevelDbu = Number.isFinite(payload?.inputLevelDbu) ? payload.inputLevelDbu ?? null : null
     trainerConfiguredOutputLevelDbu = Number.isFinite(payload?.outputLevelDbu) ? payload.outputLevelDbu ?? null : null
-    trainerConfiguredNormalizeWav = payload?.normalizeWav ?? true
+    trainerConfiguredNormalizeWav = payload?.normalizeWav ?? false
     trainerConfiguredNormalizeWavTargetDb = Number.isFinite(payload?.normalizeWavTargetDb) ? (payload.normalizeWavTargetDb ?? -5.0) : -5.0
     trainerUserCaptureProfiles = Array.isArray(payload?.userCaptureProfiles) ? payload.userCaptureProfiles : []
     resetTrainingWatchProfiles(Array.isArray(payload?.profiles) ? payload.profiles : [], payload?.retainGraphs ?? true)
@@ -4335,6 +4336,8 @@ app.whenReady().then(async () => {
     folderPath: string
     pythonPath: string
     inputPath: string
+    normalizeWav?: boolean
+    normalizeWavTargetDb?: number
     submissionId?: string
     submissionLabel?: string
     submissionCreatedAt?: string
@@ -4361,6 +4364,9 @@ app.whenReady().then(async () => {
             label: payload.submissionLabel,
             createdAt: payload.submissionCreatedAt ?? new Date().toISOString(),
           }
+        : undefined,
+      payload.normalizeWav != null
+        ? { normalizeWav: payload.normalizeWav, normalizeWavTargetDb: payload.normalizeWavTargetDb ?? -5.0 }
         : undefined
     )
     const queued = await enqueueTrainingPayloads(payloads)

@@ -781,6 +781,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       folderPath: folderRunPath.trim(),
       pythonPath: settings.namPythonPath.trim(),
       inputPath: inputPath.trim(),
+      ...resolveNormalize(normalizeWavOverride, normalizeWavTargetDb),
       submissionId,
       submissionLabel,
       submissionCreatedAt,
