@@ -1,6 +1,6 @@
 # NAM Lab Training Guide
 
-NAM Lab includes a built-in training workflow that runs the NAM Python trainer directly, without leaving the app. It handles single runs, batched queues, and automated folder watching — all in one place.
+NAM Lab includes a built-in training workflow that runs the NAM Python trainer directly inside the app. It handles single captures, mixed-architecture batches, staged drafts, automated folder watching, and a full history of completed runs — all on the same Python `neural-amp-modeler` install you'd use from the command line.
 
 ---
 
@@ -8,10 +8,10 @@ NAM Lab includes a built-in training workflow that runs the NAM Python trainer d
 
 Before training, you need a working NAM Python environment on your machine.
 
-- Install NAM following the [official instructions](https://github.com/sdatkinson/neural-amp-modeler)
+- Install `neural-amp-modeler` following the [official instructions](https://github.com/sdatkinson/neural-amp-modeler) (a NAM version **≥ 0.13** is recommended — that's the one that supports both A1 WaveNet and A2 PackedWaveNet training)
 - Note the full path to the Python executable inside that environment
   - Example: `C:\Users\YourName\.conda\envs\nam\python.exe`
-- Have a **reference input WAV** — the DI reamp signal used during capture
+- Have a **reference input DI WAV** — the reamp signal used during capture
 
 NAM Lab does not install Python or NAM itself. It only orchestrates the trainer you already have.
 
@@ -22,187 +22,280 @@ NAM Lab does not install Python or NAM itself. It only orchestrates the trainer 
 Open **Settings → Training**.
 
 - **NAM Python Executable** — paste the full path to your NAM environment's Python
-- **Default Input WAV** — optional default DI reference. Individual runs can override this.
+- **Default Input DI** — optional default reference WAV for Quick Add and history-retry flows
+- **NAM output path formula** — token-based output routing for the trained `.nam`, e.g. `../../NAM/{architecture}/{folder}`
+- **Graph output path formula** — same idea for ESR plot PNGs
+- **Normalize WAV before training** — global on/off with a target dBFS
+- **Favorite preset** — the preset Quick Add uses
 - **Enable experimental training** — must be on for the Training workspace to appear
-
-Use the **Test Python** button to verify the path loads NAM correctly before trying a real run.
 
 ---
 
 ## Training Workspace Layout
 
-The training workspace uses a **Mission Control** layout with a left-rail navigator and a main content area.
+The training workspace uses a left-rail navigator + main content. The **NAM Lab** eyebrow at the very top of the rail is a clickable back link with a chevron — click it to return to the file library (tree / file list / metadata editor).
 
 **Left-rail sections:**
 
 | Section | What it shows |
 | --- | --- |
-| Live Run | The currently running job, live output log, and progress |
-| Queue | All pending jobs — add, remove, reorder |
-| History | Every completed job with ESR and status |
-| New Run | Configure and start a new training job |
+| Dashboard | A "Simple mode" summary — hero name of what's running, 8 big stat tiles (Current epoch, Queue progress, Active batch, Current ETA, Completed, Failed, Last ESR, Last item took), Quick Add card, Up Next card |
+| Live Run | Real-time telemetry for the active job: ESR-over-epochs chart, statline (Epoch / Rate / Validation ESR / Started), Final output + Checkpoint paths, Up Next, expandable Raw trainer log |
+| Queue | Queued / running / finished jobs grouped by batch submission, with filters, Expand-all / Collapse-all, captures + batches counters |
+| Batches | **Staged** drafts — batches that were saved but not yet queued. Persist across app restarts |
+| History | Completed, failed, and canceled runs with twin charts (ESR quality / Throughput), segmented status filter, group headers per batch |
+| New Run | The Create Batch form |
 
-Below the main sections, a collapsible **Watch Folders** item shows your active watcher profiles with start/stop controls. Watch profiles themselves are configured in **Settings → Training**.
+Below the main sections, a collapsible **Watch Folders** item shows your active watcher profiles with start/stop controls. A **This Session** stats panel tracks completed runs, average ESR, throughput, and failures for the current session.
 
-A **This Session** stats panel in the left rail tracks completed runs, average ESR, throughput, and failures for the current app session.
+The **Now-strip** along the top of every section (except the Dashboard) shows the running job at a glance — model name, architecture chip, profile chip, progress bar, Pause-after-current and Emergency-stop controls.
 
 ---
 
-## Training Presets
+## Architectures
 
-Presets store a named training recipe you can reuse across manual runs and watchers.
+NAM Lab supports both NAM generations as **architectures** in one unified picker:
+
+| Architecture | Notes |
+| --- | --- |
+| **A2** | PackedWaveNet (NAM ≥ 0.13). One file contains both Full and Lite sub-models; the plugin picks at load time |
+| **A1 - Standard** | Full WaveNet — highest A1 quality, largest file, slowest |
+| **A1 - Complex** | 32-channel variant — richer detail |
+| **A1 - Lite** | Good balance of quality and speed |
+| **A1 - Feather** | Very lightweight |
+| **A1 - Nano** | Smallest |
+| **A1 - REVySTD** | 5-layer reverb-capable, 1500-epoch default |
+| **A1 - REVyHI** | High-fidelity reverb variant |
+| **A1 - REVxSTD** | 4-layer power-of-3 dilations, 1000-epoch default |
+
+There is **no separate "A1 vs A2" toggle** anymore. You tick what you want in the **Architecture(s)** multi-select and NAM Lab picks the right Python runner per job (`_run_a2` for A2, `_run_a1_v13` for A1 on modern NAM, `_run_a1` for legacy NAM). **You can mix A1 and A2 in the same batch** — each ticked architecture spawns its own job under one shared batch submission.
+
+Each architecture renders as a color-coded chip everywhere in the trainer (Create Batch, Staged Batches, Queue, History). A2 = rose, Standard = slate, Lite = emerald, Feather = sky, Nano = amber, Complex = blue, REVySTD = violet, REVyHI = purple, REVxSTD = fuchsia.
+
+### Capture Profiles (custom architectures)
+
+NAM Lab uses **Capture Profiles** to extend the picker with your own A1 WaveNet variants:
+
+- Clone any built-in profile as a starting point
+- Import a `layers_configs` JSON block from a NAM-BOT preset export
+- Edit layers with a form-based UI
+- Custom profiles store their own training parameters (LR, LR decay, batch size, NY, fit MRSTFT)
+- Available everywhere the built-in architectures are — Create Batch, watcher presets, dashboard
+- Stored in app settings; survive app restarts
+
+A2 does not currently support custom configs — A2 selections always use the official `config_model_packed.json` from your NAM install.
+
+---
+
+## Presets
+
+A **preset** stores a named recipe of architectures + epochs + latency mode + target ESR + normalize override that you can pick from the Create Batch dropdown.
 
 **Fields per preset:**
 - **Name** — free-form label
-- **Architecture(s)** — one or more formats to generate (see Architectures below)
-- **Epochs** — how many training epochs to run (1000 is a common starting point)
-- **Latency** — `Auto` lets NAM detect the sample offset; `Manual` lets you specify it
-- **Target ESR** — optional early-stop threshold (see ESR Quality below)
-- **Save graph** — saves a validation ESR plot alongside the `.nam` file
+- **Architecture(s)** — any combination of A1 variants and/or A2
+- **Epochs** — how many training epochs to run
+- **Latency** — `Auto` (NAM detects the sample offset) or `Manual` (you specify it)
+- **Target ESR** — optional early-stop threshold
+- **Save graph** — saves a validation ESR plot alongside the `.nam`
 - **Ignore trainer checks** — bypasses NAM's built-in safety validation (use with caution)
+- **Normalize WAV before training** — override the global setting per preset
 
-**Managing presets:**
-- Click **+ Add Preset** to create a blank one
-- Click the **copy icon** on any preset to duplicate it — useful for making a variant with one changed field
-- Saving is blocked if two presets are exact duplicates; change at least one field first
+The last preset you selected in Create Batch is **persisted across app restarts**. If you've never selected one, the picker initializes from your **Favorite preset** (Settings → Training) and falls back to `Custom` if neither is set.
 
 ---
 
-## Running Training Manually
+## Create Batch (manual training)
 
-Go to the **New Run** section to configure and queue individual WAV files.
+The **New Run** section is the Create Batch form. It groups one or more output WAVs into a single batch submission.
 
-### Single run
+**Sections of the form:**
 
-1. Choose a source WAV (your captured output file)
-2. Select a preset, or configure settings inline without a preset
-3. Set a train destination folder
-4. Click **Train** (or **Add to Queue** to batch multiple files first)
+1. **Captures**
+   - **Batch name** (optional) — leave blank to auto-name from the capture, folder, or count
+   - **Input DI** — the reamp reference WAV
+   - **Output WAVs** — drop files, add files, or add a folder; folder mode groups by subfolder
+2. **Training Settings**
+   - **Preset** dropdown + description chip on the same row
+   - **Architecture(s)** multi-select with color-coded chips below showing the current selection (× to remove)
+   - **Epochs**, **Latency**, **Target ESR**, **Save ESR plot**, **Ignore checks**, **Normalize**
+3. **Output Routing** — formula-driven destination (token-based) or fixed path; preview shows where each `.nam` will land
 
-### Queue
+At the bottom: **Queue + Start** (begins training right away) or **Stage** (save the batch to the Batches tab without running it).
 
-You can queue multiple WAVs before starting. Each WAV × architecture combination becomes one job.
+After a successful submission the form clears and the view jumps to Queue (or Batches for staged), so duplicate submissions are hard to make by accident.
 
-Example: one WAV queued against `standard` and `revxstd` = two jobs.
+### Mixed A1 + A2 batches
 
-Navigate to the **Queue** section to see pending jobs. Controls:
-- **Pause after current** — lets the active job finish, then holds
-- **Cancel current** — stops the running job immediately
-- **Retry failed** — requeues failed jobs
-- **Clear finished** — removes completed rows from the view
-
-Jobs run serially one at a time.
-
-### Inline settings override
-
-If you are not using a preset, you can configure directly in New Run:
-- architecture(s)
-- epochs
-- latency
-- target ESR
-- save plot / ignore checks
-
-These inline values only apply to the current queued batch.
+Tick `A2`, `A1 - Standard`, and `A1 - REVxSTD` with 3 output WAVs and you get 9 jobs (3 WAVs × 3 architectures) under one shared `submissionId`. Each job carries its own architecture and `namMode` is derived per-job. They run serially through the queue and each lands in its own `{architecture}` folder per the output formula.
 
 ---
 
-## Training Watcher (Automation)
+## Quick Add
 
-The watcher monitors a folder for new WAV files and trains them automatically as they appear.
+The Dashboard's **Quick Add** card lets you fire training without opening Create Batch:
 
-Set up watcher profiles in **Settings → Training → Watch Profiles**.
+1. Click the file-drop icon (or drop WAVs directly on the card)
+2. NAM Lab builds a batch using:
+   - **Input DI** from `Settings → Training → Default Input DI` (falls back to the legacy `Training Input WAV` setting)
+   - **Routing** from `Settings → Training → Favorite output routing`, falling back to the global **NAM output path formula**
+   - **Preset** from `Settings → Training → Favorite preset`
+3. The batch queues immediately
 
-### Watcher profile fields
+The gear icon on the Quick Add card opens Settings on the Training tab so you can tweak the favorites without leaving the workspace.
+
+---
+
+## Queue
+
+The Queue groups jobs by batch submission. Each group expands to show its capture rows.
+
+**Filters and controls:**
+- Profile / Status / Architecture select filters
+- **Expand all** / **Collapse all** buttons
+- Tile row showing **Queued / Running / Done / Failed** counts in both **captures** and **batches**
+
+**When new work is queued, finished/failed/canceled rows auto-clear** — the History file is the authoritative record. This keeps the Queue readable across multiple submissions.
+
+**Controls in the now-strip:**
+- **Emergency stop** — terminates the running Python process immediately
+- **Pause after current** — turns amber when active. Training cannot be interrupted mid-capture, so the queue keeps the current capture running to completion then stops advancing. Click again to cancel the pause. Use Emergency stop if you need to kill the active job right away.
+- **Resume** — appears once paused
+
+The queue persists across app restarts. Anything that was running when you closed the app comes back as `queued` with progress cleared (the Python child is gone). Staged batches and pending queued jobs survive intact.
+
+---
+
+## Staged Batches
+
+The **Batches** tab holds drafts saved via **Stage (save, don't run)** in Create Batch. Each batch card shows:
+
+- An amber type-icon chip (WAVs / folder / watcher)
+- The label + amber **Staged** pill
+- Meta sub-line: capture count · profile chip · color-coded architecture chips · epochs · normalize · created date
+- Routing line: output destination + DI basename
+- Actions: **Edit** (re-open in Create Batch), **Delete** (with confirm), **Queue now** (move to Queue)
+- Expand the card to see every WAV in the batch with its architecture chip
+
+**Queue all** in the header moves every staged batch into the live queue.
+
+Staged batches persist across app restarts.
+
+---
+
+## Live Run
+
+The Live Run page is the real-time view of the active job.
+
+- **ESR over epochs** chart — log-scale, lower is better; the green dashed line is your target ESR; updates per validation epoch via a Lightning callback NAM Lab installs into the trainer. Spikes are normal — see the ESR notes below.
+- **Statline** — 4 cells: `Epoch / Rate / Validation ESR / Started`. The Val ESR cell is tone-colored (green / amber / red).
+- **Final output** — full path of the destination `.nam` file
+- **Checkpoint export** — path of the Lightning checkpoint, populated once training starts
+- **Up next** — the next 3 jobs in the queue with numbered badges
+- **Raw trainer log** — collapsible. Shows the same output you'd see in an Anaconda shell: GPU detection, LR scheduler, Replicate ESR, V2/V3 checks, the rolling Epoch progress bar (deduped so each epoch becomes one updating line), and the final aggregate ESR. tqdm refresh frames and progress sanity checks are filtered out to keep it readable.
+
+### Why does the ESR curve have spikes?
+
+The chart plots true per-epoch validation ESR (NAM Lab installs a `pytorch_lightning.Callback` that emits the metric after every validation epoch end). Spikes are real but mostly cosmetic:
+
+1. The chart is **log scale**, so a tiny absolute jump (e.g. `0.005 → 0.012`) looks dramatic.
+2. Validation is stochastic — different audio chunks per epoch give natural variance.
+3. The optimizer is actively searching — until the LR decays significantly, every epoch makes a meaningful parameter update.
+
+What's NOT normal: spikes that grow over time, or the curve trending up. Those mean divergence — bail and check your data / LR.
+
+---
+
+## Watcher (Automation)
+
+The watcher monitors a folder for new WAV files and trains them automatically as they appear. Set up profiles in **Settings → Training → Watch Profiles**.
+
+### Profile fields
 
 - **Name** — profile label
-- **Watch Folder** — folder to monitor for new WAV files
-- **Linked Preset** — which training preset to apply
+- **Watch Folder** — folder to monitor
+- **Linked Preset** — which preset (architectures, epochs, etc.) to apply
 - **Watcher start mode** — `Process existing untracked files` or `Watch new files only`
-- **Naming Template** — how the output `.nam` file is named; supports:
-  - `{basename}` — source WAV filename without extension
-  - `{architecture}` — architecture shortname
-  - `{profile}` — preset name
-  - `{esr}` — achieved validation ESR
-- **Model Output Root** — where finished `.nam` files are placed (in architecture subfolders)
-- **Graph Output Root** — where ESR plot images are saved (if Save graph is on)
-- **Source WAV handling** — what happens to the source WAV after training completes:
-  - `Move source WAV to folder below` — removes it from the watch folder
-  - `Copy source WAV to folder below` — leaves original in place
-  - `Keep source WAV in place` — no movement
-- **Source WAV Destination** — where moved/copied WAVs go (only active when not set to Keep)
+- **Naming Template** — output `.nam` filename; supports `{basename}`, `{architecture}`, `{profile}`, `{esr}`
+- **Model Output Root** — where finished `.nam` files land
+- **Graph Output Root** — where ESR plots land (if Save graph is on)
+- **Source WAV handling** — `Move`, `Copy`, or `Keep in place`
+- **Source WAV Destination** — where moved/copied WAVs go
 
-The **live path summary** at the bottom of each profile shows your actual configured destinations at a glance and updates as you change fields.
+The **live path summary** at the bottom of each profile shows your actual configured destinations.
 
 ### Auto-fill
 
-Click **Auto-fill \_Processed folders** to set all three output paths to subfolders of your watch folder:
+Click **Auto-fill _Processed folders** to set all three output paths to subfolders of your watch folder:
 - `{watchFolder}/_Processed/Models`
 - `{watchFolder}/_Processed/WAV`
 - `{watchFolder}/_Processed/Graphs`
 
 ### Starting and stopping
 
-Each profile has an **Enabled** toggle and an **Auto-run** toggle. Active profiles appear in the **Watch Folders** section of the training workspace left rail, where you can start and stop them without going back to Settings.
-
-Use **Sync Now** (in the Folder Dashboard or Settings) to force a rescan of the watch folder without waiting for the next file event.
+Each profile has **Enabled** and **Auto-run** toggles. Active profiles appear in the **Watch Folders** section of the rail with start/stop controls. **Sync Now** forces a rescan.
 
 ### Re-training protection
 
-The watcher tracks every successfully trained file using a **SHA-256 content hash** plus path, size, and modification time. A file is only re-queued if its actual content has changed since the last successful run.
+The watcher tracks every successfully trained file using a SHA-256 hash + path + size + mtime. A file is only re-queued if its content has actually changed. Rename, copy, and same-folder duplicates don't trigger re-runs. Use **Mark current contents as seen** to skip everything currently in the folder going forward.
 
-Key behaviors:
-- renaming a trained WAV does not cause it to be re-queued — the hash still matches
-- copying a file to a new path does not produce a duplicate training job
-- moving a trained WAV into a subfolder does not trigger a re-run — the watcher only scans the top level of the watch folder
+### Watcher Files modal
 
-Use **Mark current contents as seen** to tell the watcher to skip all existing files and only react to new additions going forward.
+Click the file count in a watcher profile's status row to open it. Per file you can:
 
-### Watcher Files Modal
-
-Click the file count in a watcher profile's status row to open the **Watcher Files** view. This shows every file the watcher knows about with:
-- file name
-- current status (pending / training / done / failed / skipped)
-- modified date
-- sort controls (newest / oldest / by status / by name)
-
-Each file row has a **⋮ action menu** with:
-- **Wipe output & retrain** — deletes the trained `.nam` output for that file and re-queues it from scratch
-- **Retrain as new file** — leaves the existing output in place and trains a new copy with an auto-incremented filename suffix such as `(2)`, `(3)`, etc., to avoid overwriting the original
-- **Mark as skipped** — records the file as intentionally skipped so the watcher does not queue it in future sync passes
+- See status (pending / training / done / failed / skipped)
+- Sort by newest / oldest / status / name
+- **Wipe output & retrain** — deletes the trained `.nam` and re-queues
+- **Retrain as new file** — leaves the existing output, trains a new copy with an incremented suffix
+- **Mark as skipped** — records the file as intentionally skipped
 
 ---
 
-## Capture Profiles (Architectures)
+## History
 
-NAM Lab uses **Capture Profiles** to define training architectures. All 8 built-in profiles run via dynamic Python registration — no edits to `core.py` are required.
+Every completed, failed, or canceled run is recorded in the **History** section. Entries are grouped by batch submission and persist across app restarts.
 
-**Built-in profiles:**
+**Top of the page:**
+- **ESR quality · last 7 days** stacked-bar chart (green = <.01, amber = <.05, red = ≥.05)
+- **Throughput · models / hour** area chart
 
-| Profile | Description |
-| --- | --- |
-| `Standard` | Full WaveNet — highest quality, largest file, slowest training |
-| `Complex` | Extended 32-channel variant — richer frequency detail |
-| `Lite` | Lighter WaveNet — good balance of quality and speed |
-| `Feather` | Very lightweight — fastest training, smallest file |
-| `Nano` | Minimal footprint — lowest resource use |
-| `REVySTD` | 5-layer reverb-capable variant, 1500 epoch default |
-| `REVyHI` | 5-layer high-fidelity reverb variant |
-| `REVxSTD` | 4-layer power-of-3 dilations variant |
+**Filter bar:**
+- Search by name or path
+- Segmented status pill — **All / Done / Failed / Canceled**
+- Profile, time range, and ESR-tone selects
 
-**Custom profiles:**
-- Create your own profiles with a form-based layer editor
-- Clone any built-in as a starting point
-- Import a `layers_configs` JSON block from a NAM-BOT preset export
-- Custom profiles also run via dynamic registration — no `core.py` modifications needed
-- Custom profiles are stored in app settings and available in both the training workspace and watcher presets
+**Each group header shows:**
+- Batch label + source-mode badge (`Run WAVs` / `Run Folder` / `Watch folder`)
+- `N done` (emerald) + `N failed` (red) counts
+- Timestamp
+- **Retry failed** (red, only when there are failures) — re-queues the failed entries
+- **Retry batch** (when 2+ entries) — re-queues every entry
 
-Each profile stores its own training parameters (LR, LR decay, epochs, batch size, NY, fit MRSTFT) so the trainer respects profile-specific values rather than hardcoded defaults.
+**Each row shows:**
+- Mini ESR-curve thumbnail (success), red alert icon (failure), or neutral icon
+- Capture name
+- Color-coded architecture chip + profile chip + epochs + duration (or red inline error message for failures)
+- ESR pill (success) or status pill (failure/canceled)
+- Hover actions: View ESR plot, Retry, Reveal in folder
+- Clicking the row opens the ESR plot modal
 
----
+### Right-click context menu
 
-## ESR Quality Guide
+Right-click any history row for:
 
-ESR (Error-to-Signal Ratio) measures how accurately the trained model captures the original signal. Lower is better.
+- **View ESR plot** (if a plot was saved)
+- **Retry**
+- **Reveal in folder** (if the `.nam` is still on disk)
+- **Purge from history…** — removes just that entry (with a confirm modal). The `.nam` file and ESR plot on disk are left alone.
+- **Purge entire batch from history…** — only appears when the entry belongs to a batch with 2+ entries; removes them all with a single confirm.
+
+### Retry behavior
+
+Retries (per-row, Retry failed, or Retry batch) rebuild jobs from the history entry's metadata and submit them as a **new batch** with a `Retry - {original label}` (or `Retry failed - {original label}`) submission. The Input DI and output formula come from your **current** Settings — not whatever was used originally — since those aren't stored on the history entry.
+
+**Retries back up the existing `.nam` before overwriting.** If the destination already has a `foo.nam`, NAM Lab renames it to `foo.bak.nam` before writing the new model. One backup max — repeated retries replace the same `.bak`. This protects previously-successful models from being clobbered by a retry that happened to come out worse. Normal Create Batch / Quick Add submissions don't back up; they overwrite as before.
+
+### ESR Quality Guide
 
 | ESR range | Quality |
 | --- | --- |
@@ -214,60 +307,41 @@ ESR (Error-to-Signal Ratio) measures how accurately the trained model captures t
 
 ### Target ESR (early stopping)
 
-Setting a Target ESR tells the trainer to stop as soon as that threshold is reached, instead of always running to the full epoch count. This can significantly reduce training time when the model converges early.
-
-Recommended starting value: `0.01`
-
-In the training history, runs that stopped early because the target was met are marked with **"stopped early ✓"**.
+Setting a Target ESR tells the trainer to stop as soon as that threshold is reached, instead of always running to the full epoch count. Recommended starting value: `0.01`. Runs that stopped early are marked **"stopped early ✓"** in the history.
 
 ---
 
-## Training History
+## Dashboard
 
-Every completed job is recorded in the **History** section.
+The Dashboard is the default landing tab in the training workspace. It's deliberately spacious — designed to be glance-able from across the room while a batch is running.
 
-Each history row shows:
-- model name and source WAV
-- architecture
-- preset / watcher profile name
-- epoch count
-- validation ESR with quality color coding
-- whether it stopped early because the ESR target was met
-- timestamp and status
+- **Hero row** — the active model name (34px), running indicator dot, control buttons
+- **Eight stat tiles** — each with an icon chip and color tint:
+  - **Current epoch** (accent) — live epoch / total
+  - **Queue progress** (accent, featured) — captures done / total + batches breakdown
+  - **Active batch** (accent) — current capture index / total in this batch
+  - **Current ETA** (neutral)
+  - **Completed** (green) — successful captures in the current queue (**clickable** → jumps to History filtered to Done)
+  - **Failed** (red) — failed captures in the current queue (**clickable** → jumps to History filtered to Failed)
+  - **Last ESR** (tone-colored) — pulled from the most recent successful history entry (**clickable** → jumps to History)
+  - **Last item took** — duration of the most recent successful run
 
-**Right-click** a history row for actions:
-- **View graph** — opens the ESR validation plot image in-app
-- **Show .nam** — reveals the output `.nam` file in your file explorer
-- **Show WAV** — reveals the source WAV in your file explorer
-- **Retry run** — requeues the job using the same parameters
+- **Quick Add card** — drop WAVs to fire a training run with your favorite settings
+- **Up Next card** — peek at the next few queued jobs
 
-History can be exported to Excel or CSV from the history toolbar.
+The Completed / Failed counters reset to 0 when a new batch is queued (because finished rows auto-clear from the live queue), and on a fresh app launch with no queued work pending. Last ESR / Last item took read from history and persist across restarts.
 
 ---
 
 ## WAV Check (Folder Panel Tab)
 
-The **WAV Check** tab appears in the **folder panel** — the right side panel when a folder is selected in the main view (not inside the training workspace).
+The **WAV Check** tab in the folder panel (right side of the main library view) compares a WAV staging folder against the current `.nam` folder and shows:
 
-It compares the WAV staging folder against the current `.nam` folder and shows:
 - which WAVs have a matching `.nam` (trained)
 - which WAVs are missing a capture (not yet trained)
 - which `.nam` files have no matching WAV
 
-From the missing rows you can:
-- click **Train** to queue that WAV for training immediately
-- click **Train All** to queue all missing WAVs at once
-- right-click to copy the filename or show the file in explorer
-
----
-
-## Duplicate Watcher Profiles
-
-To clone an existing watcher profile for a different folder or preset:
-1. Click the **copy icon** in the profile header
-2. The clone appears with `(copy)` appended to the name
-3. Edit the name, watch folder, and any other fields you want to change
-4. Saving is blocked if the clone is still identical to the original
+From the missing rows you can click **Train** to queue that WAV immediately or **Train All** to queue everything missing.
 
 ---
 
@@ -275,22 +349,48 @@ To clone an existing watcher profile for a different folder or preset:
 
 NAM Lab can normalize WAV files before sending them to the trainer.
 
-**How it works:**
-- each WAV in a training pair (input DI and output amp) is normalized **independently** to a target peak of **-5 dBFS**
-- normalization is per-file: the DI and amp WAVs receive separate gain adjustments based on their own peak levels
-- output is written as **24-bit PCM** to preserve quality
-- the original source files are not modified — normalized copies are written to a temp location for the training run
+- Each WAV in a training pair (input DI and output amp) is normalized **independently** to a target peak (default **-5 dBFS**)
+- Output is written as 24-bit PCM
+- Original source files are **never** modified — normalized copies live in the per-run workspace
+- Logged to the raw trainer log as `NAM_LAB_NORMALIZE: ...` with peak / gain details
 
-This matches the behavior of "normalize each file separately" at -5 dBFS, similar to DAW export normalization workflows.
+Normalization can be enabled globally in **Settings → Training** or overridden per preset / per Create Batch submission.
 
-Normalization can be enabled globally in **Settings → Training** or per-preset.
+---
+
+## Raw Trainer Log
+
+The Live Run page has a collapsible **Raw trainer log** that mirrors what you'd see in an Anaconda / terminal shell — the exact stdout/stderr from NAM's `train(...)` call. Behavior notes:
+
+- The Python child is launched with `PYTHONUNBUFFERED=1`, `PYTHONIOENCODING=utf-8`, `TQDM_MININTERVAL=10`, and `TQDM_ASCII=1` so tqdm behaves like a TTY in a piped stdout.
+- Empty / "starting" tqdm refreshes (`Validation: 0it [00:00, ?it/s]`, `Sanity Checking: 0%|...`) are filtered out.
+- Consecutive refreshes of the **same** tqdm bar (e.g. `Epoch 25:` refreshing every second) collapse into one rolling line, same visual effect as a terminal rewriting in place.
+- Useful prints come through unchanged: `Using device: cuda`, `LR scheduler: ExponentialLR ...`, `Replicate ESR is ...`, `V2 checks ...`, the per-epoch ESR from the Lightning callback, and the final aggregate ESR.
+- Backups during retries log `NAM_LAB_BACKUP: foo.nam -> foo.bak.nam`.
+
+The log is selectable — drag to highlight, right-click → Copy uses the native OS clipboard.
+
+---
+
+## Persistence Map
+
+What's saved to disk and survives app restarts:
+
+| File | Lives in | Contents |
+| --- | --- | --- |
+| `trainer-history.json` | `userData/` | Every completed / failed / canceled run, newest first, capped at 2000 |
+| `trainer-queue.json` | `userData/` | Staged + queued + running jobs at last save (running jobs come back as `queued` since their Python child is gone). Throttled to one write per 2 s and flushed on quit. |
+| `trainer-skipped.json` | `userData/` | Watcher skip records — files explicitly marked as skipped |
+| `settings.json` | `userData/` | All app settings including watchers, presets, capture profiles, last selected preset, favorite preset / routing / input DI |
+| Per-run workspace | `userData/trainer-runs/{runId}/` | Lightning checkpoints, intermediate config, normalized WAVs — created per job, retained by `trainingRetainGraphs` setting |
 
 ---
 
 ## Tips
 
-- Use a dedicated folder per gear or session as your watch folder — the watcher is designed to run continuously as a background intake pipeline
-- Set Target ESR to `0.01` and a generous epoch count (e.g. 3000) to get the best result the trainer can achieve without spending time past the point of diminishing returns
-- Save graph is worth keeping on — the ESR plot helps diagnose bad captures before you distribute them
-- The naming template `{basename}_{architecture}` is useful when training multiple formats from the same WAV, so all output names stay unique
-- Use **Pause after current** rather than Cancel if you need to stop a watcher mid-session — it lets the active job finish cleanly and avoids a partial `.nam` file
+- Set Target ESR to `0.01` and a generous epoch count (e.g. 1000+) so the trainer stops early on easy captures and runs long on tough ones.
+- Save graph is worth keeping on — the ESR plot helps diagnose bad captures before distribution.
+- The naming template `{basename}_{architecture}` keeps output names unique when training multiple formats from the same WAV.
+- Use **Pause after current** rather than Cancel if you need to step away — it lets the active job finish cleanly and avoids a partial `.nam` file. Emergency stop is for actual emergencies.
+- Mixed batches are cheap — tick `A2`, `A1 - Standard`, `A1 - REVxSTD` and produce three flavors of the same capture from a single submission.
+- When in doubt about a retry, watch the `.bak.nam` file — if the new run's ESR is worse than the old, the backup is right there next to it.

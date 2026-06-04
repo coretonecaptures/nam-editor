@@ -2,23 +2,18 @@
 
 ## What is A2?
 
-NAM (Neural Amp Modeler) is evolving toward a new model architecture internally called **A2**, based on a design called **PackedWaveNet**. It replaces the original WaveNet architecture (now called **A1**) with a more efficient structure that packs multiple submodel sizes into a single training run.
+NAM (Neural Amp Modeler) ships two generations of model architecture:
 
-A1 is not going away. Both generations are expected to coexist — A1 remains the standard for most captures, and A2 will add new options when the trainer is ready.
+- **A1** — the original WaveNet, with named variants (Standard, Lite, Feather, Nano, Complex, REVySTD, REVyHI, REVxSTD).
+- **A2** — **PackedWaveNet**, introduced in `neural-amp-modeler` 0.13. A2 packs multiple submodel sizes into a single training run — one A2 `.nam` file contains both a **Lite** (channels = 3) and a **Full** (channels = 8) sub-model. The plugin picks at load time.
 
----
-
-## Current Status (as of May 2026)
-
-**A2 `.nam` files exist** — test and reference captures using the A2 model structure can be found in the NAM source repository (`wavenet_a2_max.nam` and similar). These files are real and can be loaded and viewed in NAM Lab today.
-
-**A2 training is not yet released.** The official NAM trainer does not include A2 training support in any public release as of this writing. The A2 runner code in NAM Lab is stubbed and ready but intentionally disabled until the trainer ships.
-
-**A2 architecture string is still `"WaveNet"`** — both A1 and A2 files report `"WaveNet"` in the `architecture` field. NAM Lab detects which generation a file belongs to by inspecting the model config structure, not the architecture string.
+Both generations are first-class in NAM Lab. There is no separate toggle, gate, or beta flag — A2 sits next to the A1 variants in the **Architecture(s)** multi-select and can be picked, mixed with A1 in one batch, queued, retried, and tracked in history exactly like an A1 variant.
 
 ---
 
-## How NAM Lab Identifies A2 Files
+## Detection (read side)
+
+NAM Lab identifies A2 files by config structure, not by the `architecture` string field (both A1 and A2 still report `"WaveNet"` there).
 
 A2 files wrap their layer config inside a `condition_dsp` block:
 
@@ -27,60 +22,79 @@ config.condition_dsp.config.layers   ← A2
 config.layers                        ← A1
 ```
 
-A2 layer configs also contain fields not present in A1: `bottleneck`, `gating_mode`, `secondary_activation`, `conv_pre_film`. NAM Lab checks for these fingerprint fields to confirm an A2 detection.
+A2 layer configs also contain fields not present in A1 (`bottleneck`, `gating_mode`, `secondary_activation`, `conv_pre_film`). NAM Lab checks for these fingerprint fields to confirm an A2 detection.
 
-When a file is identified as A2, NAM Lab shows an **A2** badge (pink chip) in the file list and displays "A2" as the Detected Preset in the Metadata Editor's Capture Stats section.
+When a file is identified as A2:
+- The list view shows an **A2** badge (rose chip).
+- The metadata editor's Capture Stats section shows `A2` as the detected preset.
+- The History row uses the A2 chip color (rose) and an A2 label.
 
 ---
 
 ## A2 Sub-Types
 
-A1 has named variants — Standard, Lite, Feather, Nano, Complex, and the REV family — each with a specific channel count, layer count, and kernel size that NAM Lab fingerprints.
+The official NAM project has not published named A2 sub-types (the equivalent of "Standard" / "Lite" for A1). A2 PackedWaveNet currently uses one stock config (`config_model_packed.json` in the NAM Python package) that produces a Full + Lite pair from a single run.
 
-A2 sub-type names (the equivalent of "Standard", "Lite" etc.) have not been officially defined in any public NAM release or documentation as of this writing. NAM Lab will add named A2 sub-types to the preset detection and filter system as soon as the NAM team publishes the official architecture definitions.
-
----
-
-## A2 in NAM Lab Today
-
-| Feature | Status |
-|---|---|
-| Detect A2 files by config structure | Working |
-| A2 badge in file list | Working |
-| A2 filter in Preset / Generation filter | Working |
-| A2 Model Notes display (top-level `notes` field) | Working |
-| Model Size stat (reads A2 layer path) | Working |
-| A2 sub-type names (Standard, Lite etc.) | Not yet — pending official NAM spec |
-| A2 training via local trainer | Coming Soon — trainer not yet released |
-| A2 Capture Profiles / custom A2 configs | Coming Soon — depends on trainer API |
+If the NAM team publishes named A2 variants later, NAM Lab will add them to the picker alongside the existing A2 entry.
 
 ---
 
-## A2 Training — What to Expect When It Ships
+## A2 Training in NAM Lab
 
-When the official NAM A2 trainer is released, NAM Lab will enable A2 training through the same Training workspace used for A1. The expected changes:
+A2 is a **selectable architecture in Create Batch**, in **presets**, and in **watcher profiles**:
 
-- **Training picker**: the "A2 — Coming Soon" card in the architecture picker will become selectable
-- **No custom architecture required**: A2 has its own built-in config (loaded from `config_model_packed.json` in the NAM package) — you select A2 and the trainer handles the rest
-- **Single Python environment**: one `neural-amp-modeler` install will handle both A1 and A2; no separate Python path needed
-- **Training params**: A2 uses `lr=0.004`, `weight_decay=3.17e-7`, `ExponentialLR(gamma=0.994)`. These will be pre-filled when A2 is selected
-- **Dual output**: the packed model design trains two submodels simultaneously (a lite-class and a standard-class), so one A2 run may produce two `.nam` files
-- **Capture Profiles**: user-defined custom A2 profiles may be possible once the API surface is known
+| Surface | A2 status |
+| --- | --- |
+| Architecture multi-select | A2 appears first in the list |
+| Mixed-architecture batches | Yes — A2 + A1 in one submission produces separate jobs under one shared `submissionId` |
+| Presets | A2 can be the only architecture, or one of several |
+| Watcher profiles | Yes — link any A2 preset to a watch folder |
+| Live Run / chart / log | Identical to A1, including the per-epoch ESR callback |
+| Backup-on-retry | Yes — the Retry batch button protects existing A2 `.nam` files exactly like A1 |
+| History detection + ESR badging | Yes |
+| Custom A2 configs (user-defined) | No — A2 always uses `config_model_packed.json` from your NAM install |
+
+### How NAM Lab routes A2 jobs
+
+The job's `namMode` is **derived per-job from `architecture`**: `'a2'` → `_run_a2` (PackedWaveNet), anything else → `_run_a1` or `_run_a1_v13` depending on whether the NAM install exposes the legacy `Architecture` enum.
+
+The Python guard that used to require `requested == detected` was relaxed: modern NAM (`detected == 'a2'`) accepts A1 requests via `_run_a1_v13`. Only a genuinely incompatible request — `requested='a2'` on an A1-only NAM install — errors out.
+
+### A2 training defaults
+
+A2 uses the NAM package's built-in config:
+- `lr = 0.004`, `weight_decay = 3.17e-7`
+- `ExponentialLR(gamma = 0.994)`
+- Validation metric `ESR` (also surfaced as `val_loss` in Lightning's callback metrics)
+
+These are not edited from the NAM Lab UI when A2 is selected — the trainer handles them.
+
+### A2 output
+
+An A2 run produces one `.nam` file containing both sub-models (a `SlimmableContainer` with `channels_3` and `channels_8`). The file is written to whatever destination your output formula resolves to, the same as A1. The graph PNG, checkpoint, and history record are also unchanged.
 
 ---
 
 ## A2 and the `notes` Field
 
-A2 files introduce a top-level `notes` field — an array of strings containing creator or build notes about the model. This is separate from the user-authored **Notes / Comments** field that NAM Lab stores in `metadata.nam_lab.comments`.
+A2 files introduce a top-level `notes` field — an array of strings containing creator or build notes about the model. This is **separate** from the user-authored **Notes / Comments** field that NAM Lab stores in `metadata.nam_lab.comments`.
 
-NAM Lab displays the top-level `notes` content as read-only **A2 Model Notes** in the Capture Stats section of the Metadata Editor. It cannot be edited from within NAM Lab, as it lives outside the `metadata` block that NAM Lab's surgical patcher manages.
+NAM Lab displays the top-level `notes` content as read-only **A2 Model Notes** in the Capture Stats section of the Metadata Editor. It cannot be edited from within NAM Lab — it lives outside the `metadata` block that NAM Lab's surgical patcher manages.
 
-When A2 and the `notes` field are finalized in the official spec, NAM Lab will add write support and potentially merge the `notes` field with the **Notes / Comments** user field into a unified editable field.
+If the official A2 spec finalizes write semantics for `notes`, NAM Lab will add edit support and may merge the field with the user **Notes / Comments** field into a unified surface.
 
 ---
 
 ## A1 Is Not Going Away
 
-All eight A1 Capture Profiles (Standard, Lite, Feather, Nano, Complex, REVySTD, REVyHI, REVxSTD) remain fully supported. The dynamic registration system NAM Lab uses to run custom A1 profiles works with any `neural-amp-modeler` version that includes the A1 `Architecture` enum — which covers all current stable releases.
+All eight A1 variants (Standard, Complex, Lite, Feather, Nano, REVySTD, REVyHI, REVxSTD) remain fully supported. The dynamic Capture Profile registration system still lets you ship custom A1 architectures with their own layer configs and per-profile training params.
 
-A1 and A2 training presets are stored separately. Switching between them in the Training workspace does not affect your existing A1 presets or history.
+A1 captures and A2 captures coexist in your library without any special handling — the WAV-check tab, history, dashboards, filters, and bulk editors all treat them the same.
+
+---
+
+## Compatibility Notes
+
+- **NAM ≥ 0.13** — A1 and A2 both work. A1 via `_run_a1_v13` (uses `_get_packed_model_config` monkey-patch), A2 via `_run_a2`.
+- **NAM < 0.13** — only A1 works, via `_run_a1` (uses the legacy `Architecture` enum). A2 selections will error out with a clear message.
+- **NAM Lab 0.6.1+** — required for mixed A1+A2 batches, the per-job `namMode` derivation, and the WaveNet layer config migration that lets old (flat `head_size`) capture profiles run on modern NAM (nested `head: {...}` schema).

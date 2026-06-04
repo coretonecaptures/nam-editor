@@ -59,6 +59,7 @@ NAM captures embed metadata (name, gear info, tone type, etc.) as JSON inside th
 - **Export** - CSV or Excel from any view; visible or all columns; respects active filters
 - **Spreadsheet import** - generate a pre-filled `.xlsx` template with target columns and a lookup/reference sheet, edit in Excel, import back
 - **Training version report** - pivot table showing preset x capture coverage per folder
+- **Built-in training workspace** - mission-control UI for the NAM Python trainer with a Dashboard, Live Run with a live ESR-over-epochs chart driven by an embedded PyTorch-Lightning callback, a batch-grouped Queue, Staged Batches (drafts) tab, History with twin trend charts and right-click purge / batch retry, watcher automation, and full mixed A1 + A2 batches in one submission (one preset can ship `['A2', 'standard', 'revxstd']` and produce three flavors of the same capture). Retries back up existing `.nam` files to `*.bak.nam` before overwriting. Queue, staged batches, and last-selected preset all persist across restarts.
 - **File associations** - `.nam` files open directly in NAM Lab from Explorer/Finder
 
 [Full feature reference](docs/features.md)  

@@ -2867,20 +2867,23 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                             {/* Main */}
                             <div className="flex-1 min-w-0">
                               <div className="text-[13px] font-[560] text-nm-text truncate">{entry.finalModelName}</div>
-                              {entry.status === 'error' ? (
-                                <div className="text-[11px] text-red-400 font-mono truncate mt-[3px] max-w-[460px]">{entry.failureReason || 'Failed'}</div>
-                              ) : (
-                                <div className="flex items-center gap-2 flex-wrap mt-[3px] text-[11px] text-nm-text-3">
-                                  <span className="inline-flex items-center h-[17px] px-1.5 rounded-[5px] text-[10px] font-medium border border-nm-border-s bg-field text-nm-text-2">{architectureDisplayLabel(entry.architecture)}</span>
-                                  {entry.profileName && <span className="inline-flex items-center h-[17px] px-1.5 rounded-[5px] text-[10px] font-medium border border-nm-border-s bg-field text-nm-text-2">{entry.profileName}</span>}
-                                  <span className="opacity-50">·</span>
-                                  <span>{entry.epochs} epochs</span>
-                                  {(() => {
-                                    const dur = typeof entry.durationSec === 'number' ? entry.durationSec : null
-                                    if (dur == null) return null
-                                    return <><span className="opacity-50">·</span><span className="font-mono">{formatDuration(dur)}</span></>
-                                  })()}
-                                </div>
+                              {/* Meta line — shown for ALL statuses so you can see what the failed attempt was. */}
+                              <div className="flex items-center gap-2 flex-wrap mt-[3px] text-[11px] text-nm-text-3">
+                                <span className="inline-flex items-center gap-1 h-[17px] px-1.5 rounded-[5px] text-[10px] font-[650] border" style={archChipStyle(entry.architecture)}>
+                                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+                                  {architectureDisplayLabel(entry.architecture)}
+                                </span>
+                                {entry.profileName && <span className="inline-flex items-center h-[17px] px-1.5 rounded-[5px] text-[10px] font-medium border border-nm-border-s bg-field text-nm-text-2">{entry.profileName}</span>}
+                                <span className="opacity-50">·</span>
+                                <span>{entry.epochs} epochs</span>
+                                {(() => {
+                                  const dur = typeof entry.durationSec === 'number' ? entry.durationSec : null
+                                  if (dur == null) return null
+                                  return <><span className="opacity-50">·</span><span className="font-mono">{formatDuration(dur)}</span></>
+                                })()}
+                              </div>
+                              {entry.status === 'error' && (
+                                <div className="text-[11px] text-red-400 font-mono truncate mt-1 max-w-[520px]" title={entry.failureReason || 'Failed'}>{entry.failureReason || 'Failed'}</div>
                               )}
                             </div>
                             {/* Right column */}
