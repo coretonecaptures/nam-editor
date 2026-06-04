@@ -217,6 +217,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const [batchWavList, setBatchWavList] = useState<BatchWavItem[]>([])
   const [batchName, setBatchName] = useState('')
   const [separateBatches, setSeparateBatches] = useState(false)
+  const [submittingBatch, setSubmittingBatch] = useState(false)
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set())
   const [collapsedBatches, setCollapsedBatches] = useState<Set<string>>(new Set())
   const [esrSeries, setEsrSeries] = useState<{ epoch: number; esr: number }[]>([])
@@ -249,6 +250,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const [queueContextMenu, setQueueContextMenu] = useState<{ job: TrainerQueueJob; x: number; y: number } | null>(null)
   const [historyContextMenu, setHistoryContextMenu] = useState<{ entry: TrainerHistoryEntry; x: number; y: number } | null>(null)
   const [historyPurgeConfirm, setHistoryPurgeConfirm] = useState<{ ids: string[]; label: string; mode: 'capture' | 'batch' } | null>(null)
+  const [clearQueueConfirm, setClearQueueConfirm] = useState<{ count: number } | null>(null)
   const [graphModalSrc, setGraphModalSrc] = useState<string | null>(null)
   const [queueProfileFilter, setQueueProfileFilter] = useState<string>('all')
   const [queueStatusFilter, setQueueStatusFilter] = useState<string>('all')
@@ -717,6 +719,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   }
 
   const handleQueue = async (staged = false) => {
+    if (submittingBatch) return
+    setSubmittingBatch(true)
+    try {
     setLaunchError('')
     const parsedEpochs = activePreset ? activePreset.epochs : Number.parseInt(epochs, 10)
     const parsedLatency = activePreset
@@ -833,11 +838,23 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       setLaunchError(result.error ?? 'Training jobs could not be queued.')
       return
     }
+    // Full reset on success so the next visit to Create Batch is a blank slate.
+    // Training Settings (architectures, epochs, latency, etc) are kept so a similar batch can be re-queued quickly.
     setLaunchError('')
     setQueueActionError('')
     setBatchWavList([])
     setBatchName('')
+    setInputPath(settings.namTrainingInputWav || '')
+    setTrainPath('')
+    setSeparateBatches(false)
+    setCollapsedFolders(new Set())
+    setFormulaOverrideActive(false)
+    setGraphFormulaOverrideActive(false)
+    setManualRoutingMode('root')
     setSection(staged ? 'batches' : 'queue')
+    } finally {
+      setSubmittingBatch(false)
+    }
   }
 
 
@@ -1308,10 +1325,14 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const activeJobName = activeJob
     ? activeJob.outputPath.replace(/\\/g, '/').split('/').pop() ?? 'Unknown'
     : 'No active run'
+  // Exclude staged drafts — they live in the Batches tab, not the active queue runway.
+  // Including them in totalJobs made the Now Strip read e.g. "model 7 of 8" when only 2 captures
+  // were actually in flight + 6 sitting unstaged in Batches.
+  const activeQueue = trainerState.queue.filter(j => j.status !== 'staged')
   const activeJobIdx = activeJob
-    ? trainerState.queue.findIndex(j => j.jobId === activeJob.jobId) + 1
+    ? activeQueue.findIndex(j => j.jobId === activeJob.jobId) + 1
     : 0
-  const totalJobs = trainerState.queue.length
+  const totalJobs = activeQueue.length
 
   const lastSuccessEntry = trainerState.history.filter(e => e.status === 'success')[0] ?? null
   const activeBatchJobs = activeJob ? trainerState.queue.filter(j => j.submissionId === activeJob.submissionId) : []
@@ -1378,25 +1399,27 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     <div className="flex h-full overflow-hidden bg-app-bg text-nm-text select-text" onContextMenu={showNativeTextContextMenu}>
       {/* ── Left Rail ─────────────────────────────────────────────────────── */}
       <div className="w-[220px] flex-shrink-0 flex flex-col border-r border-nm-border bg-panel overflow-y-auto">
-        <div className="px-4 pt-3 pb-3 border-b border-nm-border">
+        <div className="px-3 pt-3 pb-3 border-b border-nm-border space-y-2.5">
           {onClose && (
             <button
               onClick={onClose}
-              title="Back to the file library (tree / file list / metadata)"
-              className="inline-flex items-center gap-1 text-[10.5px] font-[600] uppercase tracking-[.6px] text-nm-text-3 hover:text-nm-accent transition-colors mb-1.5"
+              title="Return to the file library (tree / file list / metadata editor)"
+              className="w-full inline-flex items-center gap-1.5 px-2.5 h-8 rounded-[8px] text-[11.5px] font-[600] border border-nm-border-s bg-panel-2 hover:bg-nm-accent/10 hover:border-nm-accent/40 hover:text-nm-accent text-nm-text-2 transition-colors"
             >
-              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
               </svg>
-              NAM Lab
+              Back to Library
             </button>
           )}
-          {!onClose && <div className="text-[10px] font-bold uppercase tracking-wider text-nm-text-3 mb-1">NAM Lab</div>}
-          <div className="flex items-center gap-2">
-            <svg className="w-4 h-4 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23-.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" />
-            </svg>
-            <span className="text-[16px] font-[680] text-nm-text leading-tight">Local Training</span>
+          <div className="px-1">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-nm-text-3 mb-1">NAM Lab</div>
+            <div className="flex items-center gap-2">
+              <svg className="w-4 h-4 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23-.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" />
+              </svg>
+              <span className="text-[16px] font-[680] text-nm-text leading-tight">Local Training</span>
+            </div>
           </div>
         </div>
 
@@ -1593,6 +1616,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                       <span className="inline-flex items-center h-[19px] px-2 rounded-[5px] text-[10.5px] font-[600] bg-field border border-nm-border-s text-nm-text-2">{activeJob.profileName}</span>
                     )}
                     <span>model {activeJobIdx} of {totalJobs}</span>
+                    {queuedCount > 0 && <span className="text-nm-text-3">· {queuedCount} more queued</span>}
                     <span className="font-mono truncate">{activeJob.outputPath.replace(/\\/g, '/').split('/').slice(-2).join('/')}</span>
                   </>
                 )}
@@ -2279,6 +2303,31 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 >
                   Collapse all
                 </button>
+                {(successCount + failedCount) > 0 && (
+                  <button
+                    onClick={() => { void window.api.clearFinishedTrainerRuns() }}
+                    title={`Remove the ${successCount + failedCount} done / failed / canceled row${successCount + failedCount === 1 ? '' : 's'} from the queue. History keeps the full record.`}
+                    className="h-[26px] px-2 rounded-md text-[11px] font-medium border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2 transition-colors inline-flex items-center gap-1"
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 12h-15" /></svg>
+                    Clear finished ({successCount + failedCount})
+                  </button>
+                )}
+                {(() => {
+                  const activeId = trainerState.activeJobId
+                  const clearable = trainerState.queue.filter(j => j.status !== 'staged' && !(activeId && j.jobId === activeId && (j.status === 'starting' || j.status === 'running'))).length
+                  if (clearable === 0) return null
+                  return (
+                    <button
+                      onClick={() => setClearQueueConfirm({ count: clearable })}
+                      title={`Remove all ${clearable} non-running, non-staged row${clearable === 1 ? '' : 's'} from the queue. Use Emergency stop first if you also want to kill the running job. History keeps the full record.`}
+                      className="h-[26px] px-2 rounded-md text-[11px] font-medium border border-red-500/30 hover:bg-red-500/10 text-red-400 transition-colors inline-flex items-center gap-1"
+                    >
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
+                      Clear queue
+                    </button>
+                  )
+                })()}
               </div>
 
               {!!queueActionError && (
@@ -3364,19 +3413,19 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               <div className="flex gap-3">
                 <button
                   onClick={() => { void handleQueue(true) }}
-                  disabled={!canQueue}
+                  disabled={!canQueue || submittingBatch}
                   title={queueTooltip}
                   className="flex-1 py-3 rounded-xl text-[14px] font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2"
                 >
-                  Stage (save, don't run)
+                  {submittingBatch ? 'Staging…' : "Stage (save, don't run)"}
                 </button>
                 <button
                   onClick={() => { void handleQueue(false) }}
-                  disabled={!canQueue}
+                  disabled={!canQueue || submittingBatch}
                   title={queueTooltip}
                   className="flex-1 py-3 rounded-xl text-[14px] font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-white bg-nm-accent hover:opacity-90"
                 >
-                  {(() => {
+                  {submittingBatch ? 'Queueing…' : (() => {
                     const jobArchCount = activePreset ? activePreset.architectures.length : architectures.length
                     const total = batchWavList.length * Math.max(jobArchCount, 1)
                     return total <= 1 ? 'Queue + Start' : `Queue ${total} · Start`
@@ -3512,6 +3561,41 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               className="h-9 px-4 rounded-[9px] text-[12.5px] font-semibold bg-red-500 hover:bg-red-600 text-white transition-colors"
             >
               {historyPurgeConfirm.mode === 'batch' ? `Purge ${historyPurgeConfirm.ids.length} entries` : 'Purge entry'}
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body
+    )}
+
+    {clearQueueConfirm && createPortal(
+      <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/70" onClick={() => setClearQueueConfirm(null)}>
+        <div className="rounded-2xl border border-nm-border bg-panel shadow-2xl max-w-[440px] w-full mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+          <div className="px-5 py-4 border-b border-nm-border-s flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-[9px] flex items-center justify-center flex-shrink-0" style={{ background: 'color-mix(in srgb, #ef4444 16%, transparent)', color: '#f87171' }}>
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
+            </div>
+            <div>
+              <div className="text-[14.5px] font-[660] text-nm-text">Clear the queue?</div>
+              <div className="text-[12px] text-nm-text-3 mt-0.5">This can&apos;t be undone.</div>
+            </div>
+          </div>
+          <div className="px-5 py-4 text-[13px] text-nm-text-2 leading-[1.55]">
+            Removes <span className="font-semibold text-nm-text">{clearQueueConfirm.count}</span> row{clearQueueConfirm.count === 1 ? '' : 's'} from the queue (queued + done + failed + canceled).
+            <br /><br />
+            The currently <span className="font-semibold text-nm-text">running job is left alone</span> — use Emergency stop first if you want to kill that too. <span className="font-semibold text-nm-text">Staged drafts</span> in the Batches tab are also unaffected. History keeps the full record.
+          </div>
+          <div className="px-5 py-3.5 bg-panel-2 border-t border-nm-border-s flex items-center justify-end gap-2">
+            <button onClick={() => setClearQueueConfirm(null)} className="h-9 px-4 rounded-[9px] text-[12.5px] font-medium border border-nm-border-s bg-panel hover:bg-hov text-nm-text-2 transition-colors">Cancel</button>
+            <button
+              onClick={async () => {
+                setClearQueueConfirm(null)
+                const result = await window.api.clearTrainerQueue()
+                if (!result.success) setQueueActionError('Could not clear the queue.')
+              }}
+              className="h-9 px-4 rounded-[9px] text-[12.5px] font-semibold bg-red-500 hover:bg-red-600 text-white transition-colors"
+            >
+              Clear {clearQueueConfirm.count} row{clearQueueConfirm.count === 1 ? '' : 's'}
             </button>
           </div>
         </div>

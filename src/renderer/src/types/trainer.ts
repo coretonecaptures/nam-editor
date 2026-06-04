@@ -339,6 +339,13 @@ export interface TrainerStateSnapshot {
   validationEsr: number | null
   replicateEsr: number | null
   epochValidationEsr: number | null
+  // A2 packed-model breakdown (only populated for A2 runs):
+  // - Full = channels_8 sub-model (what the plugin loads by default)
+  // - Lite = channels_3 sub-model
+  // - Aggregate = NAM's reported val_loss for A2, which is the SUM of both
+  epochValidationEsrFull?: number | null
+  epochValidationEsrLite?: number | null
+  epochValidationEsrAggregate?: number | null
   progressPhase: string
   progressPercent: number | null
   progressEpochCurrent: number | null

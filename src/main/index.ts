@@ -358,6 +358,14 @@ interface TrainerStateSnapshot {
   validationEsr: number | null
   replicateEsr: number | null
   epochValidationEsr: number | null
+  // A2 packed-model breakdown — populated only for A2 runs.
+  // epochValidationEsrFull = channels_8 sub-model (the one the plugin loads by default).
+  // epochValidationEsrLite = channels_3 sub-model.
+  // epochValidationEsrAggregate = NAM's reported val_loss for A2, which is the SUM of both
+  //   (this is the number people were confused by — it makes A2 look ~2x worse than it is).
+  epochValidationEsrFull?: number | null
+  epochValidationEsrLite?: number | null
+  epochValidationEsrAggregate?: number | null
   progressPhase: string
   progressPercent: number | null
   progressEpochCurrent: number | null
@@ -483,6 +491,13 @@ let trainerState: TrainerStateSnapshot = { ...TRAINER_IDLE_STATE }
 let trainerChild: import('child_process').ChildProcessWithoutNullStreams | null = null
 let trainerQueue: TrainerQueueJob[] = []
 let trainerPauseAfterCurrent = false
+// Set by trainer:cancel (Emergency stop). The close handler reads this to:
+//   - skip history append (the job didn't really finish)
+//   - skip post-processing (graph promote, source WAV move, metadata patch)
+//   - reset the active job back to status='queued' with progress cleared
+//   - leave other queued jobs alone (no mass-cancel)
+//   - pause the queue so it doesn't auto-advance to the next job
+let trainerEmergencyRequeue = false
 let trainingProfiles: TrainingProfile[] = []
 let trainerUserCaptureProfiles: UserCaptureProfile[] = []
 let trainingRetainGraphs = true
@@ -511,22 +526,67 @@ from nam.train.core import train
 import pytorch_lightning as pl
 
 
+def _coerce_float(v):
+    if v is None:
+        return None
+    try:
+        return float(v.item() if hasattr(v, "item") else v)
+    except Exception:
+        return None
+
+
 class _NamLabEsrReporter(pl.Callback):
-    """Emit one line per validation epoch with the ESR (val_loss is configured to esr).
+    """Emit one line per validation epoch with the ESR.
+
+    A1: val_loss is configured as 'esr' so we plot that directly.
+    A2: NAM's PackedLightningModule logs val_loss as the SUM of both packed sub-models' ESRs
+        (channels_3 = Lite + channels_8 = Full). That sum makes A2 look ~2x worse than it
+        actually is when compared to a single A1 model. So when we detect the packed metrics
+        (ESR_packed_0 / ESR_packed_1), we report the BETTER sub-model's ESR (typically the
+        Full one — channels_8 — which is what the plugin loads by default) and also send the
+        other sub-model + the aggregate so the renderer can show all three on the chart.
 
     Renderer parses NAM_LAB_EPOCH_ESR:{json} lines to build the live curve.
     """
 
     def on_validation_epoch_end(self, trainer, pl_module):
         metrics = trainer.callback_metrics or {}
-        val = metrics.get("val_loss", metrics.get("ESR", metrics.get("val_esr")))
-        if val is None:
-            return
-        try:
-            esr = float(val.item() if hasattr(val, "item") else val)
-        except Exception:
-            return
-        payload = {"epoch": int(trainer.current_epoch) + 1, "esr": esr}
+
+        # Collect any packed sub-model ESRs (A2). Keys look like ESR_packed_0, ESR_packed_1.
+        packed = {}
+        for key, v in metrics.items():
+            if isinstance(key, str) and key.startswith("ESR_packed_"):
+                try:
+                    idx = int(key.rsplit("_", 1)[1])
+                except Exception:
+                    continue
+                val = _coerce_float(v)
+                if val is not None:
+                    packed[idx] = val
+
+        payload = {"epoch": int(trainer.current_epoch) + 1}
+
+        if packed:
+            # Map idx -> NAM SlimmableContainer convention: 0 = channels_3 (Lite), 1 = channels_8 (Full)
+            lite = packed.get(0)
+            full = packed.get(1)
+            best = min(v for v in packed.values())  # lowest ESR across sub-models
+            payload["esr"] = best  # primary value plotted on the live chart
+            if lite is not None:
+                payload["esr_lite"] = lite
+            if full is not None:
+                payload["esr_full"] = full
+            # Also emit the aggregate so the renderer can show the historical "sum" if desired
+            agg = _coerce_float(metrics.get("val_loss", metrics.get("ESR")))
+            if agg is not None:
+                payload["esr_aggregate"] = agg
+        else:
+            # A1 path — val_loss is already pure ESR per the loss config
+            val = _coerce_float(metrics.get("val_loss", metrics.get("ESR", metrics.get("val_esr"))))
+            if val is None:
+                return
+            payload["esr"] = val
+
         print("NAM_LAB_EPOCH_ESR:" + json.dumps(payload), flush=True)
 
 
@@ -1163,9 +1223,27 @@ async function postProcessTrainerSourceWav(job: TrainerQueueJob): Promise<string
 }
 
 let trainerQueueSaveTimer: NodeJS.Timeout | null = null
+let trainerQueueLastSignature = ''
+
+// Cheap composition signature — captures which jobs exist and what their statuses are. Excludes
+// progress fields that change every tick so we don't churn the signature unnecessarily.
+function computeTrainerQueueSignature(): string {
+  return trainerQueue.map((j) => `${j.jobId}:${j.status}`).join('|')
+}
 
 function persistTrainerQueueThrottled(): void {
-  // Throttle queue persistence — emitTrainerState fires every progress tick. Coalesce to one disk write every 2s.
+  // Two-tier save:
+  // (1) If the queue's COMPOSITION changed (job added / removed / status transition), write immediately
+  //     and synchronously. This is what survives a crash or hard quit — losing a few seconds of progress
+  //     updates is fine, losing a queued job is not.
+  // (2) Otherwise debounce to 2s so per-tick progress updates don't hammer the disk.
+  const sig = computeTrainerQueueSignature()
+  if (sig !== trainerQueueLastSignature) {
+    trainerQueueLastSignature = sig
+    if (trainerQueueSaveTimer) { clearTimeout(trainerQueueSaveTimer); trainerQueueSaveTimer = null }
+    saveTrainerQueue()
+    return
+  }
   if (trainerQueueSaveTimer) return
   trainerQueueSaveTimer = setTimeout(() => {
     trainerQueueSaveTimer = null
@@ -1270,12 +1348,21 @@ function parseTrainerProgressLine(line: string): boolean {
   const esrReport = clean.match(/NAM_LAB_EPOCH_ESR:(\{.*\})\s*$/)
   if (esrReport) {
     try {
-      const parsed = JSON.parse(esrReport[1]) as { epoch?: number; esr?: number }
+      const parsed = JSON.parse(esrReport[1]) as {
+        epoch?: number
+        esr?: number
+        esr_full?: number
+        esr_lite?: number
+        esr_aggregate?: number
+      }
       if (typeof parsed.epoch === 'number' && typeof parsed.esr === 'number') {
         trainerState = {
           ...trainerState,
           progressEpochCurrent: parsed.epoch,
           epochValidationEsr: parsed.esr,
+          epochValidationEsrFull: typeof parsed.esr_full === 'number' ? parsed.esr_full : null,
+          epochValidationEsrLite: typeof parsed.esr_lite === 'number' ? parsed.esr_lite : null,
+          epochValidationEsrAggregate: typeof parsed.esr_aggregate === 'number' ? parsed.esr_aggregate : null,
         }
         emitTrainerState()
       }
@@ -1337,6 +1424,39 @@ function parseTrainerProgressLine(line: string): boolean {
     return false
   }
 
+  // A2 prints "Error-signal ratio (channels_8) = 0.0054" per sub-model after training.
+  // Capture each and keep the best (lowest) — used to override NAM's aggregate validation_esr
+  // before it lands in history. Otherwise A2 history rows show 2x the real best ESR.
+  const a2SubEsrMatch = clean.match(/^Error-signal ratio \(([^)]+)\)\s*=\s*([0-9.eE+\-]+)/i)
+  if (a2SubEsrMatch) {
+    const subName = a2SubEsrMatch[1].trim()
+    const subEsr = Number.parseFloat(a2SubEsrMatch[2])
+    if (Number.isFinite(subEsr)) {
+      const prevBest = trainerState.epochValidationEsrFull ?? Number.POSITIVE_INFINITY
+      const prevLite = trainerState.epochValidationEsrLite ?? null
+      // channels_8 / Full is the larger sub-model the plugin loads by default; channels_3 / Lite is the smaller.
+      const isLite = /channels_3|lite/i.test(subName)
+      const isFull = /channels_8|full|standard/i.test(subName)
+      trainerState = {
+        ...trainerState,
+        epochValidationEsrFull: isFull ? subEsr : (isLite ? trainerState.epochValidationEsrFull ?? null : Math.min(prevBest, subEsr)),
+        epochValidationEsrLite: isLite ? subEsr : prevLite,
+      }
+      emitTrainerState()
+    }
+    return false
+  }
+
+  const aggregateEsrMatch = clean.match(/^Aggregate error-signal ratio\s*=\s*([0-9.eE+\-]+)/i)
+  if (aggregateEsrMatch) {
+    const agg = Number.parseFloat(aggregateEsrMatch[1])
+    if (Number.isFinite(agg)) {
+      trainerState = { ...trainerState, epochValidationEsrAggregate: agg }
+      emitTrainerState()
+    }
+    return false
+  }
+
   if (/^Validating data/i.test(clean) || /^V[23] checks/i.test(clean) || /^Checking blips/i.test(clean) || /^-Checks passed/i.test(clean) || /^Failed checks!/i.test(clean)) {
     trainerState = {
       ...trainerState,
@@ -1375,9 +1495,21 @@ function processTrainerOutputLine(line: string): void {
   if (line.startsWith('NAM_LAB_RESULT:')) {
     try {
       const parsed = JSON.parse(line.slice('NAM_LAB_RESULT:'.length)) as { validationEsr?: number | null; outputModelPath?: string; checkpointModelPath?: string; modelName?: string }
+      // For A2 runs, NAM returns the AGGREGATE (sum of both packed sub-models) as validation_esr.
+      // We parsed per-sub-model ESRs from the trainer's stdout — prefer the Full sub-model's
+      // ESR (channels_8, the one the plugin loads by default), then the best of any captured
+      // sub-models, before falling back to NAM's aggregate. This is what lands in history.
+      const subFull = trainerState.epochValidationEsrFull
+      const subLite = trainerState.epochValidationEsrLite
+      const subBest = (typeof subFull === 'number' || typeof subLite === 'number')
+        ? Math.min(...[subFull, subLite].filter((v): v is number => typeof v === 'number'))
+        : null
+      const preferredEsr = (typeof subFull === 'number')
+        ? subFull
+        : (subBest != null ? subBest : (typeof parsed.validationEsr === 'number' ? parsed.validationEsr : trainerState.validationEsr))
       trainerState = {
         ...trainerState,
-        validationEsr: typeof parsed.validationEsr === 'number' ? parsed.validationEsr : trainerState.validationEsr,
+        validationEsr: preferredEsr,
         outputModelPath: parsed.outputModelPath || trainerState.outputModelPath,
         checkpointModelPath: parsed.checkpointModelPath || trainerState.checkpointModelPath,
         modelName: parsed.modelName || trainerState.modelName,
@@ -1811,13 +1943,8 @@ async function enqueueTrainingPayloads(payloads: TrainerStartPayload[], staged =
     return 0
   }
   const jobs = uniquePayloads.map((payload) => createTrainerJob(payload, staged))
-  if (!staged) {
-    // Auto-clear finished/failed/canceled jobs from the Queue when fresh work arrives — the history file is the authoritative record.
-    for (let i = trainerQueue.length - 1; i >= 0; i--) {
-      const status = trainerQueue[i].status
-      if (status === 'success' || status === 'error' || status === 'canceled') trainerQueue.splice(i, 1)
-    }
-  }
+  // Finished/failed/canceled rows stay in the Queue until the user clicks Clear finished (or removes them
+  // individually). This keeps long-running batches readable when a follow-up batch is added mid-run.
   trainerQueue.push(...jobs)
   emitTrainerState()
   for (const job of jobs) {
@@ -1988,6 +2115,62 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
   trainerChild.once('close', async (code, signal) => {
     if (stdoutRemainder.trim()) processTrainerOutputLine(stdoutRemainder.trim())
     if (stderrRemainder.trim()) processTrainerOutputLine(stderrRemainder.trim())
+
+    // Emergency stop: send the active job back to 'queued' (front of the queue), skip history append
+    // and post-processing entirely. The job hasn't really finished — it's just been requeued.
+    if (trainerEmergencyRequeue) {
+      trainerEmergencyRequeue = false
+      const activeId = trainerState.activeJobId
+      if (activeId) {
+        trainerQueue = trainerQueue.map((job) => (
+          job.jobId === activeId
+            ? {
+                ...job,
+                status: 'queued',
+                startedAt: null,
+                finishedAt: null,
+                outputModelPath: '',
+                checkpointModelPath: '',
+                validationEsr: null,
+                progressPercent: null,
+                progressEpochCurrent: null,
+                progressBatchCurrent: null,
+                progressBatchTotal: null,
+                progressRate: null,
+                progressLatestLine: '',
+                error: '',
+              }
+            : job
+        ))
+      }
+      // Clean up the partial workspace for the killed run so the retry starts fresh.
+      try { await fs.promises.unlink(payloadPath) } catch { /* ignore */ }
+      trainerState = {
+        ...trainerState,
+        status: 'idle',
+        activeJobId: null,
+        runId: null,
+        startedAt: null,
+        finishedAt: null,
+        outputModelPath: '',
+        checkpointModelPath: '',
+        validationEsr: null,
+        epochValidationEsr: null,
+        progressPercent: null,
+        progressEpochCurrent: null,
+        progressBatchCurrent: null,
+        progressBatchTotal: null,
+        progressRate: null,
+        progressPhase: 'Stopped — queue paused',
+        error: '',
+      }
+      trainerChild = null
+      emitTrainerState()
+      // Do NOT call pumpTrainerQueue here — pauseAfterCurrent was set by the cancel handler,
+      // so the queue stays paused until the user clicks Resume.
+      return
+    }
+
     const wasCanceled = trainerState.status === 'canceled'
     const finalStatus: TrainerStateSnapshot['status'] = wasCanceled ? 'canceled' : code === 0 ? 'success' : 'error'
     let finalError = trainerState.error
@@ -4318,17 +4501,11 @@ app.whenReady().then(async () => {
     }
     try {
       const canceledAt = new Date().toISOString()
-      trainerQueue = trainerQueue.map((job) => (
-        job.status === 'queued'
-          ? {
-              ...job,
-              status: 'canceled',
-              finishedAt: canceledAt,
-              error: 'Canceled before start by emergency stop.',
-            }
-          : job
-      ))
-      trainerPauseAfterCurrent = false
+      // Emergency stop targets the CURRENT capture only — other queued jobs stay queued.
+      // The active job will be sent back to status='queued' in the close handler so it can be
+      // resumed as the first item when the user clicks Resume / Start queue.
+      trainerEmergencyRequeue = true
+      trainerPauseAfterCurrent = true
       trainerChild.kill()
       trainerState = {
         ...trainerState,
@@ -4604,6 +4781,21 @@ app.whenReady().then(async () => {
     emitTrainerState()
     await pumpTrainerQueue()
     return { success: true }
+  })
+
+  ipcMain.handle('trainer:clearQueue', async () => {
+    // Drop everything that isn't the active job or a staged draft.
+    // Staged stays in the Batches tab — that's a separate "drafts" inventory.
+    // Active job is left alone so a running training isn't interrupted; user can Emergency Stop first if they want to nuke that too.
+    const activeId = trainerState.activeJobId
+    const before = trainerQueue.length
+    trainerQueue = trainerQueue.filter((job) =>
+      job.status === 'staged' ||
+      (activeId && job.jobId === activeId && (job.status === 'starting' || job.status === 'running'))
+    )
+    const removed = before - trainerQueue.length
+    emitTrainerState()
+    return { success: true, removed }
   })
 
   ipcMain.handle('trainer:clearFinished', async () => {

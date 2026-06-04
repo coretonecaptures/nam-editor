@@ -147,6 +147,8 @@ const api = {
     ipcRenderer.invoke('trainer:retryJob', jobId),
   clearFinishedTrainerRuns: (): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('trainer:clearFinished'),
+  clearTrainerQueue: (): Promise<{ success: boolean; removed: number }> =>
+    ipcRenderer.invoke('trainer:clearQueue'),
   removeQueuedTrainerRuns: (): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('trainer:removeQueued'),
   removeTrainerJob: (jobId: string): Promise<{ success: boolean; error?: string }> =>
