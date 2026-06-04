@@ -91,13 +91,13 @@
 - Training comparison test: run the same capture through a full `1000 epoch REVxSTD` build in both NAM-BOT and NAM Lab, then compare the resulting `.nam` files directly and also do a listening check to confirm they sound the same (or understand why they do not).
 - ~~Training queue controls/icons~~: already SVGs — done.
 - Training panel layout (partially done): a first cleanup pass happened, but the Training section still needs a dedicated neatening pass so Run WAVs / Run Folder / Queue, routing, and custom controls use space more gracefully and read more cleanly.
-- Training architecture picker UX: validate on queue that at least one profile is selected, since the new card grid allows the selection to go empty.
-- Training queue status line: fix the green running summary so it reports active/running work accurately (for example, a single active run should not say `Queue Running - 0 queued` in a misleading way).
+- ~~Training architecture picker UX: validate on queue that at least one profile is selected~~ — Done. `handleQueue` blocks with "Choose at least one architecture before queueing." when `targetArchitectures.length === 0`; same guard on preset-save flow.
+- ~~Training queue status line: fix the misleading green running summary~~ — Done in the workspace redesign. Now strip shows the active job name or "Queue idle"; the "Queue Running - 0 queued" wording is gone.
 - ~~**Training history graph preview**~~ — Stale; training page redesigned.
 - Training watch presets: support more than one preset per watch folder, so one watched source can fan out into multiple training recipes such as `REVxSTD 1000 epoch` and `Standard 500 epoch`.
 - Queue UX: support drag-and-drop queue reordering in addition to move up / move down controls.
 - Queue grouping (partially done): queue/history rows already carry submission grouping for `Run WAVs`, `Run Folder`, and `Watcher`; remaining work is to deepen the batch/session UX where it helps without complicating the serial executor.
-- Queue/history grouping UX: allow grouped Watcher / Run WAVs / Folder Run batches to be collapsed and expanded so long queues and histories are easier to scan.
+- ~~Queue/history grouping UX: collapsed/expanded batches~~ — Done. Queue cards have per-batch chevron + Expand-all / Collapse-all buttons in the filter bar; same on Staged Batches header.
 - Training preset sharing: consider an export/import format so Capture Profile configs can be shared between users as standalone recipe files.
 - Training history (partially done): reviewable grouped history exists; add export/report workflows and make sure the long-term storage/revisit experience is as useful as the live queue.
 - Training watcher intake: maybe later, if the final expected output file is missing, allow reprocessing even when matching history already exists.
