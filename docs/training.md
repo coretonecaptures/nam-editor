@@ -27,6 +27,8 @@ Open **Settings → Training**.
 - **Graph output path formula** — same idea for ESR plot PNGs
 - **Normalize WAV before training** — global on/off with a target dBFS
 - **Favorite preset** — the preset Quick Add uses
+- **Auto-start queue on launch** — when enabled, NAM Lab automatically begins processing queued jobs when the app opens (takes effect on the next launch). Off by default.
+- **Skip auto-start if queue was paused** — visible only when Auto-start is on; if you manually paused the queue before closing, the auto-start is skipped so you have to click Resume deliberately. Off by default.
 - **Enable experimental training** — must be on for the Training workspace to appear
 
 ---
@@ -160,9 +162,12 @@ The Queue groups jobs by batch submission. Each group expands to show its captur
 **Controls in the now-strip:**
 - **Emergency stop** — terminates the running Python process immediately
 - **Pause after current** — turns amber when active. Training cannot be interrupted mid-capture, so the queue keeps the current capture running to completion then stops advancing. Click again to cancel the pause. Use Emergency stop if you need to kill the active job right away.
-- **Resume** — appears once paused
+- **Resume** — appears once paused; pulses with a slow accent-ring animation while the queue is paused and there are jobs waiting, so it's easy to spot at a glance
 
-The queue persists across app restarts. Anything that was running when you closed the app comes back as `queued` with progress cleared (the Python child is gone). Staged batches and pending queued jobs survive intact.
+**Batch-level controls:**
+- Each batch group in the queue shows a **Run next** button when that batch's first queued job is not already at the front of the queue. Clicking it moves the entire batch ahead of whatever is waiting, so you can promote urgent work without canceling anything.
+
+The queue persists across app restarts. Anything that was running when you closed the app comes back as `queued` with progress cleared (the Python child is gone). Staged, queued, **and finished/failed rows** all survive a restart (capped at 2000 total) so you can see what ran in the previous session alongside newly-queued work. The pause state is also saved — if you had paused the queue before closing, it comes back paused.
 
 ---
 
@@ -189,6 +194,7 @@ The Live Run page is the real-time view of the active job.
 
 - **ESR over epochs** chart — log-scale, lower is better; the green dashed line is your target ESR; updates per validation epoch via a Lightning callback NAM Lab installs into the trainer. Spikes are normal — see the ESR notes below.
 - **Statline** — 4 cells: `Epoch / Rate / Validation ESR / Started`. The Val ESR cell is tone-colored (green / amber / red).
+- **MRSTFT / MSE statline** — a secondary row showing the Multi-Resolution STFT loss (frequency-domain perceptual) and MSE (time-domain). Appears only when the trainer reports these values. For A2 batches each cell shows Full and Lite sub-model values separately (`MRSTFT (Full)` / `MRSTFT (Lite)` / `MSE (Full)` / `MSE (Lite)`). These are diagnostic — not needed for day-to-day use, but helpful for comparing convergence behavior across architectures.
 - **Final output** — full path of the destination `.nam` file
 - **Checkpoint export** — path of the Lightning checkpoint, populated once training starts
 - **Up next** — the next 3 jobs in the queue with numbered badges
@@ -402,7 +408,7 @@ What's saved to disk and survives app restarts:
 | File | Lives in | Contents |
 | --- | --- | --- |
 | `trainer-history.json` | `userData/` | Every completed / failed / canceled run, newest first, capped at 2000 |
-| `trainer-queue.json` | `userData/` | Staged + queued + running jobs at last save (running jobs come back as `queued` since their Python child is gone). Throttled to one write per 2 s and flushed on quit. |
+| `trainer-queue.json` | `userData/` | All queue rows — staged, queued, running, finished, failed, and canceled — at last save (running jobs come back as `queued` since their Python child is gone). Also persists the pause flag so auto-start-on-launch can respect it. Throttled to one write per 2 s and flushed on quit. Capped at 2000 rows; older rows are in history. |
 | `trainer-skipped.json` | `userData/` | Watcher skip records — files explicitly marked as skipped |
 | `settings.json` | `userData/` | All app settings including watchers, presets, capture profiles, last selected preset, favorite preset / routing / input DI |
 | Per-run workspace | `userData/trainer-runs/{runId}/` | Lightning checkpoints, intermediate config, normalized WAVs — created per job, retained by `trainingRetainGraphs` setting |
