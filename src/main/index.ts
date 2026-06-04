@@ -2530,10 +2530,9 @@ async function markExistingTrainingWatcherFilesAsSeen(profile: TrainingProfile):
 
 async function ensureTrainingWatcherAutoStart(profile: TrainingProfile): Promise<void> {
   if (!profile.autoRun) return
-  if (trainerPauseAfterCurrent) {
-    trainerPauseAfterCurrent = false
-    emitTrainerState()
-  }
+  // Respect explicit pause — don't clear it here. If the user paused the queue before closing,
+  // the watcher re-initializing on launch should not silently resume training.
+  if (trainerPauseAfterCurrent) return
   await pumpTrainerQueue()
 }
 
@@ -3079,7 +3078,29 @@ function createWindow(): void {
     saveTimer = setTimeout(saveWinState, 500)
   }
   mainWindow.on('resize', debouncedSave)
-  mainWindow.on('close', saveWinState)
+
+  // Warn before closing while a training job is active.
+  let closeConfirmed = false
+  mainWindow.on('close', (e) => {
+    saveWinState()
+    if (closeConfirmed || !trainerChild) return
+    e.preventDefault()
+    void dialog.showMessageBox(mainWindow!, {
+      type: 'question',
+      buttons: ['Stop Training & Close', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      title: 'Training in progress',
+      message: 'A training job is currently running.',
+      detail: 'Closing now will kill the trainer and the current capture will not be saved. Close anyway?',
+    }).then(({ response }) => {
+      if (response === 0) {
+        closeConfirmed = true
+        if (trainerChild) { trainerChild.kill(); trainerChild = null }
+        mainWindow?.destroy()
+      }
+    })
+  })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     try {
