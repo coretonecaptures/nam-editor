@@ -478,6 +478,15 @@ html.charcoal ::-webkit-scrollbar-thumb:hover { background: #4c4c4c; }
   animation: nm-lpulse 1.4s ease-in-out infinite;
 }
 
+/* Resume-button pulse — slow expanding accent ring to draw the user's eye while paused. */
+@keyframes nm-resume-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--nm-accent, var(--accent)) 55%, transparent); }
+  50%      { box-shadow: 0 0 0 8px color-mix(in srgb, var(--nm-accent, var(--accent)) 0%, transparent); }
+}
+.nm-resume-pulse {
+  animation: nm-resume-pulse 2.2s ease-in-out infinite;
+}
+
 /* Dash bar — large progress bar for dashboard hero */
 .nm-dash-bar-fill {
   position: relative;

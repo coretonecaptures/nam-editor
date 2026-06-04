@@ -286,8 +286,12 @@ export interface TrainerHistoryEntry {
   submissionCreatedAt: string | null
   // Wall-clock duration of the run in seconds — measured from job start to finish. Null when missing (older entries / canceled before start).
   durationSec?: number | null
-  // A2-only: ESR of the Lite (channels_3) sub-model. The main validationEsr above is the
-  // Full (channels_8) sub-model. Both sub-models live inside the same A2 .nam file.
+  // A2-only sub-model breakdown:
+  // - validationEsr (above) is the aggregate (sum of both sub-models), matching the official
+  //   trainer's convention for the .nam metadata field.
+  // - validationEsrFull is the Full sub-model (channels_8) — the one the plugin loads by default.
+  // - validationEsrLite is the Lite sub-model (channels_3).
+  validationEsrFull?: number | null
   validationEsrLite?: number | null
 }
 
@@ -349,6 +353,13 @@ export interface TrainerStateSnapshot {
   epochValidationEsrFull?: number | null
   epochValidationEsrLite?: number | null
   epochValidationEsrAggregate?: number | null
+  // MRSTFT / MSE — frequency-domain and time-domain validation losses. For A1 these are single
+  // values. For A2 the non-suffixed fields mirror the Full (channels_8) sub-model and the Lite
+  // fields hold channels_3.
+  epochMrstft?: number | null
+  epochMrstftLite?: number | null
+  epochMse?: number | null
+  epochMseLite?: number | null
   progressPhase: string
   progressPercent: number | null
   progressEpochCurrent: number | null

@@ -297,6 +297,8 @@ Retries (per-row, Retry failed, or Retry batch) rebuild jobs from the history en
 
 ### ESR Quality Guide
 
+**For A1 captures (and the A2 Full sub-model)**:
+
 | ESR range | Quality |
 | --- | --- |
 | < 0.01 | **Great** — excellent capture |
@@ -304,6 +306,27 @@ Retries (per-row, Retry failed, or Retry batch) rebuild jobs from the history en
 | < 0.1 | **Acceptable** — may be usable depending on the source |
 | < 0.3 | **Poor** — likely won't sound right |
 | ≥ 0.3 | **Failed** — something went wrong |
+
+**For A2 captures (aggregate ESR)**:
+
+A2 (PackedWaveNet) packs two sub-models into one `.nam` file (Full = channels_8, Lite = channels_3). The official NAM trainer writes the **aggregate** ESR (Full + Lite summed) to `metadata.training.validation_esr`. That number is roughly 2× what an A1 ESR would be for an equally-good model, because it's the sum of two sub-models' errors.
+
+NAM Lab handles this in two ways depending on what the file carries:
+
+- **NAM-Lab-trained A2 captures** also write `metadata.nam_lab.a2_full_validation_esr` and `metadata.nam_lab.a2_lite_validation_esr`. When those fields are present, NAM Lab uses the **Full sub-model ESR** for color coding and dashboard tallies — that's the sub-model the plugin loads by default, and it's directly comparable to an A1 ESR using the A1 thresholds above.
+- **A2 captures from the official trainer or downloaded from a sharing site** typically only carry the aggregate. NAM Lab uses **A2-aggregate-specific thresholds (~2×)** so they get a fair rating:
+
+| Aggregate ESR | Quality (A2 only) |
+| --- | --- |
+| < 0.02 | **Great** |
+| < 0.07 | **Good** |
+| < 0.2 | **Acceptable** |
+| < 0.6 | **Poor** |
+| ≥ 0.6 | **Failed** |
+
+The History row for an A2 capture shows the per-sub-model breakdown as separate chips (`Full 0.0050`, `Lite 0.0203`, `Agg 0.0253`) so you can see all three at once. The metadata editor's right panel shows three StatCards for A2 (`Validation ESR (A2 Aggregate)`, `Validation ESR (A2 Full)`, `Validation ESR (A2 Lite)`); for A1 it shows the single `Validation ESR` card.
+
+> **Forward note:** the NAM project may revisit what to store in `metadata.training.validation_esr` for A2 captures (aggregate vs Full vs both). If the official convention changes, NAM Lab's tolerance bands and label may shift to match — but the underlying per-sub-model values in `metadata.nam_lab.*` make it possible to recover the breakdown either way.
 
 ### Target ESR (early stopping)
 

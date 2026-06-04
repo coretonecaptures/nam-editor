@@ -5,6 +5,7 @@ let sharedScrollTop = 0
 import { NamFile, NamMetadata, GEAR_TYPES, TONE_TYPES } from '../types/nam'
 import { gearImages } from '../assets/gear'
 import { detectPreset } from '../utils/detectPreset'
+import { getCaptureBestEsr, getA2AggregateEsr, getA2LiteEsr } from '../utils/esr'
 import { ComboInput } from './ComboInput'
 
 interface MetadataEditorProps {
@@ -500,27 +501,84 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
               {m.gain != null && (
                 <StatCard label="Gain Factor" value={m.gain.toFixed(4)} />
               )}
-              {(m.training as Record<string, unknown>)?.validation_esr != null && (() => {
-                const isA2 = !!((m as Record<string, unknown>).nam_lab as Record<string, unknown> | undefined)?.a2_lite_validation_esr
-                  || !!((m.config as Record<string, unknown> | undefined)?.condition_dsp)
+              {(() => {
+                // Validation ESR cards — A1: one card. A2: main "Aggregate" card + nam_lab Full + Lite cards.
+                // Aggregate uses A2-specific tolerance (~2x A1) so a downloaded/official-trainer A2 capture
+                // with only the aggregate gets a fair color rating.
+                const meta = m as Record<string, unknown>
+                const best = getCaptureBestEsr(meta)
+                const aggregate = getA2AggregateEsr(meta)
+                const lite = getA2LiteEsr(meta)
+                const nl = meta.nam_lab as Record<string, unknown> | undefined
+                const fullFromNamLab = typeof nl?.a2_full_validation_esr === 'number' ? nl.a2_full_validation_esr : null
+                const trainingEsr = (meta.training as Record<string, unknown> | undefined)?.validation_esr
+                const isA2 = best.kind !== 'a1' || aggregate != null || typeof lite === 'number'
+                if (typeof trainingEsr !== 'number' && fullFromNamLab == null && lite == null) return null
                 return (
-                  <StatCard
-                    label={isA2 ? 'Validation ESR (A2 Full)' : 'Validation ESR'}
-                    value={((m.training as Record<string, unknown>).validation_esr as number).toFixed(6)}
-                    good={((m.training as Record<string, unknown>).validation_esr as number) < 0.01}
-                  />
+                  <>
+                    {/* Main card — A1 uses validation_esr directly; A2 uses the aggregate from validation_esr. */}
+                    {typeof trainingEsr === 'number' && (
+                      <StatCard
+                        label={isA2 ? 'Validation ESR (A2 Aggregate)' : 'Validation ESR'}
+                        value={trainingEsr.toFixed(6)}
+                        good={isA2 ? trainingEsr < 0.02 : trainingEsr < 0.01}
+                      />
+                    )}
+                    {/* A2 Full sub-model (NAM Lab-trained captures). Tone uses A1 thresholds since this IS a single sub-model's ESR. */}
+                    {isA2 && fullFromNamLab != null && (
+                      <StatCard
+                        label="Validation ESR (A2 Full)"
+                        value={fullFromNamLab.toFixed(6)}
+                        good={fullFromNamLab < 0.01}
+                      />
+                    )}
+                    {/* A2 Lite sub-model (NAM Lab-trained captures). */}
+                    {isA2 && typeof lite === 'number' && (
+                      <StatCard
+                        label="Validation ESR (A2 Lite)"
+                        value={lite.toFixed(6)}
+                        good={lite < 0.01}
+                      />
+                    )}
+                  </>
                 )
               })()}
               {(() => {
                 const nl = (m as Record<string, unknown>).nam_lab as Record<string, unknown> | undefined
-                const liteEsr = nl?.a2_lite_validation_esr
-                if (typeof liteEsr !== 'number') return null
+                if (!nl) return null
+                const isA2 = typeof nl.a2_lite_validation_esr === 'number'
+                  || !!((m.config as Record<string, unknown> | undefined)?.condition_dsp)
+                const mrstft = nl.mrstft
+                const mrstftLite = nl.a2_lite_mrstft
+                const mse = nl.mse
+                const mseLite = nl.a2_lite_mse
                 return (
-                  <StatCard
-                    label="Validation ESR (A2 Lite)"
-                    value={liteEsr.toFixed(6)}
-                    good={liteEsr < 0.01}
-                  />
+                  <>
+                    {typeof mrstft === 'number' && (
+                      <StatCard
+                        label={isA2 ? 'MRSTFT (A2 Full)' : 'MRSTFT'}
+                        value={mrstft.toFixed(6)}
+                      />
+                    )}
+                    {isA2 && typeof mrstftLite === 'number' && (
+                      <StatCard
+                        label="MRSTFT (A2 Lite)"
+                        value={mrstftLite.toFixed(6)}
+                      />
+                    )}
+                    {typeof mse === 'number' && (
+                      <StatCard
+                        label={isA2 ? 'MSE (A2 Full)' : 'MSE'}
+                        value={mse.toExponential(3)}
+                      />
+                    )}
+                    {isA2 && typeof mseLite === 'number' && (
+                      <StatCard
+                        label="MSE (A2 Lite)"
+                        value={mseLite.toExponential(3)}
+                      />
+                    )}
+                  </>
                 )
               })()}
               {(() => {

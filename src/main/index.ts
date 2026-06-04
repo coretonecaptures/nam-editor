@@ -303,8 +303,12 @@ interface TrainerHistoryEntry {
   submissionLabel: string | null
   submissionCreatedAt: string | null
   durationSec?: number | null
-  // A2-only: ESR of the Lite (channels_3) sub-model. The main validationEsr field above is the
-  // Full (channels_8) sub-model. Both live inside the same A2 .nam file (SlimmableContainer).
+  // A2-only sub-model breakdown:
+  // - validationEsr (above) is the aggregate (sum of both sub-models), matching the official
+  //   trainer's convention for the .nam metadata field.
+  // - validationEsrFull is the Full sub-model (channels_8) — the one the plugin loads by default.
+  // - validationEsrLite is the Lite sub-model (channels_3).
+  validationEsrFull?: number | null
   validationEsrLite?: number | null
 }
 
@@ -369,6 +373,14 @@ interface TrainerStateSnapshot {
   epochValidationEsrFull?: number | null
   epochValidationEsrLite?: number | null
   epochValidationEsrAggregate?: number | null
+  // MRSTFT = Multi-Resolution STFT loss (frequency-domain perceptual). MSE = time-domain mean-squared error.
+  // For A1: epochMrstft / epochMse are the single per-epoch values.
+  // For A2: epochMrstft / epochMse mirror the Full (channels_8) sub-model;
+  //         epochMrstftLite / epochMseLite hold the Lite (channels_3) sub-model.
+  epochMrstft?: number | null
+  epochMrstftLite?: number | null
+  epochMse?: number | null
+  epochMseLite?: number | null
   progressPhase: string
   progressPercent: number | null
   progressEpochCurrent: number | null
@@ -560,40 +572,59 @@ class _NamLabEsrReporter(pl.Callback):
     def on_validation_epoch_end(self, trainer, pl_module):
         metrics = trainer.callback_metrics or {}
 
-        # Collect any packed sub-model ESRs (A2). Keys look like ESR_packed_0, ESR_packed_1.
-        packed = {}
-        for key, v in metrics.items():
-            if isinstance(key, str) and key.startswith("ESR_packed_"):
-                try:
-                    idx = int(key.rsplit("_", 1)[1])
-                except Exception:
-                    continue
-                val = _coerce_float(v)
-                if val is not None:
-                    packed[idx] = val
+        def _collect_packed(prefix):
+            # Keys look like ESR_packed_0, MRSTFT_packed_1, MSE_packed_0 etc.
+            out = {}
+            for key, v in metrics.items():
+                if isinstance(key, str) and key.startswith(prefix):
+                    try:
+                        idx = int(key.rsplit("_", 1)[1])
+                    except Exception:
+                        continue
+                    fv = _coerce_float(v)
+                    if fv is not None:
+                        out[idx] = fv
+            return out
+
+        packed_esr = _collect_packed("ESR_packed_")
+        packed_mrstft = _collect_packed("MRSTFT_packed_")
+        packed_mse = _collect_packed("MSE_packed_")
 
         payload = {"epoch": int(trainer.current_epoch) + 1}
 
-        if packed:
-            # Map idx -> NAM SlimmableContainer convention: 0 = channels_3 (Lite), 1 = channels_8 (Full)
-            lite = packed.get(0)
-            full = packed.get(1)
-            best = min(v for v in packed.values())  # lowest ESR across sub-models
+        if packed_esr:
+            # NAM SlimmableContainer convention: 0 = channels_3 (Lite), 1 = channels_8 (Full)
+            esr_lite = packed_esr.get(0)
+            esr_full = packed_esr.get(1)
+            best = min(v for v in packed_esr.values())  # lowest ESR across sub-models
             payload["esr"] = best  # primary value plotted on the live chart
-            if lite is not None:
-                payload["esr_lite"] = lite
-            if full is not None:
-                payload["esr_full"] = full
-            # Also emit the aggregate so the renderer can show the historical "sum" if desired
+            if esr_lite is not None: payload["esr_lite"] = esr_lite
+            if esr_full is not None: payload["esr_full"] = esr_full
+            # Aggregate (NAM's reported val_loss for A2 = sum of both sub-models)
             agg = _coerce_float(metrics.get("val_loss", metrics.get("ESR")))
-            if agg is not None:
-                payload["esr_aggregate"] = agg
+            if agg is not None: payload["esr_aggregate"] = agg
+            # MRSTFT (multi-resolution STFT loss) — frequency-domain perceptual loss.
+            if packed_mrstft:
+                if packed_mrstft.get(0) is not None: payload["mrstft_lite"] = packed_mrstft.get(0)
+                if packed_mrstft.get(1) is not None: payload["mrstft_full"] = packed_mrstft.get(1)
+                if 1 in packed_mrstft: payload["mrstft"] = packed_mrstft[1]  # main = Full
+                elif packed_mrstft: payload["mrstft"] = min(packed_mrstft.values())
+            # MSE (time-domain mean-squared error) — diagnostic.
+            if packed_mse:
+                if packed_mse.get(0) is not None: payload["mse_lite"] = packed_mse.get(0)
+                if packed_mse.get(1) is not None: payload["mse_full"] = packed_mse.get(1)
+                if 1 in packed_mse: payload["mse"] = packed_mse[1]
+                elif packed_mse: payload["mse"] = min(packed_mse.values())
         else:
-            # A1 path — val_loss is already pure ESR per the loss config
+            # A1 path — val_loss is pure ESR per the loss config
             val = _coerce_float(metrics.get("val_loss", metrics.get("ESR", metrics.get("val_esr"))))
             if val is None:
                 return
             payload["esr"] = val
+            mrstft = _coerce_float(metrics.get("MRSTFT"))
+            if mrstft is not None: payload["mrstft"] = mrstft
+            mse = _coerce_float(metrics.get("MSE"))
+            if mse is not None: payload["mse"] = mse
 
         print("NAM_LAB_EPOCH_ESR:" + json.dumps(payload), flush=True)
 
@@ -954,6 +985,8 @@ function getTrainerQueuePath(): string {
   return join(app.getPath('userData'), TRAINER_QUEUE_FILENAME)
 }
 
+const TRAINER_QUEUE_PERSIST_CAP = 2000
+
 function loadTrainerQueue(): TrainerQueueJob[] {
   try {
     const filePath = getTrainerQueuePath()
@@ -961,9 +994,12 @@ function loadTrainerQueue(): TrainerQueueJob[] {
     const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
     if (!Array.isArray(parsed)) return []
     // Demote anything that was mid-flight when the app was killed — its Python child is gone.
+    // Otherwise preserve status exactly so finished/failed rows from previous sessions stay
+    // visible above any newly-queued work, exactly as they were before the restart.
     return (parsed as TrainerQueueJob[])
-      .filter((job) => job.status === 'staged' || job.status === 'queued' || job.status === 'starting' || job.status === 'running')
-      .map((job) => job.status === 'starting' || job.status === 'running' ? { ...job, status: 'queued', startedAt: null, finishedAt: null, progressPercent: null, progressEpochCurrent: null, progressBatchCurrent: null, progressBatchTotal: null, progressRate: null, progressLatestLine: '' } : job)
+      .map((job) => job.status === 'starting' || job.status === 'running'
+        ? { ...job, status: 'queued' as const, startedAt: null, finishedAt: null, progressPercent: null, progressEpochCurrent: null, progressBatchCurrent: null, progressBatchTotal: null, progressRate: null, progressLatestLine: '' }
+        : job)
   } catch {
     return []
   }
@@ -972,8 +1008,12 @@ function loadTrainerQueue(): TrainerQueueJob[] {
 function saveTrainerQueue(): void {
   try {
     fs.mkdirSync(dirname(getTrainerQueuePath()), { recursive: true })
-    // Persist only staged + queued + running. Terminal statuses live in history.
-    const persisted = trainerQueue.filter((job) => job.status === 'staged' || job.status === 'queued' || job.status === 'starting' || job.status === 'running')
+    // Mirror the live queue 1:1 — staged, queued, running, AND finished/failed/canceled rows.
+    // Finished rows are what the user sees as "what already ran in this session/batch"; dropping
+    // them at save time silently wipes that context on every restart, which is the bug.
+    // Cap at TRAINER_QUEUE_PERSIST_CAP (most recent end of the array) so the file can't grow
+    // unbounded — older entries are in trainer-history.json regardless.
+    const persisted = trainerQueue.slice(-TRAINER_QUEUE_PERSIST_CAP)
     fs.writeFileSync(getTrainerQueuePath(), JSON.stringify(persisted, null, 2), 'utf-8')
   } catch (error) {
     log(`trainer queue save failed: ${String(error)}`)
@@ -1362,16 +1402,27 @@ function parseTrainerProgressLine(line: string): boolean {
         esr_full?: number
         esr_lite?: number
         esr_aggregate?: number
+        mrstft?: number
+        mrstft_full?: number
+        mrstft_lite?: number
+        mse?: number
+        mse_full?: number
+        mse_lite?: number
       }
       if (typeof parsed.epoch === 'number' && typeof parsed.esr === 'number') {
         trainerLastCallbackEsrEpoch = Math.max(trainerLastCallbackEsrEpoch, parsed.epoch)
+        const pick = (n: unknown): number | null => typeof n === 'number' ? n : null
         trainerState = {
           ...trainerState,
           progressEpochCurrent: parsed.epoch,
           epochValidationEsr: parsed.esr,
-          epochValidationEsrFull: typeof parsed.esr_full === 'number' ? parsed.esr_full : null,
-          epochValidationEsrLite: typeof parsed.esr_lite === 'number' ? parsed.esr_lite : null,
-          epochValidationEsrAggregate: typeof parsed.esr_aggregate === 'number' ? parsed.esr_aggregate : null,
+          epochValidationEsrFull: pick(parsed.esr_full),
+          epochValidationEsrLite: pick(parsed.esr_lite),
+          epochValidationEsrAggregate: pick(parsed.esr_aggregate),
+          epochMrstft: pick(parsed.mrstft) ?? pick(parsed.mrstft_full),
+          epochMrstftLite: pick(parsed.mrstft_lite),
+          epochMse: pick(parsed.mse) ?? pick(parsed.mse_full),
+          epochMseLite: pick(parsed.mse_lite),
         }
         emitTrainerState()
       }
@@ -1509,21 +1560,25 @@ function processTrainerOutputLine(line: string): void {
   if (line.startsWith('NAM_LAB_RESULT:')) {
     try {
       const parsed = JSON.parse(line.slice('NAM_LAB_RESULT:'.length)) as { validationEsr?: number | null; outputModelPath?: string; checkpointModelPath?: string; modelName?: string }
-      // For A2 runs, NAM returns the AGGREGATE (sum of both packed sub-models) as validation_esr.
-      // We parsed per-sub-model ESRs from the trainer's stdout — prefer the Full sub-model's
-      // ESR (channels_8, the one the plugin loads by default), then the best of any captured
-      // sub-models, before falling back to NAM's aggregate. This is what lands in history.
+      // For A2 we now match the official NAM trainer's convention: write the AGGREGATE
+      // (sum of both packed sub-models) to metadata.training.validation_esr. The per-sub-model
+      // breakdown (Full + Lite) lives separately in metadata.nam_lab.* so NAM Lab and any
+      // sub-model-aware UI can still color-code and display the Full sub-model's ESR which is
+      // what the plugin actually loads.
+      // For A1, validationEsr is the single scalar ESR (no change).
       const subFull = trainerState.epochValidationEsrFull
       const subLite = trainerState.epochValidationEsrLite
-      const subBest = (typeof subFull === 'number' || typeof subLite === 'number')
-        ? Math.min(...[subFull, subLite].filter((v): v is number => typeof v === 'number'))
+      const aggCallback = trainerState.epochValidationEsrAggregate
+      const aggFromSum = (typeof subFull === 'number' && typeof subLite === 'number')
+        ? subFull + subLite
         : null
-      const preferredEsr = (typeof subFull === 'number')
-        ? subFull
-        : (subBest != null ? subBest : (typeof parsed.validationEsr === 'number' ? parsed.validationEsr : trainerState.validationEsr))
+      const isPackedRun = typeof subFull === 'number' || typeof subLite === 'number' || typeof aggCallback === 'number'
+      const finalEsr = isPackedRun
+        ? (typeof aggCallback === 'number' ? aggCallback : (aggFromSum ?? parsed.validationEsr ?? trainerState.validationEsr))
+        : (typeof parsed.validationEsr === 'number' ? parsed.validationEsr : trainerState.validationEsr)
       trainerState = {
         ...trainerState,
-        validationEsr: preferredEsr,
+        validationEsr: finalEsr,
         outputModelPath: parsed.outputModelPath || trainerState.outputModelPath,
         checkpointModelPath: parsed.checkpointModelPath || trainerState.checkpointModelPath,
         modelName: parsed.modelName || trainerState.modelName,
@@ -2236,6 +2291,10 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
           outputLevelDbu: job.outputLevelDbu,
           validationEsr: trainerState.validationEsr,
           validationEsrLite: trainerState.epochValidationEsrLite ?? null,
+          mrstft: trainerState.epochMrstft ?? null,
+          mrstftLite: trainerState.epochMrstftLite ?? null,
+          mse: trainerState.epochMse ?? null,
+          mseLite: trainerState.epochMseLite ?? null,
           manualLatencySamples: job.latency,
         })
         JSON.parse(patched)
@@ -2317,7 +2376,8 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
       submissionLabel: job.submissionLabel,
       submissionCreatedAt: job.submissionCreatedAt,
       durationSec: runDurationSec,
-      // A2-only field — null for A1 runs.
+      // A2-only fields — null for A1 runs.
+      validationEsrFull: job.architecture === 'a2' ? (trainerState.epochValidationEsrFull ?? null) : null,
       validationEsrLite: job.architecture === 'a2' ? (trainerState.epochValidationEsrLite ?? null) : null,
     })
 
@@ -2333,6 +2393,19 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
 
 async function pumpTrainerQueue(): Promise<void> {
   if (trainerChild || trainerState.status === 'starting' || trainerState.status === 'running') return
+  // Honor Pause After Current — if the user paused, don't auto-start the next job, even when
+  // a new batch is added or another handler tries to nudge the queue forward. The pause must be
+  // explicitly cleared (Resume / Start queue) before pumping resumes.
+  if (trainerPauseAfterCurrent) {
+    trainerState = {
+      ...TRAINER_IDLE_STATE,
+      queue: trainerQueue,
+      pauseAfterCurrent: trainerPauseAfterCurrent,
+      progressPhase: 'Paused — click Resume to continue',
+    }
+    emitTrainerState()
+    return
+  }
   const nextJob = nextQueuedTrainerJob()
   if (!nextJob) {
     trainerState = {
@@ -3242,6 +3315,13 @@ function persistTrainerMetadata(
     // (channels_8) sub-model. nam_lab.validation_esr_lite is a NAM-Lab-specific field; NAM itself
     // doesn't read it, so it's safe to add without breaking the official spec.
     validationEsrLite: number | null
+    // MRSTFT / MSE — NAM logs these per validation epoch but never writes them to the .nam file.
+    // NAM Lab stores them in metadata.nam_lab.* so we can show them in the metadata panel later.
+    // For A2, the *_lite values are channels_3; the non-suffixed values are the Full sub-model.
+    mrstft: number | null
+    mrstftLite: number | null
+    mse: number | null
+    mseLite: number | null
     manualLatencySamples: number | null
   }
 ): string {
@@ -3266,10 +3346,32 @@ function persistTrainerMetadata(
   patched = patchNamLabField(patched, 'preset_name', architectureLabel)
   patched = patchNamLabField(patched, 'validation_esr', options.validationEsr)
   patched = patchNamLabField(patched, 'manual_latency_samples', options.manualLatencySamples ?? 0)
-  // A2-only Lite sub-model ESR. Gated on architecture so A1 runs never get this field.
-  // Stored in metadata.nam_lab.a2_lite_validation_esr — NAM ignores it, only NAM Lab reads it back.
+  // A2 sub-model ESRs. Gated on architecture so A1 runs never get these fields.
+  // Stored in metadata.nam_lab.* — NAM ignores them, only NAM Lab reads them back.
+  // a2_full_validation_esr is redundant with whatever's in the main validation_esr field today
+  // (NAM Lab currently writes the Full there), but is captured separately so if the convention
+  // for the main field ever changes (e.g. to match the official trainer's aggregate), the
+  // Full number is still recoverable from the file.
+  if (options.architecture === 'a2' && options.validationEsr != null) {
+    patched = patchNamLabField(patched, 'a2_full_validation_esr', options.validationEsr)
+  }
   if (options.architecture === 'a2' && options.validationEsrLite != null) {
     patched = patchNamLabField(patched, 'a2_lite_validation_esr', options.validationEsrLite)
+  }
+  // MRSTFT / MSE — frequency-domain (MRSTFT) and time-domain (MSE) validation metrics that NAM
+  // logs but doesn't save. For A1 these are single values. For A2, mrstft / mse are the Full
+  // sub-model's; a2_lite_mrstft / a2_lite_mse are the Lite sub-model's.
+  if (options.mrstft != null) {
+    patched = patchNamLabField(patched, 'mrstft', options.mrstft)
+  }
+  if (options.mse != null) {
+    patched = patchNamLabField(patched, 'mse', options.mse)
+  }
+  if (options.architecture === 'a2' && options.mrstftLite != null) {
+    patched = patchNamLabField(patched, 'a2_lite_mrstft', options.mrstftLite)
+  }
+  if (options.architecture === 'a2' && options.mseLite != null) {
+    patched = patchNamLabField(patched, 'a2_lite_mse', options.mseLite)
   }
   return patched
 }

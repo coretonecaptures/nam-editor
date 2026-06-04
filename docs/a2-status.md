@@ -73,6 +73,27 @@ These are not edited from the NAM Lab UI when A2 is selected — the trainer han
 
 An A2 run produces one `.nam` file containing both sub-models (a `SlimmableContainer` with `channels_3` and `channels_8`). The file is written to whatever destination your output formula resolves to, the same as A1. The graph PNG, checkpoint, and history record are also unchanged.
 
+### A2 ESR and tolerance bands
+
+This is the part that surprises people: NAM's `PackedLightningModule.validation_step` logs `val_loss` as the **sum** of both packed sub-models' ESRs (channels_3 Lite + channels_8 Full), and NAM's `_plot()` returns that same `aggregate_esr = sum(esrs)` to `train()`'s output. So a "normal-quality" A2 capture lands ~2× higher on the `validation_esr` scale than an equally-good A1 capture.
+
+NAM Lab handles this with three metadata fields and tone-band selection:
+
+| Field | What's in it | Source |
+| --- | --- | --- |
+| `metadata.training.validation_esr` | Aggregate (sum of both sub-models) | Official NAM trainer convention; NAM Lab now writes the same value here |
+| `metadata.nam_lab.a2_full_validation_esr` | Full sub-model ESR (channels_8) | NAM Lab-only; written on every NAM Lab A2 training |
+| `metadata.nam_lab.a2_lite_validation_esr` | Lite sub-model ESR (channels_3) | NAM Lab-only; written on every NAM Lab A2 training |
+
+**Color coding rules**:
+- **A1 captures**: tone uses A1 thresholds (<0.01 green, <0.05 amber) on `validation_esr`.
+- **A2 captures with `nam_lab.a2_full_validation_esr`**: tone uses A1 thresholds on the **Full sub-model**'s ESR — that's the sub-model the plugin loads by default and it's apples-to-apples vs A1.
+- **A2 captures with only the aggregate** (downloaded files, official-trainer files): tone uses A2-aggregate thresholds (~2× A1: <0.02 green, <0.07 amber, <0.2 red) so they get a fair rating instead of looking systematically bad.
+
+History rows and the metadata-editor right panel both surface all three values (`Full`, `Lite`, `Agg`) for A2 captures so you can see the breakdown at a glance.
+
+**Forward note**: the NAM project may decide to change what gets written to `metadata.training.validation_esr` for A2 captures. If the official convention shifts (for example, to write Full instead of aggregate), NAM Lab will update the tolerance bands and the main-card label accordingly. The per-sub-model fields in `metadata.nam_lab.*` keep the breakdown recoverable regardless.
+
 ---
 
 ## A2 and the `notes` Field

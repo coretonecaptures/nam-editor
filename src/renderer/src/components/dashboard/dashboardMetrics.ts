@@ -21,9 +21,13 @@ const CORE_FIELDS: (keyof NamFile['metadata'])[] = [
   'name', 'modeled_by', 'gear_make', 'gear_model', 'gear_type', 'tone_type', 'input_level_dbu',
 ]
 
+import { getCaptureBestEsr } from '../../utils/esr'
+
 export function getEsr(f: NamFile): number | null {
-  const esr = (f.metadata.training as Record<string, unknown> | undefined)?.validation_esr
-  return typeof esr === 'number' ? esr : null
+  // Use the "best" ESR — Full sub-model for NAM-Lab-trained A2 captures, aggregate for downloaded
+  // A2 captures (only field available), single value for A1. This keeps the dashboard's good/ok/
+  // review tally apples-to-apples between A1 and well-tagged A2 captures.
+  return getCaptureBestEsr(f.metadata as Record<string, unknown> | undefined).value
 }
 
 function completeness(files: NamFile[]) {

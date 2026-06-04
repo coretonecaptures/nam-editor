@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { FolderNode } from '../types/librarian'
 import { NamFile } from '../types/nam'
+import { getCaptureBestEsr } from '../utils/esr'
 import { detectPreset } from '../utils/detectPreset'
 
 const COVER_RE = /^ampcover\.(png|jpe?g|webp|gif|avif)$/i
@@ -49,8 +50,10 @@ const PRESET_COLORS: Record<string, string> = {
 }
 
 function getEsr(file: NamFile): number | null {
-  const esr = (file.metadata.training as Record<string, unknown> | undefined)?.validation_esr
-  return typeof esr === 'number' ? esr : null
+  // Use best-available ESR — Full sub-model for NAM-Lab-trained A2 captures, aggregate (~2x)
+  // for non-NAM-Lab A2, single value for A1. Bucket thresholds are A1-style (<0.01 / <0.05)
+  // applied to whichever value comes back, which is "fair enough" for the folder-card stats.
+  return getCaptureBestEsr(file.metadata as Record<string, unknown> | undefined).value
 }
 
 function computeStats(files: NamFile[]) {

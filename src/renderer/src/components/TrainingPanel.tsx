@@ -1570,7 +1570,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 <button
                   onClick={async () => { await window.api.setTrainerPauseAfterCurrent(false) }}
                   disabled={queuedCount === 0}
-                  className="h-10 inline-flex items-center gap-2 px-4 rounded-[9px] text-[13px] font-[580] border bg-nm-accent hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed text-accent-text border-transparent transition-colors"
+                  title={trainerState.pauseAfterCurrent ? 'Queue is paused — click to resume training' : 'Start the next queued capture'}
+                  className={`h-10 inline-flex items-center gap-2 px-4 rounded-[9px] text-[13px] font-[680] border bg-nm-accent hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed text-white border-transparent transition-colors ${trainerState.pauseAfterCurrent && queuedCount > 0 ? 'nm-resume-pulse' : ''}`}
                 >
                   <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
                   Resume
@@ -1658,7 +1659,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 <button
                   onClick={async () => { await window.api.setTrainerPauseAfterCurrent(false) }}
                   disabled={queuedCount === 0}
-                  className="h-[34px] inline-flex items-center gap-1.5 px-2.5 rounded-[9px] text-xs font-[580] border bg-nm-accent hover:opacity-90 disabled:opacity-35 disabled:cursor-not-allowed text-accent-text border-transparent transition-colors"
+                  title={trainerState.pauseAfterCurrent ? 'Queue is paused — click to resume training' : 'Start the next queued capture'}
+                  className={`h-[34px] inline-flex items-center gap-1.5 px-2.5 rounded-[9px] text-xs font-[680] border bg-nm-accent hover:opacity-90 disabled:opacity-35 disabled:cursor-not-allowed text-white border-transparent transition-colors ${trainerState.pauseAfterCurrent && queuedCount > 0 ? 'nm-resume-pulse' : ''}`}
                 >
                   <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
                   Resume
@@ -2125,6 +2127,33 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 })()}
               </div>
 
+              {/* Secondary statline — MRSTFT / MSE diagnostic metrics. Shown only while running and only when the trainer
+                  is actually computing them (A1 default config has both; A2 default has both). */}
+              {(() => {
+                const isA2 = trainerState.architecture === 'a2'
+                const mrstft = trainerState.epochMrstft ?? null
+                const mrstftLite = trainerState.epochMrstftLite ?? null
+                const mse = trainerState.epochMse ?? null
+                const mseLite = trainerState.epochMseLite ?? null
+                if (mrstft == null && mse == null) return null
+                const cells: Array<{ label: string; value: string }> = []
+                if (mrstft != null) cells.push({ label: isA2 ? 'MRSTFT (Full)' : 'MRSTFT', value: mrstft.toFixed(4) })
+                if (isA2 && mrstftLite != null) cells.push({ label: 'MRSTFT (Lite)', value: mrstftLite.toFixed(4) })
+                if (mse != null) cells.push({ label: isA2 ? 'MSE (Full)' : 'MSE', value: mse.toExponential(3) })
+                if (isA2 && mseLite != null) cells.push({ label: 'MSE (Lite)', value: mseLite.toExponential(3) })
+                if (cells.length === 0) return null
+                return (
+                  <div className={`rounded-[14px] border border-nm-border-s bg-panel overflow-hidden grid grid-cols-${cells.length} divide-x divide-nm-border-s`}>
+                    {cells.map(({ label, value }) => (
+                      <div key={label} className="bg-panel-2 px-4 py-2.5">
+                        <div className="text-[10px] uppercase font-[600] tracking-[.45px] text-nm-text-3">{label}</div>
+                        <div className="mt-1 font-mono tabular-nums text-[13px] text-nm-text-2">{value}</div>
+                      </div>
+                    ))}
+                  </div>
+                )
+              })()}
+
               {/* Final output + Checkpoint export side by side */}
               <div className="grid grid-cols-2 gap-3.5">
                 <div className="rounded-[14px] border border-nm-border-s bg-panel">
@@ -2433,6 +2462,33 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                             {failCount > 0 && <span className="text-red-400">{failCount} failed</span>}
                             {queueCount > 0 && <span>{queueCount} queued</span>}
                           </div>
+                          {queueCount > 0 && !hasActive && (() => {
+                            const firstQueuedHere = group.jobs.find(j => j.status === 'queued')
+                            // Find the first queued job in the WHOLE queue across all batches; if this batch's
+                            // first queued isn't already at the front, show "Run next" so the user can jump it.
+                            const firstQueuedAnywhere = trainerState.queue.find(j => j.status === 'queued')
+                            if (!firstQueuedHere || !firstQueuedAnywhere || firstQueuedHere.jobId === firstQueuedAnywhere.jobId) return null
+                            const submissionId = group.jobs[0]?.submissionId
+                            const targetSubmissionId = firstQueuedAnywhere.submissionId
+                            return (
+                              <button
+                                onClick={async e => {
+                                  e.stopPropagation()
+                                  if (submissionId && targetSubmissionId && submissionId !== targetSubmissionId) {
+                                    await window.api.moveSubmissionBefore(submissionId, targetSubmissionId)
+                                  } else {
+                                    // No grouping move possible (orphaned single job) — just bump the first queued job to next.
+                                    await window.api.makeTrainerJobNext(firstQueuedHere.jobId)
+                                  }
+                                }}
+                                className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border border-nm-accent/40 text-nm-accent hover:bg-nm-accent/10 flex-shrink-0 transition-colors"
+                                title="Move this batch to the front of the queue so it runs next (after the currently active capture finishes if any)"
+                              >
+                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5" /></svg>
+                                Run next
+                              </button>
+                            )
+                          })()}
                           {queueCount > 0 && (
                             <button
                               onClick={e => { e.stopPropagation(); setCancelBatchConfirm({ submissionId: group.jobs[0]?.submissionId ?? '', label: group.label }) }}
@@ -2937,34 +2993,57 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                             </div>
                             {/* Right column */}
                             <div className="flex items-center gap-3.5 flex-shrink-0">
-                              {entry.status === 'success' && typeof entry.validationEsr === 'number' ? (
-                                <div className="flex items-center gap-1.5">
-                                  <span
-                                    className={`inline-flex items-center gap-1.5 h-[22px] px-2 rounded-full text-[11px] font-mono font-semibold ${tone.classes}`}
-                                    style={{ background: toneKey === 'green' ? 'color-mix(in srgb, #10b981 14%, transparent)' : toneKey === 'amber' ? 'color-mix(in srgb, #f59e0b 14%, transparent)' : toneKey === 'red' ? 'color-mix(in srgb, #ef4444 14%, transparent)' : 'var(--field)' }}
-                                    title={entry.architecture === 'a2' ? 'A2 Full (channels_8) — the sub-model the plugin loads by default' : 'Validation ESR'}
-                                  >
-                                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
-                                    {entry.architecture === 'a2' && <span className="text-[9px] font-[700] uppercase tracking-wider opacity-70">Full</span>}
-                                    {tone.text}
-                                  </span>
-                                  {entry.architecture === 'a2' && typeof entry.validationEsrLite === 'number' && (() => {
-                                    const liteTone = getEsrTone(entry.validationEsrLite)
-                                    const liteKey: 'green' | 'amber' | 'red' | 'none' = liteTone.classes.includes('emerald') ? 'green' : liteTone.classes.includes('amber') ? 'amber' : liteTone.classes.includes('red') ? 'red' : 'none'
-                                    return (
+                              {entry.status === 'success' && typeof entry.validationEsr === 'number' ? (() => {
+                                // For A2 entries, prefer the new sub-model fields (validationEsrFull / validationEsrLite).
+                                // For older A2 entries that don't have them yet, fall back to validationEsr (which was Full
+                                // under the prior convention). For A1, validationEsr is the single scalar.
+                                const isA2 = entry.architecture === 'a2'
+                                const fullVal = isA2
+                                  ? (typeof entry.validationEsrFull === 'number' ? entry.validationEsrFull : entry.validationEsr)
+                                  : entry.validationEsr
+                                const liteVal = isA2 ? (typeof entry.validationEsrLite === 'number' ? entry.validationEsrLite : null) : null
+                                const aggVal = isA2 ? entry.validationEsr : null
+                                const fullTone = getEsrTone(fullVal)
+                                const fullKey: 'green' | 'amber' | 'red' | 'none' = fullTone.classes.includes('emerald') ? 'green' : fullTone.classes.includes('amber') ? 'amber' : fullTone.classes.includes('red') ? 'red' : 'none'
+                                const bgFor = (k: 'green' | 'amber' | 'red' | 'none') => k === 'green' ? 'color-mix(in srgb, #10b981 14%, transparent)' : k === 'amber' ? 'color-mix(in srgb, #f59e0b 14%, transparent)' : k === 'red' ? 'color-mix(in srgb, #ef4444 14%, transparent)' : 'var(--field)'
+                                return (
+                                  <div className="flex items-center gap-1.5">
+                                    <span
+                                      className={`inline-flex items-center gap-1.5 h-[22px] px-2 rounded-full text-[11px] font-mono font-semibold ${fullTone.classes}`}
+                                      style={{ background: bgFor(fullKey) }}
+                                      title={isA2 ? 'A2 Full sub-model (channels_8) — what the plugin loads by default' : 'Validation ESR'}
+                                    >
+                                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+                                      {isA2 && <span className="text-[9px] font-[700] uppercase tracking-wider opacity-70">Full</span>}
+                                      {fullTone.text}
+                                    </span>
+                                    {isA2 && typeof liteVal === 'number' && (() => {
+                                      const liteTone = getEsrTone(liteVal)
+                                      const liteKey: 'green' | 'amber' | 'red' | 'none' = liteTone.classes.includes('emerald') ? 'green' : liteTone.classes.includes('amber') ? 'amber' : liteTone.classes.includes('red') ? 'red' : 'none'
+                                      return (
+                                        <span
+                                          className={`inline-flex items-center gap-1.5 h-[22px] px-2 rounded-full text-[11px] font-mono font-semibold ${liteTone.classes}`}
+                                          style={{ background: bgFor(liteKey) }}
+                                          title="A2 Lite sub-model (channels_3) — smaller, lower-fidelity sub-model packed alongside the Full one"
+                                        >
+                                          <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+                                          <span className="text-[9px] font-[700] uppercase tracking-wider opacity-70">Lite</span>
+                                          {liteTone.text}
+                                        </span>
+                                      )
+                                    })()}
+                                    {isA2 && typeof aggVal === 'number' && fullVal !== aggVal && (
                                       <span
-                                        className={`inline-flex items-center gap-1.5 h-[22px] px-2 rounded-full text-[11px] font-mono font-semibold ${liteTone.classes}`}
-                                        style={{ background: liteKey === 'green' ? 'color-mix(in srgb, #10b981 14%, transparent)' : liteKey === 'amber' ? 'color-mix(in srgb, #f59e0b 14%, transparent)' : liteKey === 'red' ? 'color-mix(in srgb, #ef4444 14%, transparent)' : 'var(--field)' }}
-                                        title="A2 Lite (channels_3) — the smaller sub-model packed alongside the Full one"
+                                        className="inline-flex items-center gap-1.5 h-[22px] px-2 rounded-full text-[10px] font-mono text-nm-text-3 border border-nm-border-s"
+                                        title="A2 Aggregate — sum of both sub-models' ESR. Matches the value the official NAM trainer writes to metadata.training.validation_esr."
                                       >
-                                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
-                                        <span className="text-[9px] font-[700] uppercase tracking-wider opacity-70">Lite</span>
-                                        {liteTone.text}
+                                        <span className="text-[9px] font-[700] uppercase tracking-wider opacity-70">Agg</span>
+                                        {aggVal.toFixed(4)}
                                       </span>
-                                    )
-                                  })()}
-                                </div>
-                              ) : entry.status === 'error' ? (
+                                    )}
+                                  </div>
+                                )
+                              })() : entry.status === 'error' ? (
                                 <span className="inline-flex items-center gap-1.5 h-[22px] px-2 rounded-full text-[11px] font-semibold border border-red-500/25 bg-red-500/10 text-red-400">
                                   <span className="w-1.5 h-1.5 rounded-full bg-red-400" />Failed
                                 </span>
