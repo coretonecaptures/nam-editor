@@ -2938,10 +2938,32 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                             {/* Right column */}
                             <div className="flex items-center gap-3.5 flex-shrink-0">
                               {entry.status === 'success' && typeof entry.validationEsr === 'number' ? (
-                                <span className={`inline-flex items-center gap-1.5 h-[22px] px-2 rounded-full text-[11px] font-mono font-semibold ${tone.classes}`} style={{ background: toneKey === 'green' ? 'color-mix(in srgb, #10b981 14%, transparent)' : toneKey === 'amber' ? 'color-mix(in srgb, #f59e0b 14%, transparent)' : toneKey === 'red' ? 'color-mix(in srgb, #ef4444 14%, transparent)' : 'var(--field)' }}>
-                                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
-                                  {tone.text}
-                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <span
+                                    className={`inline-flex items-center gap-1.5 h-[22px] px-2 rounded-full text-[11px] font-mono font-semibold ${tone.classes}`}
+                                    style={{ background: toneKey === 'green' ? 'color-mix(in srgb, #10b981 14%, transparent)' : toneKey === 'amber' ? 'color-mix(in srgb, #f59e0b 14%, transparent)' : toneKey === 'red' ? 'color-mix(in srgb, #ef4444 14%, transparent)' : 'var(--field)' }}
+                                    title={entry.architecture === 'a2' ? 'A2 Full (channels_8) — the sub-model the plugin loads by default' : 'Validation ESR'}
+                                  >
+                                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+                                    {entry.architecture === 'a2' && <span className="text-[9px] font-[700] uppercase tracking-wider opacity-70">Full</span>}
+                                    {tone.text}
+                                  </span>
+                                  {entry.architecture === 'a2' && typeof entry.validationEsrLite === 'number' && (() => {
+                                    const liteTone = getEsrTone(entry.validationEsrLite)
+                                    const liteKey: 'green' | 'amber' | 'red' | 'none' = liteTone.classes.includes('emerald') ? 'green' : liteTone.classes.includes('amber') ? 'amber' : liteTone.classes.includes('red') ? 'red' : 'none'
+                                    return (
+                                      <span
+                                        className={`inline-flex items-center gap-1.5 h-[22px] px-2 rounded-full text-[11px] font-mono font-semibold ${liteTone.classes}`}
+                                        style={{ background: liteKey === 'green' ? 'color-mix(in srgb, #10b981 14%, transparent)' : liteKey === 'amber' ? 'color-mix(in srgb, #f59e0b 14%, transparent)' : liteKey === 'red' ? 'color-mix(in srgb, #ef4444 14%, transparent)' : 'var(--field)' }}
+                                        title="A2 Lite (channels_3) — the smaller sub-model packed alongside the Full one"
+                                      >
+                                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+                                        <span className="text-[9px] font-[700] uppercase tracking-wider opacity-70">Lite</span>
+                                        {liteTone.text}
+                                      </span>
+                                    )
+                                  })()}
+                                </div>
                               ) : entry.status === 'error' ? (
                                 <span className="inline-flex items-center gap-1.5 h-[22px] px-2 rounded-full text-[11px] font-semibold border border-red-500/25 bg-red-500/10 text-red-400">
                                   <span className="w-1.5 h-1.5 rounded-full bg-red-400" />Failed

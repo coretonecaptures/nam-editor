@@ -500,13 +500,29 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
               {m.gain != null && (
                 <StatCard label="Gain Factor" value={m.gain.toFixed(4)} />
               )}
-              {(m.training as Record<string, unknown>)?.validation_esr != null && (
-                <StatCard
-                  label="Validation ESR"
-                  value={((m.training as Record<string, unknown>).validation_esr as number).toFixed(6)}
-                  good={((m.training as Record<string, unknown>).validation_esr as number) < 0.01}
-                />
-              )}
+              {(m.training as Record<string, unknown>)?.validation_esr != null && (() => {
+                const isA2 = !!((m as Record<string, unknown>).nam_lab as Record<string, unknown> | undefined)?.a2_lite_validation_esr
+                  || !!((m.config as Record<string, unknown> | undefined)?.condition_dsp)
+                return (
+                  <StatCard
+                    label={isA2 ? 'Validation ESR (A2 Full)' : 'Validation ESR'}
+                    value={((m.training as Record<string, unknown>).validation_esr as number).toFixed(6)}
+                    good={((m.training as Record<string, unknown>).validation_esr as number) < 0.01}
+                  />
+                )
+              })()}
+              {(() => {
+                const nl = (m as Record<string, unknown>).nam_lab as Record<string, unknown> | undefined
+                const liteEsr = nl?.a2_lite_validation_esr
+                if (typeof liteEsr !== 'number') return null
+                return (
+                  <StatCard
+                    label="Validation ESR (A2 Lite)"
+                    value={liteEsr.toFixed(6)}
+                    good={liteEsr < 0.01}
+                  />
+                )
+              })()}
               {(() => {
                 const t = m.training as Record<string, unknown> | undefined
                 const data = t?.data as Record<string, unknown> | undefined

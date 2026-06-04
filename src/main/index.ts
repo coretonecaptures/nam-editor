@@ -303,6 +303,9 @@ interface TrainerHistoryEntry {
   submissionLabel: string | null
   submissionCreatedAt: string | null
   durationSec?: number | null
+  // A2-only: ESR of the Lite (channels_3) sub-model. The main validationEsr field above is the
+  // Full (channels_8) sub-model. Both live inside the same A2 .nam file (SlimmableContainer).
+  validationEsrLite?: number | null
 }
 
 interface TrainerSkippedEntry {
@@ -498,6 +501,11 @@ let trainerPauseAfterCurrent = false
 //   - leave other queued jobs alone (no mass-cancel)
 //   - pause the queue so it doesn't auto-advance to the next job
 let trainerEmergencyRequeue = false
+// Track the highest epoch the embedded Python callback has already reported a sub-model-aware
+// ESR for. tqdm bar parsing skips overwriting epochValidationEsr for epochs <= this number,
+// because the tqdm postfix carries NAM's aggregate val_loss (sum of packed sub-models) which
+// makes A2 look ~2x worse than the Full sub-model the plugin actually loads.
+let trainerLastCallbackEsrEpoch = 0
 let trainingProfiles: TrainingProfile[] = []
 let trainerUserCaptureProfiles: UserCaptureProfile[] = []
 let trainingRetainGraphs = true
@@ -1356,6 +1364,7 @@ function parseTrainerProgressLine(line: string): boolean {
         esr_aggregate?: number
       }
       if (typeof parsed.epoch === 'number' && typeof parsed.esr === 'number') {
+        trainerLastCallbackEsrEpoch = Math.max(trainerLastCallbackEsrEpoch, parsed.epoch)
         trainerState = {
           ...trainerState,
           progressEpochCurrent: parsed.epoch,
@@ -1382,8 +1391,13 @@ function parseTrainerProgressLine(line: string): boolean {
     const overallPercent = epochTotal && epochTotal > 0
       ? Math.max(0, Math.min(100, (((epochIndex) + (batchTotal > 0 ? batchCurrent / batchTotal : epochPercent / 100)) / epochTotal) * 100))
       : epochPercent
-    // Extract per-epoch validation ESR from tqdm postfix (val_loss=, ESR=, esr=, val_esr=)
-    const esrInBar = clean.match(/\b(?:val_loss|val_esr|ESR|esr)\s*=\s*([0-9.]+(?:e[+-]?\d+)?)/i)
+    // tqdm bar fallback: extract val_loss/ESR only when the embedded Python callback HASN'T
+    // already reported for this epoch. For A2 the postfix carries the AGGREGATE (sum of both
+    // packed sub-models' ESRs) which would clobber the callback's Full-sub-model value and
+    // make the live tile bounce between aggregate and best every epoch.
+    const callbackEpochNumber = epochIndex + 1
+    const callbackOwnsThisEpoch = callbackEpochNumber <= trainerLastCallbackEsrEpoch
+    const esrInBar = !callbackOwnsThisEpoch ? clean.match(/\b(?:val_loss|val_esr|ESR|esr)\s*=\s*([0-9.]+(?:e[+-]?\d+)?)/i) : null
     const epochEsr = esrInBar ? Number.parseFloat(esrInBar[1]) : null
     trainerState = {
       ...trainerState,
@@ -2086,6 +2100,9 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
       TQDM_ASCII: '1',
     },
   })
+  // Reset per-run callback epoch tracker so the tqdm fallback works correctly on the first
+  // few epochs of the new run (before the embedded Python callback has had a chance to fire).
+  trainerLastCallbackEsrEpoch = 0
   trainerState = { ...trainerState, status: 'running', progressPhase: 'Launching trainer' }
   emitTrainerState()
 
@@ -2218,6 +2235,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
           inputLevelDbu: job.inputLevelDbu,
           outputLevelDbu: job.outputLevelDbu,
           validationEsr: trainerState.validationEsr,
+          validationEsrLite: trainerState.epochValidationEsrLite ?? null,
           manualLatencySamples: job.latency,
         })
         JSON.parse(patched)
@@ -2299,6 +2317,8 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
       submissionLabel: job.submissionLabel,
       submissionCreatedAt: job.submissionCreatedAt,
       durationSec: runDurationSec,
+      // A2-only field — null for A1 runs.
+      validationEsrLite: job.architecture === 'a2' ? (trainerState.epochValidationEsrLite ?? null) : null,
     })
 
     emitTrainerState()
@@ -3218,6 +3238,10 @@ function persistTrainerMetadata(
     inputLevelDbu: number | null
     outputLevelDbu: number | null
     validationEsr: number | null
+    // For A2 only: the Lite (channels_3) sub-model's ESR. The main validationEsr above is the Full
+    // (channels_8) sub-model. nam_lab.validation_esr_lite is a NAM-Lab-specific field; NAM itself
+    // doesn't read it, so it's safe to add without breaking the official spec.
+    validationEsrLite: number | null
     manualLatencySamples: number | null
   }
 ): string {
@@ -3242,6 +3266,11 @@ function persistTrainerMetadata(
   patched = patchNamLabField(patched, 'preset_name', architectureLabel)
   patched = patchNamLabField(patched, 'validation_esr', options.validationEsr)
   patched = patchNamLabField(patched, 'manual_latency_samples', options.manualLatencySamples ?? 0)
+  // A2-only Lite sub-model ESR. Gated on architecture so A1 runs never get this field.
+  // Stored in metadata.nam_lab.a2_lite_validation_esr — NAM ignores it, only NAM Lab reads it back.
+  if (options.architecture === 'a2' && options.validationEsrLite != null) {
+    patched = patchNamLabField(patched, 'a2_lite_validation_esr', options.validationEsrLite)
+  }
   return patched
 }
 

@@ -286,6 +286,9 @@ export interface TrainerHistoryEntry {
   submissionCreatedAt: string | null
   // Wall-clock duration of the run in seconds — measured from job start to finish. Null when missing (older entries / canceled before start).
   durationSec?: number | null
+  // A2-only: ESR of the Lite (channels_3) sub-model. The main validationEsr above is the
+  // Full (channels_8) sub-model. Both sub-models live inside the same A2 .nam file.
+  validationEsrLite?: number | null
 }
 
 export type WatcherFileStatus = 'pending' | 'queued' | 'running' | 'done' | 'failed' | 'canceled' | 'skipped'
