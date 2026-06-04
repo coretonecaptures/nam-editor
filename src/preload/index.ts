@@ -151,6 +151,8 @@ const api = {
     ipcRenderer.invoke('trainer:removeQueued'),
   removeTrainerJob: (jobId: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('trainer:removeJob', jobId),
+  purgeTrainerHistoryEntries: (historyIds: string[]): Promise<{ success: boolean; error?: string; removed: number }> =>
+    ipcRenderer.invoke('trainer:purgeHistoryEntries', historyIds),
   watcherQueueAction: (jobId: string, action: 'remove' | 'skip' | 'move-canceled' | 'retry-now'): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('trainer:watcherQueueAction', jobId, action),
   moveTrainerJob: (jobId: string, direction: 'up' | 'down'): Promise<{ success: boolean; error?: string }> =>

@@ -215,6 +215,9 @@ interface TrainerStartPayload {
   submissionId?: string | null
   submissionLabel?: string | null
   submissionCreatedAt?: string | null
+  // When true, Python backs up an existing target .nam to {name}.bak.nam before overwriting.
+  // Set by the History "Retry failed" / "Retry batch" flow to protect previously-successful models.
+  backupExisting?: boolean
 }
 
 interface TrainerQueueJob {
@@ -271,6 +274,7 @@ interface TrainerQueueJob {
   submissionId: string | null
   submissionLabel: string | null
   submissionCreatedAt: string | null
+  backupExisting?: boolean
 }
 
 interface TrainerHistoryEntry {
@@ -298,6 +302,7 @@ interface TrainerHistoryEntry {
   submissionId: string | null
   submissionLabel: string | null
   submissionCreatedAt: string | null
+  durationSec?: number | null
 }
 
 interface TrainerSkippedEntry {
@@ -489,6 +494,7 @@ const trainingWatcherPendingCounts = new Map<string, number>()
 const trainingWatcherRunning = new Set<string>()
 const TRAINER_HISTORY_FILENAME = 'trainer-history.json'
 const TRAINER_SKIPPED_FILENAME = 'trainer-skipped.json'
+const TRAINER_QUEUE_FILENAME = 'trainer-queue.json'
 
 const TRAINER_RUNNER_SOURCE = String.raw`import json
 import os
@@ -575,7 +581,7 @@ def _find_output_model_path(train_path, model_name):
     return str(newest)
 
 
-def _promote_output_model_path(train_path, model_name, discovered_path):
+def _promote_output_model_path(train_path, model_name, discovered_path, backup_existing=False):
     target = Path(train_path) / f"{model_name}.nam"
     source = Path(discovered_path)
     if not source.exists():
@@ -583,6 +589,17 @@ def _promote_output_model_path(train_path, model_name, discovered_path):
     if source.resolve() == target.resolve():
         return str(target)
     target.parent.mkdir(parents=True, exist_ok=True)
+    # When invoked by a Retry, preserve the previous .nam by renaming it to <name>.bak.nam
+    # before the new model overwrites it. One backup max — repeated retries replace the .bak.
+    if backup_existing and target.exists():
+        backup = target.with_suffix(".bak.nam")
+        try:
+            if backup.exists():
+                backup.unlink()
+            target.replace(backup)
+            print(f"NAM_LAB_BACKUP: {target.name} -> {backup.name}", flush=True)
+        except Exception as exc:
+            print(f"NAM_LAB_BACKUP_WARN: could not back up existing model ({exc}); proceeding with overwrite", flush=True)
     shutil.copy2(source, target)
     return str(target)
 
@@ -693,6 +710,29 @@ def _run_a1_v13(payload):
     gamma = max(0.001, 1.0 - payload.get("lrDecay", 0.002))
     mrstft = 0.0005 if payload.get("fitMrstft", True) else 0.0
 
+    # NAM >= 0.13 changed each WaveNet layer's head config from flat (head_size/head_bias) to a nested
+    # 'head' object with out_channels/kernel_size/bias. Migrate the stored capture profile shape on the fly
+    # so existing presets continue to work without a separate data-migration pass.
+    def _migrate_layer_array(lc):
+        lc = dict(lc)
+        if "head" not in lc:
+            lc["head"] = {
+                "out_channels": int(lc.pop("head_size", 1)),
+                "kernel_size": 1,
+                "bias": bool(lc.pop("head_bias", False)),
+            }
+        else:
+            # If a profile already has 'head', drop the flat duplicates just in case.
+            lc.pop("head_size", None)
+            lc.pop("head_bias", None)
+        return lc
+
+    wncfg = dict(wncfg)
+    if "layers_configs" in wncfg and isinstance(wncfg["layers_configs"], list):
+        wncfg["layers_configs"] = [_migrate_layer_array(lc) for lc in wncfg["layers_configs"]]
+    elif "layers" in wncfg and isinstance(wncfg["layers"], list):
+        wncfg["layers"] = [_migrate_layer_array(lc) for lc in wncfg["layers"]]
+
     custom_model_config = {
         "net": {
             "name": "WaveNet",
@@ -758,19 +798,14 @@ def main():
     requested = payload.get("namMode", "a1")
     print(f"NAM_LAB_NAM_VERSION:{detected}", flush=True)
 
-    if requested != detected:
-        if requested == "a2":
-            raise RuntimeError(
-                "A2 (PackedWaveNet) training requires a NAM install that supports A2. "
-                "Your current NAM install uses A1 WaveNet. "
-                "Update your Python environment to a NAM version that includes PackedWaveNet support."
-            )
-        else:
-            raise RuntimeError(
-                "A1 (WaveNet) training requires the original NAM. "
-                "Your installed NAM appears to support only A2 (PackedWaveNet). "
-                "Check your Python environment in NAM Lab Settings."
-            )
+    # Modern NAM (>= 0.13.0) can run BOTH A1 (via _run_a1_v13) and A2 (via _run_a2),
+    # so only block when the user asked for A2 on an install that doesn't support it.
+    if requested == "a2" and detected != "a2":
+        raise RuntimeError(
+            "A2 (PackedWaveNet) training requires a NAM install that supports A2. "
+            "Your current NAM install uses A1 WaveNet. "
+            "Update your Python environment to a NAM version that includes PackedWaveNet support."
+        )
 
     active_input = payload["inputPath"]
     active_output = payload["outputPath"]
@@ -797,7 +832,7 @@ def main():
         pl.Trainer = _orig_trainer
 
     discovered_output = _find_output_model_path(payload["trainPath"], payload["modelName"])
-    promoted_output = _promote_output_model_path(payload["trainPath"], payload["modelName"], discovered_output)
+    promoted_output = _promote_output_model_path(payload["trainPath"], payload["modelName"], discovered_output, backup_existing=payload.get("backupExisting", False))
 
     summary = {
         "modelName": payload["modelName"],
@@ -844,6 +879,36 @@ function loadTrainerSkipped(): TrainerSkippedEntry[] {
     return Array.isArray(parsed) ? parsed as TrainerSkippedEntry[] : []
   } catch {
     return []
+  }
+}
+
+function getTrainerQueuePath(): string {
+  return join(app.getPath('userData'), TRAINER_QUEUE_FILENAME)
+}
+
+function loadTrainerQueue(): TrainerQueueJob[] {
+  try {
+    const filePath = getTrainerQueuePath()
+    if (!fs.existsSync(filePath)) return []
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+    if (!Array.isArray(parsed)) return []
+    // Demote anything that was mid-flight when the app was killed — its Python child is gone.
+    return (parsed as TrainerQueueJob[])
+      .filter((job) => job.status === 'staged' || job.status === 'queued' || job.status === 'starting' || job.status === 'running')
+      .map((job) => job.status === 'starting' || job.status === 'running' ? { ...job, status: 'queued', startedAt: null, finishedAt: null, progressPercent: null, progressEpochCurrent: null, progressBatchCurrent: null, progressBatchTotal: null, progressRate: null, progressLatestLine: '' } : job)
+  } catch {
+    return []
+  }
+}
+
+function saveTrainerQueue(): void {
+  try {
+    fs.mkdirSync(dirname(getTrainerQueuePath()), { recursive: true })
+    // Persist only staged + queued + running. Terminal statuses live in history.
+    const persisted = trainerQueue.filter((job) => job.status === 'staged' || job.status === 'queued' || job.status === 'starting' || job.status === 'running')
+    fs.writeFileSync(getTrainerQueuePath(), JSON.stringify(persisted, null, 2), 'utf-8')
+  } catch (error) {
+    log(`trainer queue save failed: ${String(error)}`)
   }
 }
 
@@ -1097,6 +1162,17 @@ async function postProcessTrainerSourceWav(job: TrainerQueueJob): Promise<string
   return destinationPath
 }
 
+let trainerQueueSaveTimer: NodeJS.Timeout | null = null
+
+function persistTrainerQueueThrottled(): void {
+  // Throttle queue persistence — emitTrainerState fires every progress tick. Coalesce to one disk write every 2s.
+  if (trainerQueueSaveTimer) return
+  trainerQueueSaveTimer = setTimeout(() => {
+    trainerQueueSaveTimer = null
+    saveTrainerQueue()
+  }, 2000)
+}
+
 function emitTrainerState(): void {
   if (trainerState.activeJobId) {
     updateTrainerJob(trainerState.activeJobId, {
@@ -1125,6 +1201,7 @@ function emitTrainerState(): void {
     watcherState: makeTrainerWatcherSnapshot(),
   }
   mainWindow?.webContents.send('trainer:update', trainerState)
+  persistTrainerQueueThrottled()
 }
 
 const TRAINER_LOG_NOISE_RE = /^\s*(Validation(?:\s+DataLoader\s+\d+)?|Sanity Checking(?:\s+DataLoader\s+\d+)?|Training):\s*0%\|.*0\/\d+\s*\[00:00<\?,?\s*\?it\/s\]/i
@@ -1186,7 +1263,8 @@ function parseTrainerProgressLine(line: string): boolean {
       progressLatestLine: clean,
     }
     emitTrainerState()
-    return true
+    // Don't consume — let the log show "Sanity Checking..." too.
+    return false
   }
 
   const esrReport = clean.match(/NAM_LAB_EPOCH_ESR:(\{.*\})\s*$/)
@@ -1233,7 +1311,8 @@ function parseTrainerProgressLine(line: string): boolean {
       ...(epochEsr !== null ? { epochValidationEsr: epochEsr } : {}),
     }
     emitTrainerState()
-    return true
+    // Don't consume — let the log show the rolling Epoch progress. appendTrainerLog dedupes consecutive refreshes of the same bar so the log stays readable.
+    return false
   }
 
   if (/^Starting training\./i.test(clean)) {
@@ -1448,6 +1527,7 @@ function createTrainerJob(payload: TrainerStartPayload, staged = false): Trainer
     submissionId: payload.submissionId ?? null,
     submissionLabel: payload.submissionLabel ?? null,
     submissionCreatedAt: payload.submissionCreatedAt ?? null,
+    backupExisting: !!payload.backupExisting,
   }
 }
 
@@ -1857,6 +1937,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     silent: job.silent,
     ignoreChecks: job.ignoreChecks,
     modelName: job.modelName,
+    backupExisting: !!job.backupExisting,
     // user_metadata fields — embedded into the .nam by the trainer
     modeledBy: job.modeledBy ?? null,
     inputLevelDbu: job.inputLevelDbu ?? null,
@@ -2006,6 +2087,9 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
       }
     }
 
+    const runDurationSec = trainerState.startedAt && trainerState.finishedAt
+      ? Math.max(0, Math.floor((new Date(trainerState.finishedAt).getTime() - new Date(trainerState.startedAt).getTime()) / 1000))
+      : null
     appendTrainerHistory({
       historyId: crypto.randomUUID(),
       timestamp: trainerState.finishedAt ?? new Date().toISOString(),
@@ -2031,6 +2115,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
       submissionId: job.submissionId,
       submissionLabel: job.submissionLabel,
       submissionCreatedAt: job.submissionCreatedAt,
+      durationSec: runDurationSec,
     })
 
     emitTrainerState()
@@ -3352,7 +3437,8 @@ app.whenReady().then(async () => {
   await loadTone3kTokens()
   trainerHistory = loadTrainerHistory()
   trainerSkipped = loadTrainerSkipped()
-  trainerState = { ...trainerState, history: trainerHistory, watcherState: makeTrainerWatcherSnapshot() }
+  trainerQueue = loadTrainerQueue()
+  trainerState = { ...trainerState, history: trainerHistory, queue: trainerQueue, watcherState: makeTrainerWatcherSnapshot() }
   log(`log file moved to userData: ${logPath}`)
 
   app.setName('NAM Lab')
@@ -4543,6 +4629,19 @@ app.whenReady().then(async () => {
     return { success: true }
   })
 
+  ipcMain.handle('trainer:purgeHistoryEntries', async (_event, historyIds: string[]) => {
+    if (!Array.isArray(historyIds) || historyIds.length === 0) return { success: false, error: 'No history entries to purge.', removed: 0 }
+    const ids = new Set(historyIds)
+    const before = trainerHistory.length
+    trainerHistory = trainerHistory.filter((e) => !ids.has(e.historyId))
+    const removed = before - trainerHistory.length
+    if (removed === 0) return { success: false, error: 'No matching history entries found.', removed: 0 }
+    saveTrainerHistory()
+    trainerState = { ...trainerState, history: trainerHistory }
+    emitTrainerState()
+    return { success: true, removed }
+  })
+
   ipcMain.handle('trainer:watcherQueueAction', async (_event, jobId: string, action: 'remove' | 'skip' | 'move-canceled' | 'retry-now') => {
     const index = findTrainerJobIndex(jobId)
     if (index === -1) return { success: false, error: 'Training queue item not found.' }
@@ -5386,6 +5485,8 @@ app.whenReady().then(async () => {
 
 app.on('will-quit', () => {
   saveFileCache()
+  if (trainerQueueSaveTimer) { clearTimeout(trainerQueueSaveTimer); trainerQueueSaveTimer = null }
+  saveTrainerQueue()
   if (folderWatcher) {
     try { folderWatcher.close() } catch { /* ignore */ }
     folderWatcher = null

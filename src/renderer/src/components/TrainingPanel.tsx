@@ -30,6 +30,7 @@ interface Props {
 }
 
 const ARCHITECTURE_LABELS: Record<TrainerArchitecture, string> = {
+  a2: 'A2',
   standard: 'Standard',
   complex: 'Complex',
   lite: 'Lite',
@@ -38,6 +39,48 @@ const ARCHITECTURE_LABELS: Record<TrainerArchitecture, string> = {
   revystd: 'REVySTD',
   revyhi: 'REVyHI',
   revxstd: 'REVxSTD',
+}
+
+// Display order for the architecture multi-select — A2 first, then A1 variants in capability order.
+const ARCHITECTURE_DISPLAY_ORDER: TrainerArchitecture[] = ['a2', 'standard', 'complex', 'lite', 'feather', 'nano', 'revystd', 'revyhi', 'revxstd']
+
+// "A1 - Standard" / "A2" — used in pickers where the namMode is non-obvious.
+function architectureFullLabel(arch: string): string {
+  if (arch === 'a2') return 'A2'
+  const short = ARCHITECTURE_LABELS[arch as TrainerArchitecture]
+  return short ? `A1 - ${short}` : arch
+}
+
+// Per-job namMode: 'a2' architecture maps to A2 PackedWaveNet, everything else to A1 WaveNet.
+function deriveNamMode(architecture: string): 'a1' | 'a2' {
+  return architecture === 'a2' ? 'a2' : 'a1'
+}
+
+// Per-architecture identifier color — same palette as ArchitectureProfilePicker so chips read consistently across Queue, Staged Batches, Create Batch, and History.
+const ARCHITECTURE_ACCENT_HEX: Record<string, string> = {
+  a2:       '#f43f5e', // rose
+  standard: '#94a3b8', // slate
+  complex:  '#3b82f6', // blue
+  lite:     '#10b981', // emerald
+  feather:  '#0ea5e9', // sky
+  nano:     '#f59e0b', // amber
+  revystd:  '#8b5cf6', // violet
+  revyhi:   '#a855f7', // purple
+  revxstd:  '#d946ef', // fuchsia
+}
+
+function architectureAccentHex(arch: string): string {
+  return ARCHITECTURE_ACCENT_HEX[arch] ?? 'var(--nm-accent, var(--accent))'
+}
+
+// Tinted background + colored dot + label, for the per-architecture pill used in batch/history rows.
+function archChipStyle(arch: string): { background: string; color: string; borderColor: string } {
+  const c = architectureAccentHex(arch)
+  return {
+    background: `color-mix(in srgb, ${c} 14%, transparent)`,
+    color: c,
+    borderColor: `color-mix(in srgb, ${c} 35%, transparent)`,
+  }
 }
 
 const CUSTOM_PRESET_ID = 'custom'
@@ -190,8 +233,6 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     const fav = (settings.trainingFavoritePresetId ?? '').trim()
     return last || fav || CUSTOM_PRESET_ID
   })
-  const [namMode, setNamMode] = useState<'a1' | 'a2'>('a1')
-  const [detectedNamVersion, setDetectedNamVersion] = useState<'a1' | 'a2' | 'unknown'>('unknown')
   const [architectures, setArchitectures] = useState<string[]>(['standard'])
   const [normalizeWavOverride, setNormalizeWavOverride] = useState<'global' | 'on' | 'off'>('off')
   const [normalizeWavTargetDb, setNormalizeWavTargetDb] = useState('')
@@ -207,6 +248,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const [trainerState, setTrainerState] = useState<TrainerStateSnapshot>(IDLE_TRAINER_STATE)
   const [queueContextMenu, setQueueContextMenu] = useState<{ job: TrainerQueueJob; x: number; y: number } | null>(null)
   const [historyContextMenu, setHistoryContextMenu] = useState<{ entry: TrainerHistoryEntry; x: number; y: number } | null>(null)
+  const [historyPurgeConfirm, setHistoryPurgeConfirm] = useState<{ ids: string[]; label: string; mode: 'capture' | 'batch' } | null>(null)
   const [graphModalSrc, setGraphModalSrc] = useState<string | null>(null)
   const [queueProfileFilter, setQueueProfileFilter] = useState<string>('all')
   const [queueStatusFilter, setQueueStatusFilter] = useState<string>('all')
@@ -228,13 +270,6 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   useEffect(() => {
     if (settings.namTrainingInputWav && !inputPath) setInputPath(settings.namTrainingInputWav)
   }, [settings.namTrainingInputWav, inputPath])
-
-  useEffect(() => {
-    const py = settings.namPythonPath.trim()
-    if (!py) { setDetectedNamVersion('unknown'); return }
-    setDetectedNamVersion('unknown')
-    void window.api.detectNamVersion(py).then(({ version }) => setDetectedNamVersion(version))
-  }, [settings.namPythonPath])
 
   useEffect(() => {
     if (!initialRunMode) return
@@ -702,9 +737,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       setLaunchError('Target ESR must be blank or a positive number.')
       return
     }
-    const activeNamMode = activePreset?.namMode ?? namMode
     const targetArchitectures = activePreset ? activePreset.architectures : architectures
-    if (activeNamMode === 'a1' && targetArchitectures.length === 0) {
+    if (targetArchitectures.length === 0) {
       setLaunchError('Choose at least one architecture before queueing.')
       return
     }
@@ -744,20 +778,21 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
         : `Batch - ${batchWavList.length} capture${batchWavList.length === 1 ? '' : 's'}`
     const sharedLabel = batchName.trim() || autoLabel
     const sharedCreatedAt = new Date().toISOString()
-    const jobArchitectures = activeNamMode === 'a2' ? ['a2'] : targetArchitectures
+    const jobArchitectures = targetArchitectures
 
     const payloads = batchWavList.flatMap((wavItem, idx) => {
       const submissionId = separateBatches ? `manual-direct-${now}-${idx}` : sharedSubmissionId!
       const submissionLabel = separateBatches ? wavItem.name : sharedLabel
       return jobArchitectures.map((architecture) => {
         const routing = getManualRoutingForOutput(wavItem.path, architecture)
-        const profileCfg = activeNamMode === 'a1' ? lookupProfileConfig(architecture, settings.userCaptureProfiles ?? []) : null
+        const jobMode = deriveNamMode(architecture)
+        const profileCfg = jobMode === 'a1' ? lookupProfileConfig(architecture, settings.userCaptureProfiles ?? []) : null
         return {
           pythonPath: resolvedPythonPath,
           inputPath: inputPath.trim(),
           outputPath: wavItem.path,
           trainPath: routing.finalModelRoot,
-          namMode: activeNamMode,
+          namMode: jobMode,
           architecture,
           waveNetConfig: profileCfg?.waveNetConfig ?? null,
           lr: profileCfg?.lr ?? 0.004,
@@ -767,7 +802,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
           fitMrstft: profileCfg?.fitMrstft ?? true,
           normalizeWav: resolvedNormalizeWav,
           normalizeWavTargetDb: resolvedNormalizeDb,
-          captureProfileId: activeNamMode === 'a1' ? architecture : null,
+          captureProfileId: jobMode === 'a1' ? architecture : null,
           epochs: parsedEpochs,
           latency: parsedLatency,
           thresholdEsr: parsedThresholdEsr,
@@ -913,14 +948,106 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   }
 
   const handleRetryHistoryEntry = async (entry: TrainerHistoryEntry) => {
-    const result = await window.api.retryTrainerHistoryEntry(entry.historyId)
-    if (!result.success) {
-      setQueueActionError(result.error ?? 'Could not retry that history item.')
-    } else {
+    // Profile-backed entries (watcher / folder-run / preset) go through the existing main-process handler.
+    if (entry.profileId) {
+      const result = await window.api.retryTrainerHistoryEntry(entry.historyId)
+      if (!result.success) {
+        setQueueActionError(result.error ?? 'Could not retry that history item.')
+        return
+      }
       setQueueActionError('')
       setHistoryContextMenu(null)
       setSection('queue')
+      return
     }
+    // Manual-direct (no profileId): reconstruct the payload from the entry + current settings.
+    await handleRetryHistoryBatch([entry], `Retry - ${entry.finalModelName || 'capture'}`)
+  }
+
+  // Re-queue a set of history entries under a single new submission. Used by the per-entry retry
+  // for profile-less manual batches AND by the History group-head "Retry failed / Retry batch" actions.
+  const handleRetryHistoryBatch = async (entries: TrainerHistoryEntry[], submissionLabel: string) => {
+    if (entries.length === 0) return
+    const py = settings.namPythonPath.trim()
+    if (!py) {
+      setQueueActionError('Set the NAM Python path in Settings → Training before retrying.')
+      return
+    }
+    const inputDi = (settings.trainingDefaultInputDi ?? '').trim() || settings.namTrainingInputWav.trim()
+    if (!inputDi) {
+      setQueueActionError('Set the Input DI (Settings → Training) before retrying — the original DI is not stored in the history entry.')
+      return
+    }
+    const outputFormula = (settings.trainingOutputFormula ?? '').trim() || (settings.trainingFavoriteRouting ?? '').trim()
+    const graphFormula = (settings.trainingGraphFormula ?? '').trim()
+    const submissionId = `retry-${Date.now()}`
+    const createdAt = new Date().toISOString()
+    const { normalizeWav: resolvedNormalizeWav, normalizeWavTargetDb: resolvedNormalizeDb } =
+      resolveNormalize(normalizeWavOverride, normalizeWavTargetDb)
+
+    const payloads = entries.map((entry) => {
+      const arch = entry.architecture
+      const jobMode = deriveNamMode(arch)
+      const profileCfg = jobMode === 'a1' ? lookupProfileConfig(arch, settings.userCaptureProfiles ?? []) : null
+      const stagingDir = entry.sourcePath.replace(/\\/g, '/').split('/').slice(0, -1).join('/')
+      // Prefer the entry's actual prior output dir when present (matches what the user already routed to);
+      // fall back to the current output formula resolved against the source.
+      const priorDir = entry.finalModelPath ? entry.finalModelPath.replace(/\\/g, '/').split('/').slice(0, -1).join('/') : ''
+      const resolvedRoot = priorDir || (outputFormula ? (resolveOutputFormula(outputFormula, stagingDir, arch) ?? outputFormula) : stagingDir)
+      const resolvedGraphRoot = graphFormula
+        ? (resolveOutputFormula(graphFormula, stagingDir, arch) ?? resolvedRoot)
+        : resolvedRoot
+      return {
+        pythonPath: py,
+        inputPath: inputDi,
+        outputPath: entry.sourcePath,
+        trainPath: resolvedRoot,
+        namMode: jobMode,
+        architecture: arch,
+        waveNetConfig: profileCfg?.waveNetConfig ?? null,
+        lr: profileCfg?.lr ?? 0.004,
+        lrDecay: profileCfg?.lrDecay ?? 0.002,
+        batchSize: profileCfg?.batchSize ?? 16,
+        ny: profileCfg?.ny ?? 8192,
+        fitMrstft: profileCfg?.fitMrstft ?? true,
+        normalizeWav: resolvedNormalizeWav,
+        normalizeWavTargetDb: resolvedNormalizeDb,
+        captureProfileId: jobMode === 'a1' ? arch : null,
+        epochs: entry.epochs,
+        latency: entry.latencyValue,
+        thresholdEsr: entry.thresholdEsr,
+        savePlot: true,
+        silent: true,
+        ignoreChecks: false,
+        sourceMode: 'manual-direct' as const,
+        finalModelRoot: resolvedRoot,
+        processedWavRoot: '',
+        graphRoot: resolvedGraphRoot,
+        graphRootResolved: !!outputFormula && !priorDir,
+        sourcePostProcess: 'keep' as const,
+        namingTemplate: '{basename}',
+        profileId: entry.profileId,
+        profileName: entry.profileName,
+        modeledBy: null,
+        inputLevelDbu: null,
+        outputLevelDbu: null,
+        submissionId,
+        submissionLabel,
+        submissionCreatedAt: createdAt,
+        // Protect any already-trained .nam files in the destination folder — the Python promoter
+        // will rename the existing model to <name>.bak.nam before overwriting.
+        backupExisting: true,
+      }
+    })
+
+    const result = await window.api.enqueueTrainerRuns(payloads, { staged: false })
+    if (!result.success) {
+      setQueueActionError(result.error ?? 'Could not re-queue that batch.')
+      return
+    }
+    setQueueActionError('')
+    setHistoryContextMenu(null)
+    setSection('queue')
   }
 
   const handleSaveAsPreset = () => {
@@ -939,13 +1066,11 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       setLaunchError('Target ESR must be blank or a positive number before saving a preset.')
       return
     }
-    if (namMode === 'a1' && architectures.length === 0) {
+    if (architectures.length === 0) {
       setLaunchError('Choose at least one architecture before saving a preset.')
       return
     }
-    const autoName = namMode === 'a2'
-      ? `A2 ${parsedEpochs} epoch`
-      : `${architectures.map((item) => architectureDisplayLabel(item)).join(' + ')} ${parsedEpochs} epoch`
+    const autoName = `${architectures.map((item) => architectureDisplayLabel(item)).join(' + ')} ${parsedEpochs} epoch`
     setPresetNameDraft(autoName)
     setPresetSaveError('')
     setShowSavePresetModal(true)
@@ -972,7 +1097,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       setPresetSaveError('Target ESR must be blank or a positive number.')
       return
     }
-    if (namMode === 'a1' && architectures.length === 0) {
+    if (architectures.length === 0) {
       setPresetSaveError('Choose at least one architecture.')
       return
     }
@@ -981,11 +1106,13 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       setPresetSaveError('A preset with that name already exists.')
       return
     }
+    // Preset namMode is now derived from its architecture list — 'a2' if any architecture is a2, else 'a1'. Mixed presets keep 'a1' here (each job derives its own mode at queue time).
+    const presetNamMode: 'a1' | 'a2' = architectures.every((arch) => arch === 'a2') ? 'a2' : 'a1'
     const preset: TrainingPreset = {
       id: makePresetId(name),
       name,
-      namMode,
-      architectures: namMode === 'a2' ? ['a2'] : architectures,
+      namMode: presetNamMode,
+      architectures,
       epochs: parsedEpochs,
       thresholdEsr: parsedThresholdEsr,
       latencyMode: parsedLatency == null ? 'auto' : 'manual',
@@ -1076,7 +1203,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
           inputPath: inputDi,
           outputPath: wavPath,
           trainPath: resolvedModelRoot,
-          namMode: 'a1' as const,
+          namMode: deriveNamMode(architecture),
           architecture,
           waveNetConfig: profileCfg?.waveNetConfig ?? null,
           lr: profileCfg?.lr ?? 0.004,
@@ -1186,7 +1313,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     : 0
   const totalJobs = trainerState.queue.length
 
-  const lastSuccessEntry = trainerState.history.filter(e => e.status === 'success').slice(-1)[0] ?? null
+  const lastSuccessEntry = trainerState.history.filter(e => e.status === 'success')[0] ?? null
   const activeBatchJobs = activeJob ? trainerState.queue.filter(j => j.submissionId === activeJob.submissionId) : []
   const activeBatchIdx = activeJob ? activeBatchJobs.findIndex(j => j.jobId === activeJob.jobId) + 1 : 0
   const activeBatchTotal = activeBatchJobs.length
@@ -1248,11 +1375,23 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
 
   return (
     <>
-    <div className="flex h-full overflow-hidden bg-app-bg text-nm-text" onContextMenu={showNativeTextContextMenu}>
+    <div className="flex h-full overflow-hidden bg-app-bg text-nm-text select-text" onContextMenu={showNativeTextContextMenu}>
       {/* ── Left Rail ─────────────────────────────────────────────────────── */}
       <div className="w-[220px] flex-shrink-0 flex flex-col border-r border-nm-border bg-panel overflow-y-auto">
-        <div className="px-4 pt-4 pb-3 border-b border-nm-border">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-nm-text-3 mb-1">NAM Lab</div>
+        <div className="px-4 pt-3 pb-3 border-b border-nm-border">
+          {onClose && (
+            <button
+              onClick={onClose}
+              title="Back to the file library (tree / file list / metadata)"
+              className="inline-flex items-center gap-1 text-[10.5px] font-[600] uppercase tracking-[.6px] text-nm-text-3 hover:text-nm-accent transition-colors mb-1.5"
+            >
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+              </svg>
+              NAM Lab
+            </button>
+          )}
+          {!onClose && <div className="text-[10px] font-bold uppercase tracking-wider text-nm-text-3 mb-1">NAM Lab</div>}
           <div className="flex items-center gap-2">
             <svg className="w-4 h-4 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23-.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" />
@@ -1388,10 +1527,21 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               {isRunning ? (
                 <button
                   onClick={async () => { await window.api.setTrainerPauseAfterCurrent(!trainerState.pauseAfterCurrent) }}
-                  className="h-10 inline-flex items-center gap-2 px-4 rounded-[9px] text-[13px] font-[580] border bg-panel hover:bg-hov text-nm-text-2 border-nm-border transition-colors"
+                  title={trainerState.pauseAfterCurrent
+                    ? 'Click to cancel — queue will keep going after current capture finishes'
+                    : 'Pauses the queue after the current capture finishes (training can’t be interrupted mid-capture). Use Emergency stop to kill the current run immediately.'}
+                  className={`h-10 inline-flex items-center gap-2 px-4 rounded-[9px] text-[13px] font-[580] border transition-colors ${
+                    trainerState.pauseAfterCurrent
+                      ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border-amber-500/40'
+                      : 'bg-panel hover:bg-hov text-nm-text-2 border-nm-border'
+                  }`}
                 >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25v13.5m-7.5-13.5v13.5" /></svg>
-                  Pause
+                  {trainerState.pauseAfterCurrent ? (
+                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25v13.5m-7.5-13.5v13.5" /></svg>
+                  )}
+                  {trainerState.pauseAfterCurrent ? 'Pausing after current' : 'Pause'}
                 </button>
               ) : (
                 <button
@@ -1466,10 +1616,19 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               {isRunning ? (
                 <button
                   onClick={async () => { await window.api.setTrainerPauseAfterCurrent(!trainerState.pauseAfterCurrent) }}
-                  className="h-[34px] inline-flex items-center gap-1.5 px-2.5 rounded-[9px] text-xs font-[580] border bg-panel hover:bg-hov text-nm-text-2 border-nm-border transition-colors"
+                  title={trainerState.pauseAfterCurrent ? 'Click to cancel — queue will keep going after current run' : 'Stop the queue after the current run finishes'}
+                  className={`h-[34px] inline-flex items-center gap-1.5 px-2.5 rounded-[9px] text-xs font-[580] border transition-colors ${
+                    trainerState.pauseAfterCurrent
+                      ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border-amber-500/40'
+                      : 'bg-panel hover:bg-hov text-nm-text-2 border-nm-border'
+                  }`}
                 >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25v13.5m-7.5-13.5v13.5" /></svg>
-                  Pause after current
+                  {trainerState.pauseAfterCurrent ? (
+                    <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                  ) : (
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25v13.5m-7.5-13.5v13.5" /></svg>
+                  )}
+                  {trainerState.pauseAfterCurrent ? 'Pausing after current' : 'Pause after current'}
                 </button>
               ) : (
                 <button
@@ -1616,7 +1775,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               {(() => {
                 const queueFinished = successCount + failedCount
                 const lastEsrTone = getEsrTone(lastSuccessEntry?.validationEsr ?? null)
-                const lastDurSec = lastSuccessEntry ? jobDurationSec(lastSuccessEntry as unknown as { startedAt: string | null; finishedAt: string | null }) : null
+                const lastDurSec = lastSuccessEntry
+                  ? (typeof lastSuccessEntry.durationSec === 'number' ? lastSuccessEntry.durationSec : null)
+                  : null
                 const accentColor = 'var(--nm-accent, var(--accent))'
                 const bigStats = [
                   {
@@ -1759,7 +1920,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                             : <span className="text-nm-text-3 italic">not set</span>,
                       },
                       {
-                        icon: <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2 12h2M7 6v12M11 9v6M15 3v18M19 7v10M20 12h2" /></svg>,
+                        icon: <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2 12h3l2-7 4 16 3-12 2 5h6" /></svg>,
                         label: 'Input DI',
                         value: (settings.trainingDefaultInputDi ?? '').trim()
                           ? <span className="font-mono truncate max-w-[200px] inline-block align-bottom">…/{(settings.trainingDefaultInputDi ?? '').replace(/\\/g, '/').split('/').pop()}</span>
@@ -1850,110 +2011,158 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
 
           {/* ── LIVE RUN ───────────────────────────────────────────────────── */}
           {section === 'live' && (
-            <div className="px-6 py-5 space-y-4 max-w-[1400px] mx-auto w-full">
-              <div className="flex items-baseline justify-between">
+            <div className="px-6 py-5 space-y-3.5 max-w-[1400px] mx-auto w-full">
+              {/* Section head with legend on the right */}
+              <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h2 className="text-[18px] font-[680] text-nm-text">Live Run</h2>
-                  <p className="text-[12px] text-nm-text-2 mt-0.5">Real-time training telemetry for the active model</p>
+                  <h2 className="text-[18px] font-[680] text-nm-text leading-tight">Live Run</h2>
+                  <p className="text-[12px] text-nm-text-3 mt-0.5">Real-time training telemetry for the active model</p>
                 </div>
+                <span className="flex items-center gap-3 text-[10.5px] text-nm-text-3 flex-shrink-0 pt-1">
+                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm" style={{ background: 'var(--nm-accent, var(--accent))' }} />validation ESR</span>
+                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm" style={{ background: '#10b981' }} />target</span>
+                </span>
               </div>
 
-              {!isRunning && trainerState.status === 'idle' && (
-                <div className="rounded-2xl border border-nm-border bg-panel p-8 text-center text-nm-text-3">
-                  <svg className="w-10 h-10 mx-auto mb-3 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
-                  </svg>
-                  <p className="text-[13px]">No run in progress. Start from the Queue or New Run tab.</p>
+              {!isRunning && trainerState.status === 'idle' && esrSeries.length === 0 && (
+                <div className="rounded-2xl border border-nm-border-s bg-panel p-10 flex flex-col items-center gap-3 text-center">
+                  <div className="w-14 h-14 rounded-[14px] flex items-center justify-center bg-panel-2 text-nm-text-3">
+                    <svg className="w-[26px] h-[26px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" /></svg>
+                  </div>
+                  <div className="text-[14px] font-[650] text-nm-text">No run in progress</div>
+                  <div className="text-[12.5px] text-nm-text-3">Start a queue or launch a new run to watch training live here.</div>
                 </div>
               )}
 
               {(isRunning || esrSeries.length > 0) && (
-                <div className="rounded-2xl border border-nm-border bg-panel/60 p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-[13px] font-semibold text-nm-text">ESR over epochs</span>
-                    <span className="text-[11px] text-nm-text-3">log scale · lower is better</span>
+                <div className="rounded-[14px] border border-nm-border-s bg-panel-2">
+                  <div className="flex items-center gap-2 px-4 pt-3.5 pb-2">
+                    <svg className="w-[15px] h-[15px] text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941" /></svg>
+                    <span className="text-[12.5px] font-[650] text-nm-text">ESR over epochs</span>
+                    <span className="flex-1" />
+                    <span className="text-[11px] font-mono text-nm-text-3">log scale · lower is better</span>
                   </div>
-                  <ChartFit minH={240}>
-                    {(w) => (
-                      <EsrCurve
-                        data={esrSeries}
-                        width={w}
-                        height={240}
-                        target={typeof trainerState.thresholdEsr === 'number' ? trainerState.thresholdEsr : 0.01}
-                        labels={true}
-                        variant="area"
-                        logScale={true}
-                      />
-                    )}
-                  </ChartFit>
+                  <div className="px-4 pb-4 pt-1">
+                    <ChartFit minH={260}>
+                      {(w) => (
+                        <EsrCurve
+                          data={esrSeries}
+                          width={w}
+                          height={260}
+                          target={typeof trainerState.thresholdEsr === 'number' ? trainerState.thresholdEsr : 0.01}
+                          labels={true}
+                          variant="area"
+                          logScale={true}
+                        />
+                      )}
+                    </ChartFit>
+                  </div>
                 </div>
               )}
 
-              {/* Stat cells */}
-              <div className="grid grid-cols-4 gap-3">
-                {[
-                  {
-                    label: 'Epoch',
-                    value: trainerState.progressEpochCurrent && progressEpochTotal
-                      ? `${trainerState.progressEpochCurrent} / ${progressEpochTotal}`
-                      : '—'
-                  },
-                  { label: 'Rate', value: typeof trainerState.progressRate === 'number' ? `${trainerState.progressRate.toFixed(2)} it/s` : '—' },
-                  (() => { const liveTone = getEsrTone(trainerState.epochValidationEsr ?? trainerState.validationEsr); return { label: 'Val ESR (live)', value: liveTone.text, extra: liveTone.classes } })(),
-                  { label: 'Replicate ESR', value: replicateEsrTone.text, extra: replicateEsrTone.classes },
-                  { label: 'Elapsed', value: isRunning && elapsedSec > 0 ? formatDuration(elapsedSec) : (trainerState.startedAt && trainerState.finishedAt ? formatDuration(Math.floor((new Date(trainerState.finishedAt).getTime() - new Date(trainerState.startedAt).getTime()) / 1000)) : '—') },
-                  { label: 'Started', value: trainerState.startedAt ? new Date(trainerState.startedAt).toLocaleTimeString() : '—' },
-                ].map(({ label, value, extra }) => (
-                  <div key={label} className="rounded-xl border border-nm-border-s bg-panel-2 px-3 py-2.5">
-                    <div className="text-[11px] text-nm-text-2 uppercase font-medium">{label}</div>
-                    <div className={`mt-1 font-semibold font-mono tabular-nums ${extra ?? 'text-nm-text'}`}>{value}</div>
-                  </div>
-                ))}
+              {/* Statline — 4 cells like prototype: Epoch / Rate / Validation ESR / Started */}
+              <div className="rounded-[14px] border border-nm-border-s bg-panel overflow-hidden grid grid-cols-4 divide-x divide-nm-border-s">
+                {(() => {
+                  const liveTone = getEsrTone(trainerState.epochValidationEsr ?? trainerState.validationEsr)
+                  return [
+                    {
+                      label: 'Epoch',
+                      value: trainerState.progressEpochCurrent ? String(trainerState.progressEpochCurrent) : '—',
+                      suffix: progressEpochTotal ? ` / ${progressEpochTotal}` : null,
+                      valueClass: 'text-nm-text',
+                    },
+                    {
+                      label: 'Rate',
+                      value: typeof trainerState.progressRate === 'number' ? trainerState.progressRate.toFixed(2) : '—',
+                      suffix: typeof trainerState.progressRate === 'number' ? ' it/s' : null,
+                      valueClass: 'text-nm-text',
+                    },
+                    {
+                      label: 'Validation ESR',
+                      value: liveTone.text,
+                      suffix: null,
+                      valueClass: liveTone.classes || 'text-nm-text',
+                    },
+                    {
+                      label: 'Started',
+                      value: trainerState.startedAt ? new Date(trainerState.startedAt).toLocaleTimeString() : '—',
+                      suffix: null,
+                      valueClass: 'text-nm-text',
+                      smaller: true,
+                    },
+                  ].map(({ label, value, suffix, valueClass, smaller }) => (
+                    <div key={label} className="bg-panel-2 px-4 py-3.5">
+                      <div className="text-[10.5px] uppercase font-[600] tracking-[.45px] text-nm-text-3">{label}</div>
+                      <div className={`mt-1.5 font-mono tabular-nums font-[680] ${smaller ? 'text-[15px]' : 'text-[19px]'} ${valueClass}`}>
+                        {value}{suffix && <span className="text-[11px] font-medium text-nm-text-3">{suffix}</span>}
+                      </div>
+                    </div>
+                  ))
+                })()}
               </div>
 
-              {/* Output paths */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-xl border border-nm-border-s bg-panel-2 px-3 py-2.5">
-                  <div className="text-[11px] text-nm-text-2">Final output</div>
-                  <div className="mt-1 text-[12px] font-mono text-nm-text break-all">{trainerState.outputModelPath || '—'}</div>
+              {/* Final output + Checkpoint export side by side */}
+              <div className="grid grid-cols-2 gap-3.5">
+                <div className="rounded-[14px] border border-nm-border-s bg-panel">
+                  <div className="flex items-center gap-2 px-4 pt-3.5 pb-2">
+                    <svg className="w-[15px] h-[15px] text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 00-1.883 2.542l.857 6a2.25 2.25 0 002.227 1.932H19.05a2.25 2.25 0 002.227-1.932l.857-6a2.25 2.25 0 00-1.883-2.542m-16.5 0V6A2.25 2.25 0 016 3.75h3.879a1.5 1.5 0 011.06.44l2.122 2.12a1.5 1.5 0 001.06.44H18A2.25 2.25 0 0120.25 9v.776" /></svg>
+                    <span className="text-[12.5px] font-[650] text-nm-text">Final output</span>
+                  </div>
+                  <div className="px-4 pb-3.5 pt-1">
+                    <div className="text-[11.5px] font-mono leading-[1.7] text-nm-text-2 break-all">{trainerState.outputModelPath || '—'}</div>
+                  </div>
                 </div>
-                <div className="rounded-xl border border-nm-border-s bg-panel-2 px-3 py-2.5">
-                  <div className="text-[11px] text-nm-text-2">Checkpoint</div>
-                  <div className="mt-1 text-[12px] font-mono text-nm-text break-all">{trainerState.checkpointModelPath || 'Appears after training starts'}</div>
+                <div className="rounded-[14px] border border-nm-border-s bg-panel">
+                  <div className="flex items-center gap-2 px-4 pt-3.5 pb-2">
+                    <svg className="w-[15px] h-[15px] text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" /></svg>
+                    <span className="text-[12.5px] font-[650] text-nm-text">Checkpoint export</span>
+                  </div>
+                  <div className="px-4 pb-3.5 pt-1">
+                    <div className="text-[11.5px] font-mono leading-[1.7] text-nm-text-3 break-all">{trainerState.checkpointModelPath || 'Lightning checkpoint copy will appear here after training starts.'}</div>
+                  </div>
                 </div>
               </div>
 
               {/* Up next */}
-              {groupedQueue.filter(g => g.jobs.some(j => j.status === 'queued')).length > 0 && (
-                <div className="rounded-2xl border border-nm-border bg-panel/60 p-4">
-                  <div className="text-[12px] font-semibold text-nm-text mb-2">
-                    Up next · {groupedQueue.reduce((n, g) => n + g.jobs.filter(j => j.status === 'queued').length, 0)} queued
+              {(() => {
+                const upNextJobs = groupedQueue.flatMap(g => g.jobs.filter(j => j.status === 'queued'))
+                if (upNextJobs.length === 0) return null
+                return (
+                  <div className="rounded-[14px] border border-nm-border-s bg-panel">
+                    <div className="flex items-center gap-2 px-4 pt-3.5 pb-2">
+                      <svg className="w-[15px] h-[15px] text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 13.5h3.86a2.25 2.25 0 012.012 1.244l.256.512a2.25 2.25 0 002.013 1.244h3.218a2.25 2.25 0 002.013-1.244l.256-.512a2.25 2.25 0 012.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 00-2.15-1.588H6.911a2.25 2.25 0 00-2.15 1.588L2.35 13.177a2.25 2.25 0 00-.1.661z" /></svg>
+                      <span className="text-[12.5px] font-[650] text-nm-text">Up next</span>
+                      <span className="flex-1" />
+                      <span className="text-[11px] text-nm-text-3">{upNextJobs.length} queued</span>
+                    </div>
+                    <div className="px-3 pb-3 pt-1 space-y-1.5">
+                      {upNextJobs.slice(0, 3).map((job, i) => (
+                        <div key={job.jobId} className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] border border-nm-border-s bg-panel-2">
+                          <span className="w-6 h-6 rounded-full bg-field border border-nm-border-s flex items-center justify-center text-[11px] font-[650] text-nm-text-3 flex-shrink-0">{i + 1}</span>
+                          <span className="flex-1 min-w-0 text-[12.5px] font-[560] text-nm-text truncate">{job.modelName || job.outputPath.replace(/\\/g, '/').split('/').pop()}</span>
+                          <span className="inline-flex items-center h-[19px] px-2 rounded-[5px] text-[10px] font-[700] uppercase tracking-[.3px]" style={{ background: 'color-mix(in srgb, var(--nm-accent, var(--accent)) 16%, transparent)', color: 'var(--accent-text)' }}>{architectureDisplayLabel(job.architecture)}</span>
+                          <span className="text-[11px] font-mono text-nm-text-3 tabular-nums flex-shrink-0">{job.epochs} ep</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <div className="space-y-1">
-                    {groupedQueue.flatMap(g => g.jobs.filter(j => j.status === 'queued')).slice(0, 4).map(job => (
-                      <div key={job.jobId} className="flex items-center gap-2 text-[12px] text-nm-text-2">
-                        <span className="flex-1 truncate font-mono">{job.outputPath.replace(/\\/g, '/').split('/').pop()}</span>
-                        <span className="px-1.5 py-0.5 rounded border border-nm-border-s text-[10px] text-nm-text-3">{architectureDisplayLabel(job.architecture)}</span>
-                        <span className="text-nm-text-3 tabular-nums">{job.epochs}ep</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+                )
+              })()}
 
               {/* Raw log */}
-              <div className="rounded-2xl border border-nm-border bg-field overflow-hidden">
+              <div className="rounded-[14px] border border-nm-border-s bg-panel overflow-hidden">
                 <button
                   onClick={() => setLogExpanded(v => !v)}
-                  className="w-full flex items-center gap-2 px-4 py-2.5 text-[12px] font-semibold text-nm-text-2 hover:bg-hov transition-colors"
+                  className="w-full flex items-center gap-2 px-4 py-3 text-[12.5px] font-[650] text-nm-text hover:bg-hov transition-colors"
                 >
-                  <svg className={`w-3 h-3 transition-transform ${logExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <svg className={`w-3 h-3 text-nm-text-3 transition-transform ${logExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
                   </svg>
+                  <svg className="w-[15px] h-[15px] text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" /></svg>
                   Raw trainer log
                 </button>
                 {logExpanded && (
-                  <div ref={rawLogRef} className="border-t border-nm-border p-3 h-[280px] overflow-y-auto whitespace-pre-wrap break-words text-[11px] font-mono text-nm-text-2">
+                  <div ref={rawLogRef} className="border-t border-nm-border-s bg-field p-3.5 h-[280px] overflow-y-auto whitespace-pre-wrap break-words text-[11px] font-mono leading-[1.55] text-nm-text-2">
                     {trainerState.logs.length === 0
                       ? <span className="text-nm-text-3">Training logs will appear here.</span>
                       : trainerState.logs.join('\n')}
@@ -1986,19 +2195,49 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               </div>
 
               {/* Metric tiles */}
-              <div className="grid grid-cols-4 gap-3">
-                {[
-                  { label: 'Queued', count: queuedCount, color: 'border-l-amber-500/70 text-amber-400' },
-                  { label: 'Running', count: isRunning ? 1 : 0, color: 'border-l-nm-accent text-nm-accent' },
-                  { label: 'Done', count: successCount, color: 'border-l-emerald-500/70 text-emerald-400' },
-                  { label: 'Failed', count: failedCount, color: 'border-l-red-500/70 text-red-400' },
-                ].map(({ label, count, color }) => (
-                  <div key={label} className={`rounded-xl border border-nm-border-s bg-panel-2 px-3 py-2.5 border-l-[3px] ${color}`}>
-                    <div className="text-[28px] font-[700] tabular-nums leading-none">{count}</div>
-                    <div className="text-[10px] uppercase font-medium text-nm-text-3 mt-1">{label}</div>
+              {(() => {
+                const batchesByStatus = (status: string) => {
+                  const ids = new Set<string>()
+                  for (const j of trainerState.queue) if (j.status === status) ids.add(j.submissionId ?? j.jobId)
+                  return ids.size
+                }
+                const queuedBatches = batchesByStatus('queued')
+                const doneBatches = batchesByStatus('success')
+                const failedBatches = batchesByStatus('error') + batchesByStatus('canceled')
+                const runningBatches = isRunning && trainerState.activeJobId
+                  ? 1
+                  : 0
+                const tiles = [
+                  { label: 'Queued', count: queuedCount, batches: queuedBatches, color: 'border-l-amber-500/70 text-amber-400' },
+                  { label: 'Running', count: isRunning ? 1 : 0, batches: runningBatches, color: 'border-l-nm-accent text-nm-accent' },
+                  { label: 'Done', count: successCount, batches: doneBatches, color: 'border-l-emerald-500/70 text-emerald-400' },
+                  { label: 'Failed', count: failedCount, batches: failedBatches, color: 'border-l-red-500/70 text-red-400' },
+                ]
+                return (
+                  <div className="grid grid-cols-4 gap-3">
+                    {tiles.map(({ label, count, batches, color }) => {
+                      const showBatches = label !== 'Running'
+                      return (
+                        <div key={label} className={`rounded-xl border border-nm-border-s bg-panel-2 px-3 py-2.5 border-l-[3px] ${color}`}>
+                          <div className="flex items-baseline gap-1.5">
+                            <span className="text-[28px] font-[700] tabular-nums leading-none">{count}</span>
+                            <span className="text-[11px] font-medium text-nm-text-3 leading-none">capture{count === 1 ? '' : 's'}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <span className="text-[10px] uppercase font-medium text-nm-text-3">{label}</span>
+                            {showBatches && (
+                              <>
+                                <span className="text-[10px] text-nm-text-3 opacity-60">·</span>
+                                <span className="text-[10px] font-medium text-nm-text-3 tabular-nums">{batches} batch{batches === 1 ? '' : 'es'}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
-                ))}
-              </div>
+                )
+              })()}
 
               {/* Filter bar */}
               <div className="flex items-center gap-2 flex-wrap">
@@ -2131,7 +2370,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                           <svg className={`w-3.5 h-3.5 flex-shrink-0 ${isWatcher ? 'text-amber-400' : 'text-nm-accent'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             {isWatcher
                               ? <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                              : <path strokeLinecap="round" strokeLinejoin="round" d="M2 12h2M7 6v12M11 9v6M15 3v18M19 7v10M20 12h2" />
+                              : <path strokeLinecap="round" strokeLinejoin="round" d="M2 12h3l2-7 4 16 3-12 2 5h6" />
                             }
                           </svg>
                           <span className="flex-1 min-w-0 text-[13px] font-semibold text-nm-text truncate">{group.label}</span>
@@ -2331,14 +2570,14 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                         ) : sourceMode === 'manual-folder-run' ? (
                           <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 00-1.883 2.542l.857 6a2.25 2.25 0 002.227 1.932H19.05a2.25 2.25 0 002.227-1.932l.857-6a2.25 2.25 0 00-1.883-2.542m-16.5 0V6A2.25 2.25 0 016 3.75h3.879a1.5 1.5 0 011.06.44l2.122 2.12a1.5 1.5 0 001.06.44H18A2.25 2.25 0 0120.25 9v.776" />
                         ) : (
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2 12h3l2-7 4 16 3-12 2 5h6" />
                         )
                       const diBasename = (firstJob?.inputPath ?? '').replace(/\\/g, '/').split('/').pop() ?? ''
                       const routingLabel = firstJob ? (
                         firstJob.sourcePostProcess === 'move' ? 'Move to output' :
                         firstJob.sourcePostProcess === 'copy' ? 'Copy to output' : 'Keep in place'
                       ) : '—'
-                      const archLabel = architectureDisplayLabel(firstJob?.architecture ?? '')
+                      const uniqueArchitectures = Array.from(new Set(group.jobs.map(j => j.architecture)))
                       const normalizeLabel = firstJob?.normalizeWav ? 'On' : 'Off'
                       const epochCount = firstJob?.epochs ?? 0
                       const createdLabel = group.createdAt ? new Date(group.createdAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
@@ -2390,7 +2629,12 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                     <span className="text-nm-text-3 text-[10px]">·</span>
                                   </>
                                 )}
-                                <span className="inline-flex items-center h-[17px] px-1.5 rounded-[5px] text-[10px] font-medium border border-nm-border-s bg-field text-nm-text-2">{archLabel}</span>
+                                {uniqueArchitectures.map(arch => (
+                                  <span key={arch} className="inline-flex items-center gap-1 h-[17px] px-1.5 rounded-[5px] text-[10px] font-[650] border" style={archChipStyle(arch)}>
+                                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+                                    {architectureDisplayLabel(arch)}
+                                  </span>
+                                ))}
                                 <span className="text-nm-text-3 text-[10px]">·</span>
                                 <span className="text-[11px] text-nm-text-3">{epochCount} epochs</span>
                                 <span className="text-nm-text-3 text-[10px]">·</span>
@@ -2443,10 +2687,13 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                 return (
                                   <div key={job.jobId} className="flex items-center gap-2 px-2.5 py-1.5 rounded-[8px] text-[12px] border border-nm-border-s bg-panel-2">
                                     <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
-                                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z" />
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M2 12h3l2-7 4 16 3-12 2 5h6" />
                                     </svg>
                                     <span className="flex-1 font-mono truncate text-nm-text text-[11.5px]">{wavName}.wav</span>
-                                    <span className="inline-flex items-center h-[17px] px-1.5 rounded-[5px] text-[10px] font-medium border border-nm-border-s bg-field text-nm-text-2 flex-shrink-0">{architectureDisplayLabel(job.architecture)}</span>
+                                    <span className="inline-flex items-center gap-1 h-[17px] px-1.5 rounded-[5px] text-[10px] font-[650] border flex-shrink-0" style={archChipStyle(job.architecture)}>
+                                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+                                      {architectureDisplayLabel(job.architecture)}
+                                    </span>
                                   </div>
                                 )
                               })}
@@ -2569,6 +2816,26 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                       {okN > 0 && <span className="inline-flex items-center h-[19px] px-1.5 rounded-[6px] text-[10px] font-semibold border border-emerald-500/25 bg-emerald-500/10 text-emerald-400">{okN} done</span>}
                       {failN > 0 && <span className="inline-flex items-center h-[19px] px-1.5 rounded-[6px] text-[10px] font-semibold border border-red-500/25 bg-red-500/10 text-red-400">{failN} failed</span>}
                       <span className="flex-1" />
+                      {failN > 0 && (
+                        <button
+                          onClick={() => { void handleRetryHistoryBatch(group.entries.filter(e => e.status === 'error'), `Retry failed - ${group.label}`) }}
+                          title={`Re-queue the ${failN} failed capture${failN === 1 ? '' : 's'} from this batch under a new submission. Uses the current Input DI and output formula from Settings.`}
+                          className="h-7 inline-flex items-center gap-1 px-2 rounded-[7px] text-[11px] font-medium border border-red-500/30 hover:bg-red-500/10 text-red-400 transition-colors"
+                        >
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                          Retry failed
+                        </button>
+                      )}
+                      {group.entries.length > 1 && (
+                        <button
+                          onClick={() => { void handleRetryHistoryBatch(group.entries, `Retry - ${group.label}`) }}
+                          title={`Re-queue all ${group.entries.length} captures from this batch under a new submission.`}
+                          className="h-7 inline-flex items-center gap-1 px-2 rounded-[7px] text-[11px] font-medium border border-nm-border-s hover:bg-hov text-nm-text-2 transition-colors"
+                        >
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                          Retry batch
+                        </button>
+                      )}
                       <span className="text-[11px] text-nm-text-3 font-mono">{group.createdAt ? new Date(group.createdAt).toLocaleString() : ''}</span>
                     </div>
                     {/* Rows */}
@@ -2609,7 +2876,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                   <span className="opacity-50">·</span>
                                   <span>{entry.epochs} epochs</span>
                                   {(() => {
-                                    const dur = jobDurationSec(entry as unknown as { startedAt: string | null; finishedAt: string | null })
+                                    const dur = typeof entry.durationSec === 'number' ? entry.durationSec : null
                                     if (dur == null) return null
                                     return <><span className="opacity-50">·</span><span className="font-mono">{formatDuration(dur)}</span></>
                                   })()}
@@ -2672,7 +2939,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               {/* Captures card */}
               <div className="rounded-2xl border border-nm-border-s bg-panel-2 p-4 space-y-4">
                 <div className="flex items-center gap-1.5">
-                  <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2 12h2M7 6v12M11 9v6M15 3v18M19 7v10M20 12h2" /></svg>
+                  <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2 12h3l2-7 4 16 3-12 2 5h6" /></svg>
                   <span className="text-[11px] font-semibold uppercase tracking-wider text-nm-accent">Captures</span>
                 </div>
                 <Field label="Batch name" hint="Optional — leave blank to auto-name from the capture, folder, or count">
@@ -2776,7 +3043,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                               const displayPath = parts.length > 2 ? `…/${parts.slice(-3, -1).join('/')}/${item.name}` : item.name
                               return (
                               <div key={item.id} className="flex items-center gap-2 px-2 py-1.5 rounded text-[12px] hover:bg-hov group">
-                                <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M2 12h2M7 6v12M11 9v6M15 3v18M19 7v10M20 12h2" /></svg>
+                                <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M2 12h3l2-7 4 16 3-12 2 5h6" /></svg>
                                 <span className="flex-1 font-mono truncate text-nm-text-2 text-[11.5px]">{displayPath}</span>
                                 <button onClick={() => setBatchWavList(prev => prev.filter(i => i.id !== item.id))} className="w-5 h-5 flex items-center justify-center rounded text-nm-text-3 hover:text-red-400 hover:bg-red-500/10 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
@@ -2805,7 +3072,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                   </div>
                                   {isExpanded && items.map(item => (
                                     <div key={item.id} className="flex items-center gap-2 pl-7 pr-2 py-1 rounded text-[12px] hover:bg-hov group">
-                                      <svg className="w-3 h-3 text-nm-accent/60 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M2 12h2M7 6v12M11 9v6M15 3v18M19 7v10M20 12h2" /></svg>
+                                      <svg className="w-3 h-3 text-nm-accent/60 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M2 12h3l2-7 4 16 3-12 2 5h6" /></svg>
                                       <span className="flex-1 font-mono truncate text-nm-text-2 text-[11.5px]">{item.name}</span>
                                       <button onClick={() => setBatchWavList(prev => prev.filter(i => i.id !== item.id))} className="w-5 h-5 flex items-center justify-center rounded text-nm-text-3 hover:text-red-400 hover:bg-red-500/10 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                                         <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
@@ -2835,55 +3102,51 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   </HelpPopover>
                 </div>
 
-                <div className="grid grid-cols-[1fr_1fr] gap-3">
+                <div className="flex items-end gap-3 flex-wrap">
                   <Field label="Preset">
                     <select
                       value={currentPresetId}
                       onChange={e => { applyPreset(e.target.value) }}
-                      className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none"
+                      className="h-10 px-3 pr-8 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none min-w-[220px]"
                     >
                       <option value={CUSTOM_PRESET_ID}>Custom</option>
                       {availablePresets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
                   </Field>
-
-                  {currentRunPreset ? (
-                    <div className="self-end">
-                      <div className="h-10 rounded-lg border border-nm-border-s bg-field px-3 text-[12px] text-nm-text-2 flex items-center">
-                        {describePreset(currentRunPreset)}
-                      </div>
+                  {currentRunPreset && (
+                    <div className="flex-1 min-w-[200px] h-10 rounded-lg border border-nm-border-s bg-field px-3 text-[12px] text-nm-text-2 flex items-center truncate">
+                      {describePreset(currentRunPreset)}
                     </div>
-                  ) : (
-                    <Field label="NAM Version">
-                      <div className="flex rounded-lg overflow-hidden border border-field-bd text-[12px]">
-                        <button onClick={() => setNamMode('a1')} className={`flex-1 py-2 px-3 font-medium transition-colors ${namMode === 'a1' ? 'bg-nm-accent text-accent-text' : 'bg-field text-nm-text-2 hover:bg-hov'}`}>A1 WaveNet</button>
-                        <button
-                          onClick={() => setNamMode('a2')}
-                          disabled={detectedNamVersion !== 'a2'}
-                          title={detectedNamVersion === 'a1' ? 'A2 requires NAM ≥ 0.13.0 — your install is A1 only' : detectedNamVersion === 'unknown' ? 'Set a Python path to check A2 support' : undefined}
-                          className={`flex-1 py-2 px-3 font-medium transition-colors ${detectedNamVersion !== 'a2' ? 'opacity-40 cursor-not-allowed bg-field text-nm-text-2' : namMode === 'a2' ? 'bg-nm-accent text-accent-text' : 'bg-field text-nm-text-2 hover:bg-hov'}`}
-                        >A2</button>
-                      </div>
-                    </Field>
                   )}
                 </div>
 
+                {/* Selected architectures as color-coded chips — appears under the preset row when a preset is active. */}
+                {currentRunPreset && currentRunPreset.architectures.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 -mt-1.5">
+                    <span className="text-[10.5px] uppercase font-[600] tracking-[.4px] text-nm-text-3 mr-0.5">Architectures</span>
+                    {currentRunPreset.architectures.map(arch => (
+                      <span key={arch} className="inline-flex items-center gap-1 h-[20px] px-2 rounded-full text-[10.5px] font-[650] border" style={archChipStyle(arch)}>
+                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+                        {architectureFullLabel(arch)}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
                 {showsCustomSettings && (
-                  <div className={`grid gap-3 ${namMode === 'a2' ? 'grid-cols-[160px_100px_140px_auto]' : 'grid-cols-[1fr_100px_140px_100px_auto]'}`}>
-                    {namMode === 'a1' && (
-                      <Field label="Architecture(s)" help={<>Each architecture produces a <code>.nam</code> of different size and quality. <strong>Standard</strong> = best quality, more CPU. <strong>Lite/Feather/Nano</strong> = faster but lower fidelity.</>}>
-                        <ArchitectureMultiSelect
-                          values={architectures}
-                          onChange={next => {
-                            setArchitectures(next)
-                            setSelectedPresetId(CUSTOM_PRESET_ID)
-                          }}
-                          userProfiles={settings.userCaptureProfiles ?? []}
-                          onCreateProfile={() => { setCaptureProfileEditorTarget(null); setCaptureProfileEditorOpen(true) }}
-                          onEditProfile={profile => { setCaptureProfileEditorTarget(profile); setCaptureProfileEditorOpen(true) }}
-                        />
-                      </Field>
-                    )}
+                  <div className="grid gap-3 grid-cols-[1fr_100px_140px_100px_auto]">
+                    <Field label="Architecture(s)" help={<>Each architecture produces a <code>.nam</code> of different size and quality. <strong>A2</strong> is the modern PackedWaveNet (one file = Full + Lite). <strong>A1 - Standard</strong> = best A1 quality. A1 Lite/Feather/Nano are smaller/faster. You can mix A1 and A2 — each ticked architecture spawns its own job in the batch.</>}>
+                      <ArchitectureMultiSelect
+                        values={architectures}
+                        onChange={next => {
+                          setArchitectures(next)
+                          setSelectedPresetId(CUSTOM_PRESET_ID)
+                        }}
+                        userProfiles={settings.userCaptureProfiles ?? []}
+                        onCreateProfile={() => { setCaptureProfileEditorTarget(null); setCaptureProfileEditorOpen(true) }}
+                        onEditProfile={profile => { setCaptureProfileEditorTarget(profile); setCaptureProfileEditorOpen(true) }}
+                      />
+                    </Field>
                     <Field label="Epochs">
                       <input value={epochs} onChange={e => setEpochs(e.target.value)} className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none" />
                     </Field>
@@ -2921,6 +3184,30 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                         </div>
                       </div>
                     </div>
+                  </div>
+                )}
+                {showsCustomSettings && architectures.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[10.5px] uppercase font-[600] tracking-[.4px] text-nm-text-3 mr-0.5">Selected</span>
+                    {architectures.map(arch => {
+                      const isBuiltIn = arch in ARCHITECTURE_ACCENT_HEX
+                      const userProfile = isBuiltIn ? null : (settings.userCaptureProfiles ?? []).find(p => p.id === arch)
+                      const displayLabel = isBuiltIn ? architectureFullLabel(arch) : (userProfile?.name ?? arch)
+                      const style = isBuiltIn ? archChipStyle(arch) : { background: 'color-mix(in srgb, var(--nm-accent, var(--accent)) 14%, transparent)', color: 'var(--nm-accent, var(--accent))', borderColor: 'color-mix(in srgb, var(--nm-accent, var(--accent)) 35%, transparent)' }
+                      return (
+                        <span key={arch} className="inline-flex items-center gap-1 h-[22px] pl-2 pr-1 rounded-full text-[11px] font-[650] border" style={style}>
+                          <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+                          {displayLabel}
+                          <button
+                            onClick={() => { setArchitectures(architectures.filter(a => a !== arch)); setSelectedPresetId(CUSTOM_PRESET_ID) }}
+                            className="w-[15px] h-[15px] rounded-full inline-flex items-center justify-center hover:bg-black/15 ml-0.5"
+                            title={`Remove ${displayLabel}`}
+                          >
+                            <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                          </button>
+                        </span>
+                      )
+                    })}
                   </div>
                 )}
                 {showsCustomSettings && epochNote && (
@@ -3088,7 +3375,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 >
                   {(() => {
                     const jobArchCount = activePreset ? activePreset.architectures.length : architectures.length
-                    const total = batchWavList.length * (namMode === 'a2' ? 1 : Math.max(jobArchCount, 1))
+                    const total = batchWavList.length * Math.max(jobArchCount, 1)
                     return total <= 1 ? 'Queue + Start' : `Queue ${total} · Start`
                   })()}
                 </button>
@@ -3135,20 +3422,98 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       </div>
     )}
 
-    {historyContextMenu && (
-      <div
-        className="fixed z-50 min-w-[200px] rounded-xl border border-nm-border bg-panel shadow-xl overflow-hidden"
-        style={{ left: historyContextMenu.x, top: historyContextMenu.y }}
-        onMouseDown={e => e.stopPropagation()}
-      >
-        {historyContextMenu.entry.graphPath && (
-          <button onClick={() => { void handleShowGraphModal(historyContextMenu.entry.graphPath) }} className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov">View ESR plot</button>
-        )}
-        <button onClick={() => { void handleRetryHistoryEntry(historyContextMenu.entry) }} className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov">Retry</button>
-        {historyContextMenu.entry.finalModelPath && (
-          <button onClick={() => handleShowHistoryPath(historyContextMenu.entry.finalModelPath)} className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov">Reveal in folder</button>
-        )}
-      </div>
+    {historyContextMenu && createPortal(
+      <>
+        <div className="fixed inset-0 z-40" onClick={() => setHistoryContextMenu(null)} onContextMenu={e => { e.preventDefault(); setHistoryContextMenu(null) }} />
+        <div
+          className="fixed z-50 min-w-[220px] rounded-xl border border-nm-border bg-panel shadow-xl overflow-hidden py-1"
+          style={{ left: historyContextMenu.x, top: historyContextMenu.y }}
+          onMouseDown={e => e.stopPropagation()}
+        >
+          {historyContextMenu.entry.graphPath && (
+            <button onClick={() => { void handleShowGraphModal(historyContextMenu.entry.graphPath); setHistoryContextMenu(null) }} className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov">View ESR plot</button>
+          )}
+          <button onClick={() => { void handleRetryHistoryEntry(historyContextMenu.entry); setHistoryContextMenu(null) }} className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov">Retry</button>
+          {historyContextMenu.entry.finalModelPath && (
+            <button onClick={() => { handleShowHistoryPath(historyContextMenu.entry.finalModelPath); setHistoryContextMenu(null) }} className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov">Reveal in folder</button>
+          )}
+          <div className="h-px bg-nm-border-s my-1" />
+          <button
+            onClick={() => {
+              const entry = historyContextMenu.entry
+              setHistoryContextMenu(null)
+              setHistoryPurgeConfirm({ ids: [entry.historyId], label: entry.finalModelName || 'this capture', mode: 'capture' })
+            }}
+            className="w-full text-left px-3 py-2 text-[13px] text-red-400 hover:bg-red-500/10"
+          >
+            Purge from history…
+          </button>
+          {historyContextMenu.entry.submissionId && (() => {
+            const sid = historyContextMenu.entry.submissionId
+            const matches = trainerState.history.filter(e => e.submissionId === sid)
+            if (matches.length <= 1) return null
+            const label = historyContextMenu.entry.submissionLabel || `Batch (${matches.length} captures)`
+            return (
+              <button
+                onClick={() => {
+                  setHistoryContextMenu(null)
+                  setHistoryPurgeConfirm({ ids: matches.map(e => e.historyId), label, mode: 'batch' })
+                }}
+                className="w-full text-left px-3 py-2 text-[13px] text-red-400 hover:bg-red-500/10"
+              >
+                Purge entire batch from history… <span className="text-nm-text-3 text-[11px]">({matches.length} captures)</span>
+              </button>
+            )
+          })()}
+        </div>
+      </>,
+      document.body
+    )}
+
+    {historyPurgeConfirm && createPortal(
+      <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/70" onClick={() => setHistoryPurgeConfirm(null)}>
+        <div className="rounded-2xl border border-nm-border bg-panel shadow-2xl max-w-[440px] w-full mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+          <div className="px-5 py-4 border-b border-nm-border-s flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-[9px] flex items-center justify-center flex-shrink-0" style={{ background: 'color-mix(in srgb, #ef4444 16%, transparent)', color: '#f87171' }}>
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+            </div>
+            <div>
+              <div className="text-[14.5px] font-[660] text-nm-text">{historyPurgeConfirm.mode === 'batch' ? 'Purge batch from history?' : 'Purge from history?'}</div>
+              <div className="text-[12px] text-nm-text-3 mt-0.5">This can&apos;t be undone.</div>
+            </div>
+          </div>
+          <div className="px-5 py-4 text-[13px] text-nm-text-2 leading-[1.55]">
+            {historyPurgeConfirm.mode === 'batch' ? (
+              <>
+                Removing <span className="font-mono text-nm-text">{historyPurgeConfirm.label}</span> will delete <span className="font-semibold text-nm-text">{historyPurgeConfirm.ids.length} history entries</span> permanently.
+                <br /><br />
+                Only the history record is removed — the trained <span className="font-mono">.nam</span> files and ESR plots on disk are left alone.
+              </>
+            ) : (
+              <>
+                Removing <span className="font-mono text-nm-text">{historyPurgeConfirm.label}</span> will delete this history entry permanently.
+                <br /><br />
+                Only the history record is removed — the trained <span className="font-mono">.nam</span> file and ESR plot on disk are left alone.
+              </>
+            )}
+          </div>
+          <div className="px-5 py-3.5 bg-panel-2 border-t border-nm-border-s flex items-center justify-end gap-2">
+            <button onClick={() => setHistoryPurgeConfirm(null)} className="h-9 px-4 rounded-[9px] text-[12.5px] font-medium border border-nm-border-s bg-panel hover:bg-hov text-nm-text-2 transition-colors">Cancel</button>
+            <button
+              onClick={async () => {
+                const target = historyPurgeConfirm
+                setHistoryPurgeConfirm(null)
+                const result = await window.api.purgeTrainerHistoryEntries(target.ids)
+                if (!result.success) setQueueActionError(result.error ?? 'Could not purge history entries.')
+              }}
+              className="h-9 px-4 rounded-[9px] text-[12.5px] font-semibold bg-red-500 hover:bg-red-600 text-white transition-colors"
+            >
+              {historyPurgeConfirm.mode === 'batch' ? `Purge ${historyPurgeConfirm.ids.length} entries` : 'Purge entry'}
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body
     )}
 
     {/* Graph modal */}
@@ -3277,7 +3642,7 @@ function ArchitectureMultiSelect({ values, onChange, userProfiles = [], onCreate
   }, [open])
 
   const allOptions = [
-    ...TRAINER_ARCHITECTURES.map((id) => ({ id, name: ARCHITECTURE_LABELS[id] ?? id })),
+    ...ARCHITECTURE_DISPLAY_ORDER.map((id) => ({ id, name: architectureFullLabel(id) })),
     ...userProfiles.map((p) => ({ id: p.id, name: p.name })),
   ]
   const label =
@@ -3302,15 +3667,15 @@ function ArchitectureMultiSelect({ values, onChange, userProfiles = [], onCreate
       {open && (
         <div className="absolute z-30 mt-2 w-full rounded-xl border border-nm-border bg-panel shadow-xl overflow-hidden">
           <div className="max-h-64 overflow-y-auto p-2 space-y-1">
-            {TRAINER_ARCHITECTURES.length > 0 && (
+            {ARCHITECTURE_DISPLAY_ORDER.length > 0 && (
               <div className="px-2.5 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-nm-text-3">Built-in</div>
             )}
-            {TRAINER_ARCHITECTURES.map((option) => {
+            {ARCHITECTURE_DISPLAY_ORDER.map((option) => {
               const checked = values.includes(option)
               return (
                 <label key={option} className={`flex items-center gap-2 rounded-lg px-2.5 py-2 cursor-pointer text-[13px] ${checked ? 'bg-nm-accent/10 text-nm-accent' : 'text-nm-text-2 hover:bg-hov'}`}>
                   <input type="checkbox" checked={checked} onChange={(e) => { if (e.target.checked) onChange([...values, option]); else onChange(values.filter((item) => item !== option)) }} className="accent-nm-accent" />
-                  <span>{ARCHITECTURE_LABELS[option] ?? option}</span>
+                  <span>{architectureFullLabel(option)}</span>
                 </label>
               )
             })}

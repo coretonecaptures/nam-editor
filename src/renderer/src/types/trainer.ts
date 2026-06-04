@@ -255,6 +255,7 @@ export interface TrainerQueueJob {
   submissionId: string | null
   submissionLabel: string | null
   submissionCreatedAt: string | null
+  backupExisting?: boolean
 }
 
 export interface TrainerHistoryEntry {
@@ -283,6 +284,8 @@ export interface TrainerHistoryEntry {
   submissionId: string | null
   submissionLabel: string | null
   submissionCreatedAt: string | null
+  // Wall-clock duration of the run in seconds — measured from job start to finish. Null when missing (older entries / canceled before start).
+  durationSec?: number | null
 }
 
 export type WatcherFileStatus = 'pending' | 'queued' | 'running' | 'done' | 'failed' | 'canceled' | 'skipped'
