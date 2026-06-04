@@ -308,6 +308,10 @@ export interface AppSettings {
   // Last-used preset in Create Batch — persisted across restarts; falls back to trainingFavoritePresetId
   trainingLastSelectedPresetId?: string
 
+  // Queue auto-start on launch
+  trainingAutoStartQueueOnLaunch: boolean
+  trainingAutoStartSkipIfPaused: boolean
+
   // Import: comma-separated suffix words that trigger prefix matching (e.g. "DI,DI2")
   importPrefixSuffixes: string
 
@@ -411,6 +415,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   trainingFavoritePresetId: '',
   trainingFavoriteRouting: '',
   trainingDefaultInputDi: '',
+  trainingAutoStartQueueOnLaunch: false,
+  trainingAutoStartSkipIfPaused: false,
   importPrefixSuffixes: 'DI',
   packGearCatalog: [],
   packChecklistTemplate: cloneChecklistTemplate(DEFAULT_PACK_CHECKLIST_TEMPLATE),

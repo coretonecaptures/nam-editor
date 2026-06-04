@@ -991,15 +991,25 @@ function loadTrainerQueue(): TrainerQueueJob[] {
   try {
     const filePath = getTrainerQueuePath()
     if (!fs.existsSync(filePath)) return []
-    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
-    if (!Array.isArray(parsed)) return []
+    const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+    // Support two formats:
+    //   old: bare array  (paused flag unknown — treated as false)
+    //   new: { paused: boolean, jobs: [...] }
+    let jobs: TrainerQueueJob[]
+    if (Array.isArray(raw)) {
+      jobs = raw as TrainerQueueJob[]
+    } else if (raw && typeof raw === 'object' && Array.isArray(raw.jobs)) {
+      trainerPauseAfterCurrent = !!raw.paused
+      jobs = raw.jobs as TrainerQueueJob[]
+    } else {
+      return []
+    }
     // Demote anything that was mid-flight when the app was killed — its Python child is gone.
     // Otherwise preserve status exactly so finished/failed rows from previous sessions stay
     // visible above any newly-queued work, exactly as they were before the restart.
-    return (parsed as TrainerQueueJob[])
-      .map((job) => job.status === 'starting' || job.status === 'running'
-        ? { ...job, status: 'queued' as const, startedAt: null, finishedAt: null, progressPercent: null, progressEpochCurrent: null, progressBatchCurrent: null, progressBatchTotal: null, progressRate: null, progressLatestLine: '' }
-        : job)
+    return jobs.map((job) => job.status === 'starting' || job.status === 'running'
+      ? { ...job, status: 'queued' as const, startedAt: null, finishedAt: null, progressPercent: null, progressEpochCurrent: null, progressBatchCurrent: null, progressBatchTotal: null, progressRate: null, progressLatestLine: '' }
+      : job)
   } catch {
     return []
   }
@@ -1013,8 +1023,9 @@ function saveTrainerQueue(): void {
     // them at save time silently wipes that context on every restart, which is the bug.
     // Cap at TRAINER_QUEUE_PERSIST_CAP (most recent end of the array) so the file can't grow
     // unbounded — older entries are in trainer-history.json regardless.
-    const persisted = trainerQueue.slice(-TRAINER_QUEUE_PERSIST_CAP)
-    fs.writeFileSync(getTrainerQueuePath(), JSON.stringify(persisted, null, 2), 'utf-8')
+    // Persist the pause flag so auto-start-on-launch can respect it.
+    const payload = { paused: trainerPauseAfterCurrent, jobs: trainerQueue.slice(-TRAINER_QUEUE_PERSIST_CAP) }
+    fs.writeFileSync(getTrainerQueuePath(), JSON.stringify(payload, null, 2), 'utf-8')
   } catch (error) {
     log(`trainer queue save failed: ${String(error)}`)
   }
@@ -4527,6 +4538,19 @@ app.whenReady().then(async () => {
   log('creating window...')
   createWindow()
   log('window created')
+
+  // Auto-start queue on launch if the user opted in.
+  try {
+    const settingsPath = join(app.getPath('userData'), 'settings.json')
+    const s = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as { trainingAutoStartQueueOnLaunch?: boolean; trainingAutoStartSkipIfPaused?: boolean }
+    if (s.trainingAutoStartQueueOnLaunch) {
+      const skip = s.trainingAutoStartSkipIfPaused && trainerPauseAfterCurrent
+      if (!skip) {
+        trainerPauseAfterCurrent = false
+        void pumpTrainerQueue()
+      }
+    }
+  } catch { /* settings.json missing on first launch — nothing to do */ }
 
   // Send any files queued before window was ready (macOS open-file events + Windows argv)
   const argvFiles = getArgvFiles()

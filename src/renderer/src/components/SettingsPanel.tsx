@@ -1744,6 +1744,24 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                     onChange={(v) => update('trainingRetainGraphs', v)}
                   />
 
+                  <CheckboxField
+                    label="Auto-start queue on launch"
+                    description="Automatically begin processing queued training jobs when NAM Lab opens. Takes effect on the next launch."
+                    checked={draft.trainingAutoStartQueueOnLaunch}
+                    onChange={(v) => update('trainingAutoStartQueueOnLaunch', v)}
+                  />
+
+                  {draft.trainingAutoStartQueueOnLaunch && (
+                    <div className="ml-6 border-l-2 border-gray-200 dark:border-gray-700 pl-4">
+                      <CheckboxField
+                        label="Skip auto-start if queue was paused"
+                        description="If you manually paused the queue before closing NAM Lab, don't auto-start on the next launch — wait for you to click Resume."
+                        checked={draft.trainingAutoStartSkipIfPaused}
+                        onChange={(v) => update('trainingAutoStartSkipIfPaused', v)}
+                      />
+                    </div>
+                  )}
+
                   {/* Dashboard Simple Mode favorites */}
                   <div className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
                     <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700">
