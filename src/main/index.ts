@@ -2530,10 +2530,10 @@ async function markExistingTrainingWatcherFilesAsSeen(profile: TrainingProfile):
 
 async function ensureTrainingWatcherAutoStart(profile: TrainingProfile): Promise<void> {
   if (!profile.autoRun) return
-  // Respect explicit pause — don't clear it here. If the user paused the queue before closing,
-  // the watcher re-initializing on launch should not silently resume training.
-  if (trainerPauseAfterCurrent) return
-  await pumpTrainerQueue()
+  // Intentionally does NOT call pumpTrainerQueue here. Watcher files go through
+  // enqueueTrainingPayloads which already calls pumpTrainerQueue when jobs are added.
+  // Calling it here would start manually-queued jobs on every launch whenever an autoRun
+  // watcher profile initializes, bypassing the user's auto-start-on-launch preference.
 }
 
 function scheduleTrainingWatcherFile(profile: TrainingProfile, filePath: string): void {
