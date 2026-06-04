@@ -7,14 +7,15 @@
 
 ## Security and hardening
 
-- Move Tone3000 OAuth token storage from plain `userData/tone3000-tokens.json` to `safeStorage` with migration from the old plain JSON file.
-- Add external URL validation in main process (`openExternal`, `window.open` handling) and allow only expected schemes such as `https:`, `mailto:`, and app-internal `file:` use where intentionally needed.
-- Standardize renderer links on `window.api.openExternal(...)` instead of raw `window.open(...)`.
-- Add URL guardrails for remote download helpers:
-  - Tone3000 model / cover URLs should be restricted to expected `tone3000.com` hosts / schemes.
-  - Generic cover download should accept only `http:` / `https:` URLs and continue validating image content type.
-- Review the broad preload / IPC surface and plan a narrower permission model before any store-distribution push.
-- Evaluate whether `sandbox: false` can be tightened without breaking file management, trainer flows, or local image rendering. Do this as a separate test-heavy pass.
+- ~~Move Tone3000 OAuth token storage from plain `userData/tone3000-tokens.json` to `safeStorage` with migration from the old plain JSON file.~~ — Done. `tone3000-tokens.bin` written via `safeStorage.encryptString`; legacy `.json` is auto-migrated and unlinked on next save (`loadTone3kTokens` / `saveTone3kTokens` in `main/index.ts`).
+- ~~Move AI provider keys (OpenAI, Anthropic, etc.) to `safeStorage`.~~ — Done. Per-provider `ai-key-{provider}.bin` files via `storeAiKey` / `readAiKey`. Keys never travel back to the renderer (saved by name; never re-emitted).
+- ~~Add external URL validation in main process (`openExternal`, `window.open` handling) and allow only expected schemes.~~ — Done. `openExternalSafe(raw, allowedProtocols)` gates `shell.openExternal`; default allowlist is `['https:', 'mailto:']`. Used by the `app:openExternal` IPC handler and by `webContents.setWindowOpenHandler` for child-window requests.
+- ~~Standardize renderer links on `window.api.openExternal(...)` instead of raw `window.open(...)`.~~ — Done. Zero `window.open(` / `window.location.href =` usages remain in `src/renderer/`.
+- ~~Add URL guardrails for remote download helpers~~ — Done.
+  - Tone3000 model + cover URLs are filtered through `isAllowedTone3000Url` (https:// only, hostname must be `tone3000.com` or `www.tone3000.com`) before any `fetch`.
+  - `cover:downloadFromUrl` accepts only `http:` / `https:` URLs via `parseAllowedUrl`, validates `Content-Type` starts with `image/`, and restricts the saved extension to a known image-format whitelist.
+- Review the broad preload / IPC surface and plan a narrower permission model before any store-distribution push. The preload currently exposes ~80 IPC channels — many of them broad filesystem operations (read/write/move/trash arbitrary paths). For app-store distribution this would need either: (a) per-channel scope/origin checks, (b) renderer-supplied paths restricted to user-selected dialogs/drops only, or (c) splitting trainer / library / Tone3000 IPC namespaces with separate preload scripts. Pending.
+- Evaluate whether `sandbox: false` can be tightened without breaking file management, trainer flows, or local image rendering. `contextIsolation: true` and `nodeIntegration: false` are already in place, which provide the strongest practical boundaries — but a true `sandbox: true` would force the preload to be sandboxed too (no `require` of arbitrary modules) and would need a refactor of the preload's `electron`/`webUtils` imports. Pending; do this as a separate test-heavy pass.
 
 ## Pack Info and export
 
