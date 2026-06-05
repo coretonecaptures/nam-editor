@@ -3998,6 +3998,7 @@ INSTRUCTIONS:
         onOpenExperimentalTraining={() => handleOpenExperimentalTraining('files')}
         trainingQueueCount={activeTrainingQueueCount}
         trainingQueueActive={trainingQueueIsActive}
+        trainingModelName={trainingQueueIsActive ? (globalTrainerState.modelName || globalTrainerState.outputModelPath || null) : null}
         onOpenTrainingQueue={() => handleOpenExperimentalTraining('queue')}
         showDashboard={files.length > 0}
         dashboardActive={showDashboard}

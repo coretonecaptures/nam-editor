@@ -24,6 +24,7 @@ interface ToolbarProps {
   onOpenExperimentalTraining?: () => void
   trainingQueueCount?: number
   trainingQueueActive?: boolean
+  trainingModelName?: string | null
   onOpenTrainingQueue?: () => void
   showDashboard?: boolean
   dashboardActive?: boolean
@@ -65,6 +66,7 @@ export function Toolbar({
   onOpenExperimentalTraining,
   trainingQueueCount = 0,
   trainingQueueActive = false,
+  trainingModelName = null,
   onOpenTrainingQueue,
   showDashboard = false,
   dashboardActive = false,
@@ -127,7 +129,7 @@ export function Toolbar({
   }, [showHelpMenu])
   return (
     <div
-      className="h-12 flex items-center gap-1 flex-shrink-0 border-b"
+      className="h-12 flex items-center gap-1 flex-shrink-0 border-b relative"
       style={{
         paddingLeft: isMac ? '80px' : '10px',
         paddingRight: isMac ? '10px' : '155px',
@@ -136,6 +138,20 @@ export function Toolbar({
         borderColor: 'var(--border, #242b34)',
       } as React.CSSProperties}
     >
+      {/* Training-active indicator — centered in toolbar, visible from anywhere in the app */}
+      {trainingQueueActive && (
+        <div
+          className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 cursor-pointer select-none"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          onClick={onOpenTrainingQueue}
+          title="Training in progress — click to open queue"
+        >
+          <span className="w-2 h-2 rounded-full bg-emerald-400 nm-lpulse flex-shrink-0" />
+          <span className="text-[11px] font-[580] text-emerald-400 whitespace-nowrap">
+            {trainingModelName ? trainingModelName.replace(/\.nam$/i, '').split(/[/\\]/).pop()?.slice(0, 40) || 'Training' : 'Training'}
+          </span>
+        </div>
+      )}
       {/* NAM Lab logo chip */}
       <div className="nam-logo-chip flex items-center gap-2 mr-3" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
         <div className="nam-logo-icon">
