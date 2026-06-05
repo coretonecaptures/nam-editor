@@ -127,6 +127,11 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
     }
   }
 
+  const relockTrainerField = (lock: () => void) => {
+    lock()
+    if (file.isDirty) onSave()
+  }
+
   const commitNameEdit = () => {
     update('name', nameEditValue)
     setIsEditingName(false)
@@ -455,7 +460,7 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
                       autoFilled={false}
                     />
                     <button
-                      onClick={() => setLatencyUnlocked(false)}
+                      onClick={() => relockTrainerField(() => setLatencyUnlocked(false))}
                       className="flex-shrink-0 p-1.5 rounded text-amber-500 hover:text-amber-600 transition-colors"
                       title="Lock field"
                     >
@@ -617,7 +622,7 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
                       <div className="text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Integrated Loudness</div>
                       <div className="flex items-center gap-2">
                         <NumberInput value={m.loudness ?? ''} onChange={(v) => update('loudness', v)} placeholder="e.g. -18.00" step={0.01} changed={isManuallyChanged('loudness')} autoFilled={false} />
-                        <button onClick={() => setLoudnessUnlocked(false)} className="flex-shrink-0 p-1.5 rounded text-amber-500 hover:text-amber-600 transition-colors" title="Lock field">
+                        <button onClick={() => relockTrainerField(() => setLoudnessUnlocked(false))} className="flex-shrink-0 p-1.5 rounded text-amber-500 hover:text-amber-600 transition-colors" title="Lock field">
                           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 00-9 0v3.75M3.75 21.75h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H3.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" /></svg>
                         </button>
                       </div>
@@ -646,7 +651,7 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
                       <div className="text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Gain Factor</div>
                       <div className="flex items-center gap-2">
                         <NumberInput value={m.gain ?? ''} onChange={(v) => update('gain', v)} placeholder="e.g. 1.0000" step={0.0001} changed={isManuallyChanged('gain')} autoFilled={false} />
-                        <button onClick={() => setGainUnlocked(false)} className="flex-shrink-0 p-1.5 rounded text-amber-500 hover:text-amber-600 transition-colors" title="Lock field">
+                        <button onClick={() => relockTrainerField(() => setGainUnlocked(false))} className="flex-shrink-0 p-1.5 rounded text-amber-500 hover:text-amber-600 transition-colors" title="Lock field">
                           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 00-9 0v3.75M3.75 21.75h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H3.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" /></svg>
                         </button>
                       </div>

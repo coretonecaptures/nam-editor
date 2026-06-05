@@ -113,12 +113,15 @@ export function ProgressRing({
 /* Sparkline &mdash; tiny line + soft fill. */
 export function Sparkline({
   data, color = '#14b8a6', width = 120, height = 32, strokeWidth = 1.75, fill = true,
-}: { data: number[]; color?: string; width?: number; height?: number; strokeWidth?: number; fill?: boolean }) {
+  invert = false,
+}: { data: number[]; color?: string; width?: number; height?: number; strokeWidth?: number; fill?: boolean; invert?: boolean }) {
   const max = Math.max(...data), min = Math.min(...data)
   const range = max - min || 1
   const pts = data.map((v, i) => {
     const x = (i / (data.length - 1)) * width
-    const y = height - ((v - min) / range) * (height - strokeWidth * 2) - strokeWidth
+    let norm = (v - min) / range
+    if (invert) norm = 1 - norm
+    const y = height - norm * (height - strokeWidth * 2) - strokeWidth
     return [x, y] as const
   })
   const line = pts.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(' ')

@@ -92,6 +92,14 @@ Supported workflows:
 
 Custom NAM Lab fields are stored under `metadata.nam_lab`.
 
+Locked-field behavior:
+- Some trainer-derived fields such as latency, loudness, and gain factor are shown locked by default.
+- Warning: unlocking them is meant for manual correction only.
+- Warning: when you lock one of those fields again, NAM Lab immediately saves the file so the correction persists without a separate Save click. Relocking does not behave like a normal unsaved edit state.
+- Unlocking lets you make a manual correction.
+- Relocking that field is treated as "done editing" for that value. In practice, once you lock it again, NAM Lab treats the field as settled rather than continuing to highlight it like a normal dirty editable field.
+- This is mainly meant for one-off corrections to trainer-derived values, not ongoing freeform editing.
+
 ---
 
 ## Capture Defaults

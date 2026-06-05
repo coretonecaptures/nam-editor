@@ -501,9 +501,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const validationEsrTone = getEsrToneKind(_bestStateEsr, _bestStateEsrKind)
   const replicateEsrTone = getEsrTone(trainerState.replicateEsr)
   const liveRunShowsA2Full = trainerState.architecture === 'a2' && _bestStateEsrKind === 'a2_full'
-  const liveChartTarget = liveRunShowsA2Full
-    ? null
-    : (typeof trainerState.thresholdEsr === 'number' ? trainerState.thresholdEsr : 0.01)
+  const liveChartTarget = typeof trainerState.thresholdEsr === 'number' ? trainerState.thresholdEsr : 0.01
 
   const resolvedModelName = useMemo(() => {
     const first = batchWavList[0]?.path ?? ''
@@ -1788,7 +1786,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
             {/* ESR sparkline */}
             {esrSparkline.length > 1 && (
               <div className="flex-shrink-0 pl-4 border-l border-nm-border-s">
-                <Sparkline data={esrSparkline} width={130} height={40} color="var(--nm-accent,#6366f1)" strokeWidth={1.75} fill={true} />
+                <Sparkline data={esrSparkline} width={130} height={40} color="var(--nm-accent,#6366f1)" strokeWidth={1.75} fill={true} invert={true} />
               </div>
             )}
           </div>
@@ -2116,7 +2114,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   <p className="text-[12px] text-nm-text-3 mt-0.5">Real-time training telemetry for the active model</p>
                   {liveRunShowsA2Full && (
                     <p className="text-[11px] text-amber-300/90 mt-1">
-                      A2 live chart is showing the Full sub-model ESR. NAM&apos;s training target / early-stop threshold is still aggregate-based upstream, so the green target line is hidden here to avoid a misleading comparison.
+                      A2 live chart is showing the Full sub-model ESR. The green line is a Full-quality reference here; upstream NAM&apos;s A2 early-stop logic is still aggregate-based.
                     </p>
                   )}
                 </div>
@@ -2125,9 +2123,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     <span className="w-2 h-2 rounded-sm" style={{ background: 'var(--nm-accent, var(--accent))' }} />
                     {liveRunShowsA2Full ? 'validation ESR (Full)' : 'validation ESR'}
                   </span>
-                  {!liveRunShowsA2Full && (
-                    <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm" style={{ background: '#10b981' }} />target</span>
-                  )}
+                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm" style={{ background: '#10b981' }} />{liveRunShowsA2Full ? 'Full target' : 'target'}</span>
                 </span>
               </div>
 
@@ -2964,7 +2960,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   <input
                     value={historySearch}
                     onChange={e => setHistorySearch(e.target.value)}
-                    placeholder="Search name or path\u2026"
+                    placeholder="Search name or path..."
                     className="flex-1 min-w-0 bg-transparent border-0 outline-none text-[12.5px] text-nm-text placeholder:text-nm-text-3"
                   />
                 </div>
