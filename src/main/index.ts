@@ -4179,7 +4179,7 @@ app.whenReady().then(async () => {
   // all formatting, spacing, and field order in the original file are preserved exactly.
   const EDITABLE_FIELDS = [
     'name', 'modeled_by', 'gear_type', 'gear_make', 'gear_model',
-    'tone_type', 'input_level_dbu', 'output_level_dbu'
+    'tone_type', 'input_level_dbu', 'output_level_dbu', 'loudness', 'gain'
   ] as const
   ipcMain.handle('file:writeMetadata', async (_event, filePath: string, metadata: unknown) => {
     try {
@@ -4189,7 +4189,7 @@ app.whenReady().then(async () => {
       const incoming = metadata as Record<string, unknown>
 
       // Numeric metadata fields â€” must always be written as JSON numbers, never strings
-      const NUMERIC_META_FIELDS = new Set(['input_level_dbu', 'output_level_dbu'])
+      const NUMERIC_META_FIELDS = new Set(['input_level_dbu', 'output_level_dbu', 'loudness', 'gain'])
 
       // Build patch map: only touch fields the renderer explicitly sent.
       // This preserves unrelated metadata when a workflow performs a surgical write
