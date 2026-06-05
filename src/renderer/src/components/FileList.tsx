@@ -746,7 +746,7 @@ export function FileList({
         </div>
       </div>
 
-      {/* All filters in one wrapping row — no artificial row break */}
+      {/* All filters in one wrapping row &mdash; no artificial row break */}
       <div className="px-3 pb-2 flex gap-1.5 flex-wrap items-center flex-shrink-0">
         <button
           onClick={() => setFilter('all')}
@@ -795,7 +795,7 @@ export function FileList({
             {directFilesOnly ? 'Showing: This Folder Only' : 'Showing: Including Subfolders'}
           </button>
         )}
-        {/* Gear + Tone + Preset + Manufacturer + Name — list mode only; grid uses per-column header filters */}
+        {/* Gear + Tone + Preset + Manufacturer + Name &mdash; list mode only; grid uses per-column header filters */}
         {viewMode === 'list' && (<>
           <select
             value={gearFilter}
@@ -1055,7 +1055,7 @@ export function FileList({
                 })()
                 const pruned = JSON.parse(JSON.stringify(source, (_key, val) => {
                   if (Array.isArray(val) && val.length > 8 && typeof val[0] === 'number') {
-                    return `[… ${val.length} values …]`
+                    return `[\u2026 ${val.length} values \u2026]`
                   }
                   return val
                 }))

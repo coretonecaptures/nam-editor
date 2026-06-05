@@ -36,9 +36,9 @@ const NL_FIELDS: FieldDef[] = [
   { key: 'nl_cabinet_config',label: 'Cabinet Config',     type: 'text', placeholder: 'e.g. 4x12' },
   { key: 'nl_amp_settings',  label: 'Amp Settings',       type: 'text', placeholder: 'e.g. Gain 7, Bass 5' },
   { key: 'nl_boost_pedal',   label: 'Boost Pedal(s)',     type: 'text', placeholder: 'e.g. Klon Centaur - Blues Breaker' },
-  { key: 'nl_pedal_settings',label: 'Pedal Settings',     type: 'text', placeholder: 'e.g. TS9 — Drive 5' },
+  { key: 'nl_pedal_settings',label: 'Pedal Settings',     type: 'text', placeholder: 'e.g. TS9 \u2014 Drive 5' },
   { key: 'nl_amp_switches',  label: 'Amp Switches',       type: 'text', placeholder: 'e.g. Bright on, Fat off' },
-  { key: 'nl_comments',      label: 'Comments',           type: 'text', placeholder: 'Any notes…' },
+  { key: 'nl_comments',      label: 'Comments',           type: 'text', placeholder: 'Any notes\u2026' },
 ]
 
 const ALL_FIELDS = [...FIELDS, ...NL_FIELDS]
@@ -89,7 +89,7 @@ export function MultiSelectEditor({ files, onApply, skipConfirmation, gearMakeSu
         parts.push(`${changed.size} field${changed.size !== 1 ? 's' : ''}: ${fieldNames}`)
       }
       const confirmed = window.confirm(
-        `Apply to ${files.length} selected file${files.length !== 1 ? 's' : ''}:\n  · ${parts.join('\n  · ')}\n\nThis will write changes directly to the .nam files on disk.\n\n(This warning can be toggled off in Settings → Behavior)`
+        `Apply to ${files.length} selected file${files.length !== 1 ? 's' : ''}:\n  \u00b7 ${parts.join('\n  \u00b7 ')}\n\nThis will write changes directly to the .nam files on disk.\n\n(This warning can be toggled off in Settings \u2192 Behavior)`
       )
       if (!confirmed) return
     }
@@ -121,7 +121,7 @@ export function MultiSelectEditor({ files, onApply, skipConfirmation, gearMakeSu
             </h2>
           </div>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5 ml-10">
-            Edit fields below — <span className="text-amber-400">amber</span> = changed · <span className="text-indigo-400">indigo badge</span> = all files share this value
+            Edit fields below &mdash; <span className="text-amber-400">amber</span> = changed &middot; <span className="text-indigo-400">indigo badge</span> = all files share this value
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -162,7 +162,7 @@ export function MultiSelectEditor({ files, onApply, skipConfirmation, gearMakeSu
             />
             <label htmlFor="ms-revert-filename" className="text-sm text-gray-600 dark:text-gray-400 cursor-pointer select-none">
               <span className="font-medium">Revert Capture Name to filename</span>
-              <span className="text-gray-400 dark:text-gray-600"> — sets each file's name to its own filename</span>
+              <span className="text-gray-400 dark:text-gray-600"> &mdash; sets each file's name to its own filename</span>
             </label>
           </div>
 
@@ -212,7 +212,7 @@ function renderMsFields(
             >
               {['', ...options].map((o) => (
                 <option key={o} value={o} className="bg-gray-200 dark:bg-gray-800">
-                  {o === '' ? (same ? '— not set —' : '— varies —') : o}
+                  {o === '' ? (same ? '\u2014 not set \u2014' : '\u2014 varies \u2014') : o}
                 </option>
               ))}
             </select>
@@ -221,7 +221,7 @@ function renderMsFields(
               type="number"
               value={val ?? ''}
               onChange={(e) => update(key, e.target.value === '' ? null : parseFloat(e.target.value))}
-              placeholder={same ? (placeholder ?? '') : '— varies —'}
+              placeholder={same ? (placeholder ?? '') : '\u2014 varies \u2014'}
               step={0.5}
               className={`${inputBase} ${isChanged ? inputChanged : ''}`}
             />
@@ -230,7 +230,7 @@ function renderMsFields(
               value={(val as string) ?? ''}
               onChange={(v) => update(key, v)}
               suggestions={key === 'gear_make' ? gearMakeSuggestions : key === 'gear_model' ? gearModelSuggestions : []}
-              placeholder={same ? (placeholder ?? '') : '— varies —'}
+              placeholder={same ? (placeholder ?? '') : '\u2014 varies \u2014'}
               className={`${inputBase} ${isChanged ? inputChanged : ''}`}
             />
           )}

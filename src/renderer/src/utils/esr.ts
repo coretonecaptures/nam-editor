@@ -80,7 +80,7 @@ export function getCaptureBestEsr(meta: Record<string, unknown> | undefined): Ca
 //     in the best case. The threshold table below approximates "A1 equivalent" tone.
 export function getEsrTone(esr: number | null | undefined, kind: EsrKind = 'a1', digits = 6): EsrToneInfo {
   if (typeof esr !== 'number') {
-    return { text: '—', classes: 'text-nm-text-3', tone: 'none' }
+    return { text: '\u2014', classes: 'text-nm-text-3', tone: 'none' }
   }
   const thresholds = kind === 'a2_aggregate'
     ? { green: 0.02, amber: 0.07 }

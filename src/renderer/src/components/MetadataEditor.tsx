@@ -179,17 +179,17 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
             </div>
             <div className="flex items-center gap-2 mt-0.5">
               <span className="text-xs text-gray-400 dark:text-gray-600">v{file.version}</span>
-              <span className="text-xs text-gray-400 dark:text-gray-600">·</span>
+              <span className="text-xs text-gray-400 dark:text-gray-600">&middot;</span>
               <span className="text-xs text-gray-400 dark:text-gray-600">{file.architecture}</span>
               {m.loudness != null && (
                 <>
-                  <span className="text-xs text-gray-400 dark:text-gray-600">·</span>
+                  <span className="text-xs text-gray-400 dark:text-gray-600">&middot;</span>
                   <span className="text-xs text-gray-400 dark:text-gray-600">loudness: {m.loudness.toFixed(2)} dBFS</span>
                 </>
               )}
               {!!m.training && (m.training as Record<string, unknown>).validation_esr != null && (
                 <>
-                  <span className="text-xs text-gray-400 dark:text-gray-600">·</span>
+                  <span className="text-xs text-gray-400 dark:text-gray-600">&middot;</span>
                   <span className="text-xs text-gray-400 dark:text-gray-600">
                     ESR: {((m.training as Record<string, unknown>).validation_esr as number).toFixed(6)}
                   </span>
@@ -202,7 +202,7 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
           )}
         </div>
 
-        {/* Action row — left-spread, Save right-justified */}
+        {/* Action row &mdash; left-spread, Save right-justified */}
         <div className="flex items-center gap-1.5 pb-3">
           {file.isDirty && (
             <span className="text-xs text-amber-400 font-medium mr-1">Unsaved</span>
@@ -516,7 +516,7 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
                 if (typeof trainingEsr !== 'number' && fullFromNamLab == null && lite == null) return null
                 return (
                   <>
-                    {/* Main card — A1 uses validation_esr directly; A2 uses the aggregate from validation_esr. */}
+                    {/* Main card &mdash; A1 uses validation_esr directly; A2 uses the aggregate from validation_esr. */}
                     {typeof trainingEsr === 'number' && (
                       <StatCard
                         label={isA2 ? 'Validation ESR (A2 Aggregate)' : 'Validation ESR'}
@@ -619,7 +619,7 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
             )}
           </Section>
 
-          {/* Star rating — always visible */}
+          {/* Star rating &mdash; always visible */}
           <div className="flex items-center gap-3 py-1">
             <span className="text-xs font-medium text-gray-500 dark:text-gray-400 w-28 flex-shrink-0">Rating</span>
             <div className="flex items-center gap-0.5">
@@ -760,7 +760,7 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
                   {show('nl_pedal_settings') && (
                     <div className={fieldClass('nl_pedal_settings')}>
                       <Field label="Pedal Settings" hint="Boost pedal + any other pedals in chain">
-                        <TextInput value={m.nl_pedal_settings ?? ''} onChange={(v) => update('nl_pedal_settings', v)} placeholder="e.g. Klon — Gain 10, Vol 9 · TS9 — Drive 5, Tone 12" changed={isManuallyChanged('nl_pedal_settings')} />
+                        <TextInput value={m.nl_pedal_settings ?? ''} onChange={(v) => update('nl_pedal_settings', v)} placeholder="e.g. Klon \u2014 Gain 10, Vol 9 \u00b7 TS9 \u2014 Drive 5, Tone 12" changed={isManuallyChanged('nl_pedal_settings')} />
                       </Field>
                     </div>
                   )}
@@ -770,7 +770,7 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
                       <textarea
                         value={m.nl_comments ?? ''}
                         onChange={(e) => update('nl_comments', e.target.value)}
-                        placeholder="Any additional notes about this capture…"
+                        placeholder="Any additional notes about this capture\u2026"
                         rows={3}
                         maxLength={500}
                         className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none transition-colors resize-none ${inputClass(isManuallyChanged('nl_comments'))}`}
@@ -933,7 +933,7 @@ function Select({
     >
       {options.map((o) => (
         <option key={o} value={o} className="bg-gray-200 dark:bg-gray-800">
-          {o === '' ? '— not set —' : o}
+          {o === '' ? '\u2014 not set \u2014' : o}
         </option>
       ))}
     </select>

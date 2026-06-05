@@ -54,7 +54,7 @@ export function BatchEditor({ folderName, fileCount, onApply, onClose, skipConfi
         parts.push(`${enabled.size} field${enabled.size !== 1 ? 's' : ''} (${fieldNames})`)
       }
       const confirmed = window.confirm(
-        `Apply to ${fileCount} file${fileCount !== 1 ? 's' : ''} in "${folderName}":\n  · ${parts.join('\n  · ')}\n\nThis will write changes directly to the .nam files on disk.\n\n(This warning can be toggled off in Settings → Behavior)`
+        `Apply to ${fileCount} file${fileCount !== 1 ? 's' : ''} in "${folderName}":\n  \u00b7 ${parts.join('\n  \u00b7 ')}\n\nThis will write changes directly to the .nam files on disk.\n\n(This warning can be toggled off in Settings \u2192 Behavior)`
       )
       if (!confirmed) return
     }
@@ -75,7 +75,7 @@ export function BatchEditor({ folderName, fileCount, onApply, onClose, skipConfi
             <span className="text-xs px-2 py-0.5 rounded-full bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400">{folderName}</span>
           </div>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
-            {fileCount} file{fileCount !== 1 ? 's' : ''} · <span className="text-amber-400">check fields to include</span>
+            {fileCount} file{fileCount !== 1 ? 's' : ''} &middot; <span className="text-amber-400">check fields to include</span>
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -143,7 +143,7 @@ export function BatchEditor({ folderName, fileCount, onApply, onClose, skipConfi
                   disabled={!isEnabled}
                   value={(fields.nl_comments as string | undefined) ?? ''}
                   onChange={(e) => update('nl_comments', e.target.value)}
-                  placeholder={isAppend ? 'Text to append…' : def.placeholder}
+                  placeholder={isAppend ? 'Text to append\u2026' : def.placeholder}
                   className="flex-1 min-w-0 px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 disabled:opacity-40"
                 />
                 <button
@@ -155,7 +155,7 @@ export function BatchEditor({ folderName, fileCount, onApply, onClose, skipConfi
                     else next.add('nl_comments')
                     return next
                   })}
-                  title={isAppend ? 'Append mode — text will be added after existing content' : 'Overwrite mode — existing content will be replaced'}
+                  title={isAppend ? 'Append mode \u2014 text will be added after existing content' : 'Overwrite mode \u2014 existing content will be replaced'}
                   className={`flex-shrink-0 text-xs px-2 py-1 rounded border transition-colors disabled:opacity-40 ${isAppend ? 'border-teal-500 text-teal-600 dark:text-teal-400 bg-teal-50 dark:bg-teal-900/20' : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-gray-400'}`}
                 >
                   {isAppend ? 'Append' : 'Overwrite'}
@@ -210,7 +210,7 @@ function renderBatchFields(
           >
             {['', ...options].map((o) => (
               <option key={o} value={o} className="bg-gray-200 dark:bg-gray-800">
-                {o === '' ? '— not set —' : o}
+                {o === '' ? '\u2014 not set \u2014' : o}
               </option>
             ))}
           </select>
@@ -261,7 +261,7 @@ const namLabFields: BatchFieldDef[] = [
   { key: 'nl_cabinet_config', label: 'Cabinet Config', type: 'text', placeholder: 'e.g. 4x12' },
   { key: 'nl_amp_settings', label: 'Amp Settings', type: 'text', placeholder: 'e.g. Gain 7, Bass 5, Mid 4, Treb 6' },
   { key: 'nl_boost_pedal', label: 'Boost Pedal(s)', type: 'text', placeholder: 'e.g. Klon Centaur - Blues Breaker' },
-  { key: 'nl_pedal_settings', label: 'Pedal Settings', type: 'text', placeholder: 'e.g. TS9 — Drive 5, Tone 12, Level 5' },
+  { key: 'nl_pedal_settings', label: 'Pedal Settings', type: 'text', placeholder: 'e.g. TS9 \u2014 Drive 5, Tone 12, Level 5' },
   { key: 'nl_amp_switches', label: 'Amp Switches', type: 'text', placeholder: 'e.g. Bright on, Fat off' },
-  { key: 'nl_comments', label: 'Comments', type: 'text', placeholder: 'Any notes…' },
+  { key: 'nl_comments', label: 'Comments', type: 'text', placeholder: 'Any notes\u2026' },
 ]

@@ -799,7 +799,7 @@ export function ToneStore({
               >
                 <span>More Info / Download {checkedCount > 0 ? `${checkedCount} file${checkedCount !== 1 ? 's' : ''}` : '(none selected)'}</span>
                 {defaultDownloadDir && (
-                  <span className="text-xs opacity-75 font-normal">→ {defaultDownloadDir.replace(/\\/g, '/').split('/').pop()}</span>
+                  <span className="text-xs opacity-75 font-normal">&rarr; {defaultDownloadDir.replace(/\\/g, '/').split('/').pop()}</span>
                 )}
               </button>
             )}

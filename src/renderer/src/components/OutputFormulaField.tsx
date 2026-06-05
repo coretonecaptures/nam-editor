@@ -4,7 +4,7 @@ import { resolveOutputFormulaWithSteps } from '../utils/resolveOutputFormula'
 interface OutputFormulaFieldProps {
   value: string
   onChange: (v: string) => void
-  /** Example staging path to populate the resolution table — uses a demo path if absent */
+  /** Example staging path to populate the resolution table &mdash; uses a demo path if absent */
   exampleStagingPath?: string
   /** Architecture name shown in the example table */
   exampleArchitecture?: string
@@ -12,7 +12,7 @@ interface OutputFormulaFieldProps {
   isPresetOverride?: boolean
   /** The resolved global formula (shown as placeholder when isPresetOverride) */
   globalFormula?: string
-  /** Formula inserted by the "Use suggestion" button — defaults to NAM formula */
+  /** Formula inserted by the "Use suggestion" button &mdash; defaults to NAM formula */
   suggestionFormula?: string
 }
 
@@ -138,7 +138,7 @@ export function OutputFormulaField({
                   {
                     token: '../',
                     desc: 'Go up one directory level',
-                    example: '—',
+                    example: '\u2014',
                   },
                 ].map((row) => (
                   <tr key={row.token} className="border-t border-indigo-100 dark:border-indigo-900/40">
@@ -235,7 +235,7 @@ export function OutputFormulaField({
           {/* Multi-arch note */}
           {!isPresetOverride && (
             <div className="px-3 py-2 border-t border-indigo-100 dark:border-indigo-800/40 bg-indigo-50 dark:bg-indigo-900/20 text-[11px] text-indigo-600 dark:text-indigo-400">
-              When running multiple architectures, each job resolves <code className="font-mono">{'{architecture}'}</code> independently —
+              When running multiple architectures, each job resolves <code className="font-mono">{'{architecture}'}</code> independently &mdash;
               so REVxSTD and Standard trained together each land in their own subfolder automatically.
             </div>
           )}

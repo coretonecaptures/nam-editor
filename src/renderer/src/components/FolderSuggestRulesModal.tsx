@@ -48,7 +48,7 @@ function buildPrefixValuePreview(rule: MetadataSuggestRule): string {
   const sampleToken = `${prefix}${sampleValue}`
   const template = rule.value.trim() || `${prefix} {value}`
   const output = template.replaceAll('{value}', sampleValue).replaceAll('{match}', sampleToken)
-  return `e.g. "${sampleToken}" → "${output}"`
+  return `e.g. "${sampleToken}" \u2192 "${output}"`
 }
 
 function makeBlankRule(): MetadataSuggestRule {
@@ -146,7 +146,7 @@ function RuleCard({
           className="w-10 flex-shrink-0 px-1.5 py-1 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 text-center"
         />
         {/* Divider arrow */}
-        <span className="text-gray-300 dark:text-gray-700 flex-shrink-0 select-none text-base">→</span>
+        <span className="text-gray-300 dark:text-gray-700 flex-shrink-0 select-none text-base">&rarr;</span>
         {/* Field */}
         <select
           value={rule.field}
@@ -167,7 +167,7 @@ function RuleCard({
             onChange={(e) => update({ value: e.target.value })}
             className="w-32 flex-shrink-0 px-2 py-1 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
           >
-            <option value="">Pick value…</option>
+            <option value="">Pick value&hellip;</option>
             {METADATA_SUGGEST_LOOKUP_VALUES[rule.field]!.map((v) => (
               <option key={v} value={v}>{v}</option>
             ))}
@@ -223,7 +223,7 @@ function RuleCard({
         <div className="flex items-center gap-2 px-3 pb-2 border-t border-amber-200/50 dark:border-amber-700/30 pt-1.5">
           <span className="w-4 flex-shrink-0" />
           <span className="text-[11px] text-amber-600 dark:text-amber-400 whitespace-nowrap flex-shrink-0">
-            Guard — only overwrite if current value is:
+            Guard &mdash; only overwrite if current value is:
           </span>
           <input
             value={rule.overwriteOnlyValues}
@@ -237,7 +237,7 @@ function RuleCard({
       {/* Prefix+value preview sub-row */}
       {prefixPreview && (
         <div className="px-3 pb-1.5 pl-8 flex items-center gap-1.5 text-[11px] text-indigo-600 dark:text-indigo-400">
-          <span className="opacity-50">→</span>
+          <span className="opacity-50">&rarr;</span>
           <span className="font-mono">{prefixPreview}</span>
         </div>
       )}
@@ -245,7 +245,7 @@ function RuleCard({
       {/* Scope-default note */}
       {isBlankToken && (
         <div className="px-3 pb-1.5 pl-8 text-[11px] text-violet-500 dark:text-violet-400">
-          Scope default — fills this field for any file in this folder where the field is empty
+          Scope default &mdash; fills this field for any file in this folder where the field is empty
         </div>
       )}
     </div>
@@ -366,16 +366,16 @@ export function FolderSuggestRulesModal({
 
         {/* Info strip */}
         <div className="mx-5 mt-3 px-3 py-2.5 bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-800 rounded-lg flex-shrink-0 text-xs text-violet-700 dark:text-violet-400 space-y-0.5">
-          <p className="font-semibold text-violet-800 dark:text-violet-300">Each rule: when a token matches in a filename or folder → set a metadata field to a value</p>
+          <p className="font-semibold text-violet-800 dark:text-violet-300">Each rule: when a token matches in a filename or folder &rarr; set a metadata field to a value</p>
           <p>These rules apply to this folder and its children, overriding any global rule with the same token. You can repeat a token across rows to fill multiple fields from one match. A blank token acts as a scope default, filling a field for all files where it is empty.</p>
         </div>
 
         {/* Prefix + value guide */}
         <div className="mx-5 mt-2 px-3 py-2 bg-indigo-50 dark:bg-indigo-900/15 border border-indigo-200 dark:border-indigo-800 rounded-lg flex-shrink-0 text-xs text-indigo-700 dark:text-indigo-400">
           <span className="font-semibold text-indigo-800 dark:text-indigo-300">Prefix + value</span>
-          {' — '}use <code className="font-mono bg-indigo-100 dark:bg-indigo-900/40 px-0.5 rounded">{'{value}'}</code> for the part after the prefix,{' '}
+          {' \u2014 '}use <code className="font-mono bg-indigo-100 dark:bg-indigo-900/40 px-0.5 rounded">{'{value}'}</code> for the part after the prefix,{' '}
           <code className="font-mono bg-indigo-100 dark:bg-indigo-900/40 px-0.5 rounded">{'{match}'}</code> for the full token.{' '}
-          Example: prefix <span className="font-mono">G</span> + template <span className="font-mono">Gain {'{value}'}</span> → <span className="font-mono">G10</span> becomes <span className="font-mono">Gain 10</span>.
+          Example: prefix <span className="font-mono">G</span> + template <span className="font-mono">Gain {'{value}'}</span> &rarr; <span className="font-mono">G10</span> becomes <span className="font-mono">Gain 10</span>.
         </div>
 
         {/* Toolbar */}
@@ -384,7 +384,7 @@ export function FolderSuggestRulesModal({
             <span className="font-semibold text-violet-600 dark:text-violet-400">{enabledCount}</span> rule{enabledCount !== 1 ? 's' : ''} enabled
             {overwriteCount > 0 && (
               <span className="ml-2 text-amber-600 dark:text-amber-400">
-                · <span className="font-semibold">{overwriteCount}</span> overwrite
+                &middot; <span className="font-semibold">{overwriteCount}</span> overwrite
               </span>
             )}
           </div>
@@ -393,13 +393,13 @@ export function FolderSuggestRulesModal({
               onClick={() => setShowRecipeBuilder(true)}
               className="px-2.5 py-1.5 rounded border border-indigo-400 dark:border-indigo-600 bg-indigo-600 text-xs text-white hover:bg-indigo-700 transition-colors font-medium"
             >
-              Build from example…
+              Build from example&hellip;
             </button>
             <button
               onClick={() => setShowRuleLibraryPicker(true)}
               className="px-2.5 py-1.5 rounded border border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-900/20 text-xs text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/30 transition-colors"
             >
-              Add from library…
+              Add from library&hellip;
             </button>
             <button
               onClick={copyGlobals}
@@ -416,7 +416,7 @@ export function FolderSuggestRulesModal({
                   : 'border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
               }`}
             >
-              Copy from folder…
+              Copy from folder&hellip;
             </button>
             <button
               onClick={addRule}
@@ -454,7 +454,7 @@ export function FolderSuggestRulesModal({
                     onClick={() => setShowRecipeBuilder(true)}
                     className="px-3 py-1.5 rounded border border-indigo-400 dark:border-indigo-600 bg-indigo-600 text-xs text-white hover:bg-indigo-700 transition-colors"
                   >
-                    Build from example filename…
+                    Build from example filename&hellip;
                   </button>
                   <button
                     onClick={addRule}
@@ -464,7 +464,7 @@ export function FolderSuggestRulesModal({
                   </button>
                 </div>
                 <p className="text-[11px] text-gray-400 dark:text-gray-600">
-                  Tip: "Build from example" is the fastest way — paste a real filename and map each segment to a field.
+                  Tip: "Build from example" is the fastest way &mdash; paste a real filename and map each segment to a field.
                 </p>
               </div>
             ) : (
@@ -495,12 +495,12 @@ export function FolderSuggestRulesModal({
                 onClick={() => setConfirmSave(true)}
                 className="px-4 py-1.5 text-sm rounded-lg bg-amber-500 text-white hover:bg-amber-600 transition-colors"
               >
-                Save folder rules…
+                Save folder rules&hellip;
               </button>
             ) : confirmSave ? (
               <div className="flex items-center gap-2">
                 <span className="text-xs text-amber-700 dark:text-amber-400">
-                  {overwriteCount} overwrite rule{overwriteCount !== 1 ? 's' : ''} will replace existing values — confirm?
+                  {overwriteCount} overwrite rule{overwriteCount !== 1 ? 's' : ''} will replace existing values &mdash; confirm?
                 </span>
                 <button
                   onClick={() => setConfirmSave(false)}

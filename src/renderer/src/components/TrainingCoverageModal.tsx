@@ -255,7 +255,7 @@ function CoverageTable({ rows, presets, emptyMsg }: { rows: CoverageRow[]; prese
                         ))}
                       </div>
                     ) : (
-                      <span className="text-gray-700">—</span>
+                      <span className="text-gray-700">&mdash;</span>
                     )}
                   </td>
                 )
@@ -309,7 +309,7 @@ export function TrainingCoverageModal({ files, folderPath, prefixSuffixes, onClo
           <section>
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                DI Captures (amp / pedal_amp) — {diRows.length} base{diRows.length !== 1 ? 's' : ''} | {countCaptures(diRows)} capture{countCaptures(diRows) !== 1 ? 's' : ''}
+                DI Captures (amp / pedal_amp) &mdash; {diRows.length} base{diRows.length !== 1 ? 's' : ''} | {countCaptures(diRows)} capture{countCaptures(diRows) !== 1 ? 's' : ''}
               </h3>
               {diRows.length > 0 && (
                 <div className="flex gap-2">
@@ -337,7 +337,7 @@ export function TrainingCoverageModal({ files, folderPath, prefixSuffixes, onClo
           <section>
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                Amp+Cab Captures (amp_cab / amp_pedal_cab) — {cabRows.length} base{cabRows.length !== 1 ? 's' : ''} | {countCaptures(cabRows)} capture{countCaptures(cabRows) !== 1 ? 's' : ''}
+                Amp+Cab Captures (amp_cab / amp_pedal_cab) &mdash; {cabRows.length} base{cabRows.length !== 1 ? 's' : ''} | {countCaptures(cabRows)} capture{countCaptures(cabRows) !== 1 ? 's' : ''}
               </h3>
               {cabRows.length > 0 && (
                 <div className="flex gap-2">

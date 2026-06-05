@@ -114,7 +114,7 @@ export function WatcherFilesModal({ profileId, profileName, watchFolder, archite
         {/* Header */}
         <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-200 dark:border-gray-700">
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">{profileName} — Files</div>
+            <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">{profileName} &mdash; Files</div>
             <div className="text-[11px] text-gray-500 dark:text-gray-500 font-mono truncate mt-0.5">{watchFolder}</div>
           </div>
           <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
@@ -128,7 +128,7 @@ export function WatcherFilesModal({ profileId, profileName, watchFolder, archite
         {files && files.length > 0 && (
           <div className="flex items-center gap-2 px-5 py-2.5 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700">
             <span className="text-xs text-gray-500 dark:text-gray-400 flex-1">
-              {files.length} file{files.length !== 1 ? 's' : ''} · {pendingOrSkipped.length} need{pendingOrSkipped.length === 1 ? 's' : ''} attention
+              {files.length} file{files.length !== 1 ? 's' : ''} &middot; {pendingOrSkipped.length} need{pendingOrSkipped.length === 1 ? 's' : ''} attention
             </span>
             <select
               value={sort}
@@ -137,8 +137,8 @@ export function WatcherFilesModal({ profileId, profileName, watchFolder, archite
             >
               <option value="date-new">Date: Newest</option>
               <option value="date-old">Date: Oldest</option>
-              <option value="name-asc">Name: A–Z</option>
-              <option value="name-desc">Name: Z–A</option>
+              <option value="name-asc">Name: A&ndash;Z</option>
+              <option value="name-desc">Name: Z&ndash;A</option>
             </select>
             <button
               onClick={() => void load()}
@@ -152,7 +152,7 @@ export function WatcherFilesModal({ profileId, profileName, watchFolder, archite
                 disabled={resetAll}
                 className="px-2.5 py-1 rounded text-xs font-medium bg-indigo-600 hover:bg-indigo-700 text-white transition-colors disabled:opacity-50"
               >
-                {resetAll ? 'Resetting…' : 'Reset All & Re-queue'}
+                {resetAll ? 'Resetting\u2026' : 'Reset All & Re-queue'}
               </button>
             )}
           </div>
@@ -162,7 +162,7 @@ export function WatcherFilesModal({ profileId, profileName, watchFolder, archite
         <div className="flex-1 overflow-y-auto">
           {!files && !error && (
             <div className="flex items-center justify-center py-12 text-sm text-gray-400 dark:text-gray-600">
-              Scanning folder…
+              Scanning folder&hellip;
             </div>
           )}
           {error && (
@@ -216,7 +216,7 @@ export function WatcherFilesModal({ profileId, profileName, watchFolder, archite
                       </td>
                       <td className="px-2 py-2.5 text-right relative">
                         {isResetting ? (
-                          <span className="text-xs text-gray-400 dark:text-gray-600 px-1">…</span>
+                          <span className="text-xs text-gray-400 dark:text-gray-600 px-1">&hellip;</span>
                         ) : (
                           <div className="relative inline-block" ref={menuOpen === file.filePath ? menuRef : null}>
                             <button

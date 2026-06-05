@@ -218,7 +218,7 @@ export function BatchRenameModal({ files, onApply, onClose }: Props) {
             <span className="text-xs text-gray-600 dark:text-gray-400">Replace underscores with spaces</span>
           </label>
           {!renameFiles && (
-            <span className="text-[10px] text-gray-400 dark:text-gray-500 italic">— updates metadata name only, files stay unchanged</span>
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 italic">&mdash; updates metadata name only, files stay unchanged</span>
           )}
         </div>
 
@@ -253,7 +253,7 @@ export function BatchRenameModal({ files, onApply, onClose }: Props) {
                     : changed ? 'text-indigo-600 dark:text-indigo-400'
                     : 'text-gray-400 dark:text-gray-600'
                   }`}>
-                    {isEmpty ? '(empty — will be skipped)' : isConflict ? `${p.newName} ⚠ duplicate` : p.newName}
+                    {isEmpty ? '(empty \u2014 will be skipped)' : isConflict ? `${p.newName} \u26a0 duplicate` : p.newName}
                   </div>
                 </div>
               )

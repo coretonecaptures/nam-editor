@@ -94,7 +94,7 @@ export function WavCoverageTab({ folderPath, namFiles, comparisonFolder, onSetCo
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 00-1.883 2.542l.857 6a2.25 2.25 0 002.227 1.932H19.05a2.25 2.25 0 002.227-1.932l.857-6a2.25 2.25 0 00-1.883-2.542m-16.5 0V6A2.25 2.25 0 016 3.75h3.879a1.5 1.5 0 011.06.44l2.122 2.12a1.5 1.5 0 001.06.44H18A2.25 2.25 0 0120.25 9v.776" />
           </svg>
-          Choose WAV Folder…
+          Choose WAV Folder&hellip;
         </button>
       </div>
     )
@@ -121,7 +121,7 @@ export function WavCoverageTab({ folderPath, namFiles, comparisonFolder, onSetCo
             onClick={pickFolder}
             className="text-xs px-2.5 py-1 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors border border-gray-200 dark:border-gray-700"
           >
-            Change…
+            Change&hellip;
           </button>
           <button
             onClick={clearFolder}
@@ -134,7 +134,7 @@ export function WavCoverageTab({ folderPath, namFiles, comparisonFolder, onSetCo
       </div>
 
       {loading ? (
-        <div className="flex-1 flex items-center justify-center text-xs text-gray-400 dark:text-gray-500">Scanning WAV folder…</div>
+        <div className="flex-1 flex items-center justify-center text-xs text-gray-400 dark:text-gray-500">Scanning WAV folder&hellip;</div>
       ) : error ? (
         <div className="flex-1 flex items-center justify-center text-xs text-red-500">{error}</div>
       ) : wavNames.length === 0 ? (

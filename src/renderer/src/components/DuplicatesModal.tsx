@@ -519,7 +519,7 @@ export function DuplicatesModal({
                         className="px-2 py-1.5 text-xs rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-amber-500 hover:text-amber-600 dark:hover:text-amber-400 disabled:opacity-40 transition-colors"
                         title={destFolder ? `Destination: ${destFolder}` : 'Change destination folder (default: _Duplicates in root)'}
                       >
-                        {destFolder ? '📁 ' + destFolder.replace(/\\/g, '/').split('/').pop() : 'Change folder…'}
+                        {destFolder ? '📁 ' + destFolder.replace(/\\/g, '/').split('/').pop() : 'Change folder\u2026'}
                       </button>
                     )}
                   </div>

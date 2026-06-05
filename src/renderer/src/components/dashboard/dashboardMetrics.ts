@@ -1,17 +1,17 @@
 /* ────────────────────────────────────────────────────────────────────────────
-   dashboardMetrics.ts — derived metrics for the NAM Lab dashboards
+   dashboardMetrics.ts &mdash; derived metrics for the NAM Lab dashboards
    Drop into:  src/renderer/src/components/dashboard/dashboardMetrics.ts
 
    Everything here is computed from the EXISTING NamFile[] you already pass to
    NamDashboard / FolderDashboard. The functions cover both the metrics the
    current dashboards show AND the new "useful data" the redesign adds:
-     • libraryHealth() / folderHealth()  — composite 0..100 score
-     • buildGrowthSeries()               — captures added per month (uses birthtimeMs)
-     • buildEsrTrend()                   — avg validation ESR per month (mtimeMs + training)
-     • buildEsrRuns()                    — ESR per recent capture, newest→oldest
-     • buildActivityMatrix()             — weeks×7 activity grid (uses mtimeMs)
-     • topMakes()                        — gear_make leaderboard
-   Tune the weights to taste — they are intentionally simple and transparent.
+     • libraryHealth() / folderHealth()  &mdash; composite 0..100 score
+     • buildGrowthSeries()               &mdash; captures added per month (uses birthtimeMs)
+     • buildEsrTrend()                   &mdash; avg validation ESR per month (mtimeMs + training)
+     • buildEsrRuns()                    &mdash; ESR per recent capture, newest&rarr;oldest
+     • buildActivityMatrix()             &mdash; weeks×7 activity grid (uses mtimeMs)
+     • topMakes()                        &mdash; gear_make leaderboard
+   Tune the weights to taste &mdash; they are intentionally simple and transparent.
    ──────────────────────────────────────────────────────────────────────────── */
 import type { NamFile } from '../../types/nam'
 
@@ -60,7 +60,7 @@ function grade(score: number) {
   return score >= 85 ? 'Excellent' : score >= 70 ? 'Healthy' : score >= 50 ? 'Needs work' : 'At risk'
 }
 
-/* LIBRARY HEALTH — completeness 40% · training quality 35% · saved 15% · dup-free 10% */
+/* LIBRARY HEALTH &mdash; completeness 40% &middot; training quality 35% &middot; saved 15% &middot; dup-free 10% */
 export function libraryHealth(files: NamFile[]): Health {
   const total = files.length || 1
   const { complete } = completeness(files)
@@ -85,7 +85,7 @@ export function libraryHealth(files: NamFile[]): Health {
   }
 }
 
-/* PACK HEALTH — training quality 40% · completeness 35% · readiness 25% */
+/* PACK HEALTH &mdash; training quality 40% &middot; completeness 35% &middot; readiness 25% */
 export function folderHealth(
   files: NamFile[],
   readiness: { packInfo: boolean; readme: boolean; cover: boolean; gallery: number },
@@ -108,7 +108,7 @@ export function folderHealth(
   }
 }
 
-/* GROWTH — captures added per calendar month, oldest→newest. Uses birthtimeMs. */
+/* GROWTH &mdash; captures added per calendar month, oldest&rarr;newest. Uses birthtimeMs. */
 export function buildGrowthSeries(files: NamFile[], months = 14): { m: string; add: number }[] {
   const now = new Date()
   const labels: { key: string; m: string }[] = []
@@ -125,7 +125,7 @@ export function buildGrowthSeries(files: NamFile[], months = 14): { m: string; a
   return labels.map((l) => ({ m: l.m, add: counts.get(l.key) ?? 0 }))
 }
 
-/* ESR TREND — average validation ESR per month, oldest→newest. Uses mtimeMs. */
+/* ESR TREND &mdash; average validation ESR per month, oldest&rarr;newest. Uses mtimeMs. */
 export function buildEsrTrend(files: NamFile[], months = 14): number[] {
   const now = new Date()
   const buckets: { sum: number; n: number }[] = Array.from({ length: months }, () => ({ sum: 0, n: 0 }))
@@ -140,7 +140,7 @@ export function buildEsrTrend(files: NamFile[], months = 14): number[] {
   return buckets.map((b) => { if (b.n) last = b.sum / b.n; return +last.toFixed(4) })
 }
 
-/* ESR RUNS — ESR for the N most-recently-updated captures (newest last for the chart). */
+/* ESR RUNS &mdash; ESR for the N most-recently-updated captures (newest last for the chart). */
 export function buildEsrRuns(files: NamFile[], n = 18): number[] {
   return [...files]
     .filter((f) => getEsr(f) != null && f.mtimeMs)
@@ -149,7 +149,7 @@ export function buildEsrRuns(files: NamFile[], n = 18): number[] {
     .map((f) => getEsr(f) as number)
 }
 
-/* ACTIVITY MATRIX — weeks×7 grid of 0..1 normalised edit counts. Uses mtimeMs. */
+/* ACTIVITY MATRIX &mdash; weeks×7 grid of 0..1 normalised edit counts. Uses mtimeMs. */
 export function buildActivityMatrix(files: NamFile[], weeks = 18): number[][] {
   const dayMs = 86_400_000
   const today = new Date(); today.setHours(0, 0, 0, 0)
@@ -170,7 +170,7 @@ export function buildActivityMatrix(files: NamFile[], weeks = 18): number[][] {
   return matrix
 }
 
-/* TOP MAKES — leaderboard from metadata.gear_make. Pass your gear color map for bar colors. */
+/* TOP MAKES &mdash; leaderboard from metadata.gear_make. Pass your gear color map for bar colors. */
 export function topMakes(files: NamFile[], limit = 8): { name: string; count: number }[] {
   const counts = new Map<string, number>()
   for (const f of files) {

@@ -1695,7 +1695,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
 
               {draft.enableExperimentalTraining && (
                 <>
-                  <SettingsField label="NAM Python executable" hint="Python executable with neural-amp-modeler installed (≥ 0.12.3 recommended)" help={<>Point this to the <code>python.exe</code> (Windows) or <code>python</code> binary inside your NAM conda or venv environment — <em>not</em> your system Python.<br /><br />Example: <code className="break-all">C:\Users\you\.conda\envs\nam\python.exe</code><br /><br />Requires <strong>neural-amp-modeler ≥ 0.12.3</strong> installed in that environment.</>}>
+                  <SettingsField label="NAM Python executable" hint="Python executable with neural-amp-modeler installed (\u2265 0.12.3 recommended)" help={<>Point this to the <code>python.exe</code> (Windows) or <code>python</code> binary inside your NAM conda or venv environment &mdash; <em>not</em> your system Python.<br /><br />Example: <code className="break-all">C:\Users\you\.conda\envs\nam\python.exe</code><br /><br />Requires <strong>neural-amp-modeler &ge; 0.12.3</strong> installed in that environment.</>}>
                     <div className="flex items-center gap-2">
                       <input
                         type="text"
@@ -1755,7 +1755,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                     <div className="ml-6 border-l-2 border-gray-200 dark:border-gray-700 pl-4">
                       <CheckboxField
                         label="Skip auto-start if queue was paused"
-                        description="If you manually paused the queue before closing NAM Lab, don't auto-start on the next launch — wait for you to click Resume."
+                        description="If you manually paused the queue before closing NAM Lab, don't auto-start on the next launch \u2014 wait for you to click Resume."
                         checked={draft.trainingAutoStartSkipIfPaused}
                         onChange={(v) => update('trainingAutoStartSkipIfPaused', v)}
                       />
@@ -1766,17 +1766,17 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                   <div className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
                     <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700">
                       <svg className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
-                      <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Dashboard Simple Mode — Favorites</span>
+                      <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Dashboard Simple Mode &mdash; Favorites</span>
                       <span className="text-[10px] text-gray-400 dark:text-gray-500 ml-1">Used by Quick Add on the Dashboard</span>
                     </div>
                     <div className="p-3 space-y-3">
-                      <SettingsField label="Favorite preset" hint="Used for every Quick Add batch — no per-run setup">
+                      <SettingsField label="Favorite preset" hint="Used for every Quick Add batch \u2014 no per-run setup">
                         <select
                           value={draft.trainingFavoritePresetId ?? ''}
                           onChange={(e) => update('trainingFavoritePresetId', e.target.value)}
                           className="w-full h-9 px-2.5 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
                         >
-                          <option value="">— not set —</option>
+                          <option value="">&mdash; not set &mdash;</option>
                           {draft.trainingPresets.filter(p => p.architectures.length > 0).map((preset) => (
                             <option key={preset.id} value={preset.id}>{preset.name}</option>
                           ))}
@@ -1790,7 +1790,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                           suggestionFormula="../../NAM/{architecture}/{folder}"
                         />
                       </SettingsField>
-                      <SettingsField label="Default Input DI" hint="Skip the DI picker in Quick Add — always use this WAV as the reference capture">
+                      <SettingsField label="Default Input DI" hint="Skip the DI picker in Quick Add \u2014 always use this WAV as the reference capture">
                         <div className="flex items-center gap-2">
                           <input
                             type="text"
@@ -1811,7 +1811,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                   <div className="flex items-center gap-3 flex-wrap">
                     <CheckboxField
                       label="Normalize WAV pair before training"
-                      description="Applies identical linked peak gain to both input and output WAVs before each training run. Originals are never modified — normalized copies are used only within the run workspace."
+                      description="Applies identical linked peak gain to both input and output WAVs before each training run. Originals are never modified \u2014 normalized copies are used only within the run workspace."
                       checked={draft.normalizeWavBeforeTraining ?? true}
                       onChange={(v) => update('normalizeWavBeforeTraining', v)}
                     />
@@ -1835,7 +1835,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                   <SettingsField
                     label="NAM output path formula"
                     hint="Derive the .nam output folder from the staging WAV path using tokens. Leave blank to use a fixed path per run."
-                    help={<>Tokens derive the output path from your input WAV's location:<br /><br /><code>{'{folder}'}</code> — parent folder name<br /><code>{'{filename}'}</code> — WAV filename without extension<br /><code>{'{architecture}'}</code> — e.g. standard, lite<br /><code>{'{date}'}</code> — YYYY-MM-DD<br /><br />Example: <code>../../Captures/{'{folder}'}/{'{architecture}'}</code></>}
+                    help={<>Tokens derive the output path from your input WAV's location:<br /><br /><code>{'{folder}'}</code> \u2014 parent folder name<br /><code>{'{filename}'}</code> \u2014 WAV filename without extension<br /><code>{'{architecture}'}</code> \u2014 e.g. standard, lite<br /><code>{'{date}'}</code> \u2014 YYYY-MM-DD<br /><br />Example: <code>../../Captures/{'{folder}'}/{'{architecture}'}</code></>}
                   >
                     <OutputFormulaField
                       value={draft.trainingOutputFormula ?? ''}
@@ -1847,7 +1847,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                   <SettingsField
                     label="Graph output path formula"
                     hint="Derive the graph output folder from the staging WAV path using tokens. Leave blank to use a fixed path per run."
-                    help={<>Same tokens as the NAM output formula. Training graphs are PNG charts of ESR over time — useful for diagnosing under/overtraining.<br /><br />Suggested: <code>../../Graphs/{'{architecture}'}/{'{folder}'}</code></>}
+                    help={<>Same tokens as the NAM output formula. Training graphs are PNG charts of ESR over time &mdash; useful for diagnosing under/overtraining.<br /><br />Suggested: <code>../../Graphs/{'{architecture}'}/{'{folder}'}</code></>}
                   >
                     <OutputFormulaField
                       value={draft.trainingGraphFormula ?? ''}
@@ -1935,7 +1935,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                               {duplicateProfileIds.has(profile.id) && (
                                 <div className="px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-700/50 text-[11px] text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
                                   <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
-                                  Exact duplicate of another watcher — change at least one field before saving.
+                                  Exact duplicate of another watcher &mdash; change at least one field before saving.
                                 </div>
                               )}
                               <div className="px-3 py-3 bg-white dark:bg-gray-900/50 space-y-3">
@@ -1968,7 +1968,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                                 if (!linkedPreset) return null
                                 return (
                                   <div className="rounded-lg border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-xs text-sky-800 dark:text-sky-200">
-                                    {linkedPreset.architectures.map((item) => item.toUpperCase()).join(', ') || 'No architectures'} · {linkedPreset.epochs} epochs · {linkedPreset.thresholdEsr != null ? `Target ESR ${linkedPreset.thresholdEsr}` : 'No ESR target'}
+                                    {linkedPreset.architectures.map((item) => item.toUpperCase()).join(', ') || 'No architectures'} &middot; {linkedPreset.epochs} epochs &middot; {linkedPreset.thresholdEsr != null ? `Target ESR ${linkedPreset.thresholdEsr}` : 'No ESR target'}
                                   </div>
                                 )
                               })()}
@@ -2021,7 +2021,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                                     className="px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 border border-indigo-500/30 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                                     title="View all WAV files in this folder and their queue/history status"
                                   >
-                                    View Files…
+                                    View Files&hellip;
                                   </button>
                                 </div>
                               </SettingsField>
@@ -2052,7 +2052,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                         </span>
                         {(draft.userCaptureProfiles ?? []).length > 0 && (
                           <span className="text-[10px] text-gray-400 dark:text-gray-500">
-                            · {(draft.userCaptureProfiles ?? []).length} custom
+                            &middot; {(draft.userCaptureProfiles ?? []).length} custom
                           </span>
                         )}
                       </button>
@@ -2070,7 +2070,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                       <div className="ml-3 pl-3 border-l-2 border-gray-200 dark:border-gray-700">
                       <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/50 px-3 py-3">
                         <p className="text-[11px] text-gray-500 dark:text-gray-500 mb-3">
-                          All 8 built-in architectures run via dynamic registration — no core.py edits needed. Clone any built-in or create a custom profile from scratch.
+                          All 8 built-in architectures run via dynamic registration &mdash; no core.py edits needed. Clone any built-in or create a custom profile from scratch.
                         </p>
                         <ArchitectureProfilePicker
                           selectedIds={[]}
@@ -2154,7 +2154,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                               {duplicatePresetIds.has(preset.id) && (
                                 <div className="px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-700/50 text-[11px] text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
                                   <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
-                                  Exact duplicate of another preset — change at least one field before saving.
+                                  Exact duplicate of another preset &mdash; change at least one field before saving.
                                 </div>
                               )}
                               <div className="px-3 py-3 bg-white dark:bg-gray-900/50 space-y-3">
@@ -2179,7 +2179,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                                       title="A2 training is not yet available in the NAM trainer. Coming soon."
                                       className="flex-1 py-1.5 px-3 font-medium bg-white dark:bg-gray-800 text-gray-300 dark:text-gray-600 cursor-not-allowed"
                                     >
-                                      A2 — Coming Soon
+                                      A2 &mdash; Coming Soon
                                     </button>
                                   </div>
                                 </SettingsField>
@@ -2222,7 +2222,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                                     />
                                   </div>
                                 </SettingsField>
-                                <SettingsField label="Target ESR" labelTitle="Stop training early once this ESR is reached. Quality: <0.01 = Great · <0.035 = Good · <0.1 = Acceptable">
+                                <SettingsField label="Target ESR" labelTitle="Stop training early once this ESR is reached. Quality: <0.01 = Great \u00b7 <0.035 = Good \u00b7 <0.1 = Acceptable">
                                   <input
                                     type="number"
                                     min={0}
@@ -2322,7 +2322,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                   <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
                 </div>
                 <p className="text-xs text-gray-500 dark:text-gray-400 mb-5 leading-relaxed">
-                  API keys are stored encrypted on your machine via Electron safeStorage — they are never written to settings.json or sent anywhere except the provider's API.
+                  API keys are stored encrypted on your machine via Electron safeStorage &mdash; they are never written to settings.json or sent anywhere except the provider's API.
                 </p>
 
                 {/* Provider preference */}
@@ -2346,7 +2346,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="text-sm font-medium text-gray-800 dark:text-gray-200">Anthropic (Claude)</div>
-                      <div className="text-xs text-gray-500 dark:text-gray-500 mt-0.5">console.anthropic.com → API Keys</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-500 mt-0.5">console.anthropic.com &rarr; API Keys</div>
                     </div>
                     {draft.hasAnthropicKey && (
                       <span className="inline-flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">
@@ -2358,7 +2358,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                   <div className="flex gap-2">
                     <input
                       type="password"
-                      placeholder={draft.hasAnthropicKey ? '••••••••  (replace to update)' : 'sk-ant-…'}
+                      placeholder={draft.hasAnthropicKey ? '••••••••  (replace to update)' : 'sk-ant-\u2026'}
                       value={aiKeyDraft.anthropic}
                       onChange={e => { setAiKeyDraft(prev => ({ ...prev, anthropic: e.target.value })); setAiKeyError(null); setAiKeySaved(null) }}
                       className="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-cyan-500"
@@ -2368,7 +2368,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                       disabled={!aiKeyDraft.anthropic.trim() || aiKeySaving === 'anthropic'}
                       className="px-3 py-2 rounded-lg text-xs font-medium bg-cyan-600 text-white hover:bg-cyan-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                     >
-                      {aiKeySaving === 'anthropic' ? 'Saving…' : aiKeySaved === 'anthropic' ? '✓ Saved' : 'Save'}
+                      {aiKeySaving === 'anthropic' ? 'Saving\u2026' : aiKeySaved === 'anthropic' ? '✓ Saved' : 'Save'}
                     </button>
                     {draft.hasAnthropicKey && (
                       <button onClick={() => void handleClearAiKey('anthropic')} className="px-3 py-2 rounded-lg text-xs text-red-500 border border-red-500/30 hover:bg-red-500/10 transition-colors">
@@ -2385,7 +2385,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                       placeholder="claude-haiku-4-5-20251001"
                       className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-600 font-mono focus:outline-none focus:border-cyan-500"
                     />
-                    <p className="text-[10px] text-gray-400 dark:text-gray-600 mt-1">Haiku = fast &amp; cheap · Sonnet = more accurate</p>
+                    <p className="text-[10px] text-gray-400 dark:text-gray-600 mt-1">Haiku = fast &amp; cheap &middot; Sonnet = more accurate</p>
                   </div>
                 </div>
 
@@ -2394,7 +2394,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="text-sm font-medium text-gray-800 dark:text-gray-200">OpenAI (GPT)</div>
-                      <div className="text-xs text-gray-500 dark:text-gray-500 mt-0.5">platform.openai.com → API Keys</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-500 mt-0.5">platform.openai.com &rarr; API Keys</div>
                     </div>
                     {draft.hasOpenAiKey && (
                       <span className="inline-flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">
@@ -2406,7 +2406,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                   <div className="flex gap-2">
                     <input
                       type="password"
-                      placeholder={draft.hasOpenAiKey ? '••••••••  (replace to update)' : 'sk-…'}
+                      placeholder={draft.hasOpenAiKey ? '••••••••  (replace to update)' : 'sk-\u2026'}
                       value={aiKeyDraft.openai}
                       onChange={e => { setAiKeyDraft(prev => ({ ...prev, openai: e.target.value })); setAiKeyError(null); setAiKeySaved(null) }}
                       className="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-cyan-500"
@@ -2416,7 +2416,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                       disabled={!aiKeyDraft.openai.trim() || aiKeySaving === 'openai'}
                       className="px-3 py-2 rounded-lg text-xs font-medium bg-cyan-600 text-white hover:bg-cyan-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                     >
-                      {aiKeySaving === 'openai' ? 'Saving…' : aiKeySaved === 'openai' ? '✓ Saved' : 'Save'}
+                      {aiKeySaving === 'openai' ? 'Saving\u2026' : aiKeySaved === 'openai' ? '✓ Saved' : 'Save'}
                     </button>
                     {draft.hasOpenAiKey && (
                       <button onClick={() => void handleClearAiKey('openai')} className="px-3 py-2 rounded-lg text-xs text-red-500 border border-red-500/30 hover:bg-red-500/10 transition-colors">
@@ -2433,7 +2433,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                       placeholder="gpt-4o-mini"
                       className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-600 font-mono focus:outline-none focus:border-cyan-500"
                     />
-                    <p className="text-[10px] text-gray-400 dark:text-gray-600 mt-1">gpt-4o-mini = fast &amp; cheap · gpt-4o = more accurate</p>
+                    <p className="text-[10px] text-gray-400 dark:text-gray-600 mt-1">gpt-4o-mini = fast &amp; cheap &middot; gpt-4o = more accurate</p>
                   </div>
                 </div>
 

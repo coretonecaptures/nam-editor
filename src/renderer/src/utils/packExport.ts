@@ -161,7 +161,7 @@ export function generatePackHtml(
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>${esc(info.title || folderName)} — NAM Pack</title>
+<title>${esc(info.title || folderName)} &mdash; NAM Pack</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
   * { margin: 0; padding: 0; box-sizing: border-box; }

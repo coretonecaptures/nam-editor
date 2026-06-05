@@ -34,7 +34,7 @@ export interface CaptureProfile {
   name: string
   description: string
   builtIn: boolean
-  waveNetConfig: WaveNetConfig | null  // null for A2 (PackedWaveNet) — config is fixed in trainer
+  waveNetConfig: WaveNetConfig | null  // null for A2 (PackedWaveNet) &mdash; config is fixed in trainer
   lr: number
   lrDecay: number
   defaultEpochs: number
@@ -49,7 +49,7 @@ export interface CaptureProfile {
 export const A2_CAPTURE_PROFILE: CaptureProfile = {
   id: 'a2',
   name: 'A2',
-  description: 'NAM Architecture 2 — produces a single .nam file containing both lite and standard submodels (SlimmableContainer). Requires NAM ≥ 0.13.0.',
+  description: 'NAM Architecture 2 \u2014 produces a single .nam file containing both lite and standard submodels (SlimmableContainer). Requires NAM \u2265 0.13.0.',
   builtIn: true,
   waveNetConfig: null,
   lr: 0.004,
@@ -62,7 +62,7 @@ export const A2_CAPTURE_PROFILE: CaptureProfile = {
 
 export const BUILT_IN_CAPTURE_PROFILES: CaptureProfile[] = [
   {
-    id: 'standard', name: 'Standard', description: 'Full WaveNet — highest quality, largest file, slowest training', builtIn: true,
+    id: 'standard', name: 'Standard', description: 'Full WaveNet \u2014 highest quality, largest file, slowest training', builtIn: true,
     waveNetConfig: { head_scale: 0.02, layers_configs: [
       { input_size: 1, condition_size: 1, channels: 16, head_size: 8, kernel_size: 3, dilations: [1,2,4,8,16,32,64,128,256,512], activation: 'Tanh', gated: false, head_bias: false },
       { input_size: 16, condition_size: 1, channels: 8, head_size: 1, kernel_size: 3, dilations: [1,2,4,8,16,32,64,128,256,512], activation: 'Tanh', gated: false, head_bias: true },
@@ -70,7 +70,7 @@ export const BUILT_IN_CAPTURE_PROFILES: CaptureProfile[] = [
     lr: 0.004, lrDecay: 0.002, defaultEpochs: 1000, batchSize: 16, ny: 8192, fitMrstft: true,
   },
   {
-    id: 'lite', name: 'Lite', description: 'Lighter WaveNet — good balance of quality and speed', builtIn: true,
+    id: 'lite', name: 'Lite', description: 'Lighter WaveNet \u2014 good balance of quality and speed', builtIn: true,
     waveNetConfig: { head_scale: 0.02, layers_configs: [
       { input_size: 1, condition_size: 1, channels: 12, head_size: 6, kernel_size: 3, dilations: [1,2,4,8,16,32,64], activation: 'Tanh', gated: false, head_bias: false },
       { input_size: 12, condition_size: 1, channels: 6, head_size: 1, kernel_size: 3, dilations: [128,256,512,1,2,4,8,16,32,64,128,256,512], activation: 'Tanh', gated: false, head_bias: true },
@@ -78,7 +78,7 @@ export const BUILT_IN_CAPTURE_PROFILES: CaptureProfile[] = [
     lr: 0.004, lrDecay: 0.002, defaultEpochs: 1000, batchSize: 16, ny: 8192, fitMrstft: true,
   },
   {
-    id: 'feather', name: 'Feather', description: 'Very lightweight — fastest training, smallest file', builtIn: true,
+    id: 'feather', name: 'Feather', description: 'Very lightweight \u2014 fastest training, smallest file', builtIn: true,
     waveNetConfig: { head_scale: 0.02, layers_configs: [
       { input_size: 1, condition_size: 1, channels: 8, head_size: 4, kernel_size: 3, dilations: [1,2,4,8,16,32,64], activation: 'Tanh', gated: false, head_bias: false },
       { input_size: 8, condition_size: 1, channels: 4, head_size: 1, kernel_size: 3, dilations: [128,256,512,1,2,4,8,16,32,64,128,256,512], activation: 'Tanh', gated: false, head_bias: true },
@@ -86,7 +86,7 @@ export const BUILT_IN_CAPTURE_PROFILES: CaptureProfile[] = [
     lr: 0.004, lrDecay: 0.002, defaultEpochs: 1000, batchSize: 16, ny: 8192, fitMrstft: true,
   },
   {
-    id: 'nano', name: 'Nano', description: 'Minimal footprint — lowest resource use', builtIn: true,
+    id: 'nano', name: 'Nano', description: 'Minimal footprint \u2014 lowest resource use', builtIn: true,
     waveNetConfig: { head_scale: 0.02, layers_configs: [
       { input_size: 1, condition_size: 1, channels: 4, head_size: 2, kernel_size: 3, dilations: [1,2,4,8,16,32,64], activation: 'Tanh', gated: false, head_bias: false },
       { input_size: 4, condition_size: 1, channels: 2, head_size: 1, kernel_size: 3, dilations: [128,256,512,1,2,4,8,16,32,64,128,256,512], activation: 'Tanh', gated: false, head_bias: true },
@@ -94,7 +94,7 @@ export const BUILT_IN_CAPTURE_PROFILES: CaptureProfile[] = [
     lr: 0.004, lrDecay: 0.002, defaultEpochs: 1000, batchSize: 16, ny: 8192, fitMrstft: true,
   },
   {
-    id: 'complex', name: 'Complex', description: 'Extended WaveNet — richer frequency detail, slower training', builtIn: true,
+    id: 'complex', name: 'Complex', description: 'Extended WaveNet \u2014 richer frequency detail, slower training', builtIn: true,
     waveNetConfig: { head_scale: 0.02, layers_configs: [
       { input_size: 1, condition_size: 1, channels: 32, head_size: 8, kernel_size: 3, dilations: [1,2,4,8,16,32,64,128,256,512,1,2,4,8,16,32,64,128,256,512], activation: 'Tanh', gated: false, head_bias: false },
       { input_size: 32, condition_size: 1, channels: 8, head_size: 1, kernel_size: 3, dilations: [1,2,4,8,16,32,64,128,256,512,1,2,4,8,16,32,64,128,256,512], activation: 'Tanh', gated: false, head_bias: true },
@@ -102,7 +102,7 @@ export const BUILT_IN_CAPTURE_PROFILES: CaptureProfile[] = [
     lr: 0.001, lrDecay: 0.001, defaultEpochs: 1000, batchSize: 16, ny: 8192, fitMrstft: true,
   },
   {
-    id: 'revystd', name: 'REVySTD', description: 'Revy standard — 5-layer variant, reversed power-of-2 dilations', builtIn: true,
+    id: 'revystd', name: 'REVySTD', description: 'Revy standard \u2014 5-layer variant, reversed power-of-2 dilations', builtIn: true,
     waveNetConfig: { head_scale: 0.99, layers_configs: [
       { input_size: 1, condition_size: 1, channels: 8, head_size: 8, kernel_size: 5, dilations: [1024,256,64,16,4,1], activation: 'Tanh', gated: false, head_bias: false },
       { input_size: 8, condition_size: 1, channels: 8, head_size: 8, kernel_size: 5, dilations: [1024,256,64,16,4,1], activation: 'Tanh', gated: false, head_bias: false },
@@ -113,7 +113,7 @@ export const BUILT_IN_CAPTURE_PROFILES: CaptureProfile[] = [
     lr: 0.002, lrDecay: 0.0015, defaultEpochs: 1500, batchSize: 16, ny: 8192, fitMrstft: true,
   },
   {
-    id: 'revyhi', name: 'REVyHI', description: 'Revy high-fidelity — 5-layer, 10-channel variant', builtIn: true,
+    id: 'revyhi', name: 'REVyHI', description: 'Revy high-fidelity \u2014 5-layer, 10-channel variant', builtIn: true,
     waveNetConfig: { head_scale: 0.99, layers_configs: [
       { input_size: 1, condition_size: 1, channels: 10, head_size: 10, kernel_size: 6, dilations: [1024,256,64,16,4,1], activation: 'Tanh', gated: false, head_bias: false },
       { input_size: 10, condition_size: 1, channels: 10, head_size: 10, kernel_size: 6, dilations: [1024,256,64,16,4,1], activation: 'Tanh', gated: false, head_bias: false },
@@ -124,7 +124,7 @@ export const BUILT_IN_CAPTURE_PROFILES: CaptureProfile[] = [
     lr: 0.002, lrDecay: 0.0015, defaultEpochs: 1500, batchSize: 16, ny: 8192, fitMrstft: true,
   },
   {
-    id: 'revxstd', name: 'REVxSTD', description: 'RevX standard — 4-layer, powers-of-3 dilations', builtIn: true,
+    id: 'revxstd', name: 'REVxSTD', description: 'RevX standard \u2014 4-layer, powers-of-3 dilations', builtIn: true,
     waveNetConfig: { head_scale: 0.99, layers_configs: [
       { input_size: 1, condition_size: 1, channels: 8, head_size: 8, kernel_size: 6, dilations: [729,243,81,27,9,3,1], activation: 'Tanh', gated: false, head_bias: false },
       { input_size: 8, condition_size: 1, channels: 8, head_size: 8, kernel_size: 6, dilations: [729,243,81,27,9,3,1], activation: 'Tanh', gated: false, head_bias: false },

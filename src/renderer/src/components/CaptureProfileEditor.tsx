@@ -225,14 +225,14 @@ export function CaptureProfileEditor({ profile, onSave, onCancel }: CaptureProfi
             <div>
               <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
                 Start from built-in
-                <span className="ml-1 font-normal text-gray-400">(optional — populates all fields)</span>
+                <span className="ml-1 font-normal text-gray-400">(optional &mdash; populates all fields)</span>
               </label>
               <select
                 defaultValue=""
                 onChange={(e) => { if (e.target.value) handleCloneFrom(e.target.value) }}
                 className="w-full px-3 py-1.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
               >
-                <option value="">— pick a starting point —</option>
+                <option value="">&mdash; pick a starting point &mdash;</option>
                 {BUILT_IN_CAPTURE_PROFILES.map((p) => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
@@ -366,7 +366,7 @@ export function CaptureProfileEditor({ profile, onSave, onCancel }: CaptureProfi
           {/* JSON paste */}
           <div>
             <div className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">
-              — or paste JSON —
+              &mdash; or paste JSON &mdash;
             </div>
             <div className="text-[10px] text-gray-400 dark:text-gray-500 mb-1.5">
               Paste a <code className="px-0.5 py-0 bg-gray-100 dark:bg-gray-800 rounded">layers_configs</code> array or a full NAM-BOT preset export. Non-config keys are ignored.
@@ -384,7 +384,7 @@ export function CaptureProfileEditor({ profile, onSave, onCancel }: CaptureProfi
               disabled={!jsonPaste.trim()}
               className="mt-2 px-3 py-1.5 rounded-md text-xs font-medium bg-indigo-100 dark:bg-indigo-900/30 hover:bg-indigo-200 dark:hover:bg-indigo-800/40 text-indigo-700 dark:text-indigo-300 disabled:opacity-50 transition-colors"
             >
-              Apply JSON →
+              Apply JSON &rarr;
             </button>
           </div>
         </div>

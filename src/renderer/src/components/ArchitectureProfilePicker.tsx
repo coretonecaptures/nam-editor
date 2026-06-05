@@ -79,7 +79,7 @@ function ProfileCard({
           )}
         </div>
         <div className="mt-1.5 text-[10px] text-nm-text-3">
-          {profile.lr} LR · {(profile as CaptureProfile).defaultEpochs ?? (profile as UserCaptureProfile).defaultEpochs} ep
+          {profile.lr} LR &middot; {(profile as CaptureProfile).defaultEpochs ?? (profile as UserCaptureProfile).defaultEpochs} ep
         </div>
       </div>
       {/* Hover action icons */}

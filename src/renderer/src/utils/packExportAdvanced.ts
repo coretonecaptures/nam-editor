@@ -75,7 +75,7 @@ const LIGHT_THEME = (accent: string): Theme => ({
 // for any amp's knob layout. Pairs of "Name Value" are styled two-tone;
 // strings the parser can't split fall back to verbatim text.
 function styleSettings(raw: string, esc: (s: string) => string, t: Theme): string {
-  if (!raw) return `<span style="color:${t.dimmer}">—</span>`
+  if (!raw) return `<span style="color:${t.dimmer}">\u2014</span>`
   const re = /([A-Za-z]+)\s*([0-9][0-9.]*)/g
   const parts: [string, string][] = []
   let m: RegExpExecArray | null
@@ -159,7 +159,7 @@ export function generatePackHtmlAdvanced(
   const captureRows = captures.map((f) => {
     const cells = activeCols.map((c) => {
       const v = c.accessor(f)
-      if (!v) return `<td><span class="em-dash">—</span></td>`
+      if (!v) return `<td><span class="em-dash">\u2014</span></td>`
       switch (c.id) {
         case 'nl_amp_channel':
           return `<td><span class="chan">${esc(v)}</span></td>`
@@ -204,8 +204,8 @@ export function generatePackHtmlAdvanced(
 
   const statsBarHtml = (() => {
     const captureSubtitle = stats.channels.length
-      ? stats.channels.join(' · ')
-      : stats.toneTypes.map(tt => tt.replace('_', '-')).join(' · ')
+      ? stats.channels.join(' \u00b7 ')
+      : stats.toneTypes.map(tt => tt.replace('_', '-')).join(' \u00b7 ')
 
     const statCol = (label: string, value: string, sub: string) =>
       `<div class="stat">
@@ -227,14 +227,14 @@ export function generatePackHtmlAdvanced(
     }
 
     // NAM — full 4-column bar
-    const algoValue = stats.presets[0] ? esc(stats.presets[0].toUpperCase()) : '—'
+    const algoValue = stats.presets[0] ? esc(stats.presets[0].toUpperCase()) : '\u2014'
     const algoSub = stats.presets.length > 1
       ? esc('+ ' + stats.presets.slice(1).join(' / '))
       : ''
-    const epochStr = stats.epochValue ? `${stats.epochValue.toLocaleString()} ep` : '—'
+    const epochStr = stats.epochValue ? `${stats.epochValue.toLocaleString()} ep` : '\u2014'
     const trainingSubSub = stats.avgEsr !== null && stats.avgEsr < 0.01 ? 'convergence-locked' : ''
     const refStr = stats.refLevel !== undefined ? String(stats.refLevel) : ''
-    const refValue = refStr ? esc((refStr.startsWith('+') || refStr.startsWith('-') ? refStr : '+' + refStr) + ' dBu') : '—'
+    const refValue = refStr ? esc((refStr.startsWith('+') || refStr.startsWith('-') ? refStr : '+' + refStr) + ' dBu') : '\u2014'
     const refSub = stats.refGear ? esc(stats.refGear) : ''
 
     return `<div class="stats-bar">
@@ -268,16 +268,16 @@ export function generatePackHtmlAdvanced(
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>${esc(info.title || folderName)} — NAM Pack</title>
+<title>${esc(info.title || folderName)} &mdash; NAM Pack</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <style>
   @page {
     size: letter landscape;
-    margin: 24mm 0 20mm 0;     /* top/bottom only — sides handled by body padding so they stay consistent regardless of print-dialog Margins setting */
+    margin: 24mm 0 20mm 0;     /* top/bottom only &mdash; sides handled by body padding so they stay consistent regardless of print-dialog Margins setting */
     background: ${t.bg};
-    @bottom-left   { content: "Core Tone Captures · coretonecaptures.com"; font: 8pt "IBM Plex Mono", monospace; color: ${t.dim}; letter-spacing: 0.18em; text-transform: uppercase; }
+    @bottom-left   { content: "Core Tone Captures \u00b7 coretonecaptures.com"; font: 8pt "IBM Plex Mono", monospace; color: ${t.dim}; letter-spacing: 0.18em; text-transform: uppercase; }
     @bottom-center { content: "© ${new Date().getFullYear()} Core Tone Captures"; font: 8pt "IBM Plex Mono", monospace; color: ${t.dimmer}; letter-spacing: 0.18em; text-transform: uppercase; }
     @bottom-right  { content: counter(page) " / " counter(pages); font: 8pt "IBM Plex Mono", monospace; color: ${t.dim}; letter-spacing: 0.18em; }
   }
@@ -351,7 +351,7 @@ export function generatePackHtmlAdvanced(
   .switch-card .desc { font-size: 9.5pt; color: ${t.dim}; line-height: 1.55; }
   .switch-card hr { border: 0; border-top: 1px solid ${t.rule}; }
 
-  /* Footer colophon (last page only — distinct from @page footer chrome) */
+  /* Footer colophon (last page only &mdash; distinct from @page footer chrome) */
   .colophon { margin-top: 24pt; padding-top: 14pt; border-top: 1px solid ${t.rule}; display: flex; justify-content: space-between; align-items: flex-end; gap: 18pt; break-inside: avoid; }
   .colophon .body { font-size: 9.5pt; color: ${t.dim}; max-width: 480px; line-height: 1.55; }
   .colophon img.logo { height: 36px; }
@@ -396,7 +396,7 @@ ${contentsHtml}
 ${hasCaptures ? `<div class="section break">
   <div class="section-head">
     <div>
-      <h2><span class="section-num">·</span> The Captures</h2>
+      <h2><span class="section-num">&middot;</span> The Captures</h2>
       <div class="section-sub">Settings are listed in dial-position notation, exactly as logged at capture time. Switches indicate engaged positions; blank means default.</div>
     </div>
     <div class="micro">${captures.length} captures</div>
@@ -408,19 +408,19 @@ ${hasCaptures ? `<div class="section break">
 </div>` : ''}
 
 ${hasEquip ? `<div class="section break">
-  <div class="section-head"><div><h2><span class="section-num">·</span> Equipment</h2></div></div>
+  <div class="section-head"><div><h2><span class="section-num">&middot;</span> Equipment</h2></div></div>
   <div class="kv">${kvRows(info.equipment)}</div>
 </div>` : ''}
 
 ${hasPedals ? `<div class="section">
-  <div class="section-head"><div><h2><span class="section-num">·</span> Drive Pedals</h2></div></div>
+  <div class="section-head"><div><h2><span class="section-num">&middot;</span> Drive Pedals</h2></div></div>
   <div class="kv two-col">${kvRows(info.pedals)}</div>
 </div>` : ''}
 
 ${hasSwitches ? `<div class="section break">
   <div class="section-head">
     <div>
-      <h2><span class="section-num">·</span> Switches &amp; Modes</h2>
+      <h2><span class="section-num">&middot;</span> Switches &amp; Modes</h2>
       <div class="section-sub">Front-panel and back-panel toggles referenced in the capture list, and what each one shapes about the sound.</div>
     </div>
   </div>
@@ -430,7 +430,7 @@ ${hasSwitches ? `<div class="section break">
 ${hasGlossary ? `<div class="section break">
   <div class="section-head">
     <div>
-      <h2><span class="section-num">·</span> Glossary</h2>
+      <h2><span class="section-num">&middot;</span> Glossary</h2>
       <div class="section-sub">Capture-name shorthand, cabinet and mic conventions, and gain-structure abbreviations used throughout the pack.</div>
     </div>
   </div>

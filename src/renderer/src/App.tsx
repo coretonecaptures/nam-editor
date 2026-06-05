@@ -1139,7 +1139,7 @@ export default function App() {
           if (lastSlash <= 0) break
           const parent = current.substring(0, lastSlash)
           if (!parent.startsWith(normRoot) || parent.length < normRoot.length) break
-          if (parent === normRoot) break  // stop before root ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â root images only show at root
+          if (parent === normRoot) break  // stop before root ÃƒÆ&rsquo;Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â root images only show at root
           const parentResult = await window.api.scanImages(parent)
           if (cancelled) return
           const parentPaths = parentResult.success
@@ -1711,7 +1711,7 @@ export default function App() {
       }
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // intentionally empty ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â runs once on mount after React is ready
+  }, []) // intentionally empty ÃƒÆ&rsquo;Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â runs once on mount after React is ready
 
   // Returns false if user cancels, true if safe to proceed
   const confirmDiscardChanges = (): boolean => {
@@ -2703,7 +2703,7 @@ INSTRUCTIONS:
     { header: 'Reamp Send (dBu)',   field: 'input_level_dbu' },
     { header: 'Reamp Return (dBu)', field: 'output_level_dbu' },
     { header: 'Trained Epochs',     field: 'nb_trained_epochs' },
-    { header: 'NAM-BOT Preset',     field: null }, // read-only ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â shown in template, skipped on import
+    { header: 'NAM-BOT Preset',     field: null }, // read-only ÃƒÆ&rsquo;Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â shown in template, skipped on import
     { header: 'Mic(s)',             field: 'nl_mics' },
     { header: 'Comments',           field: 'nl_comments' },
   ]
@@ -3871,7 +3871,7 @@ INSTRUCTIONS:
     const ignoreChecks = preset?.ignoreChecks ?? false
     const modeledBy = settings.enableCaptureDefaults && settings.defaultModeledBy.trim() ? settings.defaultModeledBy.trim() : null
     const submissionId = makeSubmissionId('wav-check')
-    const submissionLabel = `WAV Check – ${wavPaths.length} capture${wavPaths.length !== 1 ? 's' : ''}`
+    const submissionLabel = `WAV Check \u2013 ${wavPaths.length} capture${wavPaths.length !== 1 ? 's' : ''}`
     const submissionCreatedAt = new Date().toISOString()
     const payloads: TrainerStartPayload[] = wavPaths.flatMap((wavPath) =>
       architectures.map((architecture) => ({
@@ -4335,7 +4335,7 @@ INSTRUCTIONS:
           </>
         )}
 
-        {/* File list ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â only shown when files are loaded */}
+        {/* File list ÃƒÆ&rsquo;Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â only shown when files are loaded */}
         {files.length > 0 && !(cardView && showToneStorePanel) && <>
           <div className={gridMaximized ? 'flex-1 flex flex-col overflow-hidden' : 'flex-shrink-0 flex flex-col overflow-hidden'} style={gridMaximized ? undefined : { width: (overviewMaximized || showTrainingWorkspace) ? 0 : (listCollapsed ? 0 : listWidth), overflow: 'hidden' }}>
             <FileList
@@ -4624,7 +4624,7 @@ INSTRUCTIONS:
                     onClick={() => handleOpenExperimentalTraining('files')}
                     className="px-4 py-2 text-xs font-medium transition-colors border-b-2 -mb-px border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
                   >
-                    Training ↗
+                    Training &#x2197;
                   </button>
                 </div>
                 <div className="flex-1 overflow-hidden">
@@ -4993,7 +4993,7 @@ INSTRUCTIONS:
           )}
         </div>
 
-        {/* Slide-in editor overlay ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â maximized grid mode */}
+        {/* Slide-in editor overlay ÃƒÆ&rsquo;Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â maximized grid mode */}
         {gridMaximized && (selectedFiles.length >= 1 || batchFolder !== null || showSettings) && (
           <div className={`absolute top-0 right-0 bottom-0 w-[460px] z-40 flex flex-col bg-white dark:bg-gray-950 border-l border-gray-200 dark:border-gray-700 shadow-2xl transition-transform duration-200 ${gridSlideOpen ? 'translate-x-0' : 'translate-x-full'}`}>
             <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">

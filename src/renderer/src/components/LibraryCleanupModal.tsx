@@ -392,7 +392,7 @@ export function LibraryCleanupModal({
                 {previewNeedsReview > 0 && (
                   <div className="rounded border border-amber-200 dark:border-amber-900/60 bg-amber-50/60 dark:bg-amber-900/10 px-3 py-2">
                     <div className="text-xs font-medium text-amber-800 dark:text-amber-200">
-                      “Needs Review” means these files would be copied into the destination library’s <span className="font-semibold">Needs Review</span> folder because the selected layout needs metadata that NAM Lab could not classify confidently.
+                      “Needs Review” means these files would be copied into the destination library&rsquo;s <span className="font-semibold">Needs Review</span> folder because the selected layout needs metadata that NAM Lab could not classify confidently.
                     </div>
                     {reasonCounts.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-2">

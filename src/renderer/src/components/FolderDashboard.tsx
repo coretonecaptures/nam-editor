@@ -296,11 +296,11 @@ export function FolderDashboard({
 
       {/* 1. Hero row */}
       <div className="flex flex-row gap-2.5">
-        {/* Left — health gauge */}
+        {/* Left &mdash; health gauge */}
         <div style={{ flex: '0 0 47%' }}>
           <D1Health score={stats.health.score} parts={stats.health.parts} label="Pack Health" />
         </div>
-        {/* Right — 2×2 stat cards */}
+        {/* Right &mdash; 2×2 stat cards */}
         <div className="flex-1 grid grid-cols-2 gap-2">
           <D1StatCard label="Captures" value={stats.total} sub="in this pack" />
           <div
@@ -345,7 +345,7 @@ export function FolderDashboard({
               { label: 'Pack Info', ok: !!hasPackInfo },
               { label: 'Read Me', ok: !!hasReadme },
               { label: 'Cover', ok: !!hasCoverImage },
-              { label: galleryCount > 0 ? `Gallery · ${galleryCount} image${galleryCount !== 1 ? 's' : ''}` : 'Gallery', ok: galleryCount > 0 },
+              { label: galleryCount > 0 ? `Gallery \u00b7 ${galleryCount} image${galleryCount !== 1 ? 's' : ''}` : 'Gallery', ok: galleryCount > 0 },
             ].map((item) => (
               <span
                 key={item.label}
@@ -451,7 +451,7 @@ export function FolderDashboard({
                   className={`flex items-center gap-2 rounded px-1 py-0.5 ${onEsrClick ? 'cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800/60' : ''} ${activeEsr === 'ok' ? 'bg-gray-100 dark:bg-gray-800/60' : ''} transition-colors`}
                   onClick={() => onEsrClick?.(activeEsr === 'ok' ? null : 'ok')}
                 >
-                  <span className="text-[11px] font-semibold w-28 flex-shrink-0 truncate" style={{ color: '#f59e0b' }}>OK <span className="font-normal opacity-70">0.01–0.05</span></span>
+                  <span className="text-[11px] font-semibold w-28 flex-shrink-0 truncate" style={{ color: '#f59e0b' }}>OK <span className="font-normal opacity-70">0.01&ndash;0.05</span></span>
                   <div className="flex-1 h-2 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
                     <div className="h-full rounded-full" style={{ width: `${Math.max(2, Math.round((stats.esrOk / esrMax) * 100))}%`, backgroundColor: '#f59e0b' }} />
                   </div>
@@ -517,7 +517,7 @@ export function FolderDashboard({
           <div className="flex items-baseline justify-between">
             <div>
               <span className={EYEBROW}>Training Quality Trend</span>
-              <span className="block text-[9.5px] text-gray-400 dark:text-gray-500 mt-0.5">avg ESR · lower is better</span>
+              <span className="block text-[9.5px] text-gray-400 dark:text-gray-500 mt-0.5">avg ESR &middot; lower is better</span>
             </div>
             {esrRuns.length >= 2 && (
               <span className="font-mono text-[10px]" style={{ color: esrImproving ? '#34d399' : '#f87171' }}>
@@ -530,10 +530,10 @@ export function FolderDashboard({
               <TrendLine data={esrRuns} color="#22c55e" height={104} invert />
               <div className="flex items-center justify-between">
                 <span className="font-mono text-[9.5px] text-gray-400 dark:text-gray-500">
-                  oldest · {esrRuns[0].toFixed(4)}
+                  oldest &middot; {esrRuns[0].toFixed(4)}
                 </span>
                 <span className="font-mono text-[9.5px]" style={{ color: '#34d399' }}>
-                  latest · {esrRuns[esrRuns.length - 1].toFixed(4)}
+                  latest &middot; {esrRuns[esrRuns.length - 1].toFixed(4)}
                 </span>
               </div>
             </>

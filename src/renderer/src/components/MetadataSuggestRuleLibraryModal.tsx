@@ -212,11 +212,11 @@ export function MetadataSuggestRuleLibraryModal({
                       </div>
                       <div className="mt-1 text-[11px] text-gray-500 dark:text-gray-500">
                         {MATCH_TYPE_LABELS[rule.matchType]}
-                        <span className="mx-1.5">·</span>
+                        <span className="mx-1.5">&middot;</span>
                         {rule.matchIn === 'either' ? 'Filename or folder' : rule.matchIn === 'filename' ? 'Filename only' : 'Folder only'}
                         {rule.overwriteExisting && rule.overwriteOnlyValues.trim() && (
                           <>
-                            <span className="mx-1.5">·</span>
+                            <span className="mx-1.5">&middot;</span>
                             Guarded overwrite: {rule.overwriteOnlyValues}
                           </>
                         )}

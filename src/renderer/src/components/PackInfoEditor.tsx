@@ -947,7 +947,7 @@ function RowEditor<T extends Record<string, string>>({
               <svg className="h-3.5 w-3.5 flex-shrink-0 text-teal-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
               </svg>
-              <span className="truncate">{keys.map((k) => String(activeRow[k] ?? '')).filter(Boolean).join(' — ')}</span>
+              <span className="truncate">{keys.map((k) => String(activeRow[k] ?? '')).filter(Boolean).join(' \u2014 ')}</span>
             </div>
           ) : null}
         </DragOverlay>
@@ -1819,7 +1819,7 @@ export function PackInfoEditor({
                 className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border border-violet-500/40 text-violet-400 hover:bg-violet-500/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 {aboutGenerating
-                  ? <><svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg> Generating…</>
+                  ? <><svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg> Generating&hellip;</>
                   : <>✨ Generate</>
                 }
               </button>
@@ -1830,13 +1830,13 @@ export function PackInfoEditor({
           <textarea
             value={pack.about}
             onChange={(e) => { update('about', e.target.value); setAboutError(null) }}
-            placeholder={hasAiKey ? 'Click ✨ Generate to fill with AI, or type manually…' : 'A short description of what this gear is and its tonal character…'}
+            placeholder={hasAiKey ? 'Click ✨ Generate to fill with AI, or type manually\u2026' : 'A short description of what this gear is and its tonal character\u2026'}
             rows={4}
             maxLength={1000}
             className={`${inputCls('about')} resize-y leading-relaxed font-mono text-xs`}
           />
           <p className="mt-1 px-1 text-[10px] text-gray-400 dark:text-gray-500">
-            Saved with this pack — not included in the exported pack sheet.
+            Saved with this pack &mdash; not included in the exported pack sheet.
           </p>
         </div>
 

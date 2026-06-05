@@ -342,7 +342,7 @@ export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, o
       </div>
 
       <div className="flex-1 overflow-hidden relative">
-        {/* Card grid — always full width; preview panel overlays absolutely */}
+        {/* Card grid &mdash; always full width; preview panel overlays absolutely */}
         <div
           className="absolute inset-0 overflow-y-auto p-5"
           style={{ paddingRight: (!hidePreviewPanel && selected && selectedNode) ? previewWidth + 6 : undefined }}
@@ -388,7 +388,7 @@ export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, o
                       </div>
                       <div className={`text-xs mt-0.5 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
                         {node.totalCount} capture{node.totalCount !== 1 ? 's' : ''}
-                        {node.children.length > 0 && ` · ${node.children.length} folder${node.children.length !== 1 ? 's' : ''}`}
+                        {node.children.length > 0 && ` \u00b7 ${node.children.length} folder${node.children.length !== 1 ? 's' : ''}`}
                       </div>
                       {packInfoFolders.has(node.path) && (
                         <div className="mt-1 flex items-center gap-1">
@@ -404,7 +404,7 @@ export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, o
           )}
         </div>
 
-        {/* Drag handle + preview panel — absolutely positioned so grid width never changes */}
+        {/* Drag handle + preview panel &mdash; absolutely positioned so grid width never changes */}
         {!hidePreviewPanel && selected && selectedNode && (
           <>
             <div
@@ -441,7 +441,7 @@ export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, o
           onClick={(e) => e.stopPropagation()}
         >
           <button onClick={() => { onOpenFolder(ctxMenu.node.path); setCtxMenu(null) }} className="w-full text-left px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2">
-            <span>→</span> Open folder
+            <span>&rarr;</span> Open folder
           </button>
           {ctxMenu.node.children.length > 0 && (
             <button onClick={() => drillInto(ctxMenu.node)} className="w-full text-left px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2">
@@ -608,14 +608,14 @@ function GetCoverModal({ node, isDark, onClose, onSaved }: {
               : isDark ? 'border-gray-700 text-gray-500' : 'border-gray-300 text-gray-400'
           }`}
         >
-          {busy ? 'Saving…' : 'Drag an image here from your browser or Explorer'}
+          {busy ? 'Saving\u2026' : 'Drag an image here from your browser or Explorer'}
           {!busy && (
             <div className="mt-3">
               <button
                 onClick={handleBrowse}
                 className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${isDark ? 'border-gray-600 text-gray-300 hover:bg-gray-800' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}
               >
-                Browse for image…
+                Browse for image&hellip;
               </button>
             </div>
           )}
@@ -631,7 +631,7 @@ function GetCoverModal({ node, isDark, onClose, onSaved }: {
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') handleUrl(url) }}
-            placeholder="Paste image URL…"
+            placeholder="Paste image URL\u2026"
             className={`flex-1 text-sm px-3 py-2 rounded-lg border outline-none focus:ring-1 focus:ring-teal-500 ${isDark ? 'bg-gray-800 border-gray-700 text-gray-100 placeholder-gray-600' : 'bg-gray-50 border-gray-300 text-gray-900 placeholder-gray-400'}`}
           />
           <button
@@ -740,7 +740,7 @@ function FolderPreviewPanel({
             ) : (
               <>
                 {stats.esrGood > 0 && <BarRow label="Excellent < 0.01" count={stats.esrGood} maxCount={esrMaxCount} color="#22c55e" />}
-                {stats.esrOk > 0 && <BarRow label="OK 0.01–0.05" count={stats.esrOk} maxCount={esrMaxCount} color="#f59e0b" />}
+                {stats.esrOk > 0 && <BarRow label="OK 0.01\u20130.05" count={stats.esrOk} maxCount={esrMaxCount} color="#f59e0b" />}
                 {stats.esrReview > 0 && <BarRow label="Review > 0.05" count={stats.esrReview} maxCount={esrMaxCount} color="#dc2626" />}
               </>
             )}
@@ -783,7 +783,7 @@ function FolderPreviewPanel({
           onClick={onOpen}
           className="w-full px-3 py-2 rounded-lg bg-teal-600 hover:bg-teal-500 text-white text-sm font-medium transition flex items-center justify-center gap-1.5"
         >
-          Open folder <span>→</span>
+          Open folder <span>&rarr;</span>
         </button>
       </div>
     </div>

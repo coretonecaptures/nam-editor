@@ -1,5 +1,5 @@
 /* ────────────────────────────────────────────────────────────────────────────
-   Charts.tsx — reference SVG chart primitives for the NAM Lab dashboards
+   Charts.tsx &mdash; reference SVG chart primitives for the NAM Lab dashboards
    Drop into:  src/renderer/src/components/dashboard/Charts.tsx
    No dependencies. Pure SVG + React. Theme-agnostic: pass explicit colors.
 
@@ -28,7 +28,7 @@ export function arcPath(cx: number, cy: number, r: number, startDeg: number, end
   return `M ${s.x} ${s.y} A ${r} ${r} 0 ${large} 0 ${e.x} ${e.y}`
 }
 
-/* Donut — proportional ring. Put a number/label in children for the hole. */
+/* Donut &mdash; proportional ring. Put a number/label in children for the hole. */
 export function Donut({
   segments, size = 120, thickness = 16, gap = 2.5, track = 'var(--chart-track,#2f2f2f)', children,
 }: {
@@ -64,7 +64,7 @@ export function Donut({
   )
 }
 
-/* Gauge — 0..100 score over a `sweep`° arc (default 270). */
+/* Gauge &mdash; 0..100 score over a `sweep`° arc (default 270). */
 export function Gauge({
   value, size = 160, thickness = 13, color = '#14b8a6', track = 'var(--chart-track,#2f2f2f)', sweep = 270, children,
 }: {
@@ -89,7 +89,7 @@ export function Gauge({
   )
 }
 
-/* ProgressRing — full-circle progress. */
+/* ProgressRing &mdash; full-circle progress. */
 export function ProgressRing({
   value, size = 64, thickness = 7, color = '#14b8a6', track = 'var(--chart-track,#2f2f2f)', children,
 }: {
@@ -110,7 +110,7 @@ export function ProgressRing({
   )
 }
 
-/* Sparkline — tiny line + soft fill. */
+/* Sparkline &mdash; tiny line + soft fill. */
 export function Sparkline({
   data, color = '#14b8a6', width = 120, height = 32, strokeWidth = 1.75, fill = true,
 }: { data: number[]; color?: string; width?: number; height?: number; strokeWidth?: number; fill?: boolean }) {
@@ -142,7 +142,7 @@ export function Sparkline({
   )
 }
 
-/* AreaChart — line + gradient fill with dashed gridlines and optional month labels. */
+/* AreaChart &mdash; line + gradient fill with dashed gridlines and optional month labels. */
 export function AreaChart({
   data, color = '#14b8a6', width = 360, height = 120, labels, gridLines = 3,
 }: { data: number[]; color?: string; width?: number; height?: number; labels?: string[]; gridLines?: number }) {
@@ -177,7 +177,7 @@ export function AreaChart({
   )
 }
 
-/* TrendLine — line chart, `invert` flips the scale (for ESR where lower = better). */
+/* TrendLine &mdash; line chart, `invert` flips the scale (for ESR where lower = better). */
 export function TrendLine({
   data, color = '#22c55e', width = 360, height = 110, invert = false,
 }: { data: number[]; color?: string; width?: number; height?: number; invert?: boolean }) {
@@ -199,7 +199,7 @@ export function TrendLine({
   )
 }
 
-/* Heatmap — GitHub-style activity grid. Pass a `weeks × 7` matrix of 0..1 values
+/* Heatmap &mdash; GitHub-style activity grid. Pass a `weeks × 7` matrix of 0..1 values
    (see buildActivityMatrix in dashboardMetrics.ts to derive from file mtimes). */
 export function Heatmap({
   matrix, base = '#2a2a2a', color = '#14b8a6', cell = 12, gap = 3.5,
@@ -225,7 +225,7 @@ export function Heatmap({
   )
 }
 
-/* StackedMeter — horizontal stacked proportion bar. */
+/* StackedMeter &mdash; horizontal stacked proportion bar. */
 export function StackedMeter({
   segments, height = 12, radius = 5, gap = 1.5,
 }: { segments: Segment[]; height?: number; radius?: number; gap?: number }) {
@@ -244,7 +244,7 @@ export function hexToRgb(hex: string): [number, number, number] {
   return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
 }
 
-/* EsrCurve — ESR-vs-epoch, log scale, descending. Optional target line. */
+/* EsrCurve &mdash; ESR-vs-epoch, log scale, descending. Optional target line. */
 export function EsrCurve({
   data, color = 'var(--nm-accent,#6366f1)', width = 640, height = 240, target = null,
   labels = true, variant = 'area' as 'area' | 'line' | 'minimal', logScale = true,
@@ -321,7 +321,7 @@ export function EsrCurve({
   )
 }
 
-/* QualityBars — ESR quality distribution: vertical green/amber/red bars per session/day. */
+/* QualityBars &mdash; ESR quality distribution: vertical green/amber/red bars per session/day. */
 export function QualityBars({
   groups, width = 360, height = 150,
 }: { groups: { label: string; green: number; amber: number; red: number }[]; width?: number; height?: number }) {
@@ -353,7 +353,7 @@ export function QualityBars({
   )
 }
 
-/* Burndown — remaining queue vs done, two stacked-ish lines over time. */
+/* Burndown &mdash; remaining queue vs done, two stacked-ish lines over time. */
 export function Burndown({
   remaining, done, color = 'var(--nm-accent,#6366f1)', width = 360, height = 130,
 }: { remaining: number[]; done: number[]; color?: string; width?: number; height?: number }) {

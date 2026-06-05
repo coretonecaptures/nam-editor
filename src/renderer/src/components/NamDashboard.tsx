@@ -369,11 +369,11 @@ export function NamDashboard({
 
         {/* 1. Hero row */}
         <div className="flex flex-row gap-2.5">
-          {/* Left — health gauge */}
+          {/* Left &mdash; health gauge */}
           <div style={{ flex: '0 0 47%' }}>
             <D1Health score={health.score} parts={health.parts} label="Library Health" />
           </div>
-          {/* Right — 2×2 stat cards */}
+          {/* Right &mdash; 2×2 stat cards */}
           <div className="flex-1 grid grid-cols-2 gap-2">
             <D1StatCard
               label="Total Captures"
@@ -391,7 +391,7 @@ export function NamDashboard({
             <D1StatCard
               label="Incomplete"
               value={partial + incomplete}
-              sub={`${partial} partial · ${incomplete} missing 2+`}
+              sub={`${partial} partial \u00b7 ${incomplete} missing 2+`}
               onClick={onIncompleteClick}
             />
             <D1StatCard

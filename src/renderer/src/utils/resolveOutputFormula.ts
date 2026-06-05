@@ -65,9 +65,9 @@ export function resolveOutputFormulaWithSteps(
       base.push(seg)
       // Build a readable label for token substitutions
       let label = seg
-      if (raw.includes('{folder}')) label = `{folder} → ${folder}`
-      else if (raw.includes('{parent}')) label = `{parent} → ${parent}`
-      else if (raw.includes('{architecture}')) label = `{architecture} → ${architectureName}`
+      if (raw.includes('{folder}')) label = `{folder} \u2192 ${folder}`
+      else if (raw.includes('{parent}')) label = `{parent} \u2192 ${parent}`
+      else if (raw.includes('{architecture}')) label = `{architecture} \u2192 ${architectureName}`
       steps.push({
         segment: raw + '/',
         label,
