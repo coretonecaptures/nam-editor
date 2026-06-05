@@ -37,6 +37,7 @@
 - Blank xlsx import template with lookup dropdowns
 - Large collection / network share load performance: add mtime cache
 - Tone3000 search follow-up: if the API stays limited, explore a bounded multi-page fetch/cache strategy for narrow searches, favorites, or creator-focused browsing without trying to mirror the full catalog locally.
+- Tone3000 OAuth picker/select flow: add a hosted Tone3000 picker path alongside direct API browsing, so users can choose tones through Tone3000's recommended Select OAuth flow without replacing the current NAM Lab browser/download workflow.
 
 ## Onboarding and discoverability
 
@@ -95,6 +96,7 @@
 - ~~Training queue status line: fix the misleading green running summary~~ — Done in the workspace redesign. Now strip shows the active job name or "Queue idle"; the "Queue Running - 0 queued" wording is gone.
 - ~~**Training history graph preview**~~ — Stale; training page redesigned.
 - Training watch presets: support more than one preset per watch folder, so one watched source can fan out into multiple training recipes such as `REVxSTD 1000 epoch` and `Standard 500 epoch`.
+- **[HIGH PRIORITY] Queue visual ordering after restart**: when the queue is stopped mid-run (some jobs complete, some still queued) and the app is relaunched, `getPersistableTrainerQueueJobs()` separates unfinished jobs from terminal jobs and places unfinished first — so the visual order scrambles: completed rows appear at the top (from the previous run), then new completions fill in from the top again, leaving completed rows at both top and bottom with in-progress/queued sandwiched in the middle. Fix: preserve the original submission order when restoring the queue from disk; do not reorder by terminal/non-terminal status.
 - Queue UX: support drag-and-drop queue reordering in addition to move up / move down controls.
 - Queue grouping (partially done): queue/history rows already carry submission grouping for `Run WAVs`, `Run Folder`, and `Watcher`; remaining work is to deepen the batch/session UX where it helps without complicating the serial executor.
 - ~~Queue/history grouping UX: collapsed/expanded batches~~ — Done. Queue cards have per-batch chevron + Expand-all / Collapse-all buttons in the filter bar; same on Staged Batches header.
