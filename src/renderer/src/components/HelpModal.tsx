@@ -311,7 +311,7 @@ const NAV_ITEMS: { id: HelpModalTab; label: string; badge?: string }[] = [
   { id: 'workflows', label: 'Workflow Guide' },
   { id: 'features',  label: 'Feature Reference' },
   { id: 'training',  label: 'Training Guide' },
-  { id: 'a2',        label: 'A2', badge: 'Soon' },
+  { id: 'a2',        label: 'A2' },
   { id: 'install',   label: 'First Launch / Install' },
   { id: 'about',     label: 'About NAM Lab' },
 ]

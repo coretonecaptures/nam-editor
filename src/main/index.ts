@@ -67,7 +67,7 @@ function parseAllowedUrl(raw: string, allowedProtocols: string[]): URL | null {
 function isAllowedTone3000Url(raw: string): boolean {
   const url = parseAllowedUrl(raw, ['https:'])
   if (!url) return false
-  return url.hostname === 'www.tone3000.com' || url.hostname === 'tone3000.com'
+  return url.hostname === 'www.tone3000.com' || url.hostname === 'tone3000.com' || url.hostname === 'api.tone3000.com'
 }
 
 function openExternalSafe(raw: string, allowedProtocols = ['https:', 'mailto:']): boolean {
@@ -513,6 +513,7 @@ let trainerPauseAfterCurrent = false
 //   - leave other queued jobs alone (no mass-cancel)
 //   - pause the queue so it doesn't auto-advance to the next job
 let trainerEmergencyRequeue = false
+let trainerEmergencyRequeueJobId: string | null = null
 // Track the highest epoch the embedded Python callback has already reported a sub-model-aware
 // ESR for. tqdm bar parsing skips overwriting epochValidationEsr for epochs <= this number,
 // because the tqdm postfix carries NAM's aggregate val_loss (sum of packed sub-models) which
@@ -1024,11 +1025,23 @@ function saveTrainerQueue(): void {
     // Cap at TRAINER_QUEUE_PERSIST_CAP (most recent end of the array) so the file can't grow
     // unbounded — older entries are in trainer-history.json regardless.
     // Persist the pause flag so auto-start-on-launch can respect it.
-    const payload = { paused: trainerPauseAfterCurrent, jobs: trainerQueue.slice(-TRAINER_QUEUE_PERSIST_CAP) }
+    const payload = { paused: trainerPauseAfterCurrent, jobs: getPersistableTrainerQueueJobs() }
     fs.writeFileSync(getTrainerQueuePath(), JSON.stringify(payload, null, 2), 'utf-8')
   } catch (error) {
     log(`trainer queue save failed: ${String(error)}`)
   }
+}
+
+function isTrainerQueueTerminalStatus(status: TrainerQueueJobStatus): boolean {
+  return status === 'success' || status === 'error' || status === 'canceled'
+}
+
+function getPersistableTrainerQueueJobs(): TrainerQueueJob[] {
+  const unfinished = trainerQueue.filter((job) => !isTrainerQueueTerminalStatus(job.status))
+  if (unfinished.length >= TRAINER_QUEUE_PERSIST_CAP) return unfinished
+  const terminal = trainerQueue.filter((job) => isTrainerQueueTerminalStatus(job.status))
+  const remainingSlots = TRAINER_QUEUE_PERSIST_CAP - unfinished.length
+  return [...unfinished, ...terminal.slice(-remainingSlots)]
 }
 
 function saveTrainerHistory(): void {
@@ -1287,7 +1300,19 @@ let trainerQueueLastSignature = ''
 // Cheap composition signature — captures which jobs exist and what their statuses are. Excludes
 // progress fields that change every tick so we don't churn the signature unnecessarily.
 function computeTrainerQueueSignature(): string {
-  return trainerQueue.map((j) => `${j.jobId}:${j.status}`).join('|')
+  return `${trainerPauseAfterCurrent ? 'paused' : 'live'}|${trainerQueue.map((j) => `${j.jobId}:${j.status}`).join('|')}`
+}
+
+function requestEmergencyRequeueCurrentJob(pauseQueue: boolean): boolean {
+  const activeJobId = trainerState.activeJobId
+  if (!activeJobId) return false
+  trainerEmergencyRequeue = true
+  trainerEmergencyRequeueJobId = activeJobId
+  if (pauseQueue) trainerPauseAfterCurrent = true
+  trainerQueue = trainerQueue.map((job) => (
+    job.jobId === activeJobId ? resetTrainerJobForQueue(job) : job
+  ))
+  return true
 }
 
 function persistTrainerQueueThrottled(): void {
@@ -1311,7 +1336,10 @@ function persistTrainerQueueThrottled(): void {
 }
 
 function emitTrainerState(): void {
-  if (trainerState.activeJobId) {
+  const suppressActiveJobSync =
+    trainerEmergencyRequeueJobId != null &&
+    trainerState.activeJobId === trainerEmergencyRequeueJobId
+  if (trainerState.activeJobId && !suppressActiveJobSync) {
     updateTrainerJob(trainerState.activeJobId, {
       status: trainerState.status === 'starting' ? 'starting' : trainerState.status === 'running' ? 'running' : trainerState.status === 'success' ? 'success' : trainerState.status === 'error' ? 'error' : trainerState.status === 'canceled' ? 'canceled' : 'queued',
       startedAt: trainerState.startedAt,
@@ -1770,9 +1798,13 @@ function resetTrainerJobForQueue(job: TrainerQueueJob): TrainerQueueJob {
   return {
     ...job,
     status: 'queued',
+    startedAt: null,
     finishedAt: null,
+    outputModelPath: '',
+    checkpointModelPath: '',
     error: '',
     validationEsr: null,
+    validationEsrFull: null,
     progressPercent: null,
     progressEpochCurrent: null,
     progressEpochTotal: job.epochs,
@@ -2204,26 +2236,12 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     // and post-processing entirely. The job hasn't really finished — it's just been requeued.
     if (trainerEmergencyRequeue) {
       trainerEmergencyRequeue = false
-      const activeId = trainerState.activeJobId
+      const activeId = trainerEmergencyRequeueJobId
+      trainerEmergencyRequeueJobId = null
       if (activeId) {
         trainerQueue = trainerQueue.map((job) => (
           job.jobId === activeId
-            ? {
-                ...job,
-                status: 'queued',
-                startedAt: null,
-                finishedAt: null,
-                outputModelPath: '',
-                checkpointModelPath: '',
-                validationEsr: null,
-                progressPercent: null,
-                progressEpochCurrent: null,
-                progressBatchCurrent: null,
-                progressBatchTotal: null,
-                progressRate: null,
-                progressLatestLine: '',
-                error: '',
-              }
+            ? resetTrainerJobForQueue(job)
             : job
         ))
       }
@@ -3097,7 +3115,17 @@ function createWindow(): void {
     }).then(({ response }) => {
       if (response === 0) {
         closeConfirmed = true
-        if (trainerChild) { trainerChild.kill(); trainerChild = null }
+        if (requestEmergencyRequeueCurrentJob(false)) {
+          trainerState = {
+            ...trainerState,
+            status: 'canceled',
+            finishedAt: new Date().toISOString(),
+            error: '',
+            progressPhase: 'Closing app...'
+          }
+          emitTrainerState()
+        }
+        if (trainerChild) trainerChild.kill()
         mainWindow?.destroy()
       }
     })
@@ -3140,6 +3168,37 @@ function createWindow(): void {
     mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+  }
+}
+
+function getDialogParentWindow(): BrowserWindow | undefined {
+  return BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined
+}
+
+async function showOpenDialogSafely(
+  options: Electron.OpenDialogOptions,
+  parentWindow: BrowserWindow | undefined = getDialogParentWindow()
+): Promise<Electron.OpenDialogReturnValue> {
+  if (
+    process.platform !== 'win32' ||
+    !parentWindow ||
+    parentWindow.isDestroyed() ||
+    !parentWindow.isMaximized()
+  ) {
+    return dialog.showOpenDialog(parentWindow, options)
+  }
+
+  parentWindow.unmaximize()
+  parentWindow.focus()
+  await new Promise((resolve) => setTimeout(resolve, 75))
+
+  try {
+    return await dialog.showOpenDialog(parentWindow, options)
+  } finally {
+    if (!parentWindow.isDestroyed()) {
+      parentWindow.maximize()
+      parentWindow.focus()
+    }
   }
 }
 
@@ -3894,7 +3953,7 @@ app.whenReady().then(async () => {
 
   // IPC: Open file dialog
   ipcMain.handle('dialog:openFiles', async () => {
-    const result = await dialog.showOpenDialog({
+    const result = await showOpenDialogSafely({
       properties: ['openFile', 'multiSelections'],
       filters: [{ name: 'NAM Files', extensions: ['nam'] }]
     })
@@ -3903,7 +3962,7 @@ app.whenReady().then(async () => {
 
   // IPC: Open image file picker (PNG/JPG/SVG/WEBP) for logo upload
   ipcMain.handle('dialog:openImageFile', async () => {
-    const result = await dialog.showOpenDialog({
+    const result = await showOpenDialogSafely({
       properties: ['openFile'],
       filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'svg', 'webp'] }]
     })
@@ -3912,7 +3971,7 @@ app.whenReady().then(async () => {
 
   // IPC: Open import spreadsheet file picker (.xlsx or .csv)
   ipcMain.handle('dialog:openImportFile', async () => {
-    const result = await dialog.showOpenDialog({
+    const result = await showOpenDialogSafely({
       properties: ['openFile'],
       filters: [{ name: 'Spreadsheet', extensions: ['xlsx', 'csv'] }]
     })
@@ -3920,7 +3979,7 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('dialog:openAudioFile', async () => {
-    const result = await dialog.showOpenDialog({
+    const result = await showOpenDialogSafely({
       properties: ['openFile'],
       filters: [
         { name: 'Audio', extensions: ['wav', 'wave', 'aif', 'aiff'] },
@@ -3931,7 +3990,7 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('dialog:openAudioFiles', async () => {
-    const result = await dialog.showOpenDialog({
+    const result = await showOpenDialogSafely({
       properties: ['openFile', 'multiSelections'],
       filters: [
         { name: 'Audio', extensions: ['wav', 'wave', 'aif', 'aiff'] },
@@ -3943,7 +4002,7 @@ app.whenReady().then(async () => {
 
   // IPC: Open folder dialog
   ipcMain.handle('dialog:openFolder', async (_event, defaultPath?: string) => {
-    const result = await dialog.showOpenDialog({
+    const result = await showOpenDialogSafely({
       properties: ['openDirectory'],
       ...(defaultPath ? { defaultPath } : {})
     })
@@ -4661,11 +4720,11 @@ app.whenReady().then(async () => {
       : process.platform === 'darwin'
         ? [{ name: 'Application', extensions: ['app'] }]
         : [{ name: 'All Files', extensions: ['*'] }]
-    const result = await dialog.showOpenDialog(mainWindow, {
+    const result = await showOpenDialogSafely({
       title: 'Select Neural Amp Modeler standalone',
       properties: ['openFile'],
       filters
-    })
+    }, mainWindow)
     return result.canceled ? null : result.filePaths[0]
   })
 
@@ -4680,8 +4739,7 @@ app.whenReady().then(async () => {
       // Emergency stop targets the CURRENT capture only — other queued jobs stay queued.
       // The active job will be sent back to status='queued' in the close handler so it can be
       // resumed as the first item when the user clicks Resume / Start queue.
-      trainerEmergencyRequeue = true
-      trainerPauseAfterCurrent = true
+      requestEmergencyRequeueCurrentJob(true)
       trainerChild.kill()
       trainerState = {
         ...trainerState,
@@ -5116,6 +5174,13 @@ app.whenReady().then(async () => {
     // Also kill the active run if it belongs to this submission
     if (activeIsInBatch && trainerChild && (trainerState.status === 'running' || trainerState.status === 'starting')) {
       found = true
+      trainerState = {
+        ...trainerState,
+        status: 'canceled',
+        finishedAt: canceledAt,
+        error: 'Batch canceled.',
+      }
+      emitTrainerState()
       trainerChild.kill()
     }
     if (!found) return { success: false, error: 'No queued jobs found for that batch.' }
@@ -5534,7 +5599,7 @@ app.whenReady().then(async () => {
     } catch (e) { return { error: String(e) } }
   })
 
-  ipcMain.handle('tone3000:getModels', async (_event, toneId: number) => {
+  ipcMain.handle('tone3000:getModels', async (_event, toneId: number, architecture?: string) => {
     const valid = await ensureValidToken()
     if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
     try {
@@ -5542,7 +5607,12 @@ app.whenReady().then(async () => {
       let page = 1
       let total = Infinity
       while (all.length < total && all.length < 500) {
-        const res = await fetch(`${T3K_BASE}/api/v1/models?tone_id=${toneId}&page=${page}&page_size=100`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+        const sp = new URLSearchParams()
+        sp.set('tone_id', String(toneId))
+        sp.set('page', String(page))
+        sp.set('page_size', '100')
+        if (architecture) sp.set('architecture', architecture)
+        const res = await fetch(`${T3K_BASE}/api/v1/models?${sp}`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
         if (!res.ok) return { error: `API error ${res.status}` }
         const d = await res.json() as { data: unknown[]; total: number }
         all.push(...(d.data ?? []))
@@ -5681,7 +5751,7 @@ app.whenReady().then(async () => {
       }
     })
 
-  ipcMain.handle('tone3000:search', async (_event, params: { query?: string; page?: number; pageSize?: number; gears?: string[]; sizes?: string[]; sort?: string }) => {
+  ipcMain.handle('tone3000:search', async (_event, params: { query?: string; page?: number; pageSize?: number; gears?: string[]; sizes?: string[]; sort?: string; architecture?: string; platform?: string }) => {
     const valid = await ensureValidToken()
     if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
     const sp = new URLSearchParams()
@@ -5691,6 +5761,8 @@ app.whenReady().then(async () => {
     if (params.sort) sp.set('sort', params.sort)
     if (params.gears?.length) sp.set('gears', params.gears.join('_'))
     if (params.sizes?.length) sp.set('sizes', params.sizes.join('_'))
+    if (params.architecture) sp.set('architecture', params.architecture)
+    if (params.platform) sp.set('platform', params.platform)
     try {
       const res = await fetch(`${T3K_BASE}/api/v1/tones/search?${sp}`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
       if (!res.ok) return { error: `API error ${res.status}` }
@@ -5813,11 +5885,11 @@ app.whenReady().then(async () => {
   ipcMain.handle('cover:openImagePicker', async () => {
     const win = BrowserWindow.getFocusedWindow()
     if (!win) return null
-    const result = await dialog.showOpenDialog(win, {
+    const result = await showOpenDialogSafely({
       title: 'Select cover image',
       filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif'] }],
       properties: ['openFile'],
-    })
+    }, win)
     return result.canceled ? null : result.filePaths[0] ?? null
   })
 

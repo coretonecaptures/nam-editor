@@ -209,9 +209,14 @@ NAM Lab can browse and download Tone3000 captures inside the app.
 Key behaviors:
 - all-tones search
 - my-files view
+- favorites view
 - remembered search term
 - open creator / public page
 - local "find similar on Tone3000"
+- architecture filter: `A1` / `A2` / `Custom`
+- search-level size filter
+- platform filter, defaulting to `NAM` since that is the primary NAM Lab workflow
+- creator username lookup with autocomplete suggestions
 - large downloads use a background queue
 - queue survives leaving the Tone3000 panel
 - queue handles retries and cooldowns
@@ -219,6 +224,14 @@ Key behaviors:
 - duplicate local filenames are skipped before download
 - destination folders can be auto-seeded with Pack Info
 - both `ampcover.*` and original Tone3000 image can be saved
+
+Notes:
+- creator filtering is still best-effort because Tone3000 search does not expose a direct "all tones by arbitrary creator" browse endpoint in the way NAM Lab would ideally want
+- architecture badges on result cards are counts, not versions or ESR values:
+  - `A1 x26` = 26 A1 models in that Tone3000 tone
+  - `A2 x26` = 26 A2 models in that Tone3000 tone
+  - `Custom x3` = 3 custom models in that Tone3000 tone
+- detail view also shows per-model architecture badges when Tone3000 exposes them
 
 ---
 
@@ -507,7 +520,7 @@ NAM Lab orchestrates the NAM Python trainer directly inside the app. Full detail
 - **Live Run** — real-time ESR-over-epochs chart fed by an embedded `pytorch_lightning.Callback` that NAM Lab installs into the trainer so per-epoch validation ESR actually populates (the official NAM trainer's tqdm postfix carries training loss, not validation ESR). Statline cells for Epoch / Rate / Validation ESR / Started; secondary MRSTFT / MSE statline (frequency-domain and time-domain losses) that appears when the trainer reports them, with Full/Lite split for A2 runs; Final output + Checkpoint paths; collapsible Raw trainer log that mirrors what an Anaconda shell would show (tqdm-aware dedupe + filter so each epoch becomes one rolling line instead of hundreds).
 - **Queue** — batch-grouped, with Expand-all / Collapse-all, status / profile / architecture filters, and tiles that count both **captures** and **batches**. Finished / failed / canceled rows auto-clear when a new batch is queued; history is the source of truth. Each batch group shows a **Run next** button when the batch is not already at the front, so you can promote urgent work without canceling anything. The Resume button pulses with an accent ring while the queue is paused and jobs are waiting.
 - **Staged Batches** — drafts saved via **Stage** in Create Batch. Cards with amber type icon + Staged pill + color-coded architecture chips per unique arch in the batch + routing line + Edit / Delete / Queue-now / expand-to-see-captures.
-- **History** — ESR-quality and Throughput trend charts, search bar with magnifier icon, segmented status filter (All / Done / Failed / Canceled), grouped by batch submission with `N done` / `N failed` counts + **Retry failed** + **Retry batch** buttons on every group header. Each row has a seeded MiniEsrPlot thumbnail tinted to the entry ESR tone; failed rows show their architecture chip + profile + epochs + duration on one line and the failure reason in red mono on the next. Right-click → View ESR plot / Retry / Reveal in folder / Purge from history / Purge entire batch (with confirm modal — only the history record is removed, on-disk `.nam` and PNG stay). Whole row click opens the ESR plot modal.
+- **History** — ESR-quality and Throughput trend charts, search bar with magnifier icon, segmented status filter (All / Done / Failed / Canceled), grouped by batch submission with `N done` / `N failed` counts + **Retry failed** + **Retry batch** buttons on every group header. Each row has a compact status icon tinted to the entry ESR tone; failed rows show their architecture chip + profile + epochs + duration on one line and the failure reason in red mono on the next. Right-click → View ESR plot / Retry / Reveal in folder / Purge from history / Purge entire batch (with confirm modal — only the history record is removed, on-disk `.nam` and PNG stay). Whole row click opens the ESR plot modal.
 - **New Run** (Create Batch) — optional Batch name field with smart placeholder (capture / folder / count), Input DI, drop-or-pick output WAVs, Preset selector on one line + Architecture multi-select with **A2 first, A1 variants prefixed as `A1 - Standard` / `A1 - Lite` / etc.**, color-coded selection chips below with × buttons to remove. Submitting clears the form and jumps to Queue (or Batches for staged) so duplicate submissions are hard to make by accident.
 - **Mixed A1 + A2 batches** — one ticked architecture spawns one job; one batch can mix A1 variants and A2 freely, all under one shared submission. `namMode` is derived per-job from `architecture` so the right Python runner (`_run_a2` / `_run_a1_v13` / `_run_a1`) fires per capture.
 - **Quick Add** — Dashboard card that fires a training run from your favorite preset + favorite routing + default DI without opening Create Batch. Falls back to the global output formula if the favorite routing is empty.

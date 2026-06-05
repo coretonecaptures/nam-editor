@@ -111,6 +111,15 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function makeSubmissionId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2, 10)}`
+}
+
+function buildTone3000FileName(name: string): string {
+  const safeName = name.replace(/[^\w.\- ]/g, '_').trim() || 'tone'
+  return safeName.toLowerCase().endsWith('.nam') ? safeName : `${safeName}.nam`
+}
+
 function migrateLegacyNamBotInMemory(meta: NamFile['metadata']): NamFile['metadata'] {
   const training = meta.training as Record<string, unknown> | undefined
   const legacy = training?.nam_bot as Record<string, unknown> | undefined
@@ -203,6 +212,21 @@ function parentFolderPath(path: string): string {
   const parentParts = parts.slice(0, -1)
   if (rootPrefix) return `${rootPrefix}/${parentParts.slice(1).join('/')}`.replace(/\/+/g, '/')
   return parentParts.join('/')
+}
+
+async function buildUniqueFileName(destDir: string, collisionBaseName: string): Promise<string> {
+  let desiredBaseName = collisionBaseName
+  let targetPath = `${destDir.replace(/\\/g, '/')}/${desiredBaseName}`
+  let suffix = 2
+  while ((await window.api.readFile(targetPath)).success) {
+    const dotIndex = collisionBaseName.lastIndexOf('.')
+    const stem = dotIndex > 0 ? collisionBaseName.slice(0, dotIndex) : collisionBaseName
+    const ext = dotIndex > 0 ? collisionBaseName.slice(dotIndex) : ''
+    desiredBaseName = `${stem} (${suffix})${ext}`
+    targetPath = `${destDir.replace(/\\/g, '/')}/${desiredBaseName}`
+    suffix += 1
+  }
+  return desiredBaseName
 }
 
 function sanitizeCleanupPathPart(value: string): string {
@@ -400,12 +424,12 @@ declare global {
       tone3000Status: () => Promise<{ connected: boolean; username: string | null }>
       tone3000Connect: () => Promise<{ ok: boolean; username?: string | null; error?: string }>
       tone3000Disconnect: () => Promise<{ ok: boolean }>
-        tone3000Search: (params: { query?: string; page?: number; pageSize?: number; gears?: string[]; sizes?: string[]; sort?: string }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
+        tone3000Search: (params: { query?: string; page?: number; pageSize?: number; gears?: string[]; sizes?: string[]; sort?: string; architecture?: string; platform?: string }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
         tone3000UsersSearch: (params: { query: string; page?: number; pageSize?: number; sort?: string }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
         tone3000Created: (params: { page?: number; pageSize?: number }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
         tone3000Favorited: (params: { page?: number; pageSize?: number }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
         tone3000GetTone: (toneId: number) => Promise<{ ok?: boolean; tone?: unknown; error?: string }>
-      tone3000GetModels: (toneId: number) => Promise<{ ok?: boolean; models?: unknown[]; error?: string }>
+      tone3000GetModels: (toneId: number, architecture?: string) => Promise<{ ok?: boolean; models?: unknown[]; error?: string }>
       tone3000Download: (modelUrl: string, name: string) => Promise<{ ok?: boolean; localPath?: string; error?: string }>
       tone3000FileExists: (destDir: string, name: string) => Promise<{ exists: boolean; destPath?: string }>
       tone3000SaveCoverImage: (imageUrl: string, destDir: string) => Promise<{ ok?: boolean; skipped?: boolean; destPath?: string; error?: string }>
@@ -418,7 +442,7 @@ declare global {
 
 
 // onLoad=true: per-field fillOnLoad flags are enforced (auto-fill on open)
-// onLoad=false: manual re-apply / training — always apply if enableCaptureDefaults is on
+// onLoad=false: manual re-apply / training Ã¢â‚¬â€ always apply if enableCaptureDefaults is on
 function applyDefaults(meta: NamFile['metadata'], baseName: string, settings: AppSettings, onLoad = false): NamFile['metadata'] {
   const m = { ...meta }
 
@@ -468,7 +492,7 @@ function applyDefaults(meta: NamFile['metadata'], baseName: string, settings: Ap
   return m
 }
 
-// Keywords that map to each tone type Ã¢â‚¬â€ order within each array doesn't matter,
+// Keywords that map to each tone type ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â order within each array doesn't matter,
 // detection picks the keyword that appears latest in the filename (rightmost wins)
 const TONE_KEYWORDS: Record<typeof TONE_TYPES[number], string[]> = {
   'clean':      ['clean'],
@@ -598,9 +622,9 @@ export default function App() {
   const [folderPanelTab, setFolderPanelTab] = useState<'overview' | 'pack' | 'checklist' | 'gallery' | 'readme' | 'targets'>(settings.defaultFolderTab)
   // Path of the ancestor that owns the pack info for the current folder (null = current folder may own one)
   const [packInfoAncestor, setPackInfoAncestor] = useState<string | null>(null)
-  // Set of folder paths that have a valid nam-pack.json (non-empty title) Ã¢â‚¬â€ drives blue dot in tree
+  // Set of folder paths that have a valid nam-pack.json (non-empty title) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â drives blue dot in tree
   const [packInfoFolders, setPackInfoFolders] = useState<Set<string>>(new Set())
-  // Set of folder paths that have a nam-bundle.json Ã¢â‚¬â€ drives chain-link icon in tree
+  // Set of folder paths that have a nam-bundle.json ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â drives chain-link icon in tree
   const [bundleFolders, setBundleFolders] = useState<Set<string>>(new Set())
   // Folder compare modal: array of paths to compare (null = closed)
   const [compareFolderPaths, setCompareFolderPaths] = useState<string[] | null>(null)
@@ -643,7 +667,7 @@ export default function App() {
     if (!initial.error || !/\(403\)/.test(initial.error)) return initial
 
     await wait(1500)
-    const refreshedModels = await window.api.tone3000GetModels(toneId)
+    const refreshedModels = await window.api.tone3000GetModels(toneId, model.architecture_version)
     if (refreshedModels.error || !refreshedModels.models) return { ...initial, retryable403: true }
     const refreshed = (refreshedModels.models as ToneModel[]).find((entry) => entry.id === model.id)
     if (!refreshed) return { ...initial, retryable403: true }
@@ -686,22 +710,6 @@ export default function App() {
         if (toneStoreQueueAbortRef.current !== abortToken) return
         const model = items[i]
 
-        const existingDest = await window.api.tone3000FileExists(toneStoreQueueJob.destDir, model.name)
-        if (toneStoreQueueAbortRef.current !== abortToken) return
-        if (existingDest.exists) {
-          skipped++
-          setToneStoreQueueJob((prev) => prev ? {
-            ...prev,
-            items,
-            downloadedPaths: [...downloadedPaths],
-            skipped,
-            nextIndex: i + 1,
-            resumePass: 0,
-            message: `Skipping existing file ${i + 1} of ${items.length}...`
-          } : prev)
-          continue
-        }
-
         setToneStoreQueueJob((prev) => prev ? { ...prev, nextIndex: i, message: `Downloading ${i + 1} of ${items.length}...` } : prev)
 
         const dlResult = await runToneStoreQueueStep(toneStoreQueueJob.toneId, model)
@@ -732,13 +740,49 @@ export default function App() {
           return
         }
 
-        const copyResults = await window.api.copyFiles([dlResult.localPath], toneStoreQueueJob.destDir)
+        const collisionBaseName = buildTone3000FileName(model.name)
+        const existingDest = await window.api.tone3000FileExists(toneStoreQueueJob.destDir, model.name)
         if (toneStoreQueueAbortRef.current !== abortToken) return
-        const copied = copyResults[0]
+
+        let desiredBaseName: string | undefined
+        if (existingDest.exists && existingDest.destPath) {
+          const hashResults = await window.api.hashFilesWithoutMetadata([dlResult.localPath, existingDest.destPath])
+          if (toneStoreQueueAbortRef.current !== abortToken) return
+          const localHash = hashResults.find((result) => result.filePath === dlResult.localPath && result.success)?.hash
+          const existingHash = hashResults.find((result) => result.filePath === existingDest.destPath && result.success)?.hash
+          if (localHash && existingHash && localHash === existingHash) {
+            skipped++
+            setToneStoreQueueJob((prev) => prev ? {
+              ...prev,
+              items,
+              downloadedPaths: [...downloadedPaths],
+              skipped,
+              nextIndex: i + 1,
+              resumePass: 0,
+              message: `Skipping exact duplicate ${i + 1} of ${items.length}...`
+            } : prev)
+            continue
+          }
+          desiredBaseName = await buildUniqueFileName(toneStoreQueueJob.destDir, collisionBaseName)
+          if (toneStoreQueueAbortRef.current !== abortToken) return
+        }
+
+        let copyResults = await window.api.copyFiles(
+          [dlResult.localPath],
+          toneStoreQueueJob.destDir,
+          desiredBaseName ? [desiredBaseName] : undefined
+        )
+        if (toneStoreQueueAbortRef.current !== abortToken) return
+        let copied = copyResults[0]
+        if (copied.error === 'exists') {
+          const retryBaseName = await buildUniqueFileName(toneStoreQueueJob.destDir, desiredBaseName ?? collisionBaseName)
+          if (toneStoreQueueAbortRef.current !== abortToken) return
+          copyResults = await window.api.copyFiles([dlResult.localPath], toneStoreQueueJob.destDir, [retryBaseName])
+          if (toneStoreQueueAbortRef.current !== abortToken) return
+          copied = copyResults[0]
+        }
         if (copied.success && copied.destPath) {
           downloadedPaths.push(copied.destPath)
-        } else if (copied.error === 'exists') {
-          skipped++
         } else {
           const errorMessage = `Failed on "${model.name}": ${copied.error ?? 'copy failed'}`
           setToneStoreQueueJob((prev) => prev ? { ...prev, items, nextIndex: i, skipped, status: 'error', message: errorMessage } : prev)
@@ -853,7 +897,7 @@ export default function App() {
 
       const selectedCount = items.length
       const msg = skipped > 0
-        ? `${selectedCount} model${selectedCount !== 1 ? 's' : ''} selected, ${downloadedPaths.length} saved, ${skipped} skipped (already existed or duplicate filenames)${coverSaved ? ', ampcover image added' : ''}`
+        ? `${selectedCount} model${selectedCount !== 1 ? 's' : ''} selected, ${downloadedPaths.length} saved, ${skipped} skipped (exact duplicates)${coverSaved ? ', ampcover image added' : ''}`
         : `${selectedCount} model${selectedCount !== 1 ? 's' : ''} selected, ${downloadedPaths.length} saved${coverSaved ? ', ampcover image added' : ''}`
       setToneStoreQueueJob((prev) => prev ? { ...prev, items, downloadedPaths, skipped, nextIndex: items.length, status: 'done', message: msg } : prev)
       setStatus({ message: `Tone3000 download complete: ${msg}`, type: 'success' })
@@ -1061,7 +1105,7 @@ export default function App() {
           if (lastSlash <= 0) break
           const parent = current.substring(0, lastSlash)
           if (!parent.startsWith(normRoot) || parent.length < normRoot.length) break
-          if (parent === normRoot) break  // stop before root Ã¢â‚¬â€ root images only show at root
+          if (parent === normRoot) break  // stop before root ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â root images only show at root
           const parentResult = await window.api.scanImages(parent)
           if (cancelled) return
           const parentPaths = parentResult.success
@@ -1300,6 +1344,18 @@ export default function App() {
         const merged = existing.map((e) => backfilledByPath.get(e.sourcePath) ?? e)
         const existingPaths = new Set(existing.map((e) => e.sourcePath))
         for (const e of entries) { if (!existingPaths.has(e.sourcePath)) merged.push(e) }
+        const unchanged =
+          merged.length === existing.length &&
+          merged.every((entry, index) => {
+            const prior = existing[index]
+            return prior &&
+              prior.sourcePath === entry.sourcePath &&
+              prior.sizeBytes === entry.sizeBytes &&
+              prior.mtimeMs === entry.mtimeMs &&
+              prior.importedAt === entry.importedAt &&
+              prior.contentHash === entry.contentHash
+          })
+        if (unchanged) return prev
         const next = { ...prev, folderWatchImports: { ...prev.folderWatchImports, [key]: merged } }
         saveSettings(next)
         return next
@@ -1323,7 +1379,7 @@ export default function App() {
 
   // Electron on Windows loses keyboard focus when the focused DOM element is removed
   // (e.g. BatchEditor unmounts) or after native confirm dialogs close. Chromium's
-  // internal focus state gets stale. Fix: DOM focus as first attempt, then a blurÃ¢â€ â€™focus
+  // internal focus state gets stale. Fix: DOM focus as first attempt, then a blurÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢focus
   // cycle in main process which resets OS-level keyboard routing (same as Alt+Tab).
   useEffect(() => {
     mainContentRef.current?.focus()
@@ -1357,7 +1413,7 @@ export default function App() {
     }
     const onUp = () => {
       draggingRef.current = null
-      // Persist layout Ã¢â‚¬â€ save per-mode list width
+      // Persist layout ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â save per-mode list width
       saveLayout({
         treeWidth: latestTree,
         listWidthList: listViewMode === 'list' ? latestList : loadLayout().listWidthList,
@@ -1443,7 +1499,7 @@ export default function App() {
     else setStatus({ message: `Failed to delete pack info: ${res.error}`, type: 'error' })
   }
 
-  // Called by PackInfoEditor after saving Ã¢â‚¬â€ updates the blue-dot set in the tree
+  // Called by PackInfoEditor after saving ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â updates the blue-dot set in the tree
   const handlePackSaved = (folderPath: string, hasData: boolean) => {
     setPackInfoFolders((prev) => {
       const next = new Set(prev)
@@ -1453,7 +1509,7 @@ export default function App() {
     })
   }
 
-  // Auto-load default folder on startup (moved below loadFolderByPath Ã¢â‚¬â€ see combined startup effect)
+  // Auto-load default folder on startup (moved below loadFolderByPath ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â see combined startup effect)
 
   // mode='replace': clear existing, load fresh (open folder/files)
   // Shared: turn raw IPC read results into NamFile[] and update state
@@ -1488,7 +1544,7 @@ export default function App() {
       const existing = new Set(prev.map((f) => f.filePath))
       return [...prev, ...loaded.filter((f) => !existing.has(f.filePath))]
     })
-    // Read and clear outside the updater Ã¢â‚¬â€ updaters can be called multiple times in Concurrent Mode
+    // Read and clear outside the updater ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â updaters can be called multiple times in Concurrent Mode
     const shouldSuppressSelect = suppressStartupAutoSelectRef.current
     suppressStartupAutoSelectRef.current = false
     setSelectedIds((prev) => {
@@ -1597,7 +1653,7 @@ export default function App() {
     setWatcherKey((k) => k + 1)
   }, [loadFiles, settings])
 
-  // Subscribe to app:openFiles Ã¢â‚¬â€ for files opened while app is already running
+  // Subscribe to app:openFiles ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â for files opened while app is already running
   useEffect(() => {
     const unsub = window.api.onOpenFiles((paths) => loadFiles(paths, 'append'))
     return unsub
@@ -1613,15 +1669,15 @@ export default function App() {
   useEffect(() => {
     window.api.getPendingFiles().then((paths) => {
       if (paths.length > 0) {
-        // File was opened via double-click / file association Ã¢â‚¬â€ load just those files
+        // File was opened via double-click / file association ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â load just those files
         loadFiles(paths, 'replace')
       } else if (settings.enableDefaultFolder && settings.defaultFolder) {
-        // No pending files Ã¢â‚¬â€ restore last folder as normal
+        // No pending files ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â restore last folder as normal
         loadFolderByPath(settings.defaultFolder)
       }
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // intentionally empty Ã¢â‚¬â€ runs once on mount after React is ready
+  }, []) // intentionally empty ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â runs once on mount after React is ready
 
   // Returns false if user cancels, true if safe to proceed
   const confirmDiscardChanges = (): boolean => {
@@ -1654,7 +1710,7 @@ export default function App() {
     setLibrarian(EMPTY_LIBRARIAN)
     setCardView(false)
     setStatus({ message: 'Open .nam files or a folder to get started', type: 'info' })
-    // Don't reopen on next launch Ã¢â‚¬â€ user explicitly closed
+    // Don't reopen on next launch ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â user explicitly closed
     setSettings((prev) => {
       const updated = { ...prev, enableDefaultFolder: false }
       saveSettings(updated)
@@ -1697,7 +1753,7 @@ export default function App() {
     refreshFolderTreeRef.current = refreshFolderTree
   }, [refreshFolderTree])
 
-  // OS drag/drop Ã¢â‚¬â€ use React synthetic onDrop on the root div (works in Electron;
+  // OS drag/drop ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â use React synthetic onDrop on the root div (works in Electron;
   // native document-level listeners do NOT receive OS file drops in Electron 41+).
   // Guard against intra-app drags (application/x-nam-files) which are handled by FolderTree.
   const handleOsDrop = async (e: React.DragEvent) => {
@@ -1807,7 +1863,7 @@ export default function App() {
 
   const handleSaveAndAdvance = async (filePath: string) => {
     await handleSave(filePath)
-    // Use same visibility logic as visibleFiles (folder filter only Ã¢â‚¬â€ no FileList internal filters)
+    // Use same visibility logic as visibleFiles (folder filter only ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â no FileList internal filters)
     const currentVisible = files.filter((f) => {
       const norm = f.filePath.replace(/\\/g, '/')
       if (librarian.selectedFolders.length > 0 && !librarian.selectedFolders.some((sf) => norm.startsWith(sf + '/'))) return false
@@ -1887,7 +1943,7 @@ export default function App() {
     const { gear_make, gear_model, gear_type } = file.metadata
     if (!gear_make || !gear_model) return null
     const gearLabel = gear_type ? `${gear_type.replace(/_/g, ' ')} ` : ''
-    const prompt = `You are an expert in guitar amplifiers, pedals, and audio gear. Write exactly 2–3 sentences describing the ${gearLabel}"${gear_make} ${gear_model}". Cover its tonal character, gain range or key modes/channels, and what genres or playing styles it's best known for. Be factual and specific. Write in present tense. Do not start with "The".`
+    const prompt = `You are an expert in guitar amplifiers, pedals, and audio gear. Write exactly 2Ã¢â‚¬â€œ3 sentences describing the ${gearLabel}"${gear_make} ${gear_model}". Cover its tonal character, gain range or key modes/channels, and what genres or playing styles it's best known for. Be factual and specific. Write in present tense. Do not start with "The".`
     const provider = settings.aiProvider ?? 'anthropic'
     const model = provider === 'anthropic' ? (settings.aiAnthropicModel || 'claude-haiku-4-5-20251001') : (settings.aiOpenAiModel || 'gpt-4o-mini')
     const res = await window.api.aiEnrich({ prompt, provider, model })
@@ -1950,9 +2006,9 @@ CAPTURE PACK DATA:
 ${captureContext}
 
 INSTRUCTIONS:
-- Write 3–5 sentences total.
-- Paragraph 1 (2–3 sentences): Describe the real ${gear_make} ${gear_model} — its character, key specs, notable channels or modes, and what it's known for. Draw on accurate knowledge of this specific piece of gear. If you are NOT familiar with this exact model or it appears to be a custom/boutique/fictional piece of gear, say so honestly (e.g. "This appears to be a boutique or custom design...") rather than inventing facts.
-- Paragraph 2 (1–2 sentences): Summarize what was captured in this pack — number of captures, tone types covered, channels captured, any pedals or special setups used. Ground this in the capture data above.
+- Write 3Ã¢â‚¬â€œ5 sentences total.
+- Paragraph 1 (2Ã¢â‚¬â€œ3 sentences): Describe the real ${gear_make} ${gear_model} Ã¢â‚¬â€ its character, key specs, notable channels or modes, and what it's known for. Draw on accurate knowledge of this specific piece of gear. If you are NOT familiar with this exact model or it appears to be a custom/boutique/fictional piece of gear, say so honestly (e.g. "This appears to be a boutique or custom design...") rather than inventing facts.
+- Paragraph 2 (1Ã¢â‚¬â€œ2 sentences): Summarize what was captured in this pack Ã¢â‚¬â€ number of captures, tone types covered, channels captured, any pedals or special setups used. Ground this in the capture data above.
 - Be specific and factual. Do not use filler phrases like "This amp is renowned for" or "This versatile unit". Do not start with "The".
 - Write in present tense. Plain text only, no markdown.`
 
@@ -2119,7 +2175,7 @@ INSTRUCTIONS:
 
     if (moved.length === 0) return
 
-    // Update files state Ã¢â‚¬â€ repath moved files, clear dirty flag
+    // Update files state ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â repath moved files, clear dirty flag
     const movedMap = new Map(moved.map((m) => [m.oldPath, m.newPath]))
     setFiles((prev) =>
       prev.map((f) => {
@@ -2464,7 +2520,7 @@ INSTRUCTIONS:
     const conflictPaths: string[] = []
     let failed = 0
 
-    // First pass Ã¢â‚¬â€ move non-conflicting files
+    // First pass ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â move non-conflicting files
     for (const p of paths) {
       const result = await window.api.moveFile(p, destFolder)
       if (result.success) movedPaths.add(p)
@@ -2540,7 +2596,7 @@ INSTRUCTIONS:
     setStatus({ message: `Applied defaults to ${paths.length} file${paths.length !== 1 ? 's' : ''}`, type: 'success' })
   }
 
-  // Fields that make sense to copy Ã¢â‚¬â€ editable metadata only, no read-only stats
+  // Fields that make sense to copy ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â editable metadata only, no read-only stats
   const COPYABLE_FIELDS: (keyof NamFile['metadata'])[] = [
     'modeled_by', 'gear_type', 'gear_make', 'gear_model', 'tone_type',
     'input_level_dbu', 'output_level_dbu', 'nb_trained_epochs',
@@ -2595,7 +2651,7 @@ INSTRUCTIONS:
     else doExportXLSX(targets, ALL_GRID_COLUMNS, filename)
   }
 
-  // Column definition for import/export template Ã¢â‚¬â€ editable fields only, in user-preferred order
+  // Column definition for import/export template ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â editable fields only, in user-preferred order
   const IMPORT_COLUMNS: { header: string; field: keyof NamFile['metadata'] | null }[] = [
     { header: 'Capture Name',       field: 'name' },
     { header: 'Modeled By',         field: 'modeled_by' },
@@ -2613,7 +2669,7 @@ INSTRUCTIONS:
     { header: 'Reamp Send (dBu)',   field: 'input_level_dbu' },
     { header: 'Reamp Return (dBu)', field: 'output_level_dbu' },
     { header: 'Trained Epochs',     field: 'nb_trained_epochs' },
-    { header: 'NAM-BOT Preset',     field: null }, // read-only Ã¢â‚¬â€ shown in template, skipped on import
+    { header: 'NAM-BOT Preset',     field: null }, // read-only ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â shown in template, skipped on import
     { header: 'Mic(s)',             field: 'nl_mics' },
     { header: 'Comments',           field: 'nl_comments' },
   ]
@@ -2711,7 +2767,7 @@ INSTRUCTIONS:
       return
     }
 
-    // Build lookup: name (lowercase) Ã¢â€ â€™ NamFile[], scoped to folderPath.
+    // Build lookup: name (lowercase) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ NamFile[], scoped to folderPath.
     // Stores arrays to handle multiple files sharing the same capture name (different subfolders).
     const scopedFiles = folderPath === null
       ? files
@@ -2726,12 +2782,12 @@ INSTRUCTIONS:
       }
     }
 
-    // Fields skipped for prefix (variant-specific) matches Ã¢â‚¬â€ nl_ cabinet/mic fields vary
+    // Fields skipped for prefix (variant-specific) matches ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â nl_ cabinet/mic fields vary
     // per variant. gear_type is handled separately with cab-upgrade logic below.
-    // tone_type is NOT skipped Ã¢â‚¬â€ it's the same across DI/cab variants of the same session.
+    // tone_type is NOT skipped ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â it's the same across DI/cab variants of the same session.
     const PREFIX_SKIP: Set<keyof NamFile['metadata']> = new Set(['nl_cabinet', 'nl_cabinet_config', 'nl_mics'])
 
-    // For prefix matches only: ampÃ¢â€ â€™amp_cab, pedal_ampÃ¢â€ â€™amp_pedal_cab. All other gear_types skipped.
+    // For prefix matches only: ampÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢amp_cab, pedal_ampÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢amp_pedal_cab. All other gear_types skipped.
     const CAB_UPGRADE: Record<string, string> = { amp: 'amp_cab', pedal_amp: 'amp_pedal_cab' }
 
     // Defined early so Pass 1 can use it to detect DI files by their own name suffix.
@@ -2753,7 +2809,7 @@ INSTRUCTIONS:
         if (strVal === '') continue
         if (col.field === 'gear_type') {
           if (isPrefix) {
-            // Prefix match: upgrade ampÃ¢â€ â€™amp_cab / pedal_ampÃ¢â€ â€™amp_pedal_cab; skip everything else
+            // Prefix match: upgrade ampÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢amp_cab / pedal_ampÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢amp_pedal_cab; skip everything else
             const upgraded = CAB_UPGRADE[strVal]
             if (upgraded) (incoming as Record<string, unknown>)[col.field] = upgraded
             continue
@@ -2768,7 +2824,7 @@ INSTRUCTIONS:
       return incoming
     }
 
-    // Pass 1: exact matches Ã¢â‚¬â€ all files sharing a name get claimed; track which have explicit gear_type
+    // Pass 1: exact matches ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â all files sharing a name get claimed; track which have explicit gear_type
     const exactMatches: ImportMatch[] = []
     const exactMatchedPaths = new Set<string>()
     const exactGearTypePaths = new Set<string>()  // files where exact row explicitly set gear_type
@@ -2778,12 +2834,12 @@ INSTRUCTIONS:
       const matchedFiles = nameToFiles.get(captureName.toLowerCase())
       if (!matchedFiles || matchedFiles.length === 0) continue
       for (const file of matchedFiles) {
-        // Always mark exact-matched Ã¢â‚¬â€ prevents prefix from a different row overriding it
+        // Always mark exact-matched ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â prevents prefix from a different row overriding it
         exactMatchedPaths.add(file.filePath)
         const incoming = buildIncoming(row)
         // Block Pass 3 cab upgrade if:
         //   (a) gear_type is already a cab-inclusive type (amp_cab / amp_pedal_cab), OR
-        //   (b) this file's own name ends with a configured DI suffix Ã¢â‚¬â€ it IS the DI capture,
+        //   (b) this file's own name ends with a configured DI suffix ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â it IS the DI capture,
         //       not a cab variant, so it must keep its gear_type unchanged.
         // Non-DI files with amp/pedal_amp are left unprotected so Pass 3 can upgrade them.
         const fileWords = (file.metadata.name || file.fileName || '').trim().split(/\s+/)
@@ -2799,7 +2855,7 @@ INSTRUCTIONS:
       }
     }
 
-    // Pass 1.5: full-name prefix matches Ã¢â‚¬â€ file name starts with "{rowName} "
+    // Pass 1.5: full-name prefix matches ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â file name starts with "{rowName} "
     // Treated as direct matches (all fields, no cab upgrade). Covers variants like
     // "FMAN100V2 BE HG C45 DI HYPER" when the row is "FMAN100V2 BE HG C45 DI".
     const fullPrefixMatchedRowNames = new Set<string>()
@@ -2821,7 +2877,7 @@ INSTRUCTIONS:
       }
     }
 
-    // Pass 2: prefix matches Ã¢â‚¬â€ only for files WITHOUT an exact match row.
+    // Pass 2: prefix matches ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â only for files WITHOUT an exact match row.
     // Sort by prefix length descending so the most specific (longest) DI row wins
     // when multiple DI rows share a common base prefix.
     const prefixMatches: ImportMatch[] = []
@@ -2854,7 +2910,7 @@ INSTRUCTIONS:
     // Pass 3: supplement gear_type for exact-matched files whose Excel row had no gear_type.
     // These files are blocked from prefix matching above, but should still inherit
     // the CAB_UPGRADE gear_type from a matching DI row (e.g. "BE100 Mars" has its own row
-    // with tone_type set but no gear_type Ã¢â€ â€™ "BE100 DI" row contributes amp_cab).
+    // with tone_type set but no gear_type ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ "BE100 DI" row contributes amp_cab).
     const pathToFile = new Map(scopedFiles.map(f => [f.filePath, f]))
     const exactMatchByPath = new Map(exactMatches.map(m => [m.file.filePath, m]))
     // Sort DI rows longest-prefix-first so the most specific row wins when multiple
@@ -3718,15 +3774,22 @@ INSTRUCTIONS:
   const selectedSingleFilePath = selectedFiles.length === 1 ? selectedFiles[0].filePath : null
   const selectedFileSignature = selectedFiles.map((f) => f.filePath).sort().join('|')
   const skipNextTrainingWorkspaceSelectionCloseRef = useRef(false)
+  const trainerSnapshotSigRef = useRef(buildTrainerSnapshotSignature(IDLE_TRAINER_STATE))
   const previousSelectionSignatureRef = useRef(selectedFileSignature)
 
   useEffect(() => {
     let alive = true
+    const applyTrainerState = (state: TrainerStateSnapshot) => {
+      const nextSig = buildTrainerSnapshotSignature(state)
+      if (trainerSnapshotSigRef.current === nextSig) return
+      trainerSnapshotSigRef.current = nextSig
+      setGlobalTrainerState(state)
+    }
     void window.api.getTrainerState().then((state) => {
-      if (alive) setGlobalTrainerState(state)
+      if (alive) applyTrainerState(state)
     }).catch(() => null)
     const unsubscribe = window.api.onTrainerUpdate((state) => {
-      if (alive) setGlobalTrainerState(state)
+      if (alive) applyTrainerState(state)
     })
     return () => {
       alive = false
@@ -3773,8 +3836,8 @@ INSTRUCTIONS:
     const savePlot = preset?.savePlot ?? false
     const ignoreChecks = preset?.ignoreChecks ?? false
     const modeledBy = settings.enableCaptureDefaults && settings.defaultModeledBy.trim() ? settings.defaultModeledBy.trim() : null
-    const submissionId = `wav-check-${Date.now()}`
-    const submissionLabel = `WAV Check – ${wavPaths.length} capture${wavPaths.length !== 1 ? 's' : ''}`
+    const submissionId = makeSubmissionId('wav-check')
+    const submissionLabel = `WAV Check Ã¢â‚¬â€œ ${wavPaths.length} capture${wavPaths.length !== 1 ? 's' : ''}`
     const submissionCreatedAt = new Date().toISOString()
     const payloads: TrainerStartPayload[] = wavPaths.flatMap((wavPath) =>
       architectures.map((architecture) => ({
@@ -4094,13 +4157,13 @@ INSTRUCTIONS:
         />
       )}
 
-      {/* 3-panel layout — hidden in card view unless ToneStore is open (then right-panel only) */}
+      {/* 3-panel layout Ã¢â‚¬â€ hidden in card view unless ToneStore is open (then right-panel only) */}
       <div className="flex flex-1 overflow-hidden relative" style={
         cardView && showToneStorePanel ? { width: toneStorePanelWidth, flexBasis: toneStorePanelWidth, flexShrink: 0, flexGrow: 0 }
         : cardView ? { display: 'none' }
         : undefined
       }>
-        {/* Folder tree — only shown when a folder is open */}
+        {/* Folder tree Ã¢â‚¬â€ only shown when a folder is open */}
         {hasTree && !(cardView && showToneStorePanel) && (
           <>
             <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: (treeCollapsed || gridMaximized || showTrainingWorkspace || (cardView && showToneStorePanel)) ? 0 : treeWidth, overflow: 'hidden' }}>
@@ -4237,7 +4300,7 @@ INSTRUCTIONS:
           </>
         )}
 
-        {/* File list Ã¢â‚¬â€ only shown when files are loaded */}
+        {/* File list ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â only shown when files are loaded */}
         {files.length > 0 && !(cardView && showToneStorePanel) && <>
           <div className={gridMaximized ? 'flex-1 flex flex-col overflow-hidden' : 'flex-shrink-0 flex flex-col overflow-hidden'} style={gridMaximized ? undefined : { width: (overviewMaximized || showTrainingWorkspace) ? 0 : (listCollapsed ? 0 : listWidth), overflow: 'hidden' }}>
             <FileList
@@ -4526,7 +4589,7 @@ INSTRUCTIONS:
                     onClick={() => handleOpenExperimentalTraining('files')}
                     className="px-4 py-2 text-xs font-medium transition-colors border-b-2 -mb-px border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
                   >
-                    Training ↗
+                    Training Ã¢â€ â€”
                   </button>
                 </div>
                 <div className="flex-1 overflow-hidden">
@@ -4895,7 +4958,7 @@ INSTRUCTIONS:
           )}
         </div>
 
-        {/* Slide-in editor overlay Ã¢â‚¬â€ maximized grid mode */}
+        {/* Slide-in editor overlay ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â maximized grid mode */}
         {gridMaximized && (selectedFiles.length >= 1 || batchFolder !== null || showSettings) && (
           <div className={`absolute top-0 right-0 bottom-0 w-[460px] z-40 flex flex-col bg-white dark:bg-gray-950 border-l border-gray-200 dark:border-gray-700 shadow-2xl transition-transform duration-200 ${gridSlideOpen ? 'translate-x-0' : 'translate-x-full'}`}>
             <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">

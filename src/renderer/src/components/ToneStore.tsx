@@ -1,15 +1,22 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 
 interface ToneUser { username: string }
+type ToneArchitectureFilter = '' | '1' | '2' | 'custom'
+type TonePlatform = '' | 'nam' | 'ir' | 'aida-x' | 'aa-snapshot' | 'proteus'
+
 interface ToneResult {
   id: number
   title: string
   user: ToneUser
   gear: string
+  platform?: Exclude<TonePlatform, ''>
   sizes: string[]
   images: string[] | null
   downloads_count: number
   models_count: number
+  a1_models_count?: number
+  a2_models_count?: number
+  custom_models_count?: number
   created_at?: string
 }
 interface ToneDetail {
@@ -18,6 +25,7 @@ interface ToneDetail {
   description: string | null
   user: ToneUser
   gear: string
+  platform?: Exclude<TonePlatform, ''>
   makes: { name: string }[]
   tags: { name: string }[]
   links: string[] | null
@@ -25,6 +33,9 @@ interface ToneDetail {
   downloads_count: number
   favorites_count: number
   models_count: number
+  a1_models_count?: number
+  a2_models_count?: number
+  custom_models_count?: number
   created_at?: string
 }
 export interface ToneModel {
@@ -32,6 +43,7 @@ export interface ToneModel {
   name: string
   size: string
   model_url: string
+  architecture_version?: Exclude<ToneArchitectureFilter, ''>
 }
 interface SearchResponse {
   data: ToneResult[]
@@ -43,6 +55,25 @@ interface SearchResponse {
 interface UserSearchResponse {
   data: ToneUser[]
 }
+
+const ARCHITECTURE_OPTIONS: Array<{ value: ToneArchitectureFilter; label: string }> = [
+  { value: '', label: 'All Architectures' },
+  { value: '1', label: 'A1' },
+  { value: '2', label: 'A2' },
+  { value: 'custom', label: 'Custom' },
+]
+const PLATFORM_OPTIONS: Array<{ value: TonePlatform; label: string }> = [
+  { value: 'nam', label: 'NAM' },
+  { value: '', label: 'All Platforms' },
+]
+const SIZE_FILTER_OPTIONS = [
+  { value: '', label: 'All Sizes' },
+  { value: 'standard', label: 'Standard' },
+  { value: 'lite', label: 'Lite' },
+  { value: 'feather', label: 'Feather' },
+  { value: 'nano', label: 'Nano' },
+  { value: 'custom', label: 'Custom' },
+]
 
 export interface ToneStoreDownloadQueueJob {
   toneId: number
@@ -66,6 +97,30 @@ export interface ToneStoreDownloadQueueJob {
 
 function normalizeUsername(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '')
+}
+
+function normalizePlatform(value?: string | null): TonePlatform {
+  return (value ?? '').toLowerCase() as TonePlatform
+}
+
+function filterToneByArchitecture(tone: ToneResult, architecture: ToneArchitectureFilter): boolean {
+  if (!architecture) return true
+  if (architecture === '1') return (tone.a1_models_count ?? 0) > 0
+  if (architecture === '2') return (tone.a2_models_count ?? 0) > 0
+  return (tone.custom_models_count ?? 0) > 0
+}
+
+function filterToneBySize(tone: ToneResult, size: string): boolean {
+  if (!size) return true
+  return (tone.sizes ?? []).some((entry) => entry.toLowerCase() === size.toLowerCase())
+}
+
+function summarizeArchitectureBadges(tone: ToneResult | ToneDetail): Array<{ key: string; label: string; toneClass: string }> {
+  const badges: Array<{ key: string; label: string; toneClass: string }> = []
+  if ((tone.a1_models_count ?? 0) > 0) badges.push({ key: 'a1', label: `A1 x${tone.a1_models_count}`, toneClass: 'bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300' })
+  if ((tone.a2_models_count ?? 0) > 0) badges.push({ key: 'a2', label: `A2 x${tone.a2_models_count}`, toneClass: 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300' })
+  if ((tone.custom_models_count ?? 0) > 0) badges.push({ key: 'custom', label: `Custom x${tone.custom_models_count}`, toneClass: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300' })
+  return badges
 }
 
 const GEAR_OPTIONS = [
@@ -146,7 +201,12 @@ export function ToneStore({
     }
   })
   const [creatorUsername, setCreatorUsername] = useState('')
+  const [creatorSuggestions, setCreatorSuggestions] = useState<ToneUser[]>([])
+  const [creatorLookupPending, setCreatorLookupPending] = useState(false)
   const [gear, setGear] = useState('')
+  const [architecture, setArchitecture] = useState<ToneArchitectureFilter>('')
+  const [platform, setPlatform] = useState<TonePlatform>('nam')
+  const [searchSize, setSearchSize] = useState('')
   const [sort, setSort] = useState('trending')
   const [scope, setScope] = useState<'all' | 'mine' | 'favorites'>('all')
   const [results, setResults] = useState<ToneResult[]>([])
@@ -157,6 +217,9 @@ export function ToneStore({
   const queryRef = useRef(query)
   const creatorUsernameRef = useRef(creatorUsername)
   const gearRef = useRef(gear)
+  const architectureRef = useRef(architecture)
+  const platformRef = useRef(platform)
+  const searchSizeRef = useRef(searchSize)
   const sortRef = useRef(sort)
   const scopeRef = useRef(scope)
   const bootstrappedRef = useRef(false)
@@ -183,6 +246,9 @@ export function ToneStore({
   }, [query])
   useEffect(() => { creatorUsernameRef.current = creatorUsername }, [creatorUsername])
   useEffect(() => { gearRef.current = gear }, [gear])
+  useEffect(() => { architectureRef.current = architecture }, [architecture])
+  useEffect(() => { platformRef.current = platform }, [platform])
+  useEffect(() => { searchSizeRef.current = searchSize }, [searchSize])
   useEffect(() => { sortRef.current = sort }, [sort])
   useEffect(() => { scopeRef.current = scope }, [scope])
   const queueLocked = queueJob !== null && (queueJob.status === 'running' || queueJob.status === 'cooldown')
@@ -193,6 +259,29 @@ export function ToneStore({
       setStatusChecked(true)
     })
   }, [])
+
+  useEffect(() => {
+    if (!connected || !creatorUsername.trim()) { setCreatorSuggestions([]); setCreatorLookupPending(false); return }
+    const handle = window.setTimeout(async () => {
+      setCreatorLookupPending(true)
+      const result = await window.api.tone3000UsersSearch({ query: creatorUsername.trim(), page: 1, pageSize: 6, sort: 'tones' })
+      setCreatorLookupPending(false)
+      if (result.error || !result.data) { setCreatorSuggestions([]); return }
+      const data = result.data as UserSearchResponse
+      const target = normalizeUsername(creatorUsername.trim())
+      const deduped: ToneUser[] = []
+      const seen = new Set<string>()
+      for (const user of data.data ?? []) {
+        const normalized = normalizeUsername(user.username)
+        if (!normalized || seen.has(normalized)) continue
+        if (!normalized.includes(target) && !target.includes(normalized)) continue
+        seen.add(normalized)
+        deduped.push(user)
+      }
+      setCreatorSuggestions(deduped)
+    }, 180)
+    return () => window.clearTimeout(handle)
+  }, [connected, creatorUsername])
 
   const resolveUsername = useCallback(async (value: string): Promise<string> => {
     const trimmed = value.trim()
@@ -209,6 +298,9 @@ export function ToneStore({
     p = 1,
     q = queryRef.current,
     g = gearRef.current,
+    arch = architectureRef.current,
+    plat = platformRef.current,
+    searchSizeValue = searchSizeRef.current,
     s = sortRef.current,
     user = creatorUsernameRef.current,
     searchScope = scopeRef.current
@@ -227,7 +319,16 @@ export function ToneStore({
       ? await window.api.tone3000Created({ page: p, pageSize: 100 })
       : useFavorited
         ? await window.api.tone3000Favorited({ page: p, pageSize: 100 })
-      : await window.api.tone3000Search({ query: q || undefined, page: p, pageSize: 24, gears: g ? [g] : undefined, sort: s })
+      : await window.api.tone3000Search({
+          query: q || undefined,
+          page: p,
+          pageSize: 24,
+          gears: g ? [g] : undefined,
+          sizes: searchSizeValue ? [searchSizeValue] : undefined,
+          architecture: arch || undefined,
+          platform: plat || undefined,
+          sort: s,
+        })
     setSearching(false)
     if (result.error) { setSearchError(result.error); return }
     const data = result.data as SearchResponse
@@ -238,6 +339,9 @@ export function ToneStore({
         filtered = filtered.filter((tone) => [tone.title, tone.user?.username].filter(Boolean).join(' ').toLowerCase().includes(needle))
       }
       if (g) filtered = filtered.filter((tone) => tone.gear === g)
+      if (searchSizeValue) filtered = filtered.filter((tone) => filterToneBySize(tone, searchSizeValue))
+      if (arch) filtered = filtered.filter((tone) => filterToneByArchitecture(tone, arch))
+      if (plat) filtered = filtered.filter((tone) => normalizePlatform(tone.platform) === plat)
       filtered = [...filtered].sort((a, b) => {
         const aTime = a.created_at ? new Date(a.created_at).getTime() : 0
         const bTime = b.created_at ? new Date(b.created_at).getTime() : 0
@@ -245,6 +349,11 @@ export function ToneStore({
       })
     } else if (requestedUsername) {
       filtered = filtered.filter((tone) => normalizeUsername(tone.user?.username ?? '').includes(requestedUsername))
+    }
+    if (!useCreated && !useFavorited) {
+      if (searchSizeValue) filtered = filtered.filter((tone) => filterToneBySize(tone, searchSizeValue))
+      if (arch) filtered = filtered.filter((tone) => filterToneByArchitecture(tone, arch))
+      if (plat) filtered = filtered.filter((tone) => normalizePlatform(tone.platform) === plat)
     }
     setResults(filtered)
     setTotal((useCreated || useFavorited || requestedUsername) ? filtered.length : (data.total ?? 0))
@@ -258,16 +367,19 @@ export function ToneStore({
       lastSearchRequestKeyRef.current = searchRequest.key
       setQuery(searchRequest.query)
       setCreatorUsername('')
+      setArchitecture('')
+        setPlatform('nam')
+      setSearchSize('')
       setGear('')
       setSort('trending')
       setScope('all')
-      handleSearch(1, searchRequest.query, '', 'trending', '', 'all')
+      handleSearch(1, searchRequest.query, '', '', '', '', 'trending', '', 'all')
       bootstrappedRef.current = true
       return
     }
 
     if (!bootstrappedRef.current) {
-      handleSearch(1, queryRef.current, gearRef.current, sortRef.current, creatorUsernameRef.current, scopeRef.current)
+      handleSearch(1, queryRef.current, gearRef.current, architectureRef.current, platformRef.current, searchSizeRef.current, sortRef.current, creatorUsernameRef.current, scopeRef.current)
       bootstrappedRef.current = true
     }
   }, [connected, statusChecked, searchRequest, handleSearch])
@@ -303,15 +415,39 @@ export function ToneStore({
     setDownloadDone(null)
     setDownloadError(null)
 
-    const [detailResult, modelsResult] = await Promise.all([
+    const activeArchitecture = architectureRef.current
+    const modelRequests: Array<Promise<{ ok?: boolean; models?: unknown[]; error?: string }>> = [
+      window.api.tone3000GetModels(tone.id, activeArchitecture || undefined),
+    ]
+    if (!activeArchitecture && (tone.a2_models_count ?? 0) > 0) {
+      modelRequests.push(window.api.tone3000GetModels(tone.id, '2'))
+    }
+
+    const [detailResult, ...modelResults] = await Promise.all([
       window.api.tone3000GetTone(tone.id),
-      window.api.tone3000GetModels(tone.id),
+      ...modelRequests,
     ])
 
     setModelsLoading(false)
     if (detailResult.ok && detailResult.tone) setToneDetail(detailResult.tone as ToneDetail)
-    if (modelsResult.error || !modelsResult.models) { setModelsError(modelsResult.error ?? 'Failed to load'); return }
-    const ms = modelsResult.models as ToneModel[]
+    const firstError = modelResults.find((result) => result.error)
+    if (firstError?.error) { setModelsError(firstError.error); return }
+    const merged = new Map<number, ToneModel>()
+    modelResults.forEach((result, index) => {
+      const requestArchitecture: Exclude<ToneArchitectureFilter, ''> | undefined =
+        activeArchitecture
+          ? activeArchitecture
+          : index === 1
+            ? '2'
+            : undefined
+      for (const model of (result.models ?? []) as ToneModel[]) {
+        merged.set(model.id, model.architecture_version ? model : {
+          ...model,
+          architecture_version: requestArchitecture,
+        })
+      }
+    })
+    const ms = Array.from(merged.values())
     setModels(ms)
     setCheckedIds(new Set(ms.map((m) => m.id)))
   }
@@ -478,6 +614,14 @@ export function ToneStore({
               <span className="px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300">
                 {GEAR_LABELS[selectedTone.gear] ?? selectedTone.gear}
               </span>
+              {(toneDetail ?? selectedTone).platform && (
+                <>
+                  <span>|</span>
+                  <span className="px-1.5 py-0.5 rounded bg-fuchsia-100 dark:bg-fuchsia-900/30 text-fuchsia-700 dark:text-fuchsia-300 uppercase">
+                    {(toneDetail ?? selectedTone).platform}
+                  </span>
+                </>
+              )}
               {!modelsLoading && models.length > 0 && (
                 <><span>|</span><span>{models.length} file{models.length !== 1 ? 's' : ''}</span></>
               )}
@@ -488,6 +632,15 @@ export function ToneStore({
                 <><span>|</span><span>{fmtDate(toneDetail.created_at)}</span></>
               )}
             </div>
+            {summarizeArchitectureBadges(toneDetail ?? selectedTone).length > 0 && (
+              <div className="flex items-center gap-1 flex-wrap">
+                {summarizeArchitectureBadges(toneDetail ?? selectedTone).map((badge) => (
+                  <span key={badge.key} className={`text-xs px-1.5 py-0.5 rounded ${badge.toneClass}`}>
+                    {badge.label}
+                  </span>
+                ))}
+              </div>
+            )}
 
             {toneDetail?.makes && toneDetail.makes.length > 0 && (
               <div className="flex items-center gap-1 flex-wrap">
@@ -588,6 +741,17 @@ export function ToneStore({
                     />
                     <span className="text-xs text-gray-900 dark:text-white flex-1 truncate">{model.name}</span>
                     <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 flex-shrink-0">{model.size}</span>
+                    {model.architecture_version && (
+                      <span className={`text-xs px-1.5 py-0.5 rounded flex-shrink-0 ${
+                        model.architecture_version === '2'
+                          ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
+                          : model.architecture_version === '1'
+                            ? 'bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300'
+                            : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300'
+                      }`}>
+                        {model.architecture_version === '2' ? 'A2' : model.architecture_version === '1' ? 'A1' : 'Custom'}
+                      </span>
+                    )}
                   </label>
                 ))}
               </div>
@@ -665,19 +829,19 @@ export function ToneStore({
       <div className="flex flex-col gap-1.5 px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
         <div className="flex items-center gap-2">
             <button
-              onClick={() => { setScope('all'); handleSearch(1, query, gear, sort, creatorUsername, 'all') }}
+              onClick={() => { setScope('all'); handleSearch(1, query, gear, architecture, platform, searchSize, sort, creatorUsername, 'all') }}
               className={`px-2.5 py-1 text-xs rounded transition-colors ${scope === 'all' ? 'bg-violet-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-700'}`}
             >
               All tones
             </button>
             <button
-              onClick={() => { setScope('mine'); handleSearch(1, query, gear, sort, creatorUsername, 'mine') }}
+              onClick={() => { setScope('mine'); handleSearch(1, query, gear, architecture, platform, searchSize, sort, creatorUsername, 'mine') }}
               className={`px-2.5 py-1 text-xs rounded transition-colors ${scope === 'mine' ? 'bg-violet-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-700'}`}
             >
               My files
             </button>
             <button
-              onClick={() => { setScope('favorites'); handleSearch(1, query, gear, sort, creatorUsername, 'favorites') }}
+              onClick={() => { setScope('favorites'); handleSearch(1, query, gear, architecture, platform, searchSize, sort, creatorUsername, 'favorites') }}
               className={`px-2.5 py-1 text-xs rounded transition-colors ${scope === 'favorites' ? 'bg-violet-600 text-white' : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-700'}`}
             >
               Favorites
@@ -689,19 +853,19 @@ export function ToneStore({
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && !queueLocked && handleSearch(1, query, gear, sort, creatorUsername, scope)}
+              onKeyDown={(e) => e.key === 'Enter' && !queueLocked && handleSearch(1, query, gear, architecture, platform, searchSize, sort, creatorUsername, scope)}
               placeholder="Search tones..."
               disabled={queueLocked}
               className="w-full px-3 py-1.5 pr-8 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-violet-500"
             />
             {query && (
               <button
-                onClick={() => { if (!queueLocked) { setQuery(''); handleSearch(1, '', gear, sort, creatorUsername, scope) } }}
+                onClick={() => { if (!queueLocked) { setQuery(''); handleSearch(1, '', gear, architecture, platform, searchSize, sort, creatorUsername, scope) } }}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 px-1"
               >x</button>
             )}
           </div>
-          <div className="relative min-w-[220px] flex-1">
+          <div className="relative min-w-[240px] flex-1">
             <svg className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
             </svg>
@@ -709,35 +873,68 @@ export function ToneStore({
               type="text"
               value={creatorUsername}
               onChange={(e) => setCreatorUsername(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && !queueLocked && handleSearch(1, query, gear, sort, creatorUsername, scope)}
+              list="tone3000-user-suggestions"
+              onKeyDown={(e) => e.key === 'Enter' && !queueLocked && handleSearch(1, query, gear, architecture, platform, searchSize, sort, creatorUsername, scope)}
               placeholder={`Tone3000 username${savedTone3000Username ? ` (saved: ${savedTone3000Username})` : ''}`}
               title="Tone3000 does not currently expose a direct tones-by-user endpoint. NAM Lab filters search results by username, so this may not include every capture from that creator."
               disabled={queueLocked}
               className="w-full px-3 py-1.5 pl-8 pr-8 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-violet-500"
             />
+            <datalist id="tone3000-user-suggestions">
+              {creatorSuggestions.map((user) => <option key={user.username} value={user.username} />)}
+            </datalist>
             {creatorUsername && (
               <button
-                onClick={() => { if (!queueLocked) { setCreatorUsername(''); handleSearch(1, query, gear, sort, '', scope) } }}
+                onClick={() => { if (!queueLocked) { setCreatorUsername(''); setCreatorSuggestions([]); handleSearch(1, query, gear, architecture, platform, searchSize, sort, '', scope) } }}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 px-1"
               >x</button>
             )}
           </div>
-          <select value={gear} onChange={(e) => { const g = e.target.value; setGear(g); if (!queueLocked) handleSearch(1, query, g, sort, creatorUsername, scope) }}
+          <select value={gear} onChange={(e) => { const g = e.target.value; setGear(g); if (!queueLocked) handleSearch(1, query, g, architecture, platform, searchSize, sort, creatorUsername, scope) }}
             disabled={queueLocked}
             className="px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
           >
             {GEAR_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
-          <select value={sort} onChange={(e) => { const s = e.target.value; setSort(s); if (!queueLocked) handleSearch(1, query, gear, s, creatorUsername, scope) }}
+          <select value={architecture} onChange={(e) => { const value = e.target.value as ToneArchitectureFilter; setArchitecture(value); if (!queueLocked) handleSearch(1, query, gear, value, platform, searchSize, sort, creatorUsername, scope) }}
+            disabled={queueLocked}
+            className="px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
+          >
+            {ARCHITECTURE_OPTIONS.map((o) => <option key={o.value || 'all'} value={o.value}>{o.label}</option>)}
+          </select>
+          <select value={searchSize} onChange={(e) => { const value = e.target.value; setSearchSize(value); if (!queueLocked) handleSearch(1, query, gear, architecture, platform, value, sort, creatorUsername, scope) }}
+            disabled={queueLocked}
+            className="px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
+          >
+            {SIZE_FILTER_OPTIONS.map((o) => <option key={o.value || 'all'} value={o.value}>{o.label}</option>)}
+          </select>
+          <select value={platform} onChange={(e) => { const value = e.target.value as TonePlatform; setPlatform(value); if (!queueLocked) handleSearch(1, query, gear, architecture, value, searchSize, sort, creatorUsername, scope) }}
+            disabled={queueLocked}
+            className="px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
+          >
+            {PLATFORM_OPTIONS.map((o) => <option key={o.value || 'all'} value={o.value}>{o.label}</option>)}
+          </select>
+          <select value={sort} onChange={(e) => { const s = e.target.value; setSort(s); if (!queueLocked) handleSearch(1, query, gear, architecture, platform, searchSize, s, creatorUsername, scope) }}
             disabled={scope === 'mine' || scope === 'favorites' || queueLocked}
             className="px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
           >
             {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
-          <button onClick={() => handleSearch(1, query, gear, sort, creatorUsername, scope)} disabled={searching || queueLocked}
+          <button onClick={() => handleSearch(1, query, gear, architecture, platform, searchSize, sort, creatorUsername, scope)} disabled={searching || queueLocked}
             className="px-3 py-1.5 text-sm font-medium rounded-md bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white transition-colors"
           >Search</button>
         </div>
+        {(creatorUsername || creatorSuggestions.length > 0 || creatorLookupPending) && (
+          <div className="flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400">
+            {creatorLookupPending && <span>Looking up creators...</span>}
+            {!creatorLookupPending && creatorSuggestions.length > 0 && (
+              <span>
+                Suggestions: {creatorSuggestions.map((user) => `@${user.username}`).join(', ')}
+              </span>
+            )}
+            <span className="hidden sm:inline">Arbitrary creator filtering is still best-effort on Tone3000 search results.</span>
+          </div>
+        )}
         {queueLocked && (
           <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 space-y-2">
             <div className="flex items-start justify-between gap-3">
@@ -783,6 +980,11 @@ export function ToneStore({
 
         {!searching && results.length > 0 && (
           <>
+            {creatorUsername && (
+              <div className="mb-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
+                Creator filtering is best-effort only. Tone3000 does not expose a direct "all tones by creator" browse endpoint here, so NAM Lab filters the search results it receives and may only show a partial set for <span className="font-semibold">@{creatorUsername}</span>.
+              </div>
+            )}
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
               {scope === 'favorites'
                 ? `${total.toLocaleString()} favorite tone${total !== 1 ? 's' : ''}`
@@ -814,11 +1016,21 @@ export function ToneStore({
                       <span className="text-xs px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300">
                         {GEAR_LABELS[tone.gear] ?? tone.gear}
                       </span>
+                      {tone.platform && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-fuchsia-100 dark:bg-fuchsia-900/30 text-fuchsia-700 dark:text-fuchsia-300 uppercase">
+                          {tone.platform}
+                        </span>
+                      )}
                       {tone.models_count > 0 && (
                         <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400">
                           {tone.models_count} file{tone.models_count !== 1 ? 's' : ''}
                         </span>
                       )}
+                      {summarizeArchitectureBadges(tone).map((badge) => (
+                        <span key={badge.key} className={`text-xs px-1.5 py-0.5 rounded ${badge.toneClass}`}>
+                          {badge.label}
+                        </span>
+                      ))}
                     </div>
                     <div className="flex items-center justify-between text-xs text-gray-400 dark:text-gray-500">
                       <span>Downloads {tone.downloads_count?.toLocaleString()}</span>
@@ -836,11 +1048,11 @@ export function ToneStore({
 
             {totalPages > 1 && (
               <div className="flex items-center justify-center gap-3 mt-4 pb-2">
-                <button onClick={() => handleSearch(page - 1, query, gear, sort, creatorUsername, scope)} disabled={page <= 1}
+                <button onClick={() => handleSearch(page - 1, query, gear, architecture, platform, searchSize, sort, creatorUsername, scope)} disabled={page <= 1}
                   className="px-3 py-1 text-xs rounded-md bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >Prev</button>
                 <span className="text-xs text-gray-500 dark:text-gray-400">Page {page} of {totalPages}</span>
-                <button onClick={() => handleSearch(page + 1, query, gear, sort, creatorUsername, scope)} disabled={page >= totalPages}
+                <button onClick={() => handleSearch(page + 1, query, gear, architecture, platform, searchSize, sort, creatorUsername, scope)} disabled={page >= totalPages}
                   className="px-3 py-1 text-xs rounded-md bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >Next</button>
               </div>
