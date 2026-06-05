@@ -1296,11 +1296,47 @@ async function postProcessTrainerSourceWav(job: TrainerQueueJob): Promise<string
 
 let trainerQueueSaveTimer: NodeJS.Timeout | null = null
 let trainerQueueLastSignature = ''
+let trainerLastEmitSignature = ''
 
 // Cheap composition signature — captures which jobs exist and what their statuses are. Excludes
 // progress fields that change every tick so we don't churn the signature unnecessarily.
 function computeTrainerQueueSignature(): string {
   return `${trainerPauseAfterCurrent ? 'paused' : 'live'}|${trainerQueue.map((j) => `${j.jobId}:${j.status}`).join('|')}`
+}
+
+function computeTrainerEmitSignature(): string {
+  const queueSig = trainerQueue.map((job) => (
+    `${job.jobId}:${job.status}:${job.progressEpochCurrent ?? ''}:${job.progressBatchCurrent ?? ''}:${job.validationEsr ?? ''}:${job.validationEsrFull ?? ''}`
+  )).join('|')
+  const historySig = trainerHistory.slice(-3).map((entry) => (
+    `${entry.jobId}:${entry.status}:${entry.finishedAt ?? ''}:${entry.validationEsr ?? ''}:${entry.validationEsrFull ?? ''}`
+  )).join('|')
+  return [
+    trainerState.status,
+    trainerState.activeJobId ?? '',
+    trainerState.startedAt ?? '',
+    trainerState.finishedAt ?? '',
+    trainerState.modelName ?? '',
+    trainerState.outputModelPath ?? '',
+    trainerState.progressPercent ?? '',
+    trainerState.progressEpochCurrent ?? '',
+    trainerState.progressEpochTotal ?? '',
+    trainerState.progressBatchCurrent ?? '',
+    trainerState.progressBatchTotal ?? '',
+    trainerState.progressRate ?? '',
+    trainerState.validationEsr ?? '',
+    trainerState.epochValidationEsr ?? '',
+    trainerState.epochValidationEsrFull ?? '',
+    trainerState.epochValidationEsrLite ?? '',
+    trainerState.epochValidationEsrAggregate ?? '',
+    trainerState.logs.length,
+    trainerPauseAfterCurrent ? 'paused' : 'live',
+    trainerQueue.length,
+    queueSig,
+    trainerHistory.length,
+    historySig,
+    JSON.stringify(makeTrainerWatcherSnapshot()),
+  ].join('~')
 }
 
 function requestEmergencyRequeueCurrentJob(pauseQueue: boolean): boolean {
@@ -1366,7 +1402,11 @@ function emitTrainerState(): void {
     history: trainerHistory,
     watcherState: makeTrainerWatcherSnapshot(),
   }
-  mainWindow?.webContents.send('trainer:update', trainerState)
+  const emitSig = computeTrainerEmitSignature()
+  if (emitSig !== trainerLastEmitSignature) {
+    trainerLastEmitSignature = emitSig
+    mainWindow?.webContents.send('trainer:update', trainerState)
+  }
   persistTrainerQueueThrottled()
 }
 
