@@ -26,6 +26,7 @@ interface ToolbarProps {
   trainingQueueActive?: boolean
   trainingModelName?: string | null
   onOpenTrainingQueue?: () => void
+  onOpenTrainingLive?: () => void
   showDashboard?: boolean
   dashboardActive?: boolean
   onToggleDashboard?: () => void
@@ -68,6 +69,7 @@ export function Toolbar({
   trainingQueueActive = false,
   trainingModelName = null,
   onOpenTrainingQueue,
+  onOpenTrainingLive,
   showDashboard = false,
   dashboardActive = false,
   onToggleDashboard,
@@ -143,8 +145,8 @@ export function Toolbar({
         <div
           className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 cursor-pointer select-none"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-          onClick={onOpenTrainingQueue}
-          title="Training in progress — click to open queue"
+          onClick={onOpenTrainingLive}
+          title="Training in progress — click to open live run"
         >
           <span className="w-2 h-2 rounded-full bg-emerald-400 nm-lpulse flex-shrink-0" />
           <span className="text-[11px] font-[580] text-emerald-400 whitespace-nowrap">
@@ -372,7 +374,7 @@ export function Toolbar({
       {showExperimentalTraining && onOpenTrainingQueue && (
         <button
           onClick={onOpenTrainingQueue}
-          title={trainingQueueCount > 0 ? `${trainingQueueCount} training queue item${trainingQueueCount === 1 ? '' : 's'}` : 'Open training queue'}
+          title={trainingQueueCount > 0 ? `${trainingQueueCount} training queue item${trainingQueueCount === 1 ? '' : 's'} — open training dashboard` : 'Open training dashboard'}
           className={`tb-menu-btn relative ${trainingQueueActive ? 'active' : ''}`}
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >

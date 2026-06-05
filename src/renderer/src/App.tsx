@@ -120,6 +120,40 @@ function buildTone3000FileName(name: string): string {
   return safeName.toLowerCase().endsWith('.nam') ? safeName : `${safeName}.nam`
 }
 
+function buildTrainerSnapshotSignature(state: TrainerStateSnapshot): string {
+  const queueSig = state.queue.map((job) => (
+    `${job.jobId}:${job.status}:${job.progressEpochCurrent ?? ''}:${job.progressBatchCurrent ?? ''}:${job.validationEsr ?? ''}:${job.validationEsrFull ?? ''}`
+  )).join('|')
+  const historySig = state.history.slice(-3).map((entry) => (
+    `${entry.jobId}:${entry.status}:${entry.finishedAt ?? ''}:${entry.validationEsr ?? ''}:${entry.validationEsrFull ?? ''}`
+  )).join('|')
+  return [
+    state.status,
+    state.activeJobId ?? '',
+    state.startedAt ?? '',
+    state.finishedAt ?? '',
+    state.modelName ?? '',
+    state.outputModelPath ?? '',
+    state.progressPercent ?? '',
+    state.progressEpochCurrent ?? '',
+    state.progressEpochTotal ?? '',
+    state.progressBatchCurrent ?? '',
+    state.progressBatchTotal ?? '',
+    state.progressRate ?? '',
+    state.validationEsr ?? '',
+    state.epochValidationEsr ?? '',
+    state.epochValidationEsrFull ?? '',
+    state.epochValidationEsrLite ?? '',
+    state.epochValidationEsrAggregate ?? '',
+    state.logs.length,
+    state.pauseAfterCurrent ? 'paused' : 'live',
+    state.queue.length,
+    queueSig,
+    state.history.length,
+    historySig,
+  ].join('~')
+}
+
 function migrateLegacyNamBotInMemory(meta: NamFile['metadata']): NamFile['metadata'] {
   const training = meta.training as Record<string, unknown> | undefined
   const legacy = training?.nam_bot as Record<string, unknown> | undefined
@@ -1943,7 +1977,7 @@ export default function App() {
     const { gear_make, gear_model, gear_type } = file.metadata
     if (!gear_make || !gear_model) return null
     const gearLabel = gear_type ? `${gear_type.replace(/_/g, ' ')} ` : ''
-    const prompt = `You are an expert in guitar amplifiers, pedals, and audio gear. Write exactly 2Ã¢â‚¬â€œ3 sentences describing the ${gearLabel}"${gear_make} ${gear_model}". Cover its tonal character, gain range or key modes/channels, and what genres or playing styles it's best known for. Be factual and specific. Write in present tense. Do not start with "The".`
+    const prompt = `You are an expert in guitar amplifiers, pedals, and audio gear. Write exactly 2-3 sentences describing the ${gearLabel}"${gear_make} ${gear_model}". Cover its tonal character, gain range or key modes/channels, and what genres or playing styles it's best known for. Be factual and specific. Write in present tense. Do not start with "The".`
     const provider = settings.aiProvider ?? 'anthropic'
     const model = provider === 'anthropic' ? (settings.aiAnthropicModel || 'claude-haiku-4-5-20251001') : (settings.aiOpenAiModel || 'gpt-4o-mini')
     const res = await window.api.aiEnrich({ prompt, provider, model })
@@ -2006,9 +2040,9 @@ CAPTURE PACK DATA:
 ${captureContext}
 
 INSTRUCTIONS:
-- Write 3Ã¢â‚¬â€œ5 sentences total.
-- Paragraph 1 (2Ã¢â‚¬â€œ3 sentences): Describe the real ${gear_make} ${gear_model} Ã¢â‚¬â€ its character, key specs, notable channels or modes, and what it's known for. Draw on accurate knowledge of this specific piece of gear. If you are NOT familiar with this exact model or it appears to be a custom/boutique/fictional piece of gear, say so honestly (e.g. "This appears to be a boutique or custom design...") rather than inventing facts.
-- Paragraph 2 (1Ã¢â‚¬â€œ2 sentences): Summarize what was captured in this pack Ã¢â‚¬â€ number of captures, tone types covered, channels captured, any pedals or special setups used. Ground this in the capture data above.
+- Write 3-5 sentences total.
+- Paragraph 1 (2-3 sentences): Describe the real ${gear_make} ${gear_model} - its character, key specs, notable channels or modes, and what it's known for. Draw on accurate knowledge of this specific piece of gear. If you are NOT familiar with this exact model or it appears to be a custom/boutique/fictional piece of gear, say so honestly (e.g. "This appears to be a boutique or custom design...") rather than inventing facts.
+- Paragraph 2 (1-2 sentences): Summarize what was captured in this pack - number of captures, tone types covered, channels captured, any pedals or special setups used. Ground this in the capture data above.
 - Be specific and factual. Do not use filler phrases like "This amp is renowned for" or "This versatile unit". Do not start with "The".
 - Write in present tense. Plain text only, no markdown.`
 
@@ -3837,7 +3871,7 @@ INSTRUCTIONS:
     const ignoreChecks = preset?.ignoreChecks ?? false
     const modeledBy = settings.enableCaptureDefaults && settings.defaultModeledBy.trim() ? settings.defaultModeledBy.trim() : null
     const submissionId = makeSubmissionId('wav-check')
-    const submissionLabel = `WAV Check Ã¢â‚¬â€œ ${wavPaths.length} capture${wavPaths.length !== 1 ? 's' : ''}`
+    const submissionLabel = `WAV Check - ${wavPaths.length} capture${wavPaths.length !== 1 ? 's' : ''}`
     const submissionCreatedAt = new Date().toISOString()
     const payloads: TrainerStartPayload[] = wavPaths.flatMap((wavPath) =>
       architectures.map((architecture) => ({
@@ -4062,7 +4096,8 @@ INSTRUCTIONS:
         trainingQueueCount={activeTrainingQueueCount}
         trainingQueueActive={trainingQueueIsActive}
         trainingModelName={trainingQueueIsActive ? (globalTrainerState.modelName || globalTrainerState.outputModelPath || null) : null}
-        onOpenTrainingQueue={() => handleOpenExperimentalTraining('queue')}
+        onOpenTrainingQueue={() => handleOpenExperimentalTraining('files')}
+        onOpenTrainingLive={() => handleOpenExperimentalTraining('queue')}
         showDashboard={files.length > 0}
         dashboardActive={showDashboard}
         onToggleDashboard={() => {
@@ -4589,7 +4624,7 @@ INSTRUCTIONS:
                     onClick={() => handleOpenExperimentalTraining('files')}
                     className="px-4 py-2 text-xs font-medium transition-colors border-b-2 -mb-px border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
                   >
-                    Training Ã¢â€ â€”
+                    Training ->
                   </button>
                 </div>
                 <div className="flex-1 overflow-hidden">
