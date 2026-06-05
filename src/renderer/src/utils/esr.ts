@@ -116,3 +116,44 @@ export function getA2AggregateEsr(meta: Record<string, unknown> | undefined): nu
 }
 
 export { isA2Metadata }
+
+// ── Trainer-state / history helpers ──────────────────────────────────────────
+// These work on TrainerHistoryEntry / TrainerQueueJob / TrainerStateSnapshot
+// shapes — not on .nam file metadata.
+
+export interface BestEsr {
+  value: number | null
+  kind: EsrKind
+}
+
+// Best ESR for a completed history entry or queue job.
+// Prefers Full sub-model for A2 (same thresholds as A1); falls back to aggregate (2× thresholds).
+export function getBestJobEsr(job: {
+  architecture?: string | null
+  validationEsr: number | null
+  validationEsrFull?: number | null
+}): BestEsr {
+  if (job.architecture === 'a2') {
+    if (typeof job.validationEsrFull === 'number') return { value: job.validationEsrFull, kind: 'a2_full' }
+    if (typeof job.validationEsr === 'number') return { value: job.validationEsr, kind: 'a2_aggregate' }
+    return { value: null, kind: 'a2_aggregate' }
+  }
+  return { value: job.validationEsr, kind: 'a1' }
+}
+
+// Best ESR for the live trainer state (per-epoch values).
+export function getBestLiveEsr(state: {
+  architecture?: string | null
+  epochValidationEsr?: number | null
+  epochValidationEsrFull?: number | null
+  epochValidationEsrAggregate?: number | null
+  validationEsr?: number | null
+}): BestEsr {
+  if (state.architecture === 'a2') {
+    if (typeof state.epochValidationEsrFull === 'number') return { value: state.epochValidationEsrFull, kind: 'a2_full' }
+    const agg = state.epochValidationEsrAggregate ?? state.epochValidationEsr ?? state.validationEsr ?? null
+    return { value: agg, kind: 'a2_aggregate' }
+  }
+  const val = state.epochValidationEsr ?? state.validationEsr ?? null
+  return { value: val, kind: 'a1' }
+}

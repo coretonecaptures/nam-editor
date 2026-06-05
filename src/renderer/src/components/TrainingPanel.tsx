@@ -16,6 +16,7 @@ import { CaptureProfileEditor } from './CaptureProfileEditor'
 import { WatcherFilesModal } from './WatcherFilesModal'
 import { HelpPopover } from './HelpPopover'
 import { effectiveFormula, resolveOutputFormula } from '../utils/resolveOutputFormula'
+import { getEsrTone as getEsrToneKind, getBestJobEsr, getBestLiveEsr } from '../utils/esr'
 import { EsrCurve, ProgressRing, QualityBars, Sparkline, StackedMeter } from './dashboard/Charts'
 
 type BatchWavItem = { id: string; path: string; name: string; fromFolder?: string }
@@ -306,7 +307,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
         setEsrSeries(prev => {
           const epoch = state.progressEpochCurrent!
           if (prev.length > 0 && prev[prev.length - 1].epoch === epoch) return prev
-          return [...prev, { epoch, esr: state.epochValidationEsr as number }]
+          const { value: bestEsr } = getBestLiveEsr(state)
+          return [...prev, { epoch, esr: (bestEsr ?? state.epochValidationEsr) as number }]
         })
       }
       if ((state.status === 'success' || state.status === 'error') && typeof state.validationEsr === 'number') {
@@ -432,7 +434,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     (trainerState.architecture || architectures[0] || 'standard') as TrainerArchitecture | '',
     trainerState.progressEpochTotal ?? trainerState.epochs
   )
-  const validationEsrTone = getEsrTone(trainerState.validationEsr)
+  const { value: _bestStateEsr, kind: _bestStateEsrKind } = getBestLiveEsr(trainerState)
+  const validationEsrTone = getEsrToneKind(_bestStateEsr, _bestStateEsrKind)
   const replicateEsrTone = getEsrTone(trainerState.replicateEsr)
 
   const resolvedModelName = useMemo(() => {
@@ -503,15 +506,17 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
         if (!Number.isFinite(entryTime) || now - entryTime > maxAgeMs) return false
       }
       if (historyEsrFilter !== 'all') {
-        const esr = entry.validationEsr
+        const { value: fEsr, kind: fKind } = getBestJobEsr(entry)
+        const greenThresh = fKind === 'a2_aggregate' ? 0.02 : 0.01
+        const amberThresh = fKind === 'a2_aggregate' ? 0.07 : 0.05
         if (historyEsrFilter === 'none') {
-          if (typeof esr === 'number') return false
+          if (fEsr != null) return false
         } else if (historyEsrFilter === 'green') {
-          if (typeof esr !== 'number' || esr >= 0.01) return false
+          if (fEsr == null || fEsr >= greenThresh) return false
         } else if (historyEsrFilter === 'amber') {
-          if (typeof esr !== 'number' || esr < 0.01 || esr >= 0.05) return false
+          if (fEsr == null || fEsr < greenThresh || fEsr >= amberThresh) return false
         } else if (historyEsrFilter === 'red') {
-          if (typeof esr !== 'number' || esr < 0.05) return false
+          if (fEsr == null || fEsr < amberThresh) return false
         }
       }
       if (historySearch.trim()) {
@@ -1270,7 +1275,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     const today = trainerState.history.filter(e => new Date(e.timestamp).getTime() >= todayMs)
     const completed = today.filter(e => e.status === 'success').length
     const failed = today.filter(e => e.status === 'error').length
-    const esrs = today.filter(e => typeof e.validationEsr === 'number').map(e => e.validationEsr as number)
+    const esrs = today.filter(e => getBestJobEsr(e).value != null).map(e => getBestJobEsr(e).value as number)
     const avgEsr = esrs.length > 0 ? esrs.reduce((a, b) => a + b, 0) / esrs.length : null
     const oneHrAgo = Date.now() - 3_600_000
     const throughput = trainerState.history.filter(e => new Date(e.timestamp).getTime() >= oneHrAgo && e.status === 'success').length
@@ -1290,9 +1295,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       })
       return {
         label: new Date(ds).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-        green: entries.filter(e => typeof e.validationEsr === 'number' && (e.validationEsr as number) < 0.01).length,
-        amber: entries.filter(e => typeof e.validationEsr === 'number' && (e.validationEsr as number) >= 0.01 && (e.validationEsr as number) < 0.05).length,
-        red: entries.filter(e => typeof e.validationEsr === 'number' && (e.validationEsr as number) >= 0.05).length,
+        green: entries.filter(e => { const { value: v, kind: k } = getBestJobEsr(e); const t = k === 'a2_aggregate' ? 0.02 : 0.01; return v != null && v < t }).length,
+        amber: entries.filter(e => { const { value: v, kind: k } = getBestJobEsr(e); const g = k === 'a2_aggregate' ? 0.02 : 0.01; const a = k === 'a2_aggregate' ? 0.07 : 0.05; return v != null && v >= g && v < a }).length,
+        red: entries.filter(e => { const { value: v, kind: k } = getBestJobEsr(e); const a = k === 'a2_aggregate' ? 0.07 : 0.05; return v != null && v >= a }).length,
       }
     })
   }, [trainerState.history])
@@ -1706,7 +1711,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               {[
                 { label: 'Rate', value: typeof trainerState.progressRate === 'number' ? `${trainerState.progressRate.toFixed(1)}` : '—', unit: ' it/s' },
                 { label: 'Batch', value: trainerState.progressBatchCurrent && trainerState.progressBatchTotal ? `${trainerState.progressBatchCurrent}/${trainerState.progressBatchTotal}` : '—', unit: '' },
-                (() => { const t = getEsrTone(trainerState.epochValidationEsr ?? trainerState.validationEsr); return { label: 'Val ESR', value: t.text, unit: '', color: t.classes } })(),
+                (() => { const b = getBestLiveEsr(trainerState); const t = getEsrToneKind(b.value, b.kind); return { label: 'Val ESR', value: t.text, unit: '', color: t.classes } })(),
                 { label: 'ETA', value: eta ?? '—', unit: '' },
               ].map(({ label, value, unit, color }) => (
                 <div key={label} className="text-right">
@@ -1800,7 +1805,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               {/* Big stats 4×2 grid */}
               {(() => {
                 const queueFinished = successCount + failedCount
-                const lastEsrTone = getEsrTone(lastSuccessEntry?.validationEsr ?? null)
+                const lastBest = lastSuccessEntry ? getBestJobEsr(lastSuccessEntry) : { value: null as number | null, kind: 'a1' as const }
+                const lastEsrTone = getEsrToneKind(lastBest.value, lastBest.kind)
                 const lastDurSec = lastSuccessEntry
                   ? (typeof lastSuccessEntry.durationSec === 'number' ? lastSuccessEntry.durationSec : null)
                   : null
@@ -2089,7 +2095,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               {/* Statline — 4 cells like prototype: Epoch / Rate / Validation ESR / Started */}
               <div className="rounded-[14px] border border-nm-border-s bg-panel overflow-hidden grid grid-cols-4 divide-x divide-nm-border-s">
                 {(() => {
-                  const liveTone = getEsrTone(trainerState.epochValidationEsr ?? trainerState.validationEsr)
+                  const { value: liveEsr, kind: liveEsrKind } = getBestLiveEsr(trainerState)
+                  const liveTone = getEsrToneKind(liveEsr, liveEsrKind)
                   return [
                     {
                       label: 'Epoch',
@@ -2385,13 +2392,14 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               ) : queueView === 'compact' ? (
                 <div className="space-y-1">
                   {filteredQueue.map((job, idx) => {
-                    const esrTone = getEsrTone(job.validationEsr)
+                    const { value: jobEsr, kind: jobEsrKind } = getBestJobEsr(job)
+                    const esrTone = getEsrToneKind(jobEsr, jobEsrKind)
                     return (
                       <div key={job.jobId} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12px] border ${job.jobId === trainerState.activeJobId ? 'border-nm-accent/40 bg-nm-accent/5' : 'border-nm-border-s bg-panel-2'}`}>
                         <span className="w-5 text-center text-nm-text-3 font-mono tabular-nums">{idx + 1}</span>
                         <span className="flex-1 font-mono truncate text-nm-text">{job.outputPath.replace(/\\/g, '/').split('/').pop()}</span>
                         <span className="text-nm-text-3">{architectureDisplayLabel(job.architecture)}</span>
-                        {typeof job.validationEsr === 'number' && <span className={`font-mono ${esrTone.classes}`}>{esrTone.text}</span>}
+                        {jobEsr != null && <span className={`font-mono ${esrTone.classes}`}>{esrTone.text}</span>}
                         <span className={`font-semibold uppercase text-[10px] ${job.status === 'success' ? 'text-emerald-400' : job.status === 'error' ? 'text-red-400' : job.status === 'running' ? 'text-nm-accent' : 'text-nm-text-3'}`}>
                           {job.status}
                         </span>
@@ -2512,7 +2520,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                               <div className="text-[11px] text-nm-text-3 font-mono px-2 py-1">{group.jobs[0]?.outputPath.replace(/\\/g, '/').split('/').slice(0, -1).join('/')} · auto-queues new files as they appear</div>
                             )}
                             {group.jobs.map((job, idx) => {
-                              const esrTone = getEsrTone(job.validationEsr)
+                              const { value: jobEsr2, kind: jobEsrKind2 } = getBestJobEsr(job)
+                              const esrTone = getEsrToneKind(jobEsr2, jobEsrKind2)
                               const isActive = job.jobId === trainerState.activeJobId
                               const isQueued = job.status === 'queued'
                               return (
@@ -2559,7 +2568,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                       <div className="h-full bg-nm-accent rounded-full" style={{ width: `${job.progressPercent}%` }} />
                                     </div>
                                   )}
-                                  {typeof job.validationEsr === 'number' && (
+                                  {jobEsr2 != null && (
                                     <span className={`text-[11px] font-mono font-semibold flex-shrink-0 ${esrTone.classes}`}>{esrTone.text}</span>
                                   )}
                                   {/* Actions */}
@@ -2946,7 +2955,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     {/* Rows */}
                     <div className="rounded-[12px] border border-nm-border-s bg-panel overflow-hidden">
                       {group.entries.map((entry, idx) => {
-                        const tone = getEsrTone(entry.validationEsr)
+                        const { value: entryEsr, kind: entryEsrKind } = getBestJobEsr(entry)
+                        const tone = getEsrToneKind(entryEsr, entryEsrKind)
                         const toneKey = tone.classes.includes('emerald') ? 'green' : tone.classes.includes('amber') ? 'amber' : tone.classes.includes('red') ? 'red' : 'none'
                         const clickable = entry.status === 'success' && !!entry.graphPath
                         const seed = (entry.historyId || '').length * 7 + 3

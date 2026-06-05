@@ -230,6 +230,7 @@ export interface TrainerQueueJob {
   finishedAt: string | null
   error: string
   validationEsr: number | null
+  validationEsrFull?: number | null
   progressPercent: number | null
   progressEpochCurrent: number | null
   progressEpochTotal: number | null

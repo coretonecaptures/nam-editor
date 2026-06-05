@@ -1320,6 +1320,7 @@ function emitTrainerState(): void {
       checkpointModelPath: trainerState.checkpointModelPath,
       error: trainerState.error,
       validationEsr: trainerState.validationEsr,
+      validationEsrFull: trainerState.epochValidationEsrFull ?? null,
       progressPercent: trainerState.progressPercent,
       progressEpochCurrent: trainerState.progressEpochCurrent,
       progressEpochTotal: trainerState.progressEpochTotal,
