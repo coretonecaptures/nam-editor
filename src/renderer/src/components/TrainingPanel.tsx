@@ -42,10 +42,10 @@ const ARCHITECTURE_LABELS: Record<TrainerArchitecture, string> = {
   revxstd: 'REVxSTD',
 }
 
-// Display order for the architecture multi-select â€” A2 first, then A1 variants in capability order.
+// Display order for the architecture multi-select — A2 first, then A1 variants in capability order.
 const ARCHITECTURE_DISPLAY_ORDER: TrainerArchitecture[] = ['a2', 'standard', 'complex', 'lite', 'feather', 'nano', 'revystd', 'revyhi', 'revxstd']
 
-// "A1 - Standard" / "A2" â€” used in pickers where the namMode is non-obvious.
+// "A1 - Standard" / "A2" — used in pickers where the namMode is non-obvious.
 function architectureFullLabel(arch: string): string {
   if (arch === 'a2') return 'A2'
   const short = ARCHITECTURE_LABELS[arch as TrainerArchitecture]
@@ -57,7 +57,7 @@ function deriveNamMode(architecture: string): 'a1' | 'a2' {
   return architecture === 'a2' ? 'a2' : 'a1'
 }
 
-// Per-architecture identifier color â€” same palette as ArchitectureProfilePicker so chips read consistently across Queue, Staged Batches, Create Batch, and History.
+// Per-architecture identifier color — same palette as ArchitectureProfilePicker so chips read consistently across Queue, Staged Batches, Create Batch, and History.
 const ARCHITECTURE_ACCENT_HEX: Record<string, string> = {
   a2:       '#f43f5e', // rose
   standard: '#94a3b8', // slate
@@ -198,7 +198,7 @@ function describePreset(preset: TrainingPreset): string {
       ? 'No architectures'
       : preset.architectures.map((item) => architectureDisplayLabel(item)).join(', ')
   const esrText = typeof preset.thresholdEsr === 'number' ? `Target ESR ${formatThresholdEsr(preset.thresholdEsr)}` : 'No ESR target'
-  return `${archText} Â· ${preset.epochs} epochs Â· ${esrText}`
+  return `${archText} · ${preset.epochs} epochs · ${esrText}`
 }
 
 function makePresetId(name: string): string {
@@ -229,7 +229,7 @@ function stripPlannedCaptureSuffix(label: string | null | undefined): string {
 
 function getEsrTone(esr: number | null): { text: string; classes: string; tone: 'green' | 'amber' | 'red' | 'none' } {
   if (typeof esr !== 'number') {
-    return { text: 'â€”', classes: 'text-nm-text-3', tone: 'none' }
+    return { text: '—', classes: 'text-nm-text-3', tone: 'none' }
   }
   if (esr < 0.01) {
     return { text: esr.toFixed(6), classes: 'text-emerald-400', tone: 'green' }
@@ -1054,12 +1054,12 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     if (entries.length === 0) return
     const py = settings.namPythonPath.trim()
     if (!py) {
-      setQueueActionError('Set the NAM Python path in Settings â†’ Training before retrying.')
+      setQueueActionError('Set the NAM Python path in Settings → Training before retrying.')
       return
     }
     const inputDi = (settings.trainingDefaultInputDi ?? '').trim() || settings.namTrainingInputWav.trim()
     if (!inputDi) {
-      setQueueActionError('Set the Input DI (Settings â†’ Training) before retrying â€” the original DI is not stored in the history entry.')
+      setQueueActionError('Set the Input DI (Settings → Training) before retrying — the original DI is not stored in the history entry.')
       return
     }
     const outputFormula = (settings.trainingOutputFormula ?? '').trim() || (settings.trainingFavoriteRouting ?? '').trim()
@@ -1118,7 +1118,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
         submissionId,
         submissionLabel,
         submissionCreatedAt: createdAt,
-        // Protect any already-trained .nam files in the destination folder â€” the Python promoter
+        // Protect any already-trained .nam files in the destination folder — the Python promoter
         // will rename the existing model to <name>.bak.nam before overwriting.
         backupExisting: true,
       }
@@ -1190,7 +1190,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       setPresetSaveError('A preset with that name already exists.')
       return
     }
-    // Preset namMode is now derived from its architecture list â€” 'a2' if any architecture is a2, else 'a1'. Mixed presets keep 'a1' here (each job derives its own mode at queue time).
+    // Preset namMode is now derived from its architecture list — 'a2' if any architecture is a2, else 'a1'. Mixed presets keep 'a1' here (each job derives its own mode at queue time).
     const presetNamMode: 'a1' | 'a2' = architectures.every((arch) => arch === 'a2') ? 'a2' : 'a1'
     const preset: TrainingPreset = {
       id: makePresetId(name),
@@ -1251,15 +1251,15 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     const inputDi = (settings.trainingDefaultInputDi ?? '').trim() || settings.namTrainingInputWav.trim()
     const outputRoot = (settings.trainingFavoriteRouting ?? '').trim() || (settings.trainingOutputFormula ?? '').trim()
     if (!settings.namPythonPath.trim()) {
-      setLaunchError('Set a Python path in Settings â†’ Training before using Quick Add.')
+      setLaunchError('Set a Python path in Settings → Training before using Quick Add.')
       return
     }
     if (!inputDi) {
-      setLaunchError('Set a Default Input DI in Settings â†’ Training before using Quick Add.')
+      setLaunchError('Set a Default Input DI in Settings → Training before using Quick Add.')
       return
     }
     if (!outputRoot) {
-      setLaunchError('Set an output path formula in Settings â†’ Training (NAM output path formula, or Favorite output routing) before using Quick Add.')
+      setLaunchError('Set an output path formula in Settings → Training (NAM output path formula, or Favorite output routing) before using Quick Add.')
       return
     }
     const favPreset = settings.trainingFavoritePresetId
@@ -1271,7 +1271,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     const parsedThresholdEsr = favPreset ? favPreset.thresholdEsr : null
     const { normalizeWav: resolvedNormalizeWav, normalizeWavTargetDb: resolvedNormalizeDb } = resolveNormalize('global', '')
     const sharedSubmissionId = makeSubmissionId('quick-add')
-    const sharedLabel = `Quick Add Â· ${paths.length} capture${paths.length === 1 ? '' : 's'}`
+    const sharedLabel = `Quick Add · ${paths.length} capture${paths.length === 1 ? '' : 's'}`
     const sharedCreatedAt = new Date().toISOString()
     const isFormula = outputRoot.includes('{')
     const payloads = paths.flatMap((wavPath) =>
@@ -1391,7 +1391,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const activeJobName = activeJob
     ? activeJob.outputPath.replace(/\\/g, '/').split('/').pop() ?? 'Unknown'
     : 'No active run'
-  // Exclude staged drafts â€” they live in the Batches tab, not the active queue runway.
+  // Exclude staged drafts — they live in the Batches tab, not the active queue runway.
   // Including them in totalJobs made the Now Strip read e.g. "model 7 of 8" when only 2 captures
   // were actually in flight + 6 sitting unstaged in Batches.
   const activeQueue = trainerState.queue.filter(j => j.status !== 'staged')
@@ -1518,7 +1518,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
           <div className="text-[10px] font-bold uppercase tracking-wider text-nm-text-3 px-1 mb-2">This Session</div>
           {[
             { label: 'Completed', value: String(todayStats.completed), color: 'text-emerald-400' },
-            { label: 'Avg ESR', value: todayStats.avgEsr != null ? todayStats.avgEsr.toFixed(5) : 'â€”', color: 'text-nm-text font-mono' },
+            { label: 'Avg ESR', value: todayStats.avgEsr != null ? todayStats.avgEsr.toFixed(5) : '—', color: 'text-nm-text font-mono' },
             { label: 'Throughput', value: `${todayStats.throughput}/hr`, color: 'text-nm-text font-mono' },
             { label: 'Failed', value: String(todayStats.failed), color: todayStats.failed > 0 ? 'text-red-400' : 'text-nm-text-3' },
           ].map(({ label, value, color }) => (
@@ -1617,7 +1617,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 <button
                   onClick={async () => { await window.api.setTrainerPauseAfterCurrent(!trainerState.pauseAfterCurrent) }}
                   title={trainerState.pauseAfterCurrent
-                    ? 'Click to cancel â€” queue will keep going after current capture finishes'
+                    ? 'Click to cancel — queue will keep going after current capture finishes'
                     : 'Pauses the queue after the current capture finishes (training canâ€™t be interrupted mid-capture). Use Emergency stop to kill the current run immediately.'}
                   className={`h-10 inline-flex items-center gap-2 px-4 rounded-[9px] text-[13px] font-[580] border transition-colors ${
                     trainerState.pauseAfterCurrent
@@ -1636,7 +1636,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 <button
                   onClick={async () => { await window.api.setTrainerPauseAfterCurrent(false) }}
                   disabled={queuedCount === 0}
-                  title={trainerState.pauseAfterCurrent ? 'Queue is paused â€” click to resume training' : 'Start the next queued capture'}
+                  title={trainerState.pauseAfterCurrent ? 'Queue is paused — click to resume training' : 'Start the next queued capture'}
                   className={`h-10 inline-flex items-center gap-2 px-4 rounded-[9px] text-[13px] font-[680] border bg-nm-accent hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed text-white border-transparent transition-colors ${trainerState.pauseAfterCurrent && queuedCount > 0 ? 'nm-resume-pulse' : ''}`}
                 >
                   <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
@@ -1683,11 +1683,11 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                       <span className="inline-flex items-center h-[19px] px-2 rounded-[5px] text-[10.5px] font-[600] bg-field border border-nm-border-s text-nm-text-2">{activeJob.profileName}</span>
                     )}
                     <span>model {activeJobIdx} of {totalJobs}</span>
-                    {queuedCount > 0 && <span className="text-nm-text-3">Â· {queuedCount} more queued</span>}
+                    {queuedCount > 0 && <span className="text-nm-text-3">· {queuedCount} more queued</span>}
                     <span className="font-mono truncate">{activeJob.outputPath.replace(/\\/g, '/').split('/').slice(-2).join('/')}</span>
                   </>
                 )}
-                {!activeJob && <span>Queue is idle â€” start a run from New Run or the queue.</span>}
+                {!activeJob && <span>Queue is idle — start a run from New Run or the queue.</span>}
               </div>
             </div>
             {/* Control bar */}
@@ -1707,7 +1707,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               {isRunning ? (
                 <button
                   onClick={async () => { await window.api.setTrainerPauseAfterCurrent(!trainerState.pauseAfterCurrent) }}
-                  title={trainerState.pauseAfterCurrent ? 'Click to cancel â€” queue will keep going after current run' : 'Stop the queue after the current run finishes'}
+                  title={trainerState.pauseAfterCurrent ? 'Click to cancel — queue will keep going after current run' : 'Stop the queue after the current run finishes'}
                   className={`h-[34px] inline-flex items-center gap-1.5 px-2.5 rounded-[9px] text-xs font-[580] border transition-colors ${
                     trainerState.pauseAfterCurrent
                       ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border-amber-500/40'
@@ -1725,7 +1725,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 <button
                   onClick={async () => { await window.api.setTrainerPauseAfterCurrent(false) }}
                   disabled={queuedCount === 0}
-                  title={trainerState.pauseAfterCurrent ? 'Queue is paused â€” click to resume training' : 'Start the next queued capture'}
+                  title={trainerState.pauseAfterCurrent ? 'Queue is paused — click to resume training' : 'Start the next queued capture'}
                   className={`h-[34px] inline-flex items-center gap-1.5 px-2.5 rounded-[9px] text-xs font-[680] border bg-nm-accent hover:opacity-90 disabled:opacity-35 disabled:cursor-not-allowed text-white border-transparent transition-colors ${trainerState.pauseAfterCurrent && queuedCount > 0 ? 'nm-resume-pulse' : ''}`}
                 >
                   <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
@@ -1756,7 +1756,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
           <div className="flex items-center gap-4 min-w-0">
             <div className="flex-1 min-w-0">
               <div className="flex items-center justify-between text-[11.5px] text-nm-text-3 mb-1.5">
-                <span className="font-[600] text-nm-text">{trainerState.progressPhase || (isRunning ? 'Startingâ€¦' : 'Waiting to start')}</span>
+                <span className="font-[600] text-nm-text">{trainerState.progressPhase || (isRunning ? 'Starting…' : 'Waiting to start')}</span>
                 <span className="font-mono text-nm-text-2">{trainerState.progressEpochCurrent && progressEpochTotal ? `Epoch ${trainerState.progressEpochCurrent} / ${progressEpochTotal}` : ''}</span>
                 <span className="font-mono tabular-nums text-nm-text-2">{typeof trainerState.progressPercent === 'number' ? `${trainerState.progressPercent.toFixed(1)}%` : ''}</span>
               </div>
@@ -1770,10 +1770,10 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
             {/* Mini-stats */}
             <div className="flex items-center gap-5 flex-shrink-0">
               {[
-                { label: 'Rate', value: typeof trainerState.progressRate === 'number' ? `${trainerState.progressRate.toFixed(1)}` : 'â€”', unit: ' it/s' },
-                { label: 'Batch', value: trainerState.progressBatchCurrent && trainerState.progressBatchTotal ? `${trainerState.progressBatchCurrent}/${trainerState.progressBatchTotal}` : 'â€”', unit: '' },
+                { label: 'Rate', value: typeof trainerState.progressRate === 'number' ? `${trainerState.progressRate.toFixed(1)}` : '—', unit: ' it/s' },
+                { label: 'Batch', value: trainerState.progressBatchCurrent && trainerState.progressBatchTotal ? `${trainerState.progressBatchCurrent}/${trainerState.progressBatchTotal}` : '—', unit: '' },
                 (() => { const b = getBestLiveEsr(trainerState); const t = getEsrToneKind(b.value, b.kind); return { label: 'Val ESR', value: t.text, unit: '', color: t.classes } })(),
-                { label: 'ETA', value: eta ?? 'â€”', unit: '' },
+                { label: 'ETA', value: eta ?? '—', unit: '' },
               ].map(({ label, value, unit, color }) => (
                 <div key={label} className="text-right">
                   <div className="text-[10px] text-nm-text-3 uppercase tracking-[.4px] font-[600]">{label}</div>
@@ -1804,7 +1804,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   <div className="flex items-center gap-8 px-8 py-7 min-h-[210px]">
                     <div className="flex-1 min-w-0">
                       <div className="text-[11px] font-[700] uppercase tracking-[.55px] text-nm-text-3 mb-1.5">
-                        Now training Â· {activeJob?.submissionLabel ?? activeJob?.profileName ?? 'Manual'}
+                        Now training · {activeJob?.submissionLabel ?? activeJob?.profileName ?? 'Manual'}
                       </div>
                       <div className="text-[34px] font-[720] text-nm-text truncate leading-tight mb-2.5">{activeJobName}</div>
                       <div className="flex items-center gap-3 text-[12px] text-nm-text-3 mb-4 flex-wrap">
@@ -1824,7 +1824,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                         )}
                       </div>
                       <div className="flex items-center justify-between text-[11.5px] text-nm-text-3 mb-2">
-                        <span className="font-[600] text-nm-text">{trainerState.progressPhase || 'Trainingâ€¦'}</span>
+                        <span className="font-[600] text-nm-text">{trainerState.progressPhase || 'Training…'}</span>
                         <span className="font-mono">
                           {trainerState.progressEpochCurrent && progressEpochTotal ? `Epoch ${trainerState.progressEpochCurrent} / ${progressEpochTotal}` : ''}
                         </span>
@@ -1854,7 +1854,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                       </svg>
                     </div>
                     <div className="text-[18px] font-[650] text-nm-text">
-                      {trainerState.pauseAfterCurrent ? 'Paused â€” queue will not advance' : 'Nothing training right now'}
+                      {trainerState.pauseAfterCurrent ? 'Paused — queue will not advance' : 'Nothing training right now'}
                     </div>
                     <div className="text-[13px] text-nm-text-3 max-w-[420px]">
                       Add captures below to start a quick batch, or use the New Run tab for full control.
@@ -1875,7 +1875,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 const bigStats = [
                   {
                     label: 'Current epoch',
-                    value: isRunning && trainerState.progressEpochCurrent ? String(trainerState.progressEpochCurrent) : 'â€”',
+                    value: isRunning && trainerState.progressEpochCurrent ? String(trainerState.progressEpochCurrent) : '—',
                     sub: isRunning && progressEpochTotal ? `of ${progressEpochTotal}` : 'idle',
                     color: accentColor,
                     iconColor: accentColor,
@@ -1884,7 +1884,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   {
                     label: 'Queue progress',
                     value: `${queueFinished} / ${totalJobs}`,
-                    sub: `${groupedQueue.length} batches Â· ${Math.max(totalJobs - queueFinished, 0)} to go`,
+                    sub: `${groupedQueue.length} batches · ${Math.max(totalJobs - queueFinished, 0)} to go`,
                     color: accentColor,
                     iconColor: accentColor,
                     featured: true,
@@ -1892,7 +1892,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   },
                   {
                     label: 'Active batch',
-                    value: activeBatchTotal > 0 ? `${activeBatchIdx} / ${activeBatchTotal}` : 'â€”',
+                    value: activeBatchTotal > 0 ? `${activeBatchIdx} / ${activeBatchTotal}` : '—',
                     sub: activeJob?.submissionLabel ?? activeJob?.profileName ?? 'idle',
                     color: accentColor,
                     iconColor: accentColor,
@@ -1900,7 +1900,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   },
                   {
                     label: 'Current ETA',
-                    value: eta ?? 'â€”',
+                    value: eta ?? '—',
                     sub: eta && typeof trainerState.progressRate === 'number' ? `at ${trainerState.progressRate.toFixed(0)} it/s` : 'idle',
                     color: 'var(--text-3)',
                     iconColor: 'var(--text-3)',
@@ -1909,7 +1909,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   {
                     label: 'Completed',
                     value: String(successCount),
-                    sub: 'across queue Â· click for history',
+                    sub: 'across queue · click for history',
                     color: '#10b981',
                     iconColor: '#10b981',
                     valueClass: successCount > 0 ? 'text-emerald-400' : undefined,
@@ -1919,7 +1919,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   {
                     label: 'Failed',
                     value: String(failedCount),
-                    sub: 'across queue Â· click for history',
+                    sub: 'across queue · click for history',
                     color: failedCount > 0 ? '#ef4444' : 'var(--text-3)',
                     iconColor: failedCount > 0 ? '#ef4444' : 'var(--text-3)',
                     valueClass: failedCount > 0 ? 'text-red-400' : undefined,
@@ -1928,8 +1928,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   },
                   {
                     label: 'Last ESR',
-                    value: lastSuccessEntry ? (lastEsrTone.text !== 'â€”' ? lastEsrTone.text : 'â€”') : 'â€”',
-                    sub: lastSuccessEntry ? (lastSuccessEntry.finalModelName ?? '').split(/[/\\]/).pop()?.replace(/\.nam$/, '') ?? 'â€”' : 'no runs yet',
+                    value: lastSuccessEntry ? (lastEsrTone.text !== '—' ? lastEsrTone.text : '—') : '—',
+                    sub: lastSuccessEntry ? (lastSuccessEntry.finalModelName ?? '').split(/[/\\]/).pop()?.replace(/\.nam$/, '') ?? '—' : 'no runs yet',
                     valueClass: lastEsrTone.classes,
                     color: lastSuccessEntry && lastEsrTone.classes.includes('emerald') ? '#10b981' : lastEsrTone.classes.includes('amber') ? '#f59e0b' : lastEsrTone.classes.includes('red') ? '#ef4444' : 'var(--text-3)',
                     iconColor: lastSuccessEntry && lastEsrTone.classes.includes('emerald') ? '#10b981' : lastEsrTone.classes.includes('amber') ? '#f59e0b' : lastEsrTone.classes.includes('red') ? '#ef4444' : 'var(--text-3)',
@@ -1938,7 +1938,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   },
                   {
                     label: 'Last item took',
-                    value: lastDurSec != null ? formatDuration(lastDurSec) : 'â€”',
+                    value: lastDurSec != null ? formatDuration(lastDurSec) : '—',
                     sub: 'most recent run',
                     color: 'var(--text-3)',
                     iconColor: 'var(--text-3)',
@@ -1981,11 +1981,11 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="text-[15px] font-[660] text-nm-text">Quick add</div>
-                      <div className="text-[12px] text-nm-text-3 mt-0.5">Picks your favorite defaults â€” no setup</div>
+                      <div className="text-[12px] text-nm-text-3 mt-0.5">Picks your favorite defaults — no setup</div>
                     </div>
                     <button
                       onClick={() => onOpenSettings?.('training')}
-                      title="Configure favorites in Settings â†’ Training"
+                      title="Configure favorites in Settings → Training"
                       className="w-7 h-7 flex items-center justify-center rounded-[7px] border border-nm-border-s bg-field hover:bg-hov text-nm-text-3 hover:text-nm-text transition-colors flex-shrink-0 mt-0.5"
                     >
                       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 010 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 010-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
@@ -2000,7 +2000,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                         label: 'Preset',
                         value: settings.trainingFavoritePresetId
                           ? (availablePresets.find(p => p.id === settings.trainingFavoritePresetId)?.name ?? 'Unknown preset')
-                          : <span className="text-nm-text-3 italic">not set â€” configure in Settings</span>,
+                          : <span className="text-nm-text-3 italic">not set — configure in Settings</span>,
                         accent: true,
                       },
                       {
@@ -2016,9 +2016,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                         icon: <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2 12h3l2-7 4 16 3-12 2 5h6" /></svg>,
                         label: 'Input DI',
                         value: (settings.trainingDefaultInputDi ?? '').trim()
-                          ? <span className="font-mono truncate max-w-[200px] inline-block align-bottom">â€¦/{(settings.trainingDefaultInputDi ?? '').replace(/\\/g, '/').split('/').pop()}</span>
+                          ? <span className="font-mono truncate max-w-[200px] inline-block align-bottom">…/{(settings.trainingDefaultInputDi ?? '').replace(/\\/g, '/').split('/').pop()}</span>
                           : (settings.namTrainingInputWav?.trim()
-                              ? <span className="font-mono truncate max-w-[200px] inline-block align-bottom text-nm-text-2">â€¦/{settings.namTrainingInputWav.replace(/\\/g, '/').split('/').pop()} <span className="text-nm-text-3">(from Settings)</span></span>
+                              ? <span className="font-mono truncate max-w-[200px] inline-block align-bottom text-nm-text-2">…/{settings.namTrainingInputWav.replace(/\\/g, '/').split('/').pop()} <span className="text-nm-text-3">(from Settings)</span></span>
                               : <span className="text-nm-text-3 italic">not set</span>),
                       },
                     ].map(({ icon, label, value, accent }) => (
@@ -2044,7 +2044,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                         <div key={i} className="flex items-center gap-2 text-[12px] rounded-[9px] border border-emerald-500/25 bg-emerald-500/8 px-3 py-2">
                           <svg className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                           <span className="text-emerald-400">Queued <strong>{b.count}</strong> capture{b.count !== 1 ? 's' : ''}</span>
-                          <span className="text-nm-text-3">Â· {b.label} Â· auto-queued at end</span>
+                          <span className="text-nm-text-3">· {b.label} · auto-queued at end</span>
                         </div>
                       ))}
                     </div>
@@ -2060,7 +2060,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   <div>
                     <div className="text-[15px] font-[660] text-nm-text">Up next</div>
                     <div className="text-[12px] text-nm-text-3 mt-0.5">
-                      {queuedCount > 0 ? `${queuedCount} waiting Â· runs in order` : 'Queue is empty'}
+                      {queuedCount > 0 ? `${queuedCount} waiting · runs in order` : 'Queue is empty'}
                     </div>
                   </div>
 
@@ -2133,7 +2133,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     <svg className="w-[15px] h-[15px] text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941" /></svg>
                     <span className="text-[12.5px] font-[650] text-nm-text">ESR over epochs</span>
                     <span className="flex-1" />
-                    <span className="text-[11px] font-mono text-nm-text-3">log scale Â· lower is better</span>
+                    <span className="text-[11px] font-mono text-nm-text-3">log scale · lower is better</span>
                   </div>
                   <div className="px-4 pb-4 pt-1">
                     <ChartFit minH={260}>
@@ -2153,7 +2153,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 </div>
               )}
 
-              {/* Statline â€” 4 cells like prototype: Epoch / Rate / Validation ESR / Started */}
+              {/* Statline — 4 cells like prototype: Epoch / Rate / Validation ESR / Started */}
               <div className="rounded-[14px] border border-nm-border-s bg-panel overflow-hidden grid grid-cols-4 divide-x divide-nm-border-s">
                 {(() => {
                   const { value: liveEsr, kind: liveEsrKind } = getBestLiveEsr(trainerState)
@@ -2161,13 +2161,13 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   return [
                     {
                       label: 'Epoch',
-                      value: trainerState.progressEpochCurrent ? String(trainerState.progressEpochCurrent) : 'â€”',
+                      value: trainerState.progressEpochCurrent ? String(trainerState.progressEpochCurrent) : '—',
                       suffix: progressEpochTotal ? ` / ${progressEpochTotal}` : null,
                       valueClass: 'text-nm-text',
                     },
                     {
                       label: 'Rate',
-                      value: typeof trainerState.progressRate === 'number' ? trainerState.progressRate.toFixed(2) : 'â€”',
+                      value: typeof trainerState.progressRate === 'number' ? trainerState.progressRate.toFixed(2) : '—',
                       suffix: typeof trainerState.progressRate === 'number' ? ' it/s' : null,
                       valueClass: 'text-nm-text',
                     },
@@ -2179,7 +2179,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     },
                     {
                       label: 'Started',
-                      value: trainerState.startedAt ? new Date(trainerState.startedAt).toLocaleTimeString() : 'â€”',
+                      value: trainerState.startedAt ? new Date(trainerState.startedAt).toLocaleTimeString() : '—',
                       suffix: null,
                       valueClass: 'text-nm-text',
                       smaller: true,
@@ -2195,7 +2195,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 })()}
               </div>
 
-              {/* Secondary statline â€” MRSTFT / MSE diagnostic metrics. Shown only while running and only when the trainer
+              {/* Secondary statline — MRSTFT / MSE diagnostic metrics. Shown only while running and only when the trainer
                   is actually computing them (A1 default config has both; A2 default has both). */}
               {(() => {
                 const isA2 = trainerState.architecture === 'a2'
@@ -2230,7 +2230,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     <span className="text-[12.5px] font-[650] text-nm-text">Final output</span>
                   </div>
                   <div className="px-4 pb-3.5 pt-1">
-                    <div className="text-[11.5px] font-mono leading-[1.7] text-nm-text-2 break-all">{trainerState.outputModelPath || 'â€”'}</div>
+                    <div className="text-[11.5px] font-mono leading-[1.7] text-nm-text-2 break-all">{trainerState.outputModelPath || '—'}</div>
                   </div>
                 </div>
                 <div className="rounded-[14px] border border-nm-border-s bg-panel">
@@ -2348,7 +2348,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                             <span className="text-[10px] uppercase font-medium text-nm-text-3">{label}</span>
                             {showBatches && (
                               <>
-                                <span className="text-[10px] text-nm-text-3 opacity-60">Â·</span>
+                                <span className="text-[10px] text-nm-text-3 opacity-60">·</span>
                                 <span className="text-[10px] font-medium text-nm-text-3 tabular-nums">{batches} batch{batches === 1 ? '' : 'es'}</span>
                               </>
                             )}
@@ -2386,7 +2386,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   <option value="all">All architectures</option>
                   {TRAINER_ARCHITECTURES.map(a => <option key={a} value={a}>{ARCHITECTURE_LABELS[a]}</option>)}
                 </select>
-                <span className="text-[11px] text-nm-text-3">drag to reorder Â· click â–¸ to collapse</span>
+                <span className="text-[11px] text-nm-text-3">drag to reorder · click ▸ to collapse</span>
                 <span className="flex-1" />
                 <button
                   onClick={() => setCollapsedBatches(new Set())}
@@ -2559,7 +2559,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                   if (submissionId && targetSubmissionId && submissionId !== targetSubmissionId) {
                                     await window.api.moveSubmissionBefore(submissionId, targetSubmissionId)
                                   } else {
-                                    // No grouping move possible (orphaned single job) â€” just bump the first queued job to next.
+                                    // No grouping move possible (orphaned single job) — just bump the first queued job to next.
                                     await window.api.makeTrainerJobNext(firstQueuedHere.jobId)
                                   }
                                 }}
@@ -2585,13 +2585,13 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                         {/* Progress meter */}
                         <div className="px-3.5 pt-2 pb-1">
                           <StackedMeter segments={meterSegs} height={6} radius={3} gap={1} />
-                          <div className="text-[10px] text-nm-text-3 mt-1">{doneCount}/{total} finished {total > 0 ? `Â· ${Math.round(doneCount/total*100)}%` : ''}</div>
+                          <div className="text-[10px] text-nm-text-3 mt-1">{doneCount}/{total} finished {total > 0 ? `· ${Math.round(doneCount/total*100)}%` : ''}</div>
                         </div>
                         {/* Items */}
                         {!isCollapsed && (
                           <div className="px-3 pb-3 space-y-1 mt-1">
                             {isWatcher && (
-                              <div className="text-[11px] text-nm-text-3 font-mono px-2 py-1">{group.jobs[0]?.outputPath.replace(/\\/g, '/').split('/').slice(0, -1).join('/')} Â· auto-queues new files as they appear</div>
+                              <div className="text-[11px] text-nm-text-3 font-mono px-2 py-1">{group.jobs[0]?.outputPath.replace(/\\/g, '/').split('/').slice(0, -1).join('/')} · auto-queues new files as they appear</div>
                             )}
                             {group.jobs.map((job, idx) => {
                               const { value: jobEsr2, kind: jobEsrKind2 } = getBestJobEsr(job)
@@ -2632,9 +2632,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                   {job.status === 'queued' && <svg className="w-3.5 h-3.5 text-nm-text-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>}
                                   <div className="flex-1 min-w-0">
                                     <div className="font-mono truncate text-nm-text">{job.outputPath.replace(/\\/g, '/').split('/').pop()}</div>
-                                    {job.status === 'error' && job.error && <div className="text-red-400 text-[11px] truncate">{job.error} Â· attempt {job.attempts}</div>}
-                                    {(job.status === 'running' || job.status === 'starting') && <div className="text-[11px] text-nm-text-2 font-mono">Epoch {trainerState.progressEpochCurrent ?? '?'}/{progressEpochTotal ?? '?'} Â· {typeof trainerState.progressRate === 'number' ? `${trainerState.progressRate.toFixed(2)} it/s` : 'â€”'} Â· {formatDuration(elapsedSec)}</div>}
-                                    {job.status === 'success' && <div className="text-[11px] text-nm-text-2">{architectureDisplayLabel(job.architecture)}{(() => { const d = jobDurationSec(job); return d ? ` Â· ${formatDuration(d)}` : '' })()}</div>}
+                                    {job.status === 'error' && job.error && <div className="text-red-400 text-[11px] truncate">{job.error} · attempt {job.attempts}</div>}
+                                    {(job.status === 'running' || job.status === 'starting') && <div className="text-[11px] text-nm-text-2 font-mono">Epoch {trainerState.progressEpochCurrent ?? '?'}/{progressEpochTotal ?? '?'} · {typeof trainerState.progressRate === 'number' ? `${trainerState.progressRate.toFixed(2)} it/s` : '—'} · {formatDuration(elapsedSec)}</div>}
+                                    {job.status === 'success' && <div className="text-[11px] text-nm-text-2">{architectureDisplayLabel(job.architecture)}{(() => { const d = jobDurationSec(job); return d ? ` · ${formatDuration(d)}` : '' })()}</div>}
                                     {job.status === 'queued' && <div className="text-[11px] text-nm-text-2">Waiting in queue</div>}
                                   </div>
                                   {(job.status === 'running' || job.status === 'starting') && typeof job.progressPercent === 'number' && (
@@ -2651,7 +2651,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                       <button onClick={() => { void handleMakeNext(job) }} className="px-1.5 py-0.5 rounded text-[10px] border border-nm-border-s text-nm-text-2 hover:bg-hov">Next</button>
                                     )}
                                     {job.status === 'queued' && job.sourceMode !== 'watcher' && (
-                                      <button onClick={() => { void handleStageJob(job) }} title="Move to Batches (staged)" className="px-1.5 py-0.5 rounded text-[10px] border border-nm-border-s text-nm-text-2 hover:bg-hov">â‡¦</button>
+                                      <button onClick={() => { void handleStageJob(job) }} title="Move to Batches (staged)" className="px-1.5 py-0.5 rounded text-[10px] border border-nm-border-s text-nm-text-2 hover:bg-hov">⇦</button>
                                     )}
                                     {job.status === 'error' && <button onClick={() => { void handleRetryQueueItem(job) }} className="px-1.5 py-0.5 rounded text-[10px] border border-nm-border-s text-nm-text-2 hover:bg-hov">Retry</button>}
                                     {job.status === 'success' && job.outputModelPath && <button onClick={() => window.api.revealFile(job.outputModelPath)} className="px-1.5 py-0.5 rounded text-[10px] border border-nm-border-s text-nm-text-2 hover:bg-hov">Show</button>}
@@ -2682,7 +2682,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     <p className="text-[12px] text-nm-text-3 mt-0.5">
                       {groupedStagedQueue.length === 0
                         ? 'Nothing staged'
-                        : `${groupedStagedQueue.length} batch${groupedStagedQueue.length === 1 ? '' : 'es'} Â· ${totalCaptures} capture${totalCaptures === 1 ? '' : 's'} saved, ready to queue`}
+                        : `${groupedStagedQueue.length} batch${groupedStagedQueue.length === 1 ? '' : 'es'} · ${totalCaptures} capture${totalCaptures === 1 ? '' : 's'} saved, ready to queue`}
                     </p>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
@@ -2764,7 +2764,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                       const routingLabel = firstJob ? (
                         firstJob.sourcePostProcess === 'move' ? 'Move to output' :
                         firstJob.sourcePostProcess === 'copy' ? 'Copy to output' : 'Keep in place'
-                      ) : 'â€”'
+                      ) : '—'
                       const uniqueArchitectures = Array.from(new Set(group.jobs.map(j => j.architecture)))
                       const normalizeLabel = firstJob?.normalizeWav ? 'On' : 'Off'
                       const epochCount = firstJob?.epochs ?? 0
@@ -2810,11 +2810,11 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                               </div>
                               <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                                 <span className="text-[11px] text-nm-text-3">{group.jobs.length} capture{group.jobs.length === 1 ? '' : 's'}</span>
-                                <span className="text-nm-text-3 text-[10px]">Â·</span>
+                                <span className="text-nm-text-3 text-[10px]">·</span>
                                 {firstJob?.profileName && (
                                   <>
                                     <span className="inline-flex items-center h-[17px] px-1.5 rounded-[5px] text-[10px] font-medium border border-nm-border-s bg-field text-nm-text-2">{firstJob.profileName}</span>
-                                    <span className="text-nm-text-3 text-[10px]">Â·</span>
+                                    <span className="text-nm-text-3 text-[10px]">·</span>
                                   </>
                                 )}
                                 {uniqueArchitectures.map(arch => (
@@ -2823,13 +2823,13 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                     {architectureDisplayLabel(arch)}
                                   </span>
                                 ))}
-                                <span className="text-nm-text-3 text-[10px]">Â·</span>
+                                <span className="text-nm-text-3 text-[10px]">·</span>
                                 <span className="text-[11px] text-nm-text-3">{epochCount} epochs</span>
-                                <span className="text-nm-text-3 text-[10px]">Â·</span>
+                                <span className="text-nm-text-3 text-[10px]">·</span>
                                 <span className="text-[11px] text-nm-text-3">norm {normalizeLabel}</span>
                                 {createdLabel && (
                                   <>
-                                    <span className="text-nm-text-3 text-[10px]">Â·</span>
+                                    <span className="text-nm-text-3 text-[10px]">·</span>
                                     <span className="text-[11px] text-nm-text-3">{createdLabel}</span>
                                   </>
                                 )}
@@ -2864,8 +2864,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                           <div className="flex items-center gap-1.5 px-[52px] pb-2.5 text-[11px] text-nm-text-3 font-mono">
                             <svg className="w-3 h-3 flex-shrink-0 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>
                             <span>{routingLabel}</span>
-                            <span className="opacity-40">Â·</span>
-                            <span>DI <span className="opacity-70">â€¦/{diBasename}</span></span>
+                            <span className="opacity-40">·</span>
+                            <span>DI <span className="opacity-70">…/{diBasename}</span></span>
                           </div>
                           {/* Expanded body: capture list */}
                           {!isCollapsed && (
@@ -2920,12 +2920,12 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 <div className="rounded-[14px] border border-nm-border-s bg-panel p-4">
                   <div className="flex items-center gap-2 mb-2">
                     <svg className="w-[15px] h-[15px] text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" /></svg>
-                    <span className="text-[12.5px] font-[650] text-nm-text">ESR quality Â· last 7 days</span>
+                    <span className="text-[12.5px] font-[650] text-nm-text">ESR quality · last 7 days</span>
                     <span className="flex-1" />
                     <span className="flex items-center gap-2.5 text-[10px] text-nm-text-3">
                       <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm" style={{ background: '#10b981' }} />{'<.01'}</span>
                       <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm" style={{ background: '#f59e0b' }} />{'<.05'}</span>
-                      <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm" style={{ background: '#ef4444' }} />{'â‰¥.05'}</span>
+                      <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm" style={{ background: '#ef4444' }} />{'≥.05'}</span>
                     </span>
                   </div>
                   <ChartFit minH={155}>
@@ -2935,7 +2935,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 <div className="rounded-[14px] border border-nm-border-s bg-panel p-4">
                   <div className="flex items-center gap-2 mb-2">
                     <svg className="w-[15px] h-[15px] text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941" /></svg>
-                    <span className="text-[12.5px] font-[650] text-nm-text">Throughput Â· models / hour</span>
+                    <span className="text-[12.5px] font-[650] text-nm-text">Throughput · models / hour</span>
                   </div>
                   <ChartFit minH={155}>
                     {(w) => <Sparkline data={throughputData.map(v => Math.max(v, 0))} width={w} height={155} fill={true} />}
@@ -2950,7 +2950,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   <input
                     value={historySearch}
                     onChange={e => setHistorySearch(e.target.value)}
-                    placeholder="Search name or pathâ€¦"
+                    placeholder="Search name or path…"
                     className="flex-1 min-w-0 bg-transparent border-0 outline-none text-[12.5px] text-nm-text placeholder:text-nm-text-3"
                   />
                 </div>
@@ -2974,7 +2974,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   {[['all','All time'],['day','Today'],['week','This week'],['month','This month'],['quarter','This quarter']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
                 </select>
                 <select value={historyEsrFilter} onChange={e => setHistoryEsrFilter(e.target.value as typeof historyEsrFilter)} className="h-[34px] px-2.5 bg-field border border-field-bd rounded-[9px] text-[12px] text-nm-text-2 focus:outline-none cursor-pointer">
-                  {[['all','All ESR'],['green','Green (A1/Full <0.01 Â· A2 Agg <0.02)'],['amber','Amber (A1/Full <0.05 Â· A2 Agg <0.07)'],['red','Red (A1/Full â‰¥0.05 Â· A2 Agg â‰¥0.07)'],['none','No ESR']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+                  {[['all','All ESR'],['green','Green (A1/Full <0.01 · A2 Agg <0.02)'],['amber','Amber (A1/Full <0.05 · A2 Agg <0.07)'],['red','Red (A1/Full ≥0.05 · A2 Agg ≥0.07)'],['none','No ESR']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
                 </select>
               </div>
 
@@ -3080,19 +3080,19 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                             {/* Main */}
                             <div className="flex-1 min-w-0">
                               <div className="text-[13px] font-[560] text-nm-text truncate">{entry.finalModelName}</div>
-                              {/* Meta line â€” shown for ALL statuses so you can see what the failed attempt was. */}
+                              {/* Meta line — shown for ALL statuses so you can see what the failed attempt was. */}
                               <div className="flex items-center gap-2 flex-wrap mt-[3px] text-[11px] text-nm-text-3">
                                 <span className="inline-flex items-center gap-1 h-[17px] px-1.5 rounded-[5px] text-[10px] font-[650] border" style={archChipStyle(entry.architecture)}>
                                   <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
                                   {architectureDisplayLabel(entry.architecture)}
                                 </span>
                                 {entry.profileName && <span className="inline-flex items-center h-[17px] px-1.5 rounded-[5px] text-[10px] font-medium border border-nm-border-s bg-field text-nm-text-2">{entry.profileName}</span>}
-                                <span className="opacity-50">Â·</span>
+                                <span className="opacity-50">·</span>
                                 <span>{entry.epochs} epochs</span>
                                 {(() => {
                                   const dur = typeof entry.durationSec === 'number' ? entry.durationSec : null
                                   if (dur == null) return null
-                                  return <><span className="opacity-50">Â·</span><span className="font-mono">{formatDuration(dur)}</span></>
+                                  return <><span className="opacity-50">·</span><span className="font-mono">{formatDuration(dur)}</span></>
                                 })()}
                               </div>
                               {entry.status === 'error' && (
@@ -3126,8 +3126,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                       title={
                                         isA2
                                           ? (hasFullBreakdown
-                                            ? 'A2 Full sub-model (channels_8) â€” what the plugin loads by default'
-                                            : 'A2 Aggregate â€” sum of both sub-models\' ESR. Matches the value the official NAM trainer writes to metadata.training.validation_esr.')
+                                            ? 'A2 Full sub-model (channels_8) — what the plugin loads by default'
+                                            : 'A2 Aggregate — sum of both sub-models\' ESR. Matches the value the official NAM trainer writes to metadata.training.validation_esr.')
                                           : 'Validation ESR'
                                       }
                                     >
@@ -3142,7 +3142,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                         <span
                                           className={`inline-flex items-center gap-1.5 h-[22px] px-2 rounded-full text-[11px] font-mono font-semibold ${liteTone.classes}`}
                                           style={{ background: bgFor(liteKey) }}
-                                          title="A2 Lite sub-model (channels_3) â€” smaller, lower-fidelity sub-model packed alongside the Full one"
+                                          title="A2 Lite sub-model (channels_3) — smaller, lower-fidelity sub-model packed alongside the Full one"
                                         >
                                           <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
                                           <span className="text-[9px] font-[700] uppercase tracking-wider opacity-70">Lite</span>
@@ -3153,7 +3153,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                     {isA2 && hasFullBreakdown && typeof aggVal === 'number' && primaryVal !== aggVal && (
                                       <span
                                         className="inline-flex items-center gap-1.5 h-[22px] px-2 rounded-full text-[10px] font-mono text-nm-text-3 border border-nm-border-s"
-                                        title="A2 Aggregate â€” sum of both sub-models' ESR. Matches the value the official NAM trainer writes to metadata.training.validation_esr."
+                                        title="A2 Aggregate — sum of both sub-models' ESR. Matches the value the official NAM trainer writes to metadata.training.validation_esr."
                                       >
                                         <span className="text-[9px] font-[700] uppercase tracking-wider opacity-70">Agg</span>
                                         {aggVal.toFixed(4)}
@@ -3213,11 +3213,11 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2 12h3l2-7 4 16 3-12 2 5h6" /></svg>
                   <span className="text-[11px] font-semibold uppercase tracking-wider text-nm-accent">Captures</span>
                 </div>
-                <Field label="Batch name" hint="Optional â€” leave blank to auto-name from the capture, folder, or count">
+                <Field label="Batch name" hint="Optional — leave blank to auto-name from the capture, folder, or count">
                   {(() => {
                     const folders = new Set(batchWavList.map(w => w.fromFolder).filter(Boolean))
                     const placeholder = batchWavList.length === 0
-                      ? 'Auto â€” will use capture or folder name'
+                      ? 'Auto — will use capture or folder name'
                       : batchWavList.length === 1
                         ? batchWavList[0].name
                         : (folders.size === 1 && batchWavList[0].fromFolder)
@@ -3251,7 +3251,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     <label className="text-xs font-medium text-nm-text">
                       Output WAVs
                       {batchWavList.length > 0 && (
-                        <span className="ml-1.5 text-[11px] font-semibold text-nm-accent">Â· {batchWavList.length} selected</span>
+                        <span className="ml-1.5 text-[11px] font-semibold text-nm-accent">· {batchWavList.length} selected</span>
                       )}
                     </label>
                     <div className="flex gap-2">
@@ -3280,12 +3280,12 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                       if (files.length === 0) return
                       const wavFiles = files.filter(f => f.name.toLowerCase().endsWith('.wav'))
                       const otherFiles = files.filter(f => !f.name.toLowerCase().endsWith('.wav'))
-                      // WAV files â€” add directly
+                      // WAV files — add directly
                       if (wavFiles.length > 0) {
                         const paths = wavFiles.map(f => window.api.getPathForFile(f)).filter(Boolean) as string[]
                         addWavsToBatchList(paths)
                       }
-                      // Non-WAV / unknown â€” check if it's a folder
+                      // Non-WAV / unknown — check if it's a folder
                       for (const f of otherFiles) {
                         const p = window.api.getPathForFile(f)
                         if (!p) continue
@@ -3300,7 +3300,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   >
                     {batchWavList.length === 0 ? (
                       <div className="px-3 py-4 text-[12px] text-nm-text-3 italic text-center">
-                        {dropTargetId === 'output-wavs' ? 'Drop WAVs or a folder hereâ€¦' : 'No WAVs â€” choose files, add a folder, or drop here.'}
+                        {dropTargetId === 'output-wavs' ? 'Drop WAVs or a folder here…' : 'No WAVs — choose files, add a folder, or drop here.'}
                       </div>
                     ) : (
                       (() => {
@@ -3311,7 +3311,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                           <div className="p-1 space-y-0.5">
                             {ungrouped.map(item => {
                               const parts = item.path.replace(/\\/g, '/').split('/')
-                              const displayPath = parts.length > 2 ? `â€¦/${parts.slice(-3, -1).join('/')}/${item.name}` : item.name
+                              const displayPath = parts.length > 2 ? `…/${parts.slice(-3, -1).join('/')}/${item.name}` : item.name
                               return (
                               <div key={item.id} className="flex items-center gap-2 px-2 py-1.5 rounded text-[12px] hover:bg-hov group">
                                 <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M2 12h3l2-7 4 16 3-12 2 5h6" /></svg>
@@ -3369,7 +3369,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   <HelpPopover title="Training Settings" side="right">
                     Configure the architecture, epochs, and model type for this run. Choose a saved <strong>Preset</strong> to load a full configuration in one click, or set <strong>Custom</strong> to adjust each field individually.
                     <br /><br />
-                    The <strong>Architecture(s)</strong> picker includes built-in WaveNet sizes and any <strong>Capture Profiles</strong> you have saved in Settings â†’ Training. A Capture Profile lets you store a custom layer config alongside an epoch count so you can reuse it.
+                    The <strong>Architecture(s)</strong> picker includes built-in WaveNet sizes and any <strong>Capture Profiles</strong> you have saved in Settings → Training. A Capture Profile lets you store a custom layer config alongside an epoch count so you can reuse it.
                   </HelpPopover>
                 </div>
 
@@ -3391,7 +3391,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   )}
                 </div>
 
-                {/* Selected architectures as color-coded chips â€” appears under the preset row when a preset is active. */}
+                {/* Selected architectures as color-coded chips — appears under the preset row when a preset is active. */}
                 {currentRunPreset && currentRunPreset.architectures.length > 0 && (
                   <div className="flex flex-wrap items-center gap-1.5 -mt-1.5">
                     <span className="text-[10.5px] uppercase font-[600] tracking-[.4px] text-nm-text-3 mr-0.5">Architectures</span>
@@ -3406,7 +3406,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
 
                 {showsCustomSettings && (
                   <div className="grid gap-3 grid-cols-[1fr_100px_140px_100px_auto]">
-                    <Field label="Architecture(s)" help={<>Each architecture produces a <code>.nam</code> of different size and quality. <strong>A2</strong> is the modern PackedWaveNet (one file = Full + Lite). <strong>A1 - Standard</strong> = best A1 quality. A1 Lite/Feather/Nano are smaller/faster. You can mix A1 and A2 â€” each ticked architecture spawns its own job in the batch.</>}>
+                    <Field label="Architecture(s)" help={<>Each architecture produces a <code>.nam</code> of different size and quality. <strong>A2</strong> is the modern PackedWaveNet (one file = Full + Lite). <strong>A1 - Standard</strong> = best A1 quality. A1 Lite/Feather/Nano are smaller/faster. You can mix A1 and A2 — each ticked architecture spawns its own job in the batch.</>}>
                       <ArchitectureMultiSelect
                         values={architectures}
                         onChange={next => {
@@ -3425,7 +3425,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                       <input value={latency} onChange={e => setLatency(e.target.value)} className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none" placeholder="Auto" />
                     </Field>
                     <Field label="Target ESR" labelTitle="blank = off">
-                      <input value={thresholdEsr} onChange={e => setThresholdEsr(e.target.value)} className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none" placeholder="â€”" />
+                      <input value={thresholdEsr} onChange={e => setThresholdEsr(e.target.value)} className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none" placeholder="—" />
                     </Field>
                     <div className="flex flex-row items-end gap-2 pb-0.5 flex-wrap">
                       <ToggleRow label="Save ESR plot" checked={savePlot} onChange={setSavePlot} />
@@ -3500,7 +3500,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" /></svg>
                   <span className="text-[11px] font-semibold uppercase tracking-wider text-nm-accent">Output Routing</span>
                   <HelpPopover side="right">
-                    NAM Lab routes the final .nam and ESR graph to the configured destination. You can use a <strong>formula</strong> (from Settings â†’ Training â†’ Output Formula) for automatic token-based routing, or specify a fixed folder manually.
+                    NAM Lab routes the final .nam and ESR graph to the configured destination. You can use a <strong>formula</strong> (from Settings → Training → Output Formula) for automatic token-based routing, or specify a fixed folder manually.
                   </HelpPopover>
                 </div>
 
@@ -3518,12 +3518,12 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                           )}
                         </code>
                       </div>
-                      {previewPath && hasSource && <div className="pl-5 text-[11px] text-emerald-400 font-mono break-all">â†’ {previewPath}</div>}
+                      {previewPath && hasSource && <div className="pl-5 text-[11px] text-emerald-400 font-mono break-all">→ {previewPath}</div>}
                       {!hasSource && <div className="pl-5 text-[11px] text-emerald-500 italic">Add WAVs to preview output path</div>}
                       {!formulaOverrideActive && (
                         <div className="pl-5 flex items-center gap-2">
                           <span className="text-[11px] text-emerald-300/70">Override for this run:</span>
-                          <button onClick={() => setFormulaOverrideActive(true)} className="text-[11px] text-emerald-300 hover:text-white border border-emerald-500/40 hover:border-emerald-400/70 rounded px-2 py-0.5 transition-colors bg-emerald-900/30 hover:bg-emerald-900/50">Use fixed pathâ€¦</button>
+                          <button onClick={() => setFormulaOverrideActive(true)} className="text-[11px] text-emerald-300 hover:text-white border border-emerald-500/40 hover:border-emerald-400/70 rounded px-2 py-0.5 transition-colors bg-emerald-900/30 hover:bg-emerald-900/50">Use fixed path…</button>
                         </div>
                       )}
                       {formulaOverrideActive && (
@@ -3550,7 +3550,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                           )}
                         </code>
                       </div>
-                      {previewPath && hasSource && <div className="pl-5 text-[11px] text-nm-accent font-mono break-all">â†’ {previewPath}</div>}
+                      {previewPath && hasSource && <div className="pl-5 text-[11px] text-nm-accent font-mono break-all">→ {previewPath}</div>}
                       {!hasSource && <div className="pl-5 text-[11px] text-nm-text-3 italic">Add WAVs to preview graph path</div>}
                     </div>
                   )
@@ -3570,7 +3570,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   </Field>
                   {manualRoutingMode === 'root' ? (
                     <Field label="NAM Output Root">
-                      <PathPicker value={trainPath} placeholder="Select a destination folder" onChange={setTrainPath} onBrowse={async () => { const p = await window.api.openFolder(trainPath || undefined); if (p) setTrainPath(p) }} browseLabel="Folderâ€¦" />
+                      <PathPicker value={trainPath} placeholder="Select a destination folder" onChange={setTrainPath} onBrowse={async () => { const p = await window.api.openFolder(trainPath || undefined); if (p) setTrainPath(p) }} browseLabel="Folder…" />
                     </Field>
                   ) : (
                     <div className="rounded-lg border border-nm-border-s bg-field px-3 py-2 text-[12px] text-nm-text-3">
@@ -3580,7 +3580,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 </div>
                 <div className="text-[11px] text-nm-text-3">
                   Example model: <code className="font-mono">{exampleFinalModelPath}</code>
-                  <span className="mx-2">Â·</span>
+                  <span className="mx-2">·</span>
                   Example graph: <code className="font-mono">{exampleGraphPath}</code>
                 </div>
               </div>
@@ -3603,7 +3603,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               {/* CTA buttons */}
               {(() => {
                 const blockers: string[] = []
-                if (!settings.namPythonPath.trim()) blockers.push('Python path not set (Settings â†’ Training)')
+                if (!settings.namPythonPath.trim()) blockers.push('Python path not set (Settings → Training)')
                 if (!inputPath.trim()) blockers.push('No input DI WAV selected')
                 if (batchWavList.length === 0) blockers.push('No output WAV files added')
                 if (!activePreset && architectures.length === 0) blockers.push('No architecture selected')
@@ -3636,7 +3636,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   title={queueTooltip}
                   className="flex-1 py-3 rounded-xl text-[14px] font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2"
                 >
-                  {submittingBatch ? 'Stagingâ€¦' : "Stage (save, don't run)"}
+                  {submittingBatch ? 'Staging…' : "Stage (save, don't run)"}
                 </button>
                 <button
                   onClick={() => { void handleQueue(false) }}
@@ -3644,10 +3644,10 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   title={queueTooltip}
                   className="flex-1 py-3 rounded-xl text-[14px] font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-white bg-nm-accent hover:opacity-90"
                 >
-                  {submittingBatch ? 'Queueingâ€¦' : (() => {
+                  {submittingBatch ? 'Queueing…' : (() => {
                     const jobArchCount = activePreset ? activePreset.architectures.length : architectures.length
                     const total = batchWavList.length * Math.max(jobArchCount, 1)
-                    return total <= 1 ? 'Queue + Start' : `Queue ${total} Â· Start`
+                    return total <= 1 ? 'Queue + Start' : `Queue ${total} · Start`
                   })()}
                 </button>
               </div>
@@ -3717,7 +3717,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
             }}
             className="w-full text-left px-3 py-2 text-[13px] text-red-400 hover:bg-red-500/10"
           >
-            Purge from historyâ€¦
+            Purge from history…
           </button>
           {historyContextMenu.entry.submissionId && (() => {
             const sid = historyContextMenu.entry.submissionId
@@ -3732,7 +3732,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 }}
                 className="w-full text-left px-3 py-2 text-[13px] text-red-400 hover:bg-red-500/10"
               >
-                Purge entire batch from historyâ€¦ <span className="text-nm-text-3 text-[11px]">({matches.length} captures)</span>
+                Purge entire batch from history… <span className="text-nm-text-3 text-[11px]">({matches.length} captures)</span>
               </button>
             )
           })()}
@@ -3758,13 +3758,13 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               <>
                 Removing <span className="font-mono text-nm-text">{historyPurgeConfirm.label}</span> will delete <span className="font-semibold text-nm-text">{historyPurgeConfirm.ids.length} history entries</span> permanently.
                 <br /><br />
-                Only the history record is removed â€” the trained <span className="font-mono">.nam</span> files and ESR plots on disk are left alone.
+                Only the history record is removed — the trained <span className="font-mono">.nam</span> files and ESR plots on disk are left alone.
               </>
             ) : (
               <>
                 Removing <span className="font-mono text-nm-text">{historyPurgeConfirm.label}</span> will delete this history entry permanently.
                 <br /><br />
-                Only the history record is removed â€” the trained <span className="font-mono">.nam</span> file and ESR plot on disk are left alone.
+                Only the history record is removed — the trained <span className="font-mono">.nam</span> file and ESR plot on disk are left alone.
               </>
             )}
           </div>
@@ -3802,7 +3802,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
           <div className="px-5 py-4 text-[13px] text-nm-text-2 leading-[1.55]">
             Removes <span className="font-semibold text-nm-text">{clearQueueConfirm.count}</span> row{clearQueueConfirm.count === 1 ? '' : 's'} from the queue (queued + done + failed + canceled).
             <br /><br />
-            The currently <span className="font-semibold text-nm-text">running job is left alone</span> â€” use Emergency stop first if you want to kill that too. <span className="font-semibold text-nm-text">Staged drafts</span> in the Batches tab are also unaffected. History keeps the full record.
+            The currently <span className="font-semibold text-nm-text">running job is left alone</span> — use Emergency stop first if you want to kill that too. <span className="font-semibold text-nm-text">Staged drafts</span> in the Batches tab are also unaffected. History keeps the full record.
           </div>
           <div className="px-5 py-3.5 bg-panel-2 border-t border-nm-border-s flex items-center justify-end gap-2">
             <button onClick={() => setClearQueueConfirm(null)} className="h-9 px-4 rounded-[9px] text-[12.5px] font-medium border border-nm-border-s bg-panel hover:bg-hov text-nm-text-2 transition-colors">Cancel</button>
@@ -4004,7 +4004,7 @@ function ArchitectureMultiSelect({ values, onChange, userProfiles = [], onCreate
             })}
             {onCreateProfile && (
               <button onClick={() => { onCreateProfile(); setOpen(false) }} className="w-full text-left px-2.5 py-1.5 text-[11px] text-nm-accent hover:bg-hov border-t border-nm-border-s mt-1">
-                + New capture profileâ€¦
+                + New capture profile…
               </button>
             )}
           </div>

@@ -3871,7 +3871,7 @@ INSTRUCTIONS:
     const ignoreChecks = preset?.ignoreChecks ?? false
     const modeledBy = settings.enableCaptureDefaults && settings.defaultModeledBy.trim() ? settings.defaultModeledBy.trim() : null
     const submissionId = makeSubmissionId('wav-check')
-    const submissionLabel = `WAV Check - ${wavPaths.length} capture${wavPaths.length !== 1 ? 's' : ''}`
+    const submissionLabel = `WAV Check – ${wavPaths.length} capture${wavPaths.length !== 1 ? 's' : ''}`
     const submissionCreatedAt = new Date().toISOString()
     const payloads: TrainerStartPayload[] = wavPaths.flatMap((wavPath) =>
       architectures.map((architecture) => ({
@@ -4624,7 +4624,7 @@ INSTRUCTIONS:
                     onClick={() => handleOpenExperimentalTraining('files')}
                     className="px-4 py-2 text-xs font-medium transition-colors border-b-2 -mb-px border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
                   >
-                    Training ->
+                    Training ↗
                   </button>
                 </div>
                 <div className="flex-1 overflow-hidden">
