@@ -1239,7 +1239,7 @@ export default function App() {
     return unsub
   }, [])
 
-  function showTransientStatus(next: { message: string; type: 'info' | 'success' | 'error'; logPath?: string }, ms = 5000) {
+  const showTransientStatus = useCallback((next: { message: string; type: 'info' | 'success' | 'error'; logPath?: string }, ms = 5000) => {
     if (statusTimeoutRef.current) {
       clearTimeout(statusTimeoutRef.current)
       statusTimeoutRef.current = null
@@ -1253,7 +1253,7 @@ export default function App() {
       ))
       statusTimeoutRef.current = null
     }, ms)
-  }
+  }, [])
 
   useEffect(() => {
     void window.api.setFolderWatchState({

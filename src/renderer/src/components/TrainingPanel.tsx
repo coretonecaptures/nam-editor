@@ -500,6 +500,10 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const { value: _bestStateEsr, kind: _bestStateEsrKind } = getBestLiveEsr(trainerState)
   const validationEsrTone = getEsrToneKind(_bestStateEsr, _bestStateEsrKind)
   const replicateEsrTone = getEsrTone(trainerState.replicateEsr)
+  const liveRunShowsA2Full = trainerState.architecture === 'a2' && _bestStateEsrKind === 'a2_full'
+  const liveChartTarget = liveRunShowsA2Full
+    ? null
+    : (typeof trainerState.thresholdEsr === 'number' ? trainerState.thresholdEsr : 0.01)
 
   const resolvedModelName = useMemo(() => {
     const first = batchWavList[0]?.path ?? ''
@@ -2110,10 +2114,20 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 <div>
                   <h2 className="text-[18px] font-[680] text-nm-text leading-tight">Live Run</h2>
                   <p className="text-[12px] text-nm-text-3 mt-0.5">Real-time training telemetry for the active model</p>
+                  {liveRunShowsA2Full && (
+                    <p className="text-[11px] text-amber-300/90 mt-1">
+                      A2 live chart is showing the Full sub-model ESR. NAM&apos;s training target / early-stop threshold is still aggregate-based upstream, so the green target line is hidden here to avoid a misleading comparison.
+                    </p>
+                  )}
                 </div>
                 <span className="flex items-center gap-3 text-[10.5px] text-nm-text-3 flex-shrink-0 pt-1">
-                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm" style={{ background: 'var(--nm-accent, var(--accent))' }} />validation ESR</span>
-                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm" style={{ background: '#10b981' }} />target</span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-sm" style={{ background: 'var(--nm-accent, var(--accent))' }} />
+                    {liveRunShowsA2Full ? 'validation ESR (Full)' : 'validation ESR'}
+                  </span>
+                  {!liveRunShowsA2Full && (
+                    <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm" style={{ background: '#10b981' }} />target</span>
+                  )}
                 </span>
               </div>
 
@@ -2142,7 +2156,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                           data={esrSeries}
                           width={w}
                           height={260}
-                          target={typeof trainerState.thresholdEsr === 'number' ? trainerState.thresholdEsr : 0.01}
+                          target={liveChartTarget}
                           labels={true}
                           variant="area"
                           logScale={true}
@@ -4058,4 +4072,3 @@ function ToggleRow({ label, checked, onChange }: { label: string; checked: boole
     </label>
   )
 }
-
