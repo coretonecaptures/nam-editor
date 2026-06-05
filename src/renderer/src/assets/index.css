@@ -487,6 +487,15 @@ html.charcoal ::-webkit-scrollbar-thumb:hover { background: #4c4c4c; }
   animation: nm-resume-pulse 2.2s ease-in-out infinite;
 }
 
+/* Save-button pulse — gentle indigo ring to signal unsaved changes. */
+@keyframes nm-save-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.55); }
+  50%      { box-shadow: 0 0 0 6px rgba(99, 102, 241, 0); }
+}
+.nm-save-pulse {
+  animation: nm-save-pulse 2s ease-in-out infinite;
+}
+
 /* Dash bar — large progress bar for dashboard hero */
 .nm-dash-bar-fill {
   position: relative;

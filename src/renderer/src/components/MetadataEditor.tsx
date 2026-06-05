@@ -199,16 +199,25 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
               )}
             </div>
           </div>
-          {m.gear_type && gearImages[m.gear_type] && (
-            <GearImage gearType={m.gear_type} size="header" />
-          )}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {m.gear_type && gearImages[m.gear_type] && (
+              <GearImage gearType={m.gear_type} size="header" />
+            )}
+            <button
+              onClick={onSave}
+              disabled={!file.isDirty}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed bg-indigo-600 hover:bg-indigo-500 text-white${file.isDirty ? ' nm-save-pulse' : ''}`}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+              </svg>
+              Save
+            </button>
+          </div>
         </div>
 
-        {/* Action row &mdash; left-spread, Save right-justified */}
+        {/* Action row */}
         <div className="flex items-center gap-1.5 pb-3">
-          {file.isDirty && (
-            <span className="text-xs text-amber-400 font-medium mr-1">Unsaved</span>
-          )}
           {onRenameFile && renameTemplate && (
             <button
               onClick={() => {
@@ -230,7 +239,7 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
               className="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap"
               title="Re-apply auto-fill rules from Settings to empty fields"
             >
-              ↺ Defaults
+              &#x21BA; Defaults
             </button>
           )}
           {file.autoFilledFields.length > 0 && onClearSuggestions && (
@@ -252,16 +261,6 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
             </svg>
             Revert
-          </button>
-          <button
-            onClick={onSave}
-            disabled={!file.isDirty}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-indigo-600 hover:bg-indigo-500 text-white ml-auto"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
-            </svg>
-            Save
           </button>
         </div>
       </div>
