@@ -3382,9 +3382,8 @@ function persistTrainerMetadata(
   // A2 sub-model ESRs. Gated on architecture so A1 runs never get these fields.
   // Stored in metadata.nam_lab.* — NAM ignores them, only NAM Lab reads them back.
   // a2_full_validation_esr is redundant with whatever's in the main validation_esr field today
-  // (NAM Lab currently writes the Full there), but is captured separately so if the convention
-  // for the main field ever changes (e.g. to match the official trainer's aggregate), the
-  // Full number is still recoverable from the file.
+  // (the main field now stores the aggregate to match the official trainer), but is captured
+  // separately so the Full sub-model ESR remains recoverable from the file for NAM-Lab-aware UI.
   if (options.architecture === 'a2' && options.validationEsr != null) {
     patched = patchNamLabField(patched, 'a2_full_validation_esr', options.validationEsr)
   }

@@ -142,6 +142,8 @@ export function getBestJobEsr(job: {
 }
 
 // Best ESR for the live trainer state (per-epoch values).
+// For A2, prefer the Full sub-model when available, otherwise fall back through:
+//   aggregate callback -> generic epoch ESR -> final persisted validationEsr
 export function getBestLiveEsr(state: {
   architecture?: string | null
   epochValidationEsr?: number | null

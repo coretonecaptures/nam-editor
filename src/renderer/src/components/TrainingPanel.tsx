@@ -2900,7 +2900,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   {[['all','All time'],['day','Today'],['week','This week'],['month','This month'],['quarter','This quarter']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
                 </select>
                 <select value={historyEsrFilter} onChange={e => setHistoryEsrFilter(e.target.value as typeof historyEsrFilter)} className="h-[34px] px-2.5 bg-field border border-field-bd rounded-[9px] text-[12px] text-nm-text-2 focus:outline-none cursor-pointer">
-                  {[['all','All ESR'],['green','Green (<0.01)'],['amber','Amber (<0.05)'],['red','Red (≥0.05)'],['none','No ESR']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+                  {[['all','All ESR'],['green','Green (A1/Full <0.01 · A2 Agg <0.02)'],['amber','Amber (A1/Full <0.05 · A2 Agg <0.07)'],['red','Red (A1/Full ≥0.05 · A2 Agg ≥0.07)'],['none','No ESR']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
                 </select>
               </div>
 
@@ -3005,30 +3005,40 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                             <div className="flex items-center gap-3.5 flex-shrink-0">
                               {entry.status === 'success' && typeof entry.validationEsr === 'number' ? (() => {
                                 // For A2 entries, prefer the new sub-model fields (validationEsrFull / validationEsrLite).
-                                // For older A2 entries that don't have them yet, fall back to validationEsr (which was Full
-                                // under the prior convention). For A1, validationEsr is the single scalar.
+                                // For aggregate-only A2 entries (official trainer / downloads), use the aggregate with the
+                                // A2-specific doubled thresholds so they do not look systematically worse than A1.
                                 const isA2 = entry.architecture === 'a2'
-                                const fullVal = isA2
-                                  ? (typeof entry.validationEsrFull === 'number' ? entry.validationEsrFull : entry.validationEsr)
+                                const hasFullBreakdown = isA2 && typeof entry.validationEsrFull === 'number'
+                                const primaryVal = isA2
+                                  ? (hasFullBreakdown ? entry.validationEsrFull ?? null : entry.validationEsr)
                                   : entry.validationEsr
                                 const liteVal = isA2 ? (typeof entry.validationEsrLite === 'number' ? entry.validationEsrLite : null) : null
                                 const aggVal = isA2 ? entry.validationEsr : null
-                                const fullTone = getEsrTone(fullVal)
-                                const fullKey: 'green' | 'amber' | 'red' | 'none' = fullTone.classes.includes('emerald') ? 'green' : fullTone.classes.includes('amber') ? 'amber' : fullTone.classes.includes('red') ? 'red' : 'none'
+                                const primaryKind = isA2
+                                  ? (hasFullBreakdown ? 'a2_full' : 'a2_aggregate')
+                                  : 'a1'
+                                const primaryTone = getEsrToneKind(primaryVal, primaryKind)
+                                const primaryKey: 'green' | 'amber' | 'red' | 'none' = primaryTone.classes.includes('emerald') ? 'green' : primaryTone.classes.includes('amber') ? 'amber' : primaryTone.classes.includes('red') ? 'red' : 'none'
                                 const bgFor = (k: 'green' | 'amber' | 'red' | 'none') => k === 'green' ? 'color-mix(in srgb, #10b981 14%, transparent)' : k === 'amber' ? 'color-mix(in srgb, #f59e0b 14%, transparent)' : k === 'red' ? 'color-mix(in srgb, #ef4444 14%, transparent)' : 'var(--field)'
                                 return (
                                   <div className="flex items-center gap-1.5">
                                     <span
-                                      className={`inline-flex items-center gap-1.5 h-[22px] px-2 rounded-full text-[11px] font-mono font-semibold ${fullTone.classes}`}
-                                      style={{ background: bgFor(fullKey) }}
-                                      title={isA2 ? 'A2 Full sub-model (channels_8) — what the plugin loads by default' : 'Validation ESR'}
+                                      className={`inline-flex items-center gap-1.5 h-[22px] px-2 rounded-full text-[11px] font-mono font-semibold ${primaryTone.classes}`}
+                                      style={{ background: bgFor(primaryKey) }}
+                                      title={
+                                        isA2
+                                          ? (hasFullBreakdown
+                                            ? 'A2 Full sub-model (channels_8) — what the plugin loads by default'
+                                            : 'A2 Aggregate — sum of both sub-models\' ESR. Matches the value the official NAM trainer writes to metadata.training.validation_esr.')
+                                          : 'Validation ESR'
+                                      }
                                     >
                                       <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
-                                      {isA2 && <span className="text-[9px] font-[700] uppercase tracking-wider opacity-70">Full</span>}
-                                      {fullTone.text}
+                                      {isA2 && <span className="text-[9px] font-[700] uppercase tracking-wider opacity-70">{hasFullBreakdown ? 'Full' : 'Agg'}</span>}
+                                      {primaryTone.text}
                                     </span>
                                     {isA2 && typeof liteVal === 'number' && (() => {
-                                      const liteTone = getEsrTone(liteVal)
+                                      const liteTone = getEsrToneKind(liteVal, 'a2_full')
                                       const liteKey: 'green' | 'amber' | 'red' | 'none' = liteTone.classes.includes('emerald') ? 'green' : liteTone.classes.includes('amber') ? 'amber' : liteTone.classes.includes('red') ? 'red' : 'none'
                                       return (
                                         <span
@@ -3042,7 +3052,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                         </span>
                                       )
                                     })()}
-                                    {isA2 && typeof aggVal === 'number' && fullVal !== aggVal && (
+                                    {isA2 && hasFullBreakdown && typeof aggVal === 'number' && primaryVal !== aggVal && (
                                       <span
                                         className="inline-flex items-center gap-1.5 h-[22px] px-2 rounded-full text-[10px] font-mono text-nm-text-3 border border-nm-border-s"
                                         title="A2 Aggregate — sum of both sub-models' ESR. Matches the value the official NAM trainer writes to metadata.training.validation_esr."
