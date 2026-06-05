@@ -4825,7 +4825,7 @@ INSTRUCTIONS:
                       activeDuplicate={filterModeOverride === 'duplicates'}
                       activeGear={gearTypeFilter}
                       activeTone={toneTypeFilter}
-                      activePreset={presetFilterOverride}
+                      activePreset={presetFilterOverride === '__a2__' ? 'A2' : presetFilterOverride === '__none__' ? 'Unknown' : presetFilterOverride}
                       activeMissing={filterModeOverride === 'incomplete'}
                       activeEsr={esrFilterOverride}
                       activeRating={ratingFilter}
@@ -4843,7 +4843,7 @@ INSTRUCTIONS:
                       }}
                       onGearClick={(gear) => { setGearTypeFilter(gear); setToneTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setEsrFilterOverride(null); setRatingFilter(null) }}
                       onToneClick={(tone) => { setToneTypeFilter(tone); setGearTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setEsrFilterOverride(null); setRatingFilter(null) }}
-                      onPresetClick={(preset) => { setPresetFilterOverride(preset); setGearTypeFilter(null); setToneTypeFilter(null); setFilterModeOverride(null); setEsrFilterOverride(null); setRatingFilter(null) }}
+                      onPresetClick={(preset) => { setPresetFilterOverride(preset === 'A2' ? '__a2__' : preset === 'Unknown' ? '__none__' : preset); setGearTypeFilter(null); setToneTypeFilter(null); setFilterModeOverride(null); setEsrFilterOverride(null); setRatingFilter(null) }}
                       onMissingClick={(on) => {
                         setFilterModeOverride(on ? 'incomplete' : null)
                         setGearTypeFilter(null)
