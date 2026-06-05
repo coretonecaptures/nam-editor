@@ -663,16 +663,27 @@ def _extract_validation_esr(result):
 
 def _find_output_model_path(train_path, model_name):
     root = Path(train_path)
-    if not root.exists():
-        return str(root / f"{model_name}.nam")
 
     direct = root / f"{model_name}.nam"
     if direct.exists():
         return str(direct)
 
-    candidates = list(root.rglob("*.nam"))
+    # Scan workspace recursively for any .nam file NAM may have put in a subdirectory.
+    candidates = []
+    if root.exists():
+        candidates = list(root.rglob("*.nam"))
+
+    # Also check CWD — some NAM versions write to the current working directory.
     if not candidates:
-        return str(direct)
+        cwd = Path.cwd()
+        if cwd.resolve() != root.resolve():
+            cwd_direct = cwd / f"{model_name}.nam"
+            if cwd_direct.exists():
+                return str(cwd_direct)
+            candidates = list(cwd.glob("*.nam"))
+
+    if not candidates:
+        return str(direct)  # Caller (_promote_output_model_path) will raise if this doesn't exist.
 
     best = [path for path in candidates if "checkpoint_best" in path.stem.lower()]
     matching = [path for path in candidates if model_name.lower() in path.stem.lower()]
@@ -685,7 +696,12 @@ def _promote_output_model_path(train_path, model_name, discovered_path, backup_e
     target = Path(train_path) / f"{model_name}.nam"
     source = Path(discovered_path)
     if not source.exists():
-        return str(target)
+        raise FileNotFoundError(
+            f"NAM did not produce a .nam file at the expected location.\n"
+            f"  Searched: {train_path}\n"
+            f"  Expected: {discovered_path}\n"
+            f"  Check that NAM training completed and that the train_path is writable."
+        )
     if source.resolve() == target.resolve():
         return str(target)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -2332,10 +2348,25 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
 
     if (finalStatus === 'success' && trainerState.outputModelPath) {
       try {
+        // Verify the workspace .nam exists before copying. If it doesn't (Python bug or
+        // unexpected NAM output location), scan the workspace for any .nam as a fallback.
+        let sourceModelPath = trainerState.outputModelPath
+        const sourceExists = await fs.promises.access(sourceModelPath).then(() => true).catch(() => false)
+        if (!sourceExists) {
+          const workspaceNams = await findFilesRecursive(job.trainPath, (p) => /\.nam$/i.test(p))
+          if (workspaceNams.length > 0) {
+            // Pick newest
+            const withMtime = await Promise.all(workspaceNams.map(async (p) => ({ p, mtime: (await fs.promises.stat(p)).mtimeMs })))
+            sourceModelPath = withMtime.sort((a, b) => b.mtime - a.mtime)[0].p
+            log(`[trainer] workspace fallback: using ${sourceModelPath} instead of missing ${trainerState.outputModelPath}`)
+          } else {
+            throw new Error(`NAM did not produce a .nam file in the training workspace.\nSearched: ${job.trainPath}\nExpected: ${sourceModelPath}`)
+          }
+        }
         await fs.promises.mkdir(dirname(job.outputModelPath), { recursive: true })
         const finalModelPath = await ensureUniqueFilePath(job.outputModelPath)
         suppressWatcher()
-        await fs.promises.copyFile(trainerState.outputModelPath, finalModelPath)
+        await fs.promises.copyFile(sourceModelPath, finalModelPath)
         trainerState = {
           ...trainerState,
           outputModelPath: finalModelPath,
