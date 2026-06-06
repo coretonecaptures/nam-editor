@@ -2136,6 +2136,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
   const outputPath = job.outputPath
   const trainPath = job.trainPath
   const runId = job.jobId
+  const finalOutputModelPath = join(job.finalModelRoot, `${job.modelName}.nam`)
 
   updateTrainerJob(job.jobId, {
     status: 'starting',
@@ -2144,7 +2145,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     finishedAt: null,
     error: '',
     validationEsr: null,
-    outputModelPath: join(trainPath, `${job.modelName}.nam`),
+    outputModelPath: finalOutputModelPath,
     checkpointModelPath: '',
     progressPercent: null,
     progressEpochCurrent: null,
@@ -2168,7 +2169,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     latency: job.latency,
     thresholdEsr: job.thresholdEsr,
     modelName: job.modelName,
-    outputModelPath: join(trainPath, `${job.modelName}.nam`),
+    outputModelPath: finalOutputModelPath,
     checkpointModelPath: '',
     savePlot: job.savePlot,
     silent: job.silent,
@@ -2348,25 +2349,76 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
 
     if (finalStatus === 'success' && trainerState.outputModelPath) {
       try {
-        // Verify the workspace .nam exists before copying. If it doesn't (Python bug or
-        // unexpected NAM output location), scan the workspace for any .nam as a fallback.
-        let sourceModelPath = trainerState.outputModelPath
-        const sourceExists = await fs.promises.access(sourceModelPath).then(() => true).catch(() => false)
-        if (!sourceExists) {
-          const workspaceNams = await findFilesRecursive(job.trainPath, (p) => /\.nam$/i.test(p))
-          if (workspaceNams.length > 0) {
-            // Pick newest
-            const withMtime = await Promise.all(workspaceNams.map(async (p) => ({ p, mtime: (await fs.promises.stat(p)).mtimeMs })))
-            sourceModelPath = withMtime.sort((a, b) => b.mtime - a.mtime)[0].p
-            log(`[trainer] workspace fallback: using ${sourceModelPath} instead of missing ${trainerState.outputModelPath}`)
-          } else {
-            throw new Error(`NAM did not produce a .nam file in the training workspace.\nSearched: ${job.trainPath}\nExpected: ${sourceModelPath}`)
+        await fs.promises.mkdir(dirname(finalOutputModelPath), { recursive: true })
+        const finalModelPath = await ensureUniqueFilePath(finalOutputModelPath)
+
+        const candidatePaths = new Set<string>()
+        const pushCandidate = (value: string | null | undefined) => {
+          const trimmed = typeof value === 'string' ? value.trim() : ''
+          if (trimmed) candidatePaths.add(trimmed)
+        }
+
+        // Prefer the path reported by Python, then the discovered checkpoint path, then the
+        // conventional workspace filename. If those fail, scan the whole workspace.
+        pushCandidate(trainerState.outputModelPath)
+        pushCandidate(trainerState.checkpointModelPath)
+        pushCandidate(join(job.trainPath, `${job.modelName}.nam`))
+
+        const workspaceNams = await findFilesRecursive(job.trainPath, (p) => /\.nam$/i.test(p))
+        if (workspaceNams.length > 0) {
+          const scored = await Promise.all(workspaceNams.map(async (p) => {
+            const st = await fs.promises.stat(p).catch(() => null)
+            const lower = basename(p).toLowerCase()
+            const modelLower = job.modelName.toLowerCase()
+            const score =
+              (lower.includes('checkpoint_best') ? 100 : 0) +
+              (lower.includes(modelLower) ? 20 : 0) +
+              (lower.endsWith('.nam') ? 1 : 0)
+            return { p, score, mtime: st?.mtimeMs ?? 0 }
+          }))
+          const stronglyMatching = scored.filter((item) => {
+            const lower = basename(item.p).toLowerCase()
+            return lower === `${job.modelName.toLowerCase()}.nam` || lower.includes(job.modelName.toLowerCase())
+          })
+          const fallbackPool = stronglyMatching.length > 0 ? stronglyMatching : scored.filter((item) => item.score >= 100)
+          for (const item of fallbackPool.sort((a, b) => (b.score - a.score) || (b.mtime - a.mtime))) {
+            pushCandidate(item.p)
           }
         }
-        await fs.promises.mkdir(dirname(job.outputModelPath), { recursive: true })
-        const finalModelPath = await ensureUniqueFilePath(job.outputModelPath)
-        suppressWatcher()
-        await fs.promises.copyFile(sourceModelPath, finalModelPath)
+
+        let copied = false
+        const attempted: string[] = []
+        let lastCopyError: unknown = null
+        for (const sourceModelPath of candidatePaths) {
+          const sourceExists = await fs.promises.access(sourceModelPath).then(() => true).catch(() => false)
+          if (!sourceExists) {
+            attempted.push(`${sourceModelPath} (missing)`)
+            continue
+          }
+          try {
+            suppressWatcher()
+            await fs.promises.copyFile(sourceModelPath, finalModelPath)
+            if (sourceModelPath !== trainerState.outputModelPath) {
+              log(`[trainer] promote fallback: copied ${sourceModelPath} to ${finalModelPath}`)
+            }
+            copied = true
+            break
+          } catch (copyError) {
+            lastCopyError = copyError
+            attempted.push(`${sourceModelPath} (${String(copyError)})`)
+          }
+        }
+
+        if (!copied) {
+          throw new Error(
+            `No usable final model source was available.\n` +
+            `Workspace: ${job.trainPath}\n` +
+            `Destination: ${finalModelPath}\n` +
+            `Tried:\n- ${attempted.join('\n- ') || '(no candidates)'}\n` +
+            (lastCopyError ? `Last error: ${String(lastCopyError)}` : '')
+          )
+        }
+
         trainerState = {
           ...trainerState,
           outputModelPath: finalModelPath,
@@ -2391,6 +2443,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
           inputLevelDbu: job.inputLevelDbu,
           outputLevelDbu: job.outputLevelDbu,
           validationEsr: trainerState.validationEsr,
+          validationEsrFull: trainerState.epochValidationEsrFull ?? null,
           validationEsrLite: trainerState.epochValidationEsrLite ?? null,
           mrstft: trainerState.epochMrstft ?? null,
           mrstftLite: trainerState.epochMrstftLite ?? null,
@@ -3359,6 +3412,56 @@ function serializeJsonValue(value: unknown): string {
   return JSON.stringify(String(value))
 }
 
+function applyTrainerMetadataConventions(
+  content: string,
+  options: {
+    architecture: TrainerArchitecture
+  }
+): string {
+  try {
+    const data = JSON.parse(content) as Record<string, unknown>
+    const metadata = (data.metadata && typeof data.metadata === 'object' && !Array.isArray(data.metadata))
+      ? (data.metadata as Record<string, unknown>)
+      : null
+
+    if (!metadata) return content
+
+    // Mark NAM Lab-trained files explicitly without removing any upstream-compatible fields.
+    metadata.trainer = 'NAM Lab'
+
+    if (options.architecture === 'a2') {
+      const config = (data.config && typeof data.config === 'object' && !Array.isArray(data.config))
+        ? (data.config as Record<string, unknown>)
+        : null
+      const submodels = Array.isArray(config?.submodels) ? config?.submodels as unknown[] : null
+      const loudness = metadata.loudness
+      const gain = metadata.gain
+
+      if (submodels) {
+        for (const submodel of submodels) {
+          if (!submodel || typeof submodel !== 'object' || Array.isArray(submodel)) continue
+          const submodelRecord = submodel as Record<string, unknown>
+          const model = (submodelRecord.model && typeof submodelRecord.model === 'object' && !Array.isArray(submodelRecord.model))
+            ? (submodelRecord.model as Record<string, unknown>)
+            : null
+          if (!model) continue
+          const submodelMetadata = (model.metadata && typeof model.metadata === 'object' && !Array.isArray(model.metadata))
+            ? (model.metadata as Record<string, unknown>)
+            : {}
+
+          if (loudness != null) submodelMetadata.loudness = loudness
+          if (gain != null) submodelMetadata.gain = gain
+          model.metadata = submodelMetadata
+        }
+      }
+    }
+
+    return `${JSON.stringify(data, null, 2)}\n`
+  } catch {
+    return content
+  }
+}
+
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -3479,9 +3582,9 @@ function persistTrainerMetadata(
     inputLevelDbu: number | null
     outputLevelDbu: number | null
     validationEsr: number | null
-    // For A2 only: the Lite (channels_3) sub-model's ESR. The main validationEsr above is the Full
-    // (channels_8) sub-model. nam_lab.validation_esr_lite is a NAM-Lab-specific field; NAM itself
-    // doesn't read it, so it's safe to add without breaking the official spec.
+    // For A2 only: store the official aggregate in validationEsr, plus explicit Full/Lite
+    // sub-model ESRs in metadata.nam_lab.* so NAM Lab can show the plugin-loaded Full value.
+    validationEsrFull: number | null
     validationEsrLite: number | null
     // MRSTFT / MSE — NAM logs these per validation epoch but never writes them to the .nam file.
     // NAM Lab stores them in metadata.nam_lab.* so we can show them in the metadata panel later.
@@ -3516,11 +3619,8 @@ function persistTrainerMetadata(
   patched = patchNamLabField(patched, 'manual_latency_samples', options.manualLatencySamples ?? 0)
   // A2 sub-model ESRs. Gated on architecture so A1 runs never get these fields.
   // Stored in metadata.nam_lab.* — NAM ignores them, only NAM Lab reads them back.
-  // a2_full_validation_esr is redundant with whatever's in the main validation_esr field today
-  // (the main field now stores the aggregate to match the official trainer), but is captured
-  // separately so the Full sub-model ESR remains recoverable from the file for NAM-Lab-aware UI.
-  if (options.architecture === 'a2' && options.validationEsr != null) {
-    patched = patchNamLabField(patched, 'a2_full_validation_esr', options.validationEsr)
+  if (options.architecture === 'a2' && options.validationEsrFull != null) {
+    patched = patchNamLabField(patched, 'a2_full_validation_esr', options.validationEsrFull)
   }
   if (options.architecture === 'a2' && options.validationEsrLite != null) {
     patched = patchNamLabField(patched, 'a2_lite_validation_esr', options.validationEsrLite)
@@ -3540,7 +3640,7 @@ function persistTrainerMetadata(
   if (options.architecture === 'a2' && options.mseLite != null) {
     patched = patchNamLabField(patched, 'a2_lite_mse', options.mseLite)
   }
-  return patched
+  return applyTrainerMetadataConventions(patched, { architecture: options.architecture })
 }
 
 // Surgically remove the entire "nam_lab": {...} block from metadata.
@@ -5282,6 +5382,18 @@ app.whenReady().then(async () => {
     if (!job) return { success: false, error: 'Job not found.' }
     if (job.status !== 'queued') return { success: false, error: 'Only queued jobs can be moved to staged.' }
     trainerQueue = trainerQueue.map((j) => j.jobId === jobId ? { ...j, status: 'staged' } : j)
+    emitTrainerState()
+    return { success: true }
+  })
+
+  ipcMain.handle('trainer:stageSubmission', async (_event, submissionId: string) => {
+    let found = false
+    trainerQueue = trainerQueue.map((job) => {
+      if (job.submissionId !== submissionId || job.status !== 'queued') return job
+      found = true
+      return { ...job, status: 'staged' }
+    })
+    if (!found) return { success: false, error: 'No queued jobs found for that batch.' }
     emitTrainerState()
     return { success: true }
   })
