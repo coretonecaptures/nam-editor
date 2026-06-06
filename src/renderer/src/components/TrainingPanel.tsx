@@ -406,15 +406,16 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   )
   const groupedStagedQueue = useMemo(() => {
     const staged = trainerState.queue.filter((job) => job.status === 'staged')
-    const groups: Array<{ key: string; label: string; createdAt: string | null; jobs: TrainerQueueJob[] }> = []
+    const groups: Array<{ key: string; groupKey: string; label: string; createdAt: string | null; jobs: TrainerQueueJob[] }> = []
     for (const job of staged) {
-      const key = job.submissionId ?? `ungrouped:${job.jobId}`
+      const groupKey = job.submissionId ?? `ungrouped:${job.jobId}`
       const existing = groups[groups.length - 1]
-      if (existing && existing.key === key) {
+      if (existing && existing.groupKey === groupKey) {
         existing.jobs.push(job)
       } else {
         groups.push({
-          key,
+          key: `${groupKey}:${job.jobId}`,
+          groupKey,
           label: job.submissionLabel ?? (job.profileName ?? 'Batch'),
           createdAt: job.submissionCreatedAt ?? null,
           jobs: [job],
@@ -424,15 +425,16 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     return groups
   }, [trainerState.queue])
   const groupedQueue = useMemo(() => {
-    const groups: Array<{ key: string; label: string; createdAt: string | null; jobs: TrainerQueueJob[] }> = []
+    const groups: Array<{ key: string; groupKey: string; label: string; createdAt: string | null; jobs: TrainerQueueJob[] }> = []
     for (const job of filteredQueue) {
-      const key = job.submissionId ?? `ungrouped:${job.jobId}`
+      const groupKey = job.submissionId ?? `ungrouped:${job.jobId}`
       const existing = groups[groups.length - 1]
-      if (existing && existing.key === key) {
+      if (existing && existing.groupKey === groupKey) {
         existing.jobs.push(job)
       } else {
         groups.push({
-          key,
+          key: `${groupKey}:${job.jobId}`,
+          groupKey,
           label: job.submissionLabel ?? (job.profileName ?? (job.sourceMode === 'watcher' ? 'Watcher' : job.sourceMode === 'manual-folder-run' ? 'Folder run' : 'Run WAVs')),
           createdAt: job.submissionCreatedAt ?? null,
           jobs: [job],
@@ -593,15 +595,16 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     [historyArchitectureFilter, historyEsrFilter, historyProfileFilter, historySearch, historyStatusFilter, historyTimeFilter, trainerState.history]
   )
   const groupedHistory = useMemo(() => {
-    const groups: Array<{ key: string; label: string; createdAt: string | null; entries: TrainerHistoryEntry[] }> = []
+    const groups: Array<{ key: string; groupKey: string; label: string; createdAt: string | null; entries: TrainerHistoryEntry[] }> = []
     for (const entry of filteredHistory) {
-      const key = entry.submissionId ?? `ungrouped:${entry.historyId}`
+      const groupKey = entry.submissionId ?? `ungrouped:${entry.historyId}`
       const existing = groups[groups.length - 1]
-      if (existing && existing.key === key) {
+      if (existing && existing.groupKey === groupKey) {
         existing.entries.push(entry)
       } else {
         groups.push({
-          key,
+          key: `${groupKey}:${entry.historyId}`,
+          groupKey,
           label: entry.submissionLabel ?? (entry.profileName ?? (entry.sourceMode === 'watcher' ? 'Watcher' : entry.sourceMode === 'manual-folder-run' ? 'Folder run' : 'Run WAVs')),
           createdAt: entry.submissionCreatedAt ?? entry.timestamp,
           entries: [entry],

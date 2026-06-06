@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef, startTransition } from 'react'
 import beakerTransparent from './assets/images/beaker.only.transparent.png'
 import { NamFile, NamMetadata, TONE_TYPES, GEAR_TYPES } from './types/nam'
 import { AppSettings, FolderWatchImportEntry, FolderWatchRule, MetadataSuggestRule, TrainingProfile, loadSettings, saveSettings } from './types/settings'
@@ -3817,7 +3817,11 @@ INSTRUCTIONS:
       const nextSig = buildTrainerSnapshotSignature(state)
       if (trainerSnapshotSigRef.current === nextSig) return
       trainerSnapshotSigRef.current = nextSig
-      setGlobalTrainerState(state)
+      startTransition(() => {
+        setGlobalTrainerState((prev) => (
+          buildTrainerSnapshotSignature(prev) === nextSig ? prev : state
+        ))
+      })
     }
     void window.api.getTrainerState().then((state) => {
       if (alive) applyTrainerState(state)

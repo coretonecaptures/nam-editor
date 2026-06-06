@@ -2410,9 +2410,12 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
       }
     }
 
+    const effectiveFinalStatus: TrainerStateSnapshot['status'] = trainerState.status
+    const effectiveFinalError = trainerState.error
+
     let promotedGraphPath = ''
     let processedWavPath = ''
-    if (finalStatus === 'success') {
+    if (effectiveFinalStatus === 'success') {
       try {
         promotedGraphPath = await promoteTrainerGraph(job)
         if (promotedGraphPath) {
@@ -2461,10 +2464,10 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
       sourceSizeBytes: getActiveTrainerJob()?.sourceSizeBytes ?? job.sourceSizeBytes,
       sourceMtimeMs: getActiveTrainerJob()?.sourceMtimeMs ?? job.sourceMtimeMs,
       architecture: job.architecture,
-      finalModelPath: finalStatus === 'success' ? trainerState.outputModelPath : '',
+      finalModelPath: effectiveFinalStatus === 'success' ? trainerState.outputModelPath : '',
       processedWavPath,
       graphPath: promotedGraphPath,
-      status: finalStatus === 'success' ? 'success' : finalStatus === 'error' ? 'error' : 'canceled',
+      status: effectiveFinalStatus === 'success' ? 'success' : effectiveFinalStatus === 'error' ? 'error' : 'canceled',
       attempts: job.attempts,
       validationEsr: trainerState.validationEsr,
       thresholdEsr: job.thresholdEsr,
@@ -2472,7 +2475,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
       latencyMode: job.latency == null ? 'auto' : 'manual',
       latencyValue: job.latency,
       finalModelName: job.modelName,
-      failureReason: finalStatus === 'success' ? '' : finalError,
+      failureReason: effectiveFinalStatus === 'success' ? '' : (effectiveFinalError ?? finalError),
       submissionId: job.submissionId,
       submissionLabel: job.submissionLabel,
       submissionCreatedAt: job.submissionCreatedAt,
@@ -2520,15 +2523,17 @@ async function pumpTrainerQueue(): Promise<void> {
   try {
     await startTrainerJob(nextJob)
   } catch (error) {
+    const failureReason = String(error)
     updateTrainerJob(nextJob.jobId, {
       status: 'error',
       finishedAt: new Date().toISOString(),
-      error: String(error),
+      error: failureReason,
     })
+    appendTrainerCanceledHistory(nextJob, failureReason, '', 'error')
     trainerState = {
       ...TRAINER_IDLE_STATE,
       status: 'error',
-      error: String(error),
+      error: failureReason,
       finishedAt: new Date().toISOString(),
       activeJobId: null,
       queue: trainerQueue,
