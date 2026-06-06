@@ -22,6 +22,8 @@ Download the latest installer from the [Releases](https://github.com/coretonecap
 
 The app is currently unsigned. macOS will show a Gatekeeper warning; Windows will show a SmartScreen prompt. Both are safe to bypass - [first-launch instructions](docs/install.md)
 
+On macOS, you may also see a system prompt related to secure storage / Keychain access. This is expected when NAM Lab reads or saves sensitive credentials such as Tone3000 login tokens or AI API keys. The app uses Electron `safeStorage` so those secrets are encrypted on your machine instead of being stored as plain text.
+
 ---
 
 ## What It Does
