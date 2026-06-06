@@ -193,6 +193,9 @@ export interface TrainerStartPayload {
   submissionId?: string | null
   submissionLabel?: string | null
   submissionCreatedAt?: string | null
+  appendModelArchitectureFolder?: boolean
+  appendGraphArchitectureFolder?: boolean
+  appendProcessedArchitectureFolder?: boolean
 }
 
 export type TrainerStatus = 'idle' | 'starting' | 'running' | 'success' | 'error' | 'canceled'
@@ -257,6 +260,9 @@ export interface TrainerQueueJob {
   submissionLabel: string | null
   submissionCreatedAt: string | null
   backupExisting?: boolean
+  appendModelArchitectureFolder?: boolean
+  appendGraphArchitectureFolder?: boolean
+  appendProcessedArchitectureFolder?: boolean
 }
 
 export interface TrainerHistoryEntry {

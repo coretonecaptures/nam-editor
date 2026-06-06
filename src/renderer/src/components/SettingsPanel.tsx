@@ -1782,12 +1782,12 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                           ))}
                         </select>
                       </SettingsField>
-                      <SettingsField label="Favorite output routing" hint="Supports formulas like ../../NAM/{architecture}/{folder} or a fixed absolute path">
+                      <SettingsField label="Favorite output routing" hint="Supports formulas like ../../NAM/{folder}/{architecture} or a fixed absolute path">
                         <OutputFormulaField
                           value={draft.trainingFavoriteRouting ?? ''}
                           onChange={(v) => update('trainingFavoriteRouting', v)}
                           exampleStagingPath={draft.namTrainingInputWav ? draft.namTrainingInputWav.replace(/\\/g, '/').split('/').slice(0, -1).join('/') : undefined}
-                          suggestionFormula="../../NAM/{architecture}/{folder}"
+                          suggestionFormula="../../NAM/{folder}/{architecture}"
                         />
                       </SettingsField>
                       <SettingsField label="Default Input DI" hint="Skip the DI picker in Quick Add \u2014 always use this WAV as the reference capture">
@@ -1847,13 +1847,13 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                   <SettingsField
                     label="Graph output path formula"
                     hint="Derive the graph output folder from the staging WAV path using tokens. Leave blank to use a fixed path per run."
-                    help={<>Same tokens as the NAM output formula. Training graphs are PNG charts of ESR over time &mdash; useful for diagnosing under/overtraining.<br /><br />Suggested: <code>../../Graphs/{'{architecture}'}/{'{folder}'}</code></>}
+                    help={<>Same tokens as the NAM output formula. Training graphs are PNG charts of ESR over time &mdash; useful for diagnosing under/overtraining.<br /><br />Suggested: <code>../../Graphs/{'{folder}'}/{'{architecture}'}</code></>}
                   >
                     <OutputFormulaField
                       value={draft.trainingGraphFormula ?? ''}
                       onChange={(v) => update('trainingGraphFormula', v)}
                       exampleStagingPath={draft.namTrainingInputWav ? draft.namTrainingInputWav.replace(/\\/g, '/').split('/').slice(0, -1).join('/') : undefined}
-                      suggestionFormula="../../Graphs/{architecture}/{folder}"
+                      suggestionFormula="../../Graphs/{folder}/{architecture}"
                     />
                   </SettingsField>
 
@@ -2283,7 +2283,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                                   exampleStagingPath={draft.namTrainingInputWav ? draft.namTrainingInputWav.replace(/\\/g, '/').split('/').slice(0, -1).join('/') : undefined}
                                   exampleArchitecture={preset.architectures[0]}
                                   isPresetOverride
-                                  suggestionFormula="../../Graphs/{architecture}/{folder}"
+                                  suggestionFormula="../../Graphs/{folder}/{architecture}"
                                   globalFormula={draft.trainingGraphFormula ?? ''}
                                 />
                               </SettingsField>

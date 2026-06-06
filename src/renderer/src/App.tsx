@@ -429,6 +429,7 @@ declare global {
       cancelTrainerRun: () => Promise<{ success: boolean; error?: string }>
       setTrainerPauseAfterCurrent: (pause: boolean) => Promise<{ success: boolean }>
       retryFailedTrainerRuns: () => Promise<{ success: boolean; retried?: number }>
+      stageTrainerSubmission: (submissionId: string) => Promise<{ success: boolean; error?: string }>
       retryTrainerJob: (jobId: string) => Promise<{ success: boolean; error?: string }>
       clearFinishedTrainerRuns: () => Promise<{ success: boolean }>
       removeQueuedTrainerRuns: () => Promise<{ success: boolean }>

@@ -5,8 +5,9 @@ let sharedScrollTop = 0
 import { NamFile, NamMetadata, GEAR_TYPES, TONE_TYPES } from '../types/nam'
 import { gearImages } from '../assets/gear'
 import { detectPreset } from '../utils/detectPreset'
-import { getCaptureBestEsr, getA2AggregateEsr, getA2LiteEsr } from '../utils/esr'
+import { getCaptureBestEsr, getA2AggregateEsr, getA2FullEsr, getA2LiteEsr, isA2Metadata } from '../utils/esr'
 import { ComboInput } from './ComboInput'
+import { HelpPopover } from './HelpPopover'
 
 interface MetadataEditorProps {
   file: NamFile
@@ -85,15 +86,92 @@ function formatBytes(bytes?: number): string | null {
   return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`
 }
 
+interface A2SubmodelFieldValues {
+  main: number | null
+  full: number | null
+  lite: number | null
+}
+
+function getA2EsrValues(file: NamFile): A2SubmodelFieldValues | null {
+  const meta = { ...(file.metadata as Record<string, unknown>), architecture: file.architecture, config: file.config }
+  if (!meta) return null
+
+  const aggregate = getA2AggregateEsr(meta)
+  const lite = getA2LiteEsr(meta)
+  const full = getA2FullEsr(meta)
+
+  if (
+    typeof aggregate !== 'number' &&
+    typeof full !== 'number' &&
+    typeof lite !== 'number'
+  ) {
+    return null
+  }
+
+  return {
+    main: aggregate,
+    full,
+    lite,
+  }
+}
+
+function readNumericSubmodelField(
+  submodel: unknown,
+  field: 'loudness' | 'gain'
+): number | null {
+  if (!submodel || typeof submodel !== 'object' || Array.isArray(submodel)) return null
+  const model = (submodel as Record<string, unknown>).model
+  if (!model || typeof model !== 'object' || Array.isArray(model)) return null
+  const metadata = (model as Record<string, unknown>).metadata
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null
+  const value = (metadata as Record<string, unknown>)[field]
+  return typeof value === 'number' ? value : null
+}
+
+function getA2SubmodelFieldValues(
+  file: NamFile,
+  field: 'loudness' | 'gain'
+): A2SubmodelFieldValues | null {
+  const config = file.config
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return null
+  const submodels = (config as Record<string, unknown>).submodels
+  if (!Array.isArray(submodels) || submodels.length === 0) return null
+
+  const mainValue = file.metadata[field]
+  const lite = readNumericSubmodelField(submodels[0], field)
+  const full = readNumericSubmodelField(submodels[1], field)
+
+  if (
+    typeof mainValue !== 'number' &&
+    typeof full !== 'number' &&
+    typeof lite !== 'number'
+  ) {
+    return null
+  }
+
+  return {
+    main: typeof mainValue === 'number' ? mainValue : null,
+    full,
+    lite,
+  }
+}
+
+function formatReadOnlyNumeric(value: number | null, digits: number, suffix = ''): string {
+  if (typeof value !== 'number') return '-'
+  return `${value.toFixed(digits)}${suffix}`
+}
+
 export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, onRevert, onRevealInFinder, onReapplyDefaults, onClearSuggestions, hasActiveDefaults, renameTemplate, onRenameFile, onSaveAndAdvance, gearMakeSuggestions = [], gearModelSuggestions = [], showNamLabFields = true }: MetadataEditorProps) {
   const m = file.metadata
   const orig = file.originalMetadata
+  const esrMeta = { ...(m as Record<string, unknown>), architecture: file.architecture, config: file.config }
   const [nlShowAll, setNlShowAll] = useState(false)
   const [latencyUnlocked, setLatencyUnlocked] = useState(false)
   const [loudnessUnlocked, setLoudnessUnlocked] = useState(false)
   const [gainUnlocked, setGainUnlocked] = useState(false)
   const [isEditingName, setIsEditingName] = useState(false)
   const [nameEditValue, setNameEditValue] = useState('')
+  const [showA2SubmodelMetadata, setShowA2SubmodelMetadata] = useState(false)
   const nameInputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -143,6 +221,13 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
     setTimeout(() => { nameInputRef.current?.select() }, 20)
   }
 
+  const a2CanonicalFieldNote = isA2Metadata(esrMeta)
+    ? 'NAM Lab uses the main loudness, gain, and latency values for normal editing. Full and Lite copies can still differ, but they stay read-only here.'
+    : null
+  const a2LoudnessValues = getA2SubmodelFieldValues(file, 'loudness')
+  const a2GainValues = getA2SubmodelFieldValues(file, 'gain')
+  const a2EsrValues = getA2EsrValues(file)
+  const hasA2SubmodelMetadata = !!(a2LoudnessValues || a2GainValues || a2EsrValues)
   const dateStr = m.date
     ? `${m.date.year}-${String(m.date.month).padStart(2, '0')}-${String(m.date.day).padStart(2, '0')} ${String(m.date.hour ?? 0).padStart(2, '0')}:${String(m.date.minute ?? 0).padStart(2, '0')}:${String(m.date.second ?? 0).padStart(2, '0')}`
     : ''
@@ -312,7 +397,7 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
                   title="Revert to filename"
                   className="flex-shrink-0 px-2 py-2 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap"
                 >
-                  ↺ filename
+                  to filename
                 </button>
               </div>
             </Field>
@@ -384,7 +469,18 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
           </Section>
 
           {/* Levels section */}
-          <Section title="Levels" icon="📊">
+          <Section title="Levels" icon={
+            <svg className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16V8" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19V5" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 14V10" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 18V6" />
+              <circle cx="4" cy="16" r="1.5" strokeWidth={1.5} />
+              <circle cx="9" cy="19" r="1.5" strokeWidth={1.5} />
+              <circle cx="15" cy="14" r="1.5" strokeWidth={1.5} />
+              <circle cx="20" cy="18" r="1.5" strokeWidth={1.5} />
+            </svg>
+          }>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Reamp Send Level (dBu)" autoFilled={isAutoFilled('input_level_dbu')}>
                 <NumberInput
@@ -483,7 +579,14 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
           </Section>
 
           {/* Read-only stats */}
-          <Section title="Capture Stats" icon="📈">
+          <Section title="Capture Stats" icon={
+            <svg className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 19V5" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10 19v-6" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 19V9" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M22 19V3" />
+            </svg>
+          }>
             <div className="grid grid-cols-2 gap-3">
               <StatCard label="Architecture" value={file.architecture} />
               <StatCard label="NAM Version" value={file.version} />
@@ -502,45 +605,18 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
                 <StatCard label="Detected Preset" value={detectPreset(file.config)!} />
               )}
               {(() => {
-                // Validation ESR cards — A1: one card. A2: main "Aggregate" card + nam_lab Full + Lite cards.
-                // Aggregate uses A2-specific tolerance (~2x A1) so a downloaded/official-trainer A2 capture
-                // with only the aggregate gets a fair color rating.
-                const meta = m as Record<string, unknown>
-                const best = getCaptureBestEsr(meta)
-                const aggregate = getA2AggregateEsr(meta)
-                const lite = getA2LiteEsr(meta)
-                const nl = meta.nam_lab as Record<string, unknown> | undefined
-                const fullFromNamLab = typeof nl?.a2_full_validation_esr === 'number' ? nl.a2_full_validation_esr : null
-                const trainingEsr = (meta.training as Record<string, unknown> | undefined)?.validation_esr
-                const isA2 = best.kind !== 'a1' || aggregate != null || typeof lite === 'number'
-                if (typeof trainingEsr !== 'number' && fullFromNamLab == null && lite == null) return null
+                // Show one primary Validation ESR card here.
+                // A1 uses the saved validation_esr directly.
+                // A2 prefers the Full sub-model ESR when available; only official/downloaded A2 files
+                // without a NAM Lab breakdown fall back to the saved aggregate.
+                const best = getCaptureBestEsr(esrMeta)
+                if (typeof best.value !== 'number') return null
                 return (
-                  <>
-                    {/* Main card &mdash; A1 uses validation_esr directly; A2 uses the aggregate from validation_esr. */}
-                    {typeof trainingEsr === 'number' && (
-                      <StatCard
-                        label={isA2 ? 'Validation ESR (A2 Aggregate)' : 'Validation ESR'}
-                        value={trainingEsr.toFixed(6)}
-                        good={isA2 ? trainingEsr < 0.02 : trainingEsr < 0.01}
-                      />
-                    )}
-                    {/* A2 Full sub-model (NAM Lab-trained captures). Tone uses A1 thresholds since this IS a single sub-model's ESR. */}
-                    {isA2 && fullFromNamLab != null && (
-                      <StatCard
-                        label="Validation ESR (A2 Full)"
-                        value={fullFromNamLab.toFixed(6)}
-                        good={fullFromNamLab < 0.01}
-                      />
-                    )}
-                    {/* A2 Lite sub-model (NAM Lab-trained captures). */}
-                    {isA2 && typeof lite === 'number' && (
-                      <StatCard
-                        label="Validation ESR (A2 Lite)"
-                        value={lite.toFixed(6)}
-                        good={lite < 0.01}
-                      />
-                    )}
-                  </>
+                  <StatCard
+                    label={best.kind === 'a2_aggregate' ? 'Validation ESR (A2 Aggregate)' : 'Validation ESR'}
+                    value={best.value.toFixed(6)}
+                    good={best.kind === 'a2_aggregate' ? best.value < 0.02 : best.value < 0.01}
+                  />
                 )
               })()}
               {(() => {
@@ -659,6 +735,79 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
                         <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
                         Auto-set by NAM trainer. Only change if correcting an inaccurate value.
                       </p>
+                    </div>
+                  )}
+                </div>
+              )}
+              {m.trainer && (
+                <StatCard label="Trained By" value={m.trainer} />
+              )}
+              {a2CanonicalFieldNote && (
+                <div className="col-span-2 flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400">
+                  <span>A2 metadata behavior</span>
+                  <HelpPopover title="A2 metadata">
+                    {a2CanonicalFieldNote}
+                  </HelpPopover>
+                </div>
+              )}
+              {hasA2SubmodelMetadata && (
+                <div className="col-span-2 rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-100/70 dark:bg-gray-900/30 overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setShowA2SubmodelMetadata((v) => !v)}
+                    className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-gray-200/60 dark:hover:bg-gray-800/40 transition-colors"
+                  >
+                    <div>
+                      <div className="text-xs font-semibold text-gray-700 dark:text-gray-200">A2 sub-model metadata</div>
+                      <div className="text-[11px] text-gray-500 dark:text-gray-400">Read-only view of the Main, Full, and Lite values stored in the file.</div>
+                    </div>
+                    <svg
+                      className={`w-4 h-4 text-gray-400 transition-transform ${showA2SubmodelMetadata ? 'rotate-180' : ''}`}
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                    </svg>
+                  </button>
+                  {showA2SubmodelMetadata && (
+                    <div className="border-t border-gray-200 dark:border-gray-800 px-3 py-3 space-y-3">
+                      <div className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 text-[11px]">
+                        <div className="text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Field</div>
+                        <div className="text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Main</div>
+                        <div className="text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Full</div>
+                        <div className="text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Lite</div>
+                        {a2LoudnessValues && (
+                          <>
+                            <div className="text-gray-700 dark:text-gray-300">Integrated Loudness</div>
+                            <div className="font-mono text-gray-700 dark:text-gray-300">{formatReadOnlyNumeric(a2LoudnessValues.main, 2, ' dBFS')}</div>
+                            <div className="font-mono text-gray-700 dark:text-gray-300">{formatReadOnlyNumeric(a2LoudnessValues.full, 2, ' dBFS')}</div>
+                            <div className="font-mono text-gray-700 dark:text-gray-300">{formatReadOnlyNumeric(a2LoudnessValues.lite, 2, ' dBFS')}</div>
+                          </>
+                        )}
+                        {a2GainValues && (
+                          <>
+                            <div className="text-gray-700 dark:text-gray-300">Gain Factor</div>
+                            <div className="font-mono text-gray-700 dark:text-gray-300">{formatReadOnlyNumeric(a2GainValues.main, 4)}</div>
+                            <div className="font-mono text-gray-700 dark:text-gray-300">{formatReadOnlyNumeric(a2GainValues.full, 4)}</div>
+                            <div className="font-mono text-gray-700 dark:text-gray-300">{formatReadOnlyNumeric(a2GainValues.lite, 4)}</div>
+                          </>
+                        )}
+                        {a2EsrValues && (
+                          <>
+                            <div className="text-gray-700 dark:text-gray-300">Validation ESR</div>
+                            <div className="font-mono text-gray-700 dark:text-gray-300">{formatReadOnlyNumeric(a2EsrValues.main, 6)}</div>
+                            <div className="font-mono text-gray-700 dark:text-gray-300">{formatReadOnlyNumeric(a2EsrValues.full, 6)}</div>
+                            <div className="font-mono text-gray-700 dark:text-gray-300">{formatReadOnlyNumeric(a2EsrValues.lite, 6)}</div>
+                          </>
+                        )}
+                      </div>
+                      {a2EsrValues && (
+                        <div className="text-[10px] text-gray-500 dark:text-gray-400">
+                          ESR row: Main is the top-level saved <code>validation_esr</code> value in the file, which for A2 is usually the aggregate. Full and Lite are the NAM Lab per-submodel ESR values when present.
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1016,3 +1165,5 @@ function StatCard({
     </div>
   )
 }
+
+

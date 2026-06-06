@@ -118,6 +118,8 @@ const api = {
     ipcRenderer.invoke('trainer:unstageSubmission', submissionId),
   stageTrainerJob: (jobId: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('trainer:stageJob', jobId),
+  stageTrainerSubmission: (submissionId: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('trainer:stageSubmission', submissionId),
   setTrainerProfilesState: (payload: unknown): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('trainer:setProfilesState', payload),
   getTrainerProfilesState: (): Promise<unknown> => ipcRenderer.invoke('trainer:getProfilesState'),

@@ -13,6 +13,7 @@ export interface NamMetadata {
   gain?: number | null
   name?: string | null
   modeled_by?: string | null
+  trainer?: string | null
   gear_type?: string | null
   gear_make?: string | null
   gear_model?: string | null

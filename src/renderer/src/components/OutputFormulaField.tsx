@@ -25,7 +25,7 @@ export function OutputFormulaField({
   onChange,
   exampleStagingPath,
   exampleArchitecture,
-  suggestionFormula = '../../NAM/{architecture}/{folder}',
+  suggestionFormula = '../../NAM/{folder}/{architecture}',
   isPresetOverride = false,
   globalFormula = '',
 }: OutputFormulaFieldProps) {
@@ -36,7 +36,7 @@ export function OutputFormulaField({
   const stagingPath = pathDepth >= MIN_STAGING_DEPTH ? providedPath : DEMO_STAGING
   const isDemoPath = stagingPath === DEMO_STAGING
   const archName = exampleArchitecture?.trim() || DEMO_ARCH
-  const formulaToPreview = value.trim() || globalFormula.trim() || '../../NAM/{architecture}/{folder}'
+  const formulaToPreview = value.trim() || globalFormula.trim() || '../../NAM/{folder}/{architecture}'
 
   const resolution = useMemo(
     () => resolveOutputFormulaWithSteps(formulaToPreview, stagingPath, archName),
@@ -59,7 +59,7 @@ export function OutputFormulaField({
               ? globalFormula.trim()
                 ? `${globalFormula.trim()} (global)`
                 : 'Enter formula or leave blank to use fixed path'
-              : 'e.g. ../../NAM/{architecture}/{folder}'
+              : 'e.g. ../../NAM/{folder}/{architecture}'
           }
           className="flex-1 min-w-0 px-3 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-gray-900 dark:text-gray-100 font-mono focus:outline-none focus:border-indigo-500"
         />

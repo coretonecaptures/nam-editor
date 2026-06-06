@@ -553,6 +553,31 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     const arch = (activePreset?.architectures[0] ?? architectures[0]) || 'Standard'
     return resolveOutputFormula(activeGraphFormula, filesStagingDir, arch)
   }, [activeGraphFormula, filesStagingDir, activePreset, architectures])
+  const previewArchitecture = useMemo<TrainerArchitecture>(() => {
+    const candidate = (activePreset?.architectures[0] ?? architectures[0] ?? 'standard') as TrainerArchitecture
+    return candidate
+  }, [activePreset, architectures])
+  const previewUsesArchitectureSubfolders = useMemo(
+    () => (activePreset?.architectures.length ?? architectures.length) > 1,
+    [activePreset, architectures]
+  )
+  const previewModelUsesArchitectureSubfolders = useMemo(
+    () => previewUsesArchitectureSubfolders && !(activeFormula && /\{architecture\}/i.test(activeFormula)),
+    [activeFormula, previewUsesArchitectureSubfolders]
+  )
+  const previewGraphUsesArchitectureSubfolders = useMemo(
+    () => previewUsesArchitectureSubfolders && !(activeGraphFormula && /\{architecture\}/i.test(activeGraphFormula)),
+    [activeGraphFormula, previewUsesArchitectureSubfolders]
+  )
+  const previewArchitectureFolder = useMemo(
+    () => architectureDisplayLabel(previewArchitecture),
+    [previewArchitecture]
+  )
+  const effectiveFormulaModelRootPreview = useMemo(() => {
+    if (!formulaPreviewPath) return null
+    const root = formulaPreviewPath.replace(/\\/g, '/').replace(/\/+$/, '')
+    return previewModelUsesArchitectureSubfolders ? `${root}/${previewArchitectureFolder}` : root
+  }, [formulaPreviewPath, previewArchitectureFolder, previewModelUsesArchitectureSubfolders])
 
   const filteredHistory = useMemo(
     () => trainerState.history.filter((entry) => {
@@ -624,26 +649,53 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
         : (architectures.length > 0 && (!!trainPath.trim() || (!!activeFormula && !formulaOverrideActive && !!filesStagingDir)) && Number.isFinite(Number(epochs)) && Number(epochs) > 0)
     )
   const exampleFinalModelPath = useMemo(() => {
-    const architectureFolder = 'Standard'
+    const architectureFolder = previewArchitectureFolder
     if (manualRoutingMode === 'sibling_processed') {
       const sourceBase = manualRoutingSourceFolder.replace(/\\/g, '/').replace(/\/+$/, '')
       const root = sourceBase ? `${sourceBase}/_Processed/Models` : '_Processed/Models'
-      return `${root}/${architectureFolder}/${resolvedModelName}.nam`
+      return previewModelUsesArchitectureSubfolders
+        ? `${root}/${architectureFolder}/${resolvedModelName}.nam`
+        : `${root}/${resolvedModelName}.nam`
+    }
+    if (activeFormula && !formulaOverrideActive && effectiveFormulaModelRootPreview) {
+      return `${effectiveFormulaModelRootPreview}/${resolvedModelName}.nam`
     }
     const root = trainPath.trim().replace(/\\/g, '/')
-    return root ? `${root}/${architectureFolder}/${resolvedModelName}.nam` : `${architectureFolder}/${resolvedModelName}.nam`
-  }, [manualRoutingMode, manualRoutingSourceFolder, resolvedModelName, trainPath])
+    if (!root) {
+      return previewModelUsesArchitectureSubfolders
+        ? `${architectureFolder}/${resolvedModelName}.nam`
+        : `${resolvedModelName}.nam`
+    }
+    return previewModelUsesArchitectureSubfolders
+      ? `${root}/${architectureFolder}/${resolvedModelName}.nam`
+      : `${root}/${resolvedModelName}.nam`
+  }, [activeFormula, effectiveFormulaModelRootPreview, formulaOverrideActive, manualRoutingMode, manualRoutingSourceFolder, previewArchitectureFolder, previewModelUsesArchitectureSubfolders, resolvedModelName, trainPath])
 
   const exampleGraphPath = useMemo(() => {
-    const architectureFolder = 'Standard'
+    const architectureFolder = previewArchitectureFolder
     if (manualRoutingMode === 'sibling_processed') {
       const sourceBase = manualRoutingSourceFolder.replace(/\\/g, '/').replace(/\/+$/, '')
       const root = sourceBase ? `${sourceBase}/_Processed/Graphs` : '_Processed/Graphs'
-      return `${root}/${architectureFolder}/${resolvedModelName}.png`
+      return previewGraphUsesArchitectureSubfolders
+        ? `${root}/${architectureFolder}/${resolvedModelName}.png`
+        : `${root}/${resolvedModelName}.png`
+    }
+    if (activeGraphFormula && !formulaOverrideActive && graphFormulaPreviewPath) {
+      const root = graphFormulaPreviewPath.replace(/\\/g, '/').replace(/\/+$/, '')
+      return previewGraphUsesArchitectureSubfolders
+        ? `${root}/${architectureFolder}/${resolvedModelName}.png`
+        : `${root}/${resolvedModelName}.png`
     }
     const root = trainPath.trim().replace(/\\/g, '/')
-    return root ? `${root}/${resolvedModelName}.png` : `${resolvedModelName}.png`
-  }, [manualRoutingMode, manualRoutingSourceFolder, resolvedModelName, trainPath])
+    if (!root) {
+      return previewGraphUsesArchitectureSubfolders
+        ? `${architectureFolder}/${resolvedModelName}.png`
+        : `${resolvedModelName}.png`
+    }
+    return previewGraphUsesArchitectureSubfolders
+      ? `${root}/${architectureFolder}/${resolvedModelName}.png`
+      : `${root}/${resolvedModelName}.png`
+  }, [activeGraphFormula, formulaOverrideActive, graphFormulaPreviewPath, manualRoutingMode, manualRoutingSourceFolder, previewArchitectureFolder, previewGraphUsesArchitectureSubfolders, resolvedModelName, trainPath])
 
   const getManualRoutingForOutput = (outputPath: string, architectureName?: string) => {
     if (manualRoutingMode === 'sibling_processed') {
@@ -856,6 +908,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     const sharedLabel = batchName.trim() || autoLabel
     const sharedCreatedAt = new Date().toISOString()
     const jobArchitectures = targetArchitectures
+    const appendModelArchitectureFolder = jobArchitectures.length > 1 && !(activeFormula && /\{architecture\}/i.test(activeFormula))
+    const appendGraphArchitectureFolder = jobArchitectures.length > 1 && !(activeGraphFormula && /\{architecture\}/i.test(activeGraphFormula))
+    const appendProcessedArchitectureFolder = jobArchitectures.length > 1
 
     const payloads = batchWavList.flatMap((wavItem, idx) => {
       const submissionId = separateBatches ? makeSubmissionId(`manual-direct-${idx + 1}`) : sharedSubmissionId!
@@ -901,6 +956,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
           submissionId,
           submissionLabel,
           submissionCreatedAt: sharedCreatedAt,
+          appendModelArchitectureFolder,
+          appendGraphArchitectureFolder,
+          appendProcessedArchitectureFolder,
         }
       })
     })
@@ -973,6 +1031,16 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       setQueueActionError(result.error ?? 'Could not move that job to staged batches.')
     } else {
       setQueueActionError('')
+    }
+  }
+
+  const handleStageSubmission = async (submissionId: string) => {
+    const result = await window.api.stageTrainerSubmission(submissionId)
+    if (!result.success) {
+      setQueueActionError(result.error ?? 'Could not park that batch.')
+    } else {
+      setQueueActionError('')
+      setSection('batches')
     }
   }
 
@@ -1073,6 +1141,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     const createdAt = new Date().toISOString()
     const { normalizeWav: resolvedNormalizeWav, normalizeWavTargetDb: resolvedNormalizeDb } =
       resolveNormalize(normalizeWavOverride, normalizeWavTargetDb)
+    const appendModelArchitectureFolder = new Set(entries.map((entry) => entry.architecture)).size > 1 && !(outputFormula && /\{architecture\}/i.test(outputFormula))
+    const appendGraphArchitectureFolder = new Set(entries.map((entry) => entry.architecture)).size > 1 && !(graphFormula && /\{architecture\}/i.test(graphFormula))
+    const appendProcessedArchitectureFolder = new Set(entries.map((entry) => entry.architecture)).size > 1
 
     const payloads = entries.map((entry) => {
       const arch = entry.architecture
@@ -1123,6 +1194,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
         submissionId,
         submissionLabel,
         submissionCreatedAt: createdAt,
+        appendModelArchitectureFolder,
+        appendGraphArchitectureFolder,
+        appendProcessedArchitectureFolder,
         // Protect any already-trained .nam files in the destination folder — the Python promoter
         // will rename the existing model to <name>.bak.nam before overwriting.
         backupExisting: true,
@@ -1279,6 +1353,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     const sharedLabel = `Quick Add \u00b7 ${paths.length} capture${paths.length === 1 ? '' : 's'}`
     const sharedCreatedAt = new Date().toISOString()
     const isFormula = outputRoot.includes('{')
+    const appendModelArchitectureFolder = jobArchitectures.length > 1 && !(isFormula && /\{architecture\}/i.test(outputRoot))
+    const appendGraphArchitectureFolder = appendModelArchitectureFolder
+    const appendProcessedArchitectureFolder = jobArchitectures.length > 1
     const payloads = paths.flatMap((wavPath) =>
       jobArchitectures.map((architecture) => {
         const profileCfg = lookupProfileConfig(architecture, settings.userCaptureProfiles ?? [])
@@ -1323,6 +1400,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
           submissionId: sharedSubmissionId,
           submissionLabel: sharedLabel,
           submissionCreatedAt: sharedCreatedAt,
+          appendModelArchitectureFolder,
+          appendGraphArchitectureFolder,
+          appendProcessedArchitectureFolder,
         }
       })
     )
@@ -1623,7 +1703,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   onClick={async () => { await window.api.setTrainerPauseAfterCurrent(!trainerState.pauseAfterCurrent) }}
                   title={trainerState.pauseAfterCurrent
                     ? 'Click to cancel \u2014 queue will keep going after current capture finishes'
-                    : 'Pauses the queue after the current capture finishes (training canâ€™t be interrupted mid-capture). Use Emergency stop to kill the current run immediately.'}
+                    : 'Pauses the queue after the current capture finishes (training can\'t be interrupted mid-capture). Use Emergency stop to kill the current run immediately.'}
                   className={`h-10 inline-flex items-center gap-2 px-4 rounded-[9px] text-[13px] font-[580] border transition-colors ${
                     trainerState.pauseAfterCurrent
                       ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border-amber-500/40'
@@ -2586,6 +2666,21 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                           })()}
                           {queueCount > 0 && (
                             <button
+                              onClick={e => {
+                                e.stopPropagation()
+                                void handleStageSubmission(group.jobs[0]?.submissionId ?? '')
+                              }}
+                              className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border border-amber-500/30 text-amber-300 hover:bg-amber-500/10 flex-shrink-0 transition-colors"
+                              title="Move this batch's queued jobs back to Staged Batches so they wait there until you queue them again. Completed items stay where they are."
+                            >
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+                              </svg>
+                              Park batch
+                            </button>
+                          )}
+                          {queueCount > 0 && (
+                            <button
                               onClick={e => { e.stopPropagation(); setCancelBatchConfirm({ submissionId: group.jobs[0]?.submissionId ?? '', label: group.label }) }}
                               className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border border-red-500/30 text-red-400 hover:bg-red-500/10 flex-shrink-0 transition-colors"
                               title="Cancel all queued jobs in this batch"
@@ -3280,7 +3375,14 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                         <button
                           onClick={() => setBatchWavList([])}
                           className="h-7 px-2.5 rounded-lg text-[12px] font-medium border border-nm-border-s hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/30 text-nm-text-3 transition-colors"
-                        >âœ• Clear</button>
+                        >
+                          <span className="inline-flex items-center gap-1">
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                            Clear
+                          </span>
+                        </button>
                       )}
                     </div>
                   </div>
@@ -3434,11 +3536,11 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     <Field label="Epochs">
                       <input value={epochs} onChange={e => setEpochs(e.target.value)} className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none" />
                     </Field>
-                    <Field label="Latency" labelTitle="blank = auto">
+                    <Field label="Latency" labelTitle="Leave blank to use Auto">
                       <input value={latency} onChange={e => setLatency(e.target.value)} className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none" placeholder="Auto" />
                     </Field>
-                    <Field label="Target ESR" labelTitle="blank = off">
-                      <input value={thresholdEsr} onChange={e => setThresholdEsr(e.target.value)} className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none" placeholder="\u2014" />
+                    <Field label="Target ESR" labelTitle="Leave blank to turn it off">
+                      <input value={thresholdEsr} onChange={e => setThresholdEsr(e.target.value)} className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none" placeholder="Off" />
                     </Field>
                     <div className="flex flex-row items-end gap-2 pb-0.5 flex-wrap">
                       <ToggleRow label="Save ESR plot" checked={savePlot} onChange={setSavePlot} />
@@ -3499,7 +3601,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 )}
                 {showsCustomSettings && (
                   <div className="flex justify-end">
-                    <button onClick={handleSaveAsPreset} className="h-8 inline-flex items-center gap-1.5 px-3 rounded-lg text-[12px] font-medium border border-nm-border-s bg-field hover:bg-hov text-nm-text-2 transition-colors">
+                    <button onClick={handleSaveAsPreset} className="h-8 inline-flex items-center gap-1.5 px-3 rounded-lg text-[12px] font-semibold border border-nm-accent/35 bg-nm-accent/12 hover:bg-nm-accent/18 text-nm-text transition-colors">
                       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" /></svg>
                       Save as Preset
                     </button>
@@ -3531,7 +3633,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                           )}
                         </code>
                       </div>
-                      {previewPath && hasSource && <div className="pl-5 text-[11px] text-emerald-400 font-mono break-all">&rarr; {previewPath}</div>}
+                      {previewPath && hasSource && <div className="pl-5 text-[11px] text-emerald-400 font-mono break-all">&rarr; {effectiveFormulaModelRootPreview ?? previewPath}</div>}
                       {!hasSource && <div className="pl-5 text-[11px] text-emerald-500 italic">Add WAVs to preview output path</div>}
                       {!formulaOverrideActive && (
                         <div className="pl-5 flex items-center gap-2">
@@ -3592,6 +3694,13 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   )}
                 </div>
                 <div className="text-[11px] text-nm-text-3">
+                  {previewUsesArchitectureSubfolders
+                    ? (previewModelUsesArchitectureSubfolders || previewGraphUsesArchitectureSubfolders
+                      ? `Multiple architectures selected. Outputs will split by architecture automatically where the routing path does not already include {architecture}.`
+                      : 'Multiple architectures selected. Your routing formula already includes {architecture}, so no extra architecture subfolder will be added.')
+                    : 'Single architecture selected. NAM models and graphs will be written directly to the chosen root.'}
+                </div>
+                <div className="text-[11px] text-nm-text-3">
                   Example model: <code className="font-mono">{exampleFinalModelPath}</code>
                   <span className="mx-2">&middot;</span>
                   Example graph: <code className="font-mono">{exampleGraphPath}</code>
@@ -3622,7 +3731,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 if (!activePreset && architectures.length === 0) blockers.push('No architecture selected')
                 if (!activePreset && (!Number.isFinite(Number(epochs)) || Number(epochs) <= 0)) blockers.push('Invalid epoch count')
                 if (!trainPath.trim() && !(activeFormula && !formulaOverrideActive)) blockers.push('No output folder or formula set')
-                const queueTooltip = blockers.length > 0 ? `Cannot queue:\nâ€¢ ${blockers.join('\nâ€¢ ')}` : undefined
+                const queueTooltip = blockers.length > 0 ? `Cannot queue:\n- ${blockers.join('\n- ')}` : undefined
                 const allReady = blockers.length === 0
                 return (
               <div className="flex flex-col gap-3">
@@ -3937,7 +4046,15 @@ function Field({ label, hint, labelTitle, help, children }: { label: string; hin
       <div className="flex items-center gap-1 mb-1.5">
         <label title={labelTitle} className={`text-[11px] font-[600] text-nm-text-2 ${labelTitle ? 'cursor-help' : ''}`}>
           {label}
-          {labelTitle && <span className="ml-1 text-nm-text-3">â“˜</span>}
+          {labelTitle && (
+            <span className="ml-1 inline-flex align-middle text-nm-text-3" aria-hidden="true">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                <circle cx="12" cy="12" r="8.25" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 10.25v5" />
+                <circle cx="12" cy="7.75" r="0.75" fill="currentColor" stroke="none" />
+              </svg>
+            </span>
+          )}
           {hint && <span className="ml-2 text-nm-text-3 font-normal">{hint}</span>}
         </label>
         {help && <HelpPopover>{help}</HelpPopover>}

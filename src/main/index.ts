@@ -215,6 +215,9 @@ interface TrainerStartPayload {
   submissionId?: string | null
   submissionLabel?: string | null
   submissionCreatedAt?: string | null
+  appendModelArchitectureFolder?: boolean
+  appendGraphArchitectureFolder?: boolean
+  appendProcessedArchitectureFolder?: boolean
   // When true, Python backs up an existing target .nam to {name}.bak.nam before overwriting.
   // Set by the History "Retry failed" / "Retry batch" flow to protect previously-successful models.
   backupExisting?: boolean
@@ -275,6 +278,9 @@ interface TrainerQueueJob {
   submissionLabel: string | null
   submissionCreatedAt: string | null
   backupExisting?: boolean
+  appendModelArchitectureFolder?: boolean
+  appendGraphArchitectureFolder?: boolean
+  appendProcessedArchitectureFolder?: boolean
 }
 
 interface TrainerHistoryEntry {
@@ -1288,7 +1294,9 @@ async function promoteTrainerGraph(job: TrainerQueueJob): Promise<string> {
   const graphRoot = job.graphRoot.trim() || join(job.finalModelRoot, '_graphs')
   const destinationDir = job.graphRootResolved
     ? graphRoot
-    : join(graphRoot, getTrainerArchitectureFolderName(job.architecture))
+    : job.appendGraphArchitectureFolder
+      ? join(graphRoot, getTrainerArchitectureFolderName(job.architecture))
+      : graphRoot
   await fs.promises.mkdir(destinationDir, { recursive: true })
   const destinationPath = await ensureUniqueFilePath(join(destinationDir, `${job.modelName}${extname(preferred) || '.png'}`))
   suppressWatcher()
@@ -1298,7 +1306,9 @@ async function promoteTrainerGraph(job: TrainerQueueJob): Promise<string> {
 
 async function postProcessTrainerSourceWav(job: TrainerQueueJob): Promise<string> {
   if (job.sourcePostProcess === 'keep' || !job.processedWavRoot.trim()) return ''
-  const destinationDir = join(job.processedWavRoot.trim(), getTrainerArchitectureFolderName(job.architecture))
+  const destinationDir = job.appendProcessedArchitectureFolder
+    ? join(job.processedWavRoot.trim(), getTrainerArchitectureFolderName(job.architecture))
+    : job.processedWavRoot.trim()
   await fs.promises.mkdir(destinationDir, { recursive: true })
   const destinationPath = await ensureUniqueFilePath(join(destinationDir, basename(job.outputPath)))
   suppressWatcher()
@@ -1765,7 +1775,10 @@ function createTrainerJob(payload: TrainerStartPayload, staged = false): Trainer
   const modelName = payload.modelNameSuffix ? `${baseName}${payload.modelNameSuffix}` : baseName
   const architectureFolder = getTrainerArchitectureFolderName(payload.architecture)
   const finalModelRoot = (payload.finalModelRoot ?? payload.trainPath).trim()
-  const architectureFinalRoot = join(finalModelRoot, architectureFolder)
+  const appendModelArchitectureFolder = payload.appendModelArchitectureFolder ?? true
+  const appendGraphArchitectureFolder = payload.appendGraphArchitectureFolder ?? appendModelArchitectureFolder
+  const appendProcessedArchitectureFolder = payload.appendProcessedArchitectureFolder ?? appendModelArchitectureFolder
+  const architectureFinalRoot = appendModelArchitectureFolder ? join(finalModelRoot, architectureFolder) : finalModelRoot
   const workspacePath = getTrainerRunWorkspacePath(jobId, modelName, payload.architecture)
   return {
     jobId,
@@ -1825,6 +1838,9 @@ function createTrainerJob(payload: TrainerStartPayload, staged = false): Trainer
     submissionLabel: payload.submissionLabel ?? null,
     submissionCreatedAt: payload.submissionCreatedAt ?? null,
     backupExisting: !!payload.backupExisting,
+    appendModelArchitectureFolder,
+    appendGraphArchitectureFolder,
+    appendProcessedArchitectureFolder,
   }
 }
 
@@ -2081,6 +2097,9 @@ async function buildTrainerPayloadsForProfile(
         submissionId: submissionMeta?.id ?? null,
         submissionLabel: submissionMeta?.label ?? null,
         submissionCreatedAt: submissionMeta?.createdAt ?? null,
+        appendModelArchitectureFolder: profile.architectures.length > 1 && !/\{architecture\}/i.test(outputFormula),
+        appendGraphArchitectureFolder: profile.architectures.length > 1 && !/\{architecture\}/i.test(graphFormula),
+        appendProcessedArchitectureFolder: profile.architectures.length > 1,
       })
     }
   }
@@ -2136,7 +2155,9 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
   const outputPath = job.outputPath
   const trainPath = job.trainPath
   const runId = job.jobId
-  const finalOutputModelPath = join(job.finalModelRoot, `${job.modelName}.nam`)
+  const finalOutputModelPath = job.appendModelArchitectureFolder
+    ? join(job.finalModelRoot, getTrainerArchitectureFolderName(job.architecture), `${job.modelName}.nam`)
+    : join(job.finalModelRoot, `${job.modelName}.nam`)
 
   updateTrainerJob(job.jobId, {
     status: 'starting',
@@ -3436,9 +3457,24 @@ function applyTrainerMetadataConventions(
       const submodels = Array.isArray(config?.submodels) ? config?.submodels as unknown[] : null
       const loudness = metadata.loudness
       const gain = metadata.gain
+      const topLevelNamLab = (metadata.nam_lab && typeof metadata.nam_lab === 'object' && !Array.isArray(metadata.nam_lab))
+        ? (metadata.nam_lab as Record<string, unknown>)
+        : null
+      const mirroredNamLabKeys = [
+        'trained_epochs',
+        'preset_name',
+        'validation_esr',
+        'manual_latency_samples',
+        'a2_full_validation_esr',
+        'a2_lite_validation_esr',
+        'mrstft',
+        'mse',
+        'a2_lite_mrstft',
+        'a2_lite_mse',
+      ] as const
 
       if (submodels) {
-        for (const submodel of submodels) {
+        for (const [index, submodel] of submodels.entries()) {
           if (!submodel || typeof submodel !== 'object' || Array.isArray(submodel)) continue
           const submodelRecord = submodel as Record<string, unknown>
           const model = (submodelRecord.model && typeof submodelRecord.model === 'object' && !Array.isArray(submodelRecord.model))
@@ -3451,6 +3487,15 @@ function applyTrainerMetadataConventions(
 
           if (loudness != null) submodelMetadata.loudness = loudness
           if (gain != null) submodelMetadata.gain = gain
+          if (topLevelNamLab && index === (submodels.length > 1 ? 1 : 0)) {
+            const submodelNamLab = (submodelMetadata.nam_lab && typeof submodelMetadata.nam_lab === 'object' && !Array.isArray(submodelMetadata.nam_lab))
+              ? (submodelMetadata.nam_lab as Record<string, unknown>)
+              : {}
+            for (const key of mirroredNamLabKeys) {
+              if (topLevelNamLab[key] != null) submodelNamLab[key] = topLevelNamLab[key]
+            }
+            if (Object.keys(submodelNamLab).length > 0) submodelMetadata.nam_lab = submodelNamLab
+          }
           model.metadata = submodelMetadata
         }
       }
@@ -5084,9 +5129,9 @@ app.whenReady().then(async () => {
 
     if (action === 'retrain-new') {
       for (const payload of payloads) {
-        const architectureFolder = getTrainerArchitectureFolderName(payload.architecture as TrainerArchitecture)
         const finalRoot = (payload.finalModelRoot ?? payload.trainPath).trim()
-        const architectureFinalRoot = join(finalRoot, architectureFolder)
+        const architectureFolder = getTrainerArchitectureFolderName(payload.architecture as TrainerArchitecture)
+        const architectureFinalRoot = payload.appendModelArchitectureFolder === false ? finalRoot : join(finalRoot, architectureFolder)
         const baseName = deriveTrainerModelName(payload.outputPath, payload.architecture as TrainerArchitecture, payload.namingTemplate, payload.profileName, payload.thresholdEsr)
         payload.modelNameSuffix = findNextModelNameSuffix(baseName, architectureFinalRoot)
       }
