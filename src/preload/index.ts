@@ -30,6 +30,7 @@ const api = {
   scanFolder: (folderPath: string, hiddenFolders?: string) => ipcRenderer.invoke('folder:scanNam', folderPath, hiddenFolders),
   scanTree: (folderPath: string, hiddenFolders?: string) => ipcRenderer.invoke('folder:scanTree', folderPath, hiddenFolders),
   listWavFiles: (folderPath: string): Promise<string[]> => ipcRenderer.invoke('folder:listWavFiles', folderPath),
+  listNamFiles: (folderPath: string): Promise<string[]> => ipcRenderer.invoke('folder:listNamFiles', folderPath),
   moveFile: (sourcePath: string, destDir: string, force = false, destBaseName?: string) =>
     ipcRenderer.invoke('file:move', sourcePath, destDir, force, destBaseName) as Promise<{ success: boolean; error?: string; destPath?: string }>,
   revealFile: (filePath: string) => ipcRenderer.invoke('shell:revealFile', filePath),

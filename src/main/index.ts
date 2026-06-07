@@ -5000,8 +5000,8 @@ app.whenReady().then(async () => {
     if (validPayloads.length === 0) {
       return { success: false, error: 'No valid training jobs were provided.' }
     }
-    await enqueueTrainingPayloads(validPayloads, opts?.staged ?? false)
-    return { success: true, queued: validPayloads.length }
+    const queued = await enqueueTrainingPayloads(validPayloads, opts?.staged ?? false)
+    return { success: true, queued }
   })
 
   ipcMain.handle('trainer:setProfilesState', async (_event, payload: {
@@ -5672,6 +5672,18 @@ app.whenReady().then(async () => {
       const entries = await fs.promises.readdir(folderPath, { withFileTypes: true })
       return entries
         .filter((e) => e.isFile() && /\.wav$/i.test(e.name))
+        .map((e) => e.name)
+        .sort((a, b) => a.localeCompare(b))
+    } catch {
+      return []
+    }
+  })
+
+  ipcMain.handle('folder:listNamFiles', async (_event, folderPath: string) => {
+    try {
+      const entries = await fs.promises.readdir(folderPath, { withFileTypes: true })
+      return entries
+        .filter((e) => e.isFile() && /\.nam$/i.test(e.name))
         .map((e) => e.name)
         .sort((a, b) => a.localeCompare(b))
     } catch {

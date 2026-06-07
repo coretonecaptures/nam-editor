@@ -21,6 +21,45 @@ import { EsrCurve, ProgressRing, QualityBars, Sparkline, StackedMeter } from './
 
 type BatchWavItem = { id: string; path: string; name: string; fromFolder?: string }
 
+type RetrainMatchResult = { seedName: string; wavName: string }
+type RetrainSkipped = { seedName: string; reason: 'no-match' | 'ambiguous' }
+type RetrainReview = { matched: RetrainMatchResult[]; skipped: RetrainSkipped[]; duplicatesCollapsed: number }
+
+function normBasenameRetrain(name: string): string {
+  return name.replace(/\.[^.]+$/, '').toLowerCase()
+}
+
+function matchSeedsToWavs(seedNames: string[], wavNames: string[]): RetrainReview {
+  const wavByNorm = new Map<string, string[]>()
+  for (const w of wavNames) {
+    const key = normBasenameRetrain(w)
+    const arr = wavByNorm.get(key)
+    if (arr) arr.push(w)
+    else wavByNorm.set(key, [w])
+  }
+  const matched: RetrainMatchResult[] = []
+  const skipped: RetrainSkipped[] = []
+  const seenWavNorms = new Set<string>()
+  let duplicatesCollapsed = 0
+  for (const seedName of seedNames) {
+    const key = normBasenameRetrain(seedName)
+    const candidates = wavByNorm.get(key) ?? []
+    if (candidates.length === 0) {
+      skipped.push({ seedName, reason: 'no-match' })
+    } else if (candidates.length > 1) {
+      skipped.push({ seedName, reason: 'ambiguous' })
+    } else {
+      if (seenWavNorms.has(key)) {
+        duplicatesCollapsed++
+      } else {
+        seenWavNorms.add(key)
+        matched.push({ seedName, wavName: candidates[0] })
+      }
+    }
+  }
+  return { matched, skipped, duplicatesCollapsed }
+}
+
 interface Props {
   settings: AppSettings
   onSaveSettings: (settings: AppSettings) => void
@@ -316,6 +355,16 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const [elapsedSec, setElapsedSec] = useState(0)
   const rawLogRef = useRef<HTMLDivElement | null>(null)
   const trainerSnapshotSigRef = useRef(buildTrainerSnapshotSignature(IDLE_TRAINER_STATE))
+
+  // Retrain from folder state
+  const [newRunMode, setNewRunMode] = useState<'manual' | 'retrain'>('manual')
+  const [retrainSeedFolder, setRetrainSeedFolder] = useState('')
+  const [retrainWavFolder, setRetrainWavFolder] = useState('')
+  const [retrainArchitectures, setRetrainArchitectures] = useState<string[]>(['standard'])
+  const [retrainReview, setRetrainReview] = useState<RetrainReview | null>(null)
+  const [retrainBusy, setRetrainBusy] = useState(false)
+  const [retrainError, setRetrainError] = useState('')
+  const [retrainQueued, setRetrainQueued] = useState<{ count: number; skipped: number } | null>(null)
 
   useEffect(() => {
     if (settings.namTrainingInputWav && !inputPath) setInputPath(settings.namTrainingInputWav)
@@ -1023,6 +1072,122 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       setQueueActionError('')
       setSection('queue')
     }
+  }
+
+  const handleRetrainBrowseSeedFolder = async () => {
+    const folder = await window.api.openFolder()
+    if (folder) { setRetrainSeedFolder(folder); setRetrainReview(null); setRetrainQueued(null); setRetrainError('') }
+  }
+
+  const handleRetrainBrowseWavFolder = async () => {
+    const folder = await window.api.openFolder()
+    if (folder) { setRetrainWavFolder(folder); setRetrainReview(null); setRetrainQueued(null); setRetrainError('') }
+  }
+
+  const handleRetrainAnalyze = async () => {
+    setRetrainError('')
+    setRetrainReview(null)
+    setRetrainQueued(null)
+    if (!retrainSeedFolder.trim()) { setRetrainError('Choose a seed NAM folder.'); return }
+    if (!retrainWavFolder.trim()) { setRetrainError('Choose a WAV superset folder.'); return }
+    if (retrainArchitectures.length === 0) { setRetrainError('Choose at least one architecture.'); return }
+    setRetrainBusy(true)
+    try {
+      const seedNames = await window.api.listNamFiles(retrainSeedFolder.trim())
+      const wavNames = await window.api.listWavFiles(retrainWavFolder.trim())
+      if (seedNames.length === 0) { setRetrainError('No .nam files found in the seed folder.'); return }
+      if (wavNames.length === 0) { setRetrainError('No .wav files found in the WAV folder.'); return }
+      setRetrainReview(matchSeedsToWavs(seedNames, wavNames))
+    } catch (e) {
+      setRetrainError(String(e))
+    } finally {
+      setRetrainBusy(false)
+    }
+  }
+
+  const handleRetrainQueue = async (staged = false) => {
+    if (!retrainReview || retrainReview.matched.length === 0) return
+    const wavFolder = retrainWavFolder.trim().replace(/\\/g, '/')
+    const targetArchitectures = retrainArchitectures as TrainerArchitecture[]
+    const parsedEpochs = activePreset ? activePreset.epochs : Number.parseInt(epochs, 10)
+    const parsedLatency = activePreset
+      ? (activePreset.latencyMode === 'manual' ? activePreset.latencyValue : null)
+      : (latency.trim() === '' ? null : Number.parseInt(latency.trim(), 10))
+    const parsedThresholdEsr = activePreset
+      ? activePreset.thresholdEsr
+      : (thresholdEsr.trim() === '' ? null : Number.parseFloat(thresholdEsr.trim()))
+    const activeNormalizeOverride = activePreset?.normalizeWav ?? normalizeWavOverride
+    const activeNormalizeTargetDb = activePreset?.normalizeWavTargetDb != null
+      ? String(activePreset.normalizeWavTargetDb)
+      : normalizeWavTargetDb
+    const { normalizeWav: resolvedNormalizeWav, normalizeWavTargetDb: resolvedNormalizeDb } =
+      resolveNormalize(activeNormalizeOverride as 'global' | 'on' | 'off', activeNormalizeTargetDb)
+    const resolvedPythonPath = settings.namPythonPath.trim()
+    const modeledBy = (settings.enableCaptureDefaults && settings.defaultModeledBy.trim()) ? settings.defaultModeledBy.trim() : null
+    const inputLevelDbu = (settings.enableCaptureDefaults && settings.defaultInputLevel.trim()) ? Number.parseFloat(settings.defaultInputLevel.trim()) : null
+    const outputLevelDbu = (settings.enableCaptureDefaults && settings.defaultOutputLevel.trim()) ? Number.parseFloat(settings.defaultOutputLevel.trim()) : null
+    const appendModelArchitectureFolder = targetArchitectures.length > 1 && !(activeFormula && /\{architecture\}/i.test(activeFormula))
+    const appendGraphArchitectureFolder = targetArchitectures.length > 1 && !(activeGraphFormula && /\{architecture\}/i.test(activeGraphFormula))
+    const appendProcessedArchitectureFolder = targetArchitectures.length > 1
+    const sharedSubmissionId = makeSubmissionId('retrain')
+    const sharedLabel = `Retrain · ${retrainReview.matched.length} capture${retrainReview.matched.length === 1 ? '' : 's'}`
+    const sharedCreatedAt = new Date().toISOString()
+    const payloads = retrainReview.matched.flatMap(({ wavName }) => {
+      const wavPath = `${wavFolder.replace(/\/+$/, '')}/${wavName}`
+      return targetArchitectures.map((architecture) => {
+        const routing = getManualRoutingForOutput(wavPath, architecture)
+        const jobMode = deriveNamMode(architecture)
+        const profileCfg = jobMode === 'a1' ? lookupProfileConfig(architecture, settings.userCaptureProfiles ?? []) : null
+        return {
+          pythonPath: resolvedPythonPath,
+          inputPath: inputPath.trim(),
+          outputPath: wavPath,
+          trainPath: routing.finalModelRoot,
+          namMode: jobMode,
+          architecture,
+          waveNetConfig: profileCfg?.waveNetConfig ?? null,
+          lr: profileCfg?.lr ?? 0.004,
+          lrDecay: profileCfg?.lrDecay ?? 0.002,
+          batchSize: profileCfg?.batchSize ?? 16,
+          ny: profileCfg?.ny ?? 8192,
+          fitMrstft: profileCfg?.fitMrstft ?? true,
+          normalizeWav: resolvedNormalizeWav,
+          normalizeWavTargetDb: resolvedNormalizeDb,
+          captureProfileId: jobMode === 'a1' ? architecture : null,
+          epochs: parsedEpochs,
+          latency: parsedLatency,
+          thresholdEsr: parsedThresholdEsr,
+          savePlot: activePreset?.savePlot ?? savePlot,
+          silent: true,
+          ignoreChecks: activePreset?.ignoreChecks ?? ignoreChecks,
+          sourceMode: 'manual-direct' as const,
+          finalModelRoot: routing.finalModelRoot,
+          processedWavRoot: routing.processedWavRoot,
+          graphRoot: routing.graphRoot,
+          graphRootResolved: routing.graphRootResolved,
+          sourcePostProcess: routing.sourcePostProcess,
+          namingTemplate: '{basename}',
+          profileId: activePreset?.id ?? null,
+          profileName: activePreset?.name ?? null,
+          modeledBy,
+          inputLevelDbu: Number.isFinite(inputLevelDbu) ? inputLevelDbu : null,
+          outputLevelDbu: Number.isFinite(outputLevelDbu) ? outputLevelDbu : null,
+          submissionId: sharedSubmissionId,
+          submissionLabel: sharedLabel,
+          submissionCreatedAt: sharedCreatedAt,
+          appendModelArchitectureFolder,
+          appendGraphArchitectureFolder,
+          appendProcessedArchitectureFolder,
+        }
+      })
+    })
+    const result = await window.api.enqueueTrainerRuns(payloads, { staged })
+    if (!result.success) { setRetrainError(result.error ?? 'Could not queue retrain batch.'); return }
+    const queued = result.queued ?? 0
+    const skippedByProtection = payloads.length - queued
+    setRetrainQueued({ count: queued, skipped: skippedByProtection })
+    setRetrainReview(null)
+    setSection(staged ? 'batches' : 'queue')
   }
 
   const handleStageJob = async (job: TrainerQueueJob) => {
@@ -3310,11 +3475,162 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
           {/* â”€â”€ NEW RUN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
           {section === 'new' && (
             <div className="px-6 py-5 space-y-4 max-w-[1400px] mx-auto w-full">
-              <div className="flex items-baseline justify-between">
-                <h2 className="text-[18px] font-[680] text-nm-text">Create Batch</h2>
-                {presetSaveNotice && <span className="text-[12px] text-emerald-400">{presetSaveNotice}</span>}
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <h2 className="text-[18px] font-[680] text-nm-text">{newRunMode === 'retrain' ? 'Retrain from Folder' : 'Create Batch'}</h2>
+                <div className="flex items-center gap-1 p-0.5 rounded-xl bg-panel border border-nm-border-s">
+                  {(['manual', 'retrain'] as const).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => { setNewRunMode(m); setRetrainError(''); setRetrainQueued(null) }}
+                      className={`px-3.5 py-1.5 rounded-[10px] text-[12.5px] font-medium transition-colors ${
+                        newRunMode === m
+                          ? 'bg-nm-accent/15 text-nm-accent font-semibold'
+                          : 'text-nm-text-2 hover:text-nm-text hover:bg-hov'
+                      }`}
+                    >
+                      {m === 'manual' ? 'Manual' : 'Retrain from Folder'}
+                    </button>
+                  ))}
+                </div>
+                {newRunMode === 'manual' && presetSaveNotice && <span className="text-[12px] text-emerald-400">{presetSaveNotice}</span>}
               </div>
 
+              {/* â"€â"€ Retrain from Folder UI â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
+              {newRunMode === 'retrain' && (
+                <div className="space-y-4">
+                  {/* Inputs card */}
+                  <div className="rounded-2xl border border-nm-border-s bg-panel-2 p-4 space-y-4">
+                    <div className="flex items-center gap-1.5">
+                      <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25zM6.75 12h.008v.008H6.75V12zm0 3h.008v.008H6.75V15zm0 3h.008v.008H6.75V18z" /></svg>
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-nm-accent">Sources</span>
+                    </div>
+                    <Field label="Seed NAM folder" hint="Folder of trained .nam files to retrain">
+                      <PathPicker
+                        value={retrainSeedFolder}
+                        placeholder="Folder containing .nam files"
+                        onChange={(v) => { setRetrainSeedFolder(v); setRetrainReview(null); setRetrainQueued(null) }}
+                        onBrowse={handleRetrainBrowseSeedFolder}
+                      />
+                    </Field>
+                    <Field label="WAV superset folder" hint="Folder containing the matching output WAVs (must be a superset of the seed set)">
+                      <PathPicker
+                        value={retrainWavFolder}
+                        placeholder="Folder containing output WAV files"
+                        onChange={(v) => { setRetrainWavFolder(v); setRetrainReview(null); setRetrainQueued(null) }}
+                        onBrowse={handleRetrainBrowseWavFolder}
+                      />
+                    </Field>
+                    <Field label="Input DI" hint="Trainer reference / DI file">
+                      <PathPicker value={inputPath} placeholder="Select DI WAV" onChange={setInputPath} onBrowse={handleBrowseInput} />
+                    </Field>
+                  </div>
+
+                  {/* Architecture + Training Settings */}
+                  <div className="rounded-2xl border border-nm-border-s bg-panel-2 p-4 space-y-4">
+                    <div className="flex items-center gap-1.5">
+                      <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-nm-accent">Target Architectures</span>
+                    </div>
+                    <Field label="Architectures" hint="Select one or more target architectures for the retrain batch">
+                      <ArchitectureMultiSelect
+                        values={retrainArchitectures}
+                        onChange={(v) => { setRetrainArchitectures(v); setRetrainReview(null); setRetrainQueued(null) }}
+                        userProfiles={settings.userCaptureProfiles ?? []}
+                        onCreateProfile={() => { setCaptureProfileEditorTarget(null); setCaptureProfileEditorOpen(true) }}
+                        onEditProfile={(p) => { setCaptureProfileEditorTarget(p); setCaptureProfileEditorOpen(true) }}
+                      />
+                    </Field>
+                    <p className="text-[11.5px] text-nm-text-3 leading-relaxed">
+                      Training settings (epochs, preset, output routing) are inherited from the current preset selection in <strong className="text-nm-text-2">Manual</strong> mode.
+                    </p>
+                  </div>
+
+                  {/* Analyze button */}
+                  {!retrainReview && (
+                    <button
+                      onClick={() => { void handleRetrainAnalyze() }}
+                      disabled={retrainBusy || !retrainSeedFolder.trim() || !retrainWavFolder.trim() || retrainArchitectures.length === 0}
+                      className="w-full py-3 rounded-xl text-[14px] font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-white bg-nm-accent hover:opacity-90"
+                    >
+                      {retrainBusy ? 'Analyzing…' : 'Analyze Seed Folder'}
+                    </button>
+                  )}
+
+                  {retrainError && (
+                    <div className="rounded-[11px] border border-red-500/30 bg-red-500/8 px-4 py-3 text-[12.5px] text-red-400">{retrainError}</div>
+                  )}
+
+                  {/* Review step */}
+                  {retrainReview && (
+                    <div className="rounded-2xl border border-nm-border-s bg-panel-2 p-4 space-y-4">
+                      <div className="flex items-center gap-1.5">
+                        <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        <span className="text-[11px] font-semibold uppercase tracking-wider text-nm-accent">Match Summary</span>
+                        <button onClick={() => setRetrainReview(null)} className="ml-auto text-[11px] text-nm-text-3 hover:text-nm-text transition-colors">Re-analyze ↺</button>
+                      </div>
+
+                      {/* Stats row */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        {[
+                          { label: 'Seeds found', value: retrainReview.matched.length + retrainReview.skipped.length + retrainReview.duplicatesCollapsed, color: 'text-nm-text' },
+                          { label: 'WAVs matched', value: retrainReview.matched.length, color: 'text-emerald-400' },
+                          { label: 'Duplicates collapsed', value: retrainReview.duplicatesCollapsed, color: retrainReview.duplicatesCollapsed > 0 ? 'text-amber-400' : 'text-nm-text-3' },
+                          { label: 'Unmatched / ambiguous', value: retrainReview.skipped.length, color: retrainReview.skipped.length > 0 ? 'text-red-400' : 'text-nm-text-3' },
+                        ].map(({ label, value, color }) => (
+                          <div key={label} className="rounded-xl border border-nm-border-s bg-field px-3 py-2.5">
+                            <div className={`text-[20px] font-[700] tabular-nums leading-none mb-1 ${color}`}>{value}</div>
+                            <div className="text-[10.5px] text-nm-text-3 leading-tight">{label}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Skipped detail */}
+                      {retrainReview.skipped.length > 0 && (
+                        <details className="group">
+                          <summary className="cursor-pointer text-[11.5px] text-nm-text-3 hover:text-nm-text select-none list-none flex items-center gap-1.5">
+                            <svg className="w-3.5 h-3.5 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>
+                            {retrainReview.skipped.length} skipped seed{retrainReview.skipped.length !== 1 ? 's' : ''} — click to view
+                          </summary>
+                          <div className="mt-2 rounded-xl border border-nm-border-s overflow-hidden max-h-48 overflow-y-auto">
+                            {retrainReview.skipped.map(({ seedName, reason }) => (
+                              <div key={seedName} className="flex items-center justify-between px-3 py-1.5 border-b border-nm-border-s last:border-0 hover:bg-hov">
+                                <span className="text-[11.5px] font-mono text-nm-text-2 truncate">{seedName}</span>
+                                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ml-3 shrink-0 ${reason === 'ambiguous' ? 'bg-amber-500/15 text-amber-400' : 'bg-red-500/15 text-red-400'}`}>
+                                  {reason === 'ambiguous' ? 'ambiguous' : 'no match'}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      )}
+
+                      {retrainReview.matched.length === 0 ? (
+                        <div className="text-[12.5px] text-nm-text-3 text-center py-2">No WAVs matched — nothing to queue.</div>
+                      ) : (
+                        <div className="flex gap-3">
+                          <button
+                            onClick={() => { void handleRetrainQueue(true) }}
+                            className="flex-1 py-3 rounded-xl text-[14px] font-semibold transition-colors border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2"
+                          >
+                            Stage (save, don&apos;t run)
+                          </button>
+                          <button
+                            onClick={() => { void handleRetrainQueue(false) }}
+                            className="flex-1 py-3 rounded-xl text-[14px] font-semibold transition-colors text-white bg-nm-accent hover:opacity-90"
+                          >
+                            {(() => {
+                              const total = retrainReview.matched.length * retrainArchitectures.length
+                              return `Queue ${total} · Start`
+                            })()}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {newRunMode === 'manual' && <>
               {/* Captures card */}
               <div className="rounded-2xl border border-nm-border-s bg-panel-2 p-4 space-y-4">
                 <div className="flex items-center gap-1.5">
@@ -3776,6 +4092,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               </div>
                 )
               })()}
+              </>}
             </div>
           )}
 
