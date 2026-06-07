@@ -1915,16 +1915,16 @@ function FileItem({
 
       {(meta.gear_type || meta.date || detectedPreset || epochCount != null) && (
         <div className="flex-shrink-0 min-w-[96px] self-stretch flex flex-col items-end justify-between py-0">
-            <div className="flex flex-col items-end gap-0.5">
-            {meta.gear_type && (() => {
-              const src = getGearImageSrc(meta.gear_type)
-              return src ? <img src={src} alt={meta.gear_type} className="h-7 w-auto object-contain opacity-60" /> : null
-            })()}
+          <div className="flex flex-col items-end gap-0.5">
             {meta.date && (
               <div className="text-xs text-gray-400 dark:text-gray-300 tabular-nums text-right">
                 {`${meta.date.year}-${String(meta.date.month).padStart(2, '0')}-${String(meta.date.day).padStart(2, '0')}`}
               </div>
             )}
+            {meta.gear_type && (() => {
+              const src = getGearImageSrc(meta.gear_type)
+              return src ? <img src={src} alt={meta.gear_type} className="h-7 w-auto object-contain opacity-60" /> : null
+            })()}
           </div>
           {(detectedPreset || epochCount != null) && (
             <div className="flex items-center justify-end gap-1.5 text-right mt-1">
