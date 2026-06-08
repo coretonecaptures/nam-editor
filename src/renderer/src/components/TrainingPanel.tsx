@@ -2964,8 +2964,6 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                       <div
                         key={group.key}
                         className={`rounded-[13px] border ${hasActive ? 'border-nm-accent/50' : 'border-nm-border-s'} bg-panel overflow-hidden`}
-                        draggable={queueCount > 0}
-                        onDragStart={() => { dragBatchRef.current = group.jobs[0]?.submissionId ?? null }}
                         onDragOver={e => { e.preventDefault() }}
                         onDrop={async () => {
                           const fromId = dragBatchRef.current
@@ -2976,11 +2974,15 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                           dragBatchRef.current = null
                         }}
                       >
-                        {/* Batch header */}
-                        <div className={`flex items-center gap-2 px-3.5 py-3 bg-panel-2 border-b border-nm-border-s cursor-pointer select-none`}
+                        {/* Batch header — draggable here so job rows inside the body don't steal the drag */}
+                        <div
+                          className={`flex items-center gap-2 px-3.5 py-3 bg-panel-2 border-b border-nm-border-s select-none ${queueCount > 0 ? 'cursor-grab' : 'cursor-pointer'}`}
+                          draggable={queueCount > 0}
+                          onDragStart={() => { dragBatchRef.current = group.jobs[0]?.submissionId ?? null }}
+                          onDragEnd={() => { dragBatchRef.current = null }}
                           onClick={() => toggleBatchCollapse(group.key)}
                         >
-                          <svg className="w-3.5 h-3.5 text-nm-text-3 cursor-grab flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <svg className="w-3.5 h-3.5 text-nm-text-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9h16.5m-16.5 6.75h16.5" />
                           </svg>
                           <svg className={`w-3 h-3 text-nm-text-3 flex-shrink-0 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -4158,7 +4160,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   </Field>
                   {manualRoutingMode === 'root' ? (
                     <Field label="NAM Output Root">
-                      <PathPicker value={trainPath} placeholder="Select a destination folder" onChange={setTrainPath} onBrowse={async () => { const p = await window.api.openFolder(trainPath || undefined); if (p) setTrainPath(p) }} browseLabel="Folder\u2026" />
+                      <PathPicker value={trainPath} placeholder="Select a destination folder" onChange={setTrainPath} onBrowse={async () => { const p = await window.api.openFolder(trainPath || undefined); if (p) setTrainPath(p) }} />
                     </Field>
                   ) : (
                     <div className="rounded-lg border border-nm-border-s bg-field px-3 py-2 text-[12px] text-nm-text-3">
@@ -4728,13 +4730,11 @@ function PathPicker({
   placeholder,
   onChange,
   onBrowse,
-  browseLabel = 'Browse...',
 }: {
   value: string
   placeholder: string
   onChange: (value: string) => void
   onBrowse: () => void | Promise<void>
-  browseLabel?: string
 }) {
   return (
     <div className="flex gap-2">
@@ -4746,9 +4746,12 @@ function PathPicker({
       />
       <button
         onClick={() => { void onBrowse() }}
-        className="h-10 px-3 rounded-lg text-[13px] font-medium transition-colors bg-field border border-field-bd hover:bg-hov text-nm-text-2"
+        title="Browse for folder"
+        className="h-10 w-10 flex items-center justify-center rounded-lg transition-colors bg-field border border-field-bd hover:bg-hov text-nm-text-2 flex-shrink-0"
       >
-        {browseLabel}
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
+        </svg>
       </button>
     </div>
   )
