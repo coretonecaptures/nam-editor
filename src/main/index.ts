@@ -1888,7 +1888,14 @@ function resetTrainerJobForQueue(job: TrainerQueueJob): TrainerQueueJob {
   }
 }
 
-function nextQueuedTrainerJob(): TrainerQueueJob | null {
+function nextQueuedTrainerJob(preferSubmissionId?: string | null): TrainerQueueJob | null {
+  // Sticky-batch: prefer the next queued job in the same submission so an entire batch
+  // runs to completion before the queue advances to the next batch. Falls back to the
+  // globally first queued job when the preferred submission has nothing left.
+  if (preferSubmissionId) {
+    const sameSubmission = trainerQueue.find(j => j.status === 'queued' && j.submissionId === preferSubmissionId)
+    if (sameSubmission) return sameSubmission
+  }
   return trainerQueue.find((job) => job.status === 'queued') ?? null
 }
 
@@ -2334,7 +2341,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     }
     trainerChild = null
     emitTrainerState()
-    if (!trainerPauseAfterCurrent) await pumpTrainerQueue()
+    if (!trainerPauseAfterCurrent) await pumpTrainerQueue(job.submissionId)
   })
 
   trainerChild.once('close', async (code, signal) => {
@@ -2602,7 +2609,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     }
 
     if (!trainerPauseAfterCurrent) {
-      await pumpTrainerQueue()
+      await pumpTrainerQueue(job.submissionId)
     } else {
       trainerState = { ...trainerState, activeJobId: null, runId: null }
       emitTrainerState()
@@ -2610,7 +2617,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
   })
 }
 
-async function pumpTrainerQueue(): Promise<void> {
+async function pumpTrainerQueue(preferSubmissionId?: string | null): Promise<void> {
   if (trainerChild || trainerState.status === 'starting' || trainerState.status === 'running') return
   // Honor Pause After Current — if the user paused, don't auto-start the next job, even when
   // a new batch is added or another handler tries to nudge the queue forward. The pause must be
@@ -2625,7 +2632,7 @@ async function pumpTrainerQueue(): Promise<void> {
     emitTrainerState()
     return
   }
-  const nextJob = nextQueuedTrainerJob()
+  const nextJob = nextQueuedTrainerJob(preferSubmissionId)
   if (!nextJob) {
     trainerState = {
       ...TRAINER_IDLE_STATE,

@@ -130,31 +130,75 @@ The last preset you selected in Create Batch is **persisted across app restarts*
 
 ---
 
-## Create Batch (manual training)
+## Create Batch
 
-The **New Run** section is the Create Batch form. It groups one or more output WAVs into a single batch submission.
+The **New Run** section has two modes, toggled at the top of the form:
+
+| Mode | Use when |
+| --- | --- |
+| **Manual** | You have a specific set of output WAVs you want to train |
+| **From Captures** | You have a folder of existing `.nam` files and want to re-train them all as a new architecture |
+
+Both modes share the **Training Settings** card (preset, architectures, epochs, latency, target ESR, normalize) and the **Output Routing** card — only the source pickers differ.
+
+---
+
+### Manual
 
 **Sections of the form:**
 
 1. **Captures**
-   - **Batch name** (optional) â€” leave blank to auto-name from the capture, folder, or count
-   - **Input DI** â€” the reamp reference WAV
-   - **Output WAVs** â€” drop files, add files, or add a folder; folder mode groups by subfolder
-2. **Training Settings**
-   - **Preset** dropdown + description chip on the same row
-   - **Architecture(s)** multi-select with color-coded chips below showing the current selection (Ã— to remove)
-   - **Epochs**, **Latency**, **Target ESR**, **Save ESR plot**, **Ignore checks**, **Normalize**
-3. **Output Routing** â€” formula-driven destination (token-based) or fixed path; preview shows where each `.nam` will land
+   - **Batch name** (optional) — leave blank to auto-name from the capture, folder, or count
+   - **Input DI** — the reamp reference WAV
+   - **Output WAVs** — drop files, add files, or add a folder; folder mode groups by subfolder
+2. **Training Settings** (shared — see below)
+3. **Output Routing** (shared — see below)
 
 At the bottom: **Queue + Start** (begins training right away) or **Stage** (save the batch to the Batches tab without running it).
 
 After a successful submission the form clears and the view jumps to Queue (or Batches for staged), so duplicate submissions are hard to make by accident.
 
-### Mixed A1 + A2 batches
+#### Mixed A1 + A2 batches
 
-Tick `A2`, `A1 - Standard`, and `A1 - REVxSTD` with 3 output WAVs and you get 9 jobs (3 WAVs Ã— 3 architectures) under one shared `submissionId`. Each job carries its own architecture and `namMode` is derived per-job. They run serially through the queue and each lands in its own `{architecture}` folder per the output formula.
+Tick `A2`, `A1 - Standard`, and `A1 - REVxSTD` with 3 output WAVs and you get 9 jobs (3 WAVs × 3 architectures) under one shared `submissionId`. Each job carries its own architecture and `namMode` is derived per-job. They run serially through the queue and each lands in its own `{architecture}` folder per the output formula.
 
 ---
+
+### From Captures
+
+**From Captures** lets you re-train a folder of existing `.nam` files as a new architecture (or set of architectures) without manually building a WAV list.
+
+**When to use it:**
+- You have a folder of A1 Standard captures and want to produce A2 versions of all of them.
+- You want to upgrade captures to a higher-quality variant (e.g. REVxSTD → A1 Complex) without hand-matching each file.
+- Any scenario where you have trained `.nam` files and a matching folder of output WAVs and want to re-train them all in bulk.
+
+**Steps:**
+
+1. Switch the mode toggle to **From Captures**.
+2. **Captures folder** — the folder containing your existing `.nam` files. NAM Lab reads their filenames as the target list.
+3. **Output WAVs folder** — the folder containing the matching amp output WAVs. Files are matched by basename (case-insensitive, extension ignored). Hover the (?) next to Sources for a quick overview.
+4. Choose a **Preset** (or Custom) and **Target Architecture(s)** in the Training Settings card below — same as Manual mode.
+5. Click **Analyze Captures** — NAM Lab cross-references the `.nam` names against the WAV folder and produces a match report.
+6. Review the **Match Summary** — tiles showing Matched / Unmatched / WAVs-only counts; the unmatched list is always visible so you can see exactly which files didn't resolve.
+7. Click **Queue + Start** or **Stage** — only the matched pairs are submitted. Each matched capture × each selected architecture becomes one job in the batch.
+
+**Matching rules:**
+- Basenames are compared case-insensitively: `.nam` extension stripped from the capture name, WAV extension stripped from the WAV filename.
+- `Marshall-JCM800.nam` matches `marshall-jcm800.wav`, `Marshall-JCM800.WAV`, etc.
+- A `.nam` with no matching WAV appears in the unmatched list and is skipped.
+
+---
+
+### Training Settings (shared)
+
+- **Preset** dropdown + description chip on the same row
+- **Architecture(s)** multi-select with color-coded chips showing the current selection (× to remove). When a preset is active the architectures come from that preset and the picker is read-only; switch to **Custom** to pick freely.
+- **Epochs**, **Latency**, **Target ESR**, **Save ESR plot**, **Ignore checks**, **Normalize**
+
+### Output Routing (shared)
+
+Formula-driven destination (token-based) or fixed path. A live preview shows where each `.nam` will land. The formula tokens (`{folder}`, `{basename}`, `{architecture}`, etc.) resolve per-job, so mixed-architecture batches land in their own subfolders automatically.
 
 ## Quick Add
 
@@ -180,7 +224,7 @@ The Queue groups jobs by batch submission. Each group expands to show its captur
 - **Expand all** / **Collapse all** buttons
 - Tile row showing **Queued / Running / Done / Failed** counts in both **captures** and **batches**
 
-**When new work is queued, finished/failed/canceled rows auto-clear** â€” the History file is the authoritative record. This keeps the Queue readable across multiple submissions.
+**Queue auto-cleanup:** When every job in a batch completes successfully, the batch silently removes itself from the queue (it’s already in History). Batches with any failures stay so you can retry them. To dismiss a failed batch without retrying, click **Send to history** on the batch header — a confirmation shows how many failed and completed jobs will be removed. To manually clear all finished rows in one go, click **Clear finished** in the queue header.
 
 **Controls in the now-strip:**
 - **Emergency stop** â€” terminates the running Python process immediately
@@ -219,7 +263,7 @@ The Live Run page is the real-time view of the active job.
 - **Statline** â€” 4 cells: `Epoch / Rate / Validation ESR / Started`. The Val ESR cell is tone-colored (green / amber / red).
 - **MRSTFT / MSE statline** â€” a secondary row showing the Multi-Resolution STFT loss (frequency-domain perceptual) and MSE (time-domain). Appears only when the trainer reports these values. For A2 batches each cell shows Full and Lite sub-model values separately (`MRSTFT (Full)` / `MRSTFT (Lite)` / `MSE (Full)` / `MSE (Lite)`). These are diagnostic â€” not needed for day-to-day use, but helpful for comparing convergence behavior across architectures.
 - **Final output** â€” full path of the destination `.nam` file
-- **Checkpoint export** â€” path of the Lightning checkpoint, populated once training starts
+- **Checkpoint export** — path of the most recent Lightning checkpoint (`.ckpt`) file. NAM Lab scans the workspace every 15 seconds and updates this live during training, so you can locate or copy the checkpoint before the run finishes.
 - **Up next** â€” the next 3 jobs in the queue with numbered badges
 - **Raw trainer log** â€” collapsible. Shows the same output you'd see in an Anaconda shell: GPU detection, LR scheduler, Replicate ESR, V2/V3 checks, the rolling Epoch progress bar (deduped so each epoch becomes one updating line), and the final aggregate ESR. tqdm refresh frames and progress sanity checks are filtered out to keep it readable.
 
