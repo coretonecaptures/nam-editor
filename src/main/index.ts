@@ -1064,7 +1064,9 @@ function getPersistableTrainerQueueJobs(): TrainerQueueJob[] {
   if (unfinished.length >= TRAINER_QUEUE_PERSIST_CAP) return unfinished
   const terminal = trainerQueue.filter((job) => isTrainerQueueTerminalStatus(job.status))
   const remainingSlots = TRAINER_QUEUE_PERSIST_CAP - unfinished.length
-  return [...unfinished, ...terminal.slice(-remainingSlots)]
+  // Keep recent terminal entries within the cap, then reconstruct in original queue order
+  const keptTerminalIds = new Set(terminal.slice(-remainingSlots).map((j) => j.jobId))
+  return trainerQueue.filter((j) => !isTrainerQueueTerminalStatus(j.status) || keptTerminalIds.has(j.jobId))
 }
 
 function saveTrainerHistory(): void {

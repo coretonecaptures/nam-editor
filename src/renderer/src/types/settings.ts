@@ -109,12 +109,18 @@ export interface TrainingWatchProfile {
   autoRun: boolean
   initialScanMode: TrainingWatchInitialScanMode
   watchFolder: string
-  presetId: string
+  presetId: string  // preset ID, or 'bundle:<bundleId>' for a training bundle
   sourcePostProcess: TrainingSourcePostProcessMode
   processedWavRoot: string
   graphRoot: string
   graphOutputFormula: string
   finalModelRoot: string
+}
+
+export interface TrainingBundle {
+  id: string
+  name: string
+  presetIds: string[]
 }
 
 export const METADATA_SUGGEST_FIELD_OPTIONS = [
@@ -307,6 +313,8 @@ export interface AppSettings {
   trainingDefaultInputDi: string
   // Last-used preset in Create Batch — persisted across restarts; falls back to trainingFavoritePresetId
   trainingLastSelectedPresetId?: string
+  // Training bundles: named groups of presets submitted together as one batch
+  trainingBundles: TrainingBundle[]
 
   // Queue auto-start on launch
   trainingAutoStartQueueOnLaunch: boolean
@@ -417,6 +425,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   trainingDefaultInputDi: '',
   trainingAutoStartQueueOnLaunch: false,
   trainingAutoStartSkipIfPaused: false,
+  trainingBundles: [],
   importPrefixSuffixes: 'DI',
   packGearCatalog: [],
   packChecklistTemplate: cloneChecklistTemplate(DEFAULT_PACK_CHECKLIST_TEMPLATE),
@@ -592,6 +601,9 @@ function normalizeSettingsMetadataRules(settings: AppSettings): AppSettings {
     metadataSuggestRuleLibrary: (settings.metadataSuggestRuleLibrary ?? []).map((rule, index) => normalizeMetadataSuggestRule(rule, index)),
     userCaptureProfiles: (settings.userCaptureProfiles ?? []).filter(
       (p): p is UserCaptureProfile => Boolean(p?.id && p?.name && p?.waveNetConfig?.layers_configs)
+    ),
+    trainingBundles: (settings.trainingBundles ?? []).filter(
+      (b): b is TrainingBundle => Boolean(b?.id && b?.name && Array.isArray(b?.presetIds))
     ),
   }
 }

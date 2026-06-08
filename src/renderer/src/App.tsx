@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef, startTransition } from 'react'
 import beakerTransparent from './assets/images/beaker.only.transparent.png'
 import { NamFile, NamMetadata, TONE_TYPES, GEAR_TYPES } from './types/nam'
-import { AppSettings, FolderWatchImportEntry, FolderWatchRule, MetadataSuggestRule, TrainingProfile, loadSettings, saveSettings } from './types/settings'
+import { AppSettings, FolderWatchImportEntry, FolderWatchRule, MetadataSuggestRule, TrainingBundle, TrainingPreset, TrainingProfile, loadSettings, saveSettings } from './types/settings'
 import { effectiveFormula } from './utils/resolveOutputFormula'
 import { loadLayout, saveLayout } from './types/layout'
 import { LibrarianState } from './types/librarian'
@@ -299,39 +299,64 @@ function makeFolderWatchKey(sourceFolder: string, destFolder: string): string {
   return `${sourceFolder.replace(/\\/g, '/')}=>${destFolder.replace(/\\/g, '/')}`
 }
 
+const BUNDLE_PRESET_PREFIX = 'bundle:'
+
+function buildWatcherTrainingProfile(
+  watchProfile: { id: string; name: string; enabled: boolean; autoRun: boolean; initialScanMode: string; watchFolder: string; sourcePostProcess: string; processedWavRoot: string; graphRoot: string; finalModelRoot: string },
+  preset: TrainingPreset,
+  globalOutputFormula: string,
+  globalGraphFormula: string,
+  profileIdOverride?: string,
+  profileNameOverride?: string,
+): TrainingProfile {
+  return {
+    id: profileIdOverride ?? watchProfile.id,
+    name: profileNameOverride ?? watchProfile.name,
+    sourceMode: 'watcher' as const,
+    enabled: watchProfile.enabled,
+    autoRun: watchProfile.autoRun,
+    initialScanMode: watchProfile.initialScanMode as 'process-existing' | 'new-only',
+    namingTemplate: preset.namingTemplate,
+    architectures: preset.architectures,
+    epochs: preset.epochs,
+    thresholdEsr: preset.thresholdEsr,
+    latencyMode: preset.latencyMode,
+    latencyValue: preset.latencyValue,
+    savePlot: preset.savePlot,
+    ignoreChecks: preset.ignoreChecks,
+    sourcePostProcess: watchProfile.sourcePostProcess as 'move' | 'copy' | 'keep',
+    watchFolder: watchProfile.watchFolder,
+    processedWavRoot: watchProfile.processedWavRoot,
+    graphRoot: watchProfile.graphRoot,
+    effectiveOutputFormula: effectiveFormula(globalOutputFormula, preset.outputFormulaOverride),
+    effectiveGraphFormula: effectiveFormula(globalGraphFormula, preset.graphOutputFormulaOverride),
+    finalModelRoot: watchProfile.finalModelRoot,
+  }
+}
+
 function resolveTrainingWatcherProfiles(settings: AppSettings): TrainingProfile[] {
   const presetMap = new Map(settings.trainingPresets.map((preset) => [preset.id, preset]))
+  const bundleMap = new Map((settings.trainingBundles ?? []).map((b: TrainingBundle) => [b.id, b]))
   const globalOutputFormula = settings.trainingOutputFormula ?? ''
   const globalGraphFormula = settings.trainingGraphFormula ?? ''
-  return settings.trainingWatchProfiles
-    .map((watchProfile) => {
-      const preset = presetMap.get(watchProfile.presetId)
-      if (!preset) return null
-      return {
-        id: watchProfile.id,
-        name: watchProfile.name,
-        sourceMode: 'watcher' as const,
-        enabled: watchProfile.enabled,
-        autoRun: watchProfile.autoRun,
-        initialScanMode: watchProfile.initialScanMode,
-        namingTemplate: preset.namingTemplate,
-        architectures: preset.architectures,
-        epochs: preset.epochs,
-        thresholdEsr: preset.thresholdEsr,
-        latencyMode: preset.latencyMode,
-        latencyValue: preset.latencyValue,
-        savePlot: preset.savePlot,
-        ignoreChecks: preset.ignoreChecks,
-        sourcePostProcess: watchProfile.sourcePostProcess,
-        watchFolder: watchProfile.watchFolder,
-        processedWavRoot: watchProfile.processedWavRoot,
-        graphRoot: watchProfile.graphRoot,
-        effectiveOutputFormula: effectiveFormula(globalOutputFormula, preset.outputFormulaOverride),
-        effectiveGraphFormula: effectiveFormula(globalGraphFormula, preset.graphOutputFormulaOverride),
-        finalModelRoot: watchProfile.finalModelRoot,
-      }
-    })
-    .filter((profile): profile is TrainingProfile => profile !== null)
+  return settings.trainingWatchProfiles.flatMap((watchProfile) => {
+    if (watchProfile.presetId.startsWith(BUNDLE_PRESET_PREFIX)) {
+      const bundleId = watchProfile.presetId.slice(BUNDLE_PRESET_PREFIX.length)
+      const bundle = bundleMap.get(bundleId)
+      if (!bundle) return []
+      return bundle.presetIds
+        .map((pid: string) => presetMap.get(pid))
+        .filter((preset): preset is TrainingPreset => Boolean(preset) && preset.architectures.length > 0)
+        .map((preset) => buildWatcherTrainingProfile(
+          watchProfile, preset, globalOutputFormula, globalGraphFormula,
+          `${watchProfile.id}::${preset.id}`,
+          `${watchProfile.name} / ${preset.name}`,
+        ))
+    }
+    const preset = presetMap.get(watchProfile.presetId)
+    if (!preset) return []
+    return [buildWatcherTrainingProfile(watchProfile, preset, globalOutputFormula, globalGraphFormula)]
+  })
 }
 
 const AMPCOVER_PATTERN = /^ampcover\.(png|jpe?g|webp|gif|avif)$/i
@@ -1293,6 +1318,7 @@ export default function App() {
     settings.defaultInputLevel,
     settings.defaultOutputLevel,
     settings.trainingPresets,
+    settings.trainingBundles,
     settings.trainingWatchProfiles,
     settings.trainingRetainGraphs,
     settings.normalizeWavBeforeTraining,

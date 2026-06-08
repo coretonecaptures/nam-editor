@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
-import type { AppSettings, TrainingPreset, UserCaptureProfile } from '../types/settings'
+import type { AppSettings, TrainingBundle, TrainingPreset, UserCaptureProfile } from '../types/settings'
 import {
   IDLE_TRAINER_STATE,
   TRAINER_ARCHITECTURES,
@@ -124,6 +124,7 @@ function archChipStyle(arch: string): { background: string; color: string; borde
 }
 
 const CUSTOM_PRESET_ID = 'custom'
+const BUNDLE_PREFIX = 'bundle:'
 
 function lookupProfileConfig(
   profileId: string,
@@ -356,6 +357,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const [elapsedSec, setElapsedSec] = useState(0)
   const rawLogRef = useRef<HTMLDivElement | null>(null)
   const trainerSnapshotSigRef = useRef(buildTrainerSnapshotSignature(IDLE_TRAINER_STATE))
+  const [outputNotices, setOutputNotices] = useState<Array<{ id: string; label: string; folders: string[] }>>([])
+  const prevQueueJobStatusRef = useRef<Map<string, string>>(new Map())
 
   // Retrain from folder state
   const [newRunMode, setNewRunMode] = useState<'manual' | 'fromCaptures'>('manual')
@@ -439,6 +442,49 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     const timer = window.setTimeout(() => setPresetSaveNotice(''), 2500)
     return () => window.clearTimeout(timer)
   }, [presetSaveNotice])
+
+  // Detect newly completed batches and surface output folder notices (TODO #4)
+  useEffect(() => {
+    const queue = trainerState.queue
+    const prevStatuses = prevQueueJobStatusRef.current
+    const terminal = new Set(['success', 'error', 'canceled'])
+
+    // Group jobs by submissionId
+    const bySubmission = new Map<string, TrainerQueueJob[]>()
+    for (const job of queue) {
+      const sid = job.submissionId ?? `solo:${job.jobId}`
+      const arr = bySubmission.get(sid) ?? []
+      arr.push(job)
+      bySubmission.set(sid, arr)
+    }
+
+    for (const [sid, jobs] of bySubmission) {
+      const allTerminalNow = jobs.every((j) => terminal.has(j.status))
+      if (!allTerminalNow) continue
+      const wasAlreadyAllTerminal = jobs.every((j) => terminal.has(prevStatuses.get(j.jobId) ?? ''))
+      if (wasAlreadyAllTerminal) continue
+
+      // This submission just fully completed — collect unique output folders from successful jobs
+      const successFolders = [...new Set(
+        jobs
+          .filter((j) => j.status === 'success' && j.outputModelPath)
+          .map((j) => {
+            const p = j.outputModelPath.replace(/\\/g, '/')
+            return p.substring(0, p.lastIndexOf('/'))
+          })
+          .filter(Boolean)
+      )]
+      if (successFolders.length === 0) continue
+
+      const label = jobs[0].submissionLabel ?? 'Batch'
+      setOutputNotices((prev) => [...prev, { id: sid, label, folders: successFolders }])
+    }
+
+    // Update previous statuses
+    const next = new Map<string, string>()
+    for (const job of queue) next.set(job.jobId, job.status)
+    prevQueueJobStatusRef.current = next
+  }, [trainerState.queue])
 
   const queueProfileOptions = useMemo(
     () => Array.from(new Map(trainerState.queue.filter((job) => job.profileId || job.profileName).map((job) => [job.profileId ?? job.profileName ?? 'manual', job.profileName ?? 'Manual'])).entries()),
@@ -571,8 +617,28 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     () => settings.trainingPresets.filter((preset) => preset.architectures.length > 0),
     [settings.trainingPresets]
   )
+  const availableBundles = useMemo(
+    () => (settings.trainingBundles ?? []).filter((b) => b.presetIds.length > 0),
+    [settings.trainingBundles]
+  )
+  const activeBundle = useMemo(
+    () => selectedPresetId.startsWith(BUNDLE_PREFIX)
+      ? availableBundles.find((b) => b.id === selectedPresetId.slice(BUNDLE_PREFIX.length)) ?? null
+      : null,
+    [availableBundles, selectedPresetId]
+  )
+  const bundleActivePresets = useMemo(
+    () => activeBundle
+      ? activeBundle.presetIds
+          .map((pid) => availablePresets.find((p) => p.id === pid))
+          .filter((p): p is TrainingPreset => Boolean(p))
+      : [],
+    [activeBundle, availablePresets]
+  )
   const activePreset = useMemo(
-    () => selectedPresetId === CUSTOM_PRESET_ID ? null : availablePresets.find((preset) => preset.id === selectedPresetId) ?? null,
+    () => (selectedPresetId === CUSTOM_PRESET_ID || selectedPresetId.startsWith(BUNDLE_PREFIX))
+      ? null
+      : availablePresets.find((preset) => preset.id === selectedPresetId) ?? null,
     [availablePresets, selectedPresetId]
   )
 
@@ -694,9 +760,11 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     !!inputPath.trim() &&
     batchWavList.length > 0 &&
     (
-      activePreset
-        ? (!!trainPath.trim() || (!!activeFormula && !formulaOverrideActive && !!filesStagingDir))
-        : (architectures.length > 0 && (!!trainPath.trim() || (!!activeFormula && !formulaOverrideActive && !!filesStagingDir)) && Number.isFinite(Number(epochs)) && Number(epochs) > 0)
+      activeBundle
+        ? (bundleActivePresets.length > 0 && (!!trainPath.trim() || (!!activeFormula && !formulaOverrideActive && !!filesStagingDir)))
+        : activePreset
+          ? (!!trainPath.trim() || (!!activeFormula && !formulaOverrideActive && !!filesStagingDir))
+          : (architectures.length > 0 && (!!trainPath.trim() || (!!activeFormula && !formulaOverrideActive && !!filesStagingDir)) && Number.isFinite(Number(epochs)) && Number(epochs) > 0)
     )
   const exampleFinalModelPath = useMemo(() => {
     const architectureFolder = previewArchitectureFolder
@@ -870,7 +938,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
 
   const applyPreset = (presetId: string) => {
     setSelectedPresetId(presetId)
-    if (presetId === CUSTOM_PRESET_ID) return
+    if (presetId === CUSTOM_PRESET_ID || presetId.startsWith(BUNDLE_PREFIX)) return
     const preset = availablePresets.find((item) => item.id === presetId)
     if (!preset) return
     setArchitectures(
@@ -898,38 +966,16 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     setSubmittingBatch(true)
     try {
     setLaunchError('')
-    const parsedEpochs = activePreset ? activePreset.epochs : Number.parseInt(epochs, 10)
-    const parsedLatency = activePreset
-      ? (activePreset.latencyMode === 'manual' ? activePreset.latencyValue : null)
-      : (latency.trim() === '' ? null : Number.parseInt(latency.trim(), 10))
-    const parsedThresholdEsr = activePreset
-      ? activePreset.thresholdEsr
-      : (thresholdEsr.trim() === '' ? null : Number.parseFloat(thresholdEsr.trim()))
-    if (!Number.isFinite(parsedEpochs) || parsedEpochs <= 0) {
-      setLaunchError('Epochs must be a positive whole number.')
-      return
-    }
-    if (!activePreset && latency.trim() !== '' && (!Number.isFinite(parsedLatency) || parsedLatency! < 0)) {
-      setLaunchError('Latency must be blank or a non-negative integer sample offset.')
-      return
-    }
-    if (!activePreset && thresholdEsr.trim() !== '' && (!Number.isFinite(parsedThresholdEsr) || parsedThresholdEsr! <= 0)) {
-      setLaunchError('Target ESR must be blank or a positive number.')
-      return
-    }
-    const targetArchitectures = activePreset ? activePreset.architectures : architectures
-    if (targetArchitectures.length === 0) {
-      setLaunchError('Choose at least one architecture before queueing.')
+
+    if (batchWavList.length === 0) {
+      setLaunchError('Add at least one WAV file before queueing.')
       return
     }
     if (manualRoutingMode === 'root' && !trainPath.trim() && (!activeFormula || formulaOverrideActive)) {
       setLaunchError('Choose an output root or set an output formula in Settings before queueing.')
       return
     }
-    if (batchWavList.length === 0) {
-      setLaunchError('Add at least one WAV file before queueing.')
-      return
-    }
+
     const captureDefaultsEnabled = settings.enableCaptureDefaults
     const modeledBy = captureDefaultsEnabled && settings.defaultModeledBy.trim() !== ''
       ? settings.defaultModeledBy.trim()
@@ -941,14 +987,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       ? Number.parseFloat(settings.defaultOutputLevel.trim())
       : null
     const resolvedPythonPath = settings.namPythonPath.trim()
-    const activeNormalizeOverride = activePreset?.normalizeWav ?? normalizeWavOverride
-    const activeNormalizeTargetDb = activePreset?.normalizeWavTargetDb != null
-      ? String(activePreset.normalizeWavTargetDb)
-      : normalizeWavTargetDb
-    const { normalizeWav: resolvedNormalizeWav, normalizeWavTargetDb: resolvedNormalizeDb } =
-      resolveNormalize(activeNormalizeOverride as 'global' | 'on' | 'off', activeNormalizeTargetDb)
 
-    const sharedSubmissionId = separateBatches ? null : makeSubmissionId('manual-direct')
     const folders = new Set(batchWavList.map(w => w.fromFolder).filter(Boolean))
     const autoLabel = batchWavList.length === 1
       ? batchWavList[0].name
@@ -957,61 +996,164 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
         : `Batch - ${batchWavList.length} capture${batchWavList.length === 1 ? '' : 's'}`
     const sharedLabel = batchName.trim() || autoLabel
     const sharedCreatedAt = new Date().toISOString()
-    const jobArchitectures = targetArchitectures
-    const appendModelArchitectureFolder = jobArchitectures.length > 1 && !(activeFormula && /\{architecture\}/i.test(activeFormula))
-    const appendGraphArchitectureFolder = jobArchitectures.length > 1 && !(activeGraphFormula && /\{architecture\}/i.test(activeGraphFormula))
-    const appendProcessedArchitectureFolder = jobArchitectures.length > 1
 
-    const payloads = batchWavList.flatMap((wavItem, idx) => {
-      const submissionId = separateBatches ? makeSubmissionId(`manual-direct-${idx + 1}`) : sharedSubmissionId!
-      const submissionLabel = separateBatches ? wavItem.name : sharedLabel
-      return jobArchitectures.map((architecture) => {
-        const routing = getManualRoutingForOutput(wavItem.path, architecture)
-        const jobMode = deriveNamMode(architecture)
-        const profileCfg = jobMode === 'a1' ? lookupProfileConfig(architecture, settings.userCaptureProfiles ?? []) : null
-        return {
-          pythonPath: resolvedPythonPath,
-          inputPath: inputPath.trim(),
-          outputPath: wavItem.path,
-          trainPath: routing.finalModelRoot,
-          namMode: jobMode,
-          architecture,
-          waveNetConfig: profileCfg?.waveNetConfig ?? null,
-          lr: profileCfg?.lr ?? 0.004,
-          lrDecay: profileCfg?.lrDecay ?? 0.002,
-          batchSize: profileCfg?.batchSize ?? 16,
-          ny: profileCfg?.ny ?? 8192,
-          fitMrstft: profileCfg?.fitMrstft ?? true,
-          normalizeWav: resolvedNormalizeWav,
-          normalizeWavTargetDb: resolvedNormalizeDb,
-          captureProfileId: jobMode === 'a1' ? architecture : null,
-          epochs: parsedEpochs,
-          latency: parsedLatency,
-          thresholdEsr: parsedThresholdEsr,
-          savePlot: activePreset?.savePlot ?? savePlot,
-          silent: true,
-          ignoreChecks: activePreset?.ignoreChecks ?? ignoreChecks,
-          sourceMode: 'manual-direct' as const,
-          finalModelRoot: routing.finalModelRoot,
-          processedWavRoot: routing.processedWavRoot,
-          graphRoot: routing.graphRoot,
-          graphRootResolved: routing.graphRootResolved,
-          sourcePostProcess: routing.sourcePostProcess,
-          namingTemplate: '{basename}',
-          profileId: activePreset?.id ?? null,
-          profileName: activePreset?.name ?? null,
-          modeledBy,
-          inputLevelDbu: Number.isFinite(inputLevelDbu) ? inputLevelDbu : null,
-          outputLevelDbu: Number.isFinite(outputLevelDbu) ? outputLevelDbu : null,
-          submissionId,
-          submissionLabel,
-          submissionCreatedAt: sharedCreatedAt,
-          appendModelArchitectureFolder,
-          appendGraphArchitectureFolder,
-          appendProcessedArchitectureFolder,
-        }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let payloads: any[]
+
+    if (activeBundle) {
+      const validPresets = bundleActivePresets.filter((p) => p.architectures.length > 0)
+      if (validPresets.length === 0) {
+        setLaunchError('Bundle has no valid presets with architectures selected.')
+        return
+      }
+      const sharedSubmissionId = separateBatches ? null : makeSubmissionId('bundle')
+      payloads = batchWavList.flatMap((wavItem, idx) => {
+        const submissionId = separateBatches ? makeSubmissionId(`bundle-${idx + 1}`) : sharedSubmissionId!
+        const submissionLabel = separateBatches ? wavItem.name : sharedLabel
+        return validPresets.flatMap((preset) => {
+          const presetArchitectures = preset.architectures
+          const appendModelArchitectureFolder = presetArchitectures.length > 1 && !(activeFormula && /\{architecture\}/i.test(activeFormula))
+          const appendGraphArchitectureFolder = presetArchitectures.length > 1 && !(activeGraphFormula && /\{architecture\}/i.test(activeGraphFormula))
+          const appendProcessedArchitectureFolder = presetArchitectures.length > 1
+          const presetNorm = preset.normalizeWav ?? 'off'
+          const presetNormDb = preset.normalizeWavTargetDb != null ? String(preset.normalizeWavTargetDb) : normalizeWavTargetDb
+          const { normalizeWav: resolvedNormalizeWav, normalizeWavTargetDb: resolvedNormalizeDb } =
+            resolveNormalize(presetNorm as 'global' | 'on' | 'off', presetNormDb)
+          return presetArchitectures.map((architecture) => {
+            const routing = getManualRoutingForOutput(wavItem.path, architecture)
+            const jobMode = deriveNamMode(architecture)
+            const profileCfg = jobMode === 'a1' ? lookupProfileConfig(architecture, settings.userCaptureProfiles ?? []) : null
+            return {
+              pythonPath: resolvedPythonPath,
+              inputPath: inputPath.trim(),
+              outputPath: wavItem.path,
+              trainPath: routing.finalModelRoot,
+              namMode: jobMode,
+              architecture,
+              waveNetConfig: profileCfg?.waveNetConfig ?? null,
+              lr: profileCfg?.lr ?? 0.004,
+              lrDecay: profileCfg?.lrDecay ?? 0.002,
+              batchSize: profileCfg?.batchSize ?? 16,
+              ny: profileCfg?.ny ?? 8192,
+              fitMrstft: profileCfg?.fitMrstft ?? true,
+              normalizeWav: resolvedNormalizeWav,
+              normalizeWavTargetDb: resolvedNormalizeDb,
+              captureProfileId: jobMode === 'a1' ? architecture : null,
+              epochs: preset.epochs,
+              latency: preset.latencyMode === 'manual' ? preset.latencyValue : null,
+              thresholdEsr: preset.thresholdEsr,
+              savePlot: preset.savePlot,
+              silent: true,
+              ignoreChecks: preset.ignoreChecks,
+              sourceMode: 'manual-direct' as const,
+              finalModelRoot: routing.finalModelRoot,
+              processedWavRoot: routing.processedWavRoot,
+              graphRoot: routing.graphRoot,
+              graphRootResolved: routing.graphRootResolved,
+              sourcePostProcess: routing.sourcePostProcess,
+              namingTemplate: preset.namingTemplate ?? '{basename}',
+              profileId: preset.id,
+              profileName: preset.name,
+              modeledBy,
+              inputLevelDbu: Number.isFinite(inputLevelDbu) ? inputLevelDbu : null,
+              outputLevelDbu: Number.isFinite(outputLevelDbu) ? outputLevelDbu : null,
+              submissionId,
+              submissionLabel,
+              submissionCreatedAt: sharedCreatedAt,
+              appendModelArchitectureFolder,
+              appendGraphArchitectureFolder,
+              appendProcessedArchitectureFolder,
+            }
+          })
+        })
       })
-    })
+    } else {
+      const parsedEpochs = activePreset ? activePreset.epochs : Number.parseInt(epochs, 10)
+      const parsedLatency = activePreset
+        ? (activePreset.latencyMode === 'manual' ? activePreset.latencyValue : null)
+        : (latency.trim() === '' ? null : Number.parseInt(latency.trim(), 10))
+      const parsedThresholdEsr = activePreset
+        ? activePreset.thresholdEsr
+        : (thresholdEsr.trim() === '' ? null : Number.parseFloat(thresholdEsr.trim()))
+      if (!Number.isFinite(parsedEpochs) || parsedEpochs <= 0) {
+        setLaunchError('Epochs must be a positive whole number.')
+        return
+      }
+      if (!activePreset && latency.trim() !== '' && (!Number.isFinite(parsedLatency) || parsedLatency! < 0)) {
+        setLaunchError('Latency must be blank or a non-negative integer sample offset.')
+        return
+      }
+      if (!activePreset && thresholdEsr.trim() !== '' && (!Number.isFinite(parsedThresholdEsr) || parsedThresholdEsr! <= 0)) {
+        setLaunchError('Target ESR must be blank or a positive number.')
+        return
+      }
+      const targetArchitectures = activePreset ? activePreset.architectures : architectures
+      if (targetArchitectures.length === 0) {
+        setLaunchError('Choose at least one architecture before queueing.')
+        return
+      }
+      const activeNormalizeOverride = activePreset?.normalizeWav ?? normalizeWavOverride
+      const activeNormalizeTargetDb = activePreset?.normalizeWavTargetDb != null
+        ? String(activePreset.normalizeWavTargetDb)
+        : normalizeWavTargetDb
+      const { normalizeWav: resolvedNormalizeWav, normalizeWavTargetDb: resolvedNormalizeDb } =
+        resolveNormalize(activeNormalizeOverride as 'global' | 'on' | 'off', activeNormalizeTargetDb)
+      const sharedSubmissionId = separateBatches ? null : makeSubmissionId('manual-direct')
+      const jobArchitectures = targetArchitectures
+      const appendModelArchitectureFolder = jobArchitectures.length > 1 && !(activeFormula && /\{architecture\}/i.test(activeFormula))
+      const appendGraphArchitectureFolder = jobArchitectures.length > 1 && !(activeGraphFormula && /\{architecture\}/i.test(activeGraphFormula))
+      const appendProcessedArchitectureFolder = jobArchitectures.length > 1
+      payloads = batchWavList.flatMap((wavItem, idx) => {
+        const submissionId = separateBatches ? makeSubmissionId(`manual-direct-${idx + 1}`) : sharedSubmissionId!
+        const submissionLabel = separateBatches ? wavItem.name : sharedLabel
+        return jobArchitectures.map((architecture) => {
+          const routing = getManualRoutingForOutput(wavItem.path, architecture)
+          const jobMode = deriveNamMode(architecture)
+          const profileCfg = jobMode === 'a1' ? lookupProfileConfig(architecture, settings.userCaptureProfiles ?? []) : null
+          return {
+            pythonPath: resolvedPythonPath,
+            inputPath: inputPath.trim(),
+            outputPath: wavItem.path,
+            trainPath: routing.finalModelRoot,
+            namMode: jobMode,
+            architecture,
+            waveNetConfig: profileCfg?.waveNetConfig ?? null,
+            lr: profileCfg?.lr ?? 0.004,
+            lrDecay: profileCfg?.lrDecay ?? 0.002,
+            batchSize: profileCfg?.batchSize ?? 16,
+            ny: profileCfg?.ny ?? 8192,
+            fitMrstft: profileCfg?.fitMrstft ?? true,
+            normalizeWav: resolvedNormalizeWav,
+            normalizeWavTargetDb: resolvedNormalizeDb,
+            captureProfileId: jobMode === 'a1' ? architecture : null,
+            epochs: parsedEpochs,
+            latency: parsedLatency,
+            thresholdEsr: parsedThresholdEsr,
+            savePlot: activePreset?.savePlot ?? savePlot,
+            silent: true,
+            ignoreChecks: activePreset?.ignoreChecks ?? ignoreChecks,
+            sourceMode: 'manual-direct' as const,
+            finalModelRoot: routing.finalModelRoot,
+            processedWavRoot: routing.processedWavRoot,
+            graphRoot: routing.graphRoot,
+            graphRootResolved: routing.graphRootResolved,
+            sourcePostProcess: routing.sourcePostProcess,
+            namingTemplate: '{basename}',
+            profileId: activePreset?.id ?? null,
+            profileName: activePreset?.name ?? null,
+            modeledBy,
+            inputLevelDbu: Number.isFinite(inputLevelDbu) ? inputLevelDbu : null,
+            outputLevelDbu: Number.isFinite(outputLevelDbu) ? outputLevelDbu : null,
+            submissionId,
+            submissionLabel,
+            submissionCreatedAt: sharedCreatedAt,
+            appendModelArchitectureFolder,
+            appendGraphArchitectureFolder,
+            appendProcessedArchitectureFolder,
+          }
+        })
+      })
+    }
 
     const result = await window.api.enqueueTrainerRuns(payloads, { staged })
     if (!result.success) {
@@ -1119,79 +1261,111 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const handleRetrainQueue = async (staged = false) => {
     if (!retrainReview || retrainReview.matched.length === 0) return
     const wavFolder = retrainWavFolder.trim().replace(/\\/g, '/')
-    const targetArchitectures = (activePreset ? activePreset.architectures : retrainArchitectures) as TrainerArchitecture[]
-    const parsedEpochs = activePreset ? activePreset.epochs : Number.parseInt(epochs, 10)
-    const parsedLatency = activePreset
-      ? (activePreset.latencyMode === 'manual' ? activePreset.latencyValue : null)
-      : (latency.trim() === '' ? null : Number.parseInt(latency.trim(), 10))
-    const parsedThresholdEsr = activePreset
-      ? activePreset.thresholdEsr
-      : (thresholdEsr.trim() === '' ? null : Number.parseFloat(thresholdEsr.trim()))
-    const activeNormalizeOverride = activePreset?.normalizeWav ?? normalizeWavOverride
-    const activeNormalizeTargetDb = activePreset?.normalizeWavTargetDb != null
-      ? String(activePreset.normalizeWavTargetDb)
-      : normalizeWavTargetDb
-    const { normalizeWav: resolvedNormalizeWav, normalizeWavTargetDb: resolvedNormalizeDb } =
-      resolveNormalize(activeNormalizeOverride as 'global' | 'on' | 'off', activeNormalizeTargetDb)
     const resolvedPythonPath = settings.namPythonPath.trim()
     const modeledBy = (settings.enableCaptureDefaults && settings.defaultModeledBy.trim()) ? settings.defaultModeledBy.trim() : null
     const inputLevelDbu = (settings.enableCaptureDefaults && settings.defaultInputLevel.trim()) ? Number.parseFloat(settings.defaultInputLevel.trim()) : null
     const outputLevelDbu = (settings.enableCaptureDefaults && settings.defaultOutputLevel.trim()) ? Number.parseFloat(settings.defaultOutputLevel.trim()) : null
-    const appendModelArchitectureFolder = targetArchitectures.length > 1 && !(activeFormula && /\{architecture\}/i.test(activeFormula))
-    const appendGraphArchitectureFolder = targetArchitectures.length > 1 && !(activeGraphFormula && /\{architecture\}/i.test(activeGraphFormula))
-    const appendProcessedArchitectureFolder = targetArchitectures.length > 1
     const sharedSubmissionId = makeSubmissionId('retrain')
     const sharedLabel = `From Captures · ${retrainReview.matched.length} capture${retrainReview.matched.length === 1 ? '' : 's'}`
     const sharedCreatedAt = new Date().toISOString()
-    const payloads = retrainReview.matched.flatMap(({ wavName }) => {
-      const wavPath = `${wavFolder.replace(/\/+$/, '')}/${wavName}`
-      return targetArchitectures.map((architecture) => {
-        const routing = getManualRoutingForOutput(wavPath, architecture)
-        const jobMode = deriveNamMode(architecture)
-        const profileCfg = jobMode === 'a1' ? lookupProfileConfig(architecture, settings.userCaptureProfiles ?? []) : null
-        return {
-          pythonPath: resolvedPythonPath,
-          inputPath: inputPath.trim(),
-          outputPath: wavPath,
-          trainPath: routing.finalModelRoot,
-          namMode: jobMode,
-          architecture,
-          waveNetConfig: profileCfg?.waveNetConfig ?? null,
-          lr: profileCfg?.lr ?? 0.004,
-          lrDecay: profileCfg?.lrDecay ?? 0.002,
-          batchSize: profileCfg?.batchSize ?? 16,
-          ny: profileCfg?.ny ?? 8192,
-          fitMrstft: profileCfg?.fitMrstft ?? true,
-          normalizeWav: resolvedNormalizeWav,
-          normalizeWavTargetDb: resolvedNormalizeDb,
-          captureProfileId: jobMode === 'a1' ? architecture : null,
-          epochs: parsedEpochs,
-          latency: parsedLatency,
-          thresholdEsr: parsedThresholdEsr,
-          savePlot: activePreset?.savePlot ?? savePlot,
-          silent: true,
-          ignoreChecks: activePreset?.ignoreChecks ?? ignoreChecks,
-          sourceMode: 'manual-direct' as const,
-          finalModelRoot: routing.finalModelRoot,
-          processedWavRoot: routing.processedWavRoot,
-          graphRoot: routing.graphRoot,
-          graphRootResolved: routing.graphRootResolved,
-          sourcePostProcess: routing.sourcePostProcess,
-          namingTemplate: '{basename}',
-          profileId: activePreset?.id ?? null,
-          profileName: activePreset?.name ?? null,
-          modeledBy,
-          inputLevelDbu: Number.isFinite(inputLevelDbu) ? inputLevelDbu : null,
-          outputLevelDbu: Number.isFinite(outputLevelDbu) ? outputLevelDbu : null,
-          submissionId: sharedSubmissionId,
-          submissionLabel: sharedLabel,
-          submissionCreatedAt: sharedCreatedAt,
-          appendModelArchitectureFolder,
-          appendGraphArchitectureFolder,
-          appendProcessedArchitectureFolder,
-        }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let payloads: any[]
+
+    if (activeBundle) {
+      const validPresets = bundleActivePresets.filter((p) => p.architectures.length > 0)
+      payloads = retrainReview.matched.flatMap(({ wavName }) => {
+        const wavPath = `${wavFolder.replace(/\/+$/, '')}/${wavName}`
+        return validPresets.flatMap((preset) => {
+          const presetArchitectures = preset.architectures
+          const appendModelArchitectureFolder = presetArchitectures.length > 1 && !(activeFormula && /\{architecture\}/i.test(activeFormula))
+          const appendGraphArchitectureFolder = presetArchitectures.length > 1 && !(activeGraphFormula && /\{architecture\}/i.test(activeGraphFormula))
+          const appendProcessedArchitectureFolder = presetArchitectures.length > 1
+          const presetNorm = preset.normalizeWav ?? 'off'
+          const presetNormDb = preset.normalizeWavTargetDb != null ? String(preset.normalizeWavTargetDb) : normalizeWavTargetDb
+          const { normalizeWav: resolvedNormalizeWav, normalizeWavTargetDb: resolvedNormalizeDb } = resolveNormalize(presetNorm as 'global' | 'on' | 'off', presetNormDb)
+          return presetArchitectures.map((architecture) => {
+            const routing = getManualRoutingForOutput(wavPath, architecture)
+            const jobMode = deriveNamMode(architecture)
+            const profileCfg = jobMode === 'a1' ? lookupProfileConfig(architecture, settings.userCaptureProfiles ?? []) : null
+            return {
+              pythonPath: resolvedPythonPath,
+              inputPath: inputPath.trim(),
+              outputPath: wavPath,
+              trainPath: routing.finalModelRoot,
+              namMode: jobMode, architecture,
+              waveNetConfig: profileCfg?.waveNetConfig ?? null,
+              lr: profileCfg?.lr ?? 0.004, lrDecay: profileCfg?.lrDecay ?? 0.002,
+              batchSize: profileCfg?.batchSize ?? 16, ny: profileCfg?.ny ?? 8192, fitMrstft: profileCfg?.fitMrstft ?? true,
+              normalizeWav: resolvedNormalizeWav, normalizeWavTargetDb: resolvedNormalizeDb,
+              captureProfileId: jobMode === 'a1' ? architecture : null,
+              epochs: preset.epochs, latency: preset.latencyMode === 'manual' ? preset.latencyValue : null,
+              thresholdEsr: preset.thresholdEsr, savePlot: preset.savePlot, silent: true, ignoreChecks: preset.ignoreChecks,
+              sourceMode: 'manual-direct' as const,
+              finalModelRoot: routing.finalModelRoot, processedWavRoot: routing.processedWavRoot,
+              graphRoot: routing.graphRoot, graphRootResolved: routing.graphRootResolved, sourcePostProcess: routing.sourcePostProcess,
+              namingTemplate: preset.namingTemplate ?? '{basename}',
+              profileId: preset.id, profileName: preset.name,
+              modeledBy,
+              inputLevelDbu: Number.isFinite(inputLevelDbu) ? inputLevelDbu : null,
+              outputLevelDbu: Number.isFinite(outputLevelDbu) ? outputLevelDbu : null,
+              submissionId: sharedSubmissionId, submissionLabel: sharedLabel, submissionCreatedAt: sharedCreatedAt,
+              appendModelArchitectureFolder, appendGraphArchitectureFolder, appendProcessedArchitectureFolder,
+            }
+          })
+        })
       })
-    })
+    } else {
+      const targetArchitectures = (activePreset ? activePreset.architectures : retrainArchitectures) as TrainerArchitecture[]
+      const parsedEpochs = activePreset ? activePreset.epochs : Number.parseInt(epochs, 10)
+      const parsedLatency = activePreset
+        ? (activePreset.latencyMode === 'manual' ? activePreset.latencyValue : null)
+        : (latency.trim() === '' ? null : Number.parseInt(latency.trim(), 10))
+      const parsedThresholdEsr = activePreset
+        ? activePreset.thresholdEsr
+        : (thresholdEsr.trim() === '' ? null : Number.parseFloat(thresholdEsr.trim()))
+      const activeNormalizeOverride = activePreset?.normalizeWav ?? normalizeWavOverride
+      const activeNormalizeTargetDb = activePreset?.normalizeWavTargetDb != null
+        ? String(activePreset.normalizeWavTargetDb)
+        : normalizeWavTargetDb
+      const { normalizeWav: resolvedNormalizeWav, normalizeWavTargetDb: resolvedNormalizeDb } =
+        resolveNormalize(activeNormalizeOverride as 'global' | 'on' | 'off', activeNormalizeTargetDb)
+      const appendModelArchitectureFolder = targetArchitectures.length > 1 && !(activeFormula && /\{architecture\}/i.test(activeFormula))
+      const appendGraphArchitectureFolder = targetArchitectures.length > 1 && !(activeGraphFormula && /\{architecture\}/i.test(activeGraphFormula))
+      const appendProcessedArchitectureFolder = targetArchitectures.length > 1
+      payloads = retrainReview.matched.flatMap(({ wavName }) => {
+        const wavPath = `${wavFolder.replace(/\/+$/, '')}/${wavName}`
+        return targetArchitectures.map((architecture) => {
+          const routing = getManualRoutingForOutput(wavPath, architecture)
+          const jobMode = deriveNamMode(architecture)
+          const profileCfg = jobMode === 'a1' ? lookupProfileConfig(architecture, settings.userCaptureProfiles ?? []) : null
+          return {
+            pythonPath: resolvedPythonPath,
+            inputPath: inputPath.trim(),
+            outputPath: wavPath,
+            trainPath: routing.finalModelRoot,
+            namMode: jobMode, architecture,
+            waveNetConfig: profileCfg?.waveNetConfig ?? null,
+            lr: profileCfg?.lr ?? 0.004, lrDecay: profileCfg?.lrDecay ?? 0.002,
+            batchSize: profileCfg?.batchSize ?? 16, ny: profileCfg?.ny ?? 8192, fitMrstft: profileCfg?.fitMrstft ?? true,
+            normalizeWav: resolvedNormalizeWav, normalizeWavTargetDb: resolvedNormalizeDb,
+            captureProfileId: jobMode === 'a1' ? architecture : null,
+            epochs: parsedEpochs, latency: parsedLatency, thresholdEsr: parsedThresholdEsr,
+            savePlot: activePreset?.savePlot ?? savePlot, silent: true, ignoreChecks: activePreset?.ignoreChecks ?? ignoreChecks,
+            sourceMode: 'manual-direct' as const,
+            finalModelRoot: routing.finalModelRoot, processedWavRoot: routing.processedWavRoot,
+            graphRoot: routing.graphRoot, graphRootResolved: routing.graphRootResolved, sourcePostProcess: routing.sourcePostProcess,
+            namingTemplate: '{basename}',
+            profileId: activePreset?.id ?? null, profileName: activePreset?.name ?? null,
+            modeledBy,
+            inputLevelDbu: Number.isFinite(inputLevelDbu) ? inputLevelDbu : null,
+            outputLevelDbu: Number.isFinite(outputLevelDbu) ? outputLevelDbu : null,
+            submissionId: sharedSubmissionId, submissionLabel: sharedLabel, submissionCreatedAt: sharedCreatedAt,
+            appendModelArchitectureFolder, appendGraphArchitectureFolder, appendProcessedArchitectureFolder,
+          }
+        })
+      })
+    }
     const result = await window.api.enqueueTrainerRuns(payloads, { staged })
     if (!result.success) { setRetrainError(result.error ?? 'Could not queue the batch.'); return }
     const queued = result.queued ?? 0
@@ -2700,6 +2874,33 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{queueActionError}</div>
               )}
 
+              {/* Output folder notices (new subfolders created by completed batches) */}
+              {outputNotices.map((notice) => (
+                <div key={notice.id} className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-3 py-2.5 flex items-start gap-3">
+                  <svg className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-medium text-emerald-300 mb-1">{notice.label} — training complete</div>
+                    <div className="space-y-0.5">
+                      {notice.folders.map((f) => (
+                        <div key={f} className="flex items-center gap-2">
+                          <span className="font-mono text-[11px] text-nm-text-2 truncate">{f}</span>
+                          <button
+                            onClick={() => window.api.revealFile(f)}
+                            className="text-[10px] text-nm-accent hover:underline flex-shrink-0"
+                          >Show</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setOutputNotices((prev) => prev.filter((n) => n.id !== notice.id))}
+                    className="text-nm-text-3 hover:text-nm-text flex-shrink-0"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+              ))}
+
               {/* Batch cards */}
               {groupedQueue.length === 0 ? (
                 <div className="rounded-2xl border border-nm-border bg-panel p-8 text-center text-nm-text-3 text-[13px]">
@@ -3721,14 +3922,23 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 </div>
 
                 <div className="flex items-end gap-3 flex-wrap">
-                  <Field label="Preset">
+                  <Field label="Preset / Bundle">
                     <select
                       value={currentPresetId}
                       onChange={e => { applyPreset(e.target.value) }}
                       className="h-10 px-3 pr-8 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none min-w-[220px]"
                     >
                       <option value={CUSTOM_PRESET_ID}>Custom</option>
-                      {availablePresets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      {availablePresets.length > 0 && (
+                        <optgroup label="Presets">
+                          {availablePresets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </optgroup>
+                      )}
+                      {availableBundles.length > 0 && (
+                        <optgroup label="Bundles">
+                          {availableBundles.map(b => <option key={b.id} value={`${BUNDLE_PREFIX}${b.id}`}>{b.name}</option>)}
+                        </optgroup>
+                      )}
                     </select>
                   </Field>
                   {currentRunPreset && (
@@ -3736,9 +3946,15 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                       {describePreset(currentRunPreset)}
                     </div>
                   )}
+                  {activeBundle && (
+                    <div className="flex-1 min-w-[200px] h-10 rounded-lg border border-nm-accent/30 bg-nm-accent/5 px-3 text-[12px] text-nm-text-2 flex items-center gap-2 truncate">
+                      <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z" /></svg>
+                      <span className="truncate">{bundleActivePresets.length} preset{bundleActivePresets.length === 1 ? '' : 's'}: {bundleActivePresets.map(p => p.name).join(', ')}</span>
+                    </div>
+                  )}
                 </div>
 
-                {/* Selected architectures as color-coded chips &mdash; appears under the preset row when a preset is active. */}
+                {/* Architecture chips — shown for single presets */}
                 {currentRunPreset && currentRunPreset.architectures.length > 0 && (
                   <div className="flex flex-wrap items-center gap-1.5 -mt-1.5">
                     <span className="text-[10.5px] uppercase font-[600] tracking-[.4px] text-nm-text-3 mr-0.5">Architectures</span>
@@ -3747,6 +3963,24 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                         <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
                         {architectureFullLabel(arch)}
                       </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Bundle breakdown — per-preset arch chips */}
+                {activeBundle && bundleActivePresets.length > 0 && (
+                  <div className="space-y-1.5 -mt-1.5">
+                    {bundleActivePresets.map(p => (
+                      <div key={p.id} className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[10.5px] font-[600] text-nm-text-3 min-w-[80px] truncate">{p.name}</span>
+                        {p.architectures.map(arch => (
+                          <span key={arch} className="inline-flex items-center gap-1 h-[18px] px-1.5 rounded-full text-[10px] font-[650] border" style={archChipStyle(arch)}>
+                            <span className="w-1 h-1 rounded-full" style={{ background: 'currentColor' }} />
+                            {architectureFullLabel(arch)}
+                          </span>
+                        ))}
+                        <span className="text-[10px] text-nm-text-3">{p.epochs} ep</span>
+                      </div>
                     ))}
                   </div>
                 )}
