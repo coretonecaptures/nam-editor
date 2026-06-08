@@ -486,6 +486,14 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     prevQueueJobStatusRef.current = next
   }, [trainerState.queue])
 
+  // Auto-clear output notices when new work starts (user queued another batch)
+  const prevHadActiveRef = useRef(false)
+  useEffect(() => {
+    const hasActive = trainerState.queue.some(j => j.status === 'queued' || j.status === 'running' || j.status === 'starting')
+    if (hasActive && !prevHadActiveRef.current && outputNotices.length > 0) setOutputNotices([])
+    prevHadActiveRef.current = hasActive
+  }, [trainerState.queue, outputNotices.length])
+
   const queueProfileOptions = useMemo(
     () => Array.from(new Map(trainerState.queue.filter((job) => job.profileId || job.profileName).map((job) => [job.profileId ?? job.profileName ?? 'manual', job.profileName ?? 'Manual'])).entries()),
     [trainerState.queue]
