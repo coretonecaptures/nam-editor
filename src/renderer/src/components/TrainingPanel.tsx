@@ -2550,42 +2550,6 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                       A2 live chart is showing the Full sub-model ESR. The green line is a Full-quality reference here; upstream NAM&apos;s A2 early-stop logic is still aggregate-based.
                     </p>
                   )}
-                  {/* Folder shortcut buttons */}
-                  {(() => {
-                    const ckptPath = trainerState.checkpointModelPath
-                    const outPath = trainerState.outputModelPath
-                    const ckptDir = ckptPath ? ckptPath.replace(/\\/g, '/').replace(/\/[^/]+$/, '') : null
-                    const outDir = outPath ? outPath.replace(/\\/g, '/').replace(/\/[^/]+$/, '') : null
-                    if (!ckptDir && !outDir) return null
-                    return (
-                      <div className="flex items-center gap-2 mt-2 flex-wrap">
-                        {ckptDir && (
-                          <button
-                            onClick={() => { void window.api.openFile(ckptDir) }}
-                            title={ckptDir}
-                            className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-[11.5px] font-medium border border-nm-border-s bg-field hover:bg-hov text-nm-text-2 transition-colors"
-                          >
-                            <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
-                            </svg>
-                            Checkpoints
-                          </button>
-                        )}
-                        {outDir && (
-                          <button
-                            onClick={() => outPath ? window.api.revealFile(outPath) : void window.api.openFile(outDir)}
-                            title={outDir}
-                            className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-[11.5px] font-medium border border-nm-border-s bg-field hover:bg-hov text-nm-text-2 transition-colors"
-                          >
-                            <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
-                            </svg>
-                            Output folder
-                          </button>
-                        )}
-                      </div>
-                    )
-                  })()}
                 </div>
                 <span className="flex items-center gap-3 text-[10.5px] text-nm-text-3 flex-shrink-0 pt-1">
                   <span className="flex items-center gap-1.5">
@@ -2707,6 +2671,16 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   <div className="flex items-center gap-2 px-4 pt-3.5 pb-2">
                     <svg className="w-[15px] h-[15px] text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 00-1.883 2.542l.857 6a2.25 2.25 0 002.227 1.932H19.05a2.25 2.25 0 002.227-1.932l.857-6a2.25 2.25 0 00-1.883-2.542m-16.5 0V6A2.25 2.25 0 016 3.75h3.879a1.5 1.5 0 011.06.44l2.122 2.12a1.5 1.5 0 001.06.44H18A2.25 2.25 0 0120.25 9v.776" /></svg>
                     <span className="text-[12.5px] font-[650] text-nm-text">Final output</span>
+                    <span className="flex-1" />
+                    {trainerState.outputModelPath && (
+                      <button
+                        onClick={() => window.api.revealFile(trainerState.outputModelPath)}
+                        title="Reveal in Explorer"
+                        className="w-6 h-6 flex items-center justify-center rounded-md text-nm-text-3 hover:text-nm-text hover:bg-hov transition-colors flex-shrink-0"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>
+                      </button>
+                    )}
                   </div>
                   <div className="px-4 pb-3.5 pt-1">
                     <div className="text-[11.5px] font-mono leading-[1.7] text-nm-text-2 break-all">{trainerState.outputModelPath || '\u2014'}</div>
@@ -2716,6 +2690,16 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   <div className="flex items-center gap-2 px-4 pt-3.5 pb-2">
                     <svg className="w-[15px] h-[15px] text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" /></svg>
                     <span className="text-[12.5px] font-[650] text-nm-text">Checkpoint export</span>
+                    <span className="flex-1" />
+                    {trainerState.checkpointModelPath && (
+                      <button
+                        onClick={() => { const dir = trainerState.checkpointModelPath.replace(/\\/g, '/').replace(/\/[^/]+$/, ''); void window.api.openFile(dir) }}
+                        title="Open checkpoints folder"
+                        className="w-6 h-6 flex items-center justify-center rounded-md text-nm-text-3 hover:text-nm-text hover:bg-hov transition-colors flex-shrink-0"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>
+                      </button>
+                    )}
                   </div>
                   <div className="px-4 pb-3.5 pt-1">
                     <div className="text-[11.5px] font-mono leading-[1.7] text-nm-text-3 break-all">{trainerState.checkpointModelPath || 'Lightning checkpoint copy will appear here after training starts.'}</div>
