@@ -5302,7 +5302,24 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('trainer:clearFinished', async () => {
-    trainerQueue = trainerQueue.filter((job) => !['success', 'error', 'canceled'].includes(job.status))
+    // Find submissions where every non-staged job is terminal (no queued/running siblings).
+    // Only remove jobs that belong to one of those fully-finished submissions.
+    const terminalStatuses = new Set(['success', 'error', 'canceled'])
+    const submissionStatus = new Map<string, boolean>() // true = all terminal
+    for (const job of trainerQueue) {
+      if (!job.submissionId || job.status === 'staged') continue
+      const allTerminalSoFar = submissionStatus.get(job.submissionId) ?? true
+      submissionStatus.set(job.submissionId, allTerminalSoFar && terminalStatuses.has(job.status))
+    }
+    const fullyFinishedSubmissions = new Set(
+      [...submissionStatus.entries()].filter(([, allTerminal]) => allTerminal).map(([id]) => id)
+    )
+    // Also remove ungrouped terminal jobs (no submissionId).
+    trainerQueue = trainerQueue.filter((job) => {
+      if (!terminalStatuses.has(job.status)) return true
+      if (!job.submissionId) return false
+      return !fullyFinishedSubmissions.has(job.submissionId)
+    })
     emitTrainerState()
     return { success: true }
   })

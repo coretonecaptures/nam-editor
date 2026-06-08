@@ -1042,6 +1042,17 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const stagedCount = trainerState.queue.filter((job) => job.status === 'staged').length
   const successCount = trainerState.queue.filter((job) => job.status === 'success').length
   const failedCount = trainerState.queue.filter((job) => job.status === 'error').length
+  const clearableFinishedCount = (() => {
+    const terminal = new Set(['success', 'error', 'canceled'])
+    const subAllTerminal = new Map<string, boolean>()
+    for (const job of trainerState.queue) {
+      if (!job.submissionId || job.status === 'staged') continue
+      subAllTerminal.set(job.submissionId, (subAllTerminal.get(job.submissionId) ?? true) && terminal.has(job.status))
+    }
+    return trainerState.queue.filter((job) =>
+      terminal.has(job.status) && (!job.submissionId || subAllTerminal.get(job.submissionId) === true)
+    ).length
+  })()
   const currentPresetId = selectedPresetId
   const currentRunPreset = activePreset
   const showsCustomSettings = currentPresetId === CUSTOM_PRESET_ID
@@ -2658,14 +2669,14 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 >
                   Collapse all
                 </button>
-                {(successCount + failedCount) > 0 && (
+                {clearableFinishedCount > 0 && (
                   <button
                     onClick={() => { void window.api.clearFinishedTrainerRuns() }}
-                    title={`Remove the ${successCount + failedCount} done / failed / canceled row${successCount + failedCount === 1 ? '' : 's'} from the queue. History keeps the full record.`}
+                    title={`Remove ${clearableFinishedCount} row${clearableFinishedCount === 1 ? '' : 's'} from fully-finished batches. Batches with any queued or running captures are left intact. History keeps the full record.`}
                     className="h-[26px] px-2 rounded-md text-[11px] font-medium border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2 transition-colors inline-flex items-center gap-1"
                   >
                     <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 12h-15" /></svg>
-                    Clear finished ({successCount + failedCount})
+                    Clear finished ({clearableFinishedCount})
                   </button>
                 )}
                 {(() => {
