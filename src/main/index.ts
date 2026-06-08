@@ -1949,6 +1949,14 @@ function reorderQueuedTrainerJob(jobId: string, beforeJobId: string): boolean {
   return true
 }
 
+function moveSubmissionToEndOfQueue(submissionId: string): boolean {
+  const queued = trainerQueue.filter((j) => j.status === 'queued' && j.submissionId === submissionId)
+  if (queued.length === 0) return false
+  const rest = trainerQueue.filter((j) => !(j.status === 'queued' && j.submissionId === submissionId))
+  trainerQueue = [...rest, ...queued]
+  return true
+}
+
 function moveSubmissionBeforeSubmission(submissionId: string, beforeSubmissionId: string): boolean {
   if (submissionId === beforeSubmissionId) return false
   const queued = trainerQueue.filter((j) => j.status === 'queued' && j.submissionId === submissionId)
@@ -5524,6 +5532,13 @@ app.whenReady().then(async () => {
   ipcMain.handle('trainer:moveSubmissionBefore', async (_event, submissionId: string, beforeSubmissionId: string) => {
     const moved = moveSubmissionBeforeSubmission(submissionId, beforeSubmissionId)
     if (!moved) return { success: false, error: 'Could not reorder that batch.' }
+    emitTrainerState()
+    return { success: true }
+  })
+
+  ipcMain.handle('trainer:moveSubmissionToEnd', async (_event, submissionId: string) => {
+    const moved = moveSubmissionToEndOfQueue(submissionId)
+    if (!moved) return { success: false, error: 'Could not move that batch to end.' }
     emitTrainerState()
     return { success: true }
   })

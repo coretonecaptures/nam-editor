@@ -168,6 +168,8 @@ const api = {
     ipcRenderer.invoke('trainer:reorderJob', jobId, beforeJobId),
   moveSubmissionBefore: (submissionId: string, beforeSubmissionId: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('trainer:moveSubmissionBefore', submissionId, beforeSubmissionId),
+  moveSubmissionToEnd: (submissionId: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('trainer:moveSubmissionToEnd', submissionId),
   cancelTrainerBatch: (submissionId: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('trainer:cancelBatch', submissionId),
   dismissTrainerBatch: (submissionId: string): Promise<{ success: boolean; removed?: number; error?: string }> =>

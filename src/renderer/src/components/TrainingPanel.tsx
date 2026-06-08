@@ -2968,10 +2968,22 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                         onDrop={async () => {
                           const fromId = dragBatchRef.current
                           const toId = group.jobs[0]?.submissionId ?? null
-                          if (fromId && toId && fromId !== toId) {
-                            await window.api.moveSubmissionBefore(fromId, toId)
-                          }
                           dragBatchRef.current = null
+                          if (!fromId || !toId || fromId === toId) return
+                          const fromIdx = groupedQueue.findIndex(g => g.jobs[0]?.submissionId === fromId)
+                          const toIdx = groupedQueue.findIndex(g => g.jobs[0]?.submissionId === toId)
+                          if (fromIdx > toIdx) {
+                            // moving up: insert before the target
+                            await window.api.moveSubmissionBefore(fromId, toId)
+                          } else {
+                            // moving down: insert after the target
+                            const nextGroup = groupedQueue[toIdx + 1]
+                            if (nextGroup) {
+                              await window.api.moveSubmissionBefore(fromId, nextGroup.jobs[0]?.submissionId ?? toId)
+                            } else {
+                              await window.api.moveSubmissionToEnd(fromId)
+                            }
+                          }
                         }}
                       >
                         {/* Batch header — draggable here so job rows inside the body don't steal the drag */}
