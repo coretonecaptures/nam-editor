@@ -486,11 +486,14 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     prevQueueJobStatusRef.current = next
   }, [trainerState.queue])
 
-  // Auto-clear output notices when new work starts (user queued another batch)
+  // Auto-clear output notices and finished queue batches when new work starts
   const prevHadActiveRef = useRef(false)
   useEffect(() => {
     const hasActive = trainerState.queue.some(j => j.status === 'queued' || j.status === 'running' || j.status === 'starting')
-    if (hasActive && !prevHadActiveRef.current && outputNotices.length > 0) setOutputNotices([])
+    if (hasActive && !prevHadActiveRef.current) {
+      if (outputNotices.length > 0) setOutputNotices([])
+      void window.api.clearFinishedTrainerRuns()
+    }
     prevHadActiveRef.current = hasActive
   }, [trainerState.queue, outputNotices.length])
 
@@ -3126,7 +3129,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                         </div>
                         {/* Items */}
                         {!isCollapsed && (
-                          <div className="px-3 pb-3 space-y-1 mt-1">
+                          <div className="pl-4 pr-3 pb-3 space-y-1 mt-1 ml-3 border-l-2 border-nm-border-s">
                             {isWatcher && (
                               <div className="text-[11px] text-nm-text-3 font-mono px-2 py-1">{group.jobs[0]?.outputPath.replace(/\\/g, '/').split('/').slice(0, -1).join('/')} &middot; auto-queues new files as they appear</div>
                             )}
