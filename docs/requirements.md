@@ -46,13 +46,15 @@ Update both when features land.
 - [x] WAV Check tab (trained/missing/extra counts)
 - [x] HelpPopovers on training settings fields
 - [x] TrainingSetupGuide component
-- [ ] Retrain from trained folder: add a manual Training / New Run workflow where the user picks a folder of existing trained `.nam` files plus a WAV folder that is a superset, then queues the matching WAVs for one or more new target architectures without manually reselecting them.
-  - Seed set rule: every `.nam` in the chosen source folder counts as a seed; this is not an ESR-ranking feature and should not try to choose the "best" captures by ESR.
-  - Matching rule: map each seed `.nam` back to one WAV using exact basename first, then the app's existing coverage/base-name normalization rules.
-  - Ambiguity rule: if a seed `.nam` has no confident WAV match or matches multiple WAVs, skip it and report the reason instead of guessing.
-  - Deduping rule: if multiple seed `.nam` files map to the same WAV, queue that WAV only once per selected target architecture.
-  - Queueing rule: reuse the normal batch queue flow and existing "already queued / already in history" protections for the selected target architectures.
-  - Review step: before queueing, show counts for seeds found, WAVs matched, duplicates collapsed, unmatched seeds, ambiguous seeds, and items skipped by existing queue/history protections.
+- [ ] Retrain from trained folder: allow a manual Training / New Run workflow where the user picks a folder of existing trained `.nam` files plus a WAV folder that is a superset, then queues the matching WAVs for one or more new target architectures without manually reselecting them.
+  - **Seed set rule**: every `.nam` in the chosen source folder counts as a seed; this is not an ESR-ranking feature and must not attempt to choose the "best" captures by ESR.
+  - **Matching rule**: map each seed `.nam` back to one WAV using exact basename first, then the app's existing coverage/base-name normalization rules.
+  - **Ambiguity rule**: if a seed `.nam` has no confident WAV match or matches multiple WAVs, skip it and report the reason — do not guess.
+  - **Deduping rule**: if multiple seed `.nam` files map to the same WAV, queue that WAV only once per selected target architecture.
+  - **Queueing rule**: reuse the normal batch queue flow and existing "already queued / already in history" protections for the selected target architectures.
+  - **Review step**: before queueing, show a summary with counts for: seeds found, WAVs matched, duplicates collapsed, unmatched seeds, ambiguous seeds, and items skipped by existing queue/history protections.
+  - **Acceptance cases**: (a) 40 seeds + 100-WAV superset + A2 selected → 40 jobs queued; (b) same input + A2 + Standard → 80 jobs; (c) two seeds map to the same WAV → one WAV queued once per architecture; (d) one seed has no WAV match → skipped and counted; (e) one seed matches multiple WAVs → skipped and counted; (f) matched WAV already in queue/history for target architecture → not requeued, counted as skipped.
+  - **Out of scope (v1)**: manual conflict resolution UI, ESR-based ranking or filtering.
 
 **Training Mission Control redesign** — design handoff at `design/design_handoff_training/`
 - [ ] Full workspace layout: left rail (220px) + main column

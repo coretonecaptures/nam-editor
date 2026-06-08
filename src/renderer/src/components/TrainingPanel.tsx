@@ -2615,7 +2615,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                       valueClass: 'text-nm-text',
                     },
                     {
-                      label: 'Validation ESR',
+                      label: liveRunShowsA2Full ? 'Validation ESR (Full)' : 'Validation ESR',
                       value: liveTone.text,
                       suffix: null,
                       valueClass: liveTone.classes || 'text-nm-text',
