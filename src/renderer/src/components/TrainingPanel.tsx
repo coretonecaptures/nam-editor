@@ -2550,6 +2550,42 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                       A2 live chart is showing the Full sub-model ESR. The green line is a Full-quality reference here; upstream NAM&apos;s A2 early-stop logic is still aggregate-based.
                     </p>
                   )}
+                  {/* Folder shortcut buttons */}
+                  {(() => {
+                    const ckptPath = trainerState.checkpointModelPath
+                    const outPath = trainerState.outputModelPath
+                    const ckptDir = ckptPath ? ckptPath.replace(/\\/g, '/').replace(/\/[^/]+$/, '') : null
+                    const outDir = outPath ? outPath.replace(/\\/g, '/').replace(/\/[^/]+$/, '') : null
+                    if (!ckptDir && !outDir) return null
+                    return (
+                      <div className="flex items-center gap-2 mt-2 flex-wrap">
+                        {ckptDir && (
+                          <button
+                            onClick={() => { void window.api.openFile(ckptDir) }}
+                            title={ckptDir}
+                            className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-[11.5px] font-medium border border-nm-border-s bg-field hover:bg-hov text-nm-text-2 transition-colors"
+                          >
+                            <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
+                            </svg>
+                            Checkpoints
+                          </button>
+                        )}
+                        {outDir && (
+                          <button
+                            onClick={() => outPath ? window.api.revealFile(outPath) : void window.api.openFile(outDir)}
+                            title={outDir}
+                            className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-[11.5px] font-medium border border-nm-border-s bg-field hover:bg-hov text-nm-text-2 transition-colors"
+                          >
+                            <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
+                            </svg>
+                            Output folder
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })()}
                 </div>
                 <span className="flex items-center gap-3 text-[10.5px] text-nm-text-3 flex-shrink-0 pt-1">
                   <span className="flex items-center gap-1.5">
