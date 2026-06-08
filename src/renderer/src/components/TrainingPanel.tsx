@@ -320,7 +320,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     const fav = (settings.trainingFavoritePresetId ?? '').trim()
     return last || fav || CUSTOM_PRESET_ID
   })
-  const [architectures, setArchitectures] = useState<string[]>(['standard'])
+  const [architectures, setArchitectures] = useState<string[]>(['a2'])
   const [normalizeWavOverride, setNormalizeWavOverride] = useState<'global' | 'on' | 'off'>('off')
   const [normalizeWavTargetDb, setNormalizeWavTargetDb] = useState('')
   const [captureProfileEditorOpen, setCaptureProfileEditorOpen] = useState(false)
@@ -352,15 +352,16 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const [presetSaveError, setPresetSaveError] = useState('')
   const [presetSaveNotice, setPresetSaveNotice] = useState('')
   const [cancelBatchConfirm, setCancelBatchConfirm] = useState<{ submissionId: string; label: string } | null>(null)
+  const [dismissBatchConfirm, setDismissBatchConfirm] = useState<{ submissionId: string; label: string; failCount: number; doneCount: number } | null>(null)
   const [elapsedSec, setElapsedSec] = useState(0)
   const rawLogRef = useRef<HTMLDivElement | null>(null)
   const trainerSnapshotSigRef = useRef(buildTrainerSnapshotSignature(IDLE_TRAINER_STATE))
 
   // Retrain from folder state
-  const [newRunMode, setNewRunMode] = useState<'manual' | 'retrain'>('manual')
+  const [newRunMode, setNewRunMode] = useState<'manual' | 'fromCaptures'>('manual')
   const [retrainSeedFolder, setRetrainSeedFolder] = useState('')
   const [retrainWavFolder, setRetrainWavFolder] = useState('')
-  const [retrainArchitectures, setRetrainArchitectures] = useState<string[]>(['standard'])
+  const [retrainArchitectures, setRetrainArchitectures] = useState<string[]>(['a2'])
   const [retrainReview, setRetrainReview] = useState<RetrainReview | null>(null)
   const [retrainBusy, setRetrainBusy] = useState(false)
   const [retrainError, setRetrainError] = useState('')
@@ -1088,9 +1089,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     setRetrainError('')
     setRetrainReview(null)
     setRetrainQueued(null)
-    if (!retrainSeedFolder.trim()) { setRetrainError('Choose a seed NAM folder.'); return }
-    if (!retrainWavFolder.trim()) { setRetrainError('Choose a WAV superset folder.'); return }
-    if (retrainArchitectures.length === 0) { setRetrainError('Choose at least one architecture.'); return }
+    if (!retrainSeedFolder.trim()) { setRetrainError('Choose a capture folder.'); return }
+    if (!retrainWavFolder.trim()) { setRetrainError('Choose a WAV folder.'); return }
     setRetrainBusy(true)
     try {
       const seedNames = await window.api.listNamFiles(retrainSeedFolder.trim())
@@ -1108,7 +1108,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const handleRetrainQueue = async (staged = false) => {
     if (!retrainReview || retrainReview.matched.length === 0) return
     const wavFolder = retrainWavFolder.trim().replace(/\\/g, '/')
-    const targetArchitectures = retrainArchitectures as TrainerArchitecture[]
+    const targetArchitectures = (activePreset ? activePreset.architectures : retrainArchitectures) as TrainerArchitecture[]
     const parsedEpochs = activePreset ? activePreset.epochs : Number.parseInt(epochs, 10)
     const parsedLatency = activePreset
       ? (activePreset.latencyMode === 'manual' ? activePreset.latencyValue : null)
@@ -1130,7 +1130,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     const appendGraphArchitectureFolder = targetArchitectures.length > 1 && !(activeGraphFormula && /\{architecture\}/i.test(activeGraphFormula))
     const appendProcessedArchitectureFolder = targetArchitectures.length > 1
     const sharedSubmissionId = makeSubmissionId('retrain')
-    const sharedLabel = `Retrain · ${retrainReview.matched.length} capture${retrainReview.matched.length === 1 ? '' : 's'}`
+    const sharedLabel = `From Captures · ${retrainReview.matched.length} capture${retrainReview.matched.length === 1 ? '' : 's'}`
     const sharedCreatedAt = new Date().toISOString()
     const payloads = retrainReview.matched.flatMap(({ wavName }) => {
       const wavPath = `${wavFolder.replace(/\/+$/, '')}/${wavName}`
@@ -1182,7 +1182,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       })
     })
     const result = await window.api.enqueueTrainerRuns(payloads, { staged })
-    if (!result.success) { setRetrainError(result.error ?? 'Could not queue retrain batch.'); return }
+    if (!result.success) { setRetrainError(result.error ?? 'Could not queue the batch.'); return }
     const queued = result.queued ?? 0
     const skippedByProtection = payloads.length - queued
     setRetrainQueued({ count: queued, skipped: skippedByProtection })
@@ -2854,6 +2854,16 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                               Cancel batch
                             </button>
                           )}
+                          {queueCount === 0 && runCount === 0 && failCount > 0 && !isWatcher && (
+                            <button
+                              onClick={e => { e.stopPropagation(); setDismissBatchConfirm({ submissionId: group.jobs[0]?.submissionId ?? '', label: group.label, failCount, doneCount }) }}
+                              className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border border-slate-600/50 text-slate-400 hover:bg-slate-500/10 flex-shrink-0 transition-colors"
+                              title="Remove this batch from the queue without retrying. All jobs are already in history."
+                            >
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0H10.5a2.25 2.25 0 00-2.15 1.586" /></svg>
+                              Send to history
+                            </button>
+                          )}
                         </div>
                         {/* Progress meter */}
                         <div className="px-3.5 pt-2 pb-1">
@@ -3476,9 +3486,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
           {section === 'new' && (
             <div className="px-6 py-5 space-y-4 max-w-[1400px] mx-auto w-full">
               <div className="flex items-center justify-between gap-4 flex-wrap">
-                <h2 className="text-[18px] font-[680] text-nm-text">{newRunMode === 'retrain' ? 'Retrain from Folder' : 'Create Batch'}</h2>
+                <h2 className="text-[18px] font-[680] text-nm-text">{newRunMode === 'fromCaptures' ? 'From Captures' : 'Create Batch'}</h2>
                 <div className="flex items-center gap-1 p-0.5 rounded-xl bg-panel border border-nm-border-s">
-                  {(['manual', 'retrain'] as const).map((m) => (
+                  {(['manual', 'fromCaptures'] as const).map((m) => (
                     <button
                       key={m}
                       onClick={() => { setNewRunMode(m); setRetrainError(''); setRetrainQueued(null) }}
@@ -3488,7 +3498,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                           : 'text-nm-text-2 hover:text-nm-text hover:bg-hov'
                       }`}
                     >
-                      {m === 'manual' ? 'Manual' : 'Retrain from Folder'}
+                      {m === 'manual' ? 'Manual' : 'From Captures'}
                     </button>
                   ))}
                 </div>
@@ -3496,140 +3506,33 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               </div>
 
               {/* â"€â"€ Retrain from Folder UI â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
-              {newRunMode === 'retrain' && (
-                <div className="space-y-4">
-                  {/* Inputs card */}
-                  <div className="rounded-2xl border border-nm-border-s bg-panel-2 p-4 space-y-4">
-                    <div className="flex items-center gap-1.5">
-                      <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25zM6.75 12h.008v.008H6.75V12zm0 3h.008v.008H6.75V15zm0 3h.008v.008H6.75V18z" /></svg>
-                      <span className="text-[11px] font-semibold uppercase tracking-wider text-nm-accent">Sources</span>
-                    </div>
-                    <Field label="Seed NAM folder" hint="Folder of trained .nam files to retrain">
-                      <PathPicker
-                        value={retrainSeedFolder}
-                        placeholder="Folder containing .nam files"
-                        onChange={(v) => { setRetrainSeedFolder(v); setRetrainReview(null); setRetrainQueued(null) }}
-                        onBrowse={handleRetrainBrowseSeedFolder}
-                      />
-                    </Field>
-                    <Field label="WAV superset folder" hint="Folder containing the matching output WAVs (must be a superset of the seed set)">
-                      <PathPicker
-                        value={retrainWavFolder}
-                        placeholder="Folder containing output WAV files"
-                        onChange={(v) => { setRetrainWavFolder(v); setRetrainReview(null); setRetrainQueued(null) }}
-                        onBrowse={handleRetrainBrowseWavFolder}
-                      />
-                    </Field>
-                    <Field label="Input DI" hint="Trainer reference / DI file">
-                      <PathPicker value={inputPath} placeholder="Select DI WAV" onChange={setInputPath} onBrowse={handleBrowseInput} />
-                    </Field>
+              {/* ── From Captures: source card only ─────────────────────────── */}
+              {newRunMode === 'fromCaptures' && (
+                <div className="rounded-2xl border border-nm-border-s bg-panel-2 p-4 space-y-4">
+                  <div className="flex items-center gap-1.5">
+                    <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25zM6.75 12h.008v.008H6.75V12zm0 3h.008v.008H6.75V15zm0 3h.008v.008H6.75V18z" /></svg>
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-nm-accent">Sources</span>
                   </div>
-
-                  {/* Architecture + Training Settings */}
-                  <div className="rounded-2xl border border-nm-border-s bg-panel-2 p-4 space-y-4">
-                    <div className="flex items-center gap-1.5">
-                      <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                      <span className="text-[11px] font-semibold uppercase tracking-wider text-nm-accent">Target Architectures</span>
-                    </div>
-                    <Field label="Architectures" hint="Select one or more target architectures for the retrain batch">
-                      <ArchitectureMultiSelect
-                        values={retrainArchitectures}
-                        onChange={(v) => { setRetrainArchitectures(v); setRetrainReview(null); setRetrainQueued(null) }}
-                        userProfiles={settings.userCaptureProfiles ?? []}
-                        onCreateProfile={() => { setCaptureProfileEditorTarget(null); setCaptureProfileEditorOpen(true) }}
-                        onEditProfile={(p) => { setCaptureProfileEditorTarget(p); setCaptureProfileEditorOpen(true) }}
-                      />
-                    </Field>
-                    <p className="text-[11.5px] text-nm-text-3 leading-relaxed">
-                      Training settings (epochs, preset, output routing) are inherited from the current preset selection in <strong className="text-nm-text-2">Manual</strong> mode.
-                    </p>
-                  </div>
-
-                  {/* Analyze button */}
-                  {!retrainReview && (
-                    <button
-                      onClick={() => { void handleRetrainAnalyze() }}
-                      disabled={retrainBusy || !retrainSeedFolder.trim() || !retrainWavFolder.trim() || retrainArchitectures.length === 0}
-                      className="w-full py-3 rounded-xl text-[14px] font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-white bg-nm-accent hover:opacity-90"
-                    >
-                      {retrainBusy ? 'Analyzing…' : 'Analyze Seed Folder'}
-                    </button>
-                  )}
-
-                  {retrainError && (
-                    <div className="rounded-[11px] border border-red-500/30 bg-red-500/8 px-4 py-3 text-[12.5px] text-red-400">{retrainError}</div>
-                  )}
-
-                  {/* Review step */}
-                  {retrainReview && (
-                    <div className="rounded-2xl border border-nm-border-s bg-panel-2 p-4 space-y-4">
-                      <div className="flex items-center gap-1.5">
-                        <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                        <span className="text-[11px] font-semibold uppercase tracking-wider text-nm-accent">Match Summary</span>
-                        <button onClick={() => setRetrainReview(null)} className="ml-auto text-[11px] text-nm-text-3 hover:text-nm-text transition-colors">Re-analyze ↺</button>
-                      </div>
-
-                      {/* Stats row */}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                        {[
-                          { label: 'Seeds found', value: retrainReview.matched.length + retrainReview.skipped.length + retrainReview.duplicatesCollapsed, color: 'text-nm-text' },
-                          { label: 'WAVs matched', value: retrainReview.matched.length, color: 'text-emerald-400' },
-                          { label: 'Duplicates collapsed', value: retrainReview.duplicatesCollapsed, color: retrainReview.duplicatesCollapsed > 0 ? 'text-amber-400' : 'text-nm-text-3' },
-                          { label: 'Unmatched / ambiguous', value: retrainReview.skipped.length, color: retrainReview.skipped.length > 0 ? 'text-red-400' : 'text-nm-text-3' },
-                        ].map(({ label, value, color }) => (
-                          <div key={label} className="rounded-xl border border-nm-border-s bg-field px-3 py-2.5">
-                            <div className={`text-[20px] font-[700] tabular-nums leading-none mb-1 ${color}`}>{value}</div>
-                            <div className="text-[10.5px] text-nm-text-3 leading-tight">{label}</div>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Skipped detail */}
-                      {retrainReview.skipped.length > 0 && (
-                        <details className="group">
-                          <summary className="cursor-pointer text-[11.5px] text-nm-text-3 hover:text-nm-text select-none list-none flex items-center gap-1.5">
-                            <svg className="w-3.5 h-3.5 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>
-                            {retrainReview.skipped.length} skipped seed{retrainReview.skipped.length !== 1 ? 's' : ''} — click to view
-                          </summary>
-                          <div className="mt-2 rounded-xl border border-nm-border-s overflow-hidden max-h-48 overflow-y-auto">
-                            {retrainReview.skipped.map(({ seedName, reason }) => (
-                              <div key={seedName} className="flex items-center justify-between px-3 py-1.5 border-b border-nm-border-s last:border-0 hover:bg-hov">
-                                <span className="text-[11.5px] font-mono text-nm-text-2 truncate">{seedName}</span>
-                                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ml-3 shrink-0 ${reason === 'ambiguous' ? 'bg-amber-500/15 text-amber-400' : 'bg-red-500/15 text-red-400'}`}>
-                                  {reason === 'ambiguous' ? 'ambiguous' : 'no match'}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        </details>
-                      )}
-
-                      {retrainReview.matched.length === 0 ? (
-                        <div className="text-[12.5px] text-nm-text-3 text-center py-2">No WAVs matched — nothing to queue.</div>
-                      ) : (
-                        <div className="flex gap-3">
-                          <button
-                            onClick={() => { void handleRetrainQueue(true) }}
-                            className="flex-1 py-3 rounded-xl text-[14px] font-semibold transition-colors border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2"
-                          >
-                            Stage (save, don&apos;t run)
-                          </button>
-                          <button
-                            onClick={() => { void handleRetrainQueue(false) }}
-                            className="flex-1 py-3 rounded-xl text-[14px] font-semibold transition-colors text-white bg-nm-accent hover:opacity-90"
-                          >
-                            {(() => {
-                              const total = retrainReview.matched.length * retrainArchitectures.length
-                              return `Queue ${total} · Start`
-                            })()}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  <Field label="Capture folder" hint="Folder of .nam files — their basenames are used to look up matching WAVs">
+                    <PathPicker
+                      value={retrainSeedFolder}
+                      placeholder="Folder containing .nam files"
+                      onChange={(v) => { setRetrainSeedFolder(v); setRetrainReview(null); setRetrainQueued(null) }}
+                      onBrowse={handleRetrainBrowseSeedFolder}
+                    />
+                  </Field>
+                  <Field label="WAV folder" hint="Folder containing the output WAVs — filenames must match the capture basenames">
+                    <PathPicker
+                      value={retrainWavFolder}
+                      placeholder="Folder containing output WAV files"
+                      onChange={(v) => { setRetrainWavFolder(v); setRetrainReview(null); setRetrainQueued(null) }}
+                      onBrowse={handleRetrainBrowseWavFolder}
+                    />
+                  </Field>
                 </div>
               )}
 
+              {/* ── Manual: captures card only ───────────────────────────────── */}
               {newRunMode === 'manual' && <>
               {/* Captures card */}
               <div className="rounded-2xl border border-nm-border-s bg-panel-2 p-4 space-y-4">
@@ -3791,7 +3694,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   </div>
                 </div>
               </div>
+              </>}
 
+              {/* ── Shared: Training settings + Output routing ───────────────── */}
               {/* Training settings card */}
               <div className="rounded-2xl border border-nm-border-s bg-panel-2 p-4 space-y-4">
                 <div className="flex items-center gap-1.5">
@@ -4023,75 +3928,150 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 </div>
               </div>
 
-              {launchError && (
-                <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-400">{launchError}</div>
-              )}
-
-              {/* "Create as separate batches" checkbox */}
-              <label className="flex items-center gap-2.5 cursor-pointer select-none text-[13px] text-nm-text-2">
-                <input
-                  type="checkbox"
-                  checked={separateBatches}
-                  onChange={e => setSeparateBatches(e.target.checked)}
-                  className="w-4 h-4 rounded accent-nm-accent"
-                />
-                Create all files as separate batches
-              </label>
-
-              {/* CTA buttons */}
-              {(() => {
-                const blockers: string[] = []
-                if (!settings.namPythonPath.trim()) blockers.push('Python path not set (Settings \u2192 Training)')
-                if (!inputPath.trim()) blockers.push('No input DI WAV selected')
-                if (batchWavList.length === 0) blockers.push('No output WAV files added')
-                if (!activePreset && architectures.length === 0) blockers.push('No architecture selected')
-                if (!activePreset && (!Number.isFinite(Number(epochs)) || Number(epochs) <= 0)) blockers.push('Invalid epoch count')
-                if (!trainPath.trim() && !(activeFormula && !formulaOverrideActive)) blockers.push('No output folder or formula set')
-                const queueTooltip = blockers.length > 0 ? `Cannot queue:\n- ${blockers.join('\n- ')}` : undefined
-                const allReady = blockers.length === 0
-                return (
-              <div className="flex flex-col gap-3">
-                {!allReady && (
-                  <div className="rounded-[11px] border border-amber-500/30 bg-amber-500/8 px-4 py-3">
-                    <div className="flex items-center gap-2 mb-2">
-                      <svg className="w-4 h-4 text-amber-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
-                      <span className="text-[12.5px] font-[650] text-amber-400">Before you can queue</span>
+              {/* \u2500\u2500 From Captures: analyze + review \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */}
+              {newRunMode === 'fromCaptures' && <>
+                {!retrainReview && (
+                  <button
+                    onClick={() => { void handleRetrainAnalyze() }}
+                    disabled={retrainBusy || !retrainSeedFolder.trim() || !retrainWavFolder.trim()}
+                    className="w-full py-3 rounded-xl text-[14px] font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-white bg-nm-accent hover:opacity-90"
+                  >
+                    {retrainBusy ? 'Analyzing\u2026' : 'Analyze Captures'}
+                  </button>
+                )}
+                {retrainError && (
+                  <div className="rounded-[11px] border border-red-500/30 bg-red-500/8 px-4 py-3 text-[12.5px] text-red-400">{retrainError}</div>
+                )}
+                {retrainReview && (
+                  <div className="rounded-2xl border border-nm-border-s bg-panel-2 p-4 space-y-4">
+                    <div className="flex items-center gap-1.5">
+                      <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-nm-accent">Match Summary</span>
+                      <button onClick={() => setRetrainReview(null)} className="ml-auto text-[11px] text-nm-text-3 hover:text-nm-text transition-colors">Re-analyze \u21ba</button>
                     </div>
-                    <ul className="space-y-1">
-                      {blockers.map((b) => (
-                        <li key={b} className="flex items-start gap-2 text-[12px] text-amber-300/90">
-                          <span className="mt-[3px] w-1.5 h-1.5 rounded-full bg-amber-400/70 flex-shrink-0" />
-                          {b}
-                        </li>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {[
+                        { label: 'Seeds found', value: retrainReview.matched.length + retrainReview.skipped.length + retrainReview.duplicatesCollapsed, color: 'text-nm-text' },
+                        { label: 'WAVs matched', value: retrainReview.matched.length, color: 'text-emerald-400' },
+                        { label: 'Duplicates collapsed', value: retrainReview.duplicatesCollapsed, color: retrainReview.duplicatesCollapsed > 0 ? 'text-amber-400' : 'text-nm-text-3' },
+                        { label: 'Unmatched / ambiguous', value: retrainReview.skipped.length, color: retrainReview.skipped.length > 0 ? 'text-red-400' : 'text-nm-text-3' },
+                      ].map(({ label, value, color }) => (
+                        <div key={label} className="rounded-xl border border-nm-border-s bg-field px-3 py-2.5">
+                          <div className={`text-[20px] font-[700] tabular-nums leading-none mb-1 ${color}`}>{value}</div>
+                          <div className="text-[10.5px] text-nm-text-3 leading-tight">{label}</div>
+                        </div>
                       ))}
-                    </ul>
+                    </div>
+                    {retrainReview.skipped.length > 0 && (
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wider text-red-400 mb-2">
+                          {retrainReview.skipped.length} unmatched capture{retrainReview.skipped.length !== 1 ? 's' : ''} \u2014 no WAV found
+                        </div>
+                        <div className="rounded-xl border border-nm-border-s overflow-hidden max-h-48 overflow-y-auto">
+                          {retrainReview.skipped.map(({ seedName, reason }) => (
+                            <div key={seedName} className="flex items-center justify-between px-3 py-1.5 border-b border-nm-border-s last:border-0 hover:bg-hov">
+                              <span className="text-[11.5px] font-mono text-nm-text-2 truncate">{seedName}</span>
+                              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ml-3 shrink-0 ${reason === 'ambiguous' ? 'bg-amber-500/15 text-amber-400' : 'bg-red-500/15 text-red-400'}`}>
+                                {reason === 'ambiguous' ? 'ambiguous' : 'no match'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {retrainReview.matched.length === 0 ? (
+                      <div className="text-[12.5px] text-nm-text-3 text-center py-2">No WAVs matched \u2014 nothing to queue.</div>
+                    ) : (
+                      <div className="flex gap-3">
+                        <button
+                          onClick={() => { void handleRetrainQueue(true) }}
+                          className="flex-1 py-3 rounded-xl text-[14px] font-semibold transition-colors border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2"
+                        >
+                          Stage (save, don&apos;t run)
+                        </button>
+                        <button
+                          onClick={() => { void handleRetrainQueue(false) }}
+                          className="flex-1 py-3 rounded-xl text-[14px] font-semibold transition-colors text-white bg-nm-accent hover:opacity-90"
+                        >
+                          {(() => {
+                            const fcArchs = activePreset ? activePreset.architectures : retrainArchitectures
+                            const total = retrainReview.matched.length * Math.max(fcArchs.length, 1)
+                            return `Queue ${total} \u00b7 Start`
+                          })()}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
-              <div className="flex gap-3">
-                <button
-                  onClick={() => { void handleQueue(true) }}
-                  disabled={!canQueue || submittingBatch}
-                  title={queueTooltip}
-                  className="flex-1 py-3 rounded-xl text-[14px] font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2"
-                >
-                  {submittingBatch ? 'Staging\u2026' : "Stage (save, don't run)"}
-                </button>
-                <button
-                  onClick={() => { void handleQueue(false) }}
-                  disabled={!canQueue || submittingBatch}
-                  title={queueTooltip}
-                  className="flex-1 py-3 rounded-xl text-[14px] font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-white bg-nm-accent hover:opacity-90"
-                >
-                  {submittingBatch ? 'Queueing\u2026' : (() => {
-                    const jobArchCount = activePreset ? activePreset.architectures.length : architectures.length
-                    const total = batchWavList.length * Math.max(jobArchCount, 1)
-                    return total <= 1 ? 'Queue + Start' : `Queue ${total} \u00b7 Start`
-                  })()}
-                </button>
-              </div>
-              </div>
-                )
-              })()}
+              </>}
+
+              {/* \u2500\u2500 Manual: action section \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */}
+              {newRunMode === 'manual' && <>
+                {launchError && (
+                  <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-400">{launchError}</div>
+                )}
+                <label className="flex items-center gap-2.5 cursor-pointer select-none text-[13px] text-nm-text-2">
+                  <input
+                    type="checkbox"
+                    checked={separateBatches}
+                    onChange={e => setSeparateBatches(e.target.checked)}
+                    className="w-4 h-4 rounded accent-nm-accent"
+                  />
+                  Create all files as separate batches
+                </label>
+                {(() => {
+                  const blockers: string[] = []
+                  if (!settings.namPythonPath.trim()) blockers.push('Python path not set (Settings \u2192 Training)')
+                  if (!inputPath.trim()) blockers.push('No input DI WAV selected')
+                  if (batchWavList.length === 0) blockers.push('No output WAV files added')
+                  if (!activePreset && architectures.length === 0) blockers.push('No architecture selected')
+                  if (!activePreset && (!Number.isFinite(Number(epochs)) || Number(epochs) <= 0)) blockers.push('Invalid epoch count')
+                  if (!trainPath.trim() && !(activeFormula && !formulaOverrideActive)) blockers.push('No output folder or formula set')
+                  const queueTooltip = blockers.length > 0 ? `Cannot queue:\n- ${blockers.join('\n- ')}` : undefined
+                  const allReady = blockers.length === 0
+                  return (
+                    <div className="flex flex-col gap-3">
+                      {!allReady && (
+                        <div className="rounded-[11px] border border-amber-500/30 bg-amber-500/8 px-4 py-3">
+                          <div className="flex items-center gap-2 mb-2">
+                            <svg className="w-4 h-4 text-amber-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+                            <span className="text-[12.5px] font-[650] text-amber-400">Before you can queue</span>
+                          </div>
+                          <ul className="space-y-1">
+                            {blockers.map((b) => (
+                              <li key={b} className="flex items-start gap-2 text-[12px] text-amber-300/90">
+                                <span className="mt-[3px] w-1.5 h-1.5 rounded-full bg-amber-400/70 flex-shrink-0" />
+                                {b}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      <div className="flex gap-3">
+                        <button
+                          onClick={() => { void handleQueue(true) }}
+                          disabled={!canQueue || submittingBatch}
+                          title={queueTooltip}
+                          className="flex-1 py-3 rounded-xl text-[14px] font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2"
+                        >
+                          {submittingBatch ? 'Staging\u2026' : "Stage (save, don't run)"}
+                        </button>
+                        <button
+                          onClick={() => { void handleQueue(false) }}
+                          disabled={!canQueue || submittingBatch}
+                          title={queueTooltip}
+                          className="flex-1 py-3 rounded-xl text-[14px] font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-white bg-nm-accent hover:opacity-90"
+                        >
+                          {submittingBatch ? 'Queueing\u2026' : (() => {
+                            const jobArchCount = activePreset ? activePreset.architectures.length : architectures.length
+                            const total = batchWavList.length * Math.max(jobArchCount, 1)
+                            return total <= 1 ? 'Queue + Start' : `Queue ${total} \u00b7 Start`
+                          })()}
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })()}
               </>}
             </div>
           )}
@@ -4349,6 +4329,36 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               onClick={() => { void handleCancelBatch(cancelBatchConfirm.submissionId) }}
               className="h-9 px-4 rounded-xl text-[13px] bg-red-500 hover:bg-red-600 text-white font-medium transition-colors"
             >Cancel batch</button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Dismiss batch confirmation */}
+    {dismissBatchConfirm && (
+      <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 px-4">
+        <div className="w-full max-w-sm rounded-2xl border border-nm-border bg-panel shadow-2xl">
+          <div className="px-5 py-4 border-b border-nm-border">
+            <div className="text-[14px] font-semibold text-nm-text">Send batch to history?</div>
+            <div className="mt-1 text-[12px] text-nm-text-3 break-all">{dismissBatchConfirm.label}</div>
+          </div>
+          <div className="px-5 py-4 text-[13px] text-nm-text-2">
+            {dismissBatchConfirm.failCount} failed job{dismissBatchConfirm.failCount !== 1 ? 's' : ''}
+            {dismissBatchConfirm.doneCount > 0 && ` and ${dismissBatchConfirm.doneCount} completed job${dismissBatchConfirm.doneCount !== 1 ? 's' : ''}`}
+            {' '}will be removed from the queue. They are already saved in history. Failed jobs will not be retried.
+          </div>
+          <div className="px-5 pb-4 flex justify-end gap-2">
+            <button
+              onClick={() => setDismissBatchConfirm(null)}
+              className="h-9 px-4 rounded-xl text-[13px] border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2 transition-colors"
+            >Keep</button>
+            <button
+              onClick={() => {
+                void window.api.dismissTrainerBatch(dismissBatchConfirm.submissionId)
+                setDismissBatchConfirm(null)
+              }}
+              className="h-9 px-4 rounded-xl text-[13px] bg-slate-600 hover:bg-slate-500 text-white font-medium transition-colors"
+            >Send to history</button>
           </div>
         </div>
       </div>

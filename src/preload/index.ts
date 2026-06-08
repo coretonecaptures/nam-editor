@@ -170,6 +170,8 @@ const api = {
     ipcRenderer.invoke('trainer:moveSubmissionBefore', submissionId, beforeSubmissionId),
   cancelTrainerBatch: (submissionId: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('trainer:cancelBatch', submissionId),
+  dismissTrainerBatch: (submissionId: string): Promise<{ success: boolean; removed?: number; error?: string }> =>
+    ipcRenderer.invoke('trainer:dismissBatch', submissionId),
   retryTrainerHistoryEntry: (historyId: string): Promise<{ success: boolean; error?: string; queued?: number }> =>
     ipcRenderer.invoke('trainer:retryHistoryEntry', historyId),
   onTrainerUpdate: (cb: (state: TrainerStateSnapshot) => void): (() => void) => {

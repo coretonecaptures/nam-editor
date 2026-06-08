@@ -510,6 +510,7 @@ function lookupCaptureProfileConfig(architectureId: string, userProfiles: UserCa
 
 let trainerState: TrainerStateSnapshot = { ...TRAINER_IDLE_STATE }
 let trainerChild: import('child_process').ChildProcessWithoutNullStreams | null = null
+let trainerCheckpointPollTimer: ReturnType<typeof setInterval> | null = null
 let trainerQueue: TrainerQueueJob[] = []
 let trainerPauseAfterCurrent = false
 // Set by trainer:cancel (Emergency stop). The close handler reads this to:
@@ -2149,6 +2150,32 @@ async function enqueueTrainingPayloads(payloads: TrainerStartPayload[], staged =
   return jobs.length
 }
 
+async function pollTrainerCheckpoint(trainPath: string): Promise<void> {
+  try {
+    const ckpts = await findFilesRecursive(trainPath, (p) => /\.ckpt$/i.test(p))
+    if (ckpts.length === 0) return
+    // Pick the most recently modified checkpoint.
+    const withMtime = await Promise.all(ckpts.map(async (p) => {
+      const st = await fs.promises.stat(p).catch(() => null)
+      return { p, mtime: st?.mtimeMs ?? 0 }
+    }))
+    const newest = withMtime.reduce((a, b) => (b.mtime > a.mtime ? b : a)).p
+    if (newest && newest !== trainerState.checkpointModelPath) {
+      trainerState = { ...trainerState, checkpointModelPath: newest }
+      emitTrainerState()
+    }
+  } catch {
+    /* best effort */
+  }
+}
+
+function stopCheckpointPoll(): void {
+  if (trainerCheckpointPollTimer !== null) {
+    clearInterval(trainerCheckpointPollTimer)
+    trainerCheckpointPollTimer = null
+  }
+}
+
 async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
   const pythonPath = job.pythonPath
   const inputPath = job.inputPath
@@ -2283,6 +2310,9 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
   trainerState = { ...trainerState, status: 'running', progressPhase: 'Launching trainer' }
   emitTrainerState()
 
+  stopCheckpointPoll()
+  trainerCheckpointPollTimer = setInterval(() => { void pollTrainerCheckpoint(trainPath) }, 15_000)
+
   let stdoutRemainder = ''
   let stderrRemainder = ''
 
@@ -2295,6 +2325,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
   })
 
   trainerChild.once('error', async (error) => {
+    stopCheckpointPoll()
     trainerState = {
       ...trainerState,
       status: 'error',
@@ -2307,6 +2338,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
   })
 
   trainerChild.once('close', async (code, signal) => {
+    stopCheckpointPoll()
     if (stdoutRemainder.trim()) processTrainerOutputLine(stdoutRemainder.trim())
     if (stderrRemainder.trim()) processTrainerOutputLine(stderrRemainder.trim())
 
@@ -2560,6 +2592,15 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     })
 
     emitTrainerState()
+
+    // Auto-clear batch from queue when every job in it succeeded.
+    if (finalStatus === 'success' && job.submissionId) {
+      const batchJobs = trainerQueue.filter(j => j.submissionId === job.submissionId && j.status !== 'staged')
+      if (batchJobs.length > 0 && batchJobs.every(j => j.status === 'success')) {
+        trainerQueue = trainerQueue.filter(j => j.submissionId !== job.submissionId)
+      }
+    }
+
     if (!trainerPauseAfterCurrent) {
       await pumpTrainerQueue()
     } else {
@@ -5274,6 +5315,17 @@ app.whenReady().then(async () => {
     trainerQueue.splice(index, 1)
     emitTrainerState()
     return { success: true }
+  })
+
+  ipcMain.handle('trainer:dismissBatch', async (_event, submissionId: string) => {
+    if (!submissionId) return { success: false, error: 'No submission ID.' }
+    const activeId = trainerState.activeJobId
+    const before = trainerQueue.length
+    // Remove all jobs in this batch except the currently running one (can't interrupt mid-training).
+    trainerQueue = trainerQueue.filter(j => j.submissionId !== submissionId || j.jobId === activeId)
+    const removed = before - trainerQueue.length
+    emitTrainerState()
+    return { success: true, removed }
   })
 
   ipcMain.handle('trainer:purgeHistoryEntries', async (_event, historyIds: string[]) => {
