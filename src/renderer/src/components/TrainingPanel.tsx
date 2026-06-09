@@ -3037,7 +3037,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                               : <path strokeLinecap="round" strokeLinejoin="round" d="M2 12h3l2-7 4 16 3-12 2 5h6" />
                             }
                           </svg>
-                          <span className="flex-1 min-w-0 text-[14px] font-[700] text-nm-accent truncate">{displayLabel}</span>
+                          <span className="flex-1 min-w-0 text-[14px] font-[700] text-nm-text truncate">{displayLabel}</span>
                           <span className="inline-flex items-center h-[19px] px-1.5 rounded-[6px] text-[10px] font-semibold border border-nm-border-s bg-field text-nm-text-2 flex-shrink-0">
                             {total} row{total === 1 ? '' : 's'}
                           </span>
