@@ -263,6 +263,8 @@ export interface TrainerQueueJob {
   appendModelArchitectureFolder?: boolean
   appendGraphArchitectureFolder?: boolean
   appendProcessedArchitectureFolder?: boolean
+  editedAt?: string | null
+  namingTemplate?: string | null
 }
 
 export interface TrainerHistoryEntry {

@@ -354,6 +354,11 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const [presetSaveNotice, setPresetSaveNotice] = useState('')
   const [cancelBatchConfirm, setCancelBatchConfirm] = useState<{ submissionId: string; label: string } | null>(null)
   const [dismissBatchConfirm, setDismissBatchConfirm] = useState<{ submissionId: string; label: string; failCount: number; doneCount: number } | null>(null)
+  const [editBatchModal, setEditBatchModal] = useState<{ submissionId: string; label: string; epochs: number; thresholdEsr: number | null; lr: number; lrDecay: number } | null>(null)
+  const [editBatchEpochs, setEditBatchEpochs] = useState('')
+  const [editBatchThresholdEsr, setEditBatchThresholdEsr] = useState('')
+  const [editBatchLr, setEditBatchLr] = useState('')
+  const [editBatchLrDecay, setEditBatchLrDecay] = useState('')
   const [elapsedSec, setElapsedSec] = useState(0)
   const rawLogRef = useRef<HTMLDivElement | null>(null)
   const trainerSnapshotSigRef = useRef(buildTrainerSnapshotSignature(IDLE_TRAINER_STATE))
@@ -3122,11 +3127,36 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                               <span className="w-1 h-1 rounded-full bg-nm-accent animate-pulse" />active
                             </span>
                           )}
+                          {group.jobs.some(j => j.status === 'queued' && j.editedAt) && (
+                            <span className="inline-flex items-center h-[19px] px-1.5 rounded-[6px] text-[10px] font-semibold border border-violet-500/30 bg-violet-500/10 text-violet-300 flex-shrink-0" title="Batch settings were edited after queuing — some captures may use different settings than the original submission">
+                              edited
+                            </span>
+                          )}
                           <div className="flex items-center gap-1.5 text-[10px] text-nm-text-3 flex-shrink-0">
                             {doneCount > 0 && <span className="text-emerald-400">{doneCount} done</span>}
                             {failCount > 0 && <span className="text-red-400">{failCount} failed</span>}
                             {queueCount > 0 && <span>{queueCount} queued</span>}
                           </div>
+                          {queueCount > 0 && (
+                            <button
+                              onClick={e => {
+                                e.stopPropagation()
+                                const firstQueued = group.jobs.find(j => j.status === 'queued')
+                                if (!firstQueued) return
+                                const submissionId = group.jobs[0]?.submissionId ?? ''
+                                setEditBatchModal({ submissionId, label: displayLabel, epochs: firstQueued.epochs, thresholdEsr: firstQueued.thresholdEsr, lr: firstQueued.lr, lrDecay: firstQueued.lrDecay })
+                                setEditBatchEpochs(String(firstQueued.epochs))
+                                setEditBatchThresholdEsr(firstQueued.thresholdEsr != null ? String(firstQueued.thresholdEsr) : '')
+                                setEditBatchLr(String(firstQueued.lr))
+                                setEditBatchLrDecay(String(firstQueued.lrDecay))
+                              }}
+                              className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border border-nm-border-s text-nm-text-3 hover:bg-hov hover:text-nm-text flex-shrink-0 transition-colors"
+                              title="Edit settings for all remaining queued captures in this batch"
+                            >
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.862 4.487z" /></svg>
+                              Edit
+                            </button>
+                          )}
                           {queueCount > 0 && !hasActive && (() => {
                             const firstQueuedHere = group.jobs.find(j => j.status === 'queued')
                             // Find the first queued job in the WHOLE queue across all batches; if this batch's
@@ -4673,6 +4703,98 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
         }}
         onCancel={() => { setCaptureProfileEditorOpen(false); setCaptureProfileEditorTarget(null) }}
       />
+    )}
+
+    {/* Edit batch settings modal */}
+    {editBatchModal && (
+      <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 px-4">
+        <div className="w-full max-w-sm rounded-2xl border border-nm-border bg-panel shadow-2xl">
+          <div className="px-5 py-4 border-b border-nm-border">
+            <div className="text-[14px] font-semibold text-nm-text">Edit queued captures</div>
+            <div className="mt-1 text-[12px] text-nm-text-3 break-all">{editBatchModal.label}</div>
+          </div>
+          <div className="px-5 py-4 space-y-4">
+            <div>
+              <label className="text-[11px] font-[600] text-nm-text-2 block mb-1.5">Epochs</label>
+              <input
+                type="number"
+                min={1}
+                step={100}
+                value={editBatchEpochs}
+                onChange={e => setEditBatchEpochs(e.target.value)}
+                className="w-full h-9 px-3 rounded-xl text-[13px] border border-nm-border-s bg-field text-nm-text focus:outline-none focus:border-nm-accent/60"
+              />
+            </div>
+            <div>
+              <label className="text-[11px] font-[600] text-nm-text-2 block mb-1.5">Early stop ESR <span className="font-normal text-nm-text-3">(blank = disabled)</span></label>
+              <input
+                type="number"
+                min={0}
+                step={0.001}
+                value={editBatchThresholdEsr}
+                onChange={e => setEditBatchThresholdEsr(e.target.value)}
+                placeholder="e.g. 0.01"
+                className="w-full h-9 px-3 rounded-xl text-[13px] border border-nm-border-s bg-field text-nm-text focus:outline-none focus:border-nm-accent/60"
+              />
+            </div>
+            <details className="group">
+              <summary className="text-[11px] font-[600] text-nm-text-3 cursor-pointer select-none list-none flex items-center gap-1">
+                <svg className="w-3 h-3 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>
+                Advanced (LR / LR decay)
+              </summary>
+              <div className="mt-3 space-y-3">
+                <div>
+                  <label className="text-[11px] font-[600] text-nm-text-2 block mb-1.5">Learning rate</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.0001}
+                    value={editBatchLr}
+                    onChange={e => setEditBatchLr(e.target.value)}
+                    className="w-full h-9 px-3 rounded-xl text-[13px] border border-nm-border-s bg-field text-nm-text focus:outline-none focus:border-nm-accent/60"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-[600] text-nm-text-2 block mb-1.5">LR decay</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.0001}
+                    value={editBatchLrDecay}
+                    onChange={e => setEditBatchLrDecay(e.target.value)}
+                    className="w-full h-9 px-3 rounded-xl text-[13px] border border-nm-border-s bg-field text-nm-text focus:outline-none focus:border-nm-accent/60"
+                  />
+                </div>
+              </div>
+            </details>
+          </div>
+          <div className="px-5 pb-4 flex justify-end gap-2">
+            <button
+              onClick={() => setEditBatchModal(null)}
+              className="h-9 px-4 rounded-xl text-[13px] border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2 transition-colors"
+            >Cancel</button>
+            <button
+              onClick={async () => {
+                if (!editBatchModal) return
+                const epochs = parseInt(editBatchEpochs, 10)
+                const thresholdEsr = editBatchThresholdEsr.trim() === '' ? null : parseFloat(editBatchThresholdEsr)
+                const lr = parseFloat(editBatchLr)
+                const lrDecay = parseFloat(editBatchLrDecay)
+                if (!Number.isFinite(epochs) || epochs < 1) return
+                const changes: { epochs?: number; thresholdEsr?: number | null; lr?: number; lrDecay?: number } = { epochs }
+                if (editBatchThresholdEsr.trim() === '' || (thresholdEsr != null && Number.isFinite(thresholdEsr))) {
+                  changes.thresholdEsr = thresholdEsr
+                }
+                if (Number.isFinite(lr)) changes.lr = lr
+                if (Number.isFinite(lrDecay)) changes.lrDecay = lrDecay
+                await window.api.editSubmission(editBatchModal.submissionId, changes)
+                setEditBatchModal(null)
+              }}
+              className="h-9 px-4 rounded-xl text-[13px] bg-nm-accent hover:bg-nm-accent/90 text-white font-medium transition-colors"
+            >Apply to queued</button>
+          </div>
+        </div>
+      </div>
     )}
 
     {/* Cancel batch confirmation */}

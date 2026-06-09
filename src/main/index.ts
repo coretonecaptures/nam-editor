@@ -281,6 +281,8 @@ interface TrainerQueueJob {
   appendModelArchitectureFolder?: boolean
   appendGraphArchitectureFolder?: boolean
   appendProcessedArchitectureFolder?: boolean
+  editedAt?: string | null
+  namingTemplate?: string | null
 }
 
 interface TrainerHistoryEntry {
@@ -1840,6 +1842,8 @@ function createTrainerJob(payload: TrainerStartPayload, staged = false): Trainer
     appendModelArchitectureFolder,
     appendGraphArchitectureFolder,
     appendProcessedArchitectureFolder,
+    editedAt: null,
+    namingTemplate: payload.namingTemplate ?? null,
   }
 }
 
@@ -5544,6 +5548,30 @@ app.whenReady().then(async () => {
     emitTrainerState()
     return { success: true }
   })
+
+  ipcMain.handle(
+    'trainer:editSubmission',
+    async (_event, submissionId: string, changes: { epochs?: number; thresholdEsr?: number | null; lr?: number; lrDecay?: number }) => {
+      const now = new Date().toISOString()
+      let changed = false
+      trainerQueue = trainerQueue.map((job) => {
+        if (job.submissionId !== submissionId || job.status !== 'queued') return job
+        changed = true
+        return {
+          ...job,
+          ...(typeof changes.epochs === 'number' ? { epochs: changes.epochs, progressEpochTotal: changes.epochs } : {}),
+          ...(changes.thresholdEsr !== undefined ? { thresholdEsr: changes.thresholdEsr } : {}),
+          ...(typeof changes.lr === 'number' ? { lr: changes.lr } : {}),
+          ...(typeof changes.lrDecay === 'number' ? { lrDecay: changes.lrDecay } : {}),
+          editedAt: now,
+        }
+      })
+      if (!changed) return { success: false, error: 'No queued jobs found for that batch.' }
+      emitTrainerState()
+      persistTrainerQueueThrottled()
+      return { success: true }
+    }
+  )
 
   ipcMain.handle('trainer:retryHistoryEntry', async (_event, historyId: string) => {
     const entry = trainerHistory.find((item) => item.historyId === historyId)
