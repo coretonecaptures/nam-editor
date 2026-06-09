@@ -1060,13 +1060,9 @@ function isTrainerQueueTerminalStatus(status: TrainerQueueJobStatus): boolean {
 }
 
 function getPersistableTrainerQueueJobs(): TrainerQueueJob[] {
-  const unfinished = trainerQueue.filter((job) => !isTrainerQueueTerminalStatus(job.status))
-  if (unfinished.length >= TRAINER_QUEUE_PERSIST_CAP) return unfinished
-  const terminal = trainerQueue.filter((job) => isTrainerQueueTerminalStatus(job.status))
-  const remainingSlots = TRAINER_QUEUE_PERSIST_CAP - unfinished.length
-  // Keep recent terminal entries within the cap, then reconstruct in original queue order
-  const keptTerminalIds = new Set(terminal.slice(-remainingSlots).map((j) => j.jobId))
-  return trainerQueue.filter((j) => !isTrainerQueueTerminalStatus(j.status) || keptTerminalIds.has(j.jobId))
+  // Only persist non-terminal jobs. Terminal entries live in trainer-history.json; keeping them
+  // in the queue file just causes completed batches to pile up across restarts.
+  return trainerQueue.filter((job) => !isTrainerQueueTerminalStatus(job.status))
 }
 
 function saveTrainerHistory(): void {
@@ -1950,24 +1946,30 @@ function reorderQueuedTrainerJob(jobId: string, beforeJobId: string): boolean {
 }
 
 function moveSubmissionToEndOfQueue(submissionId: string): boolean {
-  const queued = trainerQueue.filter((j) => j.status === 'queued' && j.submissionId === submissionId)
-  if (queued.length === 0) return false
-  const rest = trainerQueue.filter((j) => !(j.status === 'queued' && j.submissionId === submissionId))
-  trainerQueue = [...rest, ...queued]
+  const activeId = trainerState.activeJobId
+  // Must have at least one queued job to be draggable
+  const hasQueued = trainerQueue.some((j) => j.status === 'queued' && j.submissionId === submissionId)
+  if (!hasQueued) return false
+  // Move the entire submission block (all non-running jobs) to the end so the batch stays contiguous
+  const block = trainerQueue.filter((j) => j.submissionId === submissionId && j.jobId !== activeId)
+  const rest = trainerQueue.filter((j) => !(j.submissionId === submissionId && j.jobId !== activeId))
+  trainerQueue = [...rest, ...block]
   return true
 }
 
 function moveSubmissionBeforeSubmission(submissionId: string, beforeSubmissionId: string): boolean {
   if (submissionId === beforeSubmissionId) return false
-  const queued = trainerQueue.filter((j) => j.status === 'queued' && j.submissionId === submissionId)
-  if (queued.length === 0) return false
+  const activeId = trainerState.activeJobId
+  // Must have at least one queued job to be draggable
+  const hasQueued = trainerQueue.some((j) => j.status === 'queued' && j.submissionId === submissionId)
+  if (!hasQueued) return false
   const beforeFirst = trainerQueue.findIndex((j) => j.status === 'queued' && j.submissionId === beforeSubmissionId)
   if (beforeFirst === -1) return false
-  // Remove queued jobs of submissionId from queue
-  let next = trainerQueue.filter((j) => !(j.status === 'queued' && j.submissionId === submissionId))
-  // Find the insert point (before the first queued job of beforeSubmissionId)
+  // Move the entire submission block (all non-running jobs) as a unit so the batch stays contiguous
+  const block = trainerQueue.filter((j) => j.submissionId === submissionId && j.jobId !== activeId)
+  let next = trainerQueue.filter((j) => !(j.submissionId === submissionId && j.jobId !== activeId))
   const insertAt = next.findIndex((j) => j.status === 'queued' && j.submissionId === beforeSubmissionId)
-  next.splice(insertAt === -1 ? next.length : insertAt, 0, ...queued)
+  next.splice(insertAt === -1 ? next.length : insertAt, 0, ...block)
   trainerQueue = next
   return true
 }

@@ -81,7 +81,7 @@ NAM Lab handles this with three metadata fields and tone-band selection:
 
 | Field | What's in it | Source |
 | --- | --- | --- |
-| `metadata.training.validation_esr` | Aggregate (sum of both sub-models) | Official NAM trainer convention; NAM Lab now writes the same value here |
+| `metadata.training.validation_esr` | Aggregate (sum of both sub-models) | Official NAM trainer convention **pre-PR #676** |
 | `metadata.nam_lab.a2_full_validation_esr` | Full sub-model ESR (channels_8) | NAM Lab-only; written on every NAM Lab A2 training |
 | `metadata.nam_lab.a2_lite_validation_esr` | Lite sub-model ESR (channels_3) | NAM Lab-only; written on every NAM Lab A2 training |
 
@@ -92,7 +92,69 @@ NAM Lab handles this with three metadata fields and tone-band selection:
 
 History rows and the metadata-editor right panel both surface all three values (`Full`, `Lite`, `Agg`) for A2 captures so you can see the breakdown at a glance.
 
-**Forward note**: the NAM project may decide to change what gets written to `metadata.training.validation_esr` for A2 captures. If the official convention shifts (for example, to write Full instead of aggregate), NAM Lab will update the tolerance bands and the main-card label accordingly. The per-sub-model fields in `metadata.nam_lab.*` keep the breakdown recoverable regardless.
+---
+
+### Upstream ESR convention change — NAM PR #676
+
+**Status: merged to `main` on 2026-06-08; not yet in any release. Latest release is v0.13.0 (2026-06-02).**
+
+PR #676 ("Use mean packed metrics and remove aggregate ESR from plot") changes what NAM writes to `metadata.training.validation_esr` for A2 captures:
+
+| | Pre-PR #676 | Post-PR #676 |
+| --- | --- | --- |
+| `metadata.training.validation_esr` | **Sum** of both sub-models (e.g. 0.025 if Full=0.010, Lite=0.015) | **Last sub-model ESR** — `esrs[-1]` = channels_8 **Full** (e.g. 0.010) |
+| `ESR` in epoch callback metrics | Sum of both sub-models | **Mean** of both sub-models |
+| "Aggregate error-signal ratio = …" stdout line | Present (printed after each training run) | **Removed** |
+| Plot title | "Aggregate ESR=X.XXX (…)" | "ESR (…)" |
+
+The problem this fixes: users and developers complained (issue #674) that A2 captures appeared ~2× worse than comparably-good A1 captures because the stored ESR was a sum rather than a per-model value.
+
+#### What changes in NAM Lab when PR #676 ships in a release
+
+**1. `finalEsr` at job completion — `main/index.ts` ~line 1681 — MUST FIX before users upgrade NAM**
+
+Currently for A2:
+```typescript
+const aggCallback = trainerState.epochValidationEsrAggregate  // was sum, will be mean after PR
+const aggFromSum  = subFull + subLite                         // our computed fallback sum
+const finalEsr   = aggCallback ?? aggFromSum ?? ...
+```
+`finalEsr` is written to `metadata.training.validation_esr`. After PR #676, the official .nam file will contain the Full (channels_8) ESR in that field, but NAM Lab would write the mean/sum — a mismatch.
+
+**Fix**: For A2 runs, prefer `subFull` (channels_8) directly as `finalEsr`:
+```typescript
+const finalEsr = isPackedRun
+  ? (typeof subFull === 'number' ? subFull : aggCallback ?? aggFromSum ?? parsed.validationEsr)
+  : ...
+```
+
+**2. `Aggregate error-signal ratio` stdout regex — `main/index.ts` ~line 1624 — dead code cleanup**
+
+The line `"Aggregate error-signal ratio = X"` no longer appears in NAM output after PR #676. The `epochValidationEsrAggregate` field and its parsing regex become vestigial. Safe to remove after the release; no functional impact (the epoch callback `esr_full`/`esr_lite` values are the primary source and are unaffected).
+
+**3. External A2 captures — `src/renderer/src/utils/esr.ts` — threshold selection**
+
+For captures trained outside NAM Lab (no `a2_full_validation_esr` field):
+- **Before PR #676**: `validation_esr` = sum → NAM Lab correctly applies loose `a2_aggregate` thresholds.
+- **After PR #676**: `validation_esr` = Full → NAM Lab still sees no `a2_full_validation_esr`, still applies loose `a2_aggregate` thresholds, but now the value is "real" Full-quality ESR — so it will be rated as slightly too green compared to A1.
+
+This is a best-effort situation. Options:
+- Accept the mismatch (minor; affects only externally-trained A2 files; the captures are not mis-rated, just compared on a slightly different scale).
+- Add a heuristic: if `validation_esr` < some ceiling (e.g. 0.04 — below what any aggregate sum realistically lands), treat it as Full and apply A1 thresholds.
+- Longer term: define a versioned convention (e.g. `metadata.nam_lab.a2_esr_convention = 'full' | 'aggregate'`) and set it on every NAM Lab A2 write going forward, so old captures keep their existing rating and new captures use A1 thresholds automatically.
+
+**4. NAM Lab-trained captures — no breakage**
+
+NAM Lab-trained A2 captures always have `metadata.nam_lab.a2_full_validation_esr`, which the display logic already prefers with A1 thresholds. These are unaffected by the upstream change.
+
+#### Summary of action items (deferred until PR #676 is in a release)
+
+| Priority | Action | Location |
+| --- | --- | --- |
+| High | `finalEsr` for A2: use `subFull` not aggregate/mean | `main/index.ts` ~1681 |
+| Medium | External A2 threshold heuristic or `a2_esr_convention` versioning | `esr.ts`, `main/index.ts` |
+| Low | Remove dead `Aggregate error-signal ratio` regex and `aggFromSum` | `main/index.ts` ~1624, ~1681 |
+| Low | Update this doc + `validation_esr` table above to reflect new convention | `docs/a2-status.md` |
 
 ---
 

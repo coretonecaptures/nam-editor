@@ -74,6 +74,12 @@
 
 ## NAM A2 / PackedWaveNet (future)
 
+- **[PENDING UPSTREAM] PR #676 ESR convention change** — NAM `main` (merged 2026-06-08, not yet released; latest release is v0.13.0 from 2026-06-02). Changes `metadata.training.validation_esr` for A2 from **sum** of both sub-models to **`esrs[-1]`** (channels_8 Full). Also changes epoch `ESR` metric from sum → mean, and removes the `"Aggregate error-signal ratio = X"` stdout line. When a NAM release ships this:
+  - `main/index.ts` ~1681: change `finalEsr` for A2 to use `subFull` (channels_8) directly instead of the aggregate/mean.
+  - `main/index.ts` ~1624: remove the now-dead `Aggregate error-signal ratio` stdout regex and `epochValidationEsrAggregate` tracking.
+  - `esr.ts`: decide threshold treatment for externally-trained A2 captures (no `a2_full_validation_esr` field) whose `validation_esr` will now be a real Full value — either accept slight threshold mismatch or add a versioning convention.
+  - Full analysis and action items in `docs/a2-status.md` under "Upstream ESR convention change — NAM PR #676".
+
 - A2 architecture research (done): A2 = PackedWaveNet / Slimmable NAM â€” released in `neural-amp-modeler` source. Uses a fundamentally different model: single flat config with 23 sub-layers, `LeakyReLU` activation, Fibonacci-ish dilations `[1,3,7,17,41,101,239,â€¦]`, and two submodels (`channels_3` + `channels_8`) trained simultaneously so one run yields lite+standard outputs. Config loaded from `config_model_packed.json` resource file.
 - A2 NAM Lab support: the current `__namlab__` Architecture enum trick is not applicable â€” the new `core.py` has no `Architecture` enum and no `get_wavenet_config()`. Supporting A2 requires a separate Python runner mode that calls `PackedLightningModule` directly with the packed config JSON. Doable as a new runner branch; should be treated as a separate feature once A2 stabilizes in the official NAM release.
 - A2 config reference: packed config is at `nam/train/_resources/config_model_packed.json` in the NAM source; `lr=0.004`, `weight_decay=3.17e-7`, `ExponentialLR(gamma=0.994)`, `mrstft_weight=0.0005`. Two submodels: `channels_3` (nano-class) and `channels_8` (standard-class).

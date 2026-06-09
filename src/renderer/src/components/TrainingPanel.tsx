@@ -486,12 +486,19 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     prevQueueJobStatusRef.current = next
   }, [trainerState.queue])
 
-  // Auto-clear output notices and finished queue batches when new work starts
+  // Auto-clear finished batches from the queue on both transitions:
+  //   idle → active: clear leftovers before new work starts; also clear output notices
+  //   active → idle: clear as soon as the queue drains
   const prevHadActiveRef = useRef(false)
   useEffect(() => {
     const hasActive = trainerState.queue.some(j => j.status === 'queued' || j.status === 'running' || j.status === 'starting')
-    if (hasActive && !prevHadActiveRef.current) {
+    const wasActive = prevHadActiveRef.current
+    if (hasActive && !wasActive) {
+      // idle → active
       if (outputNotices.length > 0) setOutputNotices([])
+      void window.api.clearFinishedTrainerRuns()
+    } else if (!hasActive && wasActive) {
+      // active → idle (queue just drained)
       void window.api.clearFinishedTrainerRuns()
     }
     prevHadActiveRef.current = hasActive
@@ -532,24 +539,42 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     return groups
   }, [trainerState.queue])
   const groupedQueue = useMemo(() => {
-    const groups: Array<{ key: string; groupKey: string; label: string; createdAt: string | null; jobs: TrainerQueueJob[] }> = []
+    // Group by submissionId regardless of array position so split batches merge into one card.
+    const groupMap = new Map<string, { key: string; groupKey: string; label: string; createdAt: string | null; jobs: TrainerQueueJob[] }>()
+    const groupOrder: string[] = []
     for (const job of filteredQueue) {
       const groupKey = job.submissionId ?? `ungrouped:${job.jobId}`
-      const existing = groups[groups.length - 1]
-      if (existing && existing.groupKey === groupKey) {
+      const existing = groupMap.get(groupKey)
+      if (existing) {
         existing.jobs.push(job)
       } else {
-        groups.push({
+        groupMap.set(groupKey, {
           key: `${groupKey}:${job.jobId}`,
           groupKey,
           label: job.submissionLabel ?? (job.profileName ?? (job.sourceMode === 'watcher' ? 'Watcher' : job.sourceMode === 'manual-folder-run' ? 'Folder run' : 'Run WAVs')),
           createdAt: job.submissionCreatedAt ?? null,
           jobs: [job],
         })
+        groupOrder.push(groupKey)
       }
     }
-    return groups
+    // Sort by position of first active (queued/running) job so the running batch stays on top.
+    // Terminal-only batches fall back to first-occurrence order.
+    const activePos = (gk: string) => {
+      const idx = filteredQueue.findIndex(j =>
+        (j.submissionId ?? `ungrouped:${j.jobId}`) === gk &&
+        (j.status === 'queued' || j.status === 'running' || j.status === 'starting')
+      )
+      return idx === -1 ? Infinity : idx
+    }
+    groupOrder.sort((a, b) => {
+      const diff = activePos(a) - activePos(b)
+      if (diff !== 0) return diff
+      return groupOrder.indexOf(a) - groupOrder.indexOf(b)
+    })
+    return groupOrder.map(k => groupMap.get(k)!)
   }, [filteredQueue])
+
 
   // Auto-collapse fully-finished batches (no queued/running items)
   useEffect(() => {
@@ -1853,7 +1878,32 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
 
   // drag refs for queue reordering
   const dragJobRef = useRef<string | null>(null)
-  const dragBatchRef = useRef<string | null>(null)
+
+  // Batch drag — mouse-event based, NOT HTML5 DnD.
+  //
+  // Why not HTML5 DnD (draggable / onDragStart / onDrop):
+  //   Electron on Windows does not reliably fire `drop` on same-window targets. We tried it
+  //   for many sessions and it never worked consistently. `onDragOver` fires fine, but `onDrop`
+  //   just doesn't. Do not switch back to DnD without testing on Windows first.
+  //
+  // Why not useEffect for attaching listeners:
+  //   useEffect runs after React re-renders, which is asynchronous. A fast user can release
+  //   the mouse before the effect fires, so `mouseup` never gets caught. Listeners must be
+  //   attached synchronously inside `onMouseDown` instead.
+  //
+  // How it works:
+  //   onMouseDown (handle) → attach window mousemove + mouseup immediately
+  //   mousemove             → elementFromPoint + closest('[data-submission-id]') → dragOverBatchRef
+  //   mouseup               → remove listeners, read draggingBatchRef + dragOverBatchRef, call IPC
+  //   Each batch card outer div has data-submission-id={group.groupKey} for hit-testing.
+  const [draggingBatch, setDraggingBatch] = useState<string | null>(null)
+  const draggingBatchRef = useRef<string | null>(null)
+  const dragOverBatchRef = useRef<string | null>(null)
+
+  // Keep a stable ref so the drag mouseup closure always sees the latest queue order
+  const groupedQueueRef = useRef(groupedQueue)
+  useEffect(() => { groupedQueueRef.current = groupedQueue }, [groupedQueue])
+
 
   const toggleBatchCollapse = (key: string) => {
     setCollapsedBatches(prev => {
@@ -2994,40 +3044,58 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     return (
                       <div
                         key={group.key}
-                        className={`rounded-[13px] border ${hasActive ? 'border-indigo-400/70' : 'border-indigo-500/30'} bg-panel overflow-hidden`}
-                        onDragOver={e => { e.preventDefault() }}
-                        onDrop={async () => {
-                          const fromId = dragBatchRef.current
-                          const toId = group.jobs[0]?.submissionId ?? null
-                          dragBatchRef.current = null
-                          if (!fromId || !toId || fromId === toId) return
-                          const fromIdx = groupedQueue.findIndex(g => g.jobs[0]?.submissionId === fromId)
-                          const toIdx = groupedQueue.findIndex(g => g.jobs[0]?.submissionId === toId)
-                          if (fromIdx > toIdx) {
-                            // moving up: insert before the target
-                            await window.api.moveSubmissionBefore(fromId, toId)
-                          } else {
-                            // moving down: insert after the target
-                            const nextGroup = groupedQueue[toIdx + 1]
-                            if (nextGroup) {
-                              await window.api.moveSubmissionBefore(fromId, nextGroup.jobs[0]?.submissionId ?? toId)
-                            } else {
-                              await window.api.moveSubmissionToEnd(fromId)
-                            }
-                          }
-                        }}
+                        data-submission-id={group.groupKey}
+                        className={`rounded-[13px] border ${hasActive ? 'border-indigo-400/70' : 'border-indigo-500/30'} bg-panel overflow-hidden transition-opacity ${draggingBatch === group.groupKey ? 'opacity-50' : ''}`}
                       >
-                        {/* Batch header — draggable here so job rows inside the body don't steal the drag */}
-                        <div
-                          className={`flex items-center gap-2 px-3.5 py-3 bg-panel-2 border-b border-nm-border-s select-none ${queueCount > 0 ? 'cursor-grab' : 'cursor-pointer'}`}
-                          draggable={queueCount > 0}
-                          onDragStart={() => { dragBatchRef.current = group.jobs[0]?.submissionId ?? null }}
-                          onDragEnd={() => { dragBatchRef.current = null }}
-                          onClick={() => toggleBatchCollapse(group.key)}
-                        >
-                          <svg className="w-3.5 h-3.5 text-nm-text-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9h16.5m-16.5 6.75h16.5" />
-                          </svg>
+                        {/* Batch header */}
+                        <div className="flex items-center bg-panel-2 border-b border-nm-border-s select-none">
+                          {/* Drag handle — mouse-event based (HTML5 DnD unreliable in Electron) */}
+                          <div
+                            className={`px-3 self-stretch flex items-center flex-shrink-0 ${queueCount > 0 ? 'cursor-grab active:cursor-grabbing' : 'cursor-default opacity-30'}`}
+                            onMouseDown={e => {
+                              if (queueCount === 0) return
+                              e.preventDefault()
+                              const submissionId = group.groupKey
+                              draggingBatchRef.current = submissionId
+                              setDraggingBatch(submissionId)
+                              const onMove = (me: MouseEvent) => {
+                                const el = document.elementFromPoint(me.clientX, me.clientY)
+                                dragOverBatchRef.current = el?.closest<HTMLElement>('[data-submission-id]')?.dataset.submissionId ?? null
+                              }
+                              const onUp = async () => {
+                                window.removeEventListener('mousemove', onMove)
+                                window.removeEventListener('mouseup', onUp)
+                                const fromId = draggingBatchRef.current
+                                const toId = dragOverBatchRef.current
+                                draggingBatchRef.current = null
+                                dragOverBatchRef.current = null
+                                setDraggingBatch(null)
+                                if (!fromId || !toId || fromId === toId) return
+                                const gq = groupedQueueRef.current
+                                const fromIdx = gq.findIndex(g => g.groupKey === fromId)
+                                const toIdx = gq.findIndex(g => g.groupKey === toId)
+                                if (fromIdx === -1 || toIdx === -1) return
+                                if (fromIdx > toIdx) {
+                                  await window.api.moveSubmissionBefore(fromId, toId)
+                                } else {
+                                  const nextGroup = gq[toIdx + 1]
+                                  if (nextGroup) {
+                                    await window.api.moveSubmissionBefore(fromId, nextGroup.groupKey)
+                                  } else {
+                                    await window.api.moveSubmissionToEnd(fromId)
+                                  }
+                                }
+                              }
+                              window.addEventListener('mousemove', onMove)
+                              window.addEventListener('mouseup', onUp)
+                            }}
+                          >
+                            <svg className="w-3.5 h-3.5 text-nm-text-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9h16.5m-16.5 6.75h16.5" />
+                            </svg>
+                          </div>
+                          {/* Rest of header — click to collapse */}
+                          <div className="flex items-center gap-2 pr-3.5 py-3 flex-1 min-w-0 cursor-pointer" onClick={() => toggleBatchCollapse(group.key)}>
                           <svg className={`w-3 h-3 text-nm-text-3 flex-shrink-0 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
                           </svg>
@@ -3121,7 +3189,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                               Send to history
                             </button>
                           )}
-                        </div>
+                          </div>
+                        </div>{/* end batch header */}
                         {/* Progress meter */}
                         <div className="px-3.5 pt-2 pb-1">
                           <StackedMeter segments={meterSegs} height={6} radius={3} gap={1} />
@@ -3385,7 +3454,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                 Edit
                               </button>
                               <button
-                                onClick={e => { e.stopPropagation(); setCancelBatchConfirm({ submissionId: group.jobs[0]?.submissionId ?? '', label: group.label }) }}
+                                onClick={e => { e.stopPropagation(); void window.api.dismissTrainerBatch(group.jobs[0]?.submissionId ?? '') }}
                                 className="h-7 inline-flex items-center gap-1 px-2 rounded-[7px] text-[11px] font-medium border border-red-500/25 hover:bg-red-500/10 text-red-400 transition-colors"
                               >
                                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
