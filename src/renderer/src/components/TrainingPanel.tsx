@@ -2994,7 +2994,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     return (
                       <div
                         key={group.key}
-                        className={`rounded-[13px] border ${hasActive ? 'border-nm-accent/50' : 'border-nm-border-s'} bg-panel overflow-hidden`}
+                        className={`rounded-[13px] border ${hasActive ? 'border-indigo-400/70' : 'border-indigo-500/30'} bg-panel overflow-hidden`}
                         onDragOver={e => { e.preventDefault() }}
                         onDrop={async () => {
                           const fromId = dragBatchRef.current
