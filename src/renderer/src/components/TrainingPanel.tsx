@@ -1864,6 +1864,74 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     return mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${mins % 60}m`
   }, [isRunning, trainerState.startedAt, trainerState.progressPercent])
 
+  // Queue-wide remaining time estimate.
+  // Strategy: build a sec/epoch rate per architecture from recent completed jobs (queue + history).
+  // Cap to 20 most-recent samples per arch to stay relevant to current hardware.
+  // For the running job use elapsed-time extrapolation when no history rate exists.
+  const queueEta = useMemo(() => {
+    const MAX_SAMPLES = 20
+    const ratesByArch = new Map<string, number[]>()
+    const addSample = (arch: string, durationSec: number, epochs: number) => {
+      if (!arch || epochs <= 0 || durationSec <= 0) return
+      const arr = ratesByArch.get(arch) ?? []
+      if (arr.length < MAX_SAMPLES) { arr.push(durationSec / epochs); ratesByArch.set(arch, arr) }
+    }
+    for (const job of trainerState.queue) {
+      if (job.status === 'success' && job.startedAt && job.finishedAt) {
+        const dur = (new Date(job.finishedAt).getTime() - new Date(job.startedAt).getTime()) / 1000
+        addSample(job.architecture, dur, job.epochs)
+      }
+    }
+    for (const entry of trainerState.history) {
+      if (entry.status === 'success' && typeof entry.durationSec === 'number' && entry.epochs > 0) {
+        addSample(entry.architecture, entry.durationSec, entry.epochs)
+      }
+    }
+    const avgRate = new Map<string, number>()
+    for (const [arch, rates] of ratesByArch) {
+      avgRate.set(arch, rates.reduce((a, b) => a + b, 0) / rates.length)
+    }
+    if (avgRate.size === 0) return null
+
+    let totalSec = 0
+    let covered = 0
+    let uncovered = 0
+
+    // Running job remainder
+    if (activeJob && isRunning) {
+      const rate = avgRate.get(activeJob.architecture)
+      const pct = typeof trainerState.progressPercent === 'number' ? trainerState.progressPercent / 100 : 0
+      if (rate != null) {
+        totalSec += rate * activeJob.epochs * Math.max(0, 1 - pct)
+        covered++
+      } else if (pct > 0 && trainerState.startedAt) {
+        const elapsed = (Date.now() - new Date(trainerState.startedAt).getTime()) / 1000
+        totalSec += (elapsed / pct) * Math.max(0, 1 - pct)
+        covered++
+      } else {
+        uncovered++
+      }
+    }
+
+    // Queued jobs
+    for (const job of trainerState.queue) {
+      if (job.status !== 'queued') continue
+      const rate = avgRate.get(job.architecture)
+      if (rate != null) { totalSec += rate * job.epochs; covered++ }
+      else uncovered++
+    }
+
+    if (covered === 0 || totalSec <= 0) return null
+
+    const totalMin = Math.ceil(totalSec / 60)
+    const approx = uncovered > 0 ? '>' : '~'  // '>' when some jobs have no rate estimate
+    if (totalMin < 1) return `${approx}1m`
+    if (totalMin < 60) return `${approx}${totalMin}m`
+    const h = Math.floor(totalMin / 60)
+    const m = totalMin % 60
+    return m === 0 ? `${approx}${h}h` : `${approx}${h}h ${m}m`
+  }, [trainerState.queue, trainerState.history, activeJob, isRunning, trainerState.progressPercent, trainerState.startedAt])
+
   const activeJobName = activeJob
     ? activeJob.outputPath.replace(/\\/g, '/').split('/').pop() ?? 'Unknown'
     : 'No active run'
@@ -2184,11 +2252,18 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                       <span className="inline-flex items-center h-[19px] px-2 rounded-[5px] text-[10.5px] font-[600] bg-field border border-nm-border-s text-nm-text-2">{activeJob.profileName}</span>
                     )}
                     <span>model {activeJobIdx} of {totalJobs}</span>
-                    {queuedCount > 0 && <span className="text-nm-text-3">&middot; {queuedCount} more queued</span>}
+                    {queuedCount > 0 && <span className="text-nm-text-3">&middot; {queuedCount} more queued{queueEta ? ` · ${queueEta} remaining` : ''}</span>}
                     <span className="font-mono truncate">{activeJob.outputPath.replace(/\\/g, '/').split('/').slice(-2).join('/')}</span>
                   </>
                 )}
-                {!activeJob && <span>Queue is idle &mdash; start a run from New Run or the queue.</span>}
+                {!activeJob && (
+                  <span>
+                    {queuedCount > 0
+                      ? <>Queue ready &mdash; {queuedCount} capture{queuedCount === 1 ? '' : 's'} waiting{queueEta ? ` · ${queueEta} estimated` : ''}.</>
+                      : <>Queue is idle &mdash; start a run from New Run or the queue.</>
+                    }
+                  </span>
+                )}
               </div>
             </div>
             {/* Control bar */}
@@ -2916,6 +2991,12 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   {TRAINER_ARCHITECTURES.map(a => <option key={a} value={a}>{ARCHITECTURE_LABELS[a]}</option>)}
                 </select>
                 <span className="text-[11px] text-nm-text-3">drag to reorder &middot; click &#x25b8; to collapse</span>
+                {queueEta && queuedCount > 0 && (
+                  <span className="text-[11px] text-nm-text-2 font-[600] flex items-center gap-1">
+                    <svg className="w-3 h-3 text-nm-text-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    {queueEta} remaining
+                  </span>
+                )}
                 <span className="flex-1" />
                 <button
                   onClick={() => setCollapsedBatches(new Set())}
