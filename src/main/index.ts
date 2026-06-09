@@ -2668,6 +2668,11 @@ async function pumpTrainerQueue(preferSubmissionId?: string | null): Promise<voi
       error: failureReason,
     })
     appendTrainerCanceledHistory(nextJob, failureReason, '', 'error')
+    // Pause the queue after a start failure (Python path missing, WAV not found, etc.).
+    // startTrainerJob only throws for pre-flight checks — these failures will repeat for every
+    // subsequent job, so cascading would silently mark the entire queue as error and wipe it
+    // from the persistence file. Pausing here forces the user to fix the issue first.
+    trainerPauseAfterCurrent = true
     trainerState = {
       ...TRAINER_IDLE_STATE,
       status: 'error',
@@ -2678,9 +2683,7 @@ async function pumpTrainerQueue(preferSubmissionId?: string | null): Promise<voi
       pauseAfterCurrent: trainerPauseAfterCurrent,
     }
     emitTrainerState()
-    if (!trainerPauseAfterCurrent) {
-      await pumpTrainerQueue()
-    }
+    persistTrainerQueueThrottled()
   }
 }
 
