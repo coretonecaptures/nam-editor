@@ -172,7 +172,7 @@ const api = {
     ipcRenderer.invoke('trainer:moveSubmissionToEnd', submissionId),
   editSubmission: (
     submissionId: string,
-    changes: { epochs?: number; thresholdEsr?: number | null; lr?: number; lrDecay?: number }
+    changes: { epochs?: number; thresholdEsr?: number | null; lr?: number; lrDecay?: number; submissionLabel?: string }
   ): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('trainer:editSubmission', submissionId, changes),
   cancelTrainerBatch: (submissionId: string): Promise<{ success: boolean; error?: string }> =>

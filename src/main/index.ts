@@ -5554,22 +5554,27 @@ app.whenReady().then(async () => {
 
   ipcMain.handle(
     'trainer:editSubmission',
-    async (_event, submissionId: string, changes: { epochs?: number; thresholdEsr?: number | null; lr?: number; lrDecay?: number }) => {
+    async (_event, submissionId: string, changes: { epochs?: number; thresholdEsr?: number | null; lr?: number; lrDecay?: number; submissionLabel?: string }) => {
       const now = new Date().toISOString()
       let changed = false
       trainerQueue = trainerQueue.map((job) => {
-        if (job.submissionId !== submissionId || job.status !== 'queued') return job
-        changed = true
-        return {
-          ...job,
+        if (job.submissionId !== submissionId) return job
+        // Label change applies to all jobs in the submission (so the header always shows the new name).
+        // Settings changes (epochs, ESR, LR) apply only to queued jobs.
+        const isQueued = job.status === 'queued'
+        const settingsUpdate = isQueued ? {
           ...(typeof changes.epochs === 'number' ? { epochs: changes.epochs, progressEpochTotal: changes.epochs } : {}),
           ...(changes.thresholdEsr !== undefined ? { thresholdEsr: changes.thresholdEsr } : {}),
           ...(typeof changes.lr === 'number' ? { lr: changes.lr } : {}),
           ...(typeof changes.lrDecay === 'number' ? { lrDecay: changes.lrDecay } : {}),
           editedAt: now,
-        }
+        } : {}
+        const labelUpdate = typeof changes.submissionLabel === 'string' ? { submissionLabel: changes.submissionLabel } : {}
+        if (!isQueued && Object.keys(labelUpdate).length === 0) return job
+        changed = true
+        return { ...job, ...settingsUpdate, ...labelUpdate }
       })
-      if (!changed) return { success: false, error: 'No queued jobs found for that batch.' }
+      if (!changed) return { success: false, error: 'No jobs found for that batch.' }
       emitTrainerState()
       persistTrainerQueueThrottled()
       return { success: true }

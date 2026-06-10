@@ -355,6 +355,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const [cancelBatchConfirm, setCancelBatchConfirm] = useState<{ submissionId: string; label: string } | null>(null)
   const [dismissBatchConfirm, setDismissBatchConfirm] = useState<{ submissionId: string; label: string; failCount: number; doneCount: number } | null>(null)
   const [editBatchModal, setEditBatchModal] = useState<{ submissionId: string; label: string; epochs: number; thresholdEsr: number | null; lr: number; lrDecay: number } | null>(null)
+  const [editBatchName, setEditBatchName] = useState('')
   const [editBatchEpochs, setEditBatchEpochs] = useState('')
   const [editBatchThresholdEsr, setEditBatchThresholdEsr] = useState('')
   const [editBatchLr, setEditBatchLr] = useState('')
@@ -3226,6 +3227,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                 if (!firstQueued) return
                                 const submissionId = group.jobs[0]?.submissionId ?? ''
                                 setEditBatchModal({ submissionId, label: displayLabel, epochs: firstQueued.epochs, thresholdEsr: firstQueued.thresholdEsr, lr: firstQueued.lr, lrDecay: firstQueued.lrDecay })
+                                setEditBatchName(group.jobs[0]?.submissionLabel ?? displayLabel)
                                 setEditBatchEpochs(String(firstQueued.epochs))
                                 setEditBatchThresholdEsr(firstQueued.thresholdEsr != null ? String(firstQueued.thresholdEsr) : '')
                                 setEditBatchLr(String(firstQueued.lr))
@@ -4796,6 +4798,15 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
           </div>
           <div className="px-5 py-4 space-y-4">
             <div>
+              <label className="text-[11px] font-[600] text-nm-text-2 block mb-1.5">Batch name</label>
+              <input
+                type="text"
+                value={editBatchName}
+                onChange={e => setEditBatchName(e.target.value)}
+                className="w-full h-9 px-3 rounded-xl text-[13px] border border-nm-border-s bg-field text-nm-text focus:outline-none focus:border-nm-accent/60"
+              />
+            </div>
+            <div>
               <label className="text-[11px] font-[600] text-nm-text-2 block mb-1.5">Epochs</label>
               <input
                 type="number"
@@ -4862,12 +4873,14 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 const lr = parseFloat(editBatchLr)
                 const lrDecay = parseFloat(editBatchLrDecay)
                 if (!Number.isFinite(epochs) || epochs < 1) return
-                const changes: { epochs?: number; thresholdEsr?: number | null; lr?: number; lrDecay?: number } = { epochs }
+                const changes: { epochs?: number; thresholdEsr?: number | null; lr?: number; lrDecay?: number; submissionLabel?: string } = { epochs }
                 if (editBatchThresholdEsr.trim() === '' || (thresholdEsr != null && Number.isFinite(thresholdEsr))) {
                   changes.thresholdEsr = thresholdEsr
                 }
                 if (Number.isFinite(lr)) changes.lr = lr
                 if (Number.isFinite(lrDecay)) changes.lrDecay = lrDecay
+                const trimmedName = editBatchName.trim()
+                if (trimmedName) changes.submissionLabel = trimmedName
                 await window.api.editSubmission(editBatchModal.submissionId, changes)
                 setEditBatchModal(null)
               }}
