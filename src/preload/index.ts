@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import fs from 'fs'
 import path from 'path'
-import type { TrainerStartPayload, TrainerStateSnapshot, WatcherFileEntry } from '../renderer/src/types/trainer'
+import type { TrainerStartPayload, TrainerStateSnapshot, TrainerHistoryEntry, WatcherFileEntry } from '../renderer/src/types/trainer'
 
 // Read settings.json from userData synchronously so the renderer has settings
 // available immediately — no async flash, no re-render on load.
@@ -185,6 +185,11 @@ const api = {
     const handler = (_event: unknown, state: TrainerStateSnapshot) => cb(state)
     ipcRenderer.on('trainer:update', handler)
     return () => ipcRenderer.removeListener('trainer:update', handler)
+  },
+  onTrainerHistory: (cb: (history: TrainerHistoryEntry[]) => void): (() => void) => {
+    const handler = (_event: unknown, history: TrainerHistoryEntry[]) => cb(history)
+    ipcRenderer.on('trainer:history', handler)
+    return () => ipcRenderer.removeListener('trainer:history', handler)
   },
   openInNam: (filePath: string, standalonePath: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('app:openInNam', filePath, standalonePath),

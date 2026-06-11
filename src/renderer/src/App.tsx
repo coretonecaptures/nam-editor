@@ -38,7 +38,7 @@ import * as XLSX from 'xlsx'
 import { buildMetadataSuggestionMatches, MetadataSuggestionMatch } from './utils/metadataSuggest'
 import { cloneMetadataSuggestRule, isMetadataSuggestRuleComplete, isMetadataSuggestRuleLibraryCandidate, metadataSuggestRuleSignature } from './utils/metadataSuggestRuleLibrary'
 import { detectPreset } from './utils/detectPreset'
-import { IDLE_TRAINER_STATE, TRAINER_ARCHITECTURES, type TrainerArchitecture, type TrainerProfilesStateSnapshot, type TrainerStartPayload, type TrainerStateSnapshot } from './types/trainer'
+import { IDLE_TRAINER_STATE, TRAINER_ARCHITECTURES, type TrainerArchitecture, type TrainerHistoryEntry, type TrainerProfilesStateSnapshot, type TrainerStartPayload, type TrainerStateSnapshot } from './types/trainer'
 
 export interface HistoryEntry {
   id: string
@@ -466,6 +466,7 @@ declare global {
       moveSubmissionBefore: (submissionId: string, beforeSubmissionId: string) => Promise<{ success: boolean; error?: string }>
       retryTrainerHistoryEntry: (historyId: string) => Promise<{ success: boolean; error?: string; queued?: number }>
       onTrainerUpdate: (cb: (state: TrainerStateSnapshot) => void) => () => void
+      onTrainerHistory: (cb: (history: TrainerHistoryEntry[]) => void) => () => void
       openInNam: (filePath: string, standalonePath: string) => Promise<{ success: boolean; error?: string }>
       scanImages: (folderPath: string) => Promise<{ success: boolean; images: string[] }>
       findPackOwner: (folderPath: string, rootPath: string) => Promise<string | null>

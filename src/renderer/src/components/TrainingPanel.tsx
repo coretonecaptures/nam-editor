@@ -363,6 +363,10 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const [elapsedSec, setElapsedSec] = useState(0)
   const rawLogRef = useRef<HTMLDivElement | null>(null)
   const trainerSnapshotSigRef = useRef(buildTrainerSnapshotSignature(IDLE_TRAINER_STATE))
+  // History arrives on its own 'trainer:history' channel (not in the high-frequency progress push).
+  // We keep the latest history here and merge it into every trainerState we apply, so the rest of
+  // the component can keep reading trainerState.history unchanged.
+  const trainerHistoryRef = useRef<TrainerHistoryEntry[]>([])
   const [outputNotices, setOutputNotices] = useState<Array<{ id: string; label: string; folders: string[] }>>([])
   const prevQueueJobStatusRef = useRef<Map<string, string>>(new Map())
 
@@ -396,7 +400,10 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   useEffect(() => {
     let disposed = false
     let lastActiveJobId: string | null = null
-    const applyTrainerState = (state: TrainerStateSnapshot) => {
+    const applyTrainerState = (incoming: TrainerStateSnapshot) => {
+      // Progress pushes carry an empty history (see emitTrainerState in main) — re-attach the latest
+      // history delivered on the dedicated channel so trainerState.history stays populated.
+      const state = { ...incoming, history: trainerHistoryRef.current }
       const nextSig = buildTrainerSnapshotSignature(state)
       if (trainerSnapshotSigRef.current === nextSig) return
       trainerSnapshotSigRef.current = nextSig
@@ -423,6 +430,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     }
     void window.api.getTrainerState().then((state) => {
       if (!disposed) {
+        // getTrainerState() returns the full history (one-time, on demand) — seed the ref from it.
+        trainerHistoryRef.current = state.history ?? []
         applyTrainerState(state)
         if (state.status === 'running' || state.status === 'starting') setSection('live')
         else setSection('dashboard')
@@ -431,9 +440,17 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     const off = window.api.onTrainerUpdate((state) => {
       if (!disposed) applyTrainerState(state)
     })
+    const offHistory = window.api.onTrainerHistory((history) => {
+      if (disposed) return
+      trainerHistoryRef.current = history
+      // Bypass the snapshot-signature gate (which only hashes the oldest 3 entries) — a history
+      // change must always re-render the History tab, so patch trainerState.history directly.
+      setTrainerState((prev) => ({ ...prev, history }))
+    })
     return () => {
       disposed = true
       off()
+      offHistory()
     }
   }, [])
 

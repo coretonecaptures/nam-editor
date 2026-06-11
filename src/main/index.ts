@@ -1012,6 +1012,7 @@ function getTrainerQueuePath(): string {
 }
 
 const TRAINER_QUEUE_PERSIST_CAP = 2000
+const TRAINER_HISTORY_CAP = 10000
 
 function loadTrainerQueue(): TrainerQueueJob[] {
   try {
@@ -1092,7 +1093,7 @@ function pruneFinishedBatchesFromQueue(): boolean {
 function saveTrainerHistory(): void {
   try {
     fs.mkdirSync(dirname(getTrainerHistoryPath()), { recursive: true })
-    fs.writeFileSync(getTrainerHistoryPath(), JSON.stringify(trainerHistory.slice(0, 2000), null, 2), 'utf-8')
+    fs.writeFileSync(getTrainerHistoryPath(), JSON.stringify(trainerHistory.slice(0, TRAINER_HISTORY_CAP), null, 2), 'utf-8')
   } catch (error) {
     log(`trainer history save failed: ${String(error)}`)
   }
@@ -1169,8 +1170,9 @@ function getTrainerRunWorkspacePath(jobId: string, modelName: string, architectu
 }
 
 function appendTrainerHistory(entry: TrainerHistoryEntry): void {
-  trainerHistory = [entry, ...trainerHistory].slice(0, 2000)
+  trainerHistory = [entry, ...trainerHistory].slice(0, TRAINER_HISTORY_CAP)
   saveTrainerHistory()
+  emitTrainerHistory()
 }
 
 function makeTrainerSkippedKey(
@@ -1454,9 +1456,20 @@ function emitTrainerState(): void {
   const emitSig = computeTrainerEmitSignature()
   if (emitSig !== trainerLastEmitSignature) {
     trainerLastEmitSignature = emitSig
-    mainWindow?.webContents.send('trainer:update', trainerState)
+    // History is delivered on its own low-frequency channel (emitTrainerhistory), NOT bundled into
+    // this high-frequency progress push — otherwise the full history array is structured-cloned over
+    // IPC on every epoch/ESR tick. Strip it here; the renderer merges history from 'trainer:history'.
+    mainWindow?.webContents.send('trainer:update', { ...trainerState, history: EMPTY_TRAINER_HISTORY })
   }
   persistTrainerQueueThrottled()
+}
+
+const EMPTY_TRAINER_HISTORY: TrainerHistoryEntry[] = []
+
+// Push the full history on its own channel. Called only when history actually changes (job finishes,
+// entries forgotten/purged) — not on every progress tick — so cap size no longer affects run-time cost.
+function emitTrainerHistory(): void {
+  mainWindow?.webContents.send('trainer:history', trainerHistory)
 }
 
 const TRAINER_LOG_NOISE_RE = /^\s*(Validation(?:\s+DataLoader\s+\d+)?|Sanity Checking(?:\s+DataLoader\s+\d+)?|Training):\s*0%\|.*0\/\d+\s*\[00:00<\?,?\s*\?it\/s\]/i
@@ -5034,7 +5047,9 @@ app.whenReady().then(async () => {
     return result.canceled ? null : result.filePaths[0]
   })
 
-  ipcMain.handle('trainer:getState', async () => trainerState)
+  // Return the live history explicitly — the high-frequency 'trainer:update' push strips it, so this
+  // on-demand fetch is how the renderer seeds its history on mount.
+  ipcMain.handle('trainer:getState', async () => ({ ...trainerState, history: trainerHistory }))
 
   ipcMain.handle('trainer:cancel', async () => {
     if (!trainerChild || trainerState.status !== 'running' && trainerState.status !== 'starting') {
@@ -5172,6 +5187,7 @@ app.whenReady().then(async () => {
     trainerHistory = trainerHistory.filter((e) => !(e.profileId === profileId && normalizePath(e.sourcePath) === norm))
     saveTrainerSkipped()
     saveTrainerHistory()
+    emitTrainerHistory()
     const payloads = await buildTrainerPayloadsForProfile(profile, trainerConfiguredPythonPath, trainerConfiguredInputPath, [filePath], 'watcher', { id: crypto.randomUUID(), label: `Watcher - ${profile.name}`, createdAt: new Date().toISOString() })
     if (payloads.length > 0) {
       await enqueueTrainingPayloads(payloads)
@@ -5209,6 +5225,7 @@ app.whenReady().then(async () => {
     trainerHistory = trainerHistory.filter((e) => !(e.profileId === profileId && normalizePath(e.sourcePath) === norm))
     saveTrainerSkipped()
     saveTrainerHistory()
+    emitTrainerHistory()
 
     const payloads = await buildTrainerPayloadsForProfile(profile, trainerConfiguredPythonPath, trainerConfiguredInputPath, [filePath], 'watcher', { id: crypto.randomUUID(), label: `Watcher - ${profile.name}`, createdAt: new Date().toISOString() })
 
@@ -5383,6 +5400,7 @@ app.whenReady().then(async () => {
     if (removed === 0) return { success: false, error: 'No matching history entries found.', removed: 0 }
     saveTrainerHistory()
     trainerState = { ...trainerState, history: trainerHistory }
+    emitTrainerHistory()
     emitTrainerState()
     return { success: true, removed }
   })
