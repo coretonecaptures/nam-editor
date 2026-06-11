@@ -4886,14 +4886,19 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 const lr = parseFloat(editBatchLr)
                 const lrDecay = parseFloat(editBatchLrDecay)
                 if (!Number.isFinite(epochs) || epochs < 1) return
-                const changes: { epochs?: number; thresholdEsr?: number | null; lr?: number; lrDecay?: number; submissionLabel?: string } = { epochs }
-                if (editBatchThresholdEsr.trim() === '' || (thresholdEsr != null && Number.isFinite(thresholdEsr))) {
+                // Only include a settings field in changes if its value actually differs from the
+                // original — this prevents editedAt being set (and the "edited" pill appearing)
+                // when the user only renames the batch and touches nothing else.
+                const changes: { epochs?: number; thresholdEsr?: number | null; lr?: number; lrDecay?: number; submissionLabel?: string } = {}
+                if (epochs !== editBatchModal.epochs) changes.epochs = epochs
+                if (thresholdEsr !== editBatchModal.thresholdEsr &&
+                    (editBatchThresholdEsr.trim() === '' || (thresholdEsr != null && Number.isFinite(thresholdEsr)))) {
                   changes.thresholdEsr = thresholdEsr
                 }
-                if (Number.isFinite(lr)) changes.lr = lr
-                if (Number.isFinite(lrDecay)) changes.lrDecay = lrDecay
+                if (Number.isFinite(lr) && lr !== editBatchModal.lr) changes.lr = lr
+                if (Number.isFinite(lrDecay) && lrDecay !== editBatchModal.lrDecay) changes.lrDecay = lrDecay
                 const trimmedName = editBatchName.trim()
-                if (trimmedName) changes.submissionLabel = trimmedName
+                if (trimmedName && trimmedName !== editBatchModal.label) changes.submissionLabel = trimmedName
                 await window.api.editSubmission(editBatchModal.submissionId, changes)
                 setEditBatchModal(null)
               }}
