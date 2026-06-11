@@ -523,6 +523,10 @@ let trainerPauseAfterCurrent = false
 //   - pause the queue so it doesn't auto-advance to the next job
 let trainerEmergencyRequeue = false
 let trainerEmergencyRequeueJobId: string | null = null
+// True while the close handler is running post-processing (between trainerChild = null and the
+// final pumpTrainerQueue call). Prevents a watcher-triggered pump from starting the next job
+// during model promotion / graph copy, which would race the pause-after-current check.
+let trainerPostProcessing = false
 // Track the highest epoch the embedded Python callback has already reported a sub-model-aware
 // ESR for. tqdm bar parsing skips overwriting epochValidationEsr for epochs <= this number,
 // because the tqdm postfix carries NAM's aggregate val_loss (sum of packed sub-models) which
@@ -2438,6 +2442,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
         error: '',
       }
       trainerChild = null
+      trainerPostProcessing = false
       emitTrainerState()
       // Do NOT call pumpTrainerQueue here — pauseAfterCurrent was set by the cancel handler,
       // so the queue stays paused until the user clicks Resume.
@@ -2459,6 +2464,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
       progressPercent: code === 0 ? 100 : trainerState.progressPercent,
     }
     trainerChild = null
+    trainerPostProcessing = true
     try { await fs.promises.unlink(payloadPath) } catch { /* ignore */ }
 
     if (finalStatus === 'success' && trainerState.outputModelPath) {
@@ -2658,17 +2664,18 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     // its full record lives in history. Failed batches are retried from History, not inline.
     if (pruneFinishedBatchesFromQueue()) emitTrainerState()
 
+    trainerPostProcessing = false
     if (!trainerPauseAfterCurrent) {
       await pumpTrainerQueue(job.submissionId)
     } else {
-      trainerState = { ...trainerState, activeJobId: null, runId: null }
+      trainerState = { ...trainerState, status: 'idle', activeJobId: null, runId: null, progressPhase: 'Paused — click Resume to continue' }
       emitTrainerState()
     }
   })
 }
 
 async function pumpTrainerQueue(preferSubmissionId?: string | null): Promise<void> {
-  if (trainerChild || trainerState.status === 'starting' || trainerState.status === 'running') return
+  if (trainerChild || trainerPostProcessing || trainerState.status === 'starting' || trainerState.status === 'running') return
   // Honor Pause After Current — if the user paused, don't auto-start the next job, even when
   // a new batch is added or another handler tries to nudge the queue forward. The pause must be
   // explicitly cleared (Resume / Start queue) before pumping resumes.
