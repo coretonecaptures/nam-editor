@@ -1333,7 +1333,7 @@ function computeTrainerQueueSignature(): string {
 
 function computeTrainerEmitSignature(): string {
   const queueSig = trainerQueue.map((job) => (
-    `${job.jobId}:${job.status}:${job.progressEpochCurrent ?? ''}:${job.progressBatchCurrent ?? ''}:${job.validationEsr ?? ''}:${job.validationEsrFull ?? ''}`
+    `${job.jobId}:${job.status}:${job.progressEpochCurrent ?? ''}:${job.progressBatchCurrent ?? ''}:${job.validationEsr ?? ''}:${job.validationEsrFull ?? ''}:${job.submissionLabel ?? ''}:${job.editedAt ?? ''}`
   )).join('|')
   const historySig = trainerHistory.slice(-3).map((entry) => (
     `${entry.jobId}:${entry.status}:${entry.finishedAt ?? ''}:${entry.validationEsr ?? ''}:${entry.validationEsrFull ?? ''}`
