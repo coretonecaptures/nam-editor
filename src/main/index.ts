@@ -1367,8 +1367,13 @@ function computeTrainerQueueSignature(): string {
 }
 
 function computeTrainerEmitSignature(): string {
+  // For the active job include full progress; all other jobs only need id+status+label.
+  // This avoids an O(n) full-field map on every progress tick when the queue is large.
+  const activeJobId = trainerState.activeJobId
   const queueSig = trainerQueue.map((job) => (
-    `${job.jobId}:${job.status}:${job.progressEpochCurrent ?? ''}:${job.progressBatchCurrent ?? ''}:${job.validationEsr ?? ''}:${job.validationEsrFull ?? ''}:${job.submissionLabel ?? ''}:${job.editedAt ?? ''}`
+    job.jobId === activeJobId
+      ? `${job.jobId}:${job.status}:${job.progressEpochCurrent ?? ''}:${job.progressBatchCurrent ?? ''}:${job.validationEsr ?? ''}:${job.validationEsrFull ?? ''}:${job.submissionLabel ?? ''}:${job.editedAt ?? ''}`
+      : `${job.jobId}:${job.status}:${job.submissionLabel ?? ''}:${job.editedAt ?? ''}`
   )).join('|')
   const historySig = trainerHistory.slice(-3).map((entry) => (
     `${entry.jobId}:${entry.status}:${entry.finishedAt ?? ''}:${entry.validationEsr ?? ''}:${entry.validationEsrFull ?? ''}`
