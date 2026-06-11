@@ -5586,8 +5586,8 @@ app.whenReady().then(async () => {
         if (job.submissionId !== submissionId) return job
         // Label change applies to all jobs in the submission (so the header always shows the new name).
         // Settings changes (epochs, ESR, LR) and editedAt apply only to queued jobs.
-        const isQueued = job.status === 'queued'
-        const settingsUpdate = isQueued && hasSettingsChange ? {
+        const isEditable = job.status === 'queued' || job.status === 'staged'
+        const settingsUpdate = isEditable && hasSettingsChange ? {
           ...(typeof changes.epochs === 'number' ? { epochs: changes.epochs, progressEpochTotal: changes.epochs } : {}),
           ...(changes.thresholdEsr !== undefined ? { thresholdEsr: changes.thresholdEsr } : {}),
           ...(typeof changes.lr === 'number' ? { lr: changes.lr } : {}),

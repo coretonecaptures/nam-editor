@@ -870,7 +870,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       : `${root}/${resolvedModelName}.png`
   }, [activeGraphFormula, formulaOverrideActive, graphFormulaPreviewPath, manualRoutingMode, manualRoutingSourceFolder, previewArchitectureFolder, previewGraphUsesArchitectureSubfolders, resolvedModelName, trainPath])
 
-  const getManualRoutingForOutput = (outputPath: string, architectureName?: string) => {
+  const getManualRoutingForOutput = (outputPath: string, architectureName?: string, fromFolder?: string) => {
     if (manualRoutingMode === 'sibling_processed') {
       const sourceDir = outputPath.replace(/\\/g, '/').split('/').slice(0, -1).join('/')
       const processedRoot = `${sourceDir.replace(/\/+$/, '')}/_Processed`
@@ -901,10 +901,28 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
         }
       }
     }
+    // Flat root mode: if files came from a folder scan, preserve relative subfolder structure
+    // so /scan-root/amp/clean/di.wav → /output-root/amp/clean/ instead of all into /output-root/
+    const root = trainPath.trim().replace(/\\/g, '/').replace(/\/+$/, '')
+    if (fromFolder) {
+      const normalizedFrom = fromFolder.replace(/\\/g, '/').replace(/\/+$/, '')
+      const sourceDir = outputPath.replace(/\\/g, '/').split('/').slice(0, -1).join('/')
+      const relativeSuffix = sourceDir.toLowerCase().startsWith(normalizedFrom.toLowerCase())
+        ? sourceDir.slice(normalizedFrom.length)
+        : ''
+      const resolvedRoot = relativeSuffix ? `${root}${relativeSuffix}` : root
+      return {
+        finalModelRoot: resolvedRoot,
+        processedWavRoot: '',
+        graphRoot: resolvedRoot,
+        graphRootResolved: false,
+        sourcePostProcess: 'keep' as const,
+      }
+    }
     return {
-      finalModelRoot: trainPath.trim(),
+      finalModelRoot: root,
       processedWavRoot: '',
-      graphRoot: trainPath.trim(),
+      graphRoot: root,
       graphRootResolved: false,
       sourcePostProcess: 'keep' as const,
     }
@@ -1075,7 +1093,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
           const { normalizeWav: resolvedNormalizeWav, normalizeWavTargetDb: resolvedNormalizeDb } =
             resolveNormalize(presetNorm as 'global' | 'on' | 'off', presetNormDb)
           return presetArchitectures.map((architecture) => {
-            const routing = getManualRoutingForOutput(wavItem.path, architecture)
+            const routing = getManualRoutingForOutput(wavItem.path, architecture, wavItem.fromFolder)
             const jobMode = deriveNamMode(architecture)
             const profileCfg = jobMode === 'a1' ? lookupProfileConfig(architecture, settings.userCaptureProfiles ?? []) : null
             return {
@@ -3573,8 +3591,20 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                             {/* Action buttons */}
                             <div className="flex items-center gap-1 flex-shrink-0">
                               <button
-                                onClick={() => setSection('new')}
+                                onClick={e => {
+                                  e.stopPropagation()
+                                  const firstStaged = group.jobs.find(j => j.status === 'staged')
+                                  if (!firstStaged) return
+                                  const submissionId = group.jobs[0]?.submissionId ?? ''
+                                  setEditBatchModal({ submissionId, label: displayLabel, epochs: firstStaged.epochs, thresholdEsr: firstStaged.thresholdEsr, lr: firstStaged.lr, lrDecay: firstStaged.lrDecay })
+                                  setEditBatchName(displayLabel)
+                                  setEditBatchEpochs(String(firstStaged.epochs))
+                                  setEditBatchThresholdEsr(firstStaged.thresholdEsr != null ? String(firstStaged.thresholdEsr) : '')
+                                  setEditBatchLr(String(firstStaged.lr))
+                                  setEditBatchLrDecay(String(firstStaged.lrDecay))
+                                }}
                                 className="h-7 inline-flex items-center gap-1 px-2 rounded-[7px] text-[11px] font-medium border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2 transition-colors"
+                                title="Edit settings for all captures in this parked batch"
                               >
                                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" /></svg>
                                 Edit
@@ -4903,7 +4933,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 setEditBatchModal(null)
               }}
               className="h-9 px-4 rounded-xl text-[13px] bg-nm-accent hover:bg-nm-accent/90 text-white font-medium transition-colors"
-            >Apply to queued</button>
+            >{trainerState.queue.some(j => j.submissionId === editBatchModal?.submissionId && j.status === 'staged') ? 'Apply to parked' : 'Apply to queued'}</button>
           </div>
         </div>
       </div>
