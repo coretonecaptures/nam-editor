@@ -7,3 +7,7 @@ dist/
 # Local Claude/Codex machine config
 .claude/settings.local.json
 .claude/*.local.json
+
+# Local design assets and working files
+design/
+work/
