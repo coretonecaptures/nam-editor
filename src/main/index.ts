@@ -1065,6 +1065,30 @@ function getPersistableTrainerQueueJobs(): TrainerQueueJob[] {
   return trainerQueue.slice(-TRAINER_QUEUE_PERSIST_CAP)
 }
 
+// A batch (submission) leaves the active queue once every one of its non-staged jobs is terminal.
+// Its permanent record already lives in trainer-history.json, so keeping duplicate terminal rows in
+// the queue is what made the same finished item show up in BOTH the queue and history. Parked
+// (staged) jobs are never pruned, and partially-finished batches keep their terminal rows so the
+// batch card stays accurate and the rows survive a restart. Returns true if anything was removed.
+function pruneFinishedBatchesFromQueue(): boolean {
+  const submissionAllTerminal = new Map<string, boolean>()
+  for (const job of trainerQueue) {
+    if (!job.submissionId || job.status === 'staged') continue
+    const soFar = submissionAllTerminal.get(job.submissionId) ?? true
+    submissionAllTerminal.set(job.submissionId, soFar && isTrainerQueueTerminalStatus(job.status))
+  }
+  const fullyFinished = new Set(
+    [...submissionAllTerminal.entries()].filter(([, all]) => all).map(([id]) => id)
+  )
+  const before = trainerQueue.length
+  trainerQueue = trainerQueue.filter((job) => {
+    if (!isTrainerQueueTerminalStatus(job.status)) return true // keep staged/queued/running/starting
+    if (!job.submissionId) return false                         // drop ungrouped terminal solo jobs
+    return !fullyFinished.has(job.submissionId)                 // drop terminal rows of finished batches
+  })
+  return trainerQueue.length !== before
+}
+
 function saveTrainerHistory(): void {
   try {
     fs.mkdirSync(dirname(getTrainerHistoryPath()), { recursive: true })
@@ -2614,13 +2638,9 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
 
     emitTrainerState()
 
-    // Auto-clear batch from queue when every job in it succeeded.
-    if (finalStatus === 'success' && job.submissionId) {
-      const batchJobs = trainerQueue.filter(j => j.submissionId === job.submissionId && j.status !== 'staged')
-      if (batchJobs.length > 0 && batchJobs.every(j => j.status === 'success')) {
-        trainerQueue = trainerQueue.filter(j => j.submissionId !== job.submissionId)
-      }
-    }
+    // Once every non-staged job in this batch is terminal (any outcome), move it out of the queue —
+    // its full record lives in history. Failed batches are retried from History, not inline.
+    if (pruneFinishedBatchesFromQueue()) emitTrainerState()
 
     if (!trainerPauseAfterCurrent) {
       await pumpTrainerQueue(job.submissionId)
@@ -5319,30 +5339,14 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('trainer:clearFinished', async () => {
-    // Find submissions where every non-staged job is terminal (no queued/running siblings).
-    // Only remove jobs that belong to one of those fully-finished submissions.
-    const terminalStatuses = new Set(['success', 'error', 'canceled'])
-    const submissionStatus = new Map<string, boolean>() // true = all terminal
-    for (const job of trainerQueue) {
-      if (!job.submissionId || job.status === 'staged') continue
-      const allTerminalSoFar = submissionStatus.get(job.submissionId) ?? true
-      submissionStatus.set(job.submissionId, allTerminalSoFar && terminalStatuses.has(job.status))
-    }
-    const fullyFinishedSubmissions = new Set(
-      [...submissionStatus.entries()].filter(([, allTerminal]) => allTerminal).map(([id]) => id)
-    )
-    // Also remove ungrouped terminal jobs (no submissionId).
-    trainerQueue = trainerQueue.filter((job) => {
-      if (!terminalStatuses.has(job.status)) return true
-      if (!job.submissionId) return false
-      return !fullyFinishedSubmissions.has(job.submissionId)
-    })
+    pruneFinishedBatchesFromQueue()
     emitTrainerState()
     return { success: true }
   })
 
   ipcMain.handle('trainer:removeQueued', async () => {
     trainerQueue = trainerQueue.filter((job) => job.status !== 'queued')
+    pruneFinishedBatchesFromQueue() // removing queued jobs may leave a batch fully terminal
     emitTrainerState()
     return { success: true }
   })
@@ -5354,6 +5358,7 @@ app.whenReady().then(async () => {
       return { success: false, error: 'Cannot remove the active training job while it is running.' }
     }
     trainerQueue.splice(index, 1)
+    pruneFinishedBatchesFromQueue() // removing a job may leave its batch fully terminal
     emitTrainerState()
     return { success: true }
   })

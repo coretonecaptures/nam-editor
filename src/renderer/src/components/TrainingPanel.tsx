@@ -492,20 +492,16 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     prevQueueJobStatusRef.current = next
   }, [trainerState.queue])
 
-  // Auto-clear finished batches from the queue on both transitions:
-  //   idle → active: clear leftovers before new work starts; also clear output notices
-  //   active → idle: clear as soon as the queue drains
+  // Clear stale completion toasts when new work starts. Finished batches themselves are pruned
+  // from the queue by the MAIN process once every job in them is terminal (pruneFinishedBatchesFromQueue).
+  // The renderer must NOT call clearFinishedTrainerRuns() on mount/transition — that previously wiped
+  // the terminal rows of paused, partially-finished batches that were correctly restored from disk.
   const prevHadActiveRef = useRef(false)
   useEffect(() => {
     const hasActive = trainerState.queue.some(j => j.status === 'queued' || j.status === 'running' || j.status === 'starting')
     const wasActive = prevHadActiveRef.current
-    if (hasActive && !wasActive) {
-      // idle → active
-      if (outputNotices.length > 0) setOutputNotices([])
-      void window.api.clearFinishedTrainerRuns()
-    } else if (!hasActive && wasActive) {
-      // active → idle (queue just drained)
-      void window.api.clearFinishedTrainerRuns()
+    if (hasActive && !wasActive && outputNotices.length > 0) {
+      setOutputNotices([])
     }
     prevHadActiveRef.current = hasActive
   }, [trainerState.queue, outputNotices.length])
