@@ -3613,8 +3613,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                   const firstStaged = group.jobs.find(j => j.status === 'staged')
                                   if (!firstStaged) return
                                   const submissionId = group.jobs[0]?.submissionId ?? ''
-                                  setEditBatchModal({ submissionId, label: displayLabel, epochs: firstStaged.epochs, thresholdEsr: firstStaged.thresholdEsr, lr: firstStaged.lr, lrDecay: firstStaged.lrDecay })
-                                  setEditBatchName(displayLabel)
+                                  setEditBatchModal({ submissionId, label: group.label, epochs: firstStaged.epochs, thresholdEsr: firstStaged.thresholdEsr, lr: firstStaged.lr, lrDecay: firstStaged.lrDecay })
+                                  setEditBatchName(group.label)
                                   setEditBatchEpochs(String(firstStaged.epochs))
                                   setEditBatchThresholdEsr(firstStaged.thresholdEsr != null ? String(firstStaged.thresholdEsr) : '')
                                   setEditBatchLr(String(firstStaged.lr))
