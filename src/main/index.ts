@@ -80,6 +80,23 @@ function openExternalSafe(raw: string, allowedProtocols = ['https:', 'mailto:'])
 // Module-level reference so IPC handlers can always reach the window
 let mainWindow: BrowserWindow | null = null
 
+// Robust IPC send. `webContents.isDestroyed()` is NOT sufficient: when the renderer's
+// render frame is disposed (renderer crash, or frame-swap on focus-loss/occlusion on
+// Windows) isDestroyed() still returns false but `.send()` throws "Render frame was
+// disposed before WebFrameMain could be accessed". try/catch is the only reliable guard.
+// Returns true if the message was sent.
+function safeSend(channel: string, ...args: unknown[]): boolean {
+  const wc = mainWindow?.webContents
+  if (!mainWindow || mainWindow.isDestroyed() || !wc || wc.isDestroyed()) return false
+  try {
+    wc.send(channel, ...args)
+    return true
+  } catch {
+    // Frame disposed mid-flight — swallow. The renderer reloads itself or is gone.
+    return false
+  }
+}
+
 // Folder watcher for auto-refresh feature
 let folderWatcher: import('fs').FSWatcher | null = null
 let folderWatchRules: FolderWatchRule[] = []
@@ -1360,6 +1377,16 @@ let trainerQueueSaveTimer: NodeJS.Timeout | null = null
 let trainerQueueLastSignature = ''
 let trainerLastEmitSignature = ''
 
+// Coalesce high-frequency trainer:update pushes. The trainer spews tqdm/log lines many
+// times per second, and each emit structured-clones the full state (up to 600 log lines +
+// the whole queue) across the IPC boundary. Sending all of them floods the renderer's
+// message queue — especially when the window is backgrounded and Chromium throttles its
+// main thread — which is the actual trigger for the renderer choking and going blank.
+// Instead we mark the state dirty and flush the LATEST snapshot at most every ~120ms.
+const TRAINER_EMIT_FLUSH_MS = 120
+let trainerEmitFlushTimer: NodeJS.Timeout | null = null
+let trainerEmitDirty = false
+
 // Cheap composition signature — captures which jobs exist and what their statuses are. Excludes
 // progress fields that change every tick so we don't churn the signature unnecessarily.
 function computeTrainerQueueSignature(): string {
@@ -1464,17 +1491,39 @@ function emitTrainerState(): void {
     history: trainerHistory,
     watcherState: makeTrainerWatcherSnapshot(),
   }
-  const emitSig = computeTrainerEmitSignature()
-  if (emitSig !== trainerLastEmitSignature) {
-    trainerLastEmitSignature = emitSig
-    // History is delivered on its own low-frequency channel (emitTrainerhistory), NOT bundled into
-    // this high-frequency progress push — otherwise the full history array is structured-cloned over
-    // IPC on every epoch/ESR tick. Strip it here; the renderer merges history from 'trainer:history'.
-    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
-      mainWindow.webContents.send('trainer:update', { ...trainerState, history: EMPTY_TRAINER_HISTORY })
-    }
+  trainerEmitDirty = true
+  // Non-running transitions (start/finish/error/idle/cancel) are rare and user-visible — push them
+  // out immediately. The high-frequency 'running' progress ticks get coalesced behind the timer.
+  if (trainerState.status !== 'running') {
+    flushTrainerState()
+  } else {
+    scheduleTrainerFlush()
   }
   persistTrainerQueueThrottled()
+}
+
+function scheduleTrainerFlush(): void {
+  if (trainerEmitFlushTimer || !trainerEmitDirty) return
+  trainerEmitFlushTimer = setTimeout(() => {
+    trainerEmitFlushTimer = null
+    flushTrainerState()
+  }, TRAINER_EMIT_FLUSH_MS)
+}
+
+function flushTrainerState(): void {
+  if (trainerEmitFlushTimer) {
+    clearTimeout(trainerEmitFlushTimer)
+    trainerEmitFlushTimer = null
+  }
+  if (!trainerEmitDirty) return
+  trainerEmitDirty = false
+  const emitSig = computeTrainerEmitSignature()
+  if (emitSig === trainerLastEmitSignature) return
+  trainerLastEmitSignature = emitSig
+  // History is delivered on its own low-frequency channel (emitTrainerHistory), NOT bundled into
+  // this high-frequency progress push — otherwise the full history array is structured-cloned over
+  // IPC on every epoch/ESR tick. Strip it here; the renderer merges history from 'trainer:history'.
+  safeSend('trainer:update', { ...trainerState, history: EMPTY_TRAINER_HISTORY })
 }
 
 const EMPTY_TRAINER_HISTORY: TrainerHistoryEntry[] = []
@@ -1482,9 +1531,7 @@ const EMPTY_TRAINER_HISTORY: TrainerHistoryEntry[] = []
 // Push the full history on its own channel. Called only when history actually changes (job finishes,
 // entries forgotten/purged) — not on every progress tick — so cap size no longer affects run-time cost.
 function emitTrainerHistory(): void {
-  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
-    mainWindow.webContents.send('trainer:history', trainerHistory)
-  }
+  safeSend('trainer:history', trainerHistory)
 }
 
 const TRAINER_LOG_NOISE_RE = /^\s*(Validation(?:\s+DataLoader\s+\d+)?|Sanity Checking(?:\s+DataLoader\s+\d+)?|Training):\s*0%\|.*0\/\d+\s*\[00:00<\?,?\s*\?it\/s\]/i
@@ -3121,7 +3168,7 @@ async function copyWatchedFile(rule: FolderWatchRule, filePath: string): Promise
   try {
     const stable = await waitForStableFile(normalizedSource)
     if (!stable) {
-      mainWindow?.webContents.send('folderWatch:error', {
+      safeSend('folderWatch:error', {
         sourceFolder: rule.sourceFolder.replace(/\\/g, '/'),
         destFolder: rule.destFolder.replace(/\\/g, '/'),
         message: `Timed out waiting for ${basename(normalizedSource)} to finish writing`
@@ -3150,7 +3197,7 @@ async function copyWatchedFile(rule: FolderWatchRule, filePath: string): Promise
       contentHash,
     }
     rememberImportedWatchedFile(rule, importEntry)
-    mainWindow?.webContents.send('folderWatch:copied', {
+    safeSend('folderWatch:copied', {
       sourcePath: normalizedSource.replace(/\\/g, '/'),
       destPath: destPath.replace(/\\/g, '/'),
       sourceFolder: rule.sourceFolder.replace(/\\/g, '/'),
@@ -3158,7 +3205,7 @@ async function copyWatchedFile(rule: FolderWatchRule, filePath: string): Promise
       importEntry,
     })
   } catch (err) {
-    mainWindow?.webContents.send('folderWatch:error', {
+    safeSend('folderWatch:error', {
       sourceFolder: rule.sourceFolder.replace(/\\/g, '/'),
       destFolder: rule.destFolder.replace(/\\/g, '/'),
       message: String(err)
@@ -3182,7 +3229,7 @@ async function backfillImportHashes(rule: FolderWatchRule): Promise<void> {
   }
   if (changed) {
     folderWatchImports.set(key, entries)
-    mainWindow?.webContents.send('folderWatch:importsBackfilled', { key, entries })
+    safeSend('folderWatch:importsBackfilled', { key, entries })
   }
 }
 
@@ -3195,7 +3242,7 @@ async function syncExistingWatchedFiles(rule: FolderWatchRule): Promise<void> {
       await copyWatchedFile(rule, join(rule.sourceFolder, entry.name))
     }
   } catch (err) {
-    mainWindow?.webContents.send('folderWatch:error', {
+    safeSend('folderWatch:error', {
       sourceFolder: rule.sourceFolder.replace(/\\/g, '/'),
       destFolder: rule.destFolder.replace(/\\/g, '/'),
       message: `Initial sync failed: ${String(err)}`
@@ -3414,6 +3461,49 @@ function createWindow(): void {
   mainWindow.webContents.on('will-navigate', (event) => {
     event.preventDefault()
   })
+
+  // ── Renderer crash recovery ────────────────────────────────────────────────
+  // If the renderer process dies (OOM, GPU process crash, etc.) the window goes
+  // blank with no recovery. Log the reason (so we can finally diagnose the "goes
+  // blank when left open / loses focus" reports) and auto-reload once.
+  let reloadingAfterCrash = false
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    log(`render-process-gone: reason=${details.reason} exitCode=${details.exitCode}`)
+    if (reloadingAfterCrash) return
+    reloadingAfterCrash = true
+    setTimeout(() => {
+      reloadingAfterCrash = false
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        log('reloading window after renderer crash')
+        mainWindow.reload()
+      }
+    }, 300)
+  })
+  mainWindow.webContents.on('unresponsive', () => {
+    log('renderer became unresponsive')
+  })
+  mainWindow.webContents.on('did-fail-load', (_e, errorCode, errorDesc, validatedURL) => {
+    log(`did-fail-load: code=${errorCode} desc=${errorDesc} url=${validatedURL}`)
+  })
+  // Surface renderer-side errors into the main log so a blank screen caused by an
+  // uncaught React render exception leaves a trace. Electron changed this event's
+  // signature in v36 (positional level/message → a details object), so read both forms.
+  const onConsoleMessage = ((...args: unknown[]): void => {
+    const second = args[1]
+    let level: unknown
+    let message: unknown
+    if (second && typeof second === 'object') {
+      level = (second as { level?: unknown }).level
+      message = (second as { message?: unknown }).message
+    } else {
+      level = second
+      message = args[2]
+    }
+    if (level === 'error' || level === 3) {
+      log(`renderer console.error: ${String(message ?? '')}`)
+    }
+  }) as (...args: unknown[]) => void
+  mainWindow.webContents.on('console-message', onConsoleMessage as never)
 
   // Enable right-click Copy/Paste context menu for text selection in the app
   mainWindow.webContents.on('context-menu', (_event, params) => {
@@ -4832,7 +4922,7 @@ app.whenReady().then(async () => {
         if (debounceTimer) clearTimeout(debounceTimer)
         debounceTimer = setTimeout(() => {
           if (Date.now() < watcherSuppressUntil) return
-          mainWindow?.webContents.send('folder:changed')
+          safeSend('folder:changed')
         }, 1500)
       })
     } catch (err) {
