@@ -3227,7 +3227,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                 if (!firstQueued) return
                                 const submissionId = group.jobs[0]?.submissionId ?? ''
                                 setEditBatchModal({ submissionId, label: displayLabel, epochs: firstQueued.epochs, thresholdEsr: firstQueued.thresholdEsr, lr: firstQueued.lr, lrDecay: firstQueued.lrDecay })
-                                setEditBatchName(group.jobs[0]?.submissionLabel ?? displayLabel)
+                                setEditBatchName(displayLabel)
                                 setEditBatchEpochs(String(firstQueued.epochs))
                                 setEditBatchThresholdEsr(firstQueued.thresholdEsr != null ? String(firstQueued.thresholdEsr) : '')
                                 setEditBatchLr(String(firstQueued.lr))

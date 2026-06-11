@@ -5556,13 +5556,14 @@ app.whenReady().then(async () => {
     'trainer:editSubmission',
     async (_event, submissionId: string, changes: { epochs?: number; thresholdEsr?: number | null; lr?: number; lrDecay?: number; submissionLabel?: string }) => {
       const now = new Date().toISOString()
+      const hasSettingsChange = typeof changes.epochs === 'number' || changes.thresholdEsr !== undefined || typeof changes.lr === 'number' || typeof changes.lrDecay === 'number'
       let changed = false
       trainerQueue = trainerQueue.map((job) => {
         if (job.submissionId !== submissionId) return job
         // Label change applies to all jobs in the submission (so the header always shows the new name).
-        // Settings changes (epochs, ESR, LR) apply only to queued jobs.
+        // Settings changes (epochs, ESR, LR) and editedAt apply only to queued jobs.
         const isQueued = job.status === 'queued'
-        const settingsUpdate = isQueued ? {
+        const settingsUpdate = isQueued && hasSettingsChange ? {
           ...(typeof changes.epochs === 'number' ? { epochs: changes.epochs, progressEpochTotal: changes.epochs } : {}),
           ...(changes.thresholdEsr !== undefined ? { thresholdEsr: changes.thresholdEsr } : {}),
           ...(typeof changes.lr === 'number' ? { lr: changes.lr } : {}),
@@ -5570,7 +5571,7 @@ app.whenReady().then(async () => {
           editedAt: now,
         } : {}
         const labelUpdate = typeof changes.submissionLabel === 'string' ? { submissionLabel: changes.submissionLabel } : {}
-        if (!isQueued && Object.keys(labelUpdate).length === 0) return job
+        if (Object.keys(settingsUpdate).length === 0 && Object.keys(labelUpdate).length === 0) return job
         changed = true
         return { ...job, ...settingsUpdate, ...labelUpdate }
       })
