@@ -1367,13 +1367,8 @@ function computeTrainerQueueSignature(): string {
 }
 
 function computeTrainerEmitSignature(): string {
-  // For the active job include full progress; all other jobs only need id+status+label.
-  // This avoids an O(n) full-field map on every progress tick when the queue is large.
-  const activeJobId = trainerState.activeJobId
   const queueSig = trainerQueue.map((job) => (
-    job.jobId === activeJobId
-      ? `${job.jobId}:${job.status}:${job.progressEpochCurrent ?? ''}:${job.progressBatchCurrent ?? ''}:${job.validationEsr ?? ''}:${job.validationEsrFull ?? ''}:${job.submissionLabel ?? ''}:${job.editedAt ?? ''}`
-      : `${job.jobId}:${job.status}:${job.submissionLabel ?? ''}:${job.editedAt ?? ''}`
+    `${job.jobId}:${job.status}:${job.progressEpochCurrent ?? ''}:${job.progressBatchCurrent ?? ''}:${job.validationEsr ?? ''}:${job.validationEsrFull ?? ''}:${job.submissionLabel ?? ''}:${job.editedAt ?? ''}`
   )).join('|')
   const historySig = trainerHistory.slice(-3).map((entry) => (
     `${entry.jobId}:${entry.status}:${entry.finishedAt ?? ''}:${entry.validationEsr ?? ''}:${entry.validationEsrFull ?? ''}`
@@ -1475,7 +1470,9 @@ function emitTrainerState(): void {
     // History is delivered on its own low-frequency channel (emitTrainerhistory), NOT bundled into
     // this high-frequency progress push — otherwise the full history array is structured-cloned over
     // IPC on every epoch/ESR tick. Strip it here; the renderer merges history from 'trainer:history'.
-    mainWindow?.webContents.send('trainer:update', { ...trainerState, history: EMPTY_TRAINER_HISTORY })
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send('trainer:update', { ...trainerState, history: EMPTY_TRAINER_HISTORY })
+    }
   }
   persistTrainerQueueThrottled()
 }
@@ -1485,7 +1482,9 @@ const EMPTY_TRAINER_HISTORY: TrainerHistoryEntry[] = []
 // Push the full history on its own channel. Called only when history actually changes (job finishes,
 // entries forgotten/purged) — not on every progress tick — so cap size no longer affects run-time cost.
 function emitTrainerHistory(): void {
-  mainWindow?.webContents.send('trainer:history', trainerHistory)
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send('trainer:history', trainerHistory)
+  }
 }
 
 const TRAINER_LOG_NOISE_RE = /^\s*(Validation(?:\s+DataLoader\s+\d+)?|Sanity Checking(?:\s+DataLoader\s+\d+)?|Training):\s*0%\|.*0\/\d+\s*\[00:00<\?,?\s*\?it\/s\]/i

@@ -121,11 +121,8 @@ function buildTone3000FileName(name: string): string {
 }
 
 function buildTrainerSnapshotSignature(state: TrainerStateSnapshot): string {
-  const activeJobId = state.activeJobId
   const queueSig = state.queue.map((job) => (
-    job.jobId === activeJobId
-      ? `${job.jobId}:${job.status}:${job.progressEpochCurrent ?? ''}:${job.progressBatchCurrent ?? ''}:${job.validationEsr ?? ''}:${job.validationEsrFull ?? ''}`
-      : `${job.jobId}:${job.status}`
+    `${job.jobId}:${job.status}:${job.progressEpochCurrent ?? ''}:${job.progressBatchCurrent ?? ''}:${job.validationEsr ?? ''}:${job.validationEsrFull ?? ''}:${job.submissionLabel ?? ''}:${job.editedAt ?? ''}`
   )).join('|')
   const historySig = state.history.slice(-3).map((entry) => (
     `${entry.jobId}:${entry.status}:${entry.finishedAt ?? ''}:${entry.validationEsr ?? ''}:${entry.validationEsrFull ?? ''}`
