@@ -5577,7 +5577,7 @@ app.whenReady().then(async () => {
       })
       if (!changed) return { success: false, error: 'No jobs found for that batch.' }
       emitTrainerState()
-      persistTrainerQueueThrottled()
+      saveTrainerQueue()
       return { success: true }
     }
   )
