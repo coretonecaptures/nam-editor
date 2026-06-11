@@ -1072,20 +1072,23 @@ function getPersistableTrainerQueueJobs(): TrainerQueueJob[] {
 // (staged) jobs are never pruned, and partially-finished batches keep their terminal rows so the
 // batch card stays accurate and the rows survive a restart. Returns true if anything was removed.
 function pruneFinishedBatchesFromQueue(): boolean {
-  const submissionAllTerminal = new Map<string, boolean>()
+  // Track whether ALL non-staged jobs in a submission are success.
+  // Any error or canceled job means the batch stays — the user must dismiss it,
+  // and keeping it in the queue prevents the watcher from re-enqueuing the same files.
+  const submissionAllSuccess = new Map<string, boolean>()
   for (const job of trainerQueue) {
     if (!job.submissionId || job.status === 'staged') continue
-    const soFar = submissionAllTerminal.get(job.submissionId) ?? true
-    submissionAllTerminal.set(job.submissionId, soFar && isTrainerQueueTerminalStatus(job.status))
+    const soFar = submissionAllSuccess.get(job.submissionId) ?? true
+    submissionAllSuccess.set(job.submissionId, soFar && job.status === 'success')
   }
-  const fullyFinished = new Set(
-    [...submissionAllTerminal.entries()].filter(([, all]) => all).map(([id]) => id)
+  const fullySucceeded = new Set(
+    [...submissionAllSuccess.entries()].filter(([, all]) => all).map(([id]) => id)
   )
   const before = trainerQueue.length
   trainerQueue = trainerQueue.filter((job) => {
     if (!isTrainerQueueTerminalStatus(job.status)) return true // keep staged/queued/running/starting
     if (!job.submissionId) return false                         // drop ungrouped terminal solo jobs
-    return !fullyFinished.has(job.submissionId)                 // drop terminal rows of finished batches
+    return !fullySucceeded.has(job.submissionId)                // only drop all-success batches
   })
   return trainerQueue.length !== before
 }
