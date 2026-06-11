@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, startTransition, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
 import type { AppSettings, TrainingBundle, TrainingPreset, UserCaptureProfile } from '../types/settings'
@@ -408,26 +408,28 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       const nextSig = buildTrainerSnapshotSignature(state)
       if (trainerSnapshotSigRef.current === nextSig) return
       trainerSnapshotSigRef.current = nextSig
-      setTrainerState(state)
-      if (state.activeJobId !== lastActiveJobId) {
-        lastActiveJobId = state.activeJobId ?? null
-        if (state.activeJobId) setEsrSeries([])
-      }
-      if (state.status === 'running' && state.progressEpochCurrent && typeof state.epochValidationEsr === 'number') {
-        setEsrSeries(prev => {
-          const epoch = state.progressEpochCurrent!
-          if (prev.length > 0 && prev[prev.length - 1].epoch === epoch) return prev
-          const { value: bestEsr } = getBestLiveEsr(state)
-          return [...prev, { epoch, esr: (bestEsr ?? state.epochValidationEsr) as number }]
-        })
-      }
-      if ((state.status === 'success' || state.status === 'error') && typeof state.validationEsr === 'number') {
-        setEsrSeries(prev => {
-          if (prev.length > 0) return prev
-          const epoch = state.progressEpochTotal ?? state.epochs ?? 0
-          return [{ epoch, esr: state.validationEsr as number }]
-        })
-      }
+      startTransition(() => {
+        setTrainerState(state)
+        if (state.activeJobId !== lastActiveJobId) {
+          lastActiveJobId = state.activeJobId ?? null
+          if (state.activeJobId) setEsrSeries([])
+        }
+        if (state.status === 'running' && state.progressEpochCurrent && typeof state.epochValidationEsr === 'number') {
+          setEsrSeries(prev => {
+            const epoch = state.progressEpochCurrent!
+            if (prev.length > 0 && prev[prev.length - 1].epoch === epoch) return prev
+            const { value: bestEsr } = getBestLiveEsr(state)
+            return [...prev, { epoch, esr: (bestEsr ?? state.epochValidationEsr) as number }]
+          })
+        }
+        if ((state.status === 'success' || state.status === 'error') && typeof state.validationEsr === 'number') {
+          setEsrSeries(prev => {
+            if (prev.length > 0) return prev
+            const epoch = state.progressEpochTotal ?? state.epochs ?? 0
+            return [{ epoch, esr: state.validationEsr as number }]
+          })
+        }
+      })
     }
     void window.api.getTrainerState().then((state) => {
       if (!disposed) {
@@ -446,7 +448,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       trainerHistoryRef.current = history
       // Bypass the snapshot-signature gate (which only hashes the oldest 3 entries) — a history
       // change must always re-render the History tab, so patch trainerState.history directly.
-      setTrainerState((prev) => ({ ...prev, history }))
+      startTransition(() => { setTrainerState((prev) => ({ ...prev, history })) })
     })
     return () => {
       disposed = true
