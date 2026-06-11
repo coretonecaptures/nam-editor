@@ -1062,9 +1062,7 @@ function isTrainerQueueTerminalStatus(status: TrainerQueueJobStatus): boolean {
 }
 
 function getPersistableTrainerQueueJobs(): TrainerQueueJob[] {
-  // Only persist non-terminal jobs. Terminal entries live in trainer-history.json; keeping them
-  // in the queue file just causes completed batches to pile up across restarts.
-  return trainerQueue.filter((job) => !isTrainerQueueTerminalStatus(job.status))
+  return trainerQueue.slice(-TRAINER_QUEUE_PERSIST_CAP)
 }
 
 function saveTrainerHistory(): void {
