@@ -2416,7 +2416,9 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     if (trainerEmergencyRequeue) {
       trainerEmergencyRequeue = false
       const activeId = trainerEmergencyRequeueJobId
-      trainerEmergencyRequeueJobId = null
+      // Keep trainerEmergencyRequeueJobId set until after the async unlink so that
+      // suppressActiveJobSync stays true and emitTrainerState can't clobber the job
+      // back to 'canceled' during the I/O yield.
       if (activeId) {
         trainerQueue = trainerQueue.map((job) => (
           job.jobId === activeId
@@ -2426,6 +2428,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
       }
       // Clean up the partial workspace for the killed run so the retry starts fresh.
       try { await fs.promises.unlink(payloadPath) } catch { /* ignore */ }
+      trainerEmergencyRequeueJobId = null
       trainerState = {
         ...trainerState,
         status: 'idle',
@@ -3377,7 +3380,7 @@ function createWindow(): void {
     }).then(({ response }) => {
       if (response === 0) {
         closeConfirmed = true
-        if (requestEmergencyRequeueCurrentJob(false)) {
+        if (requestEmergencyRequeueCurrentJob(true)) {
           trainerState = {
             ...trainerState,
             status: 'canceled',
