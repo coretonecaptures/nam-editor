@@ -458,6 +458,7 @@ declare global {
       retryTrainerJob: (jobId: string) => Promise<{ success: boolean; error?: string }>
       clearFinishedTrainerRuns: () => Promise<{ success: boolean }>
       removeQueuedTrainerRuns: () => Promise<{ success: boolean }>
+      clearWatcherTrainerJobs: () => Promise<{ success: boolean; removed: number }>
       removeTrainerJob: (jobId: string) => Promise<{ success: boolean; error?: string }>
       watcherQueueAction: (jobId: string, action: 'remove' | 'skip' | 'move-canceled' | 'retry-now') => Promise<{ success: boolean; error?: string }>
       moveTrainerJob: (jobId: string, direction: 'up' | 'down') => Promise<{ success: boolean; error?: string }>

@@ -154,6 +154,8 @@ const api = {
     ipcRenderer.invoke('trainer:clearQueue'),
   removeQueuedTrainerRuns: (): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('trainer:removeQueued'),
+  clearWatcherTrainerJobs: (): Promise<{ success: boolean; removed: number }> =>
+    ipcRenderer.invoke('trainer:clearWatcherJobs'),
   removeTrainerJob: (jobId: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('trainer:removeJob', jobId),
   purgeTrainerHistoryEntries: (historyIds: string[]): Promise<{ success: boolean; error?: string; removed: number }> =>

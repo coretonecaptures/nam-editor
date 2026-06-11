@@ -338,6 +338,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const [historyContextMenu, setHistoryContextMenu] = useState<{ entry: TrainerHistoryEntry; x: number; y: number } | null>(null)
   const [historyPurgeConfirm, setHistoryPurgeConfirm] = useState<{ ids: string[]; label: string; mode: 'capture' | 'batch' } | null>(null)
   const [clearQueueConfirm, setClearQueueConfirm] = useState<{ count: number } | null>(null)
+  const [clearWatcherConfirm, setClearWatcherConfirm] = useState<{ count: number } | null>(null)
   const [graphModalSrc, setGraphModalSrc] = useState<string | null>(null)
   const [queueProfileFilter, setQueueProfileFilter] = useState<string>('all')
   const [queueStatusFilter, setQueueStatusFilter] = useState<string>('all')
@@ -3067,6 +3068,22 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     </button>
                   )
                 })()}
+                {(() => {
+                  const activeId = trainerState.activeJobId
+                  const activeRunning = activeId != null && (trainerState.status === 'starting' || trainerState.status === 'running')
+                  const watcherCount = trainerState.queue.filter(j => j.sourceMode === 'watcher' && !(activeRunning && j.jobId === activeId)).length
+                  if (watcherCount === 0) return null
+                  return (
+                    <button
+                      onClick={() => setClearWatcherConfirm({ count: watcherCount })}
+                      title={`Permanently remove all ${watcherCount} watcher-sourced row${watcherCount === 1 ? '' : 's'} from the queue and mark those files as already-seen so the watcher won't re-add them. The running job (if any) is left alone.`}
+                      className="h-[26px] px-2 rounded-md text-[11px] font-medium border border-amber-500/30 hover:bg-amber-500/10 text-amber-400 transition-colors inline-flex items-center gap-1"
+                    >
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                      Clear watcher ({watcherCount})
+                    </button>
+                  )
+                })()}
               </div>
 
               {!!queueActionError && (
@@ -4756,6 +4773,41 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               className="h-9 px-4 rounded-[9px] text-[12.5px] font-semibold bg-red-500 hover:bg-red-600 text-white transition-colors"
             >
               Clear {clearQueueConfirm.count} row{clearQueueConfirm.count === 1 ? '' : 's'}
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body
+    )}
+
+    {clearWatcherConfirm && createPortal(
+      <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/70" onClick={() => setClearWatcherConfirm(null)}>
+        <div className="rounded-2xl border border-nm-border bg-panel shadow-2xl max-w-[460px] w-full mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+          <div className="px-5 py-4 border-b border-nm-border-s flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-[9px] flex items-center justify-center flex-shrink-0" style={{ background: 'color-mix(in srgb, #f59e0b 16%, transparent)', color: '#fbbf24' }}>
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+            </div>
+            <div>
+              <div className="text-[14.5px] font-[660] text-nm-text">Permanently delete watcher batches?</div>
+              <div className="text-[12px] text-nm-text-3 mt-0.5">This can&apos;t be undone.</div>
+            </div>
+          </div>
+          <div className="px-5 py-4 text-[13px] text-nm-text-2 leading-[1.55]">
+            Removes <span className="font-semibold text-nm-text">{clearWatcherConfirm.count}</span> watcher-sourced row{clearWatcherConfirm.count === 1 ? '' : 's'} from the queue and marks those files as <span className="font-semibold text-nm-text">already-seen</span>, so the watcher will <span className="font-semibold text-nm-text">not re-add them</span> on the next scan.
+            <br /><br />
+            The currently <span className="font-semibold text-nm-text">running job is left alone</span>. Drop a file back into the watch folder (or use Re-scan) if you ever want one trained again.
+          </div>
+          <div className="px-5 py-3.5 bg-panel-2 border-t border-nm-border-s flex items-center justify-end gap-2">
+            <button onClick={() => setClearWatcherConfirm(null)} className="h-9 px-4 rounded-[9px] text-[12.5px] font-medium border border-nm-border-s bg-panel hover:bg-hov text-nm-text-2 transition-colors">Cancel</button>
+            <button
+              onClick={async () => {
+                setClearWatcherConfirm(null)
+                const result = await window.api.clearWatcherTrainerJobs()
+                if (!result.success) setQueueActionError('Could not clear watcher jobs.')
+              }}
+              className="h-9 px-4 rounded-[9px] text-[12.5px] font-semibold bg-amber-500 hover:bg-amber-600 text-white transition-colors"
+            >
+              Delete {clearWatcherConfirm.count} watcher row{clearWatcherConfirm.count === 1 ? '' : 's'}
             </button>
           </div>
         </div>

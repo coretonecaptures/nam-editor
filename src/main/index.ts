@@ -1036,8 +1036,12 @@ function loadTrainerQueue(): TrainerQueueJob[] {
       return []
     }
     // Demote anything that was mid-flight when the app was killed — its Python child is gone.
+    // A hard shutdown mid-run must behave like Emergency Stop: requeue the current job AND pause the
+    // queue, so nothing (manual OR autoRun watcher) auto-starts on next launch until the user resumes.
     // Otherwise preserve status exactly so finished/failed rows from previous sessions stay
     // visible above any newly-queued work, exactly as they were before the restart.
+    const hadMidFlight = jobs.some((job) => job.status === 'starting' || job.status === 'running')
+    if (hadMidFlight) trainerPauseAfterCurrent = true
     return jobs.map((job) => job.status === 'starting' || job.status === 'running'
       ? { ...job, status: 'queued' as const, startedAt: null, finishedAt: null, progressPercent: null, progressEpochCurrent: null, progressBatchCurrent: null, progressBatchTotal: null, progressRate: null, progressLatestLine: '' }
       : job)
@@ -5369,6 +5373,38 @@ app.whenReady().then(async () => {
     pruneFinishedBatchesFromQueue()
     emitTrainerState()
     return { success: true }
+  })
+
+  // Permanently remove ALL watcher-sourced jobs from the queue and mark each one's source file as
+  // already-seen (baseline-seen skip), so the next folder scan / fs.watch event does NOT re-enqueue
+  // them. The currently-running job (if it's a watcher job) is left alone — it can't be interrupted
+  // mid-training; the user must Emergency Stop first.
+  ipcMain.handle('trainer:clearWatcherJobs', async () => {
+    const activeId = trainerState.activeJobId
+    const activeIsRunning = activeId != null && (trainerState.status === 'starting' || trainerState.status === 'running')
+    const toRemove = trainerQueue.filter((job) =>
+      job.sourceMode === 'watcher' && !(activeIsRunning && job.jobId === activeId)
+    )
+    if (toRemove.length === 0) return { success: true, removed: 0 }
+    for (const job of toRemove) {
+      appendTrainerSkipped({
+        skipId: crypto.randomUUID(),
+        profileId: job.profileId,
+        profileName: job.profileName,
+        sourcePath: job.outputPath,
+        architecture: job.architecture,
+        sourceSizeBytes: job.sourceSizeBytes ?? null,
+        sourceMtimeMs: job.sourceMtimeMs ?? null,
+        skippedAt: new Date().toISOString(),
+        reason: 'baseline-seen',
+      })
+    }
+    const removeIds = new Set(toRemove.map((job) => job.jobId))
+    trainerQueue = trainerQueue.filter((job) => !removeIds.has(job.jobId))
+    saveTrainerSkipped()
+    saveTrainerQueue()
+    emitTrainerState()
+    return { success: true, removed: toRemove.length }
   })
 
   ipcMain.handle('trainer:removeQueued', async () => {
