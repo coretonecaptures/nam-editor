@@ -987,7 +987,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">Desktop bridge</p>
                     <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                      Off by default. Turn this on only if you want the iPhone/iPad companion to connect to NAM Lab on your local network.
+                      Off by default. Turn this on only if you want the iPhone/iPad companion to connect to NAM Lab on your local network. Use only on networks you trust (home/private Wi-Fi) — the connection is unencrypted, so avoid public or shared networks.
                     </p>
                   </div>
                   <label className="flex items-center gap-2 cursor-pointer select-none">

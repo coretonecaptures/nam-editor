@@ -378,21 +378,25 @@ function invalidateCompanionPackCache(): void {
   companionPackCache = null
 }
 
-// Defense-in-depth: confirm a client-supplied folder path actually sits inside the
-// library root the renderer told us about. Prevents a token-holder from reading or
-// writing pack JSON anywhere on disk (path traversal), even via "..".
-function companionPathWithinRoot(target: string): boolean {
-  const root = companionContext.rootFolder
-  if (!root || !target) return false
+// Defense-in-depth: confirm a target path actually sits inside an allowed parent
+// directory, resolving "." / ".." first. Prevents path traversal on disk.
+function isPathWithin(parentDir: string, target: string): boolean {
+  if (!parentDir || !target) return false
   try {
-    const rootResolved = resolve(normalizeSlashPath(root))
+    const parentResolved = resolve(normalizeSlashPath(parentDir))
     const targetResolved = resolve(normalizeSlashPath(target))
-    const a = process.platform === 'win32' ? rootResolved.toLowerCase() : rootResolved
+    const a = process.platform === 'win32' ? parentResolved.toLowerCase() : parentResolved
     const b = process.platform === 'win32' ? targetResolved.toLowerCase() : targetResolved
     return b === a || b.startsWith(a + sep)
   } catch {
     return false
   }
+}
+
+// Confirm a client-supplied folder path sits inside the library root the renderer told
+// us about. Stops a token-holder from reading/writing pack JSON anywhere on disk.
+function companionPathWithinRoot(target: string): boolean {
+  return isPathWithin(companionContext.rootFolder, target)
 }
 
 function getCompanionHostHints(): string[] {
@@ -5167,22 +5171,13 @@ app.whenReady().then(async () => {
   })
 
   // IPC: Persist settings to userData/settings.json (fire-and-forget from renderer)
+  // Bridge start/stop is driven by companion:updateBridgeConfig (called by the Settings
+  // toggle), which applies the change and returns fresh info atomically. We deliberately
+  // do NOT start/stop here too — that was a redundant second start/stop on every save.
+  // The enable value is still read back from settings.json at startup.
   ipcMain.on('settings:save', (_event, json: string) => {
     try {
       fs.writeFileSync(join(app.getPath('userData'), 'settings.json'), json, 'utf-8')
-      try {
-        const parsed = JSON.parse(json) as { enableCompanionApp?: unknown }
-        const nextEnabled = parsed.enableCompanionApp === true
-        if (!companionBridgeConfig) {
-          companionBridgeConfig = loadCompanionBridgeConfig()
-        }
-        companionBridgeConfig.enabled = nextEnabled
-        saveCompanionBridgeConfig()
-        if (nextEnabled) startCompanionBridgeServer()
-        else stopCompanionBridgeServer()
-      } catch (parseError) {
-        log(`settings:save companion sync parse error: ${String(parseError)}`)
-      }
     } catch (err) {
       log(`settings:save error: ${String(err)}`)
     }
@@ -5223,7 +5218,9 @@ app.whenReady().then(async () => {
     const existing = companionInbox.find((item) => item.id === itemId)
     if (!existing) return { success: false, error: 'Inbox item not found.' }
     companionInbox = companionInbox.filter((item) => item.id !== itemId)
-    if (existing.assetPath) {
+    // Only unlink assets that actually live in our inbox-assets dir (defense-in-depth
+    // against a tampered inbox JSON pointing assetPath elsewhere).
+    if (existing.assetPath && isPathWithin(companionInboxAssetsDir(), existing.assetPath)) {
       try { await fs.promises.unlink(existing.assetPath) } catch { /* ignore missing asset */ }
     }
     saveCompanionInbox()
