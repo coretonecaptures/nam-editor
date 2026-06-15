@@ -1,5 +1,5 @@
 import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net, Menu, safeStorage } from 'electron'
-import { join, dirname, basename, extname, normalize as normalizePath } from 'path'
+import { join, dirname, basename, extname, normalize as normalizePath, resolve, sep } from 'path'
 import fs from 'fs'
 import os from 'os'
 import http from 'http'
@@ -182,7 +182,12 @@ interface CompanionBridgeConfig {
   token: string
   port: number
   bindAddress: string
+  enabled: boolean
 }
+
+// Cap on companion request bodies (covers base64 inbox photo uploads) to bound memory/disk.
+const COMPANION_MAX_BODY_BYTES = 25 * 1024 * 1024
+const COMPANION_ASSET_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'heic', 'webp'])
 
 interface CompanionContextState {
   rootFolder: string
@@ -296,6 +301,7 @@ function loadCompanionBridgeConfig(): CompanionBridgeConfig {
     token: crypto.randomBytes(24).toString('hex'),
     port: COMPANION_BRIDGE_PORT,
     bindAddress: COMPANION_BRIDGE_BIND_ADDRESS,
+    enabled: true,
   }
   try {
     const raw = fs.readFileSync(companionBridgeConfigPath(), 'utf-8')
@@ -304,6 +310,9 @@ function loadCompanionBridgeConfig(): CompanionBridgeConfig {
       token: typeof parsed.token === 'string' && parsed.token.trim() ? parsed.token.trim() : fallback.token,
       port: Number.isFinite(parsed.port) && (parsed.port ?? 0) > 0 ? Math.floor(parsed.port as number) : fallback.port,
       bindAddress: typeof parsed.bindAddress === 'string' && parsed.bindAddress.trim() ? parsed.bindAddress.trim() : fallback.bindAddress,
+      // Toggleable kill switch: set "enabled": false in companion-bridge.json to keep the LAN
+      // server off entirely. Defaults on so the companion app works out of the box.
+      enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : fallback.enabled,
     }
     fs.writeFileSync(companionBridgeConfigPath(), JSON.stringify(config, null, 2), 'utf-8')
     return config
@@ -348,6 +357,23 @@ function saveCompanionInbox(): void {
 
 function invalidateCompanionPackCache(): void {
   companionPackCache = null
+}
+
+// Defense-in-depth: confirm a client-supplied folder path actually sits inside the
+// library root the renderer told us about. Prevents a token-holder from reading or
+// writing pack JSON anywhere on disk (path traversal), even via "..".
+function companionPathWithinRoot(target: string): boolean {
+  const root = companionContext.rootFolder
+  if (!root || !target) return false
+  try {
+    const rootResolved = resolve(normalizeSlashPath(root))
+    const targetResolved = resolve(normalizeSlashPath(target))
+    const a = process.platform === 'win32' ? rootResolved.toLowerCase() : rootResolved
+    const b = process.platform === 'win32' ? targetResolved.toLowerCase() : targetResolved
+    return b === a || b.startsWith(a + sep)
+  } catch {
+    return false
+  }
 }
 
 function getCompanionHostHints(): string[] {
@@ -506,7 +532,7 @@ async function scanCompanionPacks(rootPath: string, activeFolder: string): Promi
 
 async function readCompanionPackDetail(folderPath: string): Promise<CompanionPackDetail | null> {
   const normalized = normalizeSlashPath(folderPath)
-  if (!normalized) return null
+  if (!normalized || !companionPathWithinRoot(normalized)) return null
   try {
     const raw = await fs.promises.readFile(join(normalized, 'nam-pack.json'), 'utf-8')
     const data = JSON.parse(raw) as {
@@ -556,7 +582,7 @@ async function readCompanionPackDetail(folderPath: string): Promise<CompanionPac
 
 async function updateCompanionPackChecklistItem(folderPath: string, itemId: string, updates: { completed?: boolean; notes?: string; completedDate?: string }): Promise<CompanionPackDetail | null> {
   const normalized = normalizeSlashPath(folderPath)
-  if (!normalized || !itemId) return null
+  if (!normalized || !itemId || !companionPathWithinRoot(normalized)) return null
   try {
     const packPath = join(normalized, 'nam-pack.json')
     const raw = await fs.promises.readFile(packPath, 'utf-8')
@@ -595,11 +621,17 @@ async function createCompanionInboxItem(payload: {
   const kind: CompanionInboxKind = payload.kind === 'photo' || payload.kind === 'cover' ? payload.kind : 'note'
   let assetPath: string | null = null
   if (typeof payload.assetDataBase64 === 'string' && payload.assetDataBase64.trim()) {
-    const ext = (payload.assetExtension ?? 'jpg').replace(/[^a-z0-9]/gi, '').toLowerCase() || 'jpg'
+    const sanitizedExt = (payload.assetExtension ?? 'jpg').replace(/[^a-z0-9]/gi, '').toLowerCase()
+    // Only accept known image extensions; fall back to jpg for anything else.
+    const ext = COMPANION_ASSET_EXTENSIONS.has(sanitizedExt) ? sanitizedExt : 'jpg'
+    const buffer = Buffer.from(payload.assetDataBase64, 'base64')
+    if (buffer.length === 0 || buffer.length > COMPANION_MAX_BODY_BYTES) {
+      throw new Error('Companion asset is empty or too large.')
+    }
     const dir = companionInboxAssetsDir()
     await fs.promises.mkdir(dir, { recursive: true })
     const filePath = join(dir, `${Date.now()}-${crypto.randomUUID()}.${ext}`)
-    await fs.promises.writeFile(filePath, Buffer.from(payload.assetDataBase64, 'base64'))
+    await fs.promises.writeFile(filePath, buffer)
     assetPath = normalizeSlashPath(filePath)
   }
   const item: CompanionInboxItem = {
@@ -678,8 +710,14 @@ function writeCompanionJson(res: http.ServerResponse, status: number, payload: u
 
 async function readCompanionRequestBody(req: http.IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = []
+  let total = 0
   for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    total += buf.length
+    if (total > COMPANION_MAX_BODY_BYTES) {
+      throw new Error('Request body too large')
+    }
+    chunks.push(buf)
   }
   if (chunks.length === 0) return {}
   const raw = Buffer.concat(chunks).toString('utf-8')
@@ -687,15 +725,23 @@ async function readCompanionRequestBody(req: http.IncomingMessage): Promise<unkn
   return JSON.parse(raw)
 }
 
+function companionTokenMatches(provided: string | null | undefined, expected: string): boolean {
+  if (!provided) return false
+  const a = Buffer.from(provided)
+  const b = Buffer.from(expected)
+  // Length check first (leaks only length); timingSafeEqual requires equal-length buffers.
+  if (a.length !== b.length) return false
+  return crypto.timingSafeEqual(a, b)
+}
+
 function companionRequestAuthorized(req: http.IncomingMessage, url: URL): boolean {
   const expected = companionBridgeConfig?.token
   if (!expected) return false
   const auth = req.headers.authorization
   if (typeof auth === 'string' && auth.startsWith('Bearer ')) {
-    return auth.slice('Bearer '.length).trim() === expected
+    return companionTokenMatches(auth.slice('Bearer '.length).trim(), expected)
   }
-  const queryToken = url.searchParams.get('token')
-  return queryToken === expected
+  return companionTokenMatches(url.searchParams.get('token'), expected)
 }
 
 async function handleCompanionAction(action: string, body: unknown): Promise<{ ok: boolean; error?: string; data?: unknown }> {
@@ -964,6 +1010,10 @@ async function handleCompanionBridgeRequest(req: http.IncomingMessage, res: http
 
 function startCompanionBridgeServer(): void {
   if (companionBridgeServer || !companionBridgeConfig) return
+  if (!companionBridgeConfig.enabled) {
+    log('companion bridge disabled via config (enabled: false) — not starting')
+    return
+  }
   const server = http.createServer((req, res) => {
     void handleCompanionBridgeRequest(req, res).catch((error) => {
       writeCompanionJson(res, 500, { ok: false, error: String(error) })
