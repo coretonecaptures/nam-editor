@@ -1523,29 +1523,6 @@ export default function App() {
     showTransientStatus({ message: `Deleted "${item.title}" from the companion inbox.`, type: 'success' })
   }, [showTransientStatus])
 
-  const handleOpenCompanionInboxFolder = useCallback(async (item: CompanionInboxItem) => {
-    const folderPath = item.folderPath.replace(/\\/g, '/')
-    if (!folderPath) {
-      setStatus({ message: 'This inbox item does not have a folder attached yet.', type: 'error' })
-      return
-    }
-    const currentRoot = librarian.rootFolder?.replace(/\\/g, '/')
-    setCompanionInboxOpen(false)
-    if (currentRoot && (folderPath === currentRoot || folderPath.startsWith(`${currentRoot}/`))) {
-      setLibrarian((prev) => ({ ...prev, selectedFolders: [folderPath] }))
-      setShowDashboard(false)
-      setHistoryOpen(false)
-      setShowSettings(false)
-      setShowToneStore(false)
-      setShowTrainingWorkspace(false)
-      setBatchFolder(null)
-      setCardView(false)
-      showTransientStatus({ message: `Opened ${folderDisplayName(folderPath)} in the library.`, type: 'info' })
-      return
-    }
-    await loadFolderByPath(folderPath)
-  }, [librarian.rootFolder, loadFolderByPath, showTransientStatus])
-
   const handleUseCompanionInboxAsCover = useCallback(async (item: CompanionInboxItem) => {
     const folderPath = item.folderPath.replace(/\\/g, '/')
     if (!item.assetPath || !folderPath) {
@@ -1828,6 +1805,31 @@ export default function App() {
     if (gen !== loadGenRef.current) return
     setWatcherKey((k) => k + 1)
   }, [loadFiles, settings])
+
+  // Defined after loadFolderByPath so its dependency array doesn't hit the temporal
+  // dead zone during render (was crashing the app on startup).
+  const handleOpenCompanionInboxFolder = useCallback(async (item: CompanionInboxItem) => {
+    const folderPath = item.folderPath.replace(/\\/g, '/')
+    if (!folderPath) {
+      setStatus({ message: 'This inbox item does not have a folder attached yet.', type: 'error' })
+      return
+    }
+    const currentRoot = librarian.rootFolder?.replace(/\\/g, '/')
+    setCompanionInboxOpen(false)
+    if (currentRoot && (folderPath === currentRoot || folderPath.startsWith(`${currentRoot}/`))) {
+      setLibrarian((prev) => ({ ...prev, selectedFolders: [folderPath] }))
+      setShowDashboard(false)
+      setHistoryOpen(false)
+      setShowSettings(false)
+      setShowToneStore(false)
+      setShowTrainingWorkspace(false)
+      setBatchFolder(null)
+      setCardView(false)
+      showTransientStatus({ message: `Opened ${folderDisplayName(folderPath)} in the library.`, type: 'info' })
+      return
+    }
+    await loadFolderByPath(folderPath)
+  }, [librarian.rootFolder, loadFolderByPath, showTransientStatus])
 
   // Subscribe to app:openFiles ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â for files opened while app is already running
   useEffect(() => {
