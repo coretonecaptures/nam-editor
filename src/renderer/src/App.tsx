@@ -1228,6 +1228,13 @@ export default function App() {
     return () => { cancelled = true }
   }, [files, librarian.selectedFolders, librarian.rootFolder])
 
+  useEffect(() => {
+    void window.api.setCompanionContext({
+      rootFolder: librarian.rootFolder ?? '',
+      activeFolder: (librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null) ?? librarian.rootFolder ?? '',
+    })
+  }, [librarian.rootFolder, librarian.selectedFolders])
+
   // Apply theme data-attributes and Tailwind dark class to <html>
   useEffect(() => {
     const html = document.documentElement

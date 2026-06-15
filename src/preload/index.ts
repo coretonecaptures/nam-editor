@@ -249,6 +249,10 @@ const api = {
     ipcRenderer.invoke('cover:openImagePicker'),
   showTextContextMenu: (params: { hasSelection: boolean; isEditable: boolean }): Promise<void> =>
     ipcRenderer.invoke('app:showTextContextMenu', params),
+  setCompanionContext: (payload: { rootFolder?: string; activeFolder?: string }): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('companion:setContext', payload),
+  getCompanionBridgeInfo: (): Promise<{ enabled: boolean; port: number; token: string; hostHints: string[]; configPath: string; inboxPath: string }> =>
+    ipcRenderer.invoke('companion:getBridgeInfo'),
   platform: process.platform,
   initialSettings,
   saveSettingsToFile: (json: string) => ipcRenderer.send('settings:save', json),

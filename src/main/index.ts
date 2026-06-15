@@ -178,6 +178,806 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+interface CompanionBridgeConfig {
+  token: string
+  port: number
+  bindAddress: string
+}
+
+interface CompanionContextState {
+  rootFolder: string
+  activeFolder: string
+}
+
+type CompanionInboxKind = 'note' | 'photo' | 'cover'
+
+interface CompanionInboxItem {
+  id: string
+  kind: CompanionInboxKind
+  title: string
+  detail: string
+  createdAt: string
+  folderPath: string
+  assetPath: string | null
+  status: 'new' | 'reviewed'
+}
+
+interface CompanionPackChecklistItemSnapshot {
+  id: string
+  label: string
+  completed: boolean
+  completedDate: string
+  notes: string
+}
+
+interface CompanionPackSummary {
+  id: string
+  folderPath: string
+  title: string
+  subtitle: string
+  checklistPercent: number
+  checklistCompletedCount: number
+  checklistTotalCount: number
+  targetDate: string
+  liveDate: string
+  captureCount: number
+}
+
+interface CompanionPackDetail extends CompanionPackSummary {
+  description: string
+  about: string
+  capturedBy: string
+  checklistNotes: string
+  checklistItems: CompanionPackChecklistItemSnapshot[]
+}
+
+interface CompanionLibrarySummary {
+  rootFolder: string
+  activeFolder: string
+  packCount: number
+  captureCount: number
+  completedPackCount: number
+  averageChecklistPercent: number
+  upcomingPackCount: number
+  livePackCount: number
+}
+
+interface CompanionSnapshot {
+  app: {
+    name: string
+    version: string
+    bridgePort: number
+    hostHints: string[]
+    rootFolder: string
+    activeFolder: string
+  }
+  trainer: TrainerStateSnapshot
+  history: TrainerHistoryEntry[]
+  watchers: TrainerWatcherRuntime[]
+  library: CompanionLibrarySummary
+  packs: CompanionPackSummary[]
+  inbox: CompanionInboxItem[]
+  tone3000: {
+    connected: boolean
+    username: string | null
+  }
+}
+
+const COMPANION_BRIDGE_PORT = 38571
+const COMPANION_BRIDGE_BIND_ADDRESS = '0.0.0.0'
+const COMPANION_CACHE_TTL_MS = 15_000
+
+let companionBridgeServer: http.Server | null = null
+let companionBridgeConfig: CompanionBridgeConfig | null = null
+let companionContext: CompanionContextState = { rootFolder: '', activeFolder: '' }
+let companionInbox: CompanionInboxItem[] = []
+let companionPackCache:
+  | { rootFolder: string; activeFolder: string; expiresAt: number; packs: CompanionPackSummary[]; library: CompanionLibrarySummary }
+  | null = null
+
+function companionBridgeConfigPath(): string {
+  return join(app.getPath('userData'), 'companion-bridge.json')
+}
+
+function companionInboxPath(): string {
+  return join(app.getPath('userData'), 'companion-inbox.json')
+}
+
+function companionInboxAssetsDir(): string {
+  return join(app.getPath('userData'), 'companion-inbox-assets')
+}
+
+function normalizeSlashPath(value: string | null | undefined): string {
+  return (value ?? '').replace(/\\/g, '/').trim()
+}
+
+function loadCompanionBridgeConfig(): CompanionBridgeConfig {
+  const fallback: CompanionBridgeConfig = {
+    token: crypto.randomBytes(24).toString('hex'),
+    port: COMPANION_BRIDGE_PORT,
+    bindAddress: COMPANION_BRIDGE_BIND_ADDRESS,
+  }
+  try {
+    const raw = fs.readFileSync(companionBridgeConfigPath(), 'utf-8')
+    const parsed = JSON.parse(raw) as Partial<CompanionBridgeConfig>
+    const config: CompanionBridgeConfig = {
+      token: typeof parsed.token === 'string' && parsed.token.trim() ? parsed.token.trim() : fallback.token,
+      port: Number.isFinite(parsed.port) && (parsed.port ?? 0) > 0 ? Math.floor(parsed.port as number) : fallback.port,
+      bindAddress: typeof parsed.bindAddress === 'string' && parsed.bindAddress.trim() ? parsed.bindAddress.trim() : fallback.bindAddress,
+    }
+    fs.writeFileSync(companionBridgeConfigPath(), JSON.stringify(config, null, 2), 'utf-8')
+    return config
+  } catch {
+    fs.writeFileSync(companionBridgeConfigPath(), JSON.stringify(fallback, null, 2), 'utf-8')
+    return fallback
+  }
+}
+
+function loadCompanionInbox(): CompanionInboxItem[] {
+  try {
+    const raw = fs.readFileSync(companionInboxPath(), 'utf-8')
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.flatMap((entry): CompanionInboxItem[] => {
+      if (!entry || typeof entry !== 'object') return []
+      const item = entry as Partial<CompanionInboxItem>
+      if (typeof item.id !== 'string' || !item.id) return []
+      return [{
+        id: item.id,
+        kind: item.kind === 'photo' || item.kind === 'cover' ? item.kind : 'note',
+        title: typeof item.title === 'string' ? item.title : '',
+        detail: typeof item.detail === 'string' ? item.detail : '',
+        createdAt: typeof item.createdAt === 'string' && item.createdAt ? item.createdAt : new Date().toISOString(),
+        folderPath: typeof item.folderPath === 'string' ? item.folderPath : '',
+        assetPath: typeof item.assetPath === 'string' && item.assetPath ? item.assetPath : null,
+        status: item.status === 'reviewed' ? 'reviewed' : 'new',
+      }]
+    })
+  } catch {
+    return []
+  }
+}
+
+function saveCompanionInbox(): void {
+  try {
+    fs.writeFileSync(companionInboxPath(), JSON.stringify(companionInbox, null, 2), 'utf-8')
+  } catch (error) {
+    log(`companion inbox save failed: ${String(error)}`)
+  }
+}
+
+function invalidateCompanionPackCache(): void {
+  companionPackCache = null
+}
+
+function getCompanionHostHints(): string[] {
+  const hints = new Set<string>(['127.0.0.1', 'localhost'])
+  try {
+    const interfaces = os.networkInterfaces()
+    Object.values(interfaces).forEach((entries) => {
+      entries?.forEach((entry) => {
+        if (entry.family === 'IPv4' && !entry.internal && entry.address) {
+          hints.add(entry.address)
+        }
+      })
+    })
+  } catch { /* ignore */ }
+  return [...hints]
+}
+
+function summarizeCompanionChecklist(items: unknown): { percent: number; completedCount: number; totalCount: number } {
+  const list = Array.isArray(items) ? items : []
+  const normalized = list.filter((item): item is { completed?: boolean } => !!item && typeof item === 'object')
+  const totalCount = normalized.length
+  const completedCount = normalized.filter((item) => item.completed === true).length
+  return {
+    percent: totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0,
+    completedCount,
+    totalCount,
+  }
+}
+
+async function countNamFilesInTree(rootPath: string, depth = 4): Promise<number> {
+  if (!rootPath) return 0
+  let count = 0
+  const walk = async (dir: string, currentDepth: number) => {
+    if (currentDepth > depth) return
+    let entries: fs.Dirent[]
+    try {
+      entries = await fs.promises.readdir(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    await Promise.all(entries.map(async (entry) => {
+      if (entry.isFile() && /\.nam$/i.test(entry.name)) {
+        count += 1
+        return
+      }
+      if (entry.isDirectory() && entry.name !== '_Duplicates') {
+        await walk(join(dir, entry.name), currentDepth + 1)
+      }
+    }))
+  }
+  await walk(rootPath, 0)
+  return count
+}
+
+async function scanCompanionPacks(rootPath: string, activeFolder: string): Promise<{ packs: CompanionPackSummary[]; library: CompanionLibrarySummary }> {
+  const normalizedRoot = normalizeSlashPath(rootPath)
+  const normalizedActive = normalizeSlashPath(activeFolder)
+  const now = Date.now()
+  if (
+    companionPackCache &&
+    companionPackCache.rootFolder === normalizedRoot &&
+    companionPackCache.activeFolder === normalizedActive &&
+    companionPackCache.expiresAt > now
+  ) {
+    return { packs: companionPackCache.packs, library: companionPackCache.library }
+  }
+
+  if (!normalizedRoot || !fs.existsSync(normalizedRoot)) {
+    const emptyLibrary: CompanionLibrarySummary = {
+      rootFolder: normalizedRoot,
+      activeFolder: normalizedActive,
+      packCount: 0,
+      captureCount: 0,
+      completedPackCount: 0,
+      averageChecklistPercent: 0,
+      upcomingPackCount: 0,
+      livePackCount: 0,
+    }
+    companionPackCache = {
+      rootFolder: normalizedRoot,
+      activeFolder: normalizedActive,
+      expiresAt: now + COMPANION_CACHE_TTL_MS,
+      packs: [],
+      library: emptyLibrary,
+    }
+    return { packs: [], library: emptyLibrary }
+  }
+
+  const packs: CompanionPackSummary[] = []
+  const walk = async (dir: string, currentDepth: number) => {
+    if (currentDepth > 8) return
+    try {
+      const raw = await fs.promises.readFile(join(dir, 'nam-pack.json'), 'utf-8')
+      const data = JSON.parse(raw) as {
+        title?: string
+        subtitle?: string
+        checklistItems?: unknown
+        targetDate?: string
+        liveDate?: string
+      }
+      const title = typeof data.title === 'string' ? data.title.trim() : ''
+      if (title) {
+        const checklist = summarizeCompanionChecklist(data.checklistItems)
+        packs.push({
+          id: normalizeSlashPath(dir),
+          folderPath: normalizeSlashPath(dir),
+          title,
+          subtitle: typeof data.subtitle === 'string' ? data.subtitle.trim() : '',
+          checklistPercent: checklist.percent,
+          checklistCompletedCount: checklist.completedCount,
+          checklistTotalCount: checklist.totalCount,
+          targetDate: typeof data.targetDate === 'string' ? data.targetDate : '',
+          liveDate: typeof data.liveDate === 'string' ? data.liveDate : '',
+          captureCount: await countNamFilesInTree(dir, 3),
+        })
+      }
+    } catch { /* no pack here */ }
+
+    try {
+      const entries = await fs.promises.readdir(dir, { withFileTypes: true })
+      await Promise.all(entries.map(async (entry) => {
+        if (!entry.isDirectory() || entry.name === '_Duplicates') return
+        await walk(join(dir, entry.name), currentDepth + 1)
+      }))
+    } catch { /* skip */ }
+  }
+
+  await walk(normalizedRoot, 0)
+  packs.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }))
+
+  const captureCount = packs.reduce((sum, pack) => sum + pack.captureCount, 0)
+  const completedPackCount = packs.filter((pack) => pack.checklistTotalCount > 0 && pack.checklistCompletedCount === pack.checklistTotalCount).length
+  const averageChecklistPercent = packs.length > 0 ? Math.round(packs.reduce((sum, pack) => sum + pack.checklistPercent, 0) / packs.length) : 0
+  const upcomingPackCount = packs.filter((pack) => !!pack.targetDate && !pack.liveDate).length
+  const livePackCount = packs.filter((pack) => !!pack.liveDate).length
+  const library: CompanionLibrarySummary = {
+    rootFolder: normalizedRoot,
+    activeFolder: normalizedActive,
+    packCount: packs.length,
+    captureCount,
+    completedPackCount,
+    averageChecklistPercent,
+    upcomingPackCount,
+    livePackCount,
+  }
+
+  companionPackCache = {
+    rootFolder: normalizedRoot,
+    activeFolder: normalizedActive,
+    expiresAt: now + COMPANION_CACHE_TTL_MS,
+    packs,
+    library,
+  }
+  return { packs, library }
+}
+
+async function readCompanionPackDetail(folderPath: string): Promise<CompanionPackDetail | null> {
+  const normalized = normalizeSlashPath(folderPath)
+  if (!normalized) return null
+  try {
+    const raw = await fs.promises.readFile(join(normalized, 'nam-pack.json'), 'utf-8')
+    const data = JSON.parse(raw) as {
+      title?: string
+      subtitle?: string
+      description?: string
+      about?: string
+      capturedBy?: string
+      checklistNotes?: string
+      checklistItems?: Partial<CompanionPackChecklistItemSnapshot>[]
+      targetDate?: string
+      liveDate?: string
+    }
+    const title = typeof data.title === 'string' ? data.title.trim() : ''
+    if (!title) return null
+    const checklistItems = Array.isArray(data.checklistItems)
+      ? data.checklistItems.map((item, index) => ({
+          id: typeof item?.id === 'string' && item.id ? item.id : `checklist-${index}`,
+          label: typeof item?.label === 'string' ? item.label : '',
+          completed: item?.completed === true,
+          completedDate: typeof item?.completedDate === 'string' ? item.completedDate : '',
+          notes: typeof item?.notes === 'string' ? item.notes : '',
+        }))
+      : []
+    const checklist = summarizeCompanionChecklist(checklistItems)
+    return {
+      id: normalized,
+      folderPath: normalized,
+      title,
+      subtitle: typeof data.subtitle === 'string' ? data.subtitle.trim() : '',
+      checklistPercent: checklist.percent,
+      checklistCompletedCount: checklist.completedCount,
+      checklistTotalCount: checklist.totalCount,
+      targetDate: typeof data.targetDate === 'string' ? data.targetDate : '',
+      liveDate: typeof data.liveDate === 'string' ? data.liveDate : '',
+      captureCount: await countNamFilesInTree(normalized, 3),
+      description: typeof data.description === 'string' ? data.description : '',
+      about: typeof data.about === 'string' ? data.about : '',
+      capturedBy: typeof data.capturedBy === 'string' ? data.capturedBy : '',
+      checklistNotes: typeof data.checklistNotes === 'string' ? data.checklistNotes : '',
+      checklistItems,
+    }
+  } catch {
+    return null
+  }
+}
+
+async function updateCompanionPackChecklistItem(folderPath: string, itemId: string, updates: { completed?: boolean; notes?: string; completedDate?: string }): Promise<CompanionPackDetail | null> {
+  const normalized = normalizeSlashPath(folderPath)
+  if (!normalized || !itemId) return null
+  try {
+    const packPath = join(normalized, 'nam-pack.json')
+    const raw = await fs.promises.readFile(packPath, 'utf-8')
+    const data = JSON.parse(raw) as { checklistItems?: Partial<CompanionPackChecklistItemSnapshot>[] }
+    const items = Array.isArray(data.checklistItems) ? data.checklistItems : []
+    let found = false
+    data.checklistItems = items.map((item) => {
+      const currentId = typeof item?.id === 'string' ? item.id : ''
+      if (currentId !== itemId) return item
+      found = true
+      return {
+        ...item,
+        ...(updates.completed !== undefined ? { completed: updates.completed } : {}),
+        ...(updates.notes !== undefined ? { notes: updates.notes } : {}),
+        ...(updates.completedDate !== undefined ? { completedDate: updates.completedDate } : {}),
+      }
+    })
+    if (!found) return null
+    suppressWatcher()
+    await fs.promises.writeFile(packPath, JSON.stringify(data, null, 2), 'utf-8')
+    invalidateCompanionPackCache()
+    return await readCompanionPackDetail(normalized)
+  } catch {
+    return null
+  }
+}
+
+async function createCompanionInboxItem(payload: {
+  kind?: string
+  title?: string
+  detail?: string
+  folderPath?: string
+  assetDataBase64?: string
+  assetExtension?: string
+}): Promise<CompanionInboxItem> {
+  const kind: CompanionInboxKind = payload.kind === 'photo' || payload.kind === 'cover' ? payload.kind : 'note'
+  let assetPath: string | null = null
+  if (typeof payload.assetDataBase64 === 'string' && payload.assetDataBase64.trim()) {
+    const ext = (payload.assetExtension ?? 'jpg').replace(/[^a-z0-9]/gi, '').toLowerCase() || 'jpg'
+    const dir = companionInboxAssetsDir()
+    await fs.promises.mkdir(dir, { recursive: true })
+    const filePath = join(dir, `${Date.now()}-${crypto.randomUUID()}.${ext}`)
+    await fs.promises.writeFile(filePath, Buffer.from(payload.assetDataBase64, 'base64'))
+    assetPath = normalizeSlashPath(filePath)
+  }
+  const item: CompanionInboxItem = {
+    id: crypto.randomUUID(),
+    kind,
+    title: typeof payload.title === 'string' && payload.title.trim() ? payload.title.trim() : (kind === 'cover' ? 'Cover image candidate' : kind === 'photo' ? 'Companion photo' : 'Companion note'),
+    detail: typeof payload.detail === 'string' ? payload.detail.trim() : '',
+    createdAt: new Date().toISOString(),
+    folderPath: normalizeSlashPath(payload.folderPath),
+    assetPath,
+    status: 'new',
+  }
+  companionInbox = [item, ...companionInbox].slice(0, 200)
+  saveCompanionInbox()
+  return item
+}
+
+function markCompanionInboxItemReviewed(itemId: string): CompanionInboxItem | null {
+  let updated: CompanionInboxItem | null = null
+  companionInbox = companionInbox.map((item) => {
+    if (item.id !== itemId) return item
+    updated = { ...item, status: 'reviewed' }
+    return updated
+  })
+  if (updated) saveCompanionInbox()
+  return updated
+}
+
+async function getCompanionTone3000Status(): Promise<{ connected: boolean; username: string | null }> {
+  if (!tone3kTokens) return { connected: false, username: null }
+  const valid = await ensureValidToken()
+  if (!valid || !tone3kTokens) return { connected: false, username: null }
+  try {
+    const res = await fetch(`${T3K_BASE}/api/v1/user`, {
+      headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' }
+    })
+    if (!res.ok) return { connected: true, username: null }
+    const user = await res.json() as { username?: string }
+    return { connected: true, username: user.username ?? null }
+  } catch {
+    return { connected: true, username: null }
+  }
+}
+
+async function buildCompanionSnapshot(): Promise<CompanionSnapshot> {
+  const { packs, library } = await scanCompanionPacks(companionContext.rootFolder, companionContext.activeFolder)
+  return {
+    app: {
+      name: app.getName(),
+      version: app.getVersion(),
+      bridgePort: companionBridgeConfig?.port ?? COMPANION_BRIDGE_PORT,
+      hostHints: getCompanionHostHints(),
+      rootFolder: companionContext.rootFolder,
+      activeFolder: companionContext.activeFolder,
+    },
+    trainer: { ...trainerState, history: trainerHistory },
+    history: trainerHistory.slice(0, 200),
+    watchers: trainerState.watcherState.watchers,
+    library,
+    packs,
+    inbox: companionInbox,
+    tone3000: await getCompanionTone3000Status(),
+  }
+}
+
+function writeCompanionJson(res: http.ServerResponse, status: number, payload: unknown): void {
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'authorization, content-type',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  })
+  res.end(JSON.stringify(payload))
+}
+
+async function readCompanionRequestBody(req: http.IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = []
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+  }
+  if (chunks.length === 0) return {}
+  const raw = Buffer.concat(chunks).toString('utf-8')
+  if (!raw.trim()) return {}
+  return JSON.parse(raw)
+}
+
+function companionRequestAuthorized(req: http.IncomingMessage, url: URL): boolean {
+  const expected = companionBridgeConfig?.token
+  if (!expected) return false
+  const auth = req.headers.authorization
+  if (typeof auth === 'string' && auth.startsWith('Bearer ')) {
+    return auth.slice('Bearer '.length).trim() === expected
+  }
+  const queryToken = url.searchParams.get('token')
+  return queryToken === expected
+}
+
+async function handleCompanionAction(action: string, body: unknown): Promise<{ ok: boolean; error?: string; data?: unknown }> {
+  if (action === 'pause-after-current') {
+    trainerPauseAfterCurrent = true
+    emitTrainerState()
+    return { ok: true }
+  }
+  if (action === 'resume-queue') {
+    trainerPauseAfterCurrent = false
+    emitTrainerState()
+    await pumpTrainerQueue()
+    return { ok: true }
+  }
+  if (action === 'emergency-stop') {
+    if (!trainerChild || (trainerState.status !== 'running' && trainerState.status !== 'starting')) {
+      return { ok: false, error: 'No training run is currently active.' }
+    }
+    const canceledAt = new Date().toISOString()
+    requestEmergencyRequeueCurrentJob(true)
+    trainerChild.kill()
+    trainerState = {
+      ...trainerState,
+      status: 'canceled',
+      finishedAt: canceledAt,
+      error: '',
+    }
+    emitTrainerState()
+    return { ok: true }
+  }
+  if (action === 'retry-job') {
+    const jobId = typeof (body as { jobId?: unknown })?.jobId === 'string' ? (body as { jobId: string }).jobId : ''
+    const index = findTrainerJobIndex(jobId)
+    if (index === -1) return { ok: false, error: 'Training queue item not found.' }
+    const job = trainerQueue[index]
+    if (job.status !== 'error' && job.status !== 'canceled') {
+      return { ok: false, error: 'Only failed or canceled training items can be retried.' }
+    }
+    trainerQueue[index] = resetTrainerJobForQueue(job)
+    emitTrainerState()
+    await pumpTrainerQueue()
+    return { ok: true }
+  }
+  if (action === 'retry-history-entry') {
+    const historyId = typeof (body as { historyId?: unknown })?.historyId === 'string' ? (body as { historyId: string }).historyId : ''
+    const entry = trainerHistory.find((item) => item.historyId === historyId)
+    if (!entry) return { ok: false, error: 'Training history entry not found.' }
+    if (!entry.profileId) return { ok: false, error: 'Only profile-backed runs can be retried from mobile right now.' }
+    const profile = trainingProfiles.find((item) => item.id === entry.profileId)
+    if (!profile) return { ok: false, error: 'The training profile used by that history entry no longer exists.' }
+    if (!trainerConfiguredPythonPath || !trainerConfiguredInputPath) {
+      return { ok: false, error: 'Configure the trainer paths on desktop before retrying from mobile.' }
+    }
+    const sourcePath = [entry.processedWavPath, entry.sourcePath].find((candidate) => candidate && fs.existsSync(candidate))
+    if (!sourcePath) return { ok: false, error: 'The source WAV for that history entry could not be found.' }
+    clearTrainerSkipped(entry.profileId, entry.sourcePath, entry.architecture)
+    clearTrainerSkipped(entry.profileId, sourcePath, entry.architecture)
+    const payloads = (await buildTrainerPayloadsForProfile(
+      profile,
+      trainerConfiguredPythonPath,
+      trainerConfiguredInputPath,
+      [sourcePath],
+      entry.sourceMode,
+      {
+        id: crypto.randomUUID(),
+        label: `Retry - ${entry.profileName ?? profile.name}`,
+        createdAt: new Date().toISOString(),
+      }
+    )).filter((payload) => payload.architecture === entry.architecture)
+    if (payloads.length === 0) return { ok: false, error: 'That history entry could not be re-queued.' }
+    const queued = await enqueueTrainingPayloads(payloads)
+    return queued > 0
+      ? { ok: true, data: { queued } }
+      : { ok: false, error: 'That retry did not add a new queue item.' }
+  }
+  if (action === 'dismiss-batch') {
+    const submissionId = typeof (body as { submissionId?: unknown })?.submissionId === 'string' ? (body as { submissionId: string }).submissionId : ''
+    if (!submissionId) return { ok: false, error: 'No submission ID.' }
+    const activeId = trainerState.activeJobId
+    const before = trainerQueue.length
+    trainerQueue = trainerQueue.filter((job) => job.submissionId !== submissionId || job.jobId === activeId)
+    emitTrainerState()
+    return { ok: true, data: { removed: before - trainerQueue.length } }
+  }
+  if (action === 'set-watcher-running') {
+    const profileId = typeof (body as { profileId?: unknown })?.profileId === 'string' ? (body as { profileId: string }).profileId : ''
+    const running = (body as { running?: unknown })?.running === true
+    const target = trainingProfiles.find((profile) => profile.id === profileId && profile.sourceMode === 'watcher')
+    if (!target) return { ok: false, error: 'Training watcher profile not found.' }
+    if (!target.enabled && running) return { ok: false, error: 'Enable the watcher profile on desktop before starting it.' }
+    if (running) trainingWatcherRunning.add(profileId)
+    else trainingWatcherRunning.delete(profileId)
+    resetTrainingWatchProfiles(trainingProfiles, trainingRetainGraphs)
+    return { ok: true }
+  }
+  if (action === 'watcher-retry-now') {
+    const jobId = typeof (body as { jobId?: unknown })?.jobId === 'string' ? (body as { jobId: string }).jobId : ''
+    clearTrainerSkipped(
+      trainerQueue.find((job) => job.jobId === jobId)?.profileId ?? null,
+      trainerQueue.find((job) => job.jobId === jobId)?.outputPath ?? '',
+      trainerQueue.find((job) => job.jobId === jobId)?.architecture ?? ''
+    )
+    const moved = makeQueuedTrainerJobNext(jobId)
+    trainerPauseAfterCurrent = false
+    emitTrainerState()
+    await pumpTrainerQueue()
+    return moved ? { ok: true } : { ok: false, error: 'Could not make that watcher item next.' }
+  }
+  if (action === 'update-checklist-item') {
+    const payload = body as { folderPath?: unknown; itemId?: unknown; completed?: unknown; notes?: unknown; completedDate?: unknown }
+    if (typeof payload.folderPath !== 'string' || typeof payload.itemId !== 'string') {
+      return { ok: false, error: 'Checklist update requires a folderPath and itemId.' }
+    }
+    const detail = await updateCompanionPackChecklistItem(payload.folderPath, payload.itemId, {
+      completed: typeof payload.completed === 'boolean' ? payload.completed : undefined,
+      notes: typeof payload.notes === 'string' ? payload.notes : undefined,
+      completedDate: typeof payload.completedDate === 'string' ? payload.completedDate : undefined,
+    })
+    return detail ? { ok: true, data: detail } : { ok: false, error: 'Could not update that checklist item.' }
+  }
+  if (action === 'create-inbox-item') {
+    const payload = body as {
+      kind?: unknown
+      title?: unknown
+      detail?: unknown
+      folderPath?: unknown
+      assetDataBase64?: unknown
+      assetExtension?: unknown
+    }
+    const item = await createCompanionInboxItem({
+      kind: typeof payload.kind === 'string' ? payload.kind : undefined,
+      title: typeof payload.title === 'string' ? payload.title : undefined,
+      detail: typeof payload.detail === 'string' ? payload.detail : undefined,
+      folderPath: typeof payload.folderPath === 'string' ? payload.folderPath : undefined,
+      assetDataBase64: typeof payload.assetDataBase64 === 'string' ? payload.assetDataBase64 : undefined,
+      assetExtension: typeof payload.assetExtension === 'string' ? payload.assetExtension : undefined,
+    })
+    return { ok: true, data: item }
+  }
+  if (action === 'mark-inbox-reviewed') {
+    const itemId = typeof (body as { itemId?: unknown })?.itemId === 'string' ? (body as { itemId: string }).itemId : ''
+    const item = markCompanionInboxItemReviewed(itemId)
+    return item ? { ok: true, data: item } : { ok: false, error: 'Inbox item not found.' }
+  }
+  return { ok: false, error: `Unknown companion action: ${action}` }
+}
+
+async function handleCompanionBridgeRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`)
+  if (req.method === 'OPTIONS') {
+    writeCompanionJson(res, 200, { ok: true })
+    return
+  }
+  if (!companionRequestAuthorized(req, url)) {
+    writeCompanionJson(res, 401, { ok: false, error: 'Unauthorized' })
+    return
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/v1/health') {
+    writeCompanionJson(res, 200, { ok: true, app: app.getName(), version: app.getVersion() })
+    return
+  }
+  if (req.method === 'GET' && url.pathname === '/api/v1/snapshot') {
+    writeCompanionJson(res, 200, { ok: true, snapshot: await buildCompanionSnapshot() })
+    return
+  }
+  if (req.method === 'GET' && url.pathname === '/api/v1/history') {
+    writeCompanionJson(res, 200, { ok: true, history: trainerHistory.slice(0, 200) })
+    return
+  }
+  if (req.method === 'GET' && url.pathname === '/api/v1/packs') {
+    const { packs } = await scanCompanionPacks(companionContext.rootFolder, companionContext.activeFolder)
+    writeCompanionJson(res, 200, { ok: true, packs })
+    return
+  }
+  if (req.method === 'GET' && url.pathname === '/api/v1/library') {
+    const { library } = await scanCompanionPacks(companionContext.rootFolder, companionContext.activeFolder)
+    writeCompanionJson(res, 200, { ok: true, library })
+    return
+  }
+  if (req.method === 'GET' && url.pathname === '/api/v1/inbox') {
+    writeCompanionJson(res, 200, { ok: true, inbox: companionInbox })
+    return
+  }
+  if (req.method === 'GET' && url.pathname === '/api/v1/watchers') {
+    writeCompanionJson(res, 200, { ok: true, watchers: trainerState.watcherState.watchers })
+    return
+  }
+  if (req.method === 'GET' && url.pathname === '/api/v1/watchers/files') {
+    const profileId = url.searchParams.get('profileId') ?? ''
+    const profile = trainingProfiles.find((item) => item.id === profileId && item.sourceMode === 'watcher')
+    if (!profile) {
+      writeCompanionJson(res, 404, { ok: false, error: 'Training watcher profile not found.' })
+      return
+    }
+    const sourceFolder = profile.watchFolder.trim()
+    if (!sourceFolder) {
+      writeCompanionJson(res, 200, { ok: true, files: [] })
+      return
+    }
+    let wavFiles: string[] = []
+    try {
+      wavFiles = await scanWavFilesInFolder(sourceFolder)
+    } catch (error) {
+      writeCompanionJson(res, 500, { ok: false, error: `Could not scan folder: ${String(error)}` })
+      return
+    }
+    const activeJobId = trainerState.activeJobId
+    const files = await Promise.all(wavFiles.map(async (filePath) => {
+      let sizeBytes = 0
+      let mtimeMs = 0
+      try {
+        const stat = await fs.promises.stat(filePath)
+        sizeBytes = stat.size
+        mtimeMs = stat.mtimeMs
+      } catch { /* ignore */ }
+      const statuses = profile.architectures.map((arch) => {
+        const normalizedFile = normalizePath(filePath)
+        const activeJob = activeJobId ? trainerQueue.find((job) => job.jobId === activeJobId) : null
+        if (activeJob && normalizePath(activeJob.outputPath) === normalizedFile && activeJob.profileId === profileId && activeJob.architecture === arch) {
+          return { architecture: arch, status: 'running' }
+        }
+        if (trainerQueue.some((job) => normalizePath(job.outputPath) === normalizedFile && job.profileId === profileId && job.architecture === arch && job.status === 'queued')) {
+          return { architecture: arch, status: 'queued' }
+        }
+        if (trainerSkipped.some((entry) => normalizePath(entry.sourcePath) === normalizedFile && entry.profileId === profileId && entry.architecture === arch)) {
+          return { architecture: arch, status: 'skipped' }
+        }
+        const history = trainerHistory.find((entry) => normalizePath(entry.sourcePath) === normalizedFile && entry.profileId === profileId && entry.architecture === arch)
+        if (history) {
+          return { architecture: arch, status: history.status === 'success' ? 'done' : history.status }
+        }
+        return { architecture: arch, status: 'pending' }
+      })
+      return { filePath, fileName: basename(filePath), sizeBytes, mtimeMs, statuses }
+    }))
+    writeCompanionJson(res, 200, { ok: true, files })
+    return
+  }
+  if (req.method === 'GET' && url.pathname === '/api/v1/pack-detail') {
+    const folderPath = url.searchParams.get('folderPath') ?? ''
+    const detail = await readCompanionPackDetail(folderPath)
+    if (!detail) {
+      writeCompanionJson(res, 404, { ok: false, error: 'Pack not found.' })
+      return
+    }
+    writeCompanionJson(res, 200, { ok: true, pack: detail })
+    return
+  }
+  if (req.method === 'POST' && url.pathname.startsWith('/api/v1/actions/')) {
+    let body: unknown = {}
+    try {
+      body = await readCompanionRequestBody(req)
+    } catch (error) {
+      writeCompanionJson(res, 400, { ok: false, error: `Invalid JSON body: ${String(error)}` })
+      return
+    }
+    const action = url.pathname.slice('/api/v1/actions/'.length)
+    const result = await handleCompanionAction(action, body)
+    writeCompanionJson(res, result.ok ? 200 : 400, result.ok ? { ok: true, data: result.data ?? null } : result)
+    return
+  }
+
+  writeCompanionJson(res, 404, { ok: false, error: 'Not found' })
+}
+
+function startCompanionBridgeServer(): void {
+  if (companionBridgeServer || !companionBridgeConfig) return
+  const server = http.createServer((req, res) => {
+    void handleCompanionBridgeRequest(req, res).catch((error) => {
+      writeCompanionJson(res, 500, { ok: false, error: String(error) })
+    })
+  })
+  server.on('error', (error) => {
+    log(`companion bridge server error: ${String(error)}`)
+  })
+  server.listen(companionBridgeConfig.port, companionBridgeConfig.bindAddress, () => {
+    log(`companion bridge listening on ${companionBridgeConfig?.bindAddress}:${companionBridgeConfig?.port}`)
+  })
+  companionBridgeServer = server
+}
+
 type TrainerArchitecture = string
 type TrainerQueueJobStatus = 'queued' | 'starting' | 'running' | 'success' | 'error' | 'canceled'
 
@@ -4270,10 +5070,13 @@ app.whenReady().then(async () => {
   log('app.whenReady fired')
   switchLogToUserData()
   await loadTone3kTokens()
+  companionBridgeConfig = loadCompanionBridgeConfig()
+  companionInbox = loadCompanionInbox()
   trainerHistory = loadTrainerHistory()
   trainerSkipped = loadTrainerSkipped()
   trainerQueue = loadTrainerQueue()
   trainerState = { ...trainerState, history: trainerHistory, queue: trainerQueue, watcherState: makeTrainerWatcherSnapshot() }
+  startCompanionBridgeServer()
   log(`log file moved to userData: ${logPath}`)
 
   app.setName('NAM Lab')
@@ -4294,6 +5097,24 @@ app.whenReady().then(async () => {
       log(`settings:save error: ${String(err)}`)
     }
   })
+
+  ipcMain.handle('companion:setContext', async (_event, payload: { rootFolder?: string; activeFolder?: string }) => {
+    companionContext = {
+      rootFolder: normalizeSlashPath(payload?.rootFolder),
+      activeFolder: normalizeSlashPath(payload?.activeFolder),
+    }
+    invalidateCompanionPackCache()
+    return { success: true }
+  })
+
+  ipcMain.handle('companion:getBridgeInfo', async () => ({
+    enabled: companionBridgeServer != null,
+    port: companionBridgeConfig?.port ?? COMPANION_BRIDGE_PORT,
+    token: companionBridgeConfig?.token ?? '',
+    hostHints: getCompanionHostHints(),
+    configPath: companionBridgeConfigPath(),
+    inboxPath: companionInboxPath(),
+  }))
 
   // ── AI key helpers (safeStorage) ──────────────────────────────────────────
   function aiKeyPath(provider: string): string {
@@ -5885,6 +6706,7 @@ app.whenReady().then(async () => {
       const packPath = join(folderPath, 'nam-pack.json')
       suppressWatcher()
       await fs.promises.writeFile(packPath, JSON.stringify(data, null, 2), 'utf-8')
+      invalidateCompanionPackCache()
       return { success: true }
     } catch (e) {
       return { success: false, error: String(e) }
@@ -5897,6 +6719,7 @@ app.whenReady().then(async () => {
       const packPath = join(folderPath, 'nam-pack.json')
       suppressWatcher()
       await fs.promises.unlink(packPath)
+      invalidateCompanionPackCache()
       return { success: true }
     } catch (e) {
       return { success: false, error: String(e) }
@@ -6468,6 +7291,10 @@ app.on('will-quit', () => {
   saveFileCache()
   if (trainerQueueSaveTimer) { clearTimeout(trainerQueueSaveTimer); trainerQueueSaveTimer = null }
   saveTrainerQueue()
+  if (companionBridgeServer) {
+    try { companionBridgeServer.close() } catch { /* ignore */ }
+    companionBridgeServer = null
+  }
   if (folderWatcher) {
     try { folderWatcher.close() } catch { /* ignore */ }
     folderWatcher = null
