@@ -63,12 +63,23 @@ interface SettingsPanelProps {
   settings: AppSettings
   onSave: (settings: AppSettings) => void
   onClose: () => void
-  initialTab?: 'global' | 'defaults' | 'metadata' | 'pack' | 'training' | 'ai'
+  initialTab?: 'global' | 'defaults' | 'metadata' | 'pack' | 'training' | 'ai' | 'companion'
+}
+
+interface CompanionBridgeInfo {
+  enabled: boolean
+  running: boolean
+  port: number
+  token: string
+  bindAddress: string
+  hostHints: string[]
+  configPath: string
+  inboxPath: string
 }
 
 export function SettingsPanel({ settings, onSave, onClose, initialTab }: SettingsPanelProps) {
   const [draft, setDraft] = useState<AppSettings>({ ...settings })
-  const [settingsTab, setSettingsTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'training' | 'ai'>(initialTab ?? 'global')
+  const [settingsTab, setSettingsTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'training' | 'ai' | 'companion'>(initialTab ?? 'global')
   const [maximized, setMaximized] = useState(false)
   const [saved, setSaved] = useState(false)
   const [updateState, setUpdateState] = useState<UpdateState>({ status: 'idle' })
@@ -93,6 +104,9 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
   const [aiKeySaving, setAiKeySaving] = useState<'anthropic' | 'openai' | null>(null)
   const [aiKeyError, setAiKeyError] = useState<string | null>(null)
   const [aiKeySaved, setAiKeySaved] = useState<'anthropic' | 'openai' | null>(null)
+  const [companionBridgeInfo, setCompanionBridgeInfo] = useState<CompanionBridgeInfo | null>(null)
+  const [companionBridgeBusy, setCompanionBridgeBusy] = useState(false)
+  const [companionBridgeCopied, setCompanionBridgeCopied] = useState<'token' | 'host' | null>(null)
 
   const saveAiKey = async (provider: 'anthropic' | 'openai') => {
     const key = aiKeyDraft[provider].trim()
@@ -234,6 +248,34 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
     if (!draft.enableExperimentalTraining) return
     void window.api.getTrainerProfilesState().then((state) => setTrainingProfilesState(state as TrainerProfilesStateSnapshot)).catch(() => null)
   }, [draft.enableExperimentalTraining, draft.trainingWatchProfiles, draft.trainingPresets, draft.trainingRetainGraphs])
+
+  useEffect(() => {
+    void window.api.getCompanionBridgeInfo()
+      .then((info) => setCompanionBridgeInfo(info))
+      .catch(() => null)
+  }, [])
+
+  const copyCompanionValue = async (kind: 'token' | 'host', value: string) => {
+    try {
+      await navigator.clipboard.writeText(value)
+      setCompanionBridgeCopied(kind)
+      setTimeout(() => setCompanionBridgeCopied((current) => current === kind ? null : current), 1800)
+    } catch {
+      window.alert('Could not copy to clipboard.')
+    }
+  }
+
+  const updateCompanionBridge = async (payload: { enabled?: boolean; regenerateToken?: boolean }) => {
+    setCompanionBridgeBusy(true)
+    try {
+      const info = await window.api.updateCompanionBridgeConfig(payload)
+      setCompanionBridgeInfo(info)
+    } catch {
+      window.alert('Could not update companion bridge settings.')
+    } finally {
+      setCompanionBridgeBusy(false)
+    }
+  }
 
   const updateTrainingPreset = (presetId: string, patch: Partial<TrainingPreset>) => {
     update('trainingPresets', draft.trainingPresets.map((preset) => (
@@ -501,6 +543,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
             ['pack', 'Pack'],
             ['training', 'Training'],
             ['ai', 'AI'],
+            ['companion', 'Companion'],
           ] as const).map(([value, label]) => (
             <button
               key={value}
@@ -925,6 +968,112 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                       Clear
                     </button>
                   )}
+                </div>
+              </div>
+            </div>
+          </div>
+          )}
+
+          {settingsTab === 'companion' && (
+          <div>
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-sm">LAN</span>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Companion App</h3>
+              <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
+            </div>
+            <div className="space-y-4">
+              <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-4 space-y-4">
+                <div className="flex items-start justify-between gap-4 flex-wrap">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">Desktop bridge</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
+                      Off by default. Turn this on only if you want the iPhone/iPad companion to connect to NAM Lab on your local network.
+                    </p>
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={draft.enableCompanionApp}
+                      disabled={companionBridgeBusy}
+                      onChange={(e) => {
+                        const enabled = e.target.checked
+                        const updated = { ...draft, enableCompanionApp: enabled }
+                        setDraft(updated)
+                        onSave(updated)
+                        void updateCompanionBridge({ enabled })
+                      }}
+                      className="rounded"
+                    />
+                    <span className="text-sm text-gray-700 dark:text-gray-300">
+                      {draft.enableCompanionApp ? 'Enabled' : 'Disabled'}
+                    </span>
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950/40 p-3">
+                    <p className="text-[11px] uppercase tracking-wider text-gray-500 dark:text-gray-500 mb-1">Status</p>
+                    <p className={`text-sm font-medium ${companionBridgeInfo?.running ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-400'}`}>
+                      {companionBridgeInfo?.running ? 'Listening for companion connections' : 'Not listening'}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950/40 p-3">
+                    <p className="text-[11px] uppercase tracking-wider text-gray-500 dark:text-gray-500 mb-1">Port</p>
+                    <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{companionBridgeInfo?.port ?? '—'}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Connect your phone</p>
+                  <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950/40 p-3 space-y-2">
+                    <p className="text-xs text-gray-500 dark:text-gray-500">1. Open the Companion tab in the mobile app.</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-500">2. Use one of these host values:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {(companionBridgeInfo?.hostHints ?? []).map((host) => (
+                        <button
+                          key={host}
+                          onClick={() => { void copyCompanionValue('host', `${host}:${companionBridgeInfo?.port ?? ''}`) }}
+                          className="px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-xs font-mono text-gray-700 dark:text-gray-300 hover:border-indigo-500 dark:hover:border-indigo-500 transition-colors"
+                          title="Copy host"
+                        >
+                          {host}:{companionBridgeInfo?.port ?? ''}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap pt-1">
+                      <span className="text-xs text-gray-500 dark:text-gray-500">3. Paste this bridge token:</span>
+                      <button
+                        onClick={() => { if (companionBridgeInfo?.token) void copyCompanionValue('token', companionBridgeInfo.token) }}
+                        className="px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-xs font-mono text-gray-700 dark:text-gray-300 hover:border-indigo-500 dark:hover:border-indigo-500 transition-colors"
+                        title="Copy token"
+                      >
+                        {companionBridgeInfo?.token ? `${companionBridgeInfo.token.slice(0, 10)}...` : 'No token'}
+                      </button>
+                      <button
+                        onClick={() => { void updateCompanionBridge({ regenerateToken: true }) }}
+                        disabled={companionBridgeBusy}
+                        className="px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Regenerate token
+                      </button>
+                    </div>
+                    {(companionBridgeCopied === 'host' || companionBridgeCopied === 'token') && (
+                      <p className="text-xs text-green-600 dark:text-green-400">
+                        {companionBridgeCopied === 'host' ? 'Host copied.' : 'Token copied.'}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-2">
+                  <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950/40 p-3">
+                    <p className="text-[11px] uppercase tracking-wider text-gray-500 dark:text-gray-500 mb-1">Bridge Config</p>
+                    <p className="text-xs font-mono break-all text-gray-600 dark:text-gray-400">{companionBridgeInfo?.configPath ?? '—'}</p>
+                  </div>
+                  <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950/40 p-3">
+                    <p className="text-[11px] uppercase tracking-wider text-gray-500 dark:text-gray-500 mb-1">Companion Inbox Store</p>
+                    <p className="text-xs font-mono break-all text-gray-600 dark:text-gray-400">{companionBridgeInfo?.inboxPath ?? '—'}</p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2805,4 +2954,3 @@ function SettingsArchitectureMultiSelect({
     </div>
   )
 }
-

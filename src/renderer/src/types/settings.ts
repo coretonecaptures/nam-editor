@@ -342,6 +342,9 @@ export interface AppSettings {
   // Show Library Overview in the right panel on app launch
   showDashboardOnLaunch: boolean
 
+  // Mobile companion app bridge
+  enableCompanionApp: boolean
+
   // Optional Tone3000 username for creator matching / search helpers
   tone3000Username: string
 
@@ -436,6 +439,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   packExportDarkAccent: '#f9b966',
   defaultFolderTab: 'overview',
   showDashboardOnLaunch: true,
+  enableCompanionApp: false,
   tone3000Username: '',
   metadataSuggestRules: [],
   metadataSuggestScopedRules: [],

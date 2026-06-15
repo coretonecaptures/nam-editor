@@ -21,6 +21,9 @@ struct CompanionRootView: View {
             SettingsScreen(store: store)
                 .tabItem { Label("Settings", systemImage: "gearshape") }
         }
+        .tint(CompanionTheme.accent)
+        .preferredColorScheme(.dark)
+        .background(CompanionTheme.appBackground.ignoresSafeArea())
         .task {
             await store.refresh()
         }
@@ -30,7 +33,11 @@ struct CompanionRootView: View {
                     .font(.footnote.weight(.medium))
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(.ultraThinMaterial, in: Capsule())
+                    .background(CompanionTheme.raised, in: Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(CompanionTheme.border, lineWidth: 1)
+                    )
                     .padding(.bottom, 20)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .onAppear {
@@ -53,13 +60,16 @@ private struct DashboardScreen: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     header
+                    healthHero
                     runningCard
                     metrics
                     libraryCard
+                    packProgressCard
                     tone3000Card
                 }
                 .padding()
             }
+            .background(CompanionTheme.appBackground.ignoresSafeArea())
             .navigationTitle("Dashboard")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -84,60 +94,146 @@ private struct DashboardScreen: View {
 
     private var runningCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Now Running")
-                .font(.headline)
-            if let activeJob = store.snapshot.trainer.queue.first(where: { $0.jobId == store.snapshot.trainer.activeJobId }) {
-                Text(activeJob.modelName.isEmpty ? "Training in progress" : activeJob.modelName)
-                    .font(.title3.weight(.semibold))
-                Text("\(displayArchitecture(activeJob.architecture)) • Epoch \(activeJob.progressEpochCurrent ?? 0) / \(activeJob.progressEpochTotal ?? activeJob.epochs)")
-                    .foregroundStyle(.secondary)
-                ProgressView(value: activeJob.progressPercent ?? 0, total: 100)
-                HStack {
-                    Label("ESR \(esrText)", systemImage: "chart.line.uptrend.xyaxis")
-                    Spacer()
-                    Label(rateText, systemImage: "clock")
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Now Running")
+                        .font(.headline)
+                    if let activeJob = store.snapshot.trainer.queue.first(where: { $0.jobId == store.snapshot.trainer.activeJobId }) {
+                        Text(activeJob.modelName.isEmpty ? "Training in progress" : activeJob.modelName)
+                            .font(.title3.weight(.semibold))
+                        Text("\(displayArchitecture(activeJob.architecture)) • Epoch \(activeJob.progressEpochCurrent ?? 0) / \(activeJob.progressEpochTotal ?? activeJob.epochs)")
+                            .foregroundStyle(.secondary)
+                        DashboardLinearProgress(
+                            value: activeJob.progressPercent ?? 0,
+                            total: 100,
+                            tint: .blue
+                        )
+                        HStack {
+                            Label("ESR \(esrText)", systemImage: "chart.line.uptrend.xyaxis")
+                            Spacer()
+                            Label(rateText, systemImage: "clock")
+                        }
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        DashboardMetricRow(items: [
+                            ("Queued", "\(queuedCount)", .orange),
+                            ("History", "\(store.snapshot.history.count)", .green),
+                        ])
+                    } else {
+                        Text(store.snapshot.trainer.status == "idle" ? "Queue idle" : "Preparing next run")
+                            .foregroundStyle(.secondary)
+                        DashboardLinearProgress(
+                            value: Double(queuedCount),
+                            total: Double(max(queuedCount, 1)),
+                            tint: .gray.opacity(0.45)
+                        )
+                        Text(store.snapshot.trainer.pauseAfterCurrent ? "Queue will pause after the current run." : "Waiting for the next action from desktop.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            } else {
-                Text(store.snapshot.trainer.status == "idle" ? "Queue idle" : "Preparing next run")
-                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                DashboardGauge(
+                    value: store.snapshot.trainer.progressPercent ?? (store.snapshot.trainer.status == "idle" ? 0 : 8),
+                    title: "Run",
+                    subtitle: store.snapshot.trainer.status.capitalized,
+                    tint: store.snapshot.trainer.status == "idle" ? .gray : .blue,
+                    lineWidth: 10
+                )
             }
         }
         .padding()
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .background(CompanionTheme.panel, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(CompanionTheme.border, lineWidth: 1)
+        )
     }
 
     private var metrics: some View {
         VStack(spacing: 12) {
             HStack(spacing: 12) {
-                MetricCard(title: "Queued", value: "\(queuedCount)", note: "Runs waiting")
-                MetricCard(title: "Watchers", value: "\(store.snapshot.watchers.count)", note: "Profiles configured")
+                MetricCard(title: "Queued", value: "\(queuedCount)", note: "\(runningCount) active / starting")
+                MetricCard(title: "Watchers", value: "\(store.snapshot.watchers.count)", note: "\(runningWatcherCount) running")
             }
             HStack(spacing: 12) {
-                MetricCard(title: "Packs", value: "\(store.snapshot.library.packCount)", note: "Tracked folders")
-                MetricCard(title: "Inbox", value: "\(store.snapshot.inbox.filter { $0.status == "new" }.count)", note: "Needs review")
+                MetricCard(title: "Packs", value: "\(store.snapshot.library.packCount)", note: "\(store.snapshot.library.completedPackCount) complete")
+                MetricCard(title: "Inbox", value: "\(store.snapshot.inbox.filter { $0.status == "new" }.count)", note: "\(reviewedInboxCount) reviewed")
             }
         }
     }
 
     private var libraryCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Library")
-                .font(.headline)
+            HStack {
+                Text("Library")
+                    .font(.headline)
+                Spacer()
+                Text("\(libraryHealthScore)% health")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(healthColor)
+            }
             Text(store.snapshot.library.rootFolder.isEmpty ? "No desktop library is open right now." : store.snapshot.library.rootFolder)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            HStack {
-                Label("\(store.snapshot.library.captureCount) captures", systemImage: "waveform")
-                Spacer()
-                Label("\(store.snapshot.library.averageChecklistPercent)% avg checklist", systemImage: "checklist")
-            }
-            .font(.footnote)
-            .foregroundStyle(.secondary)
+            DashboardLinearProgress(
+                value: Double(store.snapshot.library.averageChecklistPercent),
+                total: 100,
+                tint: healthColor
+            )
+            DashboardMetricRow(items: [
+                ("Captures", "\(store.snapshot.library.captureCount)", .blue),
+                ("Avg Checklist", "\(store.snapshot.library.averageChecklistPercent)%", healthColor),
+                ("Upcoming", "\(store.snapshot.library.upcomingPackCount)", .orange),
+                ("Live", "\(store.snapshot.library.livePackCount)", .green),
+            ])
         }
         .padding()
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(CompanionTheme.panelAlt, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(CompanionTheme.borderSoft, lineWidth: 1)
+        )
+    }
+
+    private var packProgressCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Pack Progress")
+                .font(.headline)
+            if store.snapshot.library.packCount == 0 {
+                Text("No pack folders are being tracked yet.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                DashboardProgressRow(
+                    title: "Checklist Complete",
+                    value: Double(store.snapshot.library.completedPackCount),
+                    total: Double(max(store.snapshot.library.packCount, 1)),
+                    tint: .green,
+                    summary: "\(store.snapshot.library.completedPackCount) of \(store.snapshot.library.packCount) packs"
+                )
+                DashboardProgressRow(
+                    title: "Released",
+                    value: Double(store.snapshot.library.livePackCount),
+                    total: Double(max(store.snapshot.library.packCount, 1)),
+                    tint: .blue,
+                    summary: "\(store.snapshot.library.livePackCount) live now"
+                )
+                DashboardProgressRow(
+                    title: "Scheduled",
+                    value: Double(store.snapshot.library.upcomingPackCount),
+                    total: Double(max(store.snapshot.library.packCount, 1)),
+                    tint: .orange,
+                    summary: "\(store.snapshot.library.upcomingPackCount) with target dates"
+                )
+            }
+        }
+        .padding()
+        .background(CompanionTheme.panelAlt, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(CompanionTheme.borderSoft, lineWidth: 1)
+        )
     }
 
     private var tone3000Card: some View {
@@ -151,9 +247,56 @@ private struct DashboardScreen: View {
                 Text("Not connected on the desktop app")
                     .foregroundStyle(.secondary)
             }
+            DashboardLinearProgress(
+                value: store.snapshot.tone3000.connected ? 100 : 0,
+                total: 100,
+                tint: store.snapshot.tone3000.connected ? .purple : .gray.opacity(0.45)
+            )
         }
         .padding()
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(CompanionTheme.panelAlt, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(CompanionTheme.borderSoft, lineWidth: 1)
+        )
+    }
+
+    private var healthHero: some View {
+        HStack(alignment: .center, spacing: 16) {
+            DashboardGauge(
+                value: Double(libraryHealthScore),
+                title: "Health",
+                subtitle: healthLabel,
+                tint: healthColor,
+                lineWidth: 12
+            )
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Desktop Readiness")
+                    .font(.headline)
+                Text(healthSummary)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                DashboardProgressRow(
+                    title: "Inbox Reviewed",
+                    value: Double(reviewedInboxCount),
+                    total: Double(max(store.snapshot.inbox.count, 1)),
+                    tint: .teal,
+                    summary: "\(reviewedInboxCount) of \(store.snapshot.inbox.count) items"
+                )
+            }
+        }
+        .padding()
+        .background(
+            LinearGradient(
+                colors: [
+                    healthColor.opacity(0.18),
+                    CompanionTheme.panelAlt
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            in: RoundedRectangle(cornerRadius: 24, style: .continuous)
+        )
     }
 
     private var connectionSubtitle: String {
@@ -174,6 +317,66 @@ private struct DashboardScreen: View {
 
     private var queuedCount: Int {
         store.snapshot.trainer.queue.filter { ["queued", "starting", "running"].contains($0.status) }.count
+    }
+
+    private var runningCount: Int {
+        store.snapshot.trainer.queue.filter { ["running", "starting"].contains($0.status) }.count
+    }
+
+    private var runningWatcherCount: Int {
+        store.snapshot.watchers.filter(\.running).count
+    }
+
+    private var reviewedInboxCount: Int {
+        store.snapshot.inbox.filter { $0.status == "reviewed" }.count
+    }
+
+    private var completionRatio: Double {
+        guard store.snapshot.library.packCount > 0 else { return 0 }
+        return Double(store.snapshot.library.completedPackCount) / Double(store.snapshot.library.packCount)
+    }
+
+    private var releaseRatio: Double {
+        guard store.snapshot.library.packCount > 0 else { return 0 }
+        return Double(store.snapshot.library.livePackCount) / Double(store.snapshot.library.packCount)
+    }
+
+    private var watcherRatio: Double {
+        guard !store.snapshot.watchers.isEmpty else { return 0 }
+        return Double(runningWatcherCount) / Double(store.snapshot.watchers.count)
+    }
+
+    private var libraryHealthScore: Int {
+        let checklistScore = Double(store.snapshot.library.averageChecklistPercent) * 0.5
+        let completionScore = completionRatio * 30
+        let watcherScore = watcherRatio * 10
+        let inboxPenalty = min(Double(store.snapshot.inbox.filter { $0.status != "reviewed" }.count) * 2, 10)
+        return max(0, min(100, Int((checklistScore + completionScore + watcherScore - inboxPenalty).rounded())))
+    }
+
+    private var healthColor: Color {
+        switch libraryHealthScore {
+        case 85...: return .green
+        case 70...: return .teal
+        case 50...: return .orange
+        default: return .red
+        }
+    }
+
+    private var healthLabel: String {
+        switch libraryHealthScore {
+        case 85...: return "Healthy"
+        case 70...: return "Strong"
+        case 50...: return "Needs Work"
+        default: return "At Risk"
+        }
+    }
+
+    private var healthSummary: String {
+        if store.snapshot.library.packCount == 0 {
+            return "Open a desktop library to start syncing release progress, captures, and inbox review."
+        }
+        return "\(store.snapshot.library.captureCount) captures across \(store.snapshot.library.packCount) packs with \(store.snapshot.library.averageChecklistPercent)% average checklist completion."
     }
 
     private var esrText: String {
@@ -263,6 +466,8 @@ private struct TrainingScreen: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(CompanionTheme.appBackground)
             .navigationTitle("Training")
         }
     }
@@ -311,6 +516,8 @@ private struct WatcherDetailScreen: View {
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(CompanionTheme.appBackground)
         .navigationTitle(watcher.profileName)
         .task {
             await store.refreshWatcherFiles(profileId: watcher.profileId)
@@ -366,6 +573,8 @@ private struct LibraryScreen: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(CompanionTheme.appBackground)
             .navigationTitle("Library")
         }
     }
@@ -433,6 +642,8 @@ private struct PackDetailScreen: View {
                 ProgressView("Loading pack...")
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(CompanionTheme.appBackground)
         .navigationTitle(pack.title)
         .task {
             await store.loadPackDetail(folderPath: pack.folderPath)
@@ -497,6 +708,8 @@ private struct InboxScreen: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(CompanionTheme.appBackground)
             .navigationTitle("Inbox")
         }
         .onChange(of: selectedPhoto) { _, newValue in
@@ -561,6 +774,8 @@ private struct SettingsScreen: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(CompanionTheme.appBackground)
             .navigationTitle("Settings")
         }
         .onAppear {
@@ -624,6 +839,114 @@ private struct QueueJobRow: View {
             }
         }
         .padding(.vertical, 4)
+    }
+}
+
+private struct DashboardGauge: View {
+    let value: Double
+    let title: String
+    let subtitle: String
+    let tint: Color
+    let lineWidth: CGFloat
+
+    private var clampedValue: Double {
+        min(max(value, 0), 100)
+    }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(tint.opacity(0.16), lineWidth: lineWidth)
+            Circle()
+                .trim(from: 0, to: clampedValue / 100)
+                .stroke(tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            VStack(spacing: 2) {
+                Text("\(Int(clampedValue.rounded()))")
+                    .font(.title3.bold())
+                Text(title.uppercased())
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.secondary)
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.horizontal, 8)
+        }
+        .frame(width: 112, height: 112)
+    }
+}
+
+private struct DashboardLinearProgress: View {
+    let value: Double
+    let total: Double
+    let tint: Color
+
+    private var fraction: Double {
+        guard total > 0 else { return 0 }
+        return min(max(value / total, 0), 1)
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 999)
+                    .fill(Color.secondary.opacity(0.14))
+                RoundedRectangle(cornerRadius: 999)
+                    .fill(tint)
+                    .frame(width: max(CGFloat(6), proxy.size.width * CGFloat(fraction)))
+            }
+        }
+        .frame(height: 10)
+    }
+}
+
+private struct DashboardProgressRow: View {
+    let title: String
+    let value: Double
+    let total: Double
+    let tint: Color
+    let summary: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(total > 0 ? "\(Int((min(max(value / total, 0), 1) * 100).rounded()))%" : "0%")
+                    .font(.footnote.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            DashboardLinearProgress(value: value, total: total, tint: tint)
+            Text(summary)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct DashboardMetricRow: View {
+    let items: [(String, String, Color)]
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ForEach(Array(items.enumerated()), id: \.offset) { entry in
+                let item = entry.element
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.0)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(item.1)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(item.2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(item.2.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+        }
     }
 }
 
@@ -730,6 +1053,28 @@ private func relativeDate(_ date: Date) -> String {
     let formatter = RelativeDateTimeFormatter()
     formatter.unitsStyle = .short
     return formatter.localizedString(for: date, relativeTo: Date())
+}
+
+enum CompanionTheme {
+    static let accent = Color(red: 0.39, green: 0.40, blue: 0.95)
+    static let appBackground = Color(hex: 0x1E1E1E)
+    static let panel = Color(hex: 0x262626)
+    static let panelAlt = Color(hex: 0x2A2A2A)
+    static let raised = Color(hex: 0x2F2F2F)
+    static let border = Color(hex: 0x383838)
+    static let borderSoft = Color(hex: 0x2E2E2E)
+}
+
+private extension Color {
+    init(hex: UInt32, alpha: Double = 1.0) {
+        self.init(
+            .sRGB,
+            red: Double((hex >> 16) & 0xFF) / 255.0,
+            green: Double((hex >> 8) & 0xFF) / 255.0,
+            blue: Double(hex & 0xFF) / 255.0,
+            opacity: alpha
+        )
+    }
 }
 
 #Preview {

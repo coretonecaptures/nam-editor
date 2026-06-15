@@ -251,8 +251,16 @@ const api = {
     ipcRenderer.invoke('app:showTextContextMenu', params),
   setCompanionContext: (payload: { rootFolder?: string; activeFolder?: string }): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('companion:setContext', payload),
-  getCompanionBridgeInfo: (): Promise<{ enabled: boolean; port: number; token: string; hostHints: string[]; configPath: string; inboxPath: string }> =>
+  getCompanionBridgeInfo: (): Promise<{ enabled: boolean; running: boolean; port: number; token: string; bindAddress: string; hostHints: string[]; configPath: string; inboxPath: string }> =>
     ipcRenderer.invoke('companion:getBridgeInfo'),
+  getCompanionInbox: (): Promise<{ success: boolean; items: Array<{ id: string; kind: string; title: string; detail: string; createdAt: string; folderPath: string; assetPath: string | null; status: 'new' | 'reviewed' }> }> =>
+    ipcRenderer.invoke('companion:getInbox'),
+  markCompanionInboxReviewed: (itemId: string): Promise<{ success: boolean; error?: string; item?: { id: string; kind: string; title: string; detail: string; createdAt: string; folderPath: string; assetPath: string | null; status: 'new' | 'reviewed' } }> =>
+    ipcRenderer.invoke('companion:markInboxReviewed', itemId),
+  deleteCompanionInboxItem: (itemId: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('companion:deleteInboxItem', itemId),
+  updateCompanionBridgeConfig: (payload: { enabled?: boolean; regenerateToken?: boolean }): Promise<{ success: boolean; enabled: boolean; running: boolean; port: number; token: string; bindAddress: string; hostHints: string[]; configPath: string; inboxPath: string }> =>
+    ipcRenderer.invoke('companion:updateBridgeConfig', payload),
   platform: process.platform,
   initialSettings,
   saveSettingsToFile: (json: string) => ipcRenderer.send('settings:save', json),

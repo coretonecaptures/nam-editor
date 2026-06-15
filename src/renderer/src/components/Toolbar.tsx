@@ -32,6 +32,9 @@ interface ToolbarProps {
   onToggleDashboard?: () => void
   historyOpen?: boolean
   onHistoryToggle?: () => void
+  companionInboxOpen?: boolean
+  companionInboxCount?: number
+  onCompanionInboxToggle?: () => void
   toneStoreActive?: boolean
   onToggleToneStore?: () => void
   helpOpen?: boolean
@@ -75,6 +78,9 @@ export function Toolbar({
   onToggleDashboard,
   historyOpen = false,
   onHistoryToggle,
+  companionInboxOpen = false,
+  companionInboxCount = 0,
+  onCompanionInboxToggle,
   toneStoreActive = false,
   onToggleToneStore,
   helpOpen = false,
@@ -417,6 +423,25 @@ export function Toolbar({
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           History
+        </button>
+      )}
+
+      {onCompanionInboxToggle && (
+        <button
+          onClick={onCompanionInboxToggle}
+          title="Review photos, notes, and cover candidates from the companion app"
+          className={`tb-menu-btn relative ${companionInboxOpen ? 'active' : ''}`}
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M4 7h16M4 12h16M4 17h10" />
+          </svg>
+          Inbox
+          {companionInboxCount > 0 && (
+            <span className="absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-amber-500 text-white text-[10px] font-semibold flex items-center justify-center leading-none">
+              {companionInboxCount > 99 ? '99+' : companionInboxCount}
+            </span>
+          )}
         </button>
       )}
 

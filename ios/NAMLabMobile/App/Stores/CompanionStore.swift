@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 @MainActor
 final class CompanionStore: ObservableObject {
@@ -99,37 +100,37 @@ final class CompanionStore: ObservableObject {
 
     func pauseAfterCurrent() async {
         await perform(message: "Queue will pause after the current run.") {
-            try await client.pauseAfterCurrent()
+            try await self.client.pauseAfterCurrent()
         }
     }
 
     func resumeQueue() async {
         await perform(message: "Queue resumed.") {
-            try await client.resumeQueue()
+            try await self.client.resumeQueue()
         }
     }
 
     func emergencyStop() async {
         await perform(message: "Emergency stop sent.") {
-            try await client.emergencyStop()
+            try await self.client.emergencyStop()
         }
     }
 
     func retryHistory(_ entry: CompanionHistoryEntry) async {
         await perform(message: "Retry queued for \(entry.finalModelName).") {
-            try await client.retryHistoryEntry(entry.historyId)
+            try await self.client.retryHistoryEntry(entry.historyId)
         }
     }
 
     func dismissBatch(submissionId: String) async {
         await perform(message: "Batch dismissed.") {
-            try await client.dismissBatch(submissionId)
+            try await self.client.dismissBatch(submissionId)
         }
     }
 
     func setWatcherRunning(profileId: String, running: Bool) async {
         await perform(message: running ? "Watcher started." : "Watcher stopped.") {
-            try await client.setWatcherRunning(profileId: profileId, running: running)
+            try await self.client.setWatcherRunning(profileId: profileId, running: running)
         }
     }
 

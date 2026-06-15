@@ -296,6 +296,25 @@ function normalizeSlashPath(value: string | null | undefined): string {
   return (value ?? '').replace(/\\/g, '/').trim()
 }
 
+function loadEnableCompanionAppSetting(): boolean {
+  try {
+    const raw = fs.readFileSync(join(app.getPath('userData'), 'settings.json'), 'utf-8')
+    const parsed = JSON.parse(raw) as { enableCompanionApp?: unknown }
+    return parsed.enableCompanionApp === true
+  } catch {
+    return false
+  }
+}
+
+function saveCompanionBridgeConfig(): void {
+  if (!companionBridgeConfig) return
+  try {
+    fs.writeFileSync(companionBridgeConfigPath(), JSON.stringify(companionBridgeConfig, null, 2), 'utf-8')
+  } catch (error) {
+    log(`companion bridge config save failed: ${String(error)}`)
+  }
+}
+
 function loadCompanionBridgeConfig(): CompanionBridgeConfig {
   const fallback: CompanionBridgeConfig = {
     token: crypto.randomBytes(24).toString('hex'),
@@ -706,6 +725,12 @@ function writeCompanionJson(res: http.ServerResponse, status: number, payload: u
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   })
   res.end(JSON.stringify(payload))
+}
+
+function stopCompanionBridgeServer(): void {
+  if (!companionBridgeServer) return
+  try { companionBridgeServer.close() } catch { /* ignore */ }
+  companionBridgeServer = null
 }
 
 async function readCompanionRequestBody(req: http.IncomingMessage): Promise<unknown> {
@@ -5121,6 +5146,8 @@ app.whenReady().then(async () => {
   switchLogToUserData()
   await loadTone3kTokens()
   companionBridgeConfig = loadCompanionBridgeConfig()
+  companionBridgeConfig.enabled = loadEnableCompanionAppSetting()
+  saveCompanionBridgeConfig()
   companionInbox = loadCompanionInbox()
   trainerHistory = loadTrainerHistory()
   trainerSkipped = loadTrainerSkipped()
@@ -5143,6 +5170,19 @@ app.whenReady().then(async () => {
   ipcMain.on('settings:save', (_event, json: string) => {
     try {
       fs.writeFileSync(join(app.getPath('userData'), 'settings.json'), json, 'utf-8')
+      try {
+        const parsed = JSON.parse(json) as { enableCompanionApp?: unknown }
+        const nextEnabled = parsed.enableCompanionApp === true
+        if (!companionBridgeConfig) {
+          companionBridgeConfig = loadCompanionBridgeConfig()
+        }
+        companionBridgeConfig.enabled = nextEnabled
+        saveCompanionBridgeConfig()
+        if (nextEnabled) startCompanionBridgeServer()
+        else stopCompanionBridgeServer()
+      } catch (parseError) {
+        log(`settings:save companion sync parse error: ${String(parseError)}`)
+      }
     } catch (err) {
       log(`settings:save error: ${String(err)}`)
     }
@@ -5158,13 +5198,69 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('companion:getBridgeInfo', async () => ({
-    enabled: companionBridgeServer != null,
+    enabled: companionBridgeConfig?.enabled ?? false,
+    running: companionBridgeServer != null,
     port: companionBridgeConfig?.port ?? COMPANION_BRIDGE_PORT,
     token: companionBridgeConfig?.token ?? '',
+    bindAddress: companionBridgeConfig?.bindAddress ?? COMPANION_BRIDGE_BIND_ADDRESS,
     hostHints: getCompanionHostHints(),
     configPath: companionBridgeConfigPath(),
     inboxPath: companionInboxPath(),
   }))
+
+  ipcMain.handle('companion:getInbox', async () => ({
+    success: true,
+    items: companionInbox,
+  }))
+
+  ipcMain.handle('companion:markInboxReviewed', async (_event, itemId: string) => {
+    const updated = markCompanionInboxItemReviewed(itemId)
+    if (!updated) return { success: false, error: 'Inbox item not found.' }
+    return { success: true, item: updated }
+  })
+
+  ipcMain.handle('companion:deleteInboxItem', async (_event, itemId: string) => {
+    const existing = companionInbox.find((item) => item.id === itemId)
+    if (!existing) return { success: false, error: 'Inbox item not found.' }
+    companionInbox = companionInbox.filter((item) => item.id !== itemId)
+    if (existing.assetPath) {
+      try { await fs.promises.unlink(existing.assetPath) } catch { /* ignore missing asset */ }
+    }
+    saveCompanionInbox()
+    return { success: true }
+  })
+
+  ipcMain.handle('companion:updateBridgeConfig', async (_event, payload: {
+    enabled?: boolean
+    regenerateToken?: boolean
+  }) => {
+    if (!companionBridgeConfig) {
+      companionBridgeConfig = loadCompanionBridgeConfig()
+    }
+    if (typeof payload?.enabled === 'boolean') {
+      companionBridgeConfig.enabled = payload.enabled
+    }
+    if (payload?.regenerateToken) {
+      companionBridgeConfig.token = crypto.randomBytes(24).toString('hex')
+    }
+    saveCompanionBridgeConfig()
+    if (companionBridgeConfig.enabled) {
+      startCompanionBridgeServer()
+    } else {
+      stopCompanionBridgeServer()
+    }
+    return {
+      success: true,
+      enabled: companionBridgeConfig.enabled,
+      running: companionBridgeServer != null,
+      port: companionBridgeConfig.port,
+      token: companionBridgeConfig.token,
+      bindAddress: companionBridgeConfig.bindAddress,
+      hostHints: getCompanionHostHints(),
+      configPath: companionBridgeConfigPath(),
+      inboxPath: companionInboxPath(),
+    }
+  })
 
   // ── AI key helpers (safeStorage) ──────────────────────────────────────────
   function aiKeyPath(provider: string): string {
@@ -7341,10 +7437,7 @@ app.on('will-quit', () => {
   saveFileCache()
   if (trainerQueueSaveTimer) { clearTimeout(trainerQueueSaveTimer); trainerQueueSaveTimer = null }
   saveTrainerQueue()
-  if (companionBridgeServer) {
-    try { companionBridgeServer.close() } catch { /* ignore */ }
-    companionBridgeServer = null
-  }
+  stopCompanionBridgeServer()
   if (folderWatcher) {
     try { folderWatcher.close() } catch { /* ignore */ }
     folderWatcher = null

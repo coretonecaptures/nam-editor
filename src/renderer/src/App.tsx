@@ -34,6 +34,7 @@ import { FolderCardView } from './components/FolderCardView'
 import { SessionHistoryPanel } from './components/SessionHistoryPanel'
 import { LibraryCleanupModal, type LibraryCleanupFolderEntry, type LibraryCleanupLayout, type LibraryCleanupPreviewRow } from './components/LibraryCleanupModal'
 import { HelpModal, type HelpModalTab } from './components/HelpModal'
+import { CompanionInboxPanel, type CompanionInboxItem } from './components/CompanionInboxPanel'
 import * as XLSX from 'xlsx'
 import { buildMetadataSuggestionMatches, MetadataSuggestionMatch } from './utils/metadataSuggest'
 import { cloneMetadataSuggestRule, isMetadataSuggestRuleComplete, isMetadataSuggestRuleLibraryCandidate, metadataSuggestRuleSignature } from './utils/metadataSuggestRuleLibrary'
@@ -495,6 +496,9 @@ declare global {
       tone3000Download: (modelUrl: string, name: string) => Promise<{ ok?: boolean; localPath?: string; error?: string }>
       tone3000FileExists: (destDir: string, name: string) => Promise<{ exists: boolean; destPath?: string }>
       tone3000SaveCoverImage: (imageUrl: string, destDir: string) => Promise<{ ok?: boolean; skipped?: boolean; destPath?: string; error?: string }>
+      getCompanionInbox: () => Promise<{ success: boolean; items: CompanionInboxItem[] }>
+      markCompanionInboxReviewed: (itemId: string) => Promise<{ success: boolean; error?: string; item?: CompanionInboxItem }>
+      deleteCompanionInboxItem: (itemId: string) => Promise<{ success: boolean; error?: string }>
       platform: string
       initialSettings: unknown
       saveSettingsToFile: (json: string) => void
@@ -697,10 +701,12 @@ export default function App() {
   const showDashboardRef = useRef(showDashboard)
   useEffect(() => { showDashboardRef.current = showDashboard }, [showDashboard])
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [companionInboxOpen, setCompanionInboxOpen] = useState(false)
+  const [companionInboxItems, setCompanionInboxItems] = useState<CompanionInboxItem[]>([])
   const [showToneStore, setShowToneStore] = useState(false)
   const [showTrainingWorkspace, setShowTrainingWorkspace] = useState(false)
   const [showTrainingSetupGuide, setShowTrainingSetupGuide] = useState(false)
-  const [settingsInitialTab, setSettingsInitialTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'training' | undefined>(undefined)
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'training' | 'ai' | 'companion' | undefined>(undefined)
   const [trainingWorkspaceMode, setTrainingWorkspaceMode] = useState<'files' | 'folder' | 'queue' | 'history'>('files')
   const [globalTrainerState, setGlobalTrainerState] = useState<TrainerStateSnapshot>(IDLE_TRAINER_STATE)
   const trainerWatcherAutoStartRecoveryRef = useRef('')
@@ -1229,11 +1235,12 @@ export default function App() {
   }, [files, librarian.selectedFolders, librarian.rootFolder])
 
   useEffect(() => {
+    if (!settings.enableCompanionApp) return
     void window.api.setCompanionContext({
       rootFolder: librarian.rootFolder ?? '',
       activeFolder: (librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null) ?? librarian.rootFolder ?? '',
     })
-  }, [librarian.rootFolder, librarian.selectedFolders])
+  }, [librarian.rootFolder, librarian.selectedFolders, settings.enableCompanionApp])
 
   // Apply theme data-attributes and Tailwind dark class to <html>
   useEffect(() => {
@@ -1289,6 +1296,35 @@ export default function App() {
       statusTimeoutRef.current = null
     }, ms)
   }, [])
+
+  const loadCompanionInbox = useCallback(async () => {
+    if (!settings.enableCompanionApp) {
+      setCompanionInboxItems([])
+      return
+    }
+    try {
+      const result = await window.api.getCompanionInbox()
+      if (result.success) setCompanionInboxItems(result.items)
+    } catch {
+      // Keep showing the last-known inbox contents if refresh fails.
+    }
+  }, [settings.enableCompanionApp])
+
+  useEffect(() => {
+    if (!settings.enableCompanionApp) {
+      setCompanionInboxOpen(false)
+      setCompanionInboxItems([])
+      return
+    }
+    void loadCompanionInbox()
+  }, [loadCompanionInbox, settings.enableCompanionApp])
+
+  useEffect(() => {
+    if (!settings.enableCompanionApp || !companionInboxOpen) return
+    void loadCompanionInbox()
+    const timer = window.setInterval(() => { void loadCompanionInbox() }, 15000)
+    return () => window.clearInterval(timer)
+  }, [companionInboxOpen, loadCompanionInbox, settings.enableCompanionApp])
 
   useEffect(() => {
     void window.api.setFolderWatchState({
@@ -1462,6 +1498,76 @@ export default function App() {
       setShowToneStore(false)
     }
   }, [selectedIds, cardView])
+
+  const handleMarkCompanionInboxReviewed = useCallback(async (item: CompanionInboxItem) => {
+    const result = await window.api.markCompanionInboxReviewed(item.id)
+    if (!result.success) {
+      setStatus({ message: result.error ?? 'Could not update inbox item.', type: 'error' })
+      return
+    }
+    setCompanionInboxItems((prev) => prev.map((entry) => (
+      entry.id === item.id ? { ...entry, status: 'reviewed' } : entry
+    )))
+    showTransientStatus({ message: `Marked "${item.title}" as reviewed.`, type: 'success' })
+  }, [showTransientStatus])
+
+  const handleDeleteCompanionInboxItem = useCallback(async (item: CompanionInboxItem) => {
+    const confirmed = window.confirm(`Delete "${item.title}" from the companion inbox?`)
+    if (!confirmed) return
+    const result = await window.api.deleteCompanionInboxItem(item.id)
+    if (!result.success) {
+      setStatus({ message: result.error ?? 'Could not delete inbox item.', type: 'error' })
+      return
+    }
+    setCompanionInboxItems((prev) => prev.filter((entry) => entry.id !== item.id))
+    showTransientStatus({ message: `Deleted "${item.title}" from the companion inbox.`, type: 'success' })
+  }, [showTransientStatus])
+
+  const handleOpenCompanionInboxFolder = useCallback(async (item: CompanionInboxItem) => {
+    const folderPath = item.folderPath.replace(/\\/g, '/')
+    if (!folderPath) {
+      setStatus({ message: 'This inbox item does not have a folder attached yet.', type: 'error' })
+      return
+    }
+    const currentRoot = librarian.rootFolder?.replace(/\\/g, '/')
+    setCompanionInboxOpen(false)
+    if (currentRoot && (folderPath === currentRoot || folderPath.startsWith(`${currentRoot}/`))) {
+      setLibrarian((prev) => ({ ...prev, selectedFolders: [folderPath] }))
+      setShowDashboard(false)
+      setHistoryOpen(false)
+      setShowSettings(false)
+      setShowToneStore(false)
+      setShowTrainingWorkspace(false)
+      setBatchFolder(null)
+      setCardView(false)
+      showTransientStatus({ message: `Opened ${folderDisplayName(folderPath)} in the library.`, type: 'info' })
+      return
+    }
+    await loadFolderByPath(folderPath)
+  }, [librarian.rootFolder, loadFolderByPath, showTransientStatus])
+
+  const handleUseCompanionInboxAsCover = useCallback(async (item: CompanionInboxItem) => {
+    const folderPath = item.folderPath.replace(/\\/g, '/')
+    if (!item.assetPath || !folderPath) {
+      setStatus({ message: 'This inbox item needs both an image and a target folder.', type: 'error' })
+      return
+    }
+    const result = await window.api.copyLocalCoverFile(item.assetPath, folderPath)
+    if (!result.success) {
+      setStatus({ message: result.error ?? 'Could not copy cover image.', type: 'error' })
+      return
+    }
+    if (result.destPath) {
+      const selectionUsesFolder = selectedFiles.some((file) => file.filePath.replace(/\\/g, '/').startsWith(`${folderPath}/`))
+      if (selectionUsesFolder) setMetadataCoverPath(result.destPath)
+      setLibrarian((prev) => ({ ...prev, selectedFolders: [...prev.selectedFolders] }))
+    }
+    await window.api.markCompanionInboxReviewed(item.id)
+    setCompanionInboxItems((prev) => prev.map((entry) => (
+      entry.id === item.id ? { ...entry, status: 'reviewed' } : entry
+    )))
+    showTransientStatus({ message: `Saved "${item.title}" as the folder cover image.`, type: 'success' })
+  }, [selectedFiles, showTransientStatus])
 
   const onDragStart = (panel: 'tree' | 'list', e: React.MouseEvent) => {
     e.preventDefault()
@@ -3987,7 +4093,7 @@ INSTRUCTIONS:
     }
     previousSelectionSignatureRef.current = selectedFileSignature
   }, [selectedFileSignature, showTrainingWorkspace, trainingWorkspaceMode])
-  const showToneStorePanel = showToneStore && !showSettings && !showDashboard && !historyOpen && batchFolder === null
+  const showToneStorePanel = showToneStore && !showSettings && !showDashboard && !historyOpen && !companionInboxOpen && batchFolder === null
   const activeTrainingQueueCount = globalTrainerState.queue.filter((job) => ['queued', 'starting', 'running'].includes(job.status)).length
   const trainingQueueIsActive = globalTrainerState.status === 'starting' || globalTrainerState.status === 'running'
 
@@ -4115,6 +4221,7 @@ INSTRUCTIONS:
         onToggleSettings={() => {
           setShowSettings((s) => !s)
           setShowDashboard(false)
+          setCompanionInboxOpen(false)
           setBatchFolder(null)
           setShowToneStore(false)
           setShowTrainingWorkspace(false)
@@ -4143,6 +4250,7 @@ INSTRUCTIONS:
         onToggleDashboard={() => {
           setShowDashboard((v) => !v)
           setHistoryOpen(false)
+          setCompanionInboxOpen(false)
           setShowSettings(false)
           setShowToneStore(false)
           setShowTrainingWorkspace(false)
@@ -4153,18 +4261,34 @@ INSTRUCTIONS:
         onHistoryToggle={() => {
           setHistoryOpen((v) => !v)
           setShowDashboard(false)
+          setCompanionInboxOpen(false)
           setShowSettings(false)
           setShowToneStore(false)
           setShowTrainingWorkspace(false)
           setBatchFolder(null)
           setCardView(false)
         }}
+        companionInboxOpen={companionInboxOpen}
+        companionInboxCount={companionInboxItems.filter((item) => item.status === 'new').length}
+        onCompanionInboxToggle={settings.enableCompanionApp ? () => {
+          const nextOpen = !companionInboxOpen
+          setCompanionInboxOpen(nextOpen)
+          setShowDashboard(false)
+          setHistoryOpen(false)
+          setShowSettings(false)
+          setShowToneStore(false)
+          setShowTrainingWorkspace(false)
+          setBatchFolder(null)
+          setCardView(false)
+          if (nextOpen) void loadCompanionInbox()
+        } : undefined}
         toneStoreActive={showToneStorePanel}
         onToggleToneStore={() => {
           setToneStoreDefaultDir(null)
           setShowToneStore((v) => !v)
           setShowDashboard(false)
           setHistoryOpen(false)
+          setCompanionInboxOpen(false)
           setShowSettings(false)
           setShowTrainingWorkspace(false)
           setBatchFolder(null)
@@ -4539,6 +4663,17 @@ INSTRUCTIONS:
               onClose={() => setShowTrainingWorkspace(false)}
               onOpenSetupGuide={() => setShowTrainingSetupGuide(true)}
               onOpenSettings={(tab) => { setSettingsInitialTab(tab); setShowSettings(true) }}
+            />
+          ) : companionInboxOpen ? (
+            <CompanionInboxPanel
+              items={companionInboxItems}
+              onRefresh={() => { void loadCompanionInbox() }}
+              onMarkReviewed={(item) => { void handleMarkCompanionInboxReviewed(item) }}
+              onDelete={(item) => { void handleDeleteCompanionInboxItem(item) }}
+              onUseAsCover={(item) => { void handleUseCompanionInboxAsCover(item) }}
+              onRevealAsset={(item) => { if (item.assetPath) void window.api.revealFile(item.assetPath) }}
+              onOpenFolder={(item) => { void handleOpenCompanionInboxFolder(item) }}
+              onClose={() => setCompanionInboxOpen(false)}
             />
           ) : showDashboard ? (
             <div className="relative h-full flex flex-col">
