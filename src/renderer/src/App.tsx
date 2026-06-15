@@ -1523,29 +1523,6 @@ export default function App() {
     showTransientStatus({ message: `Deleted "${item.title}" from the companion inbox.`, type: 'success' })
   }, [showTransientStatus])
 
-  const handleUseCompanionInboxAsCover = useCallback(async (item: CompanionInboxItem) => {
-    const folderPath = item.folderPath.replace(/\\/g, '/')
-    if (!item.assetPath || !folderPath) {
-      setStatus({ message: 'This inbox item needs both an image and a target folder.', type: 'error' })
-      return
-    }
-    const result = await window.api.copyLocalCoverFile(item.assetPath, folderPath)
-    if (!result.success) {
-      setStatus({ message: result.error ?? 'Could not copy cover image.', type: 'error' })
-      return
-    }
-    if (result.destPath) {
-      const selectionUsesFolder = selectedFiles.some((file) => file.filePath.replace(/\\/g, '/').startsWith(`${folderPath}/`))
-      if (selectionUsesFolder) setMetadataCoverPath(result.destPath)
-      setLibrarian((prev) => ({ ...prev, selectedFolders: [...prev.selectedFolders] }))
-    }
-    await window.api.markCompanionInboxReviewed(item.id)
-    setCompanionInboxItems((prev) => prev.map((entry) => (
-      entry.id === item.id ? { ...entry, status: 'reviewed' } : entry
-    )))
-    showTransientStatus({ message: `Saved "${item.title}" as the folder cover image.`, type: 'success' })
-  }, [selectedFiles, showTransientStatus])
-
   const onDragStart = (panel: 'tree' | 'list', e: React.MouseEvent) => {
     e.preventDefault()
     const startWidth = panel === 'tree' ? treeWidth : listWidth
@@ -3949,6 +3926,32 @@ INSTRUCTIONS:
   })
 
   const selectedFiles = visibleFiles.filter((f) => selectedIds.has(f.filePath))
+
+  // Defined after selectedFiles so its dependency array doesn't hit the temporal
+  // dead zone during render (was crashing the app on startup).
+  const handleUseCompanionInboxAsCover = useCallback(async (item: CompanionInboxItem) => {
+    const folderPath = item.folderPath.replace(/\\/g, '/')
+    if (!item.assetPath || !folderPath) {
+      setStatus({ message: 'This inbox item needs both an image and a target folder.', type: 'error' })
+      return
+    }
+    const result = await window.api.copyLocalCoverFile(item.assetPath, folderPath)
+    if (!result.success) {
+      setStatus({ message: result.error ?? 'Could not copy cover image.', type: 'error' })
+      return
+    }
+    if (result.destPath) {
+      const selectionUsesFolder = selectedFiles.some((file) => file.filePath.replace(/\\/g, '/').startsWith(`${folderPath}/`))
+      if (selectionUsesFolder) setMetadataCoverPath(result.destPath)
+      setLibrarian((prev) => ({ ...prev, selectedFolders: [...prev.selectedFolders] }))
+    }
+    await window.api.markCompanionInboxReviewed(item.id)
+    setCompanionInboxItems((prev) => prev.map((entry) => (
+      entry.id === item.id ? { ...entry, status: 'reviewed' } : entry
+    )))
+    showTransientStatus({ message: `Saved "${item.title}" as the folder cover image.`, type: 'success' })
+  }, [selectedFiles, showTransientStatus])
+
   const selectedSingleFilePath = selectedFiles.length === 1 ? selectedFiles[0].filePath : null
   const selectedFileSignature = selectedFiles.map((f) => f.filePath).sort().join('|')
   const skipNextTrainingWorkspaceSelectionCloseRef = useRef(false)
