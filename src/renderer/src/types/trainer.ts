@@ -302,6 +302,7 @@ export interface TrainerHistoryEntry {
   // - validationEsrLite is the Lite sub-model (channels_3).
   validationEsrFull?: number | null
   validationEsrLite?: number | null
+  retriedAt?: string | null
 }
 
 export type WatcherFileStatus = 'pending' | 'queued' | 'running' | 'done' | 'failed' | 'canceled' | 'skipped'

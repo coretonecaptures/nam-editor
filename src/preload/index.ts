@@ -183,6 +183,8 @@ const api = {
     ipcRenderer.invoke('trainer:dismissBatch', submissionId),
   retryTrainerHistoryEntry: (historyId: string): Promise<{ success: boolean; error?: string; queued?: number }> =>
     ipcRenderer.invoke('trainer:retryHistoryEntry', historyId),
+  markHistoryRetried: (historyIds: string[]): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('trainer:markHistoryRetried', historyIds),
   onTrainerUpdate: (cb: (state: TrainerStateSnapshot) => void): (() => void) => {
     const handler = (_event: unknown, state: TrainerStateSnapshot) => cb(state)
     ipcRenderer.on('trainer:update', handler)

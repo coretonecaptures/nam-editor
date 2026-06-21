@@ -6739,7 +6739,24 @@ app.whenReady().then(async () => {
       return { success: false, error: 'That history entry could not be re-queued.' }
     }
     const queued = await enqueueTrainingPayloads(payloads)
+    if (queued > 0) {
+      entry.retriedAt = new Date().toISOString()
+      saveTrainerHistory()
+      emitTrainerHistory()
+    }
     return { success: queued > 0, queued, error: queued > 0 ? undefined : 'That retry did not add a new queue item.' }
+  })
+
+  ipcMain.handle('trainer:markHistoryRetried', async (_event, historyIds: string[]) => {
+    if (!Array.isArray(historyIds) || historyIds.length === 0) return { success: false }
+    const ids = new Set(historyIds)
+    const now = new Date().toISOString()
+    let marked = 0
+    for (const entry of trainerHistory) {
+      if (ids.has(entry.historyId)) { entry.retriedAt = now; marked++ }
+    }
+    if (marked > 0) { saveTrainerHistory(); emitTrainerHistory() }
+    return { success: marked > 0 }
   })
 
   const namVersionCache = new Map<string, 'a1' | 'a2'>()

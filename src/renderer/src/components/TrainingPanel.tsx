@@ -1300,7 +1300,6 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       setQueueActionError(result.error ?? 'Could not queue that batch.')
     } else {
       setQueueActionError('')
-      setSection('queue')
     }
   }
 
@@ -1540,7 +1539,6 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
       }
       setQueueActionError('')
       setHistoryContextMenu(null)
-      setSection('queue')
       return
     }
     // Manual-direct (no profileId): reconstruct the payload from the entry + current settings.
@@ -1636,7 +1634,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     }
     setQueueActionError('')
     setHistoryContextMenu(null)
-    setSection('queue')
+    void window.api.markHistoryRetried(entries.map((e) => e.historyId))
   }
 
   const handleSaveAsPreset = () => {
@@ -3881,6 +3879,12 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                               </div>
                               {entry.status === 'error' && (
                                 <div className="text-[11px] text-red-400 font-mono truncate mt-1 max-w-[520px]" title={entry.failureReason || 'Failed'}>{entry.failureReason || 'Failed'}</div>
+                              )}
+                              {entry.retriedAt && (
+                                <div className="inline-flex items-center gap-1 mt-1 h-[17px] px-1.5 rounded-[5px] text-[10px] font-[650] border border-amber-500/30 bg-amber-500/10 text-amber-400">
+                                  <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                                  Retried
+                                </div>
                               )}
                             </div>
                             {/* Right column */}
