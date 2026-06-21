@@ -4303,6 +4303,8 @@ INSTRUCTIONS:
         onOpenHelp={() => setHelpView('workflows')}
         onOpenFeatureHelp={() => setHelpView('features')}
         onOpenAbout={() => setHelpView('about')}
+        homeViewActive={!cardView && !showTrainingWorkspace}
+        onGoHomeView={() => { setCardView(false); setShowTrainingWorkspace(false) }}
         cardViewActive={cardView}
         cardViewEnabled={!!librarian.rootFolder && !!(librarian.folderTree?.children?.length)}
         onToggleCardView={() => { setCardViewInitialPath(null); setCardView((v) => !v) }}

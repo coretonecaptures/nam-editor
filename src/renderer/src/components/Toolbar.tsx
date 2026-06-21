@@ -44,6 +44,8 @@ interface ToolbarProps {
   cardViewActive?: boolean
   cardViewEnabled?: boolean
   onToggleCardView?: () => void
+  homeViewActive?: boolean
+  onGoHomeView?: () => void
 }
 
 export function Toolbar({
@@ -90,6 +92,8 @@ export function Toolbar({
   cardViewActive = false,
   cardViewEnabled = false,
   onToggleCardView,
+  homeViewActive = false,
+  onGoHomeView,
 }: ToolbarProps) {
   const [showFileMenu, setShowFileMenu] = useState(false)
   const [showActionsMenu, setShowActionsMenu] = useState(false)
@@ -359,6 +363,21 @@ export function Toolbar({
       )}
 
       <div className="flex-1" />
+
+      {onGoHomeView && (
+        <button
+          onClick={onGoHomeView}
+          title="Default view — folder tree, file list, and detail panel"
+          className={`tb-menu-btn ${homeViewActive ? 'active' : ''}`}
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+            <rect x="3" y="3" width="7" height="18" rx="1" strokeLinejoin="round" />
+            <rect x="12" y="3" width="5" height="18" rx="1" strokeLinejoin="round" />
+            <rect x="19" y="3" width="2" height="18" rx="1" strokeLinejoin="round" />
+          </svg>
+        </button>
+      )}
 
       {onToggleCardView && (
         <button
