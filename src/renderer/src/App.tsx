@@ -5456,7 +5456,7 @@ function DragHandle({ onMouseDown, onCollapse, collapsed }: { onMouseDown: (e: R
           onMouseDown={(e) => e.stopPropagation()}
           onClick={onCollapse}
           title={collapsed ? 'Expand library' : 'Collapse library'}
-          className="opacity-0 group-hover:opacity-100 absolute w-4 h-8 flex items-center justify-center rounded bg-indigo-500/60 hover:bg-indigo-500 text-white transition-all z-10"
+          className={`${collapsed ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} absolute w-4 h-8 flex items-center justify-center rounded bg-indigo-500/60 hover:bg-indigo-500 text-white transition-all z-10`}
         >
           <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d={collapsed ? 'M9 5l7 7-7 7' : 'M15 19l-7-7 7-7'} />
