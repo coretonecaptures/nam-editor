@@ -1,5 +1,54 @@
 # TODO
 
+## [TOP PRIORITY] Investigate: "NAM did not produce a .nam file at the expected location"
+
+Occasional training failures where the job completes without error but no `.nam` file is found at the output path. The error message is: `"NAM did not produce a .nam file at the expected location."`.
+
+- Identify when this happens (specific architectures, epoch counts, WAV pair characteristics, or workspace paths with special characters/spaces?)
+- Check whether NAM actually errored silently (non-zero exit, stderr output) vs. genuinely wrote the file somewhere else
+- Confirm the expected output path construction in `main/index.ts` matches where NAM actually writes its output for each architecture variant
+- Add better diagnostics: log the full expected path, list files actually present in the workspace dir after the run, surface that info in the failure history entry so users (and devs) can see what actually happened
+
+---
+
+## Modularization
+
+**Status: Components exist but are themselves too large. Priority: Medium.**
+
+58 TS files in `src/renderer/src/` — already well-structured with a `components/` directory and a 5,520-line App.tsx. However several component files are themselves monoliths that need splitting:
+
+| File | Lines | Problem |
+|------|-------|---------|
+| `TrainingPanel.tsx` | 5,202 | Larger than poke-locker's App.tsx was |
+| `SettingsPanel.tsx` | 2,956 | Three or four logical sections |
+| `PackInfoEditor.tsx` | 2,432 | Editor + preview + export mixed |
+| `FileList.tsx` | 1,966 | Grid + detail + modals all in one |
+| `PackTargetsEditor.tsx` | 1,180 | Could split into sub-panels |
+| `FolderTree.tsx` | 1,180 | Complex tree logic + UI mixed |
+| `MetadataEditor.tsx` | 1,169 | Multiple field groups |
+
+**App.tsx** (5,520 lines) also needs reduction — the root component should be ~300–400 lines.
+
+**Plan** (do these in priority order):
+
+1. **TrainingPanel.tsx** — Split into:
+   - `training/QueuePanel.tsx` — job queue + status + controls
+   - `training/HistoryPanel.tsx` — history browser + grouped entries
+   - `training/BatchBuilder.tsx` — WAV/folder intake + preset selection
+   - `training/WatcherPanel.tsx` — watch folder rules
+   - `training/PresetsPanel.tsx` — bundle/preset management
+   - `training/lib/` — queue helpers, ESR utils, naming templates
+
+2. **SettingsPanel.tsx** — Split into:
+   - `settings/GeneralSettings.tsx`
+   - `settings/AISettings.tsx`
+   - `settings/TrainingSettings.tsx`
+   - `settings/SecuritySettings.tsx`
+
+3. **App.tsx** — Extract remaining section scaffolding so root is nav + state only.
+
+**Approach**: Same Node.js extraction script pattern used in poke-locker. Target `npx tsc --noEmit` clean before committing each file.
+
 ## Packaging and release
 
 - App icon files for Windows and macOS (`.ico` / `.icns`)
