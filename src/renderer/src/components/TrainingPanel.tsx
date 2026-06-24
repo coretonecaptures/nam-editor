@@ -2929,7 +2929,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               </div>
 
               {!!trainerState.error && (
-                <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{trainerState.error}</div>
+                <div className="nm-error-text rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{trainerState.error}</div>
               )}
             </div>
           )}
@@ -3402,7 +3402,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                   {job.status === 'queued' && <svg className="w-3.5 h-3.5 text-nm-text-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>}
                                   <div className="flex-1 min-w-0">
                                     <div className="font-mono truncate text-nm-text">{job.outputPath.replace(/\\/g, '/').split('/').pop()}</div>
-                                    {job.status === 'error' && job.error && <div className="text-red-400 text-[11px] line-clamp-3 whitespace-pre-wrap break-words cursor-help" title={`${job.error}\n· attempt ${job.attempts}`}>{job.error} &middot; attempt {job.attempts}</div>}
+                                    {job.status === 'error' && job.error && <div className="nm-error-text text-red-400 text-[11px] line-clamp-3 whitespace-pre-wrap break-words" title={`${job.error}\n· attempt ${job.attempts}`}>{job.error} &middot; attempt {job.attempts}</div>}
                                     {(job.status === 'running' || job.status === 'starting') && <div className="text-[11px] text-nm-text-2 font-mono">Epoch {trainerState.progressEpochCurrent ?? '?'}/{progressEpochTotal ?? '?'} &middot; {typeof trainerState.progressRate === 'number' ? `${trainerState.progressRate.toFixed(2)} it/s` : '\u2014'} &middot; {formatDuration(elapsedSec)}</div>}
                                     {job.status === 'success' && <div className="text-[11px] text-nm-text-2">{architectureDisplayLabel(job.architecture)}{(() => { const d = jobDurationSec(job); return d ? ` \u00b7 ${formatDuration(d)}` : '' })()}</div>}
                                     {job.status === 'queued' && <div className="text-[11px] text-nm-text-2">Waiting in queue</div>}
@@ -3878,7 +3878,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                 })()}
                               </div>
                               {entry.status === 'error' && (
-                                <div className="text-[11px] text-red-400 font-mono truncate mt-1 max-w-[520px]" title={entry.failureReason || 'Failed'}>{entry.failureReason || 'Failed'}</div>
+                                <div className="nm-error-text text-[11px] text-red-400 font-mono mt-1 max-w-[520px] break-all whitespace-pre-wrap" title={entry.failureReason || 'Failed'}>{entry.failureReason || 'Failed'}</div>
                               )}
                               {entry.retriedAt && (
                                 <div className="inline-flex items-center gap-1 mt-1 h-[17px] px-1.5 rounded-[5px] text-[10px] font-[650] border border-amber-500/30 bg-amber-500/10 text-amber-400">

@@ -187,6 +187,18 @@ input, textarea, select {
   user-select: text;
 }
 
+/* Allow copying error messages, log output, file paths, and code blocks */
+.selectable,
+pre, code,
+[data-selectable],
+.nm-log-line,
+.nm-error-text,
+.nm-failure-reason {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
 .mono, code { font-family: var(--font-mono); }
 
 /* Scrollbar — theme-aware */
