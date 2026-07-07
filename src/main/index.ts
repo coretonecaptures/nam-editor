@@ -1635,25 +1635,21 @@ def _promote_output_model_path(train_path, model_name, discovered_path, backup_e
     return str(target)
 
 
-def _normalize_wav_pair(input_path, output_path, target_db, workspace):
-    in_data, in_sr = sf.read(input_path, dtype="float32")
+def _normalize_capture_wav(input_path, output_path, target_db, workspace):
+    in_info = sf.info(input_path)
     out_data, out_sr = sf.read(output_path, dtype="float32")
-    if in_sr != out_sr:
-        raise ValueError(f"Sample rate mismatch: input {in_sr} Hz vs output {out_sr} Hz")
-    in_peak = float(np.max(np.abs(in_data)))
+    if in_info.samplerate != out_sr:
+        raise ValueError(f"Sample rate mismatch: input {in_info.samplerate} Hz vs output {out_sr} Hz")
     out_peak = float(np.max(np.abs(out_data)))
-    if in_peak == 0 or out_peak == 0:
-        raise ValueError("Cannot normalize: one or both WAV files are silent")
+    if out_peak == 0:
+        raise ValueError("Cannot normalize: output WAV is silent")
     target_amplitude = 10 ** (target_db / 20.0)
-    in_gain = target_amplitude / in_peak
     out_gain = target_amplitude / out_peak
-    print(f"NAM_LAB_NORMALIZE: in_peak={in_peak:.6f} ({20*np.log10(in_peak):.2f} dBFS) gain={20*np.log10(in_gain):+.2f} dB | out_peak={out_peak:.6f} ({20*np.log10(out_peak):.2f} dBFS) gain={20*np.log10(out_gain):+.2f} dB | target={target_db} dBFS", flush=True)
+    print(f"NAM_LAB_NORMALIZE: input_preserved={input_path} | out_peak={out_peak:.6f} ({20*np.log10(out_peak):.2f} dBFS) gain={20*np.log10(out_gain):+.2f} dB | target={target_db} dBFS", flush=True)
     ws = Path(workspace)
-    norm_input = str(ws / "input_norm.wav")
     norm_output = str(ws / "output_norm.wav")
-    sf.write(norm_input, in_data * in_gain, in_sr, subtype="PCM_24")
     sf.write(norm_output, out_data * out_gain, out_sr, subtype="PCM_24")
-    return norm_input, norm_output
+    return input_path, norm_output
 
 
 def _detect_nam_version():
@@ -1842,13 +1838,11 @@ def main():
     active_output = payload["outputPath"]
     if payload.get("normalizeWav", False):
         target_db = payload.get("normalizeWavTargetDb", -5.0)
-        active_input, active_output = _normalize_wav_pair(
+        active_input, active_output = _normalize_capture_wav(
             active_input, active_output, target_db, payload["trainPath"]
         )
 
     norm_payload = {**payload, "inputPath": active_input, "outputPath": active_output}
-    if payload.get("normalizeWav", False):
-        norm_payload["ignoreChecks"] = True  # normalized WAV amplitude won't match NAM version fingerprint
     _orig_trainer = _install_esr_reporter()
     try:
         if requested == "a2":

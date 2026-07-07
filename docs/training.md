@@ -445,7 +445,7 @@ From the missing rows you can click **Train** to queue that WAV immediately or *
 
 NAM Lab can normalize WAV files before sending them to the trainer.
 
-- Each WAV in a training pair (input DI and output amp) is normalized **independently** to a target peak (default **-5 dBFS**)
+- The NAM reference input WAV is left untouched; only the recorded capture/output WAV gets a normalized workspace copy (default target **-5 dBFS**)
 - Output is written as 24-bit PCM
 - Original source files are **never** modified â€” normalized copies live in the per-run workspace
 - Logged to the raw trainer log as `NAM_LAB_NORMALIZE: ...` with peak / gain details
