@@ -1446,7 +1446,13 @@ import os
 import shutil
 import sys
 import traceback
+import faulthandler
 from pathlib import Path
+
+# Enable fault handler immediately — writes native crash info to stderr before the process dies.
+# This gives us a Python-level traceback even when CUDA/PyTorch native code triggers a hard crash
+# (STATUS_ACCESS_VIOLATION, STATUS_STACK_BUFFER_OVERRUN, etc.) that would otherwise be silent.
+faulthandler.enable(file=sys.stderr, all_threads=True)
 
 import numpy as np
 import soundfile as sf
@@ -1629,25 +1635,21 @@ def _promote_output_model_path(train_path, model_name, discovered_path, backup_e
     return str(target)
 
 
-def _normalize_wav_pair(input_path, output_path, target_db, workspace):
-    in_data, in_sr = sf.read(input_path, dtype="float32")
+def _normalize_capture_wav(input_path, output_path, target_db, workspace):
+    in_info = sf.info(input_path)
     out_data, out_sr = sf.read(output_path, dtype="float32")
-    if in_sr != out_sr:
-        raise ValueError(f"Sample rate mismatch: input {in_sr} Hz vs output {out_sr} Hz")
-    in_peak = float(np.max(np.abs(in_data)))
+    if in_info.samplerate != out_sr:
+        raise ValueError(f"Sample rate mismatch: input {in_info.samplerate} Hz vs output {out_sr} Hz")
     out_peak = float(np.max(np.abs(out_data)))
-    if in_peak == 0 or out_peak == 0:
-        raise ValueError("Cannot normalize: one or both WAV files are silent")
+    if out_peak == 0:
+        raise ValueError("Cannot normalize: output WAV is silent")
     target_amplitude = 10 ** (target_db / 20.0)
-    in_gain = target_amplitude / in_peak
     out_gain = target_amplitude / out_peak
-    print(f"NAM_LAB_NORMALIZE: in_peak={in_peak:.6f} ({20*np.log10(in_peak):.2f} dBFS) gain={20*np.log10(in_gain):+.2f} dB | out_peak={out_peak:.6f} ({20*np.log10(out_peak):.2f} dBFS) gain={20*np.log10(out_gain):+.2f} dB | target={target_db} dBFS", flush=True)
+    print(f"NAM_LAB_NORMALIZE: input_preserved={input_path} | out_peak={out_peak:.6f} ({20*np.log10(out_peak):.2f} dBFS) gain={20*np.log10(out_gain):+.2f} dB | target={target_db} dBFS", flush=True)
     ws = Path(workspace)
-    norm_input = str(ws / "input_norm.wav")
     norm_output = str(ws / "output_norm.wav")
-    sf.write(norm_input, in_data * in_gain, in_sr, subtype="PCM_24")
     sf.write(norm_output, out_data * out_gain, out_sr, subtype="PCM_24")
-    return norm_input, norm_output
+    return input_path, norm_output
 
 
 def _detect_nam_version():
@@ -1836,13 +1838,11 @@ def main():
     active_output = payload["outputPath"]
     if payload.get("normalizeWav", False):
         target_db = payload.get("normalizeWavTargetDb", -5.0)
-        active_input, active_output = _normalize_wav_pair(
+        active_input, active_output = _normalize_capture_wav(
             active_input, active_output, target_db, payload["trainPath"]
         )
 
     norm_payload = {**payload, "inputPath": active_input, "outputPath": active_output}
-    if payload.get("normalizeWav", False):
-        norm_payload["ignoreChecks"] = True  # normalized WAV amplitude won't match NAM version fingerprint
     _orig_trainer = _install_esr_reporter()
     try:
         if requested == "a2":
@@ -3289,15 +3289,40 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
   }
   await fs.promises.writeFile(payloadPath, JSON.stringify(runnerPayload, null, 2), 'utf-8')
 
+  // Build a clean environment: start from process.env but strip Electron-specific variables
+  // that can confuse Python's native extensions (PyTorch, CUDA DLLs) when inherited.
+  // These vars are meaningless to Python and in some cases change how native DLLs initialize.
+  const ELECTRON_VARS_TO_STRIP = new Set([
+    'ELECTRON_RUN_AS_NODE',
+    'ELECTRON_NO_ASAR',
+    'ELECTRON_DISABLE_SECURITY_WARNINGS',
+    'ELECTRON_ENABLE_LOGGING',
+    'ELECTRON_ENABLE_STACK_DUMPING',
+    'CHROME_DESKTOP',
+    'NODE_OPTIONS',
+    'ORIGINAL_XDG_CURRENT_DESKTOP',
+  ])
+  const cleanEnv: Record<string, string> = {}
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v !== undefined && !ELECTRON_VARS_TO_STRIP.has(k)) cleanEnv[k] = v
+  }
+
   const { spawn } = await import('child_process')
   trainerChild = spawn(pythonPath, ['-u', runnerPath, payloadPath], {
     cwd: trainPath,
+    // On Windows, windowsHide:true gives the subprocess null console handles.
+    // CUDA and PyTorch native DLLs sometimes call Windows console APIs internally;
+    // with null handles this can corrupt the stack cookie and trigger STATUS_STACK_BUFFER_OVERRUN (0xC0000409).
+    // We hide the window at the Windows level via windowsHide but still provide valid handles via stdio:pipe.
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
-      ...process.env,
+      ...cleanEnv,
       PYTHONUNBUFFERED: '1',
       PYTHONIOENCODING: 'utf-8',
+      // Enable Python's built-in fault handler — writes a traceback to stderr on crashes
+      // that happen inside native C extensions (SIGSEGV, stack overflow, etc.).
+      PYTHONFAULTHANDLER: '1',
       // Throttle tqdm to one refresh every 10s and force ASCII bars — mirrors Anaconda-shell behavior in a non-TTY pipe.
       TQDM_MININTERVAL: '10',
       TQDM_ASCII: '1',
@@ -3390,7 +3415,21 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     const finalStatus: TrainerStateSnapshot['status'] = wasCanceled ? 'canceled' : code === 0 ? 'success' : 'error'
     let finalError = trainerState.error
     if (!wasCanceled && code !== 0 && !finalError) {
-      finalError = signal ? `Training process stopped by signal ${signal}` : `Training process exited with code ${code}`
+      if (signal) {
+        finalError = `Training process stopped by signal ${signal}`
+      } else {
+        // Decode common Windows STATUS codes (shown as large decimal numbers on Windows).
+        const WIN_STATUS: Record<number, string> = {
+          3221225477: 'Access violation (0xC0000005) — Python or PyTorch crashed. This is usually caused by GPU/CUDA out-of-memory or a corrupt PyTorch installation. Try reducing batch size or restarting.',
+          3221225725: 'Invalid image format (0xC000007B) — a required DLL was not found or has the wrong architecture. Check your Python environment.',
+          3221225786: 'Process was terminated externally (0xC000013A).',
+          3221226356: 'Heap corruption (0xC0000374) — Python native extension crashed due to memory corruption.',
+          3221225501: 'Illegal instruction (0xC000001D) — CPU instruction not supported. Your PyTorch build may not be compatible with this CPU.',
+          3221225620: 'Integer divide by zero (0xC0000094).',
+          3221226505: 'Stack buffer overrun (0xC0000409) — Windows terminated the process via a security fast-fail. Usually caused by a stack overflow inside PyTorch\'s C++ runtime (e.g. extremely deep model or very large batch). Try reducing batch size or model complexity.',
+        }
+        finalError = WIN_STATUS[code as number] ?? `Training process exited with code ${code}`
+      }
     }
     trainerState = {
       ...trainerState,
@@ -7275,7 +7314,7 @@ app.whenReady().then(async () => {
       }
     })
 
-  ipcMain.handle('tone3000:search', async (_event, params: { query?: string; page?: number; pageSize?: number; gears?: string[]; sizes?: string[]; sort?: string; architecture?: string; platform?: string }) => {
+  ipcMain.handle('tone3000:search', async (_event, params: { query?: string; page?: number; pageSize?: number; gears?: string[]; sizes?: string[]; sort?: string; architecture?: string; platform?: string; format?: string }) => {
     const valid = await ensureValidToken()
     if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
     const sp = new URLSearchParams()
@@ -7286,7 +7325,9 @@ app.whenReady().then(async () => {
     if (params.gears?.length) sp.set('gears', params.gears.join('_'))
     if (params.sizes?.length) sp.set('sizes', params.sizes.join('_'))
     if (params.architecture) sp.set('architecture', params.architecture)
-    if (params.platform) sp.set('platform', params.platform)
+    // Prefer the new 'format' param; fall back to 'platform' (still a valid alias per the API).
+    if (params.format) sp.set('format', params.format)
+    else if (params.platform) sp.set('platform', params.platform)
     try {
       const res = await fetch(`${T3K_BASE}/api/v1/tones/search?${sp}`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
       if (!res.ok) return { error: `API error ${res.status}` }
@@ -7334,6 +7375,7 @@ app.whenReady().then(async () => {
         return { ok: true, data: await res.json() }
       } catch (e) { return { error: String(e) } }
     })
+
 
   // Download any public image URL and save as ampcover.{ext}, replacing existing cover
   ipcMain.handle('cover:downloadFromUrl', async (_event, imageUrl: string, destDir: string) => {

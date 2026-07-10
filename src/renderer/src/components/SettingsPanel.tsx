@@ -1987,7 +1987,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                   <div className="flex items-center gap-3 flex-wrap">
                     <CheckboxField
                       label="Normalize WAV pair before training"
-                      description="Applies identical linked peak gain to both input and output WAVs before each training run. Originals are never modified \u2014 normalized copies are used only within the run workspace."
+                      description="Leaves the NAM reference input WAV alone and writes a normalized copy of the recorded capture/output WAV inside the per-run workspace before training."
                       checked={draft.normalizeWavBeforeTraining ?? true}
                       onChange={(v) => update('normalizeWavBeforeTraining', v)}
                     />

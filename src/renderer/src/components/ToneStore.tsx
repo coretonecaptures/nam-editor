@@ -3,12 +3,17 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 interface ToneUser { username: string }
 type ToneArchitectureFilter = '' | '1' | '2' | 'custom'
 type TonePlatform = '' | 'nam' | 'ir' | 'aida-x' | 'aa-snapshot' | 'proteus'
+// New format field mirrors platform but lives separately per the 2026-06 API update.
+type ToneFormat = 'nam' | 'ir' | 'aida-x' | 'aa-snapshot' | 'proteus'
 
 interface ToneResult {
   id: number
   title: string
   user: ToneUser
   gear: string
+  // format replaces platform as the nam/ir discriminator (2026-06 API update).
+  // platform is kept for backward compat with older API responses.
+  format?: ToneFormat
   platform?: Exclude<TonePlatform, ''>
   sizes: string[]
   images: string[] | null
@@ -25,6 +30,7 @@ interface ToneDetail {
   description: string | null
   user: ToneUser
   gear: string
+  format?: ToneFormat
   platform?: Exclude<TonePlatform, ''>
   makes: { name: string }[]
   tags: { name: string }[]
@@ -103,6 +109,19 @@ function normalizePlatform(value?: string | null): TonePlatform {
   return (value ?? '').toLowerCase() as TonePlatform
 }
 
+// Normalise legacy/preview gear values to the canonical API values.
+function normalizeGear(value?: string | null): string {
+  const v = (value ?? '').toLowerCase()
+  if (v === 'full-rig') return 'amp-cab'
+  if (v === 'speaker-cab') return 'cab'  // email preview name vs live API name
+  return v
+}
+
+// Returns the effective format (nam/ir/etc) preferring the new format field over legacy platform.
+function toneEffectiveFormat(tone: Pick<ToneResult, 'format' | 'platform'>): TonePlatform {
+  return normalizePlatform(tone.format ?? tone.platform)
+}
+
 function filterToneByArchitecture(tone: ToneResult, architecture: ToneArchitectureFilter): boolean {
   if (!architecture) return true
   if (architecture === '1') return (tone.a1_models_count ?? 0) > 0
@@ -125,19 +144,34 @@ function summarizeArchitectureBadges(tone: ToneResult | ToneDetail): Array<{ key
 
 const GEAR_OPTIONS = [
   { value: '', label: 'All Gear' },
-  { value: 'amp', label: 'Amp' },
-  { value: 'full-rig', label: 'Full Rig' },
+  { value: 'amp-cab', label: 'Amp + Cab' },
+  { value: 'amp', label: 'Amp Head' },
+  { value: 'cab', label: 'Speaker Cab' },
   { value: 'pedal', label: 'Pedal' },
   { value: 'outboard', label: 'Outboard' },
-  { value: 'ir', label: 'IR' },
+  { value: 'space', label: 'Space' },
+  { value: 'experimental', label: 'Experimental' },
 ]
-const GEAR_LABELS: Record<string, string> = { amp: 'Amp', 'full-rig': 'Full Rig', pedal: 'Pedal', outboard: 'Outboard', ir: 'IR' }
+// Includes legacy values so gear badges on already-fetched results still render correctly.
+const GEAR_LABELS: Record<string, string> = {
+  'amp-cab': 'Amp + Cab',
+  'full-rig': 'Amp + Cab',  // legacy alias
+  amp: 'Amp Head',
+  cab: 'Speaker Cab',
+  'speaker-cab': 'Speaker Cab',  // email preview used this name; normalise to cab
+  pedal: 'Pedal',
+  outboard: 'Outboard',
+  space: 'Space',
+  experimental: 'Experimental',
+  ir: 'IR',  // legacy — ir gear value removed but keep label for cached results
+}
 const SIZE_ORDER = ['Standard', 'Lite', 'Feather', 'Nano', 'Custom']
 const SORT_OPTIONS = [
   { value: 'newest', label: 'Newest' },
-  { value: 'oldest', label: 'Oldest' },
-  { value: 'downloads-all-time', label: 'Most Downloaded' },
+  { value: 'best-match', label: 'Best Match' },
   { value: 'trending', label: 'Trending' },
+  { value: 'downloads-all-time', label: 'Most Downloaded' },
+  { value: 'oldest', label: 'Oldest' },
 ]
 const LAST_TONE3000_QUERY_KEY = 'nam-lab-tone3000-last-query'
 
@@ -326,7 +360,7 @@ export function ToneStore({
           gears: g ? [g] : undefined,
           sizes: searchSizeValue ? [searchSizeValue] : undefined,
           architecture: arch || undefined,
-          platform: plat || undefined,
+          format: plat || undefined,  // use new 'format' param; 'platform' kept as fallback in IPC handler
           sort: s,
         })
     setSearching(false)
@@ -338,10 +372,10 @@ export function ToneStore({
         const needle = q.toLowerCase()
         filtered = filtered.filter((tone) => [tone.title, tone.user?.username].filter(Boolean).join(' ').toLowerCase().includes(needle))
       }
-      if (g) filtered = filtered.filter((tone) => tone.gear === g)
+      if (g) filtered = filtered.filter((tone) => normalizeGear(tone.gear) === normalizeGear(g))
       if (searchSizeValue) filtered = filtered.filter((tone) => filterToneBySize(tone, searchSizeValue))
       if (arch) filtered = filtered.filter((tone) => filterToneByArchitecture(tone, arch))
-      if (plat) filtered = filtered.filter((tone) => normalizePlatform(tone.platform) === plat)
+      if (plat) filtered = filtered.filter((tone) => toneEffectiveFormat(tone) === plat)
       filtered = [...filtered].sort((a, b) => {
         const aTime = a.created_at ? new Date(a.created_at).getTime() : 0
         const bTime = b.created_at ? new Date(b.created_at).getTime() : 0
@@ -353,7 +387,7 @@ export function ToneStore({
     if (!useCreated && !useFavorited) {
       if (searchSizeValue) filtered = filtered.filter((tone) => filterToneBySize(tone, searchSizeValue))
       if (arch) filtered = filtered.filter((tone) => filterToneByArchitecture(tone, arch))
-      if (plat) filtered = filtered.filter((tone) => normalizePlatform(tone.platform) === plat)
+      if (plat) filtered = filtered.filter((tone) => toneEffectiveFormat(tone) === plat)
     }
     setResults(filtered)
     setTotal((useCreated || useFavorited || requestedUsername) ? filtered.length : (data.total ?? 0))
@@ -414,7 +448,6 @@ export function ToneStore({
     setSizeFilter('')
     setDownloadDone(null)
     setDownloadError(null)
-
     const activeArchitecture = architectureRef.current
     const modelRequests: Array<Promise<{ ok?: boolean; models?: unknown[]; error?: string }>> = [
       window.api.tone3000GetModels(tone.id, activeArchitecture || undefined),
@@ -614,11 +647,11 @@ export function ToneStore({
               <span className="px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300">
                 {GEAR_LABELS[selectedTone.gear] ?? selectedTone.gear}
               </span>
-              {(toneDetail ?? selectedTone).platform && (
+              {((toneDetail ?? selectedTone).format ?? (toneDetail ?? selectedTone).platform) && (
                 <>
                   <span>|</span>
                   <span className="px-1.5 py-0.5 rounded bg-fuchsia-100 dark:bg-fuchsia-900/30 text-fuchsia-700 dark:text-fuchsia-300 uppercase">
-                    {(toneDetail ?? selectedTone).platform}
+                    {(toneDetail ?? selectedTone).format ?? (toneDetail ?? selectedTone).platform}
                   </span>
                 </>
               )}
@@ -1016,9 +1049,9 @@ export function ToneStore({
                       <span className="text-xs px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300">
                         {GEAR_LABELS[tone.gear] ?? tone.gear}
                       </span>
-                      {tone.platform && (
+                      {(tone.format ?? tone.platform) && (
                         <span className="text-xs px-1.5 py-0.5 rounded bg-fuchsia-100 dark:bg-fuchsia-900/30 text-fuchsia-700 dark:text-fuchsia-300 uppercase">
-                          {tone.platform}
+                          {tone.format ?? tone.platform}
                         </span>
                       )}
                       {tone.models_count > 0 && (
