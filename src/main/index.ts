@@ -1419,6 +1419,14 @@ let trainerPauseAfterCurrent = false
 //   - pause the queue so it doesn't auto-advance to the next job
 let trainerEmergencyRequeue = false
 let trainerEmergencyRequeueJobId: string | null = null
+// Set when an explicit user reorder (batch drag, Run next, per-job Next, watcher retry-now)
+// leaves a DIFFERENT batch's job first in the queue while another batch is active. The
+// scheduler's sticky-batch preference would otherwise silently ignore the promotion and keep
+// draining the active batch — the "Run next doesn't actually run next" bug. When true, the
+// next pump after the active job finishes uses pure queue order instead of the sticky
+// preference (the running job is never interrupted). Recomputed on every reorder, so moving
+// the active batch back to the front clears it again.
+let trainerStickyPreferenceCleared = false
 // True while the close handler is running post-processing (between trainerChild = null and the
 // final pumpTrainerQueue call). Prevents a watcher-triggered pump from starting the next job
 // during model promotion / graph copy, which would race the pause-after-current check.
@@ -1976,12 +1984,16 @@ function getPersistableTrainerQueueJobs(): TrainerQueueJob[] {
 // (staged) jobs are never pruned, and partially-finished batches keep their terminal rows so the
 // batch card stays accurate and the rows survive a restart. Returns true if anything was removed.
 function pruneFinishedBatchesFromQueue(): boolean {
-  // Track whether ALL non-staged jobs in a submission are success.
+  // Track whether ALL jobs in a submission are success.
   // Any error or canceled job means the batch stays — the user must dismiss it,
   // and keeping it in the queue prevents the watcher from re-enqueuing the same files.
+  // Staged rows also keep the batch: a parked batch's finished rows stay visible in the
+  // queue card as its progress record until the parked remainder is unstaged and finishes
+  // (previously staged rows were skipped here, so parking a half-done batch silently
+  // dropped its finished rows from the queue).
   const submissionAllSuccess = new Map<string, boolean>()
   for (const job of trainerQueue) {
-    if (!job.submissionId || job.status === 'staged') continue
+    if (!job.submissionId) continue
     const soFar = submissionAllSuccess.get(job.submissionId) ?? true
     submissionAllSuccess.set(job.submissionId, soFar && job.status === 'success')
   }
@@ -2893,6 +2905,7 @@ function moveQueuedTrainerJob(jobId: string, direction: 'up' | 'down'): boolean 
   const nextQueue = [...trainerQueue]
   ;[nextQueue[currentIndex], nextQueue[targetIndex]] = [nextQueue[targetIndex], nextQueue[currentIndex]]
   trainerQueue = nextQueue
+  maybeClearStickyPreference()
   return true
 }
 
@@ -2907,6 +2920,7 @@ function makeQueuedTrainerJobNext(jobId: string): boolean {
   const [job] = trainerQueue.splice(currentIndex, 1)
   const firstQueuedIndex = trainerQueue.findIndex((item) => item.status === 'queued')
   trainerQueue.splice(firstQueuedIndex === -1 ? trainerQueue.length : firstQueuedIndex, 0, job)
+  maybeClearStickyPreference()
   return true
 }
 
@@ -2922,36 +2936,59 @@ function reorderQueuedTrainerJob(jobId: string, beforeJobId: string): boolean {
   next.splice(insertAt === -1 ? next.length : insertAt, 0, moved)
   trainerQueue = next
   void queuedJobs // suppress lint
+  maybeClearStickyPreference()
   return true
 }
 
+// Batch reorders move QUEUED rows only. The active/running job stays pinned where it is,
+// staged rows stay parked in Staged Batches, and terminal (success/error/canceled) rows do
+// not participate in queue ordering — they used to ride along with the block, which made
+// reorders drag a batch's finished/failed rows around and produced odd split-batch visuals.
+// The queue UI groups rows by submissionId regardless of array position and anchors each
+// card on its first queued/running row, so rows left behind never split a card.
 function moveSubmissionToEndOfQueue(submissionId: string): boolean {
-  const activeId = trainerState.activeJobId
   // Must have at least one queued job to be draggable
   const hasQueued = trainerQueue.some((j) => j.status === 'queued' && j.submissionId === submissionId)
   if (!hasQueued) return false
-  // Move the entire submission block (all non-running jobs) to the end so the batch stays contiguous
-  const block = trainerQueue.filter((j) => j.submissionId === submissionId && j.jobId !== activeId)
-  const rest = trainerQueue.filter((j) => !(j.submissionId === submissionId && j.jobId !== activeId))
+  const block = trainerQueue.filter((j) => j.submissionId === submissionId && j.status === 'queued')
+  const rest = trainerQueue.filter((j) => !(j.submissionId === submissionId && j.status === 'queued'))
   trainerQueue = [...rest, ...block]
+  maybeClearStickyPreference()
   return true
 }
 
 function moveSubmissionBeforeSubmission(submissionId: string, beforeSubmissionId: string): boolean {
   if (submissionId === beforeSubmissionId) return false
-  const activeId = trainerState.activeJobId
   // Must have at least one queued job to be draggable
   const hasQueued = trainerQueue.some((j) => j.status === 'queued' && j.submissionId === submissionId)
   if (!hasQueued) return false
-  const beforeFirst = trainerQueue.findIndex((j) => j.status === 'queued' && j.submissionId === beforeSubmissionId)
-  if (beforeFirst === -1) return false
-  // Move the entire submission block (all non-running jobs) as a unit so the batch stays contiguous
-  const block = trainerQueue.filter((j) => j.submissionId === submissionId && j.jobId !== activeId)
-  let next = trainerQueue.filter((j) => !(j.submissionId === submissionId && j.jobId !== activeId))
-  const insertAt = next.findIndex((j) => j.status === 'queued' && j.submissionId === beforeSubmissionId)
-  next.splice(insertAt === -1 ? next.length : insertAt, 0, ...block)
+  const block = trainerQueue.filter((j) => j.submissionId === submissionId && j.status === 'queued')
+  const next = trainerQueue.filter((j) => !(j.submissionId === submissionId && j.status === 'queued'))
+  // Insert before the target batch's first queued row; if the target has no queued rows
+  // left (e.g. dragging above the running batch on its last capture, or above a batch
+  // that's all terminal), fall back to its first row of any status. Requiring a queued
+  // target row made dragging above the active batch fail outright.
+  let insertAt = next.findIndex((j) => j.status === 'queued' && j.submissionId === beforeSubmissionId)
+  if (insertAt === -1) insertAt = next.findIndex((j) => j.submissionId === beforeSubmissionId)
+  if (insertAt === -1) return false
+  next.splice(insertAt, 0, ...block)
   trainerQueue = next
+  maybeClearStickyPreference()
   return true
+}
+
+// Re-derive the sticky-override flag after any explicit reorder: if the first queued job now
+// belongs to a different submission than the active job, the user has said "run that next" —
+// drop the sticky preference for the next pump. Recomputing (rather than latching) means
+// reordering the active batch back to the front restores normal batch-continuation.
+function maybeClearStickyPreference(): void {
+  const activeId = trainerState.activeJobId
+  if (!activeId) { trainerStickyPreferenceCleared = false; return }
+  const activeJob = trainerQueue.find((j) => j.jobId === activeId)
+  const firstQueued = trainerQueue.find((j) => j.status === 'queued')
+  trainerStickyPreferenceCleared = Boolean(
+    activeJob && firstQueued && firstQueued.submissionId !== activeJob.submissionId
+  )
 }
 
 function isTrainingProfileActive(profile: TrainingProfile): boolean {
@@ -3358,7 +3395,13 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     }
     trainerChild = null
     emitTrainerState()
-    if (!trainerPauseAfterCurrent) await pumpTrainerQueue(job.submissionId)
+    if (!trainerPauseAfterCurrent) {
+      // Honor an explicit user promotion: pump in pure queue order instead of sticking to
+      // this job's batch (see trainerStickyPreferenceCleared).
+      const preferred = trainerStickyPreferenceCleared ? null : job.submissionId
+      trainerStickyPreferenceCleared = false
+      await pumpTrainerQueue(preferred)
+    }
   })
 
   trainerChild.once('close', async (code, signal) => {
@@ -3642,7 +3685,11 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
 
     trainerPostProcessing = false
     if (!trainerPauseAfterCurrent) {
-      await pumpTrainerQueue(job.submissionId)
+      // Honor an explicit user promotion: pump in pure queue order instead of sticking to
+      // this job's batch (see trainerStickyPreferenceCleared).
+      const preferred = trainerStickyPreferenceCleared ? null : job.submissionId
+      trainerStickyPreferenceCleared = false
+      await pumpTrainerQueue(preferred)
     } else {
       trainerState = { ...trainerState, status: 'idle', activeJobId: null, runId: null, progressPhase: 'Paused — click Resume to continue' }
       emitTrainerState()

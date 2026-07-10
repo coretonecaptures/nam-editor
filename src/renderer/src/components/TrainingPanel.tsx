@@ -2005,6 +2005,32 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const [draggingBatch, setDraggingBatch] = useState<string | null>(null)
   const draggingBatchRef = useRef<string | null>(null)
   const dragOverBatchRef = useRef<string | null>(null)
+  // Mirrors dragOverBatchRef into state so the targeted card can render a highlight while
+  // dragging — without feedback, a drag that lands in a dead zone reads as "drag is broken".
+  const [dragOverBatch, setDragOverBatch] = useState<string | null>(null)
+
+  // Resolve which batch card the cursor is over. elementFromPoint alone fails in the 12px
+  // gaps between cards (space-y-3), over section padding, and past the list's ends — every
+  // one of those made the drop silently do nothing. Fall back to the vertically nearest
+  // card so any drop inside the queue area resolves to a real target.
+  const resolveDragTargetBatch = (clientX: number, clientY: number): string | null => {
+    const direct = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>('[data-submission-id]')?.dataset.submissionId
+    if (direct) return direct
+    let nearest: string | null = null
+    let nearestDist = Infinity
+    for (const el of document.querySelectorAll<HTMLElement>('[data-submission-id]')) {
+      const rect = el.getBoundingClientRect()
+      if (rect.width === 0 && rect.height === 0) continue
+      const dist = clientY < rect.top ? rect.top - clientY : clientY > rect.bottom ? clientY - rect.bottom : 0
+      if (dist < nearestDist) {
+        nearestDist = dist
+        nearest = el.dataset.submissionId ?? null
+      }
+    }
+    // Only snap to the nearest card when reasonably close — a drop far outside the queue
+    // list (e.g. over the left nav) should still cancel rather than surprise-reorder.
+    return nearestDist <= 80 ? nearest : null
+  }
 
   // Keep a stable ref so the drag mouseup closure always sees the latest queue order
   const groupedQueueRef = useRef(groupedQueue)
@@ -3180,7 +3206,11 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                       <div
                         key={group.key}
                         data-submission-id={group.groupKey}
-                        className={`rounded-[13px] border ${hasActive ? 'border-indigo-400/70' : 'border-indigo-500/30'} bg-panel overflow-hidden transition-opacity ${draggingBatch === group.groupKey ? 'opacity-50' : ''}`}
+                        className={`rounded-[13px] border bg-panel overflow-hidden transition-opacity ${
+                          draggingBatch && dragOverBatch === group.groupKey && draggingBatch !== group.groupKey
+                            ? 'border-nm-accent ring-1 ring-nm-accent/60'
+                            : hasActive ? 'border-indigo-400/70' : 'border-indigo-500/30'
+                        } ${draggingBatch === group.groupKey ? 'opacity-50' : ''}`}
                       >
                         {/* Batch header */}
                         <div className="flex items-center bg-panel-2 border-b border-nm-border-s select-none">
@@ -3194,8 +3224,11 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                               draggingBatchRef.current = submissionId
                               setDraggingBatch(submissionId)
                               const onMove = (me: MouseEvent) => {
-                                const el = document.elementFromPoint(me.clientX, me.clientY)
-                                dragOverBatchRef.current = el?.closest<HTMLElement>('[data-submission-id]')?.dataset.submissionId ?? null
+                                const target = resolveDragTargetBatch(me.clientX, me.clientY)
+                                if (dragOverBatchRef.current !== target) {
+                                  dragOverBatchRef.current = target
+                                  setDragOverBatch(target)
+                                }
                               }
                               const onUp = async () => {
                                 window.removeEventListener('mousemove', onMove)
@@ -3205,21 +3238,26 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                 draggingBatchRef.current = null
                                 dragOverBatchRef.current = null
                                 setDraggingBatch(null)
+                                setDragOverBatch(null)
                                 if (!fromId || !toId || fromId === toId) return
                                 const gq = groupedQueueRef.current
                                 const fromIdx = gq.findIndex(g => g.groupKey === fromId)
                                 const toIdx = gq.findIndex(g => g.groupKey === toId)
                                 if (fromIdx === -1 || toIdx === -1) return
+                                // Surface failures — the result used to be discarded, so a
+                                // rejected reorder looked identical to a successful one.
+                                let result: { success: boolean; error?: string }
                                 if (fromIdx > toIdx) {
-                                  await window.api.moveSubmissionBefore(fromId, toId)
+                                  result = await window.api.moveSubmissionBefore(fromId, toId)
                                 } else {
                                   const nextGroup = gq[toIdx + 1]
                                   if (nextGroup) {
-                                    await window.api.moveSubmissionBefore(fromId, nextGroup.groupKey)
+                                    result = await window.api.moveSubmissionBefore(fromId, nextGroup.groupKey)
                                   } else {
-                                    await window.api.moveSubmissionToEnd(fromId)
+                                    result = await window.api.moveSubmissionToEnd(fromId)
                                   }
                                 }
+                                setQueueActionError(result.success ? '' : (result.error ?? 'Could not reorder that batch.'))
                               }
                               window.addEventListener('mousemove', onMove)
                               window.addEventListener('mouseup', onUp)
@@ -3322,7 +3360,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                 void handleStageSubmission(group.jobs[0]?.submissionId ?? '')
                               }}
                               className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border border-amber-500/30 text-amber-300 hover:bg-amber-500/10 flex-shrink-0 transition-colors"
-                              title="Move this batch's queued jobs back to Staged Batches so they wait there until you queue them again. Completed items stay where they are."
+                              title="Finish the current capture if one is training, then freeze the rest of this batch in Staged Batches until you queue it again. Does NOT stop the active run — use Emergency stop for that. Completed items stay visible here."
                             >
                               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
