@@ -1635,6 +1635,14 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     setQueueActionError('')
     setHistoryContextMenu(null)
     void window.api.markHistoryRetried(entries.map((e) => e.historyId))
+    // The retried jobs are now a fresh submission — clear the original finished rows they
+    // supersede from the live queue so a retried failure stops counting as an outstanding
+    // Failed. Only the exact entries retried are cleared (so "Retry failed" leaves a partial
+    // batch's successes and any still-running/queued rows alone); the main process never
+    // touches a running or queued row.
+    void window.api.clearSupersededQueueRows(
+      entries.map((e) => ({ submissionId: e.submissionId, sourcePath: e.sourcePath, architecture: e.architecture }))
+    )
   }
 
   const handleSaveAsPreset = () => {
@@ -1844,7 +1852,12 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     const todayMs = d.getTime()
     const today = trainerState.history.filter(e => new Date(e.timestamp).getTime() >= todayMs)
     const completed = today.filter(e => e.status === 'success').length
-    const failed = today.filter(e => e.status === 'error').length
+    // Exclude failures the user has already retried (retriedAt set) — "Failed" should read as
+    // "outstanding failures needing attention," not "anything that ever failed today." A retry
+    // that itself fails writes a NEW error entry (no retriedAt), so real unresolved failures
+    // still count; only the superseded original drops off. Matches the queue-row clearing on
+    // retry, so both Failed surfaces agree.
+    const failed = today.filter(e => e.status === 'error' && !e.retriedAt).length
     const esrs = today.filter(e => getBestJobEsr(e).value != null).map(e => getBestJobEsr(e).value as number)
     const avgEsr = esrs.length > 0 ? esrs.reduce((a, b) => a + b, 0) / esrs.length : null
     const oneHrAgo = Date.now() - 3_600_000
@@ -3725,14 +3738,33 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   <h2 className="text-[18px] font-[680] text-nm-text leading-tight">History</h2>
                   <p className="text-[12px] text-nm-text-3 mt-0.5">{filteredHistory.length} completed, failed &amp; canceled runs</p>
                 </div>
-                <button
-                  onClick={handleExportHistory}
-                  disabled={filteredHistory.length === 0}
-                  className="h-9 inline-flex items-center gap-1.5 px-3.5 rounded-[9px] text-[12.5px] font-medium border border-nm-border-s bg-panel-2 hover:bg-hov disabled:opacity-40 disabled:cursor-not-allowed text-nm-text-2 transition-colors flex-shrink-0"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
-                  Export
-                </button>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {groupedHistory.length > 1 && (
+                    <>
+                      {/* Only touch history-prefixed keys so Queue / Staged collapse state is left alone. */}
+                      <button
+                        onClick={() => setCollapsedBatches(prev => { const next = new Set(prev); for (const g of groupedHistory) next.delete(`history:${g.key}`); return next })}
+                        className="h-9 inline-flex items-center px-2.5 rounded-[9px] text-[11.5px] font-medium border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2 transition-colors"
+                      >
+                        Expand all
+                      </button>
+                      <button
+                        onClick={() => setCollapsedBatches(prev => { const next = new Set(prev); for (const g of groupedHistory) next.add(`history:${g.key}`); return next })}
+                        className="h-9 inline-flex items-center px-2.5 rounded-[9px] text-[11.5px] font-medium border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2 transition-colors"
+                      >
+                        Collapse all
+                      </button>
+                    </>
+                  )}
+                  <button
+                    onClick={handleExportHistory}
+                    disabled={filteredHistory.length === 0}
+                    className="h-9 inline-flex items-center gap-1.5 px-3.5 rounded-[9px] text-[12.5px] font-medium border border-nm-border-s bg-panel-2 hover:bg-hov disabled:opacity-40 disabled:cursor-not-allowed text-nm-text-2 transition-colors"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+                    Export
+                  </button>
+                </div>
               </div>
 
               {/* Twin charts */}
@@ -3817,11 +3849,21 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 const modeLabel = firstMode === 'watcher' ? 'Watch folder' : firstMode === 'manual-folder-run' ? 'Run Folder' : 'Run WAVs'
                 const plannedCaptureCount = extractPlannedCaptureCount(group.label)
                 const displayLabel = stripPlannedCaptureSuffix(group.label) || group.label
+                const isCollapsed = collapsedBatches.has(`history:${group.key}`)
                 return (
                   <div key={group.key} className="mb-2">
-                    {/* Group head */}
+                    {/* Group head — chevron + label toggle collapse; retry buttons stay separate */}
                     <div className="flex items-center gap-2.5 px-0.5 pb-2.5">
-                      <span className="text-[13px] font-[650] text-nm-text">{displayLabel}</span>
+                      <button
+                        onClick={() => toggleBatchCollapse(`history:${group.key}`)}
+                        className="flex items-center gap-2 min-w-0 group/histhead"
+                        title={isCollapsed ? 'Expand this batch' : 'Collapse this batch'}
+                      >
+                        <svg className={`w-3 h-3 text-nm-text-3 flex-shrink-0 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                        </svg>
+                        <span className="text-[13px] font-[650] text-nm-text truncate group-hover/histhead:text-nm-accent transition-colors">{displayLabel}</span>
+                      </button>
                       <span className="inline-flex items-center h-[19px] px-1.5 rounded-[6px] text-[10px] font-semibold border border-nm-border-s bg-field text-nm-text-2">{modeLabel}</span>
                       <span className="inline-flex items-center h-[19px] px-1.5 rounded-[6px] text-[10px] font-semibold border border-nm-border-s bg-field text-nm-text-2">
                         {group.entries.length} recorded
@@ -3860,6 +3902,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                       <span className="text-[11px] text-nm-text-3 font-mono">{group.createdAt ? new Date(group.createdAt).toLocaleString() : ''}</span>
                     </div>
                     {/* Rows */}
+                    {!isCollapsed && (
                     <div className="rounded-[12px] border border-nm-border-s bg-panel overflow-hidden">
                       {group.entries.map((entry, idx) => {
                         const { value: entryEsr, kind: entryEsrKind } = getBestJobEsr(entry)
@@ -4019,6 +4062,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                         )
                       })}
                     </div>
+                    )}
                   </div>
                 )
               })}

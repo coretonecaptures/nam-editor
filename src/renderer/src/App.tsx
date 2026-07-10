@@ -468,6 +468,7 @@ declare global {
       moveSubmissionBefore: (submissionId: string, beforeSubmissionId: string) => Promise<{ success: boolean; error?: string }>
       retryTrainerHistoryEntry: (historyId: string) => Promise<{ success: boolean; error?: string; queued?: number }>
       markHistoryRetried: (historyIds: string[]) => Promise<{ success: boolean }>
+      clearSupersededQueueRows: (refs: Array<{ submissionId?: string | null; sourcePath: string; architecture: string }>) => Promise<{ success: boolean; removed: number }>
       onTrainerUpdate: (cb: (state: TrainerStateSnapshot) => void) => () => void
       onTrainerHistory: (cb: (history: TrainerHistoryEntry[]) => void) => () => void
       openInNam: (filePath: string, standalonePath: string) => Promise<{ success: boolean; error?: string }>

@@ -6845,6 +6845,39 @@ app.whenReady().then(async () => {
     return { success: marked > 0 }
   })
 
+  // Clear the now-redundant live-queue rows that a History retry just superseded. When you
+  // "Retry failed" (or "Retry batch") from History, the retried jobs come back as a brand-new
+  // submission — but the ORIGINAL finished rows kept sitting in the live queue as `error` /
+  // `canceled` / `success`, still counting toward the queue's Failed tile and never clearing
+  // (a fully-failed batch never auto-prunes). This removes exactly those superseded rows.
+  //
+  // Matched by (submissionId, sourcePath, architecture) — the triple that uniquely identifies
+  // one capture × one architecture within a batch (history entries carry a fresh UUID, not the
+  // original jobId, so we can't match by id). Only TERMINAL rows are ever removed: a row still
+  // `running` or `queued` is genuinely unfinished work and is left completely untouched, so
+  // retrying the finished failures of a batch that's still partway through never disturbs the
+  // rest of it. Removing all-error rows leaves any remaining rows all-success, which the
+  // existing prune then clears — so a fully-done batch's card disappears entirely, while a
+  // still-live batch's card stays minus the retried failures.
+  ipcMain.handle('trainer:clearSupersededQueueRows', async (_event, refs: Array<{ submissionId?: string | null; sourcePath: string; architecture: string }>) => {
+    if (!Array.isArray(refs) || refs.length === 0) return { success: false, removed: 0 }
+    const activeId = trainerState.activeJobId
+    const keyOf = (submissionId: string | null | undefined, sourcePath: string, architecture: string) =>
+      `${submissionId ?? ''} ${normalizePath(sourcePath)} ${architecture}`
+    const targets = new Set(refs.map((r) => keyOf(r.submissionId, r.sourcePath, r.architecture)))
+    const before = trainerQueue.length
+    trainerQueue = trainerQueue.filter((job) => {
+      if (job.jobId === activeId) return true                       // never touch the running job
+      if (!isTrainerQueueTerminalStatus(job.status)) return true    // never touch queued/running/staged
+      return !targets.has(keyOf(job.submissionId, job.outputPath, job.architecture))
+    })
+    const removed = before - trainerQueue.length
+    // Removing terminal error rows may leave a batch all-success — let the normal rule prune it.
+    pruneFinishedBatchesFromQueue()
+    if (removed > 0) emitTrainerState()
+    return { success: true, removed }
+  })
+
   const namVersionCache = new Map<string, 'a1' | 'a2'>()
   ipcMain.handle('trainer:detectNamVersion', async (_event, pythonPath: string) => {
     const key = (pythonPath ?? '').trim()

@@ -185,6 +185,8 @@ const api = {
     ipcRenderer.invoke('trainer:retryHistoryEntry', historyId),
   markHistoryRetried: (historyIds: string[]): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('trainer:markHistoryRetried', historyIds),
+  clearSupersededQueueRows: (refs: Array<{ submissionId?: string | null; sourcePath: string; architecture: string }>): Promise<{ success: boolean; removed: number }> =>
+    ipcRenderer.invoke('trainer:clearSupersededQueueRows', refs),
   onTrainerUpdate: (cb: (state: TrainerStateSnapshot) => void): (() => void) => {
     const handler = (_event: unknown, state: TrainerStateSnapshot) => cb(state)
     ipcRenderer.on('trainer:update', handler)
