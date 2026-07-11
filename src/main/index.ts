@@ -4142,16 +4142,17 @@ async function copyWatchedFile(rule: FolderWatchRule, filePath: string): Promise
     }
     const stat = await fs.promises.stat(normalizedSource)
     if (!stat.isFile()) return
-    const contentHash = await hashFile(normalizedSource)
-    if (hasImportedWatchedFile(rule, normalizedSource, stat.size, stat.mtimeMs, contentHash)) return
     const fileName = basename(normalizedSource)
     const destPath = join(rule.destFolder, fileName)
-    if (fs.existsSync(destPath)) {
-      try {
-        const destStat = await fs.promises.stat(destPath)
-        if (destStat.size === stat.size && destStat.mtimeMs === stat.mtimeMs) return
-      } catch { /* proceed */ }
-    }
+    // Never overwrite a destination file that already exists — once a copy has landed here,
+    // a later source edit (e.g. saving metadata, which rewrites the .nam file in place and
+    // changes its hash/size/mtime) must not silently replace it. Real report: editing
+    // metadata after the watcher already copied a file caused the destination copy to be
+    // silently overwritten with the edited version. Checked before hashing so an
+    // already-landed file is never re-hashed on every fs.watch event / 45s poll either.
+    if (fs.existsSync(destPath)) return
+    const contentHash = await hashFile(normalizedSource)
+    if (hasImportedWatchedFile(rule, normalizedSource, stat.size, stat.mtimeMs, contentHash)) return
     suppressWatcher()
     await fs.promises.copyFile(normalizedSource, destPath)
     const importEntry: FolderWatchImportEntry = {

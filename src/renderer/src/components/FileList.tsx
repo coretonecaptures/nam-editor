@@ -1832,7 +1832,11 @@ function FileItem({
   onContextMenu?: (e: React.MouseEvent) => void
 }) {
   const meta = file.metadata
-  const subtitle = [meta.gear_make, meta.gear_model].filter(Boolean).join(' ') || meta.tone_type || file.architecture || ''
+  // Real bug: falling back to file.architecture showed the raw internal NAM model class name
+  // (e.g. "SlimmableContainer" for A2/PackedWaveNet files) as if it were gear/tone info once
+  // gear_make/gear_model/tone_type were all unset — meaningless to a user, unlike the labeled
+  // "Architecture" stat shown elsewhere (MetadataEditor). Just leave the subtitle blank instead.
+  const subtitle = [meta.gear_make, meta.gear_model].filter(Boolean).join(' ') || meta.tone_type || ''
   const detectedPreset = detectPreset(file.config) ?? meta.nb_preset_name ?? null
   const epochCount = typeof meta.nb_trained_epochs === 'number' ? meta.nb_trained_epochs : null
   const TRACKED: { key: keyof typeof meta; label: string }[] = [
