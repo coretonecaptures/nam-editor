@@ -5,6 +5,7 @@ import { ComboInput } from './ComboInput'
 interface MultiSelectEditorProps {
   files: NamFile[]
   onApply: (filePaths: string[], fields: Partial<NamMetadata>, options?: { revertToFilename?: boolean }) => void
+  onSaveDirty?: (filePaths: string[]) => void
   skipConfirmation?: boolean
   gearMakeSuggestions?: string[]
   gearModelSuggestions?: string[]
@@ -50,7 +51,7 @@ function getShared(files: NamFile[], key: keyof NamMetadata): { same: boolean; v
   return { same, value: same ? (first as string | number | null) : null }
 }
 
-export function MultiSelectEditor({ files, onApply, skipConfirmation, gearMakeSuggestions = [], gearModelSuggestions = [] }: MultiSelectEditorProps) {
+export function MultiSelectEditor({ files, onApply, onSaveDirty, skipConfirmation, gearMakeSuggestions = [], gearModelSuggestions = [] }: MultiSelectEditorProps) {
   // Compute shared values once per file set
   const shared = useMemo(
     () => Object.fromEntries(ALL_FIELDS.map((f) => [f.key, getShared(files, f.key)])),
@@ -71,6 +72,18 @@ export function MultiSelectEditor({ files, onApply, skipConfirmation, gearMakeSu
   }
 
   const canApply = changed.size > 0 || revertToFilename
+  const dirtyCount = files.filter((f) => f.isDirty).length
+
+  const handleSaveDirty = () => {
+    if (!onSaveDirty || dirtyCount === 0) return
+    if (!skipConfirmation) {
+      const confirmed = window.confirm(
+        `Save pending changes (including any auto-filled fields) for ${dirtyCount} of the ${files.length} selected file${files.length !== 1 ? 's' : ''}?\n\nThis will write directly to the .nam files on disk.\n\n(This warning can be toggled off in Settings → Behavior)`
+      )
+      if (!confirmed) return
+    }
+    onSaveDirty(files.map((f) => f.filePath))
+  }
 
   const handleRevert = () => {
     setEdits(Object.fromEntries(ALL_FIELDS.map((f) => [f.key, shared[f.key].value ?? ''])))
@@ -125,6 +138,15 @@ export function MultiSelectEditor({ files, onApply, skipConfirmation, gearMakeSu
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {onSaveDirty && dirtyCount > 0 && (
+            <button
+              onClick={handleSaveDirty}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-emerald-600 hover:bg-emerald-500 text-white"
+              title="Write each selected file's current pending changes (including auto-filled fields) to disk — scoped to just this selection, not every loaded folder."
+            >
+              Save changes to {dirtyCount} file{dirtyCount !== 1 ? 's' : ''}
+            </button>
+          )}
           {canApply && (
             <button
               onClick={handleRevert}

@@ -2251,6 +2251,39 @@ INSTRUCTIONS:
     }
   }
 
+  // Save the CURRENT in-memory metadata (including any auto-filled values already computed
+  // by the suggestion-rule engine) for exactly the given files, scoped to just those files —
+  // not every dirty file across the whole loaded library like handleSaveAll. Real report: no
+  // way existed to write pending auto-fill values for a folder's selection without using
+  // "Save All", which the confirm dialog itself describes as writing "every loaded folder".
+  const handleSaveSelected = async (filePaths: string[]) => {
+    const pathSet = new Set(filePaths)
+    const targets = files.filter((f) => pathSet.has(f.filePath) && f.isDirty)
+    if (targets.length === 0) {
+      setStatus({ message: 'No unsaved changes in the selected files', type: 'info' })
+      return
+    }
+    setStatus({ message: `Saving ${targets.length} file(s)...`, type: 'info' })
+    const savedPaths = new Set<string>()
+    let failed = 0
+    const savedAt = Date.now()
+    for (const f of targets) {
+      const result = await window.api.writeMetadata(f.filePath, f.metadata)
+      if (result.success) savedPaths.add(f.filePath)
+      else failed++
+    }
+    setFiles((prev) => prev.map((f) =>
+      savedPaths.has(f.filePath)
+        ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [], mtimeMs: savedAt }
+        : f
+    ))
+    if (failed > 0) {
+      setStatus({ message: `Saved ${savedPaths.size}, failed ${failed}`, type: 'error' })
+    } else {
+      setStatus({ message: `Saved ${savedPaths.size} file(s)`, type: 'success' })
+    }
+  }
+
   const handleMultiSelectApply = async (
     filePaths: string[],
     fields: Partial<NamFile['metadata']>,
@@ -4912,6 +4945,7 @@ INSTRUCTIONS:
             <MultiSelectEditor
               files={selectedFiles}
               onApply={handleMultiSelectApply}
+              onSaveDirty={handleSaveSelected}
               skipConfirmation={settings.skipBatchEditConfirmation}
               gearMakeSuggestions={gearMakeSuggestions}
               gearModelSuggestions={gearModelSuggestions}
