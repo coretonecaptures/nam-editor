@@ -47,6 +47,16 @@ function buildRows(
     const fp = f.filePath.replace(/\\/g, '/')
     return fp.startsWith(norm + '/') || fp.startsWith(norm + '\\')
   })
+  // Cab filenames have no self-contained way to split "base" from "cab/mic variant" — the
+  // last word (e.g. "Mars", "Mesa") is real content, not a stripped suffix like DI's trailing
+  // "DI" token. The only way to find that split point is by matching against DI base names.
+  // Real report: right-clicking a CAB-only folder (DI lives in a sibling folder, out of that
+  // scope) returned 0/0 in BOTH tables even with 107 correctly-tagged Cab files present,
+  // because there were zero DI base names in scope to resolve them against. DI base names are
+  // derived from the WHOLE loaded library (not just the clicked folder) so a Cab-only folder
+  // can still resolve its files' base names — only which ROWS are actually displayed stays
+  // scoped to the clicked folder, via `scoped` above.
+  const allDiFiles = files.filter((f) => DI_GEAR_TYPES.has(f.metadata.gear_type ?? ''))
 
   const presetSet = new Set<string>()
   let hasUnknown = false
@@ -80,16 +90,18 @@ function buildRows(
     return null
   }
 
-  // Pass 1: collect base names from suffix-bearing DI files only
-  const diFiles = scoped.filter((f) => DI_GEAR_TYPES.has(f.metadata.gear_type ?? ''))
+  // Pass 1: collect base names from suffix-bearing DI files anywhere in the loaded library —
+  // not just the clicked folder (see comment above on why).
   const diBaseNameSet = new Set<string>()
-  for (const f of diFiles) {
+  for (const f of allDiFiles) {
     const raw = (f.metadata.name || f.fileName || '').trim()
     const stripped = stripSuffix(raw)
     if (stripped !== null) diBaseNameSet.add(stripped)
   }
   // Pass 2: resolve all DI files (including non-suffix variants like "DI HYPER")
   const diBaseNames = [...diBaseNameSet].sort((a, b) => b.length - a.length)
+  // Rows only ever come from files actually under the clicked folder.
+  const diFiles = scoped.filter((f) => DI_GEAR_TYPES.has(f.metadata.gear_type ?? ''))
 
   function getVariant(f: NamFile, base: string): string {
     const raw = (f.metadata.name || f.fileName || '').trim()
