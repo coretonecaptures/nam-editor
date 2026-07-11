@@ -11,6 +11,56 @@ Occasional training failures where the job completes without error but no `.nam`
 
 ---
 
+## [HIGH PRIORITY] Training-queue batch drag: reliable collapsed-batch drag + a real ghost image
+
+**Long-standing pain point.** Reordering training batches by dragging has been attempted ~15+
+times across multiple sessions/models and has never worked *reliably*. The 2026-07-10 pass
+(see the "batch drag" note under Experimental training) fixed several real defects and made it
+work in the common case, but two things remain and are the whole point of this ticket:
+
+1. **Collapsed batches don't drag reliably.** A collapsed batch card is just its header (much
+   shorter hit area), so cursor tracking / drop-target resolution behaves differently than for
+   an expanded card. This is the specific case the user calls out as still broken.
+2. **No drag ghost/preview.** The current implementation only dims the source card
+   (`opacity-50`) and rings the target — there is no floating "ghost" of the dragged batch
+   following the cursor, which is what makes a drag feel real and predictable.
+
+**Do NOT keep patching the hand-rolled mouse-event drag.** That's the approach that has failed
+repeatedly. The current code (`TrainingPanel.tsx`, the batch drag handle `onMouseDown` +
+`resolveDragTargetBatch` + `draggingBatch`/`dragOverBatch` state) attaches `window` mousemove/
+mouseup listeners and hit-tests with `elementFromPoint`. It was built this way because native
+HTML5 DnD (`draggable`/`onDrop`) does not fire `drop` reliably on same-window targets in
+Electron on Windows.
+
+**The proven path is already in this repo: `@dnd-kit`.** `@dnd-kit/core` + `@dnd-kit/sortable`
++ `@dnd-kit/utilities` are already dependencies AND already used successfully for drag-reorder
+**with a ghost image** in `PackInfoEditor.tsx` and `PackTargetsEditor.tsx`. The pattern there:
+`DndContext` with `useSensors(useSensor(PointerSensor))` + `SortableContext` +
+`verticalListSortingStrategy` + `closestCenter`, and `onDragEnd` reads `event.active`/
+`event.over`. Pointer sensors work in Electron where HTML5 DnD doesn't, and `@dnd-kit`'s
+`DragOverlay` gives the floating ghost for free — solving both remaining problems at once, and
+collapsed vs. expanded is a non-issue because dnd-kit tracks the pointer, not element geometry.
+
+**Recommended implementation when picked up:**
+- Wrap the batch list (Queue "Batches" view) in a `DndContext` with a `PointerSensor`
+  (add a small `activationConstraint: { distance: 4 }` so a click-to-collapse isn't read as a
+  drag), `SortableContext` over the batch `groupKey`s with `verticalListSortingStrategy`.
+- Make each batch card a `useSortable` item keyed by `groupKey`; keep the existing drag-handle
+  as the sortable listener target so clicking the header still collapses.
+- Render a `DragOverlay` containing a compact clone of the batch header as the ghost.
+- On `onDragEnd`, map `active.id`/`over.id` (both `groupKey`s) to the existing IPC calls
+  (`moveSubmissionBefore` / `moveSubmissionToEnd`) — the main-process reorder handlers are
+  correct and should not change; only the renderer drag mechanism is being replaced.
+- Delete the mouse-event drag code (`resolveDragTargetBatch`, the `onMouseDown` window-listener
+  block, `draggingBatchRef`/`dragOverBatchRef`/`draggingBatch`/`dragOverBatch`).
+- Test specifically: dragging a **collapsed** batch, dragging above the running batch, dragging
+  to the very end, and that a plain header click still collapses (doesn't start a drag).
+
+Deferred for now to stop burning tokens on incremental mouse-event patches — but this is the
+high-value fix and the `@dnd-kit` route is the way to finally land it.
+
+---
+
 ## Modularization
 
 **Status: Components exist but are themselves too large. Priority: Medium.**
@@ -164,7 +214,7 @@ Occasional training failures where the job completes without error but no `.nam`
 - ~~**[HIGH PRIORITY] New training output folder detection**~~ — Done. A green dismissable banner appears in the Queue section when a batch completes, collecting unique output folder paths from successful jobs.
 - ~~**[HIGH PRIORITY] Queue visual ordering after restart**~~ — Done. `getPersistableTrainerQueueJobs()` now filters the original array in-place (builds a set of kept terminal IDs) so submission order is preserved exactly on reload.
 - Batch edit — architecture changes: the current Edit modal (epochs / ESR / LR) does not support changing architecture(s). Adding architecture changes is significantly harder because each architecture is its own `TrainerQueueJob` with a separate model name, output path, workspace path, and waveNetConfig. The clean approach is to rebuild the queued job set for the submission: remove all current queued jobs in the submission, then create new ones from the edited payload (same WAV list + new architecture list + updated settings). Needs: (a) store `namingTemplate` and the original WAV output paths on each job (already done — `namingTemplate` added to `TrainerQueueJob`); (b) an IPC handler that takes `(submissionId, { architectures, epochs, thresholdEsr, lr, lrDecay })` and rebuilds the queued jobs; (c) extend the Edit modal with the architecture multi-select. Be cautious: rebuilding jobs resets their `jobId`, `workspacePath`, `outputModelPath` etc. — any running job in the batch must be left alone (only rebuild `queued` jobs).
-- ~~**Bug: drag-and-drop fails in the training queue (batch-level).**~~ — Fixed (2026-07-10). User confirmed the failing drag was **batch-level** (the mouse-event one), not job-level. Three real defects found and fixed: (a) `elementFromPoint` hit-testing returned null in the 12px gaps between cards / over padding, so drops there silently did nothing — now falls back to the vertically nearest card within 80px; (b) zero visual feedback during drag — the targeted card now shows an accent ring; (c) the IPC result was discarded, so a rejected reorder looked identical to success — failures now surface via the queue error banner. Also `moveSubmissionBeforeSubmission` required the *target* batch to have a queued row, so dragging above the running batch on its last capture failed outright — now falls back to the target's first row of any status. On top of that, successful drags previously had no scheduling effect (see sticky-preference fix below), which compounded the "it never works" impression.
+- **Bug: drag-and-drop in the training queue — PARTIALLY improved (2026-07-10), still not fully reliable. See the dedicated HIGH PRIORITY section near the top of this file.** The 2026-07-10 pass fixed several concrete defects in the hand-rolled mouse-event drag — (a) `elementFromPoint` returned null in the 12px gaps between cards / over padding, so drops there silently did nothing → now falls back to the vertically nearest card within 80px; (b) no visual feedback → the target card now shows an accent ring; (c) the IPC result was discarded so a rejected reorder looked like success → failures now surface in the queue error banner; (d) `moveSubmissionBeforeSubmission` required the *target* batch to have a queued row so dragging above the running batch failed outright → now falls back to the target's first row of any status; plus successful drags finally have a scheduling effect (sticky-preference fix below). **But per the user it still does not reliably drag COLLAPSED batches and has no proper drag ghost/preview image** — the remaining work is scoped in the HIGH PRIORITY section.
 - **Per-job drag WITHIN a batch (future, per user):** job rows still use native HTML5 `draggable`/`onDrop`, which doesn't fire `drop` reliably in Electron on Windows — port to the same mouse-event pattern as batch drag when picked up (`reorderTrainerJob` IPC already exists). User: within-batch only, never across batches.
 - **Design question: where does a newly queued batch land?** `enqueueTrainingPayloads` (`main/index.ts` ~3136) always does `trainerQueue.push(...jobs)` - straight append to the end. Finished/failed/canceled rows deliberately stay in the queue until cleared (so a running batch stays visible), which means a freshly queued batch often visually lands right under the current batch simply because the running batch is the last "live" entry before it. Decide whether append-to-end is actually the right default, or whether to offer an explicit choice when queueing: add after the current batch, add to the top of the queue, or add to the end.
 - ~~**[VERY SOON] Training queue semantics pass: reorder / park / sticky-batch behavior.**~~ — Done (2026-07-10), all sub-items shipped:
