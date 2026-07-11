@@ -3,7 +3,7 @@ import type { NamFile } from '../types/nam'
 import { detectPreset } from '../utils/detectPreset'
 import { getGearImageSrc } from '../assets/gear'
 import { Gauge, TrendLine } from './dashboard/Charts'
-import { folderHealth, buildEsrRuns, getEsr } from './dashboard/dashboardMetrics'
+import { folderHealth, buildEsrRuns, getEsrBucketTone } from './dashboard/dashboardMetrics'
 
 // ── Design tokens ────────────────────────────────────────────────────────────
 const GEAR_COLORS: Record<string, string> = {
@@ -239,12 +239,16 @@ export function FolderDashboard({
       .map(([key, count]) => ({ key, count }))
       .sort((a, b) => b.count - a.count)
 
+    // getEsrBucketTone applies kind-aware thresholds (strict for A1/A2-Full, looser for a
+    // genuine A2 aggregate) instead of one hardcoded band for every capture — see
+    // dashboardMetrics.ts for the real bug this replaced (A2 could never be detected here at
+    // all since architecture/config weren't passed through).
     let esrGood = 0, esrOk = 0, esrReview = 0, esrNone = 0
     for (const f of files) {
-      const esr = getEsr(f)
-      if (esr == null) esrNone++
-      else if (esr < 0.01) esrGood++
-      else if (esr <= 0.05) esrOk++
+      const tone = getEsrBucketTone(f)
+      if (tone === 'none') esrNone++
+      else if (tone === 'green') esrGood++
+      else if (tone === 'amber') esrOk++
       else esrReview++
     }
 

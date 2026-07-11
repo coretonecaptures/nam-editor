@@ -38,7 +38,7 @@ function getTopLevelNamLab(meta: Record<string, unknown> | undefined): Record<st
   return namLab as Record<string, unknown>
 }
 
-function getSubmodelNamLab(meta: Record<string, unknown> | undefined, index: number): Record<string, unknown> | undefined {
+function getSubmodelBlock(meta: Record<string, unknown> | undefined, index: number, blockKey: 'nam_lab' | 'nam_bot'): Record<string, unknown> | undefined {
   if (!meta) return undefined
   const config = meta.config as Record<string, unknown> | undefined
   const submodels = config?.submodels
@@ -47,9 +47,33 @@ function getSubmodelNamLab(meta: Record<string, unknown> | undefined, index: num
   if (!model || typeof model !== 'object' || Array.isArray(model)) return undefined
   const metadata = (model as Record<string, unknown>).metadata
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return undefined
-  const namLab = (metadata as Record<string, unknown>).nam_lab
-  if (!namLab || typeof namLab !== 'object' || Array.isArray(namLab)) return undefined
-  return namLab as Record<string, unknown>
+  const block = (metadata as Record<string, unknown>)[blockKey]
+  if (!block || typeof block !== 'object' || Array.isArray(block)) return undefined
+  return block as Record<string, unknown>
+}
+
+function getSubmodelNamLab(meta: Record<string, unknown> | undefined, index: number): Record<string, unknown> | undefined {
+  return getSubmodelBlock(meta, index, 'nam_lab')
+}
+
+// Some A2 files (confirmed live: a pack trained through an older/external pipeline, not this
+// app's own a2_full_validation_esr / a2_lite_validation_esr naming) instead store each
+// sub-model's own ESR under a plain `validation_esr` key inside that sub-model's OWN
+// nam_lab/nam_bot block — e.g. config.submodels[1].model.metadata.nam_lab.validation_esr.
+// When that's all a file has, the named-field lookup above finds nothing, isA2Metadata still
+// detects A2 via the architecture string, and the top-level aggregate field gets used instead
+// — but in these files metadata.training.validation_esr is ALREADY identical to the Full
+// sub-model's own value (verified byte-for-byte equal across a real sampled pack), not a true
+// sum-of-both-submodels aggregate. Grading that value against the looser AGGREGATE thresholds
+// (<0.02/<0.07) instead of the correct single-sub-model ones (<0.01/<0.05) silently inflated
+// several files from "OK" to "Excellent". This fallback recovers the real per-sub-model value
+// so getA2FullEsr/getA2LiteEsr succeed and the correct (stricter) thresholds apply.
+function getSubmodelOwnEsr(meta: Record<string, unknown> | undefined, index: number): number | null {
+  const fromNamLab = getSubmodelBlock(meta, index, 'nam_lab')?.validation_esr
+  if (typeof fromNamLab === 'number') return fromNamLab
+  const fromNamBot = getSubmodelBlock(meta, index, 'nam_bot')?.validation_esr
+  if (typeof fromNamBot === 'number') return fromNamBot
+  return null
 }
 
 function readNumericNamLabField(
@@ -89,7 +113,9 @@ function isA2Metadata(meta: Record<string, unknown> | undefined): boolean {
 }
 
 export function getA2FullEsr(meta: Record<string, unknown> | undefined): number | null {
-  return readNumericNamLabField(meta, 'a2_full_validation_esr', 1)
+  const named = readNumericNamLabField(meta, 'a2_full_validation_esr', 1)
+  if (typeof named === 'number') return named
+  return getSubmodelOwnEsr(meta, 1)
 }
 
 export function getCaptureBestEsr(meta: Record<string, unknown> | undefined): CaptureBestEsr {
@@ -148,7 +174,9 @@ export function getEsrToneFromMeta(meta: Record<string, unknown> | undefined, di
 }
 
 export function getA2LiteEsr(meta: Record<string, unknown> | undefined): number | null {
-  return readNumericNamLabField(meta, 'a2_lite_validation_esr', 0)
+  const named = readNumericNamLabField(meta, 'a2_lite_validation_esr', 0)
+  if (typeof named === 'number') return named
+  return getSubmodelOwnEsr(meta, 0)
 }
 
 export function getA2AggregateEsr(meta: Record<string, unknown> | undefined): number | null {

@@ -21,13 +21,33 @@ const CORE_FIELDS: (keyof NamFile['metadata'])[] = [
   'name', 'modeled_by', 'gear_make', 'gear_model', 'gear_type', 'tone_type', 'input_level_dbu',
 ]
 
-import { getCaptureBestEsr } from '../../utils/esr'
+import { getCaptureBestEsr, getEsrTone, type EsrTone } from '../../utils/esr'
+
+// A2 detection and the Full-vs-aggregate distinction both live in metadata.config
+// (submodels) and NamFile.architecture — NEITHER of which lives inside f.metadata itself.
+// Real bug: this used to call getCaptureBestEsr(f.metadata) with ONLY metadata, so
+// isA2Metadata() could never see the architecture string or config.submodels and every
+// capture silently fell through to the generic A1 branch. For packs whose top-level
+// validation_esr happens to already equal the Full sub-model's own value, that coincidentally
+// produced the right number (confirmed against a real pack) — but for a genuinely aggregated
+// A2 file (sum of both sub-models, ~2x worse than either alone) it would grade that inflated
+// value against the strict single-sub-model thresholds instead of the looser aggregate ones,
+// making a fine A2 capture look artificially bad. Build the same merged meta shape
+// MetadataEditor.tsx already uses correctly (architecture + config alongside metadata).
+function mergedMeta(f: NamFile): Record<string, unknown> {
+  return { ...(f.metadata as Record<string, unknown>), architecture: f.architecture, config: f.config }
+}
 
 export function getEsr(f: NamFile): number | null {
-  // Use the "best" ESR — Full sub-model for NAM-Lab-trained A2 captures, aggregate for downloaded
-  // A2 captures (only field available), single value for A1. This keeps the dashboard's good/ok/
-  // review tally apples-to-apples between A1 and well-tagged A2 captures.
-  return getCaptureBestEsr(f.metadata as Record<string, unknown> | undefined).value
+  return getCaptureBestEsr(mergedMeta(f)).value
+}
+
+// Kind-aware pass/fail tier for one capture — reuses the same thresholds getEsrTone applies
+// everywhere else in the app, instead of hardcoding a single strict threshold band that's
+// wrong for aggregate-only A2 captures.
+export function getEsrBucketTone(f: NamFile): EsrTone {
+  const best = getCaptureBestEsr(mergedMeta(f))
+  return getEsrTone(best.value, best.kind).tone
 }
 
 function completeness(files: NamFile[]) {
@@ -44,10 +64,10 @@ function completeness(files: NamFile[]) {
 function esrBuckets(files: NamFile[]) {
   let good = 0, ok = 0, review = 0, none = 0
   for (const f of files) {
-    const e = getEsr(f)
-    if (e == null) none++
-    else if (e < 0.01) good++
-    else if (e <= 0.05) ok++
+    const tone = getEsrBucketTone(f)
+    if (tone === 'none') none++
+    else if (tone === 'green') good++
+    else if (tone === 'amber') ok++
     else review++
   }
   return { good, ok, review, none }
