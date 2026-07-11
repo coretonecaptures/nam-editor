@@ -4240,6 +4240,14 @@ function resetFolderWatchRules(rules: FolderWatchRule[]): void {
         if (existingTimer) clearTimeout(existingTimer)
         const timer = setTimeout(() => {
           pendingTimers.delete(lowerName)
+          // Skip entirely when this event landed inside our own suppress window (any local
+          // write — metadata save, batch edit, Excel import — calls suppressWatcher() first).
+          // The destination-exists check in copyWatchedFile already prevents an overwrite,
+          // but without this the watcher still re-hashes and re-checks the file on every save,
+          // and (per user report) the resulting churn made it look like something was
+          // "copying it over and wiping it" even once the actual overwrite was blocked. This
+          // matches the same suppress check the library folder:watch listener already uses.
+          if (Date.now() < watcherSuppressUntil) return
           const fullPath = join(sourceFolder, nextFilename)
           void copyWatchedFile({ ...rule, sourceFolder, destFolder }, fullPath)
         }, 1200)
