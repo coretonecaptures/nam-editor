@@ -3169,6 +3169,98 @@ INSTRUCTIONS:
     setImportModal({ folderName, exactMatches, prefixMatches, unmatchedNames })
   }
 
+  // Fill blank metadata fields on files in `targetFolderPath` from a same-named file in a
+  // user-chosen source folder — e.g. copying real gear/tone metadata that's already been
+  // filled in for a REVxSTD training pass over to the A2 pass of the same captures. Real
+  // ask: "i filled it all out for REVxSTD files and they have the same name...so just copy
+  // folder metadata from one to the other." Matches by (metadata.name || fileName), same key
+  // handleImportMetadata already uses for its own name lookup. NEVER overwrites a value the
+  // target file already has — only fills fields that are currently blank — and writes only to
+  // in-memory state (marked dirty + autoFilledFields, same amber-highlight convention as
+  // Suggest Metadata) rather than straight to disk, so the result can be reviewed before
+  // saving via the normal per-file Save or the "Save changes to N files" multi-select action.
+  const handleCopyMetadataFromFolder = async (targetFolderPath: string | null) => {
+    const sourceFolderPath = await window.api.openFolder(librarian.rootFolder ?? undefined)
+    if (!sourceFolderPath) return
+
+    const normalizedSource = sourceFolderPath.replace(/\\/g, '/').replace(/\/$/, '')
+    const normalizedTarget = targetFolderPath ? targetFolderPath.replace(/\\/g, '/').replace(/\/$/, '') : null
+
+    if (normalizedTarget && normalizedSource.toLowerCase() === normalizedTarget.toLowerCase()) {
+      setStatus({ message: 'Source and destination folders are the same', type: 'error' })
+      return
+    }
+
+    const targetFiles = normalizedTarget === null
+      ? files
+      : files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(normalizedTarget + '/'))
+    const sourceFiles = files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(normalizedSource + '/'))
+
+    const sourceByName = new Map<string, NamFile>()
+    for (const f of sourceFiles) {
+      const key = (f.metadata.name || f.fileName || '').toLowerCase().trim()
+      if (key && !sourceByName.has(key)) sourceByName.set(key, f)
+    }
+
+    const COPY_FIELDS: (keyof NamFile['metadata'])[] = [
+      'name', 'modeled_by', 'gear_type', 'gear_make', 'gear_model', 'tone_type',
+      'input_level_dbu', 'output_level_dbu',
+      'nl_mics', 'nl_cabinet', 'nl_cabinet_config', 'nl_amp_channel', 'nl_boost_pedal',
+      'nl_amp_settings', 'nl_pedal_settings', 'nl_amp_switches', 'nl_comments', 'nl_about', 'nl_rating',
+    ]
+
+    const planned = new Map<string, Partial<NamFile['metadata']>>()
+    let matchedCount = 0
+    for (const f of targetFiles) {
+      const key = (f.metadata.name || f.fileName || '').toLowerCase().trim()
+      if (!key) continue
+      const src = sourceByName.get(key)
+      if (!src) continue
+      matchedCount++
+      const fields: Partial<NamFile['metadata']> = {}
+      for (const field of COPY_FIELDS) {
+        const targetVal = f.metadata[field]
+        const sourceVal = src.metadata[field]
+        const targetEmpty = targetVal == null || targetVal === ''
+        const sourceHasValue = sourceVal != null && sourceVal !== ''
+        if (targetEmpty && sourceHasValue) {
+          (fields as Record<string, unknown>)[field] = sourceVal
+        }
+      }
+      if (Object.keys(fields).length > 0) planned.set(f.filePath, fields)
+    }
+
+    if (matchedCount === 0) {
+      setStatus({ message: 'No files matched by name between these two folders', type: 'info' })
+      return
+    }
+    if (planned.size === 0) {
+      setStatus({ message: `${matchedCount} file(s) matched by name, but nothing was blank to fill in`, type: 'info' })
+      return
+    }
+
+    const totalFields = [...planned.values()].reduce((sum, fields) => sum + Object.keys(fields).length, 0)
+    const sourceLabel = normalizedSource.split('/').pop() ?? normalizedSource
+    const targetLabel = normalizedTarget
+      ? (normalizedTarget.split('/').pop() ?? normalizedTarget)
+      : (librarian.rootFolder?.replace(/\\/g, '/').split('/').pop() ?? 'this folder')
+    const confirmed = window.confirm(
+      `Copy metadata from "${sourceLabel}"?\n\n${matchedCount} of ${targetFiles.length} file(s) in "${targetLabel}" matched by name.\n${planned.size} file(s) will get ${totalFields} blank field(s) filled in — existing values are never overwritten.\n\nChanges are NOT written to disk yet — review the amber-highlighted fields, then save.`
+    )
+    if (!confirmed) return
+
+    setFiles((prev) => prev.map((f) => {
+      const fields = planned.get(f.filePath)
+      if (!fields) return f
+      const newMeta = { ...f.metadata, ...fields }
+      const filledKeys = Object.keys(fields) as (keyof NamFile['metadata'])[]
+      const newAutoFilled = [...new Set([...f.autoFilledFields, ...filledKeys])]
+      return { ...f, metadata: newMeta, isDirty: true, autoFilledFields: newAutoFilled }
+    }))
+
+    setStatus({ message: `Filled ${totalFields} field(s) across ${planned.size} file(s) — review and save`, type: 'success' })
+  }
+
   const handleImportConfirm = async (matches: ImportMatch[]) => {
     const unmatched = importModal?.unmatchedNames.length ?? 0
     setImportModal(null)
@@ -4507,6 +4599,7 @@ INSTRUCTIONS:
                 onGenerateTemplate={handleGenerateTemplate}
                 onImportMetadata={handleImportMetadata}
                 onSuggestMetadata={handleSuggestMetadata}
+                onCopyMetadataFromFolder={handleCopyMetadataFromFolder}
                 onEditSuggestRules={handleOpenSuggestRulesEditor}
                 onSelectAllInFolder={handleSelectAllInFolder}
                 onCoverageReport={(folderPath) => setCoverageReport({ folderPath })}

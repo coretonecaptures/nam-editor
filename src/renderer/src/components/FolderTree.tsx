@@ -33,6 +33,7 @@ interface FolderTreeProps {
   onGenerateTemplate?: (folderPath: string | null) => void
   onImportMetadata?: (folderPath: string | null) => void
   onSuggestMetadata?: (folderPath: string | null) => void
+  onCopyMetadataFromFolder?: (folderPath: string | null) => void
   onEditSuggestRules?: (folderPath: string) => void
   onCopySuggestRules?: (folderPath: string) => void
   onPasteSuggestRules?: (folderPath: string) => void
@@ -81,7 +82,7 @@ function matchesFilter(
 export function FolderTree({
   tree, files, selectedFolders, onSelect, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, onFilterChange, onDropFiles,
-  onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSuggestMetadata, onEditSuggestRules,
+  onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSuggestMetadata, onCopyMetadataFromFolder, onEditSuggestRules,
   onCopySuggestRules, onPasteSuggestRules,
   onSelectAllInFolder, onCoverageReport, onFindDuplicates, onCleanThisFolder, onDeleteEmptyFolder, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor,
   onCompareFolders, onDeletePackInfo, bundleFolders, onCreateBundle, onDeleteBundle
@@ -276,6 +277,7 @@ export function FolderTree({
           onGenerateTemplate={onGenerateTemplate ? () => onGenerateTemplate(null) : undefined}
           onImportMetadata={onImportMetadata ? () => onImportMetadata(null) : undefined}
           onSuggestMetadata={onSuggestMetadata ? () => onSuggestMetadata(null) : undefined}
+          onCopyMetadataFromFolder={onCopyMetadataFromFolder ? () => onCopyMetadataFromFolder(null) : undefined}
           onSelectAll={onSelectAllInFolder ? () => onSelectAllInFolder(null) : undefined}
           onCoverageReport={onCoverageReport ? () => onCoverageReport(tree.path) : undefined}
           onFindDuplicates={onFindDuplicates ? () => onFindDuplicates(tree.path) : undefined}
@@ -307,6 +309,7 @@ export function FolderTree({
             onGenerateTemplate={onGenerateTemplate}
             onImportMetadata={onImportMetadata}
             onSuggestMetadata={onSuggestMetadata}
+            onCopyMetadataFromFolder={onCopyMetadataFromFolder}
             onEditSuggestRules={onEditSuggestRules}
             onCopySuggestRules={onCopySuggestRules}
             onPasteSuggestRules={onPasteSuggestRules}
@@ -343,7 +346,7 @@ export function FolderTree({
 function TreeNode({
   node, selectedFolders, onSelect, depth, dirtyPaths,
   onSaveFolder, onRevertFolder, onBatchEdit, onRevealFolder, matchingPaths, onDropFiles,
-  onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSuggestMetadata, onEditSuggestRules,
+  onCreateFolder, onRenameFolder, onMoveFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSuggestMetadata, onCopyMetadataFromFolder, onEditSuggestRules,
   onCopySuggestRules, onPasteSuggestRules,
   onSelectAllInFolder, onCoverageReport, onFindDuplicates, onCleanThisFolder, expandSeq, collapseSeq, scrollToFolder, packInfoFolders, folderNameColors, onSetFolderColor,
   onCompareFolders, onDeletePackInfo, bundleFolders, onCreateBundle, onDeleteBundle
@@ -370,6 +373,7 @@ function TreeNode({
   onGenerateTemplate?: (folderPath: string | null) => void
   onImportMetadata?: (folderPath: string | null) => void
   onSuggestMetadata?: (folderPath: string | null) => void
+  onCopyMetadataFromFolder?: (folderPath: string | null) => void
   onEditSuggestRules?: (folderPath: string) => void
   onCopySuggestRules?: (folderPath: string) => void
   onPasteSuggestRules?: (folderPath: string) => void
@@ -467,6 +471,7 @@ function TreeNode({
         onGenerateTemplate={onGenerateTemplate ? () => onGenerateTemplate(node.path) : undefined}
         onImportMetadata={onImportMetadata ? () => onImportMetadata(node.path) : undefined}
         onSuggestMetadata={onSuggestMetadata ? () => onSuggestMetadata(node.path) : undefined}
+        onCopyMetadataFromFolder={onCopyMetadataFromFolder ? () => onCopyMetadataFromFolder(node.path) : undefined}
         onEditSuggestRules={onEditSuggestRules ? () => onEditSuggestRules(node.path) : undefined}
         onCopySuggestRules={onCopySuggestRules ? () => onCopySuggestRules(node.path) : undefined}
         onPasteSuggestRules={onPasteSuggestRules ? () => onPasteSuggestRules(node.path) : undefined}
@@ -516,6 +521,7 @@ function TreeNode({
               onGenerateTemplate={onGenerateTemplate}
               onImportMetadata={onImportMetadata}
               onSuggestMetadata={onSuggestMetadata}
+              onCopyMetadataFromFolder={onCopyMetadataFromFolder}
               onEditSuggestRules={onEditSuggestRules}
               onCopySuggestRules={onCopySuggestRules}
               onPasteSuggestRules={onPasteSuggestRules}
@@ -555,7 +561,7 @@ interface ContextMenuState { x: number; y: number }
 function FolderRow({
   label, folderPath, isRoot, isSelected, totalCount, dirtyCount, depth,
   hasChildren, expanded, onToggleExpand, onClick, onSave, onRevert,
-  onBatchEdit, onReveal, isFiltered, isHighlighted, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSuggestMetadata, onEditSuggestRules, onCopySuggestRules, onPasteSuggestRules, onSelectAll, onCoverageReport, onFindDuplicates, isDraggableFolder, hasPackInfo, hasSuggestRules = false, hasBundle, folderColor, onSetFolderColor, isMultiSelect, onCompareFolders, onDeletePackInfo, onCreateBundle, onDeleteBundle
+  onBatchEdit, onReveal, isFiltered, isHighlighted, onDropFiles, onDropFolder, onCreateFolder, onRenameFolder, onExportFolder, onGenerateTemplate, onImportMetadata, onSuggestMetadata, onCopyMetadataFromFolder, onEditSuggestRules, onCopySuggestRules, onPasteSuggestRules, onSelectAll, onCoverageReport, onFindDuplicates, isDraggableFolder, hasPackInfo, hasSuggestRules = false, hasBundle, folderColor, onSetFolderColor, isMultiSelect, onCompareFolders, onDeletePackInfo, onCreateBundle, onDeleteBundle
   , watchSource, onSetWatchSource, onClearWatchSource, onCleanThisFolder, onDeleteEmptyFolder
   , onToggleSubtree, onBrowseCards
 }: {
@@ -584,6 +590,7 @@ function FolderRow({
   onGenerateTemplate?: () => void
   onImportMetadata?: () => void
   onSuggestMetadata?: () => void
+  onCopyMetadataFromFolder?: () => void
   onEditSuggestRules?: () => void
   onCopySuggestRules?: () => void
   onPasteSuggestRules?: () => void
@@ -949,7 +956,7 @@ function FolderRow({
                 </button>
               )}
 
-              {(onGenerateTemplate || onImportMetadata || onSuggestMetadata || onEditSuggestRules || onCopySuggestRules || onPasteSuggestRules) && (
+              {(onGenerateTemplate || onImportMetadata || onSuggestMetadata || onCopyMetadataFromFolder || onEditSuggestRules || onCopySuggestRules || onPasteSuggestRules) && (
                 <>
                   <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
                   <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Metadata</div>
@@ -967,6 +974,15 @@ function FolderRow({
                       onClick={() => { setMenu(null); onImportMetadata() }}
                     >
                       Import metadata from spreadsheet...
+                    </button>
+                  )}
+                  {onCopyMetadataFromFolder && (
+                    <button
+                      className="w-full text-left px-3 py-1.5 text-teal-700 dark:text-teal-400 hover:bg-indigo-600/40 transition-colors"
+                      onClick={() => { setMenu(null); onCopyMetadataFromFolder() }}
+                      title="Fill in blank fields on files here from another folder's files with the same name — never overwrites a value already set."
+                    >
+                      Copy metadata from folder...
                     </button>
                   )}
                   {onSuggestMetadata && (
