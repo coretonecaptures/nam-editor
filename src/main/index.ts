@@ -129,7 +129,7 @@ interface MetadataWriteContext {
   fields?: string[]
 }
 
-type FolderWatchCopyOutcome = 'copied' | 'existing' | 'already-imported' | 'in-flight' | 'non-file' | 'timeout' | 'error'
+type FolderWatchCopyOutcome = 'copied' | 'existing' | 'already-imported' | 'in-flight' | 'non-file' | 'timeout' | 'error' | 'dest-missing'
 
 type TrainingSourceMode = 'watcher' | 'manual-folder-run' | 'manual-direct'
 type TrainingSourcePostProcessMode = 'move' | 'copy' | 'keep'
@@ -4164,8 +4164,23 @@ function isNestedPath(parentPath: string, childPath: string): boolean {
 // flip this to true for a session if you need to debug why a specific file isn't syncing.
 const WATCH_LOG_VERBOSE = false
 
+// A watch rule's destination folder can vanish out from under us — e.g. the user deletes it in
+// Explorer. copyFile then throws ENOENT for every file, every 45s poll, forever, spamming errors.
+// Detect that here and tell the renderer to auto-cancel the rule instead. We do NOT recreate the
+// folder: the user deleted it on purpose, so resurrecting it and copying files back would be wrong.
+function watchDestMissing(rule: FolderWatchRule): boolean {
+  if (fs.existsSync(rule.destFolder)) return false
+  log(`folderWatch dest-missing — requesting rule cancel sourceFolder="${rule.sourceFolder}" destFolder="${rule.destFolder}"`)
+  safeSend('folderWatch:destMissing', {
+    sourceFolder: rule.sourceFolder.replace(/\\/g, '/'),
+    destFolder: rule.destFolder.replace(/\\/g, '/'),
+  })
+  return true
+}
+
 async function copyWatchedFile(rule: FolderWatchRule, filePath: string): Promise<FolderWatchCopyOutcome> {
   const normalizedSource = normalizePath(filePath)
+  if (watchDestMissing(rule)) return 'dest-missing'
   const key = `${rule.destFolder}::${normalizedSource}`
   if (folderWatchInFlight.has(key)) {
     if (WATCH_LOG_VERBOSE) log(`folderWatch skip in-flight source="${normalizedSource}" destFolder="${rule.destFolder}"`)
@@ -4256,6 +4271,8 @@ async function backfillImportHashes(rule: FolderWatchRule): Promise<void> {
 }
 
 async function syncExistingWatchedFiles(rule: FolderWatchRule): Promise<void> {
+  // Bail before scanning/hashing anything if the destination is gone — auto-cancels the rule.
+  if (watchDestMissing(rule)) return
   await backfillImportHashes(rule)
   try {
     log(`folderWatch sync start sourceFolder="${rule.sourceFolder}" destFolder="${rule.destFolder}"`)
@@ -4268,6 +4285,7 @@ async function syncExistingWatchedFiles(rule: FolderWatchRule): Promise<void> {
       'non-file': 0,
       timeout: 0,
       error: 0,
+      'dest-missing': 0,
     }
     let scanned = 0
     for (const entry of entries) {

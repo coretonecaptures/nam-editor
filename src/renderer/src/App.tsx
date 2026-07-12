@@ -425,6 +425,7 @@ declare global {
       setFolderWatchState: (payload: { rules: FolderWatchRule[]; imports: Record<string, FolderWatchImportEntry[]> }) => Promise<void>
       onFolderWatchCopied: (cb: (event: { sourcePath: string; destPath: string; sourceFolder: string; destFolder: string; importEntry: FolderWatchImportEntry }) => void) => () => void
       onFolderWatchError: (cb: (event: { sourceFolder: string; destFolder: string; message: string }) => void) => () => void
+      onFolderWatchDestMissing: (cb: (event: { sourceFolder: string; destFolder: string }) => void) => () => void
       createFolder: (parentPath: string, name: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       renameFolder: (folderPath: string, newName: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       moveFolder: (sourcePath: string, destParentPath: string, allowMerge?: boolean) => Promise<{ success: boolean; newPath?: string; error?: string; mergedIntoExisting?: boolean; mergeTargetPath?: string; skippedPaths?: string[] }>
@@ -1644,6 +1645,25 @@ export default function App() {
       return next
     })
   }, [])
+
+  // A watch rule's destination folder was deleted/moved out from under it (e.g. in Explorer), so
+  // the main process can no longer copy into it — it would ENOENT on every file, every poll, forever.
+  // Auto-cancel the rule here (the user otherwise has no way to clear an invalid watch). Separate
+  // effect from the other folderWatch listeners because it needs updateFolderWatchRules, defined above.
+  useEffect(() => {
+    const unsub = window.api.onFolderWatchDestMissing(({ sourceFolder, destFolder }) => {
+      const normalizedDest = destFolder.replace(/\\/g, '/')
+      const normalizedSource = sourceFolder.replace(/\\/g, '/')
+      updateFolderWatchRules((rules) => rules.filter((rule) =>
+        !(rule.destFolder.replace(/\\/g, '/') === normalizedDest && rule.sourceFolder.replace(/\\/g, '/') === normalizedSource)
+      ))
+      setStatus({
+        message: `Watch canceled — destination folder no longer exists: ${formatPathLabel(normalizedDest)}`,
+        type: 'error'
+      })
+    })
+    return unsub
+  }, [updateFolderWatchRules])
 
   const handleSetWatchSource = useCallback(async (destFolder: string) => {
     const existing = settings.folderWatchRules.find((rule) => rule.destFolder === destFolder && rule.enabled)

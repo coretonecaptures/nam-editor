@@ -83,6 +83,13 @@ const api = {
     ipcRenderer.on('folderWatch:error', handler)
     return () => ipcRenderer.removeListener('folderWatch:error', handler)
   },
+  // Fired when a watch rule's destination folder no longer exists (e.g. deleted in Explorer).
+  // The renderer auto-cancels the rule so it stops retrying/erroring forever.
+  onFolderWatchDestMissing: (cb: (event: { sourceFolder: string; destFolder: string }) => void): (() => void) => {
+    const handler = (_event: unknown, payload: { sourceFolder: string; destFolder: string }) => cb(payload)
+    ipcRenderer.on('folderWatch:destMissing', handler)
+    return () => ipcRenderer.removeListener('folderWatch:destMissing', handler)
+  },
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   createFolder: (parentPath: string, name: string): Promise<{ success: boolean; newPath?: string; error?: string }> =>
     ipcRenderer.invoke('folder:create', parentPath, name),
