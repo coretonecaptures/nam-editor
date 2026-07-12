@@ -51,7 +51,7 @@ function getShared(files: NamFile[], key: keyof NamMetadata): { same: boolean; v
   return { same, value: same ? (first as string | number | null) : null }
 }
 
-export function MultiSelectEditor({ files, onApply, onSaveDirty, skipConfirmation, gearMakeSuggestions = [], gearModelSuggestions = [] }: MultiSelectEditorProps) {
+export function MultiSelectEditor({ files, onApply, /* onSaveDirty, */ skipConfirmation, gearMakeSuggestions = [], gearModelSuggestions = [] }: MultiSelectEditorProps) {
   // Compute shared values once per file set
   const shared = useMemo(
     () => Object.fromEntries(ALL_FIELDS.map((f) => [f.key, getShared(files, f.key)])),
@@ -71,19 +71,30 @@ export function MultiSelectEditor({ files, onApply, onSaveDirty, skipConfirmatio
     setChanged((prev) => new Set(prev).add(key))
   }
 
-  const canApply = changed.size > 0 || revertToFilename
   const dirtyCount = files.filter((f) => f.isDirty).length
+  // "Typed edits" = new values entered into THIS editor (or the revert-name checkbox). Distinct
+  // from files that are merely dirty from auto-filled/previously-edited values still pending on disk.
+  const hasTypedEdits = changed.size > 0 || revertToFilename
+  // Apply is enabled either when the user has typed edits OR when any selected file has pending
+  // changes to commit (e.g. auto-filled values). Both cases write the same full in-memory metadata,
+  // so this folds the old separate "Save changes to N files" button back into Apply — that button
+  // only existed because Apply used to grey out on pure auto-fills (canApply = typed edits only).
+  const canApply = hasTypedEdits || dirtyCount > 0
 
-  const handleSaveDirty = () => {
-    if (!onSaveDirty || dirtyCount === 0) return
-    if (!skipConfirmation) {
-      const confirmed = window.confirm(
-        `Save pending changes (including any auto-filled fields) for ${dirtyCount} of the ${files.length} selected file${files.length !== 1 ? 's' : ''}?\n\nThis will write directly to the .nam files on disk.\n\n(This warning can be toggled off in Settings → Behavior)`
-      )
-      if (!confirmed) return
-    }
-    onSaveDirty(files.map((f) => f.filePath))
-  }
+  // NOTE (2026-07-11): "Save changes to N files" (handleSaveDirty + the emerald button below) is
+  // commented out while testing whether Apply alone covers the auto-fill save case. It wrote the
+  // exact same metadata Apply does; the only reason it existed was Apply being greyed on auto-fills,
+  // which the canApply change above now handles. Restore both if Apply proves insufficient.
+  // const handleSaveDirty = () => {
+  //   if (!onSaveDirty || dirtyCount === 0) return
+  //   if (!skipConfirmation) {
+  //     const confirmed = window.confirm(
+  //       `Save pending changes (including any auto-filled fields) for ${dirtyCount} of the ${files.length} selected file${files.length !== 1 ? 's' : ''}?\n\nThis will write directly to the .nam files on disk.\n\n(This warning can be toggled off in Settings → Behavior)`
+  //     )
+  //     if (!confirmed) return
+  //   }
+  //   onSaveDirty(files.map((f) => f.filePath))
+  // }
 
   const handleRevert = () => {
     setEdits(Object.fromEntries(ALL_FIELDS.map((f) => [f.key, shared[f.key].value ?? ''])))
@@ -100,6 +111,10 @@ export function MultiSelectEditor({ files, onApply, onSaveDirty, skipConfirmatio
       if (changed.size > 0) {
         const fieldNames = [...changed].map((k) => FIELDS.find((f) => f.key === k)?.label ?? k).join(', ')
         parts.push(`${changed.size} field${changed.size !== 1 ? 's' : ''}: ${fieldNames}`)
+      }
+      // No typed edits \u2014 this Apply is purely committing pending/auto-filled values to disk.
+      if (parts.length === 0 && dirtyCount > 0) {
+        parts.push(`Save pending changes (including auto-filled fields) for ${dirtyCount} file${dirtyCount !== 1 ? 's' : ''}`)
       }
       const confirmed = window.confirm(
         `Apply to ${files.length} selected file${files.length !== 1 ? 's' : ''}:\n  \u00b7 ${parts.join('\n  \u00b7 ')}\n\nThis will write changes directly to the .nam files on disk.\n\n(This warning can be toggled off in Settings \u2192 Behavior)`
@@ -138,6 +153,8 @@ export function MultiSelectEditor({ files, onApply, onSaveDirty, skipConfirmatio
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {/* "Save changes to N files" — commented out 2026-07-11 while testing whether Apply alone
+              covers auto-fill saves (it now enables on dirty files too). Restore with handleSaveDirty if needed.
           {onSaveDirty && dirtyCount > 0 && (
             <button
               onClick={handleSaveDirty}
@@ -147,7 +164,8 @@ export function MultiSelectEditor({ files, onApply, onSaveDirty, skipConfirmatio
               Save changes to {dirtyCount} file{dirtyCount !== 1 ? 's' : ''}
             </button>
           )}
-          {canApply && (
+          */}
+          {hasTypedEdits && (
             <button
               onClick={handleRevert}
               className="px-3 py-2 rounded-lg text-sm font-medium transition-colors text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
