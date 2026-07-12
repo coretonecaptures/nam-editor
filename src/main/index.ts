@@ -121,6 +121,16 @@ interface FolderWatchImportEntry {
   contentHash?: string
 }
 
+interface MetadataWriteContext {
+  source?: string
+  batchId?: string
+  index?: number
+  total?: number
+  fields?: string[]
+}
+
+type FolderWatchCopyOutcome = 'copied' | 'existing' | 'already-imported' | 'in-flight' | 'non-file' | 'timeout' | 'error'
+
 type TrainingSourceMode = 'watcher' | 'manual-folder-run' | 'manual-direct'
 type TrainingSourcePostProcessMode = 'move' | 'copy' | 'keep'
 type TrainingLatencyMode = 'auto' | 'manual'
@@ -4022,6 +4032,17 @@ function makeFolderWatchKey(sourceFolder: string, destFolder: string): string {
   return `${normalizePath(sourceFolder)}=>${normalizePath(destFolder)}`
 }
 
+function folderWatchRuleSignature(rule: FolderWatchRule): string {
+  return `${normalizePath(rule.sourceFolder)}=>${normalizePath(rule.destFolder)}:${rule.enabled ? '1' : '0'}`
+}
+
+function folderWatchRulesEqual(a: FolderWatchRule[], b: FolderWatchRule[]): boolean {
+  if (a.length !== b.length) return false
+  const aSig = a.map(folderWatchRuleSignature).sort()
+  const bSig = b.map(folderWatchRuleSignature).sort()
+  return aSig.every((sig, index) => sig === bSig[index])
+}
+
 function getFolderWatchImports(rule: FolderWatchRule): FolderWatchImportEntry[] {
   return folderWatchImports.get(makeFolderWatchKey(rule.sourceFolder, rule.destFolder)) ?? []
 }
@@ -4125,23 +4146,30 @@ function isNestedPath(parentPath: string, childPath: string): boolean {
   return child === parent || child.startsWith(parent + '\\') || child.startsWith(parent + '/')
 }
 
-async function copyWatchedFile(rule: FolderWatchRule, filePath: string): Promise<void> {
+async function copyWatchedFile(rule: FolderWatchRule, filePath: string): Promise<FolderWatchCopyOutcome> {
   const normalizedSource = normalizePath(filePath)
   const key = `${rule.destFolder}::${normalizedSource}`
-  if (folderWatchInFlight.has(key)) return
+  if (folderWatchInFlight.has(key)) {
+    log(`folderWatch skip in-flight source="${normalizedSource}" destFolder="${rule.destFolder}"`)
+    return 'in-flight'
+  }
   folderWatchInFlight.add(key)
   try {
     const stable = await waitForStableFile(normalizedSource)
     if (!stable) {
+      log(`folderWatch timeout waiting for stable file source="${normalizedSource}" destFolder="${rule.destFolder}"`)
       safeSend('folderWatch:error', {
         sourceFolder: rule.sourceFolder.replace(/\\/g, '/'),
         destFolder: rule.destFolder.replace(/\\/g, '/'),
         message: `Timed out waiting for ${basename(normalizedSource)} to finish writing`
       })
-      return
+      return 'timeout'
     }
     const stat = await fs.promises.stat(normalizedSource)
-    if (!stat.isFile()) return
+    if (!stat.isFile()) {
+      log(`folderWatch skip non-file source="${normalizedSource}" destFolder="${rule.destFolder}"`)
+      return 'non-file'
+    }
     const fileName = basename(normalizedSource)
     const destPath = join(rule.destFolder, fileName)
     // Never overwrite a destination file that already exists — once a copy has landed here,
@@ -4150,11 +4178,18 @@ async function copyWatchedFile(rule: FolderWatchRule, filePath: string): Promise
     // metadata after the watcher already copied a file caused the destination copy to be
     // silently overwritten with the edited version. Checked before hashing so an
     // already-landed file is never re-hashed on every fs.watch event / 45s poll either.
-    if (fs.existsSync(destPath)) return
+    if (fs.existsSync(destPath)) {
+      log(`folderWatch skip existing-destination source="${normalizedSource}" dest="${destPath}"`)
+      return 'existing'
+    }
     const contentHash = await hashFile(normalizedSource)
-    if (hasImportedWatchedFile(rule, normalizedSource, stat.size, stat.mtimeMs, contentHash)) return
+    if (hasImportedWatchedFile(rule, normalizedSource, stat.size, stat.mtimeMs, contentHash)) {
+      log(`folderWatch skip already-imported source="${normalizedSource}" dest="${destPath}" size=${stat.size} mtime=${stat.mtimeMs} hash="${contentHash}"`)
+      return 'already-imported'
+    }
     suppressWatcher()
-    await fs.promises.copyFile(normalizedSource, destPath)
+    log(`folderWatch copy source="${normalizedSource}" dest="${destPath}" size=${stat.size} mtime=${stat.mtimeMs} hash="${contentHash}"`)
+    await fs.promises.copyFile(normalizedSource, destPath, fs.constants.COPYFILE_EXCL)
     const importEntry: FolderWatchImportEntry = {
       sourcePath: normalizedSource.replace(/\\/g, '/'),
       sizeBytes: stat.size,
@@ -4170,12 +4205,15 @@ async function copyWatchedFile(rule: FolderWatchRule, filePath: string): Promise
       destFolder: rule.destFolder.replace(/\\/g, '/'),
       importEntry,
     })
+    return 'copied'
   } catch (err) {
+    log(`folderWatch error source="${normalizedSource}" destFolder="${rule.destFolder}" error="${String(err)}"`)
     safeSend('folderWatch:error', {
       sourceFolder: rule.sourceFolder.replace(/\\/g, '/'),
       destFolder: rule.destFolder.replace(/\\/g, '/'),
       message: String(err)
     })
+    return 'error'
   } finally {
     folderWatchInFlight.delete(key)
   }
@@ -4202,12 +4240,27 @@ async function backfillImportHashes(rule: FolderWatchRule): Promise<void> {
 async function syncExistingWatchedFiles(rule: FolderWatchRule): Promise<void> {
   await backfillImportHashes(rule)
   try {
+    log(`folderWatch sync start sourceFolder="${rule.sourceFolder}" destFolder="${rule.destFolder}"`)
     const entries = await fs.promises.readdir(rule.sourceFolder, { withFileTypes: true })
+    const counts: Record<FolderWatchCopyOutcome, number> = {
+      copied: 0,
+      existing: 0,
+      'already-imported': 0,
+      'in-flight': 0,
+      'non-file': 0,
+      timeout: 0,
+      error: 0,
+    }
+    let scanned = 0
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.nam')) continue
-      await copyWatchedFile(rule, join(rule.sourceFolder, entry.name))
+      scanned += 1
+      const outcome = await copyWatchedFile(rule, join(rule.sourceFolder, entry.name))
+      counts[outcome] += 1
     }
+    log(`folderWatch sync complete sourceFolder="${rule.sourceFolder}" destFolder="${rule.destFolder}" scanned=${scanned} copied=${counts.copied} existing=${counts.existing} alreadyImported=${counts['already-imported']} inFlight=${counts['in-flight']} timeout=${counts.timeout} error=${counts.error}`)
   } catch (err) {
+    log(`folderWatch sync error sourceFolder="${rule.sourceFolder}" destFolder="${rule.destFolder}" error="${String(err)}"`)
     safeSend('folderWatch:error', {
       sourceFolder: rule.sourceFolder.replace(/\\/g, '/'),
       destFolder: rule.destFolder.replace(/\\/g, '/'),
@@ -4219,18 +4272,23 @@ async function syncExistingWatchedFiles(rule: FolderWatchRule): Promise<void> {
 function resetFolderWatchRules(rules: FolderWatchRule[]): void {
   folderWatchRules = rules
   closeFolderWatchers()
+  log(`folderWatch reset rules count=${rules.length}`)
 
   for (const rule of folderWatchRules) {
     if (!rule.enabled) continue
     const sourceFolder = normalizePath(rule.sourceFolder)
     const destFolder = normalizePath(rule.destFolder)
     if (!sourceFolder || !destFolder) continue
-    if (sourceFolder.toLowerCase() === destFolder.toLowerCase()) continue
+    if (sourceFolder.toLowerCase() === destFolder.toLowerCase()) {
+      log(`folderWatch skip same-folder source="${sourceFolder}" dest="${destFolder}"`)
+      continue
+    }
     if (isNestedPath(sourceFolder, destFolder) || isNestedPath(destFolder, sourceFolder)) {
       log(`folderWatch skipped nested rule source="${sourceFolder}" dest="${destFolder}"`)
       continue
     }
     try {
+      log(`folderWatch activate source="${sourceFolder}" dest="${destFolder}"`)
       const pendingTimers = new Map<string, ReturnType<typeof setTimeout>>()
       const watcher = fs.watch(sourceFolder, { recursive: false }, (_eventType, filename) => {
         const nextFilename = String(filename ?? '').trim()
@@ -4247,8 +4305,12 @@ function resetFolderWatchRules(rules: FolderWatchRule[]): void {
           // and (per user report) the resulting churn made it look like something was
           // "copying it over and wiping it" even once the actual overwrite was blocked. This
           // matches the same suppress check the library folder:watch listener already uses.
-          if (Date.now() < watcherSuppressUntil) return
+          if (Date.now() < watcherSuppressUntil) {
+            log(`folderWatch skip suppressed-event sourceFolder="${sourceFolder}" file="${nextFilename}" dest="${destFolder}"`)
+            return
+          }
           const fullPath = join(sourceFolder, nextFilename)
+          log(`folderWatch event source="${fullPath}" destFolder="${destFolder}"`)
           void copyWatchedFile({ ...rule, sourceFolder, destFolder }, fullPath)
         }, 1200)
         pendingTimers.set(lowerName, timer)
@@ -4535,15 +4597,54 @@ async function showOpenDialogSafely(
   }
 }
 
-// Returns the LAST match of /"metadata"\s*:\s*\{/ in content.
-// A2 (SlimmableContainer) files embed "metadata" inside each submodel before the outer
-// top-level metadata block. All patchers must target the outer (last) occurrence.
+// Returns the root-level /"metadata"\s*:\s*\{/ match.
+// A2 (SlimmableContainer) files also embed "metadata" inside each submodel under config.
+// Patchers must target the top-level metadata object because that is what the UI reads.
 function findOuterMetadataMatch(content: string): RegExpExecArray | null {
-  const re = /"metadata"\s*:\s*\{/g
-  let last: RegExpExecArray | null = null
-  let m: RegExpExecArray | null
-  while ((m = re.exec(content)) !== null) last = m
-  return last
+  let inString = false
+  let escaped = false
+  let objectDepth = 0
+  let arrayDepth = 0
+  const metadataRe = /^"metadata"\s*:\s*\{/
+
+  for (let i = 0; i < content.length; i++) {
+    const ch = content[i]
+
+    if (inString) {
+      if (escaped) {
+        escaped = false
+      } else if (ch === '\\') {
+        escaped = true
+      } else if (ch === '"') {
+        inString = false
+      }
+      continue
+    }
+
+    if (objectDepth === 1 && arrayDepth === 0 && ch === '"') {
+      const token = metadataRe.exec(content.slice(i))
+      if (token) {
+        const match = [token[0]] as unknown as RegExpExecArray
+        match.index = i
+        match.input = content
+        return match
+      }
+    }
+
+    if (ch === '"') {
+      inString = true
+    } else if (ch === '{') {
+      objectDepth++
+    } else if (ch === '}') {
+      objectDepth = Math.max(0, objectDepth - 1)
+    } else if (ch === '[') {
+      arrayDepth++
+    } else if (ch === ']') {
+      arrayDepth = Math.max(0, arrayDepth - 1)
+    }
+  }
+
+  return null
 }
 
 // Surgically patch only the changed metadata fields in the raw file text.
@@ -4709,7 +4810,73 @@ function getPreferredNamBot(meta: Record<string, unknown>): Record<string, unkno
   return undefined
 }
 
-function liftUiMetadata(meta: Record<string, unknown>): Record<string, unknown> {
+function objectRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
+}
+
+function getA2SubmodelMetadata(data: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  const config = objectRecord(data?.config)
+  const submodels = config?.submodels
+  if (!Array.isArray(submodels)) return undefined
+
+  const candidates = submodels
+    .map((submodel) => objectRecord(objectRecord(submodel)?.model)?.metadata)
+    .filter((metadata): metadata is Record<string, unknown> => !!objectRecord(metadata))
+
+  if (candidates.length === 0) return undefined
+
+  const score = (metadata: Record<string, unknown>): number => {
+    const coreFields = ['gear_type', 'gear_make', 'gear_model', 'tone_type', 'input_level_dbu', 'output_level_dbu']
+    const namLab = objectRecord(metadata.nam_lab)
+    const namLabFields = ['mics', 'cabinet', 'cabinet_config', 'amp_channel', 'boost_pedal', 'amp_settings', 'pedal_settings', 'amp_switches', 'comments', 'about', 'rating']
+    return coreFields.filter((field) => metadata[field] != null && metadata[field] !== '').length
+      + namLabFields.filter((field) => namLab?.[field] != null && namLab?.[field] !== '').length
+  }
+
+  return candidates.sort((a, b) => score(b) - score(a))[0]
+}
+
+function fillMissingMetadataFromA2Submodel(meta: Record<string, unknown>, data: Record<string, unknown> | undefined): void {
+  const subMeta = getA2SubmodelMetadata(data)
+  if (!subMeta) return
+
+  const fillIfBlank = (target: Record<string, unknown>, key: string, source: Record<string, unknown>): void => {
+    if ((target[key] == null || target[key] === '') && source[key] != null && source[key] !== '') {
+      target[key] = source[key]
+    }
+  }
+
+  for (const key of ['name', 'modeled_by', 'gear_type', 'gear_make', 'gear_model', 'tone_type', 'input_level_dbu', 'output_level_dbu']) {
+    fillIfBlank(meta, key, subMeta)
+  }
+
+  const subNamBot = getPreferredNamBot(subMeta)
+  if (subNamBot) {
+    const topNamBot = objectRecord(meta.nam_bot)
+    if (!topNamBot) meta.nam_bot = { ...subNamBot }
+    else {
+      for (const key of ['trained_epochs', 'preset_name', 'validation_esr', 'manual_latency_samples']) {
+        fillIfBlank(topNamBot, key, subNamBot)
+      }
+    }
+  }
+
+  const subNamLab = objectRecord(subMeta.nam_lab)
+  if (subNamLab) {
+    const topNamLab = objectRecord(meta.nam_lab)
+    if (!topNamLab) meta.nam_lab = { ...subNamLab }
+    else {
+      for (const key of ['mics', 'cabinet', 'cabinet_config', 'amp_channel', 'boost_pedal', 'amp_settings', 'pedal_settings', 'amp_switches', 'comments', 'about', 'rating']) {
+        fillIfBlank(topNamLab, key, subNamLab)
+      }
+    }
+  }
+}
+
+function liftUiMetadata(meta: Record<string, unknown>, data?: Record<string, unknown>): Record<string, unknown> {
+  fillMissingMetadataFromA2Submodel(meta, data)
   const nb = getPreferredNamBot(meta)
   if (nb?.trained_epochs != null) meta.nb_trained_epochs = nb.trained_epochs
   if (nb?.preset_name != null) meta.nb_preset_name = nb.preset_name
@@ -4874,14 +5041,20 @@ function persistTrainerMetadata(
 // Surgically remove the entire "nam_lab": {...} block from metadata.
 // Handles leading comma (block in middle/end) and trailing comma (block at start).
 function removeNamLabBlock(content: string): string {
+  const metaKeyMatch = findOuterMetadataMatch(content)
+  if (!metaKeyMatch) return content
+  const metaOpenBrace = metaKeyMatch.index + metaKeyMatch[0].length - 1
+  const metaCloseBrace = findMatchingBrace(content, metaOpenBrace)
+  if (metaCloseBrace === -1) return content
+  const metaSection = content.slice(metaOpenBrace, metaCloseBrace + 1)
   const namLabRe = /"nam_lab"\s*:\s*\{/
-  const match = namLabRe.exec(content)
+  const match = namLabRe.exec(metaSection)
   if (!match) return content
-  const openBrace = match.index + match[0].length - 1
+  const openBrace = metaOpenBrace + match.index + match[0].length - 1
   const closeBrace = findMatchingBrace(content, openBrace)
   if (closeBrace === -1) return content
   // The full block span: from `"nam_lab"` key to closing `}`
-  const blockStart = match.index
+  const blockStart = metaOpenBrace + match.index
   const blockEnd = closeBrace + 1
   // Remove preceding comma+whitespace if present, otherwise trailing comma+whitespace
   const before = content.slice(0, blockStart)
@@ -4904,12 +5077,18 @@ function patchNamLabField(content: string, field: string, value: unknown): strin
   const fieldRe = new RegExp(
     `("${escapeRe(field)}")(\\s*:\\s*)(null|"(?:[^"\\\\]|\\\\.)*"|-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)`
   )
+  const metaKeyMatch = findOuterMetadataMatch(content)
+  if (!metaKeyMatch) return content
+  const metaOpenBrace = metaKeyMatch.index + metaKeyMatch[0].length - 1
+  const metaCloseBrace = findMatchingBrace(content, metaOpenBrace)
+  if (metaCloseBrace === -1) return content
+  const metaSection = content.slice(metaOpenBrace, metaCloseBrace + 1)
 
   // Try to find existing nam_lab block inside metadata and update/insert the field
   const namLabRe = /"nam_lab"\s*:\s*\{/
-  const namLabMatch = namLabRe.exec(content)
+  const namLabMatch = namLabRe.exec(metaSection)
   if (namLabMatch) {
-    const openBrace = namLabMatch.index + namLabMatch[0].length - 1
+    const openBrace = metaOpenBrace + namLabMatch.index + namLabMatch[0].length - 1
     const closeBrace = findMatchingBrace(content, openBrace)
     if (closeBrace !== -1) {
       let inner = content.slice(openBrace + 1, closeBrace)
@@ -4931,12 +5110,7 @@ function patchNamLabField(content: string, field: string, value: unknown): strin
 
   // No nam_lab block — inject it directly into the metadata block
   if (value === null || value === undefined) return content
-  const metaKeyMatch = findOuterMetadataMatch(content)
-  if (!metaKeyMatch) return content
-  const openBrace = metaKeyMatch.index + metaKeyMatch[0].length - 1
-  const closeBrace = findMatchingBrace(content, openBrace)
-  if (closeBrace === -1) return content
-  let inner = content.slice(openBrace + 1, closeBrace)
+  let inner = content.slice(metaOpenBrace + 1, metaCloseBrace)
   const indentMatch = /\n([ \t]+)"/.exec(inner)
   const indent = indentMatch ? indentMatch[1] : '    '
   const trimmed = inner.trimEnd()
@@ -4944,7 +5118,7 @@ function patchNamLabField(content: string, field: string, value: unknown): strin
   const trailing = inner.slice(trimmed.length)
   const namLabBlock = `\n${indent}"nam_lab": {\n${indent}  "${field}": ${newVal}\n${indent}}`
   inner = trimmed + (needsComma ? ',' : '') + namLabBlock + trailing
-  return content.slice(0, openBrace + 1) + inner + content.slice(closeBrace)
+  return content.slice(0, metaOpenBrace + 1) + inner + content.slice(metaCloseBrace)
 }
 
 // Patch a field inside metadata.training.nam_bot, creating the legacy structure if needed.
@@ -5558,13 +5732,13 @@ app.whenReady().then(async () => {
       if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
         const cachedData = { ...(cached.data as Record<string, unknown>) }
         const cachedMeta = cachedData.metadata && typeof cachedData.metadata === 'object'
-          ? liftUiMetadata({ ...(cachedData.metadata as Record<string, unknown>) })
+          ? liftUiMetadata({ ...(cachedData.metadata as Record<string, unknown>) }, cachedData)
           : cachedData.metadata
         return { success: true, ...cachedData, metadata: cachedMeta, filePath, mtimeMs: stat.mtimeMs, birthtimeMs: stat.birthtimeMs, sizeBytes: stat.size }
       }
       const content = await fs.promises.readFile(filePath, 'utf-8')
       const data = JSON.parse(content)
-      const meta = liftUiMetadata(data.metadata ?? {})
+      const meta = liftUiMetadata(data.metadata ?? {}, data)
       const topNotes = Array.isArray(data.notes) ? (data.notes as unknown[]).filter((n): n is string => typeof n === 'string') : undefined
       const result = {
         success: true,
@@ -5599,12 +5773,21 @@ app.whenReady().then(async () => {
     'name', 'modeled_by', 'gear_type', 'gear_make', 'gear_model',
     'tone_type', 'input_level_dbu', 'output_level_dbu', 'loudness', 'gain'
   ] as const
-  ipcMain.handle('file:writeMetadata', async (_event, filePath: string, metadata: unknown) => {
+  ipcMain.handle('file:writeMetadata', async (_event, filePath: string, metadata: unknown, context?: MetadataWriteContext) => {
     try {
       const content = fs.readFileSync(filePath, 'utf-8')
       const data = JSON.parse(content)
       const orig = data.metadata ?? {}
+      const effectiveOrig = liftUiMetadata({ ...(orig as Record<string, unknown>) }, data)
       const incoming = metadata as Record<string, unknown>
+      const incomingKeys = Object.keys(incoming)
+      const isBlankValue = (value: unknown) => value == null || value === ''
+      const isPresentValue = (value: unknown) => value != null && value !== ''
+      const writeSource = typeof context?.source === 'string' && context.source.trim() ? context.source.trim() : 'unknown'
+      const writeBatchId = typeof context?.batchId === 'string' ? context.batchId : ''
+      const writeIndex = typeof context?.index === 'number' && Number.isFinite(context.index) ? context.index : null
+      const writeTotal = typeof context?.total === 'number' && Number.isFinite(context.total) ? context.total : null
+      const requestedFields = Array.isArray(context?.fields) ? context.fields.map(String).filter(Boolean) : []
 
       // Numeric metadata fields â€” must always be written as JSON numbers, never strings
       const NUMERIC_META_FIELDS = new Set(['input_level_dbu', 'output_level_dbu', 'loudness', 'gain'])
@@ -5627,20 +5810,24 @@ app.whenReady().then(async () => {
       let patched = patchMetadataFields(content, patches)
 
       // Handle nb_trained_epochs â€” stored at metadata.training.nam_bot.trained_epochs
-      const currentNamBot = getPreferredNamBot(orig)
+      const currentNamBot = getPreferredNamBot(effectiveOrig)
       const hasTopLevelNamBot = !!(orig.nam_bot && typeof orig.nam_bot === 'object')
       const hasLegacyNamBot = !!(orig.training && typeof orig.training === 'object' && (orig.training as Record<string, unknown>).nam_bot)
       const origEpochs = currentNamBot?.trained_epochs ?? null
+      let shouldVerifyEpochs = false
+      let expectedEpochs: number | null = null
       if (Object.prototype.hasOwnProperty.call(incoming, 'nb_trained_epochs')) {
         const newEpochs = incoming.nb_trained_epochs != null ? Number(incoming.nb_trained_epochs) : null
         if (newEpochs !== origEpochs) {
           if (hasTopLevelNamBot || !hasLegacyNamBot) patched = patchTopLevelNamBotField(patched, 'trained_epochs', newEpochs)
           else patched = patchLegacyNamBotField(patched, 'trained_epochs', newEpochs)
+          shouldVerifyEpochs = true
+          expectedEpochs = newEpochs
         }
       }
 
       // Handle NAM Lab extended fields â€” stored at metadata.nam_lab.*
-      const origNl = (orig.nam_lab ?? {}) as Record<string, unknown>
+      const origNl = (effectiveOrig.nam_lab ?? {}) as Record<string, unknown>
       const nlKeys = ['mics','cabinet','cabinet_config','amp_channel','boost_pedal','amp_settings','pedal_settings','amp_switches','comments','about','rating'] as const
       for (const k of nlKeys) {
         const rendererKey = `nl_${k}`
@@ -5658,12 +5845,99 @@ app.whenReady().then(async () => {
         if (newLatency !== null) patched = patchLatencyRecommended(patched, newLatency)
       }
 
+      const clearingFields: string[] = []
+      const fillingFields: string[] = []
+      const changedFields: string[] = []
+      for (const key of EDITABLE_FIELDS) {
+        if (!Object.prototype.hasOwnProperty.call(incoming, key)) continue
+        if (effectiveOrig[key] !== incoming[key]) changedFields.push(key)
+        if (isPresentValue(effectiveOrig[key]) && isBlankValue(incoming[key])) {
+          clearingFields.push(key)
+        }
+        if (isBlankValue(effectiveOrig[key]) && isPresentValue(incoming[key])) {
+          fillingFields.push(key)
+        }
+      }
+      for (const key of nlKeys) {
+        const rendererKey = `nl_${key}`
+        if (!Object.prototype.hasOwnProperty.call(incoming, rendererKey)) continue
+        if (origNl[key] !== incoming[rendererKey]) changedFields.push(rendererKey)
+        if (isPresentValue(origNl[key]) && isBlankValue(incoming[rendererKey])) {
+          clearingFields.push(rendererKey)
+        }
+        if (isBlankValue(origNl[key]) && isPresentValue(incoming[rendererKey])) {
+          fillingFields.push(rendererKey)
+        }
+      }
+      if (Object.prototype.hasOwnProperty.call(incoming, 'nb_trained_epochs') && shouldVerifyEpochs) {
+        changedFields.push('nb_trained_epochs')
+      }
+      if (Object.prototype.hasOwnProperty.call(incoming, 'latency_recommended')) {
+        changedFields.push('latency_recommended')
+      }
+      const protectedClearFields = new Set([
+        'gear_type',
+        'gear_make',
+        'gear_model',
+        'tone_type',
+        'nb_trained_epochs',
+        'nl_cabinet',
+        'nl_cabinet_config',
+        'nl_amp_channel',
+        'nl_amp_settings',
+        'nl_amp_switches',
+      ])
+      const suspiciousClears = clearingFields.filter((field) => protectedClearFields.has(field))
+      if (suspiciousClears.length > 0 && incomingKeys.length > clearingFields.length) {
+        log(`writeMetadata refused protected-clear source="${writeSource}" batch="${writeBatchId}" index=${writeIndex ?? ''}/${writeTotal ?? ''} file="${filePath}" protected="${suspiciousClears.join(',')}" clearing="${clearingFields.join(',')}" filling="${fillingFields.join(',')}" changedFields="${changedFields.join(',')}" requestedFields="${requestedFields.join(',')}" keys="${incomingKeys.join(',')}"`)
+        return { success: false, error: `Refusing to clear protected metadata fields: ${suspiciousClears.join(', ')}` }
+      }
+      if (clearingFields.length >= 3 && incomingKeys.length > clearingFields.length) {
+        log(`writeMetadata refused mass-clear source="${writeSource}" batch="${writeBatchId}" index=${writeIndex ?? ''}/${writeTotal ?? ''} file="${filePath}" clearing="${clearingFields.join(',')}" filling="${fillingFields.join(',')}" changedFields="${changedFields.join(',')}" requestedFields="${requestedFields.join(',')}" keys="${incomingKeys.join(',')}"`)
+        return { success: false, error: `Refusing to clear ${clearingFields.length} existing metadata fields at once` }
+      }
+
       // Validate output is well-formed JSON before touching disk
       try { JSON.parse(patched) } catch (ve) {
         return { success: false, error: `Patch produced invalid JSON â€” file not written. ${String(ve)}` }
       }
       suppressWatcher()
+      log(`writeMetadata source="${writeSource}" batch="${writeBatchId}" index=${writeIndex ?? ''}/${writeTotal ?? ''} file="${filePath}" keys="${incomingKeys.join(',')}" requestedFields="${requestedFields.join(',')}" changedFields="${changedFields.join(',')}" filling="${fillingFields.join(',')}" clearing="${clearingFields.join(',')}" changed=${patched !== content}`)
       fs.writeFileSync(filePath, patched, 'utf-8')
+      const verifyContent = fs.readFileSync(filePath, 'utf-8')
+      const verifyData = JSON.parse(verifyContent)
+      const verifyMeta = (verifyData.metadata ?? {}) as Record<string, unknown>
+      const verifyNl = (verifyMeta.nam_lab ?? {}) as Record<string, unknown>
+      const verifyNamBot = getPreferredNamBot(verifyMeta)
+      const mismatches: string[] = []
+      const valueMatches = (actual: unknown, expected: unknown): boolean => {
+        const normalizedActual = actual == null ? null : actual
+        const normalizedExpected = expected == null ? null : expected
+        return JSON.stringify(normalizedActual) === JSON.stringify(normalizedExpected)
+      }
+      for (const [key, expected] of Object.entries(patches)) {
+        if (!valueMatches(verifyMeta[key] ?? null, expected)) mismatches.push(key)
+      }
+      for (const k of nlKeys) {
+        const rendererKey = `nl_${k}`
+        if (!Object.prototype.hasOwnProperty.call(incoming, rendererKey)) continue
+        const expected = incoming[rendererKey] != null ? incoming[rendererKey] : null
+        if (!valueMatches(verifyNl[k] ?? null, expected)) mismatches.push(rendererKey)
+      }
+      if (shouldVerifyEpochs) {
+        if (!valueMatches(verifyNamBot?.trained_epochs ?? null, expectedEpochs)) mismatches.push('nb_trained_epochs')
+      }
+      if (Object.prototype.hasOwnProperty.call(incoming, 'latency_recommended')) {
+        const trainingData = (verifyMeta.training as Record<string, unknown> | undefined)?.data as Record<string, unknown> | undefined
+        const latencyCal = (trainingData?.latency as Record<string, unknown> | undefined)?.calibration as Record<string, unknown> | undefined
+        const expected = incoming.latency_recommended != null ? Math.round(Number(incoming.latency_recommended)) : null
+        if (!valueMatches(latencyCal?.recommended ?? null, expected)) mismatches.push('latency_recommended')
+      }
+      if (mismatches.length > 0) {
+        log(`writeMetadata verify-failed source="${writeSource}" batch="${writeBatchId}" file="${filePath}" mismatches="${mismatches.join(',')}" keys="${incomingKeys.join(',')}"`)
+        return { success: false, error: `Saved file failed verification for: ${mismatches.join(', ')}` }
+      }
+      log(`writeMetadata verify-ok source="${writeSource}" batch="${writeBatchId}" file="${filePath}" fields="${incomingKeys.join(',')}"`)
       delete loadFileCache()[filePath]
       return { success: true }
     } catch (err) {
@@ -5751,7 +6025,7 @@ app.whenReady().then(async () => {
         try {
           const content = fs.readFileSync(filePath, 'utf-8')
           const data = JSON.parse(content)
-          const meta = liftUiMetadata(data.metadata ?? {})
+          const meta = liftUiMetadata(data.metadata ?? {}, data)
           const topNotes = Array.isArray(data.notes) ? (data.notes as unknown[]).filter((n): n is string => typeof n === 'string') : undefined
           return { success: true, filePath, version: data.version ?? '?', notes: topNotes, metadata: meta, architecture: data.architecture ?? '?', config: data.config ?? null }
         } catch (err) {
@@ -5993,6 +6267,7 @@ app.whenReady().then(async () => {
     rules?: FolderWatchRule[]
     imports?: Record<string, FolderWatchImportEntry[]>
   }) => {
+    const nextRules = Array.isArray(payload?.rules) ? payload.rules : []
     const nextImports = new Map<string, FolderWatchImportEntry[]>()
     for (const [key, entries] of Object.entries(payload?.imports ?? {})) {
       nextImports.set(
@@ -6011,11 +6286,17 @@ app.whenReady().then(async () => {
       )
     }
     folderWatchImports = nextImports
-    resetFolderWatchRules(Array.isArray(payload?.rules) ? payload.rules : [])
+    if (!folderWatchRulesEqual(folderWatchRules, nextRules)) {
+      log(`folderWatch setState rules-changed rules=${nextRules.length} importKeys=${nextImports.size}`)
+      resetFolderWatchRules(nextRules)
+    } else {
+      log(`folderWatch setState imports-only rules=${nextRules.length} importKeys=${nextImports.size}`)
+    }
   })
 
   ipcMain.handle('folderWatch:resync', async (_event, sourceFolder: string) => {
     const normalized = normalizePath(String(sourceFolder ?? '').trim())
+    log(`folderWatch manual-resync requested sourceFolder="${normalized}"`)
     const rule = folderWatchRules.find(
       (r) => normalizePath(r.sourceFolder).toLowerCase() === normalized.toLowerCase()
     )
@@ -6025,6 +6306,8 @@ app.whenReady().then(async () => {
         sourceFolder: normalizePath(rule.sourceFolder),
         destFolder: normalizePath(rule.destFolder),
       })
+    } else {
+      log(`folderWatch manual-resync no-rule sourceFolder="${normalized}"`)
     }
   })
 

@@ -61,6 +61,34 @@ high-value fix and the `@dnd-kit` route is the way to finally land it.
 
 ---
 
+## [MEDIUM PRIORITY] Fix literal `\uXXXX` escape sequences showing up as raw text in UI strings
+
+JSX attribute values written as plain quoted strings (`hint="..."`, `placeholder="..."`,
+`title="..."`, `description="..."`) do **not** get JavaScript escape-sequence processing —
+that only happens inside real JS string literals (i.e. wrapped in `{...}`). Several plain
+JSX attributes use `—` (em dash), `…` (ellipsis), `·` (middle dot), or `→`
+(right arrow) expecting them to render as the actual character, but instead the user sees the
+literal 6-character text `—` etc. in the UI.
+
+Confirmed occurrences (18 total, `grep -rn '="[^{][^"]*\\u[0-9a-fA-F]\{4\}' src --include="*.tsx"`
+excluding attributes already wrapped in `{}`):
+
+- `TrainingPanel.tsx:4137` — `hint="Optional — leave blank to auto-name..."` (Batch name field)
+- `TrainingPanel.tsx:4014`, `4025` — sub-model tooltips (`title="..."`)
+- `TrainingPanel.tsx:2636` — `title="Configure favorites in Settings → Training"`
+- `BundleEditor.tsx:342, 349, 360, 405, 477, 535` — various `placeholder="...…"` and one `·`
+- `FolderCardView.tsx:634`, `MetadataEditor.tsx:980` — `placeholder="...…"`
+- `SettingsPanel.tsx:1934, 1949, 1969, 2521` — `description`/`hint`/`labelTitle` with `—`/`·`
+- `Toolbar.tsx:159` — `title="Training in progress — click to open live run"`
+
+**Fix:** either paste the real Unicode character directly into the string (simplest, and what
+the many *already-correct* strings elsewhere in the codebase do), or switch the attribute to a
+JS expression: `hint={"Optional — leave blank..."}`. Prefer the literal-character approach
+for consistency with the rest of the codebase. A quick way to catch regressions: the same grep
+above should return zero matches once fixed.
+
+---
+
 ## Modularization
 
 **Status: Components exist but are themselves too large. Priority: Medium.**

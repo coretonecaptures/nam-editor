@@ -25,8 +25,8 @@ const api = {
   hashFilesWithoutMetadata: (filePaths: string[]): Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]> =>
     ipcRenderer.invoke('file:hashManyWithoutMetadata', filePaths),
   readFile: (filePath: string) => ipcRenderer.invoke('file:read', filePath),
-  writeMetadata: (filePath: string, metadata: unknown) =>
-    ipcRenderer.invoke('file:writeMetadata', filePath, metadata),
+  writeMetadata: (filePath: string, metadata: unknown, context?: unknown) =>
+    ipcRenderer.invoke('file:writeMetadata', filePath, metadata, context),
   scanFolder: (folderPath: string, hiddenFolders?: string) => ipcRenderer.invoke('folder:scanNam', folderPath, hiddenFolders),
   scanTree: (folderPath: string, hiddenFolders?: string) => ipcRenderer.invoke('folder:scanTree', folderPath, hiddenFolders),
   listWavFiles: (folderPath: string): Promise<string[]> => ipcRenderer.invoke('folder:listWavFiles', folderPath),

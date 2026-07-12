@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx'
 import { NamFile, GEAR_TYPES, TONE_TYPES } from '../types/nam'
 import { gearChipClass, toneChipClass, getGearImageSrc, namGearChipClass, namToneChipClass, namCreatorChipClass } from '../assets/gear'
 import { detectPreset } from '../utils/detectPreset'
+import { getCaptureBestEsr, getEsrTone } from '../utils/esr'
 import { BatchRenameModal } from './BatchRenameModal'
 
 type FilterMode = 'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited' | 'incomplete' | 'complete' | 'rated' | 'duplicates'
@@ -133,6 +134,14 @@ function detectedPresetChipStyle(preset: string): React.CSSProperties {
   }
 }
 
+function mergedEsrMeta(file: NamFile): Record<string, unknown> {
+  return { ...(file.metadata as Record<string, unknown>), architecture: file.architecture, config: file.config }
+}
+
+function getFileBestEsr(file: NamFile) {
+  return getCaptureBestEsr(mergedEsrMeta(file))
+}
+
 function loadSort(): { key: string | null; dir: SortDir } {
   try {
     const s = localStorage.getItem(SORT_STORAGE_KEY)
@@ -179,8 +188,8 @@ function getCellValue(file: NamFile, key: string): string {
     case 'input_level_dbu':  return m.input_level_dbu  != null ? String(m.input_level_dbu)  : ''
     case 'output_level_dbu': return m.output_level_dbu != null ? String(m.output_level_dbu) : ''
     case 'validation_esr': {
-      const esr = (m.training as Record<string, unknown> | undefined)?.validation_esr
-      return esr != null ? (esr as number).toFixed(6) : ''
+      const esr = getFileBestEsr(file).value
+      return esr != null ? esr.toFixed(6) : ''
     }
     case 'loudness':    return m.loudness != null ? m.loudness.toFixed(2) : ''
     case 'gain':        return m.gain != null ? m.gain.toFixed(2) : ''
@@ -245,8 +254,8 @@ function getSortValue(file: NamFile, key: string): string | number {
   if (key === 'input_level_dbu') return file.metadata.input_level_dbu ?? -Infinity
   if (key === 'output_level_dbu') return file.metadata.output_level_dbu ?? -Infinity
   if (key === 'validation_esr') {
-    const esr = (file.metadata.training as Record<string, unknown> | undefined)?.validation_esr
-    return esr != null ? (esr as number) : Infinity
+    const esr = getFileBestEsr(file).value
+    return esr != null ? esr : Infinity
   }
   return getCellValue(file, key).toLowerCase()
 }
@@ -413,12 +422,12 @@ export function FileList({
       }
     }
     if (esrFilter) {
-      const esrVal = (f.metadata.training as Record<string, unknown> | undefined)?.validation_esr
-      const esrNum = typeof esrVal === 'number' ? esrVal : null
-      if (esrFilter === 'good'   && !(esrNum !== null && esrNum < 0.01)) return false
-      if (esrFilter === 'ok'     && !(esrNum !== null && esrNum >= 0.01 && esrNum < 0.05)) return false
-      if (esrFilter === 'review' && !(esrNum !== null && esrNum >= 0.05)) return false
-      if (esrFilter === 'none'   && esrNum !== null) return false
+      const best = getFileBestEsr(f)
+      const tone = getEsrTone(best.value, best.kind).tone
+      if (esrFilter === 'good' && tone !== 'green') return false
+      if (esrFilter === 'ok' && tone !== 'amber') return false
+      if (esrFilter === 'review' && tone !== 'red') return false
+      if (esrFilter === 'none' && tone !== 'none') return false
     }
     if (ratingFilter !== null && ratingFilter !== undefined) {
       const r = f.metadata.nl_rating ?? 0
@@ -1788,11 +1797,18 @@ function GridView({
                             ))}
                           </span>
                         ) : col.key === 'validation_esr' && val ? (
-                          <span className={`truncate block font-mono ${
-                            parseFloat(val) < 0.01  ? 'text-green-500' :
-                            parseFloat(val) < 0.05  ? 'text-amber-400' :
-                                                      'text-red-400'
-                          }`}>{val}</span>
+                          (() => {
+                            const best = getFileBestEsr(file)
+                            const tone = getEsrTone(best.value, best.kind)
+                            return (
+                              <span
+                                className={`truncate block font-mono ${tone.classes}`}
+                                title={best.label}
+                              >
+                                {val}
+                              </span>
+                            )
+                          })()
                         ) : (
                           <span className={`truncate block ${val ? 'text-gray-700 dark:text-gray-300' : 'text-gray-400 dark:text-gray-600'}`}>
                             {val || '-'}

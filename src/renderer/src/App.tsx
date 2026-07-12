@@ -76,6 +76,12 @@ interface DeliveryMatrixSummary {
   qcIncluded: number
 }
 
+interface SaveProgressState {
+  label: string
+  completed: number
+  total: number
+}
+
 interface FolderReadinessSummary {
   hasReadme: boolean
   galleryCount: number
@@ -403,7 +409,7 @@ declare global {
         birthtimeMs?: number
         sizeBytes?: number
       }>
-      writeMetadata: (filePath: string, metadata: unknown) => Promise<{ success: boolean; error?: string }>
+      writeMetadata: (filePath: string, metadata: unknown, context?: unknown) => Promise<{ success: boolean; error?: string }>
       moveFile: (sourcePath: string, destDir: string, force?: boolean, destBaseName?: string) => Promise<{ success: boolean; error?: string; destPath?: string }>
       scanFolder: (folderPath: string, hiddenFolders?: string) => Promise<{ success: boolean; error?: string; files?: string[] }>
       scanTree: (folderPath: string, hiddenFolders?: string) => Promise<{ success: boolean; error?: string; tree?: FolderNode }>
@@ -615,6 +621,8 @@ export default function App() {
     type: 'info'
   })
   const statusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const saveInFlightRef = useRef(false)
+  const [saveProgress, setSaveProgress] = useState<SaveProgressState | null>(null)
   const folderWatchBatchTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const [batchFolder, setBatchFolder] = useState<{ path: string | null; name: string; filePaths?: string[] } | null>(null)
   const [showSettings, setShowSettings] = useState(false)
@@ -1297,6 +1305,53 @@ export default function App() {
       ))
       statusTimeoutRef.current = null
     }, ms)
+  }, [])
+
+  const runMetadataSaveBatch = useCallback(async function <T extends { filePath: string }>(
+    items: T[],
+    getMetadata: (item: T) => unknown,
+    label = 'Saving'
+  ) {
+    if (saveInFlightRef.current) {
+      setStatus({ message: 'A save is already in progress', type: 'info' })
+      return null
+    }
+
+    saveInFlightRef.current = true
+    const total = items.length
+    const savedPaths = new Set<string>()
+    let failed = 0
+    const savedAt = Date.now()
+    const batchId = `${label.replace(/\s+/g, '-').toLowerCase()}-${savedAt}`
+
+    setSaveProgress({ label, completed: 0, total })
+    setStatus({ message: `${label} 0 / ${total} file(s)...`, type: 'info' })
+
+    try {
+      for (let i = 0; i < items.length; i += 1) {
+        const item = items[i]
+        const metadata = getMetadata(item)
+        const result = await window.api.writeMetadata(item.filePath, metadata, {
+          source: label,
+          batchId,
+          index: i + 1,
+          total,
+        })
+        if (result.success) savedPaths.add(item.filePath)
+        else failed += 1
+
+        const completed = i + 1
+        setSaveProgress({ label, completed, total })
+        if (completed === total || completed === 1 || completed % 10 === 0) {
+          setStatus({ message: `${label} ${completed} / ${total} file(s)...`, type: 'info' })
+        }
+      }
+
+      return { savedPaths, failed, savedAt }
+    } finally {
+      saveInFlightRef.current = false
+      setSaveProgress(null)
+    }
   }, [])
 
   const loadCompanionInbox = useCallback(async () => {
@@ -2001,9 +2056,13 @@ export default function App() {
   }
 
   const handleSave = async (filePath: string) => {
+    if (saveInFlightRef.current) {
+      setStatus({ message: 'A save is already in progress', type: 'info' })
+      return
+    }
     const file = files.find((f) => f.filePath === filePath)
     if (!file) return
-    const result = await window.api.writeMetadata(filePath, file.metadata)
+    const result = await window.api.writeMetadata(filePath, file.metadata, { source: 'Single file save' })
     if (result.success) {
       const savedAt = Date.now()
       setFiles((prev) => prev.map((f) =>
@@ -2066,14 +2125,9 @@ export default function App() {
         if (!confirmed) return
       }
     }
-    setStatus({ message: `Saving ${dirty.length} file(s)...`, type: 'info' })
-    const savedPaths = new Set<string>()
-    let failed = 0
-    for (const f of dirty) {
-      const result = await window.api.writeMetadata(f.filePath, f.metadata)
-      if (result.success) savedPaths.add(f.filePath)
-      else failed++
-    }
+    const batchResult = await runMetadataSaveBatch(dirty, (f) => f.metadata, 'Save All')
+    if (!batchResult) return
+    const { savedPaths, failed } = batchResult
     setFiles((prev) => prev.map((f) =>
       savedPaths.has(f.filePath)
         ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [] }
@@ -2190,57 +2244,39 @@ INSTRUCTIONS:
         : files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(folderPath + '/'))
     }
 
-    // For each target:
-    //   toWrite  = originalMetadata + batch fields only (what gets saved to disk)
-    //   newMeta  = current working metadata with batch fields applied (keeps auto-fills)
-    //   newOriginal = toWrite (reflects new on-disk state)
-    //   isDirty  = newMeta still differs from newOriginal (auto-fills remain pending)
+    // Apply writes the current working metadata plus the batch fields. That preserves
+    // auto-populated values that are visible in the UI instead of leaving them pending.
     const prepared = targets.map((f) => {
-      const toWrite = { ...f.originalMetadata }
       const newMeta = { ...f.metadata }
       if (options?.revertToFilename) {
         const nameFromFile = f.fileName.replace(/\.nam$/i, '')
-        ;(toWrite as Record<string, unknown>)['name'] = nameFromFile
         ;(newMeta as Record<string, unknown>)['name'] = nameFromFile
       }
       for (const [k, v] of Object.entries(batchFields)) {
         let val: unknown
         if (options?.appendFields?.has(k as keyof NamFile['metadata']) && v && v !== '') {
-          const existing = (f.originalMetadata as Record<string, unknown>)[k]
+          const existing = (newMeta as Record<string, unknown>)[k]
           val = existing && typeof existing === 'string' && existing.trim() !== ''
             ? `${existing.trim()} ${v}`
             : v
         } else {
           val = v === '' ? null : v
         }
-        ;(toWrite as Record<string, unknown>)[k] = val
         ;(newMeta as Record<string, unknown>)[k] = val
       }
-      const newIsDirty = JSON.stringify(newMeta) !== JSON.stringify(toWrite)
-      return { filePath: f.filePath, toWrite, newMeta, newOriginal: toWrite, newIsDirty }
+      return { filePath: f.filePath, toWrite: newMeta, newMeta }
     })
 
     setBatchFolder(null)
-    setStatus({ message: `Saving ${prepared.length} file(s)...`, type: 'info' })
+    const batchResult = await runMetadataSaveBatch(prepared, (p) => p.toWrite, 'Batch saving')
+    if (!batchResult) return
+    const { savedPaths, failed, savedAt } = batchResult
 
-    const savedPaths = new Set<string>()
-    let failed = 0
-    const savedAt = Date.now()
-    for (const p of prepared) {
-      const result = await window.api.writeMetadata(p.filePath, p.toWrite)
-      if (result.success) savedPaths.add(p.filePath)
-      else failed++
-    }
-
-    // Fields that were actually written by this batch edit
-    const savedBatchKeys = new Set(Object.keys(batchFields) as (keyof NamFile['metadata'])[])
     const resultMap = new Map(prepared.map((p) => [p.filePath, p]))
     setFiles((prev) => prev.map((f) => {
       if (!savedPaths.has(f.filePath)) return f
       const p = resultMap.get(f.filePath)!
-      // Remove batch-saved fields from autoFilledFields always
-      const autoFilledFields = f.autoFilledFields.filter((k) => !savedBatchKeys.has(k))
-      return { ...f, metadata: p.newMeta, originalMetadata: p.newOriginal, isDirty: p.newIsDirty, autoFilledFields, mtimeMs: savedAt }
+      return { ...f, metadata: p.newMeta, originalMetadata: p.newMeta, isDirty: false, autoFilledFields: [], mtimeMs: savedAt }
     }))
 
     if (failed > 0) {
@@ -2263,15 +2299,9 @@ INSTRUCTIONS:
       setStatus({ message: 'No unsaved changes in the selected files', type: 'info' })
       return
     }
-    setStatus({ message: `Saving ${targets.length} file(s)...`, type: 'info' })
-    const savedPaths = new Set<string>()
-    let failed = 0
-    const savedAt = Date.now()
-    for (const f of targets) {
-      const result = await window.api.writeMetadata(f.filePath, f.metadata)
-      if (result.success) savedPaths.add(f.filePath)
-      else failed++
-    }
+    const batchResult = await runMetadataSaveBatch(targets, (f) => f.metadata, 'Save selected')
+    if (!batchResult) return
+    const { savedPaths, failed, savedAt } = batchResult
     setFiles((prev) => prev.map((f) =>
       savedPaths.has(f.filePath)
         ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [], mtimeMs: savedAt }
@@ -2293,38 +2323,27 @@ INSTRUCTIONS:
     const targets = files.filter((f) => pathSet.has(f.filePath))
 
     const prepared = targets.map((f) => {
-      const toWrite = { ...f.originalMetadata }
       const newMeta = { ...f.metadata }
       if (options?.revertToFilename) {
         const nameFromFile = f.fileName.replace(/\.nam$/i, '')
-        ;(toWrite as Record<string, unknown>)['name'] = nameFromFile
         ;(newMeta as Record<string, unknown>)['name'] = nameFromFile
       }
       for (const [k, v] of Object.entries(fields)) {
         const val = v === '' ? null : v
-        ;(toWrite as Record<string, unknown>)[k] = val
         ;(newMeta as Record<string, unknown>)[k] = val
       }
-      const newIsDirty = JSON.stringify(newMeta) !== JSON.stringify(toWrite)
-      return { filePath: f.filePath, toWrite, newMeta, newOriginal: toWrite, newIsDirty }
+      return { filePath: f.filePath, toWrite: newMeta, newMeta }
     })
 
-    setStatus({ message: `Saving ${prepared.length} file(s)...`, type: 'info' })
-
-    const savedPaths = new Set<string>()
-    let failed = 0
-    const savedAt = Date.now()
-    for (const p of prepared) {
-      const result = await window.api.writeMetadata(p.filePath, p.toWrite)
-      if (result.success) savedPaths.add(p.filePath)
-      else failed++
-    }
+    const batchResult = await runMetadataSaveBatch(prepared, (p) => p.toWrite, 'Multi-select apply')
+    if (!batchResult) return
+    const { savedPaths, failed, savedAt } = batchResult
 
     const resultMap = new Map(prepared.map((p) => [p.filePath, p]))
     setFiles((prev) => prev.map((f) => {
       if (!savedPaths.has(f.filePath)) return f
       const p = resultMap.get(f.filePath)!
-      return { ...f, metadata: p.newMeta, originalMetadata: p.newOriginal, isDirty: p.newIsDirty, autoFilledFields: p.newIsDirty ? f.autoFilledFields : [], mtimeMs: savedAt }
+      return { ...f, metadata: p.newMeta, originalMetadata: p.newMeta, isDirty: false, autoFilledFields: [], mtimeMs: savedAt }
     }))
 
     if (failed > 0) {
@@ -2449,7 +2468,7 @@ INSTRUCTIONS:
       }
 
       // Write updated name to disk (surgical patch of the name field only)
-      const writeResult = await window.api.writeMetadata(targetPath, { ...file.metadata, name: newBaseName })
+      const writeResult = await window.api.writeMetadata(targetPath, { ...file.metadata, name: newBaseName }, { source: 'Rename file metadata sync' })
       if (writeResult.success) {
         saved.set(filePath, { newBaseName, newPath: targetPath })
       } else {
@@ -3175,10 +3194,9 @@ INSTRUCTIONS:
   // ask: "i filled it all out for REVxSTD files and they have the same name...so just copy
   // folder metadata from one to the other." Matches by (metadata.name || fileName), same key
   // handleImportMetadata already uses for its own name lookup. NEVER overwrites a value the
-  // target file already has — only fills fields that are currently blank — and writes only to
-  // in-memory state (marked dirty + autoFilledFields, same amber-highlight convention as
-  // Suggest Metadata) rather than straight to disk, so the result can be reviewed before
-  // saving via the normal per-file Save or the "Save changes to N files" multi-select action.
+  // target file already has — only fills fields that are currently blank — and immediately
+  // writes the updated metadata to disk after confirmation so the action behaves like a real
+  // copy/import rather than leaving behind easy-to-miss unsaved changes.
   const handleCopyMetadataFromFolder = async (targetFolderPath: string | null) => {
     const sourceFolderPath = await window.api.openFolder(librarian.rootFolder ?? undefined)
     if (!sourceFolderPath) return
@@ -3219,8 +3237,10 @@ INSTRUCTIONS:
       matchedCount++
       const fields: Partial<NamFile['metadata']> = {}
       for (const field of COPY_FIELDS) {
-        const targetVal = f.metadata[field]
-        const sourceVal = src.metadata[field]
+        // Decide whether the destination is blank from the saved/on-disk metadata,
+        // not from UI defaults. Otherwise an auto-filled value can hide a real blank.
+        const targetVal = f.originalMetadata[field]
+        const sourceVal = src.originalMetadata[field]
         const targetEmpty = targetVal == null || targetVal === ''
         const sourceHasValue = sourceVal != null && sourceVal !== ''
         if (targetEmpty && sourceHasValue) {
@@ -3245,20 +3265,55 @@ INSTRUCTIONS:
       ? (normalizedTarget.split('/').pop() ?? normalizedTarget)
       : (librarian.rootFolder?.replace(/\\/g, '/').split('/').pop() ?? 'this folder')
     const confirmed = window.confirm(
-      `Copy metadata from "${sourceLabel}"?\n\n${matchedCount} of ${targetFiles.length} file(s) in "${targetLabel}" matched by name.\n${planned.size} file(s) will get ${totalFields} blank field(s) filled in — existing values are never overwritten.\n\nChanges are NOT written to disk yet — review the amber-highlighted fields, then save.`
+      `Copy metadata from "${sourceLabel}"?\n\n${matchedCount} of ${targetFiles.length} file(s) in "${targetLabel}" matched by name.\n${planned.size} file(s) will get ${totalFields} blank field(s) filled in and saved to disk — existing values are never overwritten.`
     )
     if (!confirmed) return
 
+    const prepared = targetFiles
+      .filter((f) => planned.has(f.filePath))
+      .map((f) => {
+        const fields = planned.get(f.filePath)!
+        const newMeta = { ...f.metadata, ...fields }
+        return { filePath: f.filePath, fields, newMeta }
+      })
+
+    const batchResult = await runMetadataSaveBatch(prepared, (item) => item.fields, 'Copying metadata')
+    if (!batchResult) return
+    const { savedPaths, failed, savedAt } = batchResult
+
     setFiles((prev) => prev.map((f) => {
-      const fields = planned.get(f.filePath)
-      if (!fields) return f
-      const newMeta = { ...f.metadata, ...fields }
-      const filledKeys = Object.keys(fields) as (keyof NamFile['metadata'])[]
-      const newAutoFilled = [...new Set([...f.autoFilledFields, ...filledKeys])]
-      return { ...f, metadata: newMeta, isDirty: true, autoFilledFields: newAutoFilled }
+      const preparedFile = prepared.find((item) => item.filePath === f.filePath)
+      if (!preparedFile || !savedPaths.has(f.filePath)) return f
+      const savedKeys = new Set(Object.keys(preparedFile.fields) as (keyof NamFile['metadata'])[])
+      const originalMetadata = { ...f.originalMetadata, ...preparedFile.fields }
+      const isDirty = JSON.stringify(preparedFile.newMeta) !== JSON.stringify(originalMetadata)
+      return {
+        ...f,
+        metadata: preparedFile.newMeta,
+        originalMetadata,
+        isDirty,
+        autoFilledFields: f.autoFilledFields.filter((key) => !savedKeys.has(key)),
+        mtimeMs: savedAt,
+      }
     }))
 
-    setStatus({ message: `Filled ${totalFields} field(s) across ${planned.size} file(s) — review and save`, type: 'success' })
+    const pendingAutoFilledCount = prepared.reduce((sum, item) => {
+      if (!savedPaths.has(item.filePath)) return sum
+      const file = targetFiles.find((f) => f.filePath === item.filePath)
+      if (!file) return sum
+      const savedKeys = new Set(Object.keys(item.fields) as (keyof NamFile['metadata'])[])
+      return sum + file.autoFilledFields.filter((key) => !savedKeys.has(key)).length
+    }, 0)
+    const pendingNote = pendingAutoFilledCount > 0
+      ? `; ${pendingAutoFilledCount} auto-filled field${pendingAutoFilledCount !== 1 ? 's' : ''} still need Save/Apply`
+      : ''
+
+    if (failed > 0) {
+      setStatus({ message: `Copied metadata to ${savedPaths.size} file(s), failed ${failed}${pendingNote}`, type: 'error' })
+    } else {
+      addHistoryEntry({ operation: 'save-all', summary: `Copied metadata from ${sourceLabel} to ${savedPaths.size} file${savedPaths.size !== 1 ? 's' : ''}` })
+      setStatus({ message: `Copied and saved ${totalFields} field(s) across ${savedPaths.size} file(s)${pendingNote}`, type: 'success' })
+    }
   }
 
   const handleImportConfirm = async (matches: ImportMatch[]) => {
@@ -3268,7 +3323,11 @@ INSTRUCTIONS:
     const successMap = new Map<string, NamFile['metadata']>()
     for (const { file, incoming } of matches) {
       const newMeta = { ...file.metadata, ...incoming }
-      const result = await window.api.writeMetadata(file.filePath, newMeta)
+      const result = await window.api.writeMetadata(file.filePath, newMeta, {
+        source: 'Spreadsheet metadata import',
+        index: updated + failed + 1,
+        total: matches.length,
+      })
       if ((result as { success: boolean }).success) {
         updated++
         successMap.set(file.filePath, newMeta)
@@ -3885,7 +3944,12 @@ INSTRUCTIONS:
     for (const match of matches) {
       const incoming = Object.fromEntries(match.suggestions.map((suggestion) => [suggestion.field, suggestion.value])) as Partial<NamFile['metadata']>
       if (Object.keys(incoming).length === 0) continue
-      const result = await window.api.writeMetadata(match.file.filePath, incoming)
+      const result = await window.api.writeMetadata(match.file.filePath, incoming, {
+        source: 'Suggest metadata',
+        fields: match.suggestions.map((suggestion) => String(suggestion.field)),
+        index: updated + failed + 1,
+        total: matches.length,
+      })
       if (result.success) {
         updated++
         successMap.set(match.file.filePath, { writtenFields: incoming })
@@ -4345,6 +4409,7 @@ INSTRUCTIONS:
         onOpenFiles={handleOpenFiles}
         onOpenFolder={handleOpenFolder}
         onSaveAll={handleSaveAll}
+        saveProgress={saveProgress}
         dirtyCount={dirtyCount}
         autoFilledCount={autoFilledCount}
         fileCount={files.length}
@@ -4543,15 +4608,9 @@ INSTRUCTIONS:
                     const confirmed = window.confirm(`Save changes to ${targets.length} file${targets.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.\n\n(This warning can be toggled off in Settings -> Behavior)`)
                     if (!confirmed) return
                   }
-                  setStatus({ message: `Saving ${targets.length} file(s)...`, type: 'info' })
-                  const savedPaths = new Set<string>()
-                  let failed = 0
-                  const savedAt = Date.now()
-                  for (const f of targets) {
-                    const result = await window.api.writeMetadata(f.filePath, f.metadata)
-                    if (result.success) savedPaths.add(f.filePath)
-                    else failed++
-                  }
+                  const batchResult = await runMetadataSaveBatch(targets, (f) => f.metadata, path === null ? 'Save root folder' : 'Save folder')
+                  if (!batchResult) return
+                  const { savedPaths, failed, savedAt } = batchResult
                   setFiles((prev) => prev.map((f) =>
                     savedPaths.has(f.filePath)
                       ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [], mtimeMs: savedAt }
@@ -4705,14 +4764,9 @@ INSTRUCTIONS:
                   const confirmed = window.confirm(`Save changes to ${targets.length} file${targets.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.\n\n(This warning can be toggled off in Settings -> Behavior)`)
                   if (!confirmed) return
                 }
-                setStatus({ message: `Saving ${targets.length} file(s)...`, type: 'info' })
-                const savedPaths = new Set<string>()
-                let failed = 0
-                for (const f of targets) {
-                  const result = await window.api.writeMetadata(f.filePath, f.metadata)
-                  if (result.success) savedPaths.add(f.filePath)
-                  else failed++
-                }
+                const batchResult = await runMetadataSaveBatch(targets, (f) => f.metadata, 'Save grid selection')
+                if (!batchResult) return
+                const { savedPaths, failed } = batchResult
                 setFiles((prev) => prev.map((f) =>
                   savedPaths.has(f.filePath)
                     ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [] }

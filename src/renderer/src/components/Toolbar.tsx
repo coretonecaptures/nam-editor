@@ -4,6 +4,7 @@ interface ToolbarProps {
   onOpenFiles: () => void
   onOpenFolder: () => void
   onSaveAll: () => void
+  saveProgress?: { label: string; completed: number; total: number } | null
   dirtyCount: number
   autoFilledCount: number
   fileCount: number
@@ -52,6 +53,7 @@ export function Toolbar({
   onOpenFiles,
   onOpenFolder,
   onSaveAll,
+  saveProgress = null,
   dirtyCount,
   autoFilledCount,
   fileCount,
@@ -139,6 +141,7 @@ export function Toolbar({
     window.addEventListener('mousedown', handler)
     return () => window.removeEventListener('mousedown', handler)
   }, [showHelpMenu])
+  const saveBusy = !!saveProgress
   return (
     <div
       className="h-12 flex items-center gap-1 flex-shrink-0 border-b relative"
@@ -306,20 +309,32 @@ export function Toolbar({
 
       <button
         onClick={onSaveAll}
-        disabled={dirtyCount === 0}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-white"
-        style={{ WebkitAppRegion: 'no-drag', background: 'var(--accent)', opacity: dirtyCount === 0 ? 0.4 : undefined } as React.CSSProperties}
+        disabled={dirtyCount === 0 || saveBusy}
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-white ${saveBusy ? 'animate-pulse' : ''}`}
+        style={{ WebkitAppRegion: 'no-drag', background: 'var(--accent)', opacity: dirtyCount === 0 || saveBusy ? 0.4 : undefined } as React.CSSProperties}
       >
         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
         </svg>
-        {dirtyCount > 1 ? 'Save All' : 'Save'}
-        {dirtyCount > 0 && (
+        {saveProgress ? `Saving ${saveProgress.completed}/${saveProgress.total}` : dirtyCount > 1 ? 'Save All' : 'Save'}
+        {!saveProgress && dirtyCount > 0 && (
           <span className="ml-1 bg-white/20 text-white text-xs px-1.5 py-0.5 rounded-full">
             {dirtyCount}
           </span>
         )}
       </button>
+      {saveProgress && (
+        <div
+          className="flex items-center gap-2 ml-2 px-2.5 py-1 rounded-full border border-amber-400/30 bg-amber-500/10 text-amber-300"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          title={`${saveProgress.label} ${saveProgress.completed} of ${saveProgress.total} files`}
+        >
+          <span className="w-2 h-2 rounded-full bg-amber-300 animate-pulse flex-shrink-0" />
+          <span className="text-[11px] font-medium whitespace-nowrap">
+            {saveProgress.label} {saveProgress.completed} / {saveProgress.total}
+          </span>
+        </div>
+      )}
 
 
       {(unnamedCount > 0 || (autoFilledCount > 0 && onClearSuggestionsAll)) && (

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { FolderNode } from '../types/librarian'
 import { NamFile } from '../types/nam'
-import { getCaptureBestEsr } from '../utils/esr'
+import { getCaptureBestEsr, getEsrTone } from '../utils/esr'
 import { detectPreset } from '../utils/detectPreset'
 
 const COVER_RE = /^ampcover\.(png|jpe?g|webp|gif|avif)$/i
@@ -49,11 +49,15 @@ const PRESET_COLORS: Record<string, string> = {
   Nano: '#f97316', REVySTD: '#06b6d4', REVyHI: '#0ea5e9', REVxSTD: '#8b5cf6', Unknown: '#6b7280',
 }
 
-function getEsr(file: NamFile): number | null {
+function getMergedEsrMeta(file: NamFile): Record<string, unknown> {
+  return { ...(file.metadata as Record<string, unknown>), architecture: file.architecture, config: file.config }
+}
+
+function getEsrToneForFile(file: NamFile) {
   // Use best-available ESR — Full sub-model for NAM-Lab-trained A2 captures, aggregate (~2x)
-  // for non-NAM-Lab A2, single value for A1. Bucket thresholds are A1-style (<0.01 / <0.05)
-  // applied to whichever value comes back, which is "fair enough" for the folder-card stats.
-  return getCaptureBestEsr(file.metadata as Record<string, unknown> | undefined).value
+  // for non-NAM-Lab A2, single value for A1. Thresholds stay kind-aware.
+  const best = getCaptureBestEsr(getMergedEsrMeta(file))
+  return getEsrTone(best.value, best.kind).tone
 }
 
 function computeStats(files: NamFile[]) {
@@ -77,10 +81,10 @@ function computeStats(files: NamFile[]) {
 
   let esrGood = 0, esrOk = 0, esrReview = 0, esrNone = 0
   for (const f of files) {
-    const esr = getEsr(f)
-    if (esr == null) esrNone++
-    else if (esr < 0.01) esrGood++
-    else if (esr <= 0.05) esrOk++
+    const tone = getEsrToneForFile(f)
+    if (tone === 'none') esrNone++
+    else if (tone === 'green') esrGood++
+    else if (tone === 'amber') esrOk++
     else esrReview++
   }
 
