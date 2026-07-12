@@ -1885,6 +1885,26 @@ def main():
     finally:
         pl.Trainer = _orig_trainer
 
+    # NAM's own train() runs pre-training data checks (sample rate, length, latency
+    # alignment) BEFORE it starts real training. When those checks fail and ignore_checks
+    # is False (the default), train() does NOT raise — it prints "Failed checks!" +
+    # "Exiting core training..." to stdout and returns cleanly with model=None. Real bug
+    # this replaces: that silent early return used to fall straight through to the
+    # discovered_output/_promote_output_model_path calls below as if training had actually
+    # run, which then found no .nam file anywhere and raised the generic
+    # "NAM did not produce a .nam file at the expected location" — masking the real,
+    # specific reason (already printed above in this same process's stdout, e.g. a length
+    # or latency mismatch between the reamp capture and the input file) behind a confusing
+    # message that gave no indication training never started at all.
+    if getattr(result, "model", "MISSING") is None:
+        raise RuntimeError(
+            "NAM's pre-training data checks failed, so training never started (see "
+            "\"Failed checks!\" and the lines above it in this run's log for the specific "
+            "reason — usually a length/latency mismatch between the reamp capture and the "
+            "input file, or a sample-rate mismatch). Fix the capture and retry, or enable "
+            "\"Ignore checks\" in the training profile if you're confident the file is fine."
+        )
+
     discovered_output = _find_output_model_path(payload["trainPath"], payload["modelName"])
     promoted_output = _promote_output_model_path(payload["trainPath"], payload["modelName"], discovered_output, backup_existing=payload.get("backupExisting", False))
 
