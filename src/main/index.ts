@@ -169,9 +169,19 @@ let folderWatchImports = new Map<string, FolderWatchImportEntry[]>()
 const LOG_FILENAME = 'nam-lab-startup.log'
 let logPath = join(os.tmpdir(), LOG_FILENAME)
 
+// log() is called on hot paths — every fs.watch event (including skipped/suppressed ones)
+// and in per-file loops when syncing a watch source. It used to append synchronously
+// (fs.appendFileSync), which blocks Electron's single main-process thread — the same thread
+// that dispatches all renderer IPC. A busy watch source (many files, or a slow/network drive)
+// could stall that thread long enough that IPC calls (cancel, pause, etc.) queued up and the
+// app looked hung. Chained async appends here preserve line order without blocking.
+let logWriteQueue: Promise<void> = Promise.resolve()
+
 function log(msg: string): void {
   const line = `[${new Date().toISOString()}] ${msg}\n`
-  try { fs.appendFileSync(logPath, line, 'utf-8') } catch { /* best effort */ }
+  logWriteQueue = logWriteQueue
+    .then(() => fs.promises.appendFile(logPath, line, 'utf-8'))
+    .catch(() => { /* best effort */ })
   if (isDev) process.stdout.write(line)
 }
 
@@ -4146,11 +4156,19 @@ function isNestedPath(parentPath: string, childPath: string): boolean {
   return child === parent || child.startsWith(parent + '\\') || child.startsWith(parent + '/')
 }
 
+// Per-file watch-sync branches (in-flight/non-file/existing/already-imported) fire once per
+// file on every sync — activation, every 45s poll, and every real fs event. For a source
+// folder with hundreds of files that's hundreds of log lines each pass, which is what was
+// flooding the dev terminal and (before log() was made non-blocking) contributing to the
+// main-process stalls. Only the outcomes that actually matter (copy, error) log by default;
+// flip this to true for a session if you need to debug why a specific file isn't syncing.
+const WATCH_LOG_VERBOSE = false
+
 async function copyWatchedFile(rule: FolderWatchRule, filePath: string): Promise<FolderWatchCopyOutcome> {
   const normalizedSource = normalizePath(filePath)
   const key = `${rule.destFolder}::${normalizedSource}`
   if (folderWatchInFlight.has(key)) {
-    log(`folderWatch skip in-flight source="${normalizedSource}" destFolder="${rule.destFolder}"`)
+    if (WATCH_LOG_VERBOSE) log(`folderWatch skip in-flight source="${normalizedSource}" destFolder="${rule.destFolder}"`)
     return 'in-flight'
   }
   folderWatchInFlight.add(key)
@@ -4167,7 +4185,7 @@ async function copyWatchedFile(rule: FolderWatchRule, filePath: string): Promise
     }
     const stat = await fs.promises.stat(normalizedSource)
     if (!stat.isFile()) {
-      log(`folderWatch skip non-file source="${normalizedSource}" destFolder="${rule.destFolder}"`)
+      if (WATCH_LOG_VERBOSE) log(`folderWatch skip non-file source="${normalizedSource}" destFolder="${rule.destFolder}"`)
       return 'non-file'
     }
     const fileName = basename(normalizedSource)
@@ -4179,12 +4197,12 @@ async function copyWatchedFile(rule: FolderWatchRule, filePath: string): Promise
     // silently overwritten with the edited version. Checked before hashing so an
     // already-landed file is never re-hashed on every fs.watch event / 45s poll either.
     if (fs.existsSync(destPath)) {
-      log(`folderWatch skip existing-destination source="${normalizedSource}" dest="${destPath}"`)
+      if (WATCH_LOG_VERBOSE) log(`folderWatch skip existing-destination source="${normalizedSource}" dest="${destPath}"`)
       return 'existing'
     }
     const contentHash = await hashFile(normalizedSource)
     if (hasImportedWatchedFile(rule, normalizedSource, stat.size, stat.mtimeMs, contentHash)) {
-      log(`folderWatch skip already-imported source="${normalizedSource}" dest="${destPath}" size=${stat.size} mtime=${stat.mtimeMs} hash="${contentHash}"`)
+      if (WATCH_LOG_VERBOSE) log(`folderWatch skip already-imported source="${normalizedSource}" dest="${destPath}" size=${stat.size} mtime=${stat.mtimeMs} hash="${contentHash}"`)
       return 'already-imported'
     }
     suppressWatcher()
@@ -4306,7 +4324,7 @@ function resetFolderWatchRules(rules: FolderWatchRule[]): void {
           // "copying it over and wiping it" even once the actual overwrite was blocked. This
           // matches the same suppress check the library folder:watch listener already uses.
           if (Date.now() < watcherSuppressUntil) {
-            log(`folderWatch skip suppressed-event sourceFolder="${sourceFolder}" file="${nextFilename}" dest="${destFolder}"`)
+            if (WATCH_LOG_VERBOSE) log(`folderWatch skip suppressed-event sourceFolder="${sourceFolder}" file="${nextFilename}" dest="${destFolder}"`)
             return
           }
           const fullPath = join(sourceFolder, nextFilename)
