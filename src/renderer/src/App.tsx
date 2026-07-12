@@ -118,6 +118,26 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+// Subscribe to a window.api.onXxx event without crashing the whole app if that method doesn't
+// exist on the currently-loaded preload script. This happens for real: preload only executes
+// once per webContents load, so in a dev session it can go stale relative to the renderer (which
+// hot-reloads instantly) whenever the main/preload watcher misses a rebuild — e.g. after the app
+// was previously force-killed and `npm run dev` wasn't fully restarted. A missing method used to
+// throw "X is not a function" straight out of a useEffect, which is an uncaught render-time error
+// that blanks the entire UI via the root ErrorBoundary. Warn and no-op instead; the boundary is
+// still there as a last resort for anything this doesn't catch.
+function safeOn<Args extends unknown[]>(
+  name: string,
+  subscribe: ((cb: (...args: Args) => void) => () => void) | undefined,
+  cb: (...args: Args) => void
+): () => void {
+  if (typeof subscribe !== 'function') {
+    console.error(`window.api.${name} is not available — preload is out of sync with the renderer. Fully restart the dev server (not just reload the window) to pick up recent preload/main changes.`)
+    return () => {}
+  }
+  return subscribe(cb)
+}
+
 function makeSubmissionId(prefix: string): string {
   return `${prefix}-${Date.now()}-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2, 10)}`
 }
@@ -1288,7 +1308,7 @@ export default function App() {
 
   // Subscribe to folder:changed IPC event
   useEffect(() => {
-    const unsub = window.api.onFolderChanged(() => setFolderChanged(true))
+    const unsub = safeOn('onFolderChanged', window.api.onFolderChanged, () => setFolderChanged(true))
     return unsub
   }, [])
 
@@ -1449,7 +1469,7 @@ export default function App() {
       })
     }
 
-    const unsubCopied = window.api.onFolderWatchCopied(async ({ destPath, destFolder, sourceFolder, importEntry }) => {
+    const unsubCopied = safeOn('onFolderWatchCopied', window.api.onFolderWatchCopied, async ({ destPath, destFolder, sourceFolder, importEntry }) => {
       const normalizedDestPath = destPath.replace(/\\/g, '/')
       const normalizedDestFolder = destFolder.replace(/\\/g, '/')
       const normalizedRoot = librarian.rootFolder?.replace(/\\/g, '/')
@@ -1500,7 +1520,7 @@ export default function App() {
       }, 1500)
       folderWatchBatchTimersRef.current.set(batchKey, timer)
     })
-    const unsubBackfilled = window.api.onFolderWatchImportsBackfilled(({ key, entries }) => {
+    const unsubBackfilled = safeOn('onFolderWatchImportsBackfilled', window.api.onFolderWatchImportsBackfilled, ({ key, entries }) => {
       setSettings((prev) => {
         const existing = prev.folderWatchImports[key] ?? []
         const backfilledByPath = new Map(entries.map((e) => [e.sourcePath, e]))
@@ -1525,7 +1545,7 @@ export default function App() {
         return next
       })
     })
-    const unsubError = window.api.onFolderWatchError(({ destFolder, message }) => {
+    const unsubError = safeOn('onFolderWatchError', window.api.onFolderWatchError, ({ destFolder, message }) => {
       setStatus({
         message: `Folder watch for ${formatPathLabel(destFolder)} failed: ${message}`,
         type: 'error'
@@ -1651,7 +1671,7 @@ export default function App() {
   // Auto-cancel the rule here (the user otherwise has no way to clear an invalid watch). Separate
   // effect from the other folderWatch listeners because it needs updateFolderWatchRules, defined above.
   useEffect(() => {
-    const unsub = window.api.onFolderWatchDestMissing(({ sourceFolder, destFolder }) => {
+    const unsub = safeOn('onFolderWatchDestMissing', window.api.onFolderWatchDestMissing, ({ sourceFolder, destFolder }) => {
       const normalizedDest = destFolder.replace(/\\/g, '/')
       const normalizedSource = sourceFolder.replace(/\\/g, '/')
       updateFolderWatchRules((rules) => rules.filter((rule) =>
@@ -1887,7 +1907,7 @@ export default function App() {
 
   // Subscribe to app:openFiles ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â for files opened while app is already running
   useEffect(() => {
-    const unsub = window.api.onOpenFiles((paths) => loadFiles(paths, 'append'))
+    const unsub = safeOn('onOpenFiles', window.api.onOpenFiles, (paths) => loadFiles(paths, 'append'))
     return unsub
   }, [loadFiles])
 
@@ -4184,7 +4204,7 @@ INSTRUCTIONS:
     void window.api.getTrainerState().then((state) => {
       if (alive) applyTrainerState(state)
     }).catch(() => null)
-    const unsubscribe = window.api.onTrainerUpdate((state) => {
+    const unsubscribe = safeOn('onTrainerUpdate', window.api.onTrainerUpdate, (state) => {
       if (alive) applyTrainerState(state)
     })
     return () => {
