@@ -176,13 +176,14 @@ let logPath = join(os.tmpdir(), LOG_FILENAME)
 // could stall that thread long enough that IPC calls (cancel, pause, etc.) queued up and the
 // app looked hung. Chained async appends here preserve line order without blocking.
 let logWriteQueue: Promise<void> = Promise.resolve()
+const LOG_TO_STDOUT = process.env['NAM_LAB_LOG_TO_STDOUT'] === '1'
 
 function log(msg: string): void {
   const line = `[${new Date().toISOString()}] ${msg}\n`
   logWriteQueue = logWriteQueue
     .then(() => fs.promises.appendFile(logPath, line, 'utf-8'))
     .catch(() => { /* best effort */ })
-  if (isDev) process.stdout.write(line)
+  if (isDev && LOG_TO_STDOUT) process.stdout.write(line)
 }
 
 function switchLogToUserData(): void {
