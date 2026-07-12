@@ -11,7 +11,7 @@ Occasional training failures where the job completes without error but no `.nam`
 
 ---
 
-## [HIGH PRIORITY] Training-queue batch drag: reliable collapsed-batch drag + a real ghost image
+## DONE (2026-07-12): Training-queue batch drag migrated to @dnd-kit
 
 **Long-standing pain point.** Reordering training batches by dragging has been attempted ~15+
 times across multiple sessions/models and has never worked *reliably*. The 2026-07-10 pass
@@ -21,9 +21,25 @@ work in the common case, but two things remain and are the whole point of this t
 1. **Collapsed batches don't drag reliably.** A collapsed batch card is just its header (much
    shorter hit area), so cursor tracking / drop-target resolution behaves differently than for
    an expanded card. This is the specific case the user calls out as still broken.
+   - **Root cause, confirmed via code review (2026-07-11), distinct from the gap-hit-testing bug
+     fixed on 2026-07-10:** `mousemove` events are rate-limited by the browser (tied to display
+     refresh, not actual pixel distance moved), not fired continuously. A collapsed card is only
+     ~45-50px tall. At normal drag speed, with several collapsed cards stacked only `space-y-3`
+     apart, it's entirely plausible that **zero mousemove samples ever land within that 45px
+     band** — the cursor's tracked position jumps straight from "card above" to "card below"
+     without ever registering the intended card as a match. The existing 80px nearest-neighbor
+     fallback (`resolveDragTargetBatch`, added 2026-07-10) does NOT help here: it only rescues a
+     sample that landed reasonably close to a target; it can't retroactively notice a target the
+     cursor skipped over between two samples with no nearby sample at all. Widening the 80px
+     radius further is not a real fix — it starts resolving drops onto the wrong adjacent card
+     instead of the intended one. This is why further mouse-event patching is not recommended;
+     see the `@dnd-kit` note below for why that architecture doesn't have this failure mode.
 2. **No drag ghost/preview.** The current implementation only dims the source card
    (`opacity-50`) and rings the target — there is no floating "ghost" of the dragged batch
-   following the cursor, which is what makes a drag feel real and predictable.
+   following the cursor, which is what makes a drag feel real and predictable. Compounds #1:
+   with everything collapsed and visually similar, and no cursor-following visual, the user has
+   no clear signal of where the drag currently thinks it's hovering — so even correctly-resolved
+   drops can *feel* unreliable.
 
 **Do NOT keep patching the hand-rolled mouse-event drag.** That's the approach that has failed
 repeatedly. The current code (`TrainingPanel.tsx`, the batch drag handle `onMouseDown` +
@@ -56,8 +72,21 @@ collapsed vs. expanded is a non-issue because dnd-kit tracks the pointer, not el
 - Test specifically: dragging a **collapsed** batch, dragging above the running batch, dragging
   to the very end, and that a plain header click still collapses (doesn't start a drag).
 
-Deferred for now to stop burning tokens on incremental mouse-event patches — but this is the
-high-value fix and the `@dnd-kit` route is the way to finally land it.
+**Implemented 2026-07-12.** `TrainingPanel.tsx`'s Queue "Batches view" now uses `DndContext`
+(`PointerSensor`, `activationConstraint: { distance: 5 }`) + `SortableContext`
+(`verticalListSortingStrategy`, items = batch `groupKey`s) + a `DragOverlay` ghost (compact
+clone of the batch header, done/total count). Each batch card is wrapped in a small render-prop
+component (`SortableBatchCard`) that calls `useSortable({ id: group.groupKey })` — this avoids
+extracting the ~250-line card body into its own component with dozens of threaded props; the
+render-prop callback still closes over every handler/variable the existing JSX already used.
+`onDragEnd` reuses the exact same `moveSubmissionBefore`/`moveSubmissionToEnd` IPC calls the old
+mouse-event handler called. The old `draggingBatch`/`dragOverBatch`/`resolveDragTargetBatch`/
+`groupedQueueRef` state and the `onMouseDown` window-listener block were deleted outright.
+Verified via `tsc --noEmit` (net-zero new errors — two pre-existing errors from the deleted
+mousemove code disappeared) and a dev-server launch smoke test (app builds and starts with no
+console/render errors). **Still needs**: real manual verification in the running app — drag a
+collapsed batch, drag above the running batch, drag to the end of the list, and confirm a plain
+header click still collapses instead of starting a drag.
 
 ---
 

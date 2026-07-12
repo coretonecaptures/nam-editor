@@ -1,6 +1,18 @@
-import { useEffect, useMemo, useRef, useState, startTransition, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, startTransition, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
+import {
+  closestCenter,
+  DndContext,
+  DragOverlay,
+  type DragEndEvent,
+  type DragStartEvent,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core'
+import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import type { AppSettings, TrainingBundle, TrainingPreset, UserCaptureProfile } from '../types/settings'
 import {
   IDLE_TRAINER_STATE,
@@ -27,6 +39,28 @@ type RetrainReview = { matched: RetrainMatchResult[]; skipped: RetrainSkipped[];
 
 function normBasenameRetrain(name: string): string {
   return name.replace(/\.[^.]+$/, '').toLowerCase()
+}
+
+// Thin render-prop wrapper so `useSortable` (a hook) can be called once per batch card
+// without extracting the ~250-line card body into its own component with dozens of
+// threaded props — the callback below still closes over everything the parent's
+// `groupedQueue.map` scope defined, exactly as it did before this migration.
+function SortableBatchCard({
+  id,
+  children,
+}: {
+  id: string
+  children: (args: {
+    setNodeRef: (el: HTMLElement | null) => void
+    style: { transform: string | undefined; transition: string | undefined }
+    dragHandleProps: Record<string, unknown>
+    setActivatorNodeRef: (el: HTMLElement | null) => void
+    isDragging: boolean
+  }) => ReactNode
+}) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const style = { transform: CSS.Transform.toString(transform), transition }
+  return <>{children({ setNodeRef, style, dragHandleProps: { ...attributes, ...listeners }, setActivatorNodeRef, isDragging })}</>
 }
 
 function matchSeedsToWavs(seedNames: string[], wavNames: string[]): RetrainReview {
@@ -1998,56 +2032,43 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   // drag refs for queue reordering
   const dragJobRef = useRef<string | null>(null)
 
-  // Batch drag — mouse-event based, NOT HTML5 DnD.
-  //
-  // Why not HTML5 DnD (draggable / onDragStart / onDrop):
-  //   Electron on Windows does not reliably fire `drop` on same-window targets. We tried it
-  //   for many sessions and it never worked consistently. `onDragOver` fires fine, but `onDrop`
-  //   just doesn't. Do not switch back to DnD without testing on Windows first.
-  //
-  // Why not useEffect for attaching listeners:
-  //   useEffect runs after React re-renders, which is asynchronous. A fast user can release
-  //   the mouse before the effect fires, so `mouseup` never gets caught. Listeners must be
-  //   attached synchronously inside `onMouseDown` instead.
-  //
-  // How it works:
-  //   onMouseDown (handle) → attach window mousemove + mouseup immediately
-  //   mousemove             → elementFromPoint + closest('[data-submission-id]') → dragOverBatchRef
-  //   mouseup               → remove listeners, read draggingBatchRef + dragOverBatchRef, call IPC
-  //   Each batch card outer div has data-submission-id={group.groupKey} for hit-testing.
-  const [draggingBatch, setDraggingBatch] = useState<string | null>(null)
-  const draggingBatchRef = useRef<string | null>(null)
-  const dragOverBatchRef = useRef<string | null>(null)
-  // Mirrors dragOverBatchRef into state so the targeted card can render a highlight while
-  // dragging — without feedback, a drag that lands in a dead zone reads as "drag is broken".
-  const [dragOverBatch, setDragOverBatch] = useState<string | null>(null)
+  // Batch drag — migrated to @dnd-kit (2026-07-12), replacing the hand-rolled mouse-event
+  // implementation. The old approach sampled `mousemove` to hit-test `[data-submission-id]`
+  // elements, but `mousemove` is rate-limited to the display refresh rate, not actual pixel
+  // distance moved — a collapsed batch card is only ~45-50px tall, so at normal drag speed it
+  // was entirely plausible for zero mousemove samples to ever land within that band, meaning
+  // the cursor's tracked position could jump straight from one card to the next without ever
+  // registering the intended target. @dnd-kit's PointerSensor + closestCenter collision
+  // detection resolves the drop target from the pointer's actual position at drop time
+  // against every registered sortable item's rect, so it doesn't have this sampling gap.
+  const [activeDragBatchId, setActiveDragBatchId] = useState<string | null>(null)
+  const batchDragSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
-  // Resolve which batch card the cursor is over. elementFromPoint alone fails in the 12px
-  // gaps between cards (space-y-3), over section padding, and past the list's ends — every
-  // one of those made the drop silently do nothing. Fall back to the vertically nearest
-  // card so any drop inside the queue area resolves to a real target.
-  const resolveDragTargetBatch = (clientX: number, clientY: number): string | null => {
-    const direct = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>('[data-submission-id]')?.dataset.submissionId
-    if (direct) return direct
-    let nearest: string | null = null
-    let nearestDist = Infinity
-    for (const el of document.querySelectorAll<HTMLElement>('[data-submission-id]')) {
-      const rect = el.getBoundingClientRect()
-      if (rect.width === 0 && rect.height === 0) continue
-      const dist = clientY < rect.top ? rect.top - clientY : clientY > rect.bottom ? clientY - rect.bottom : 0
-      if (dist < nearestDist) {
-        nearestDist = dist
-        nearest = el.dataset.submissionId ?? null
+  const handleBatchDragStart = ({ active }: DragStartEvent) => setActiveDragBatchId(String(active.id))
+
+  const handleBatchDragEnd = async (event: DragEndEvent) => {
+    setActiveDragBatchId(null)
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const fromId = String(active.id)
+    const toId = String(over.id)
+    const gq = groupedQueue
+    const fromIdx = gq.findIndex(g => g.groupKey === fromId)
+    const toIdx = gq.findIndex(g => g.groupKey === toId)
+    if (fromIdx === -1 || toIdx === -1) return
+    let result: { success: boolean; error?: string }
+    if (fromIdx > toIdx) {
+      result = await window.api.moveSubmissionBefore(fromId, toId)
+    } else {
+      const nextGroup = gq[toIdx + 1]
+      if (nextGroup) {
+        result = await window.api.moveSubmissionBefore(fromId, nextGroup.groupKey)
+      } else {
+        result = await window.api.moveSubmissionToEnd(fromId)
       }
     }
-    // Only snap to the nearest card when reasonably close — a drop far outside the queue
-    // list (e.g. over the left nav) should still cancel rather than surprise-reorder.
-    return nearestDist <= 80 ? nearest : null
+    setQueueActionError(result.success ? '' : (result.error ?? 'Could not reorder that batch.'))
   }
-
-  // Keep a stable ref so the drag mouseup closure always sees the latest queue order
-  const groupedQueueRef = useRef(groupedQueue)
-  useEffect(() => { groupedQueueRef.current = groupedQueue }, [groupedQueue])
 
 
   const toggleBatchCollapse = (key: string) => {
@@ -3195,6 +3216,14 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 </div>
               ) : (
                 /* Batches view */
+                <DndContext
+                  sensors={batchDragSensors}
+                  collisionDetection={closestCenter}
+                  onDragStart={handleBatchDragStart}
+                  onDragEnd={e => { void handleBatchDragEnd(e) }}
+                  onDragCancel={() => setActiveDragBatchId(null)}
+                >
+                <SortableContext items={groupedQueue.map(g => g.groupKey)} strategy={verticalListSortingStrategy}>
                 <div className="space-y-3">
                   {groupedQueue.map((group) => {
                     const isCollapsed = collapsedBatches.has(group.key)
@@ -3216,65 +3245,23 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     ]
                     const isWatcher = group.jobs[0]?.sourceMode === 'watcher'
                     return (
+                      <SortableBatchCard key={group.key} id={group.groupKey}>
+                        {({ setNodeRef, style, dragHandleProps, setActivatorNodeRef, isDragging }) => (
                       <div
-                        key={group.key}
+                        ref={setNodeRef}
+                        style={style}
                         data-submission-id={group.groupKey}
                         className={`rounded-[13px] border bg-panel overflow-hidden transition-opacity ${
-                          draggingBatch && dragOverBatch === group.groupKey && draggingBatch !== group.groupKey
-                            ? 'border-nm-accent ring-1 ring-nm-accent/60'
-                            : hasActive ? 'border-indigo-400/70' : 'border-indigo-500/30'
-                        } ${draggingBatch === group.groupKey ? 'opacity-50' : ''}`}
+                          hasActive ? 'border-indigo-400/70' : 'border-indigo-500/30'
+                        } ${isDragging ? 'opacity-50 relative z-10' : ''}`}
                       >
                         {/* Batch header */}
                         <div className="flex items-center bg-panel-2 border-b border-nm-border-s select-none">
-                          {/* Drag handle — mouse-event based (HTML5 DnD unreliable in Electron) */}
+                          {/* Drag handle */}
                           <div
+                            ref={setActivatorNodeRef}
+                            {...(queueCount > 0 ? dragHandleProps : {})}
                             className={`px-3 self-stretch flex items-center flex-shrink-0 ${queueCount > 0 ? 'cursor-grab active:cursor-grabbing' : 'cursor-default opacity-30'}`}
-                            onMouseDown={e => {
-                              if (queueCount === 0) return
-                              e.preventDefault()
-                              const submissionId = group.groupKey
-                              draggingBatchRef.current = submissionId
-                              setDraggingBatch(submissionId)
-                              const onMove = (me: MouseEvent) => {
-                                const target = resolveDragTargetBatch(me.clientX, me.clientY)
-                                if (dragOverBatchRef.current !== target) {
-                                  dragOverBatchRef.current = target
-                                  setDragOverBatch(target)
-                                }
-                              }
-                              const onUp = async () => {
-                                window.removeEventListener('mousemove', onMove)
-                                window.removeEventListener('mouseup', onUp)
-                                const fromId = draggingBatchRef.current
-                                const toId = dragOverBatchRef.current
-                                draggingBatchRef.current = null
-                                dragOverBatchRef.current = null
-                                setDraggingBatch(null)
-                                setDragOverBatch(null)
-                                if (!fromId || !toId || fromId === toId) return
-                                const gq = groupedQueueRef.current
-                                const fromIdx = gq.findIndex(g => g.groupKey === fromId)
-                                const toIdx = gq.findIndex(g => g.groupKey === toId)
-                                if (fromIdx === -1 || toIdx === -1) return
-                                // Surface failures — the result used to be discarded, so a
-                                // rejected reorder looked identical to a successful one.
-                                let result: { success: boolean; error?: string }
-                                if (fromIdx > toIdx) {
-                                  result = await window.api.moveSubmissionBefore(fromId, toId)
-                                } else {
-                                  const nextGroup = gq[toIdx + 1]
-                                  if (nextGroup) {
-                                    result = await window.api.moveSubmissionBefore(fromId, nextGroup.groupKey)
-                                  } else {
-                                    result = await window.api.moveSubmissionToEnd(fromId)
-                                  }
-                                }
-                                setQueueActionError(result.success ? '' : (result.error ?? 'Could not reorder that batch.'))
-                              }
-                              window.addEventListener('mousemove', onMove)
-                              window.addEventListener('mouseup', onUp)
-                            }}
                           >
                             <svg className="w-3.5 h-3.5 text-nm-text-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                               <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9h16.5m-16.5 6.75h16.5" />
@@ -3484,9 +3471,34 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                           </div>
                         )}
                       </div>
+                        )}
+                      </SortableBatchCard>
                     )
                   })}
                 </div>
+                </SortableContext>
+                <DragOverlay dropAnimation={null}>
+                  {(() => {
+                    if (!activeDragBatchId) return null
+                    const draggedGroup = groupedQueue.find(g => g.groupKey === activeDragBatchId)
+                    if (!draggedGroup) return null
+                    const draggedLabel = stripPlannedCaptureSuffix(draggedGroup.label) || draggedGroup.label
+                    const draggedTotal = draggedGroup.jobs.length
+                    const draggedDone = draggedGroup.jobs.filter(j => j.status === 'success').length
+                    return (
+                      <div className="flex items-center gap-2 px-3.5 py-3 rounded-[13px] border border-nm-accent bg-panel-2 shadow-xl text-[14px] font-[700] text-nm-text">
+                        <svg className="w-3.5 h-3.5 text-nm-text-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9h16.5m-16.5 6.75h16.5" />
+                        </svg>
+                        <span className="truncate">{draggedLabel}</span>
+                        <span className="inline-flex items-center h-[19px] px-1.5 rounded-[6px] text-[10px] font-semibold border border-nm-border-s bg-field text-nm-text-2 flex-shrink-0">
+                          {draggedDone}/{draggedTotal} done
+                        </span>
+                      </div>
+                    )
+                  })()}
+                </DragOverlay>
+                </DndContext>
               )}
             </div>
           )}
