@@ -7,7 +7,7 @@ interface Props {
   rootFolder: string
   onClose: () => void
   onOpenSettings: (tab: string) => void
-  onOpenTraining: () => void
+  onOpenTraining: (mode?: 'files' | 'folder' | 'queue' | 'history' | 'presets') => void
 }
 
 interface Step {
@@ -30,9 +30,9 @@ export function TrainingSetupGuide({ settings, trainerState, rootFolder, onClose
     },
     {
       title: 'Create a training preset',
-      description: 'Presets save your preferred architecture + epoch combination for reuse. Go to Settings -> Training and add at least one preset before setting up a watch folder.',
+      description: 'Presets save your preferred architecture + epoch combination for reuse. Open Training -> Presets and add at least one preset before setting up a watch folder.',
       done: (settings.trainingPresets?.length ?? 0) > 0,
-      action: { label: 'Open Settings -> Training', onClick: () => { onClose(); onOpenSettings('training') } },
+      action: { label: 'Open Training -> Presets', onClick: () => { onClose(); onOpenTraining('presets') } },
     },
     {
       title: 'Configure output path',
@@ -44,7 +44,7 @@ export function TrainingSetupGuide({ settings, trainerState, rootFolder, onClose
       title: 'Add a WAV watch folder',
       description: 'In the Training panel, add a Watch Folder pointing to where your DI recording files land. Link it to a preset - NAM Lab will auto-train each new WAV it finds there.',
       done: hasWatchProfile,
-      action: { label: 'Open Training -> Watch Folders', onClick: () => { onClose(); onOpenTraining() } },
+      action: { label: 'Open Training', onClick: () => { onClose(); onOpenTraining('files') } },
     },
     {
       title: 'Load your library folder',

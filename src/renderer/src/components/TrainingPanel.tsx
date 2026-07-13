@@ -27,6 +27,7 @@ import {
 import { CaptureProfileEditor } from './CaptureProfileEditor'
 import { WatcherFilesModal } from './WatcherFilesModal'
 import { HelpPopover } from './HelpPopover'
+import { TrainingPresetsPage } from './TrainingPresetsPage'
 import { effectiveFormula, resolveOutputFormula } from '../utils/resolveOutputFormula'
 import { getEsrTone as getEsrToneKind, getBestJobEsr, getBestLiveEsr } from '../utils/esr'
 import { EsrCurve, ProgressRing, QualityBars, Sparkline, StackedMeter } from './dashboard/Charts'
@@ -98,7 +99,7 @@ interface Props {
   settings: AppSettings
   onSaveSettings: (settings: AppSettings) => void
   onClose?: () => void
-  initialRunMode?: 'files' | 'folder' | 'queue' | 'history'
+  initialRunMode?: 'files' | 'folder' | 'queue' | 'history' | 'presets'
   onOpenSetupGuide?: () => void
   onOpenSettings?: (tab?: 'global' | 'defaults' | 'metadata' | 'pack' | 'training') => void
 }
@@ -332,7 +333,7 @@ function showNativeTextContextMenu(event: MouseEvent<HTMLElement>) {
 
 export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMode, onOpenSetupGuide, onOpenSettings }: Props) {
   const [inputPath, setInputPath] = useState(settings.namTrainingInputWav || '')
-  const [section, setSection] = useState<'dashboard' | 'live' | 'queue' | 'batches' | 'history' | 'new'>('dashboard')
+  const [section, setSection] = useState<'dashboard' | 'live' | 'queue' | 'batches' | 'history' | 'new' | 'presets'>('dashboard')
   const [quickAddOpen, setQuickAddOpen] = useState(false)
   const [quickAddConfirmed, setQuickAddConfirmed] = useState<{ count: number; label: string }[]>([])
   const [batchWavList, setBatchWavList] = useState<BatchWavItem[]>([])
@@ -423,6 +424,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     if (!initialRunMode) return
     if (initialRunMode === 'queue') setSection('queue')
     else if (initialRunMode === 'history') setSection('history')
+    else if (initialRunMode === 'presets') setSection('presets')
     else setSection('dashboard')
   }, [initialRunMode])
 
@@ -431,6 +433,13 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     onSaveSettings({ ...settings, trainingLastSelectedPresetId: selectedPresetId })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPresetId])
+
+  useEffect(() => {
+    if (selectedPresetId === CUSTOM_PRESET_ID || selectedPresetId.startsWith(BUNDLE_PREFIX)) return
+    if (settings.trainingPresets.some((preset) => preset.id === selectedPresetId)) return
+    const fallbackPresetId = (settings.trainingFavoritePresetId ?? '').trim() || CUSTOM_PRESET_ID
+    if (fallbackPresetId !== selectedPresetId) setSelectedPresetId(fallbackPresetId)
+  }, [selectedPresetId, settings.trainingFavoritePresetId, settings.trainingPresets])
 
   useEffect(() => {
     let disposed = false
@@ -2167,6 +2176,9 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
           ))}
           {navItem('history', 'History', trainerState.history.length, (
             <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+          ))}
+          {navItem('presets', 'Presets', settings.trainingPresets.length > 0 ? settings.trainingPresets.length : null, (
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" /></svg>
           ))}
           {navItem('new', 'New Run', null, (
             <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
@@ -4082,6 +4094,14 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
           )}
 
           {/* â”€â”€ NEW RUN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {section === 'presets' && (
+            <TrainingPresetsPage
+              settings={settings}
+              onSaveSettings={onSaveSettings}
+              onOpenSettings={onOpenSettings}
+            />
+          )}
+
           {section === 'new' && (
             <div className="px-6 py-5 space-y-4 max-w-[1400px] mx-auto w-full">
               <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -4330,29 +4350,40 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   <HelpPopover title="Training Settings" side="right">
                     Configure the architecture, epochs, and model type for this run. Choose a saved <strong>Preset</strong> to load a full configuration in one click, or set <strong>Custom</strong> to adjust each field individually.
                     <br /><br />
+                    Use the dedicated <strong>Presets</strong> page in the left nav to create, edit, duplicate, delete, and star presets for Quick Add / Dashboard.
+                    <br /><br />
                     The <strong>Architecture(s)</strong> picker includes built-in WaveNet sizes and any <strong>Capture Profiles</strong> you have saved in Settings &rarr; Training. A Capture Profile lets you store a custom layer config alongside an epoch count so you can reuse it.
                   </HelpPopover>
                 </div>
 
                 <div className="flex items-end gap-3 flex-wrap">
                   <Field label="Preset / Bundle">
-                    <select
-                      value={currentPresetId}
-                      onChange={e => { applyPreset(e.target.value) }}
-                      className="h-10 px-3 pr-8 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none min-w-[220px]"
-                    >
-                      <option value={CUSTOM_PRESET_ID}>Custom</option>
-                      {availablePresets.length > 0 && (
-                        <optgroup label="Presets">
-                          {availablePresets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                        </optgroup>
-                      )}
-                      {availableBundles.length > 0 && (
-                        <optgroup label="Bundles">
-                          {availableBundles.map(b => <option key={b.id} value={`${BUNDLE_PREFIX}${b.id}`}>{b.name}</option>)}
-                        </optgroup>
-                      )}
-                    </select>
+                    <div className="flex items-center gap-2 min-w-[220px]">
+                      <select
+                        value={currentPresetId}
+                        onChange={e => { applyPreset(e.target.value) }}
+                        className="flex-1 h-10 px-3 pr-8 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none"
+                      >
+                        <option value={CUSTOM_PRESET_ID}>Custom</option>
+                        {availablePresets.length > 0 && (
+                          <optgroup label="Presets">
+                            {availablePresets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                          </optgroup>
+                        )}
+                        {availableBundles.length > 0 && (
+                          <optgroup label="Bundles">
+                            {availableBundles.map(b => <option key={b.id} value={`${BUNDLE_PREFIX}${b.id}`}>{b.name}</option>)}
+                          </optgroup>
+                        )}
+                      </select>
+                      <button
+                        onClick={() => setSection('presets')}
+                        className="h-10 px-3 rounded-lg text-[12px] font-medium bg-panel border border-nm-border-s hover:bg-hov text-nm-text-2 transition-colors whitespace-nowrap"
+                        title="Open preset manager"
+                      >
+                        Manage
+                      </button>
+                    </div>
                   </Field>
                   {currentRunPreset && (
                     <div className="flex-1 min-w-[200px] h-10 rounded-lg border border-nm-border-s bg-field px-3 text-[12px] text-nm-text-2 flex items-center truncate">

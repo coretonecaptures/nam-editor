@@ -20,7 +20,7 @@ import { HelpPopover } from './HelpPopover'
 import { OutputFormulaField } from './OutputFormulaField'
 import { resolveOutputFormula, effectiveFormula } from '../utils/resolveOutputFormula'
 import { FilenameRecipeBuilderModal } from './FilenameRecipeBuilderModal'
-import { TRAINER_ARCHITECTURES, BUILT_IN_CAPTURE_PROFILES } from '../types/trainer'
+import { BUILT_IN_CAPTURE_PROFILES } from '../types/trainer'
 import type { CaptureProfile, TrainerProfilesStateSnapshot } from '../types/trainer'
 import type { UserCaptureProfile } from '../types/settings'
 import {
@@ -64,6 +64,7 @@ interface SettingsPanelProps {
   onSave: (settings: AppSettings) => void
   onClose: () => void
   initialTab?: 'global' | 'defaults' | 'metadata' | 'pack' | 'training' | 'ai' | 'companion'
+  onOpenTrainingPresets?: () => void
 }
 
 interface CompanionBridgeInfo {
@@ -77,7 +78,7 @@ interface CompanionBridgeInfo {
   inboxPath: string
 }
 
-export function SettingsPanel({ settings, onSave, onClose, initialTab }: SettingsPanelProps) {
+export function SettingsPanel({ settings, onSave, onClose, initialTab, onOpenTrainingPresets }: SettingsPanelProps) {
   const [draft, setDraft] = useState<AppSettings>({ ...settings })
   const [settingsTab, setSettingsTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'training' | 'ai' | 'companion'>(initialTab ?? 'global')
   const [maximized, setMaximized] = useState(false)
@@ -91,7 +92,6 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
   const [showRecipeBuilder, setShowRecipeBuilder] = useState(false)
   const [folderWatchesOpen, setFolderWatchesOpen] = useState(false)
   const [trainingWatchersOpen, setTrainingWatchersOpen] = useState(false)
-  const [trainingPresetsOpen, setTrainingPresetsOpen] = useState(false)
   const [trainingBundlesOpen, setTrainingBundlesOpen] = useState(false)
   const [trainingProfilesState, setTrainingProfilesState] = useState<TrainerProfilesStateSnapshot>({ watchers: [], graphRetentionEnabled: draft.trainingRetainGraphs })
   const [captureProfilesOpen, setCaptureProfilesOpen] = useState(false)
@@ -229,7 +229,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
   }
 
   const handleSave = () => {
-    if (duplicatePresetIds.size > 0 || duplicateProfileIds.size > 0) return
+    if (duplicateProfileIds.size > 0) return
     const existing = new Set(draft.metadataSuggestRuleLibrary.map(metadataSuggestRuleSignature))
     const additions = draft.metadataSuggestRules
       .filter(isMetadataSuggestRuleLibraryCandidate)
@@ -277,46 +277,10 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
     }
   }
 
-  const updateTrainingPreset = (presetId: string, patch: Partial<TrainingPreset>) => {
-    update('trainingPresets', draft.trainingPresets.map((preset) => (
-      preset.id === presetId ? { ...preset, ...patch } : preset
-    )))
-  }
-
   const updateTrainingWatchProfile = (watchId: string, patch: Partial<TrainingWatchProfile>) => {
     update('trainingWatchProfiles', draft.trainingWatchProfiles.map((profile) => (
       profile.id === watchId ? { ...profile, ...patch } : profile
     )))
-  }
-
-  const addTrainingPreset = () => {
-    const nextIndex = draft.trainingPresets.length + 1
-    const id = `training-preset-${Date.now()}-${nextIndex}`
-    const nextPreset: TrainingPreset = {
-      id,
-      name: `Preset ${nextIndex}`,
-      architectures: ['standard'],
-      epochs: 1000,
-      thresholdEsr: null,
-      latencyMode: 'auto',
-      latencyValue: null,
-      savePlot: true,
-      ignoreChecks: false,
-      namingTemplate: '{basename}',
-    }
-    update('trainingPresets', [...draft.trainingPresets, nextPreset])
-    setTrainingPresetsOpen(true)
-    setNewItemId(id)
-  }
-
-  const duplicateTrainingPreset = (presetId: string) => {
-    const source = draft.trainingPresets.find((p) => p.id === presetId)
-    if (!source) return
-    const id = `training-preset-${Date.now()}`
-    const clone: TrainingPreset = { ...source, id, name: `${source.name} (copy)` }
-    update('trainingPresets', [...draft.trainingPresets, clone])
-    setTrainingPresetsOpen(true)
-    setNewItemId(id)
   }
 
   const addTrainingWatchProfile = () => {
@@ -376,18 +340,8 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
     updateTrainingBundle(bundleId, { presetIds: next })
   }
 
-  const presetSignature = (p: TrainingPreset) =>
-    JSON.stringify({ name: p.name, architectures: p.architectures, epochs: p.epochs, thresholdEsr: p.thresholdEsr, latencyMode: p.latencyMode, latencyValue: p.latencyValue, savePlot: p.savePlot, ignoreChecks: p.ignoreChecks })
-
   const watchProfileSignature = (p: TrainingWatchProfile) =>
     JSON.stringify({ name: p.name, watchFolder: p.watchFolder, presetId: p.presetId, finalModelRoot: p.finalModelRoot, graphRoot: p.graphRoot, initialScanMode: p.initialScanMode, enabled: p.enabled, autoRun: p.autoRun })
-
-  const duplicatePresetIds = new Set(
-    draft.trainingPresets
-      .map((p) => presetSignature(p))
-      .filter((sig, i, arr) => arr.indexOf(sig) !== i)
-      .flatMap((sig) => draft.trainingPresets.filter((p) => presetSignature(p) === sig).map((p) => p.id))
-  )
 
   const duplicateProfileIds = new Set(
     draft.trainingWatchProfiles
@@ -511,8 +465,8 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
         </button>
         <button
           onClick={handleSave}
-          disabled={duplicatePresetIds.size > 0 || duplicateProfileIds.size > 0}
-          title={duplicatePresetIds.size > 0 || duplicateProfileIds.size > 0 ? 'Resolve exact duplicates before saving' : undefined}
+          disabled={duplicateProfileIds.size > 0}
+          title={duplicateProfileIds.size > 0 ? 'Resolve exact duplicates before saving' : undefined}
           className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {saved ? (
@@ -1946,18 +1900,25 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                       <span className="text-[10px] text-gray-400 dark:text-gray-500 ml-1">Used by Quick Add on the Dashboard</span>
                     </div>
                     <div className="p-3 space-y-3">
-                      <SettingsField label="Favorite preset" hint="Used for every Quick Add batch \u2014 no per-run setup">
-                        <select
-                          value={draft.trainingFavoritePresetId ?? ''}
-                          onChange={(e) => update('trainingFavoritePresetId', e.target.value)}
-                          className="w-full h-9 px-2.5 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                        >
-                          <option value="">&mdash; not set &mdash;</option>
-                          {draft.trainingPresets.filter(p => p.architectures.length > 0).map((preset) => (
-                            <option key={preset.id} value={preset.id}>{preset.name}</option>
-                          ))}
-                        </select>
-                      </SettingsField>
+                      <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/40 px-3 py-2.5">
+                        <div className="text-xs font-medium text-gray-700 dark:text-gray-300">Favorite preset</div>
+                        <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          {draft.trainingFavoritePresetId
+                            ? (draft.trainingPresets.find((preset) => preset.id === draft.trainingFavoritePresetId)?.name ?? 'Unknown preset')
+                            : 'Not set'}
+                        </div>
+                        <div className="mt-2 text-[11px] text-gray-500 dark:text-gray-500">
+                          Favorite preset is now managed from Training &rarr; Presets.
+                        </div>
+                        {onOpenTrainingPresets && (
+                          <button
+                            onClick={() => { onClose(); onOpenTrainingPresets() }}
+                            className="mt-2 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-300 transition-colors"
+                          >
+                            Open Training Presets
+                          </button>
+                        )}
+                      </div>
                       <SettingsField label="Favorite output routing" hint="Supports formulas like ../../NAM/{folder}/{architecture} or a fixed absolute path">
                         <OutputFormulaField
                           value={draft.trainingFavoriteRouting ?? ''}
@@ -2383,224 +2344,48 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab }: Setting
                   </div>
 
                   <div className="space-y-3 pt-2 border-t border-gray-200 dark:border-gray-800">
-                    <div className="flex items-stretch rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
-                      <button
-                        onClick={() => setTrainingPresetsOpen((v) => !v)}
-                        className="flex-1 flex items-center gap-2 px-3 py-2.5 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-left"
-                      >
-                        <svg
-                          className={`w-3.5 h-3.5 flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-150 ${trainingPresetsOpen ? 'rotate-90' : ''}`}
-                          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
-                        >
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                    <div className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+                      <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700">
+                        <svg className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5.25h6m-9 4.5h12m-15 4.5h18m-15 4.5h12" />
                         </svg>
                         <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Training Presets</span>
-                        {draft.trainingPresets.length > 0 && (
-                          <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 tabular-nums">
-                            {draft.trainingPresets.length}
-                          </span>
-                        )}
-                      </button>
-                      <button
-                        onClick={addTrainingPreset}
-                        className="flex items-center gap-1.5 px-3 py-2.5 border-l border-gray-200 dark:border-gray-700 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-300 transition-colors text-xs font-medium"
-                      >
-                        <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                        </svg>
-                        Add
-                      </button>
-                    </div>
-                    {trainingPresetsOpen && (
-                      <div className="ml-3 pl-3 border-l-2 border-gray-200 dark:border-gray-700 space-y-3">
-                        {draft.trainingPresets.length === 0 ? (
-                          <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 px-3 py-3 text-xs text-gray-500 dark:text-gray-500">
-                            No training presets yet. Add one to store a reusable training recipe for watchers and manual runs.
+                        <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 tabular-nums">
+                          {draft.trainingPresets.length}
+                        </span>
+                      </div>
+                      <div className="p-3 space-y-3">
+                        <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/40 px-3 py-2.5">
+                          <div className="text-xs font-medium text-gray-700 dark:text-gray-300">Primary preset management moved</div>
+                          <div className="mt-1 text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+                            Create, rename, edit, duplicate, delete, and favorite presets from <strong>Training -&gt; Presets</strong>.
+                            New Run, Quick Add, watch folders, and bundles all use that shared preset list.
                           </div>
-                        ) : (
-                          draft.trainingPresets.map((preset, presetIndex) => (
-                            <div key={preset.id} ref={preset.id === newItemId ? newItemRef : undefined} className="rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
-                              <div className="flex items-center gap-2 px-3 py-2.5 bg-gray-100 dark:bg-gray-800/80 border-b border-gray-200 dark:border-gray-700 rounded-t-lg">
-                                <span className="w-5 h-5 flex items-center justify-center rounded text-[10px] font-bold bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 flex-shrink-0 tabular-nums">{presetIndex + 1}</span>
-                                <input
-                                  type="text"
-                                  value={preset.name}
-                                  onChange={(e) => updateTrainingPreset(preset.id, { name: e.target.value })}
-                                  className="flex-1 px-2.5 py-1.5 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                                />
-                                <button
-                                  onClick={() => duplicateTrainingPreset(preset.id)}
-                                  className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors flex-shrink-0"
-                                  title="Duplicate preset"
-                                >
-                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
-                                  </svg>
-                                </button>
-                                <button
-                                  onClick={() => update('trainingPresets', draft.trainingPresets.filter((item) => item.id !== preset.id))}
-                                  className="w-8 h-8 flex items-center justify-center rounded-lg border border-red-300/60 dark:border-red-800/60 bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 transition-colors flex-shrink-0"
-                                  title="Remove preset"
-                                >
-                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                                  </svg>
-                                </button>
-                              </div>
-                              {duplicatePresetIds.has(preset.id) && (
-                                <div className="px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-700/50 text-[11px] text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
-                                  <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
-                                  Exact duplicate of another preset &mdash; change at least one field before saving.
-                                </div>
-                              )}
-                              <div className="px-3 py-3 bg-white dark:bg-gray-900/50 space-y-3">
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                <SettingsField label="NAM Version">
-                                  <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 text-xs">
-                                    <button
-                                      onClick={() => updateTrainingPreset(preset.id, {
-                                        namMode: 'a1',
-                                        architectures: preset.architectures.filter((a) => a !== 'a2'),
-                                      })}
-                                      className={`flex-1 py-1.5 px-3 font-medium transition-colors ${
-                                        (preset.namMode ?? 'a1') === 'a1'
-                                          ? 'bg-indigo-600 text-white'
-                                          : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
-                                      }`}
-                                    >
-                                      A1 WaveNet
-                                    </button>
-                                    <button
-                                      disabled
-                                      title="A2 training is not yet available in the NAM trainer. Coming soon."
-                                      className="flex-1 py-1.5 px-3 font-medium bg-white dark:bg-gray-800 text-gray-300 dark:text-gray-600 cursor-not-allowed"
-                                    >
-                                      A2 &mdash; Coming Soon
-                                    </button>
-                                  </div>
-                                </SettingsField>
-                                {(preset.namMode ?? 'a1') === 'a1' && (
-                                <SettingsField label="Architecture(s)">
-                                  <SettingsArchitectureMultiSelect
-                                    values={preset.architectures}
-                                    onChange={(next) => updateTrainingPreset(preset.id, { architectures: next })}
-                                    userProfiles={draft.userCaptureProfiles ?? []}
-                                  />
-                                </SettingsField>
-                                )}
-                                <SettingsField label="Epochs">
-                                  <input
-                                    type="number"
-                                    min={1}
-                                    value={preset.epochs}
-                                    onChange={(e) => updateTrainingPreset(preset.id, { epochs: Math.max(1, Number(e.target.value) || 1) })}
-                                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                                  />
-                                </SettingsField>
-                                <SettingsField label="Latency">
-                                  <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-2">
-                                    <select
-                                      value={preset.latencyMode}
-                                      onChange={(e) => updateTrainingPreset(preset.id, { latencyMode: e.target.value as TrainingPreset['latencyMode'] })}
-                                      className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                                    >
-                                      <option value="auto">Auto</option>
-                                      <option value="manual">Manual</option>
-                                    </select>
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      value={preset.latencyValue ?? ''}
-                                      disabled={preset.latencyMode !== 'manual'}
-                                      onChange={(e) => updateTrainingPreset(preset.id, { latencyValue: e.target.value === '' ? null : Math.max(0, Number(e.target.value) || 0) })}
-                                      placeholder="Samples"
-                                      className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
-                                    />
-                                  </div>
-                                </SettingsField>
-                                <SettingsField label="Target ESR" labelTitle="Stop training early once this ESR is reached. Quality: <0.01 = Great \u00b7 <0.035 = Good \u00b7 <0.1 = Acceptable">
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    step="0.0001"
-                                    value={preset.thresholdEsr ?? ''}
-                                    onChange={(e) => updateTrainingPreset(preset.id, { thresholdEsr: e.target.value === '' ? null : Number(e.target.value) })}
-                                    placeholder="e.g. 0.005"
-                                    className="w-full px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                                  />
-                                </SettingsField>
-                              </div>
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                <CheckboxField label="Save graph" description="" checked={preset.savePlot} onChange={(v) => updateTrainingPreset(preset.id, { savePlot: v })} />
-                                <CheckboxField label="Ignore trainer checks" description="" checked={preset.ignoreChecks} onChange={(v) => updateTrainingPreset(preset.id, { ignoreChecks: v })} />
-                              </div>
-                              <SettingsField label="Normalize WAV" hint="Override the global normalize setting for this preset">
-                                <div className="flex items-center gap-2">
-                                  <select
-                                    value={preset.normalizeWav ?? 'global'}
-                                    onChange={(e) => updateTrainingPreset(preset.id, { normalizeWav: e.target.value as 'global' | 'on' | 'off' })}
-                                    className="px-3 py-2 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                                  >
-                                    <option value="global">Global default</option>
-                                    <option value="on">On</option>
-                                    <option value="off">Off</option>
-                                  </select>
-                                  {(preset.normalizeWav ?? 'global') !== 'off' && (
-                                    <>
-                                      <input
-                                        type="number"
-                                        step="0.5"
-                                        max="0"
-                                        min="-30"
-                                        value={preset.normalizeWavTargetDb ?? ''}
-                                        onChange={(e) => updateTrainingPreset(preset.id, { normalizeWavTargetDb: e.target.value === '' ? null : Number(e.target.value) })}
-                                        placeholder={String(draft.normalizeWavTargetDb ?? -5.0)}
-                                        className="w-20 px-2 py-1.5 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500"
-                                      />
-                                      <span className="text-xs text-gray-500 dark:text-gray-400">dBFS</span>
-                                    </>
-                                  )}
-                                </div>
-                              </SettingsField>
-                              <SettingsField label="NAM output path formula" hint="Override the global NAM output formula for this preset. Leave blank to inherit global.">
-                                <OutputFormulaField
-                                  value={preset.outputFormulaOverride ?? ''}
-                                  onChange={(v) => updateTrainingPreset(preset.id, { outputFormulaOverride: v })}
-                                  exampleStagingPath={draft.namTrainingInputWav ? draft.namTrainingInputWav.replace(/\\/g, '/').split('/').slice(0, -1).join('/') : undefined}
-                                  exampleArchitecture={preset.architectures[0]}
-                                  isPresetOverride
-                                  globalFormula={draft.trainingOutputFormula ?? ''}
-                                />
-                              </SettingsField>
-                              <SettingsField label="Graph output path formula" hint="Override the global graph output formula for this preset. Leave blank to inherit global.">
-                                <OutputFormulaField
-                                  value={preset.graphOutputFormulaOverride ?? ''}
-                                  onChange={(v) => updateTrainingPreset(preset.id, { graphOutputFormulaOverride: v })}
-                                  exampleStagingPath={draft.namTrainingInputWav ? draft.namTrainingInputWav.replace(/\\/g, '/').split('/').slice(0, -1).join('/') : undefined}
-                                  exampleArchitecture={preset.architectures[0]}
-                                  isPresetOverride
-                                  suggestionFormula="../../Graphs/{folder}/{architecture}"
-                                  globalFormula={draft.trainingGraphFormula ?? ''}
-                                />
-                              </SettingsField>
-                              <SettingsField label="Naming template" hint="Output filename pattern. Use {basename} for the source WAV filename without extension.">
-                                <input
-                                  value={preset.namingTemplate ?? '{basename}'}
-                                  onChange={(e) => updateTrainingPreset(preset.id, { namingTemplate: e.target.value })}
-                                  placeholder="{basename}"
-                                  className="w-full px-3 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-gray-900 dark:text-gray-100 font-mono focus:outline-none focus:border-indigo-500"
-                                />
-                              </SettingsField>
-                              </div>
-                            </div>
-                          ))
+                          <div className="mt-2 text-[11px] text-gray-500 dark:text-gray-500">
+                            {draft.trainingFavoritePresetId
+                              ? `Quick Add favorite: ${draft.trainingPresets.find((preset) => preset.id === draft.trainingFavoritePresetId)?.name ?? 'Unknown preset'}`
+                              : 'Quick Add favorite: not set'}
+                          </div>
+                          {onOpenTrainingPresets && (
+                            <button
+                              onClick={() => { onClose(); onOpenTrainingPresets() }}
+                              className="mt-3 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-300 transition-colors"
+                            >
+                              Open Training Presets
+                            </button>
+                          )}
+                        </div>
+                        {draft.trainingPresets.length === 0 && (
+                          <div className="rounded-lg border border-amber-200 dark:border-amber-700/50 bg-amber-50 dark:bg-amber-900/20 px-3 py-2.5 text-xs text-amber-700 dark:text-amber-300">
+                            No presets defined yet. Add presets from Training -&gt; Presets before wiring watchers or bundles.
+                          </div>
                         )}
                       </div>
-                    )}
+                    </div>
                   </div>
 
                   <p className="text-xs text-gray-500 dark:text-gray-500">
-                    Watch folders pick a preset and feed the shared queue. Presets are the reusable training recipes used by watchers and one-time folder runs.
+                    Watch folders pick a preset and feed the shared queue. Presets are managed in Training -&gt; Presets, while Settings keeps the global training defaults, bundles, and watcher definitions.
                   </p>
                 </>
               )}
@@ -2888,69 +2673,3 @@ function SettingsField({
   )
 }
 
-function SettingsArchitectureMultiSelect({
-  values,
-  onChange,
-  userProfiles = [],
-}: {
-  values: string[]
-  onChange: (next: string[]) => void
-  userProfiles?: UserCaptureProfile[]
-}) {
-  const [open, setOpen] = useState(false)
-  const allOptions = [
-    ...TRAINER_ARCHITECTURES.map((id) => ({ id, name: id })),
-    ...userProfiles.map((p) => ({ id: p.id, name: p.name })),
-  ]
-  const label =
-    values.length === 0
-      ? 'Choose profiles'
-      : values.length === 1
-        ? (allOptions.find((o) => o.id === values[0])?.name ?? values[0])
-        : `${values.length} selected`
-
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="w-full h-10 px-3 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500 flex items-center justify-between gap-3"
-      >
-        <span className="truncate">{label}</span>
-        <svg className={`w-3.5 h-3.5 flex-shrink-0 text-gray-400 transition-transform duration-150 ${open ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-        </svg>
-      </button>
-      {open && (
-        <div className="absolute z-30 mt-2 w-full rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-xl overflow-hidden">
-          <div className="max-h-64 overflow-y-auto p-2 space-y-1">
-            {TRAINER_ARCHITECTURES.length > 0 && (
-              <div className="px-2.5 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">Built-in</div>
-            )}
-            {TRAINER_ARCHITECTURES.map((option) => {
-              const checked = values.includes(option)
-              return (
-                <label key={option} className={`flex items-center gap-2 rounded-lg px-2.5 py-2 cursor-pointer text-sm ${checked ? 'bg-indigo-500/10 text-indigo-700 dark:text-indigo-200' : 'text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'}`}>
-                  <input type="checkbox" checked={checked} onChange={(e) => { if (e.target.checked) onChange([...values, option]); else onChange(values.filter((item) => item !== option)) }} className="accent-indigo-600" />
-                  <span>{option}</span>
-                </label>
-              )
-            })}
-            {userProfiles.length > 0 && (
-              <div className="px-2.5 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 border-t border-gray-100 dark:border-gray-800 mt-1">Custom</div>
-            )}
-            {userProfiles.map((profile) => {
-              const checked = values.includes(profile.id)
-              return (
-                <label key={profile.id} className={`flex items-center gap-2 rounded-lg px-2.5 py-2 cursor-pointer text-sm ${checked ? 'bg-indigo-500/10 text-indigo-700 dark:text-indigo-200' : 'text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'}`}>
-                  <input type="checkbox" checked={checked} onChange={(e) => { if (e.target.checked) onChange([...values, profile.id]); else onChange(values.filter((item) => item !== profile.id)) }} className="accent-indigo-600" />
-                  <span>{profile.name}</span>
-                </label>
-              )
-            })}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}

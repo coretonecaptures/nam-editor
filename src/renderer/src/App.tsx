@@ -738,7 +738,7 @@ export default function App() {
   const [showTrainingWorkspace, setShowTrainingWorkspace] = useState(false)
   const [showTrainingSetupGuide, setShowTrainingSetupGuide] = useState(false)
   const [settingsInitialTab, setSettingsInitialTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'training' | 'ai' | 'companion' | undefined>(undefined)
-  const [trainingWorkspaceMode, setTrainingWorkspaceMode] = useState<'files' | 'folder' | 'queue' | 'history'>('files')
+  const [trainingWorkspaceMode, setTrainingWorkspaceMode] = useState<'files' | 'folder' | 'queue' | 'history' | 'presets'>('files')
   const [globalTrainerState, setGlobalTrainerState] = useState<TrainerStateSnapshot>(IDLE_TRAINER_STATE)
   const trainerWatcherAutoStartRecoveryRef = useRef('')
   const [toneStoreMounted, setToneStoreMounted] = useState(false)
@@ -4213,7 +4213,7 @@ INSTRUCTIONS:
     }
   }, [])
 
-  const handleOpenExperimentalTraining = (mode: 'files' | 'folder' | 'queue' | 'history' = 'files') => {
+  const handleOpenExperimentalTraining = (mode: 'files' | 'folder' | 'queue' | 'history' | 'presets' = 'files') => {
     setShowSettings(false)
     setShowDashboard(false)
     setHistoryOpen(false)
@@ -4883,7 +4883,13 @@ INSTRUCTIONS:
             </div>
           )}
           {showSettings ? (
-            <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => { setShowSettings(false); setSettingsInitialTab(undefined) }} initialTab={settingsInitialTab} />
+            <SettingsPanel
+              settings={settings}
+              onSave={handleSaveSettings}
+              onClose={() => { setShowSettings(false); setSettingsInitialTab(undefined) }}
+              initialTab={settingsInitialTab}
+              onOpenTrainingPresets={() => handleOpenExperimentalTraining('presets')}
+            />
           ) : showToneStorePanel ? null : showTrainingWorkspace ? (
             <TrainingPanel
               settings={settings}
@@ -5410,7 +5416,13 @@ INSTRUCTIONS:
               </button>
             </div>
             {showSettings ? (
-              <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => { setShowSettings(false); setGridSlideOpen(false); setSettingsInitialTab(undefined) }} initialTab={settingsInitialTab} />
+              <SettingsPanel
+                settings={settings}
+                onSave={handleSaveSettings}
+                onClose={() => { setShowSettings(false); setGridSlideOpen(false); setSettingsInitialTab(undefined) }}
+                initialTab={settingsInitialTab}
+                onOpenTrainingPresets={() => handleOpenExperimentalTraining('presets')}
+              />
             ) : batchFolder !== null ? (
               <BatchEditor
                 folderName={batchFolder.name}
@@ -5492,10 +5504,9 @@ INSTRUCTIONS:
             setSettingsInitialTab(tab as typeof settingsInitialTab)
             setShowSettings(true)
           }}
-          onOpenTraining={() => {
+          onOpenTraining={(mode) => {
             setShowTrainingSetupGuide(false)
-            setShowTrainingWorkspace(true)
-            setTrainingWorkspaceMode('files')
+            handleOpenExperimentalTraining(mode ?? 'files')
           }}
         />
       )}
