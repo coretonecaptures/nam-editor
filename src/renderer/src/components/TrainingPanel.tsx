@@ -4085,7 +4085,26 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
           {section === 'new' && (
             <div className="px-6 py-5 space-y-4 max-w-[1400px] mx-auto w-full">
               <div className="flex items-center justify-between gap-4 flex-wrap">
-                <h2 className="text-[18px] font-[680] text-nm-text">{newRunMode === 'fromCaptures' ? 'From Captures' : 'Create Batch'}</h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-[18px] font-[680] text-nm-text">{newRunMode === 'fromCaptures' ? 'From Captures' : 'Create Batch'}</h2>
+                  {newRunMode === 'manual' && (
+                    <HelpPopover title="Create Batch" side="right">
+                      <strong>Batch name</strong> is just the label for this submission in Queue, Staged Batches, and History. It helps you recognize the run later, but it does not change the source WAVs or the trainer settings.
+                      <br /><br />
+                      Leave Batch name blank if you want NAM Lab to auto-name the batch from the capture name, folder name, or capture count.
+                      <br /><br />
+                      <strong>Input DI</strong> is the clean reference DI WAV the trainer compares against.
+                      <br /><br />
+                      <strong>Output WAVs</strong> are the recorded amp or capture-session result WAVs that will be converted into new <code>.nam</code> models.
+                      <br /><br />
+                      In short:
+                      <br />
+                      <strong>Input DI</strong> = clean source / reference
+                      <br />
+                      <strong>Output WAVs</strong> = recorded results to train from
+                    </HelpPopover>
+                  )}
+                </div>
                 <div className="flex items-center gap-1 p-0.5 rounded-xl bg-panel border border-nm-border-s">
                   {(['manual', 'fromCaptures'] as const).map((m) => (
                     <button

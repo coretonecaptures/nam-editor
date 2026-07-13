@@ -92,6 +92,20 @@ Supported workflows:
 
 Custom NAM Lab fields are stored under `metadata.nam_lab`.
 
+### Apply, Save, and Save All
+
+NAM Lab now treats visible metadata changes more consistently, including values that were auto-filled or suggested in-session.
+
+- **Apply** in the multi-select editor writes the edits you made there and also commits any visible pending auto-filled values for those selected files
+- **Save** writes the current file
+- **Save All** writes all dirty files currently loaded in the library
+
+Important distinction:
+- `Clear suggestions` removes app-added in-session suggestions before they are written
+- once you Apply or Save, those values are persisted like normal metadata
+
+This matters most after auto-fill-on-load, folder suggestions, or other preview-first tools where the values may be visible before they are written to disk.
+
 Locked-field behavior:
 - Some trainer-derived fields such as latency, loudness, and gain factor are shown locked by default.
 - Warning: unlocking them is meant for manual correction only.
@@ -169,6 +183,38 @@ Related tools:
 - Read Me tab
 - gallery tab
 - metadata cover image support via `ampcover.*`
+
+### Read Me
+
+Folders can also keep a dedicated Read Me alongside Pack Info.
+
+Use it for:
+- release notes
+- usage notes
+- install or routing guidance
+- anything that does not belong in per-file metadata
+
+The Read Me editor tracks unsaved changes and saves directly from within the Pack Info area.
+
+---
+
+## Multi-Amp Bundles
+
+NAM Lab supports bundle folders for grouped releases that combine multiple packs under one umbrella.
+
+Bundle tools can:
+- create or remove a bundle config on a folder
+- set bundle title, subtitle, description, and footer
+- link pack folders into the bundle
+- include or exclude linked packs
+- override displayed pack names
+- reorder linked packs
+- export a bundle cover sheet PDF
+
+This is useful for:
+- multi-amp packs
+- artist or studio collections
+- release bundles that need one top-level presentation layer without flattening the underlying pack folders
 
 ---
 
@@ -264,6 +310,11 @@ Important safety behavior:
 - content hashes are retroactively backfilled for existing import history on startup so older entries also benefit from hash-based protection
 - watch rules use **import-once semantics**
 - renaming a copied file in the destination will not cause a re-copy because the hash still matches
+
+What it does not do:
+- it does not overwrite existing destination files with source copies
+- it does not keep mirroring metadata changes back and forth
+- it is for importing new source captures into the destination once, not for two-way sync
 
 ---
 
@@ -415,6 +466,37 @@ If NAM Lab auto-filled values at load time and you want to see the raw on-disk m
 - or `Clear Suggestions` globally in the toolbar
 
 This only clears app-added auto-fill values in the current session. It does not write to disk by itself.
+
+### Copy metadata from folder
+
+Folder tools include **Copy metadata from folder...** for one-time metadata filling between similar folders.
+
+How it works:
+- choose the destination folder or subtree in the tree first
+- run **Copy metadata from folder...**
+- pick the source folder in the file picker
+- NAM Lab matches files by embedded metadata name first when available, otherwise by filename
+- matching is case-insensitive
+
+Safety behavior:
+- only blank target fields are filled
+- existing target values are not overwritten
+- the copy is persisted to disk after confirmation
+
+This makes it useful for cases like:
+- alternate architectures of the same pack
+- a DI folder and CAB folder with matching filenames
+- rebuilding metadata on a clean duplicate set without damaging fields you already curated
+
+Related folder-tree tools:
+- **Suggest metadata...**
+- **Edit folder suggestion rules...**
+- **Generate import template**
+- **Import metadata from spreadsheet**
+- **Find duplicates**
+- **Training version report**
+- **Set watch source / Change watch source / Stop watching source**
+- **Browse cards**
 
 ---
 
@@ -603,6 +685,26 @@ NAM Lab supports:
 - metadata cover images through `ampcover.*`
 
 `ampcover.*` is intentionally excluded from the gallery view so it can act as pack cover art instead.
+
+---
+
+## Companion Inbox
+
+NAM Lab includes a Companion Inbox panel for review items coming in from companion flows.
+
+Current item types:
+- notes
+- photos
+- cover candidates
+
+Typical actions:
+- mark reviewed
+- use an image as the folder cover
+- open the related folder
+- reveal the image in the OS
+- delete the inbox item
+
+This is meant to keep loose companion-side notes and images from getting lost before they are attached to the right folder or pack.
 
 ---
 

@@ -228,7 +228,37 @@ That gives you repair power without turning every overwrite into a broad hammer.
 
 ---
 
-## 8. Use duplicate modes intentionally when names are unreliable
+## 8. Copy metadata from another folder without overwriting good data
+
+Use this when you have two similar folders and one already has better metadata.
+
+Good fit:
+- alternate architectures of the same pack
+- DI and CAB variants with matching capture names
+- rebuilding blanks in a fresh folder from an older curated folder
+
+Open:
+- right-click the destination folder in the tree
+- choose **Copy metadata from folder...**
+- browse to the source folder
+
+How matching works:
+- NAM Lab tries embedded metadata name first
+- if that is blank, it falls back to filename
+- matching is case-insensitive
+
+Safety behavior:
+- only blank destination fields are filled
+- existing destination values are preserved
+- after confirmation, the copied metadata is written to disk
+
+Practical mindset:
+- use this as a fill-blanks helper, not as a full sync tool
+- if the destination already has curated values, they should stay intact
+
+---
+
+## 9. Use duplicate modes intentionally when names are unreliable
 
 If filenames and metadata names are inconsistent, pick the duplicate mode that matches the question you are actually asking.
 
@@ -248,7 +278,7 @@ That last mode is especially useful during metadata cleanup when you suspect you
 
 ---
 
-## 9. Suggested first-time cleanup strategy
+## 10. Suggested first-time cleanup strategy
 
 If you are starting from a very messy library:
 
@@ -264,7 +294,7 @@ This tends to be the least stressful path and gives you easy checkpoints if some
 
 ---
 
-## 10. Browse your library in card view
+## 11. Browse your library in card view
 
 Use card view when you want a visual gallery overview instead of a folder tree.
 
@@ -304,7 +334,25 @@ Downloading from Tone3000 inside card view:
 
 ---
 
-## 11. Tone3000-assisted intake workflow
+## 12. Save auto-filled values intentionally
+
+Some NAM Lab tools preview values before writing them to disk.
+
+Common examples:
+- auto-fill-on-load defaults
+- metadata suggestions
+- other in-session blank-field helpers
+
+Practical rule:
+- use **Clear suggestions** if you want to discard previewed values
+- use **Apply** in multi-select when you want those visible values committed for the selected files
+- use **Save All** when you want all current dirty files written
+
+If you can see a suggested or auto-filled value and want to keep it, do not assume it is already on disk until you Apply, Save, or Save All.
+
+---
+
+## 13. Tone3000-assisted intake workflow
 
 ![Tone3000 browser inside NAM Lab](images/tone3000-browser.png)
 

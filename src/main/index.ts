@@ -1842,6 +1842,49 @@ def _run_a2(payload):
     )
 
 
+def _collect_check_failure_details(input_path, output_path, latency):
+    try:
+        from io import StringIO
+        from contextlib import redirect_stdout
+        from nam.train.core import validate_data
+
+        capture = StringIO()
+        with redirect_stdout(capture):
+            validation = validate_data(input_path, output_path, latency)
+        raw_lines = [line.strip() for line in capture.getvalue().splitlines() if line.strip()]
+        detail_lines = []
+        for line in raw_lines:
+            lower = line.lower()
+            if (
+                lower.startswith("validating data")
+                or lower.startswith("strong hash:")
+                or lower.startswith("weak hashes:")
+                or lower.startswith("delay based on average")
+                or lower.startswith("after aplying safety factor")
+                or lower.startswith("cannot use the user latency")
+                or lower.startswith("v3 checks")
+                or lower.startswith("v2 checks")
+            ):
+                continue
+            if (
+                "failed" in lower
+                or "warning" in lower
+                or "self-esr" in lower
+                or "doesn't sound like itself" in lower
+                or "possible causes" in lower
+                or lower.startswith("* ")
+            ):
+                detail_lines.append(line)
+        if not validation.passed:
+            if not detail_lines:
+                detail_lines = raw_lines[-6:]
+            if detail_lines:
+                return "\n".join(detail_lines[:8])
+    except Exception:
+        pass
+    return ""
+
+
 def main():
     if len(sys.argv) < 2:
         raise RuntimeError("Expected payload JSON path")
@@ -1897,12 +1940,15 @@ def main():
     # or latency mismatch between the reamp capture and the input file) behind a confusing
     # message that gave no indication training never started at all.
     if getattr(result, "model", "MISSING") is None:
+        detail = _collect_check_failure_details(active_input, active_output, payload.get("latency"))
         raise RuntimeError(
-            "NAM's pre-training data checks failed, so training never started (see "
-            "\"Failed checks!\" and the lines above it in this run's log for the specific "
-            "reason — usually a length/latency mismatch between the reamp capture and the "
-            "input file, or a sample-rate mismatch). Fix the capture and retry, or enable "
-            "\"Ignore checks\" in the training profile if you're confident the file is fine."
+            "NAM's pre-training data checks failed, so training never started.\n\n"
+            + (f"NAM check details:\n{detail}\n\n" if detail else "")
+            + "Common causes include length/latency mismatch, sample-rate mismatch, or a bad "
+            "validation replicate/self-ESR check.\n\n"
+            + "See \"Failed checks!\" and the lines above it in this run's log for the full "
+            "trainer output. Fix the capture and retry, or enable \"Ignore checks\" in the "
+            "training profile if you're confident the file is fine."
         )
 
     discovered_output = _find_output_model_path(payload["trainPath"], payload["modelName"])
