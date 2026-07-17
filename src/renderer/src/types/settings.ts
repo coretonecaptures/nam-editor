@@ -320,6 +320,12 @@ export interface AppSettings {
   trainingAutoStartQueueOnLaunch: boolean
   trainingAutoStartSkipIfPaused: boolean
 
+  // When true, every training run bypasses NAM's pre-training data checks (sample rate,
+  // length, latency alignment, self-ESR) regardless of the per-preset/per-profile "Ignore
+  // checks" toggle. Runs that would have failed checks are still flagged afterward — see
+  // TrainerHistoryEntry.trainedDespiteWarnings — so a bypassed run is easy to spot and re-check.
+  alwaysIgnoreTrainingChecks: boolean
+
   // Import: comma-separated suffix words that trigger prefix matching (e.g. "DI,DI2")
   importPrefixSuffixes: string
 
@@ -428,6 +434,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   trainingDefaultInputDi: '',
   trainingAutoStartQueueOnLaunch: false,
   trainingAutoStartSkipIfPaused: false,
+  alwaysIgnoreTrainingChecks: false,
   trainingBundles: [],
   importPrefixSuffixes: 'DI',
   packGearCatalog: [],

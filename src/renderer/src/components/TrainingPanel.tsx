@@ -2503,6 +2503,15 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                         {activeJob?.profileName && (
                           <span className="inline-flex items-center h-[20px] px-2 rounded-[5px] text-[10.5px] font-[600] bg-field border border-nm-border-s text-nm-text-2">{activeJob.profileName}</span>
                         )}
+                        {trainerState.checkWarnings && (
+                          <span
+                            className="inline-flex items-center gap-1 h-[20px] px-2 rounded-[5px] text-[10.5px] font-[700] border border-orange-500/30 bg-orange-500/10 text-orange-400"
+                            title={trainerState.checkWarnings}
+                          >
+                            <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+                            Checks failed — training anyway
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center justify-between text-[11.5px] text-nm-text-3 mb-2">
                         <span className="font-[600] text-nm-text">{trainerState.progressPhase || 'Training\u2026'}</span>
@@ -3991,6 +4000,15 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                   Retried
                                 </div>
                               )}
+                              {entry.trainedDespiteWarnings && (
+                                <div
+                                  className="inline-flex items-center gap-1 mt-1 h-[17px] px-1.5 rounded-[5px] text-[10px] font-[650] border border-orange-500/30 bg-orange-500/10 text-orange-400"
+                                  title={entry.checkWarnings || 'NAM\'s pre-training data checks failed for this run, but training proceeded anyway because "Ignore checks" was on. Be skeptical of this model — re-check the capture.'}
+                                >
+                                  <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+                                  Trained despite warnings
+                                </div>
+                              )}
                             </div>
                             {/* Right column */}
                             <div className="flex items-center gap-3.5 flex-shrink-0">
@@ -4063,7 +4081,15 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                   <span className="w-1.5 h-1.5 rounded-full bg-nm-text-3" />{entry.status}
                                 </span>
                               )}
-                              <span className="text-[11px] font-mono text-nm-text-3 text-right whitespace-nowrap">{new Date(entry.timestamp).toLocaleTimeString()}</span>
+                              <span className="text-[11px] font-mono text-nm-text-3 text-right whitespace-nowrap">
+                                {new Date(entry.timestamp).toLocaleString(undefined, {
+                                  year: 'numeric',
+                                  month: 'short',
+                                  day: 'numeric',
+                                  hour: 'numeric',
+                                  minute: '2-digit',
+                                })}
+                              </span>
                               <div className="flex items-center gap-1">
                                 {entry.graphPath && (
                                   <button onClick={e => { e.stopPropagation(); void handleShowGraphModal(entry.graphPath) }} className="w-7 h-7 flex items-center justify-center rounded-[7px] hover:bg-hov text-nm-text-3 hover:text-nm-text transition-colors" title="View ESR plot">

@@ -303,6 +303,12 @@ export interface TrainerHistoryEntry {
   validationEsrFull?: number | null
   validationEsrLite?: number | null
   retriedAt?: string | null
+  // Set when this run's pre-training data checks (sample rate, length, latency alignment,
+  // self-ESR) actually failed but the run trained anyway because "Ignore checks" (per-job or
+  // the global "Always ignore" setting) was on. checkWarnings holds the same detail text NAM
+  // would have raised as an error if checks hadn't been bypassed.
+  trainedDespiteWarnings?: boolean
+  checkWarnings?: string
 }
 
 export type WatcherFileStatus = 'pending' | 'queued' | 'running' | 'done' | 'failed' | 'canceled' | 'skipped'
@@ -370,6 +376,9 @@ export interface TrainerStateSnapshot {
   epochMrstftLite?: number | null
   epochMse?: number | null
   epochMseLite?: number | null
+  // Populated mid-run when ignoreChecks bypassed a genuine check failure — see
+  // TrainerHistoryEntry.checkWarnings for the persisted equivalent.
+  checkWarnings?: string
   progressPhase: string
   progressPercent: number | null
   progressEpochCurrent: number | null

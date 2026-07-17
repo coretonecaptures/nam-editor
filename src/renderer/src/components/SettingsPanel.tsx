@@ -1875,6 +1875,13 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab, onOpenTra
                   />
 
                   <CheckboxField
+                    label="Always ignore pre-training data checks"
+                    description={'Every training run bypasses NAM\'s pre-training data checks (sample rate, length, latency alignment, self-ESR) and trains regardless of the result — overrides the per-preset/per-profile "Ignore checks" toggle. Runs that would have failed checks are still flagged afterward in Training History with a "Trained despite warnings" badge, so you can go back and be skeptical of those specific models.'}
+                    checked={draft.alwaysIgnoreTrainingChecks}
+                    onChange={(v) => update('alwaysIgnoreTrainingChecks', v)}
+                  />
+
+                  <CheckboxField
                     label="Auto-start queue on launch"
                     description="Automatically begin processing queued training jobs when NAM Lab opens. Takes effect on the next launch."
                     checked={draft.trainingAutoStartQueueOnLaunch}

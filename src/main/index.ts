@@ -327,6 +327,16 @@ function loadEnableCompanionAppSetting(): boolean {
   }
 }
 
+function loadAlwaysIgnoreTrainingChecksSetting(): boolean {
+  try {
+    const raw = fs.readFileSync(join(app.getPath('userData'), 'settings.json'), 'utf-8')
+    const parsed = JSON.parse(raw) as { alwaysIgnoreTrainingChecks?: unknown }
+    return parsed.alwaysIgnoreTrainingChecks === true
+  } catch {
+    return false
+  }
+}
+
 function saveCompanionBridgeConfig(): void {
   if (!companionBridgeConfig) return
   try {
@@ -1235,6 +1245,12 @@ interface TrainerHistoryEntry {
   // - validationEsrLite is the Lite sub-model (channels_3).
   validationEsrFull?: number | null
   validationEsrLite?: number | null
+  // Set when this run's pre-training data checks (sample rate, length, latency alignment,
+  // self-ESR) actually failed but the run trained anyway because "Ignore checks" (per-job or
+  // the global "Always ignore" setting) was on. checkWarnings holds the same detail text NAM
+  // would have raised as an error if checks hadn't been bypassed.
+  trainedDespiteWarnings?: boolean
+  checkWarnings?: string
 }
 
 interface TrainerSkippedEntry {
@@ -1306,6 +1322,9 @@ interface TrainerStateSnapshot {
   epochMrstftLite?: number | null
   epochMse?: number | null
   epochMseLite?: number | null
+  // Populated mid-run when ignoreChecks bypassed a genuine check failure — see
+  // TrainerHistoryEntry.checkWarnings for the persisted equivalent.
+  checkWarnings?: string
   progressPhase: string
   progressPercent: number | null
   progressEpochCurrent: number | null
@@ -1915,6 +1934,18 @@ def main():
         )
 
     norm_payload = {**payload, "inputPath": active_input, "outputPath": active_output}
+
+    # When ignore_checks is on, run the same check NAM's own train() will use to decide
+    # whether this data is good BEFORE we start training — not after. That way a bypassed
+    # check failure shows up live in the "Now Training" dashboard while the run is still in
+    # progress, not just retroactively in history once it finishes. If ignore_checks is off,
+    # a genuine failure raises below instead (via the getattr(result, "model", ...) check) and
+    # training never starts, so there is nothing to warn about live.
+    if payload.get("ignoreChecks"):
+        check_warning_detail = _collect_check_failure_details(active_input, active_output, payload.get("latency"))
+        if check_warning_detail:
+            print("NAM_LAB_CHECK_WARNINGS:" + json.dumps({"detail": check_warning_detail}), flush=True)
+
     _orig_trainer = _install_esr_reporter()
     try:
         if requested == "a2":
@@ -1968,7 +1999,7 @@ if __name__ == "__main__":
         main()
     except Exception as exc:
         traceback.print_exc()
-        print("NAM_LAB_ERROR:" + str(exc), flush=True)
+        print("NAM_LAB_ERROR_JSON:" + json.dumps({"message": str(exc)}), flush=True)
         sys.exit(1)
 `
 
@@ -2547,6 +2578,61 @@ function appendTrainerLog(line: string): void {
   emitTrainerState()
 }
 
+const GENERIC_TRAINER_CHECK_FAILURE =
+  "NAM's pre-training data checks failed, so training never started."
+
+function collectTrainerCheckFailureDetails(logs: string[]): string[] {
+  const detailLines: string[] = []
+  for (const entry of logs) {
+    const clean = stripAnsi(entry).trim()
+    if (!clean) continue
+    const lower = clean.toLowerCase()
+    if (
+      /^replicate esr is /i.test(clean) ||
+      lower.includes('self-esr') ||
+      lower.includes("doesn't sound like itself") ||
+      lower.includes('possible causes') ||
+      lower.includes('sample rate mismatch') ||
+      lower.includes('length mismatch') ||
+      lower.includes('latency mismatch') ||
+      lower.startsWith('* ')
+    ) {
+      detailLines.push(clean)
+    }
+  }
+  return [...new Set(detailLines)].slice(-8)
+}
+
+function enrichTrainerCheckFailure(error: string, logs: string[]): string {
+  const trimmed = error.trim()
+  if (!trimmed.startsWith(GENERIC_TRAINER_CHECK_FAILURE) || /NAM check details:/i.test(trimmed)) {
+    return trimmed
+  }
+  const detailLines = collectTrainerCheckFailureDetails(logs)
+  if (detailLines.length === 0) return trimmed
+  return [
+    trimmed,
+    '',
+    'NAM check details:',
+    ...detailLines,
+    '',
+    'See "Failed checks!" and the lines above it in this run\'s log for the full trainer output.',
+  ].join('\n')
+}
+
+function deriveTrainerFailureFromLogs(logs: string[]): string {
+  const detailLines = collectTrainerCheckFailureDetails(logs)
+  if (detailLines.length === 0) return ''
+  return [
+    GENERIC_TRAINER_CHECK_FAILURE,
+    '',
+    'NAM check details:',
+    ...detailLines,
+    '',
+    'See "Failed checks!" and the lines above it in this run\'s log for the full trainer output.',
+  ].join('\n')
+}
+
 function stripAnsi(text: string): string {
   return text.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '')
 }
@@ -2773,10 +2859,38 @@ function processTrainerOutputLine(line: string): void {
       return
     }
   }
+  if (line.startsWith('NAM_LAB_CHECK_WARNINGS:')) {
+    try {
+      const parsed = JSON.parse(line.slice('NAM_LAB_CHECK_WARNINGS:'.length)) as { detail?: string }
+      trainerState = {
+        ...trainerState,
+        checkWarnings: typeof parsed.detail === 'string' ? parsed.detail.trim() : '',
+      }
+      emitTrainerState()
+      return
+    } catch {
+      appendTrainerLog(line)
+      return
+    }
+  }
+  if (line.startsWith('NAM_LAB_ERROR_JSON:')) {
+    try {
+      const parsed = JSON.parse(line.slice('NAM_LAB_ERROR_JSON:'.length)) as { message?: string }
+      trainerState = {
+        ...trainerState,
+        error: typeof parsed.message === 'string' ? parsed.message.trim() : '',
+      }
+      emitTrainerState()
+      return
+    } catch {
+      appendTrainerLog(line)
+      return
+    }
+  }
   if (line.startsWith('NAM_LAB_ERROR:')) {
     trainerState = {
       ...trainerState,
-      error: line.slice('NAM_LAB_ERROR:'.length).trim(),
+      error: enrichTrainerCheckFailure(line.slice('NAM_LAB_ERROR:'.length).trim(), trainerState.logs),
     }
     emitTrainerState()
     return
@@ -2879,7 +2993,10 @@ function createTrainerJob(payload: TrainerStartPayload, staged = false): Trainer
     thresholdEsr: payload.thresholdEsr,
     savePlot: payload.savePlot,
     silent: payload.silent,
-    ignoreChecks: payload.ignoreChecks,
+    // The global "Always ignore pre-training data checks" setting is a hard override: when on,
+    // it wins regardless of the per-preset/per-profile toggle. Read fresh per job (not cached)
+    // so flipping it in Settings takes effect on the very next job without an app restart.
+    ignoreChecks: payload.ignoreChecks || loadAlwaysIgnoreTrainingChecksSetting(),
     modelName,
     outputModelPath: join(architectureFinalRoot, `${modelName}.nam`),
     checkpointModelPath: '',
@@ -3352,6 +3469,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     validationEsr: null,
     replicateEsr: null,
     epochValidationEsr: null,
+    checkWarnings: '',
     progressPhase: 'Preparing',
     progressPercent: null,
     progressEpochCurrent: null,
@@ -3403,7 +3521,12 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     thresholdEsr: job.thresholdEsr,
     savePlot: job.savePlot,
     silent: job.silent,
-    ignoreChecks: job.ignoreChecks,
+    // Re-read the global override here (not just at job creation in createTrainerJob) so it
+    // also covers jobs that were staged/queued BEFORE the setting was turned on. Real bug this
+    // fixes: a batch staged on day 1 with "Always ignore" off, then run on day 3 after turning
+    // it on, still trained with ignoreChecks:false baked into the job object from creation time
+    // — the setting only affected jobs created after it was toggled, not jobs already queued.
+    ignoreChecks: job.ignoreChecks || loadAlwaysIgnoreTrainingChecksSetting(),
     modelName: job.modelName,
     backupExisting: !!job.backupExisting,
     // user_metadata fields — embedded into the .nam by the trainer
@@ -3544,6 +3667,13 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     const wasCanceled = trainerState.status === 'canceled'
     const finalStatus: TrainerStateSnapshot['status'] = wasCanceled ? 'canceled' : code === 0 ? 'success' : 'error'
     let finalError = trainerState.error
+    if (!wasCanceled && finalStatus === 'error') {
+      if (finalError) {
+        finalError = enrichTrainerCheckFailure(finalError, trainerState.logs)
+      } else {
+        finalError = deriveTrainerFailureFromLogs(trainerState.logs)
+      }
+    }
     if (!wasCanceled && code !== 0 && !finalError) {
       if (signal) {
         finalError = `Training process stopped by signal ${signal}`
@@ -3762,6 +3892,8 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
       // A2-only fields — null for A1 runs.
       validationEsrFull: job.architecture === 'a2' ? (trainerState.epochValidationEsrFull ?? null) : null,
       validationEsrLite: job.architecture === 'a2' ? (trainerState.epochValidationEsrLite ?? null) : null,
+      trainedDespiteWarnings: effectiveFinalStatus === 'success' && !!trainerState.checkWarnings,
+      checkWarnings: trainerState.checkWarnings || undefined,
     })
 
     emitTrainerState()

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, startTransition } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef, startTransition } from 'react'
 import beakerTransparent from './assets/images/beaker.only.transparent.png'
 import { NamFile, NamMetadata, TONE_TYPES, GEAR_TYPES } from './types/nam'
 import { AppSettings, FolderWatchImportEntry, FolderWatchRule, MetadataSuggestRule, TrainingBundle, TrainingPreset, TrainingProfile, loadSettings, saveSettings } from './types/settings'
@@ -4144,8 +4144,14 @@ INSTRUCTIONS:
     setShowDashboard(false)
   }
 
-  // Filter files by selected folder and/or library search filter
-  const visibleFiles = files.filter((f) => {
+  // Filter files by selected folder and/or library search filter.
+  // Memoized: these were plain `const`s recomputed (new array reference) on every render,
+  // which several effects below take as a dependency — that made those effects re-fire on
+  // every render regardless of whether the actual selection/visible-set changed, not just
+  // wasted work but a real risk of update-depth cascades if the resulting async state
+  // setters ever raced each other across back-to-back renders (e.g. while a training job's
+  // frequent progress updates are also re-rendering this component).
+  const visibleFiles = useMemo(() => files.filter((f) => {
     const norm = f.filePath.replace(/\\/g, '/')
     if (librarian.selectedFolders.length > 0 && !librarian.selectedFolders.some((sf) => norm.startsWith(sf + '/'))) return false
     if (directFilesOnly && librarian.selectedFolders.length === 1) {
@@ -4154,9 +4160,12 @@ INSTRUCTIONS:
     }
     if (libraryFilter && !libraryFilter.has(norm)) return false
     return true
-  })
+  }), [files, librarian.selectedFolders, directFilesOnly, libraryFilter])
 
-  const selectedFiles = visibleFiles.filter((f) => selectedIds.has(f.filePath))
+  const selectedFiles = useMemo(
+    () => visibleFiles.filter((f) => selectedIds.has(f.filePath)),
+    [visibleFiles, selectedIds]
+  )
 
   // Defined after selectedFiles so its dependency array doesn't hit the temporal
   // dead zone during render (was crashing the app on startup).
@@ -4365,13 +4374,16 @@ INSTRUCTIONS:
     if (showToneStore || toneStoreSearchRequest) setToneStoreMounted(true)
   }, [showToneStore, toneStoreSearchRequest])
   useEffect(() => {
-    if (selectedFiles.length !== 1) {
+    // Depend on the stable derived path, not the `selectedFiles` array — that array is a
+    // fresh reference on every render (see visibleFiles/selectedFiles above), which used to
+    // make this effect re-run and re-kick-off async scanImages() calls on every render,
+    // not just when the selection actually changed.
+    if (selectedSingleFilePath == null) {
       setMetadataCoverPath(null)
       return
     }
     let cancelled = false
-    const selected = selectedFiles[0]
-    const normalized = selected.filePath.replace(/\\/g, '/')
+    const normalized = selectedSingleFilePath.replace(/\\/g, '/')
     const fileFolder = normalized.split('/').slice(0, -1).join('/')
     const normalizedRoot = librarian.rootFolder.replace(/\\/g, '/')
     const candidates: string[] = []
@@ -4402,7 +4414,7 @@ INSTRUCTIONS:
     }
     void resolveCover()
     return () => { cancelled = true }
-  }, [librarian.rootFolder, selectedFiles])
+  }, [librarian.rootFolder, selectedSingleFilePath])
   // Close slide panel if selection is empty (and no batch edit active)
   if (gridSlideOpen && selectedFiles.length === 0 && batchFolder === null) setGridSlideOpen(false)
   const dirtyCount = files.filter((f) => f.isDirty).length
