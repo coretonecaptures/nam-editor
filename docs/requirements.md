@@ -46,7 +46,11 @@ Update both when features land.
 - [x] WAV Check tab (trained/missing/extra counts)
 - [x] HelpPopovers on training settings fields
 - [x] TrainingSetupGuide component
-- [ ] Retrain from trained folder: allow a manual Training / New Run workflow where the user picks a folder of existing trained `.nam` files plus a WAV folder that is a superset, then queues the matching WAVs for one or more new target architectures without manually reselecting them.
+- [x] Training presets: duplicate, star, and a dedicated **Presets** left-rail page (separate from Create Batch)
+- [x] Training Bundles — named groups of 2+ presets submitted together as one batch; watcher profiles can link a bundle instead of a single preset
+- [x] Global **Always ignore pre-training data checks** setting (overrides the per-preset toggle, re-read live at job-start so it applies to already-staged/queued jobs too)
+- [x] "Trained despite warnings" flagging — orange badge in History (hover for check-failure detail) + live badge on the Dashboard hero card while the flagged run is still training
+- [x] Retrain from trained folder — shipped as Create Batch's **"From Captures"** mode: pick a folder of existing trained `.nam` files plus a matching WAV folder, **Analyze Captures** produces a match report (Matched / Unmatched / WAVs-only), then queue the matched pairs for one or more new target architectures. See training.md's *From Captures* section for the full matching/review-step behavior; the detailed acceptance-case spec below is kept for reference on the matching rules it was built against.
   - **Seed set rule**: every `.nam` in the chosen source folder counts as a seed; this is not an ESR-ranking feature and must not attempt to choose the "best" captures by ESR.
   - **Matching rule**: map each seed `.nam` back to one WAV using exact basename first, then the app's existing coverage/base-name normalization rules.
   - **Ambiguity rule**: if a seed `.nam` has no confident WAV match or matches multiple WAVs, skip it and report the reason — do not guess.
@@ -56,16 +60,16 @@ Update both when features land.
   - **Acceptance cases**: (a) 40 seeds + 100-WAV superset + A2 selected → 40 jobs queued; (b) same input + A2 + Standard → 80 jobs; (c) two seeds map to the same WAV → one WAV queued once per architecture; (d) one seed has no WAV match → skipped and counted; (e) one seed matches multiple WAVs → skipped and counted; (f) matched WAV already in queue/history for target architecture → not requeued, counted as skipped.
   - **Out of scope (v1)**: manual conflict resolution UI, ESR-based ranking or filtering.
 
-**Training Mission Control redesign** — design handoff at `design/design_handoff_training/`
-- [ ] Full workspace layout: left rail (220px) + main column
-- [ ] Rail: section nav (Live Run / Queue / History / New Run) + This Session stats + Watch Folders
-- [ ] Now-Training persistent strip with always-visible run controls
-- [ ] Section: Live Run — ESR curve chart, phase stats, raw log
-- [ ] Section: Queue — batch cards (collapse/expand), drag-to-reorder items + batches, filters, Compact/Board alternates
-- [ ] Section: History — filterable grouped list, ESR quality bars + throughput charts
-- [ ] Section: New Run — Run WAVs / Run Folder toggle, restored HelpPopovers
-- [ ] Charts: EsrCurve (new), QualityBars (new), Burndown (new), ThroughputArea (extend existing)
-- [ ] New IPC: `reorderTrainerJob`, `moveSubmissionBefore`
+**Training Mission Control redesign** — design handoff at `design/design_handoff_training/`. **Shipped** — left-rail layout, Now-strip, and all sections below are live in `TrainingPanel.tsx` (see training.md for the current user-facing description); the rail also grew a **Presets** page and Dashboard/Batches sections beyond the original handoff scope.
+- [x] Full workspace layout: left rail + main column
+- [x] Rail: section nav (Dashboard / Live Run / Queue / Batches / History / Presets / New Run) + This Session stats + Watch Folders
+- [x] Now-Training persistent strip with always-visible run controls
+- [x] Section: Live Run — ESR curve chart, phase stats, raw log
+- [x] Section: Queue — batch cards (collapse/expand), drag-to-reorder items + batches (migrated to `@dnd-kit`, see TODO.md), filters
+- [x] Section: History — filterable grouped list, ESR quality bars + throughput charts
+- [x] Section: New Run — Manual / From Captures toggle, restored HelpPopovers
+- [x] Charts: EsrCurve, QualityBars/throughput area chart, Sparkline
+- [x] New IPC: batch/queue reordering (`moveSubmissionBefore`, `moveSubmissionToEnd`)
 
 ## Onboarding / Discoverability
 
@@ -106,7 +110,7 @@ Update both when features land.
 
 ## NAM A2 / PackedWaveNet
 
-- [ ] A2 support (separate Python runner mode, PackedLightningModule, packed config JSON)
+- [x] A2 support — shipped. Selectable architecture in Create Batch/presets/watchers, mixed A1+A2 batches, per-job `namMode` routing to `_run_a2` (PackedWaveNet), Full/Lite sub-model ESR tracking and tone-band thresholds, A2 detection on read. See `docs/a2-status.md` for full detail, including the deferred NAM PR #676 follow-up (not yet in a NAM release as of this writing — re-verify before assuming it needs action).
 
 ## Bugs / Known Issues
 

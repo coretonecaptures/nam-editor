@@ -1,5 +1,13 @@
 # Experimental Local NAM Training Plan
 
+> **Historical planning document.** The phases below have shipped and the training feature has
+> grown well past this original scope (A2/PackedWaveNet support, Training Bundles, mixed A1+A2
+> batches, a dedicated Presets page, the ignore-checks/"trained despite warnings" system, etc.).
+> Some statements below — e.g. custom architectures being "explicitly deferred" — are no longer
+> accurate (Capture Profiles now support custom A1 architecture import). For the current, accurate
+> feature description, see `docs/training.md`, `docs/features.md`, and `docs/a2-status.md`. This
+> file is kept for historical context on the original design reasoning, not as a live spec.
+
 ## Purpose
 
 Capture the phased plan for adding a hidden/experimental local NAM training workflow to NAM Lab without depending on chat history.

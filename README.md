@@ -6,7 +6,7 @@
 
 Built with Electron, React, and Tailwind CSS. Runs on **Windows**, **macOS**, and **Linux**.
 
-> **This app does not run captures or process audio.** It is purely a metadata editor for `.nam` files. To actually use your captures, you need the [Neural Amp Modeler plugin](https://www.neuralampmodeler.com/) (free, available for all major DAWs).
+> NAM Lab is primarily a metadata editor and library manager for `.nam` files — it does not need a Python/NAM install to organize, tag, and export your existing captures. It also includes an **optional built-in training workspace** (see below) that orchestrates your own local `neural-amp-modeler` Python install if you want to train new captures without leaving the app. Either way, to actually *use* a `.nam` file in a DAW you need the [Neural Amp Modeler plugin](https://www.neuralampmodeler.com/) (free, available for all major DAWs).
 
 ---
 
@@ -61,7 +61,7 @@ NAM captures embed metadata (name, gear info, tone type, etc.) as JSON inside th
 - **Export** - CSV or Excel from any view; visible or all columns; respects active filters
 - **Spreadsheet import** - generate a pre-filled `.xlsx` template with target columns and a lookup/reference sheet, edit in Excel, import back
 - **Training version report** - pivot table showing preset x capture coverage per folder
-- **Built-in training workspace** - mission-control UI for the NAM Python trainer with a Dashboard, Live Run with a live ESR-over-epochs chart driven by an embedded PyTorch-Lightning callback, a batch-grouped Queue, Staged Batches (drafts) tab, History with twin trend charts and right-click purge / batch retry, watcher automation, and full mixed A1 + A2 batches in one submission (one preset can ship `['A2', 'standard', 'revxstd']` and produce three flavors of the same capture). Retries back up existing `.nam` files to `*.bak.nam` before overwriting. Queue, staged batches, and last-selected preset all persist across restarts.
+- **Built-in training workspace** - mission-control UI for the NAM Python trainer with a Dashboard, Live Run with a live ESR-over-epochs chart driven by an embedded PyTorch-Lightning callback, a batch-grouped Queue, Staged Batches (drafts) tab, History with twin trend charts and right-click purge / batch retry, a dedicated Presets page (presets + **Training Bundles** — named groups of presets submitted together as one batch), watcher automation (which can link a whole bundle to a watch folder), and full mixed A1 + A2 batches in one submission (one preset can ship `['A2', 'standard', 'revxstd']` and produce three flavors of the same capture). A global "always ignore pre-training data checks" setting can bypass NAM's own data validation on every run; bypassed runs that would have failed are flagged with a "Trained despite warnings" badge (live during the run and in History) so you know to double-check them. Retries back up existing `.nam` files to `*.bak.nam` before overwriting. Queue, staged batches, and last-selected preset all persist across restarts.
 - **File associations** - `.nam` files open directly in NAM Lab from Explorer/Finder
 
 [Full feature reference](docs/features.md)  

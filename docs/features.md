@@ -126,7 +126,7 @@ Locked-field behavior:
 Capture defaults supply baseline values for training and manual re-apply.
 
 Settings:
-- **Default Modeled By** â€” your creator / studio name
+- **Default Modeled By** — your creator / studio name
 - **Default Input Level (dBu)**
 - **Default Output Level (dBu)**
 
@@ -137,7 +137,7 @@ Each field has two separate uses, controlled independently:
 | Training / re-apply | Always used when you queue a training job or hit re-apply defaults |
 | Auto-fill on load | Only if the "Auto-fill blank captures on load" checkbox is checked for that field |
 
-The **Auto-fill on load** checkboxes are off by default. This matters if you open other creators' captures â€” loading them will not overwrite their existing metadata or silently inject your defaults into blank fields.
+The **Auto-fill on load** checkboxes are off by default. This matters if you open other creators' captures — loading them will not overwrite their existing metadata or silently inject your defaults into blank fields.
 
 When auto-fill is enabled for a field, NAM Lab only fills that field if it is completely blank in the loaded file; it never overwrites an existing value.
 
@@ -233,6 +233,8 @@ Pack folders can store release checklists with:
 
 Checklist progress also appears in dashboards.
 
+**Checklist templates** — reusable row sets you define once (per delivery target: NAM / ToneX / Proxy / QC) in Settings and apply to any pack's checklist, instead of rebuilding the same rows folder by folder.
+
 ---
 
 ## Delivery Targets
@@ -306,7 +308,7 @@ Current behavior:
 - supports removing watches from dashboard or Settings
 
 Important safety behavior:
-- watch import history uses **SHA-256 content hashes** for deduplication â€” a file is not re-copied if the same content has already been imported, even if the filename or destination changes
+- watch import history uses **SHA-256 content hashes** for deduplication — a file is not re-copied if the same content has already been imported, even if the filename or destination changes
 - content hashes are retroactively backfilled for existing import history on startup so older entries also benefit from hash-based protection
 - watch rules use **import-once semantics**
 - renaming a copied file in the destination will not cause a re-copy because the hash still matches
@@ -347,7 +349,7 @@ When NAM Lab picks a default file to keep inside a duplicate group, it still pre
 
 ### Architecture-aware grouping
 
-In filename and capture-name duplicate modes, NAM Lab defaults to **same-architecture-only grouping**. This means a `Standard` and a `REVxSTD` capture with the same name are not flagged as duplicates by default â€” they are different model formats and are typically kept together intentionally.
+In filename and capture-name duplicate modes, NAM Lab defaults to **same-architecture-only grouping**. This means a `Standard` and a `REVxSTD` capture with the same name are not flagged as duplicates by default — they are different model formats and are typically kept together intentionally.
 
 To also catch cross-architecture matches (for example finding that you trained the same WAV with multiple architectures and want to thin them out), toggle **Include cross-architecture** in the duplicate scan controls. When enabled, architecture badges appear on each file row in the results so you can tell which format each file is.
 
@@ -611,18 +613,20 @@ Import:
 
 NAM Lab orchestrates the NAM Python trainer directly inside the app. Full details are in [docs/training.md](training.md); short version:
 
-- **Dashboard** â€” single-glance "what's running now" view with 8 big stat tiles (Current epoch, Queue progress, Active batch, Current ETA, Completed, Failed, Last ESR, Last item took), Quick Add card, Up Next card. Completed / Failed / Last ESR tiles are clickable and jump to History pre-filtered.
-- **Live Run** â€” real-time ESR-over-epochs chart fed by an embedded `pytorch_lightning.Callback` that NAM Lab installs into the trainer so per-epoch validation ESR actually populates (the official NAM trainer's tqdm postfix carries training loss, not validation ESR). Statline cells for Epoch / Rate / Validation ESR / Started; secondary MRSTFT / MSE statline (frequency-domain and time-domain losses) that appears when the trainer reports them, with Full/Lite split for A2 runs; Final output + Checkpoint paths; collapsible Raw trainer log that mirrors what an Anaconda shell would show (tqdm-aware dedupe + filter so each epoch becomes one rolling line instead of hundreds).
-- **Queue** â€” batch-grouped, with Expand-all / Collapse-all, status / profile / architecture filters, and tiles that count both **captures** and **batches**. Finished / failed / canceled rows auto-clear when a new batch is queued; history is the source of truth. Each batch group shows a **Run next** button when the batch is not already at the front, so you can promote urgent work without canceling anything. The Resume button pulses with an accent ring while the queue is paused and jobs are waiting.
-- **Staged Batches** â€” drafts saved via **Stage** in Create Batch. Cards with amber type icon + Staged pill + color-coded architecture chips per unique arch in the batch + routing line + Edit / Delete / Queue-now / expand-to-see-captures.
-- **History** â€” ESR-quality and Throughput trend charts, search bar with magnifier icon, segmented status filter (All / Done / Failed / Canceled), grouped by batch submission with `N done` / `N failed` counts + **Retry failed** + **Retry batch** buttons on every group header. Each row has a compact status icon tinted to the entry ESR tone; failed rows show their architecture chip + profile + epochs + duration on one line and the failure reason in red mono on the next. Right-click â†’ View ESR plot / Retry / Reveal in folder / Purge from history / Purge entire batch (with confirm modal â€” only the history record is removed, on-disk `.nam` and PNG stay). Whole row click opens the ESR plot modal.
-- **New Run** (Create Batch) â€” optional Batch name field with smart placeholder (capture / folder / count), Input DI, drop-or-pick output WAVs, Preset selector on one line + Architecture multi-select with **A2 first, A1 variants prefixed as `A1 - Standard` / `A1 - Lite` / etc.**, color-coded selection chips below with Ã— buttons to remove. Submitting clears the form and jumps to Queue (or Batches for staged) so duplicate submissions are hard to make by accident.
-- **Mixed A1 + A2 batches** â€” one ticked architecture spawns one job; one batch can mix A1 variants and A2 freely, all under one shared submission. `namMode` is derived per-job from `architecture` so the right Python runner (`_run_a2` / `_run_a1_v13` / `_run_a1`) fires per capture.
-- **Quick Add** â€” Dashboard card that fires a training run from your favorite preset + favorite routing + default DI without opening Create Batch. Falls back to the global output formula if the favorite routing is empty.
-- **Watcher automation** â€” folder watchers attach a profile to a directory; new WAVs are queued automatically; SHA-256 content tracking prevents re-training after renames / copies. Watcher Files modal per profile with per-file Wipe & retrain / Retrain as new file / Mark as skipped actions.
-- **Persistence** â€” `trainer-queue.json` saves all queue rows including finished/failed/canceled (capped at 2000, throttled to 1 write per 2 s, flushed on quit); also persists the pause flag. `trainer-history.json` keeps the last 2000 entries newest-first. `trainingLastSelectedPresetId` remembers the Create Batch preset choice across restarts. The session-restore demotes anything that was running when the app died back to `queued` with progress cleared (the Python child is gone). Two Settings toggles (both off by default): **Auto-start queue on launch** and **Skip auto-start if queue was paused**.
-- **Retry safety** â€” Retry failed / Retry batch / per-row Retry rebuild jobs from history entry metadata + current Settings, submit them as a new `Retry - {label}` batch, and **back up any existing `.nam` to `*.bak.nam` before overwriting**. One backup max, replaced on subsequent retries. Normal queue submissions still overwrite as before.
-- **Live trainer log** â€” selectable text + native right-click Copy across the entire trainer (overriding the global `body { user-select: none }`). Python child spawned with `PYTHONUNBUFFERED=1`, `PYTHONIOENCODING=utf-8`, `TQDM_MININTERVAL=10`, `TQDM_ASCII=1` so the log looks like an Anaconda terminal even though it's a piped subprocess.
+- **Dashboard** — single-glance "what's running now" view with 8 big stat tiles (Current epoch, Queue progress, Active batch, Current ETA, Completed, Failed, Last ESR, Last item took), Quick Add card, Up Next card. Completed / Failed / Last ESR tiles are clickable and jump to History pre-filtered.
+- **Live Run** — real-time ESR-over-epochs chart fed by an embedded `pytorch_lightning.Callback` that NAM Lab installs into the trainer so per-epoch validation ESR actually populates (the official NAM trainer's tqdm postfix carries training loss, not validation ESR). Statline cells for Epoch / Rate / Validation ESR / Started; secondary MRSTFT / MSE statline (frequency-domain and time-domain losses) that appears when the trainer reports them, with Full/Lite split for A2 runs; Final output + Checkpoint paths; collapsible Raw trainer log that mirrors what an Anaconda shell would show (tqdm-aware dedupe + filter so each epoch becomes one rolling line instead of hundreds).
+- **Queue** — batch-grouped, with Expand-all / Collapse-all, status / profile / architecture filters, and tiles that count both **captures** and **batches**. Finished / failed / canceled rows auto-clear when a new batch is queued; history is the source of truth. Each batch group shows a **Run next** button when the batch is not already at the front, so you can promote urgent work without canceling anything. The Resume button pulses with an accent ring while the queue is paused and jobs are waiting.
+- **Staged Batches** — drafts saved via **Stage** in Create Batch. Cards with amber type icon + Staged pill + color-coded architecture chips per unique arch in the batch + routing line + Edit / Delete / Queue-now / expand-to-see-captures.
+- **History** — ESR-quality and Throughput trend charts, search bar with magnifier icon, segmented status filter (All / Done / Failed / Canceled), grouped by batch submission with `N done` / `N failed` counts + **Retry failed** + **Retry batch** buttons on every group header. Each row has a compact status icon tinted to the entry ESR tone; failed rows show their architecture chip + profile + epochs + duration on one line and the failure reason in red mono on the next. Right-click → View ESR plot / Retry / Reveal in folder / Purge from history / Purge entire batch (with confirm modal — only the history record is removed, on-disk `.nam` and PNG stay). Whole row click opens the ESR plot modal.
+- **Presets** — dedicated left-rail page to create, edit, duplicate, delete, and star training presets (architectures + epochs + latency + target ESR + normalize + ignore-checks recipe). Also where you build **Training Bundles**: named groups of 2+ presets submitted together as one Create Batch action, so one bundle can queue several architectures/recipes for every source file in a single submission. Bundles appear in their own group in the Create Batch preset picker and can be linked to watcher profiles the same way a single preset can.
+- **New Run** (Create Batch) — optional Batch name field with smart placeholder (capture / folder / count), Input DI, drop-or-pick output WAVs, Preset selector on one line + Architecture multi-select with **A2 first, A1 variants prefixed as `A1 - Standard` / `A1 - Lite` / etc.**, color-coded selection chips below with × buttons to remove. Submitting clears the form and jumps to Queue (or Batches for staged) so duplicate submissions are hard to make by accident.
+- **Mixed A1 + A2 batches** — one ticked architecture spawns one job; one batch can mix A1 variants and A2 freely, all under one shared submission. `namMode` is derived per-job from `architecture` so the right Python runner (`_run_a2` / `_run_a1_v13` / `_run_a1`) fires per capture.
+- **Ignore checks / Trained despite warnings** — a per-preset toggle bypasses NAM's pre-training data checks (sample rate, length, latency alignment, self-ESR) for runs using that preset; a global Settings override (**Always ignore pre-training data checks**) forces every run to bypass them regardless, re-read live at the moment each job launches. A run that would have failed checks but trained anyway gets flagged with an orange **"Trained despite warnings"** badge in History (hover for the actual check-failure text) and a live **"Checks failed — training anyway"** badge on the Dashboard hero card while it's still running.
+- **Quick Add** — Dashboard card that fires a training run from your favorite preset + favorite routing + default DI without opening Create Batch. Falls back to the global output formula if the favorite routing is empty.
+- **Watcher automation** — folder watchers attach a profile to a directory; new WAVs are queued automatically; SHA-256 content tracking prevents re-training after renames / copies. Watcher Files modal per profile with per-file Wipe & retrain / Retrain as new file / Mark as skipped actions.
+- **Persistence** — `trainer-queue.json` saves all queue rows including finished/failed/canceled (capped at 2000, throttled to 1 write per 2 s, flushed on quit); also persists the pause flag. `trainer-history.json` keeps the last 2000 entries newest-first. `trainingLastSelectedPresetId` remembers the Create Batch preset choice across restarts. The session-restore demotes anything that was running when the app died back to `queued` with progress cleared (the Python child is gone). Two Settings toggles (both off by default): **Auto-start queue on launch** and **Skip auto-start if queue was paused**.
+- **Retry safety** — Retry failed / Retry batch / per-row Retry rebuild jobs from history entry metadata + current Settings, submit them as a new `Retry - {label}` batch, and **back up any existing `.nam` to `*.bak.nam` before overwriting**. One backup max, replaced on subsequent retries. Normal queue submissions still overwrite as before.
+- **Live trainer log** — selectable text + native right-click Copy across the entire trainer (overriding the global `body { user-select: none }`). Python child spawned with `PYTHONUNBUFFERED=1`, `PYTHONIOENCODING=utf-8`, `TQDM_MININTERVAL=10`, `TQDM_ASCII=1` so the log looks like an Anaconda terminal even though it's a piped subprocess.
 
 ---
 
@@ -658,14 +662,14 @@ Cards:
 - card size is switchable between **Small / Medium / Large** via a picker in the breadcrumb bar; choice persists between sessions
 
 Interactions:
-- **Single click** â€” select the card; a resizable preview panel slides in on the right showing the amp cover, folder name, path, counts, and pack title/subtitle if available; panel width persists between sessions
-- **Double click** â€” drill into that folder's subfolders (stays in card view)
-- **Breadcrumb bar** â€” shows the current drill path; click any crumb to go back up
+- **Single click** — select the card; a resizable preview panel slides in on the right showing the amp cover, folder name, path, counts, and pack title/subtitle if available; panel width persists between sessions
+- **Double click** — drill into that folder's subfolders (stays in card view)
+- **Breadcrumb bar** — shows the current drill path; click any crumb to go back up
 
 Right-click menu:
-- **Open folder** â€” exits card view and loads the folder in the three-panel view
-- **Find on Tone3000** â€” opens Tone3000 search in the right preview panel slot without leaving card view; downloads flow through the normal queue and the new folder card appears automatically when done
-- **Get Cover Image** â€” fetch or set an `ampcover` image for the folder:
+- **Open folder** — exits card view and loads the folder in the three-panel view
+- **Find on Tone3000** — opens Tone3000 search in the right preview panel slot without leaving card view; downloads flow through the normal queue and the new folder card appears automatically when done
+- **Get Cover Image** — fetch or set an `ampcover` image for the folder:
   - paste an image URL
   - drag-drop an image from a browser or Windows Explorer
   - click **Browse** to pick a local file via the native file picker
