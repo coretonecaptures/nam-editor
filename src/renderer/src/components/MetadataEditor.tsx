@@ -605,10 +605,27 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
                 <StatCard label="Detected Preset" value={detectPreset(file.config)!} />
               )}
               {(() => {
-                // Show one primary Validation ESR card here.
-                // A1 uses the saved validation_esr directly.
-                // A2 prefers the Full sub-model ESR when available; only official/downloaded A2 files
-                // without a NAM Lab breakdown fall back to the saved aggregate.
+                // A1: single Validation ESR card, same as always.
+                // A2: show Full and Lite as their own cards right here (not just inside the
+                // collapsed "A2 sub-model metadata" accordion below) — same at-a-glance
+                // treatment History rows already give A2 captures (FULL / LITE / AGG chips),
+                // so you don't have to expand anything to see whether a capture is good.
+                // Falls back to a single Aggregate card only when no per-submodel breakdown
+                // exists at all (official-trainer / downloaded A2 files with no NAM Lab data).
+                const full = getA2FullEsr(esrMeta)
+                const lite = getA2LiteEsr(esrMeta)
+                if (typeof full === 'number' || typeof lite === 'number') {
+                  return (
+                    <>
+                      {typeof full === 'number' && (
+                        <StatCard label="Validation ESR (A2 Full)" value={full.toFixed(6)} good={full < 0.01} />
+                      )}
+                      {typeof lite === 'number' && (
+                        <StatCard label="Validation ESR (A2 Lite)" value={lite.toFixed(6)} good={lite < 0.01} />
+                      )}
+                    </>
+                  )
+                }
                 const best = getCaptureBestEsr(esrMeta)
                 if (typeof best.value !== 'number') return null
                 return (

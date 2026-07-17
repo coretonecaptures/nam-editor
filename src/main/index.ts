@@ -5103,7 +5103,14 @@ function fillMissingMetadataFromA2Submodel(meta: Record<string, unknown>, data: 
     const topNamLab = objectRecord(meta.nam_lab)
     if (!topNamLab) meta.nam_lab = { ...subNamLab }
     else {
-      for (const key of ['mics', 'cabinet', 'cabinet_config', 'amp_channel', 'boost_pedal', 'amp_settings', 'pedal_settings', 'amp_switches', 'comments', 'about', 'rating']) {
+      // Gear-descriptive fields AND the A2 ESR/MRSTFT/MSE breakdown — the latter used to be
+      // excluded here, so a file whose top-level nam_lab block existed but was missing (or lost)
+      // the ESR fields would keep showing the raw aggregate instead of the accurate Full/Lite
+      // breakdown, even though the real numbers were sitting right there in the submodel.
+      for (const key of [
+        'mics', 'cabinet', 'cabinet_config', 'amp_channel', 'boost_pedal', 'amp_settings', 'pedal_settings', 'amp_switches', 'comments', 'about', 'rating',
+        'a2_full_validation_esr', 'a2_lite_validation_esr', 'mrstft', 'mse', 'a2_lite_mrstft', 'a2_lite_mse',
+      ]) {
         fillIfBlank(topNamLab, key, subNamLab)
       }
     }
@@ -6488,10 +6495,26 @@ app.whenReady().then(async () => {
         const f = filename?.toLowerCase() ?? ''
         if (!f.endsWith('.nam') || f.endsWith('.json')) return
         if (debounceTimer) clearTimeout(debounceTimer)
-        debounceTimer = setTimeout(() => {
-          if (Date.now() < watcherSuppressUntil) return
+        const fireOrReschedule = (): void => {
+          const remaining = watcherSuppressUntil - Date.now()
+          // suppressWatcher() is meant to skip the REDUNDANT reload after a write the renderer
+          // already knows about (metadata save, batch edit, Excel import — it has the new data
+          // in its own state already). Real bug this fixes: a training-job write also calls
+          // suppressWatcher() (to stop the watch-PROFILE output-tracking watcher from treating
+          // its own output as a new externally-added file), but the renderer has NO other way of
+          // learning that file's new content — nothing pushes it there. The old code just
+          // dropped the notification outright when still inside the suppress window, so after
+          // every training run the library view (and this exact file's Capture Stats) kept
+          // showing stale pre-training data — sometimes an even older version's numbers —
+          // until the user manually reloaded the folder. Reschedule instead of dropping so the
+          // notification still eventually fires once the suppress window ends.
+          if (remaining > 0) {
+            debounceTimer = setTimeout(fireOrReschedule, remaining + 50)
+            return
+          }
           safeSend('folder:changed')
-        }, 1500)
+        }
+        debounceTimer = setTimeout(fireOrReschedule, 1500)
       })
     } catch (err) {
       log(`folder:watch error: ${String(err)}`)
