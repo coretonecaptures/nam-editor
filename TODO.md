@@ -1,5 +1,37 @@
 # TODO
 
+## [HIGH PRIORITY] Option to include folder images (amp/cab/mic photos etc.) in the pack PDF
+
+The pack PDF export (`src/renderer/src/utils/packExportAdvanced.ts`, `generatePackHtmlAdvanced`)
+currently only embeds a logo on the cover/colophon pages (`logo?: string` param, `.cover-header
+img.logo`) — there's no way to include the rig/gear photos a user has sitting in the folder
+(amp, cab, mic placement, pedal chain, etc.) anywhere in the exported PDF.
+
+The app already has the raw material for this: the folder panel's existing "Gallery" tab
+(`App.tsx`, `folderPanelTab === 'gallery'`, gated by `showGalleryTab`) already scans and
+displays a folder's images via `window.api.scanImages(folderPath)` (same API already used
+for auto-detecting the folder cover image, see `AMPCOVER_PATTERN` in `App.tsx`). That image
+list is the natural source — no new image-discovery logic should be needed, just export
+plumbing.
+
+**Scope:**
+- Add an export option (checkbox near the existing Simple/Advanced PDF export buttons in
+  `PackInfoEditor.tsx`) to include a "Rig Photos" section in the PDF, sourced from the same
+  folder images the Gallery tab already surfaces.
+- Let the user pick which images go in (default to all, or reuse/extend whatever selection
+  state the Gallery tab already has) rather than dumping every image in the folder
+  unconditionally — some folders may have WAV-adjacent junk images that shouldn't end up in
+  a customer-facing PDF.
+- Add a new HTML/CSS section to `generatePackHtmlAdvanced` (a photo grid page, following the
+  existing cover-page/colophon styling conventions already in that file) and wire the selected
+  image paths through as a new parameter alongside the existing `logo` param.
+- Images will need to be inlined as data URIs (same as the logo already is, per
+  `${logo ? \`<img class="logo" src="${logo}" ...\`}`) since the PDF export presumably runs
+  outside a context that can resolve local file:// paths — confirm this against however the
+  Simple/Advanced export buttons currently invoke PDF generation before assuming.
+
+---
+
 ## [TOP PRIORITY] Investigate: "NAM did not produce a .nam file at the expected location"
 
 Occasional training failures where the job completes without error but no `.nam` file is found at the output path. The error message is: `"NAM did not produce a .nam file at the expected location."`.
