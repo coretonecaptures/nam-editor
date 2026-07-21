@@ -21,6 +21,7 @@ import { AppSettings, MetadataSuggestField, MetadataSuggestRule } from '../types
 import { PACK_CAPTURE_COLUMNS, DEFAULT_EXPORT_COLUMNS, generatePackHtml } from '../utils/packExport'
 import { generatePackHtmlAdvanced } from '../utils/packExportAdvanced'
 import { metadataSuggestRuleSignature } from '../utils/metadataSuggestRuleLibrary'
+import { scanOwnAndInheritedImages, type FolderImagesData } from '../utils/folderImages'
 
 export type CatalogItem = AppSettings['packGearCatalog'][number]
 export type ChecklistTemplateItem = AppSettings['packChecklistTemplate'][number]
@@ -110,6 +111,8 @@ export interface PackInfo {
   exportExcludedSubfolders: string[]
   exportExcludedCaptures: string[]
   exportColumns: string[]
+  exportIncludeGallery: boolean
+  exportExcludedGalleryImages: string[]
   recommendedInputGain: string
   checklistItems: PackChecklistItem[]
   checklistNotes: string
@@ -161,6 +164,8 @@ const EMPTY_PACK: PackInfo = {
   exportExcludedSubfolders: [],
   exportExcludedCaptures: [],
   exportColumns: DEFAULT_EXPORT_COLUMNS,
+  exportIncludeGallery: false,
+  exportExcludedGalleryImages: [],
   recommendedInputGain: '',
   checklistItems: [],
   checklistNotes: '',
@@ -550,6 +555,7 @@ function buildRuleFromSwitchEntry(entry: { label: string; value: string }, targe
 interface Props {
   folderPath: string
   folderName: string
+  rootFolder?: string
   captures: NamFile[]
   defaultCapturedBy?: string
   catalog?: CatalogItem[]
@@ -1016,6 +1022,7 @@ function RowEditor<T extends Record<string, string>>({
 export function PackInfoEditor({
   folderPath,
   folderName,
+  rootFolder,
   captures,
   defaultCapturedBy = '',
   catalog = [],
@@ -1044,6 +1051,9 @@ export function PackInfoEditor({
   const subfoldersRef = useRef<HTMLDivElement>(null)
   const [colsOpen, setColsOpen] = useState(false)
   const colsRef = useRef<HTMLDivElement>(null)
+  const [galleryOpen, setGalleryOpen] = useState(false)
+  const galleryRef = useRef<HTMLDivElement>(null)
+  const [folderImages, setFolderImages] = useState<FolderImagesData>({ own: [], inherited: [] })
   const [darkExport, setDarkExport] = useState(() => {
     try {
       const stored = localStorage.getItem('nam-pack-dark-export')
@@ -1110,6 +1120,8 @@ export function PackInfoEditor({
               exportExcludedSubfolders: d.exportExcludedSubfolders ?? [],
               exportExcludedCaptures: d.exportExcludedCaptures ?? [],
               exportColumns: (d.exportColumns ?? DEFAULT_EXPORT_COLUMNS).filter((id) => PACK_CAPTURE_COLUMNS.some((c) => c.id === id)),
+              exportIncludeGallery: d.exportIncludeGallery ?? false,
+              exportExcludedGalleryImages: d.exportExcludedGalleryImages ?? [],
               recommendedInputGain: d.recommendedInputGain ?? '',
               checklistItems: Array.isArray(d.checklistItems)
                 ? d.checklistItems.map((item) => normalizeChecklistItem(item))
@@ -1282,6 +1294,27 @@ export function PackInfoEditor({
     return () => document.removeEventListener('mousedown', handler)
   }, [colsOpen])
 
+  // Close gallery popup on outside click
+  useEffect(() => {
+    if (!galleryOpen) return
+    const handler = (e: MouseEvent) => {
+      if (galleryRef.current && !galleryRef.current.contains(e.target as Node)) {
+        setGalleryOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [galleryOpen])
+
+  // Scan the export folder's own + inherited (parent) images, for the Rig Photos gallery option
+  useEffect(() => {
+    let cancelled = false
+    scanOwnAndInheritedImages(folderPath, rootFolder, window.api.scanImages).then((data) => {
+      if (!cancelled) setFolderImages(data)
+    })
+    return () => { cancelled = true }
+  }, [folderPath, rootFolder])
+
   // Derive all distinct relative folder paths containing captures (e.g. "V1/DI", "V2/HyperAccurate/DI").
   // Each entry is the full relative path of the folder, not just a name segment.
   const subfolders = useMemo(() => {
@@ -1313,11 +1346,36 @@ export function PackInfoEditor({
     }
   }
 
+  const imageDataUri = async (filePath: string): Promise<string | null> => {
+    const result = await window.api.readFileBinary(filePath)
+    if (!result.data) return null
+    const ext = filePath.split('.').pop()?.toLowerCase() ?? 'jpg'
+    const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : ext === 'gif' ? 'image/gif' : ext === 'avif' ? 'image/avif' : 'image/jpeg'
+    return `data:${mime};base64,${result.data}`
+  }
+
+  const buildExportGallery = async (): Promise<{ label: string | null; images: string[] }[] | undefined> => {
+    if (!pack.exportIncludeGallery) return undefined
+    const groups: { label: string | null; paths: string[] }[] = [
+      { label: null, paths: folderImages.own },
+      ...folderImages.inherited.map((g) => ({ label: g.folderName, paths: g.paths })),
+    ]
+    const result: { label: string | null; images: string[] }[] = []
+    for (const group of groups) {
+      const paths = group.paths.filter((p) => !pack.exportExcludedGalleryImages.includes(p))
+      if (paths.length === 0) continue
+      const dataUris = (await Promise.all(paths.map(imageDataUri))).filter((d): d is string => Boolean(d))
+      if (dataUris.length > 0) result.push({ label: group.label, images: dataUris })
+    }
+    return result
+  }
+
   const handleExport = async () => {
     setExporting(true)
     if (!saved) await handleSave()
     const logo = darkExport ? (logoDark || undefined) : (logoLight || undefined)
-    const html = generatePackHtml(pack, folderPath, folderName, captures, darkExport, logo, darkAccentColor)
+    const gallery = await buildExportGallery()
+    const html = generatePackHtml(pack, folderPath, folderName, captures, darkExport, logo, darkAccentColor, gallery)
     const res = await window.api.exportPackSheet(html)
     setExporting(false)
     if (!res.success) setStatus(`Export failed: ${res.error ?? 'unknown error'}`)
@@ -1327,7 +1385,8 @@ export function PackInfoEditor({
     setExporting(true)
     if (!saved) await handleSave()
     const logo = darkExport ? (logoDark || undefined) : (logoLight || undefined)
-    const html = generatePackHtmlAdvanced(pack, folderPath, folderName, captures, darkExport, logo, darkAccentColor)
+    const gallery = await buildExportGallery()
+    const html = generatePackHtmlAdvanced(pack, folderPath, folderName, captures, darkExport, logo, darkAccentColor, gallery)
     const res = await window.api.exportPackSheet(html)
     setExporting(false)
     if (!res.success) setStatus(`Export failed: ${res.error ?? 'unknown error'}`)
@@ -2162,6 +2221,92 @@ export function PackInfoEditor({
             </div>
           )}
         </div>
+        {/* Rig photos gallery chooser */}
+        {(folderImages.own.length > 0 || folderImages.inherited.some((g) => g.paths.length > 0)) && (() => {
+          const allImages: { label: string | null; paths: string[] }[] = [
+            { label: null, paths: folderImages.own },
+            ...folderImages.inherited.map((g) => ({ label: g.folderName, paths: g.paths })),
+          ]
+          const totalCount = allImages.reduce((n, g) => n + g.paths.length, 0)
+          const includedCount = totalCount - pack.exportExcludedGalleryImages.length
+          return (
+            <div className="relative" ref={galleryRef}>
+              <button
+                onClick={() => setGalleryOpen((v) => !v)}
+                className="flex items-center gap-1.5 px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:border-teal-500 dark:hover:border-teal-500 transition-colors"
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14M14 8h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                <input
+                  type="checkbox"
+                  checked={pack.exportIncludeGallery}
+                  onChange={(e) => update('exportIncludeGallery', e.target.checked)}
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-3 h-3 rounded accent-teal-600"
+                />
+                Rig photos
+                <span className="text-gray-400 dark:text-gray-500 text-[10px]">({totalCount})</span>
+                <svg className={`w-2.5 h-2.5 transition-transform ${galleryOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              {galleryOpen && (
+                <div className="absolute top-full left-0 mt-1 z-30 w-72 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl">
+                  <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-gray-700">
+                    <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">
+                      {includedCount} of {totalCount} photos in export
+                    </span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => update('exportExcludedGalleryImages', [])}
+                        className="text-[10px] text-teal-600 dark:text-teal-400 hover:underline"
+                      >All</button>
+                      <button
+                        onClick={() => update('exportExcludedGalleryImages', allImages.flatMap((g) => g.paths))}
+                        className="text-[10px] text-gray-400 hover:underline"
+                      >None</button>
+                    </div>
+                  </div>
+                  <div className="overflow-y-auto max-h-72 py-1">
+                    {allImages.filter((g) => g.paths.length > 0).map((group) => (
+                      <div key={group.label ?? '__own__'}>
+                        {group.label && (
+                          <div className="px-3 pt-2 pb-1 text-[10px] text-gray-400 dark:text-gray-500">From {group.label}</div>
+                        )}
+                        <div className="grid grid-cols-4 gap-1.5 px-3 py-1">
+                          {group.paths.map((p) => {
+                            const excluded = pack.exportExcludedGalleryImages.includes(p)
+                            return (
+                              <label key={p} className="relative cursor-pointer select-none group">
+                                <img
+                                  src={`local-file://${p.startsWith('/') ? '' : '/'}${p}`}
+                                  alt=""
+                                  className={`w-full aspect-square object-cover rounded ${excluded ? 'opacity-30' : ''}`}
+                                />
+                                <input
+                                  type="checkbox"
+                                  checked={!excluded}
+                                  onChange={(e) => {
+                                    const next = e.target.checked
+                                      ? pack.exportExcludedGalleryImages.filter((x) => x !== p)
+                                      : [...pack.exportExcludedGalleryImages, p]
+                                    update('exportExcludedGalleryImages', next)
+                                  }}
+                                  className="absolute top-1 right-1 w-3 h-3 rounded accent-teal-600"
+                                />
+                              </label>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })()}
         </div>{/* end filter+columns row */}
 
         <div>

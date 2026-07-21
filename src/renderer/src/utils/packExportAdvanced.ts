@@ -51,10 +51,13 @@ import {
   PACK_CAPTURE_COLUMNS,
   DEFAULT_EXPORT_COLUMNS,
   parseDescription,
+  chunkGalleryPages,
+  type PackGalleryGroup,
 } from './packExport'
 
 // Re-export so call sites can import from either file
 export { PACK_CAPTURE_COLUMNS, DEFAULT_EXPORT_COLUMNS, parseDescription }
+export type { PackGalleryGroup }
 
 interface Theme {
   bg: string; fg: string; dim: string; dimmer: string; rule: string
@@ -118,6 +121,10 @@ function deriveStats(captures: NamFile[]) {
   return { presets, epochValue, avgEsr, refLevel, refGear, toneTypes, channels }
 }
 
+function galleryGridCols(count: number): number {
+  return count >= 5 ? 3 : count === 1 ? 1 : 2
+}
+
 export function generatePackHtmlAdvanced(
   info: PackInfo,
   folderPath: string,
@@ -126,6 +133,7 @@ export function generatePackHtmlAdvanced(
   dark: boolean,
   logo?: string,
   darkAccentColor = '#f9b966',
+  gallery?: PackGalleryGroup[],
   target: ExportTarget = 'nam'
 ): string {
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -245,6 +253,19 @@ export function generatePackHtmlAdvanced(
     </div>`
   })()
 
+  // ── Rig photos gallery ──
+  const galleryPages = chunkGalleryPages(gallery ?? [], 6)
+  const galleryHtml = galleryPages.map((page, idx) => {
+    const cols = galleryGridCols(page.images.length)
+    const frames = page.images.map((src) => `<div class="gallery-frame"><img src="${src}" alt="" /></div>`).join('')
+    const captionText = page.label ? `From ${esc(page.label)}${page.continued ? ' (cont.)' : ''}` : ''
+    return `<div class="section break">
+      ${idx === 0 ? `<div class="section-head"><div><h2><span class="section-num">&middot;</span> Rig Photos</h2></div><div class="micro">${gallery?.reduce((n, g) => n + g.images.length, 0) ?? 0} photos</div></div>` : ''}
+      ${captionText ? `<div class="gallery-caption">${captionText}</div>` : ''}
+      <div class="gallery-grid" style="grid-template-columns: repeat(${cols}, 1fr)">${frames}</div>
+    </div>`
+  }).join('')
+
   // ── Contents ──
   const contentsSections: { title: string }[] = []
   if (hasDesc) contentsSections.push({ title: 'Overview' })
@@ -253,6 +274,7 @@ export function generatePackHtmlAdvanced(
   if (hasPedals) contentsSections.push({ title: 'Drive Pedals' })
   if (hasSwitches) contentsSections.push({ title: 'Switches' })
   if (hasGlossary) contentsSections.push({ title: 'Glossary' })
+  if (galleryPages.length > 0) contentsSections.push({ title: 'Rig Photos' })
 
   const contentsHtml = contentsSections.length > 1
     ? `<div class="contents">${contentsSections.map((s, i) =>
@@ -351,6 +373,12 @@ export function generatePackHtmlAdvanced(
   .switch-card .desc { font-size: 9.5pt; color: ${t.dim}; line-height: 1.55; }
   .switch-card hr { border: 0; border-top: 1px solid ${t.rule}; }
 
+  /* Rig photos gallery */
+  .gallery-caption { font-family: "IBM Plex Mono", monospace; font-size: 8pt; letter-spacing: 0.18em; text-transform: uppercase; color: ${t.dim}; margin: 10pt 0 8pt; }
+  .gallery-grid { display: grid; gap: 10pt; margin-top: 6pt; }
+  .gallery-frame { overflow: hidden; border: 1px solid ${t.rule}; break-inside: avoid; page-break-inside: avoid; }
+  .gallery-frame img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; }
+
   /* Footer colophon (last page only &mdash; distinct from @page footer chrome) */
   .colophon { margin-top: 24pt; padding-top: 14pt; border-top: 1px solid ${t.rule}; display: flex; justify-content: space-between; align-items: flex-end; gap: 18pt; break-inside: avoid; }
   .colophon .body { font-size: 9.5pt; color: ${t.dim}; max-width: 480px; line-height: 1.55; }
@@ -436,6 +464,8 @@ ${hasGlossary ? `<div class="section break">
   </div>
   <div class="kv">${kvRows(info.glossary)}</div>
 </div>` : ''}
+
+${galleryHtml}
 
 ${hasFooter ? `<div class="colophon">
   <div class="body">${parseDescription(info.footer, dark)}</div>

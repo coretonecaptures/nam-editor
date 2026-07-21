@@ -19,7 +19,7 @@ import { ImportMetadataModal, ImportMatch } from './components/ImportMetadataMod
 import { SuggestMetadataModal } from './components/SuggestMetadataModal'
 import { TrainingCoverageModal } from './components/TrainingCoverageModal'
 import { FolderCompareModal } from './components/FolderCompareModal'
-import { FolderGallery, FolderImagesData } from './components/FolderGallery'
+import { FolderGallery } from './components/FolderGallery'
 import { FolderDashboard } from './components/FolderDashboard'
 import { FolderReadmePanel } from './components/FolderReadmePanel'
 import { WavCoverageTab } from './components/WavCoverageTab'
@@ -39,6 +39,7 @@ import * as XLSX from 'xlsx'
 import { buildMetadataSuggestionMatches, MetadataSuggestionMatch } from './utils/metadataSuggest'
 import { cloneMetadataSuggestRule, isMetadataSuggestRuleComplete, isMetadataSuggestRuleLibraryCandidate, metadataSuggestRuleSignature } from './utils/metadataSuggestRuleLibrary'
 import { detectPreset } from './utils/detectPreset'
+import { scanOwnAndInheritedImages, type FolderImagesData } from './utils/folderImages'
 import { IDLE_TRAINER_STATE, TRAINER_ARCHITECTURES, type TrainerArchitecture, type TrainerHistoryEntry, type TrainerProfilesStateSnapshot, type TrainerStartPayload, type TrainerStateSnapshot } from './types/trainer'
 
 export interface HistoryEntry {
@@ -1185,42 +1186,10 @@ export default function App() {
       return
     }
     let cancelled = false
-    const norm = (p: string) => p.replace(/\\/g, '/')
+    // Only walk ancestors when a specific subfolder is selected (not root).
     const scan = async () => {
-      const ownResult = await window.api.scanImages(targetFolder)
-      if (cancelled) return
-      const own = ownResult.success ? ownResult.images.filter((imagePath) => {
-        const fileName = imagePath.replace(/\\/g, '/').split('/').pop() ?? ''
-        return !AMPCOVER_PATTERN.test(fileName)
-      }) : []
-      const inherited: { folderName: string; paths: string[] }[] = []
-      // Only walk ancestors when a specific subfolder is selected (not root).
-      // Stop BEFORE reaching root so root-level images don't cascade into every subfolder.
-      if (sf && rf && norm(sf) !== norm(rf)) {
-        let current = norm(sf)
-        const normRoot = norm(rf)
-        while (true) {
-          const lastSlash = current.lastIndexOf('/')
-          if (lastSlash <= 0) break
-          const parent = current.substring(0, lastSlash)
-          if (!parent.startsWith(normRoot) || parent.length < normRoot.length) break
-          if (parent === normRoot) break  // stop before root ÃƒÆ&rsquo;Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â root images only show at root
-          const parentResult = await window.api.scanImages(parent)
-          if (cancelled) return
-          const parentPaths = parentResult.success
-            ? parentResult.images.filter((imagePath) => {
-                const fileName = imagePath.replace(/\\/g, '/').split('/').pop() ?? ''
-                return !AMPCOVER_PATTERN.test(fileName)
-              })
-            : []
-          if (parentPaths.length > 0) {
-            const folderName = parent.substring(parent.lastIndexOf('/') + 1)
-            inherited.push({ folderName, paths: parentPaths })
-          }
-          current = parent
-        }
-      }
-      setFolderImages({ own, inherited })
+      const data = await scanOwnAndInheritedImages(targetFolder, sf ? rf : null, window.api.scanImages)
+      if (!cancelled) setFolderImages(data)
     }
     scan()
     return () => { cancelled = true }
@@ -5319,6 +5288,7 @@ INSTRUCTIONS:
                       key={`${activeFolderPath}:${folderPanelTab}`}
                       folderPath={activeFolderPath}
                       folderName={activeFolderName}
+                      rootFolder={librarian.rootFolder}
                       captures={visibleFiles}
                       defaultCapturedBy={settings.defaultModeledBy}
                       catalog={settings.packGearCatalog}
