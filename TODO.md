@@ -1,34 +1,36 @@
 # TODO
 
-## [HIGH PRIORITY] Option to include folder images (amp/cab/mic photos etc.) in the pack PDF
+## DONE: Option to include folder images (amp/cab/mic photos etc.) in the pack PDF
 
-The pack PDF export (`src/renderer/src/utils/packExportAdvanced.ts`, `generatePackHtmlAdvanced`)
-currently only embeds a logo on the cover/colophon pages (`logo?: string` param, `.cover-header
-img.logo`) — there's no way to include the rig/gear photos a user has sitting in the folder
-(amp, cab, mic placement, pedal chain, etc.) anywhere in the exported PDF.
+**Implemented.** Pack Info export now has a "Rig photos (N)" checkbox + thumbnail picker next
+to the Simple/Advanced export buttons in `PackInfoEditor.tsx` (~line 2224). Wiring:
+- `scanOwnAndInheritedImages` (`utils/folderImages.ts`) scans the folder's own images plus a
+  cascade **up** through ancestor folders (stopping before root), each as a labeled group;
+  `ampcover.*` is always excluded (reserved for cover art).
+- `buildExportGallery()` (`PackInfoEditor.tsx` ~1357) inlines selected images as data URIs and
+  passes them through to both `generatePackHtml` and `generatePackHtmlAdvanced` as a new
+  `gallery` param. The advanced export renders a paginated "Rig Photos" grid
+  (`packExportAdvanced.ts` ~256, `chunkGalleryPages` / `.gallery-grid`).
+- Per-image include/exclude persisted via `exportIncludeGallery` +
+  `exportExcludedGalleryImages` on `PackInfo`.
 
-The app already has the raw material for this: the folder panel's existing "Gallery" tab
-(`App.tsx`, `folderPanelTab === 'gallery'`, gated by `showGalleryTab`) already scans and
-displays a folder's images via `window.api.scanImages(folderPath)` (same API already used
-for auto-detecting the folder cover image, see `AMPCOVER_PATTERN` in `App.tsx`). That image
-list is the natural source — no new image-discovery logic should be needed, just export
-plumbing.
+**Known limitation / follow-up:** the cascade is **up-only** (own + ancestor folders).
+`folder:scanImages` (`main/index.ts:6303`) is a flat, non-recursive `readdir`, so photos sitting
+in **child subfolders** of the pack folder are never picked up. The "Rig photos" checkbox is
+also gated on there being at least one own/inherited image, so a pack whose photos all live in
+subfolders shows no toggle at all. See the "include child subfolder photos" item below.
 
-**Scope:**
-- Add an export option (checkbox near the existing Simple/Advanced PDF export buttons in
-  `PackInfoEditor.tsx`) to include a "Rig Photos" section in the PDF, sourced from the same
-  folder images the Gallery tab already surfaces.
-- Let the user pick which images go in (default to all, or reuse/extend whatever selection
-  state the Gallery tab already has) rather than dumping every image in the folder
-  unconditionally — some folders may have WAV-adjacent junk images that shouldn't end up in
-  a customer-facing PDF.
-- Add a new HTML/CSS section to `generatePackHtmlAdvanced` (a photo grid page, following the
-  existing cover-page/colophon styling conventions already in that file) and wire the selected
-  image paths through as a new parameter alongside the existing `logo` param.
-- Images will need to be inlined as data URIs (same as the logo already is, per
-  `${logo ? \`<img class="logo" src="${logo}" ...\`}`) since the PDF export presumably runs
-  outside a context that can resolve local file:// paths — confirm this against however the
-  Simple/Advanced export buttons currently invoke PDF generation before assuming.
+---
+
+## [MEDIUM] Rig photos: include child-subfolder photos (bidirectional gallery)
+
+Today `scanOwnAndInheritedImages` only cascades **up** (own + ancestors). A pack folder whose
+gear photos live in child subfolders (e.g. per-capture folders) gets nothing. Extend the scan
+to also collect images from descendant subfolders as additional labeled groups, surfaced in the
+same "Rig photos" picker so each image stays individually include/excludable. Decisions still
+open: recursion depth (immediate children vs. full descend), whether children default-on or need
+their own checkbox, and how to keep noisy folders (DI waveform screenshots etc.) from flooding
+the picker.
 
 ---
 

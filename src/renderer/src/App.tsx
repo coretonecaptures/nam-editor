@@ -501,6 +501,7 @@ declare global {
       onTrainerHistory: (cb: (history: TrainerHistoryEntry[]) => void) => () => void
       openInNam: (filePath: string, standalonePath: string) => Promise<{ success: boolean; error?: string }>
       scanImages: (folderPath: string) => Promise<{ success: boolean; images: string[] }>
+      scanChildImages: (folderPath: string) => Promise<{ success: boolean; groups: { folderName: string; paths: string[] }[] }>
       findPackOwner: (folderPath: string, rootPath: string) => Promise<string | null>
       findPackFolders: (rootPath: string) => Promise<string[]>
       readPackInfo: (folderPath: string) => Promise<{ success: boolean; data: unknown }>

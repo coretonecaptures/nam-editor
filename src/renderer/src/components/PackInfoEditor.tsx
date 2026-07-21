@@ -112,6 +112,7 @@ export interface PackInfo {
   exportExcludedCaptures: string[]
   exportColumns: string[]
   exportIncludeGallery: boolean
+  exportIncludeChildGallery: boolean
   exportExcludedGalleryImages: string[]
   recommendedInputGain: string
   checklistItems: PackChecklistItem[]
@@ -165,6 +166,7 @@ const EMPTY_PACK: PackInfo = {
   exportExcludedCaptures: [],
   exportColumns: DEFAULT_EXPORT_COLUMNS,
   exportIncludeGallery: false,
+  exportIncludeChildGallery: false,
   exportExcludedGalleryImages: [],
   recommendedInputGain: '',
   checklistItems: [],
@@ -1053,7 +1055,7 @@ export function PackInfoEditor({
   const colsRef = useRef<HTMLDivElement>(null)
   const [galleryOpen, setGalleryOpen] = useState(false)
   const galleryRef = useRef<HTMLDivElement>(null)
-  const [folderImages, setFolderImages] = useState<FolderImagesData>({ own: [], inherited: [] })
+  const [folderImages, setFolderImages] = useState<FolderImagesData>({ own: [], inherited: [], children: [] })
   const [darkExport, setDarkExport] = useState(() => {
     try {
       const stored = localStorage.getItem('nam-pack-dark-export')
@@ -1121,6 +1123,7 @@ export function PackInfoEditor({
               exportExcludedCaptures: d.exportExcludedCaptures ?? [],
               exportColumns: (d.exportColumns ?? DEFAULT_EXPORT_COLUMNS).filter((id) => PACK_CAPTURE_COLUMNS.some((c) => c.id === id)),
               exportIncludeGallery: d.exportIncludeGallery ?? false,
+              exportIncludeChildGallery: d.exportIncludeChildGallery ?? false,
               exportExcludedGalleryImages: d.exportExcludedGalleryImages ?? [],
               recommendedInputGain: d.recommendedInputGain ?? '',
               checklistItems: Array.isArray(d.checklistItems)
@@ -1306,12 +1309,27 @@ export function PackInfoEditor({
     return () => document.removeEventListener('mousedown', handler)
   }, [galleryOpen])
 
-  // Scan the export folder's own + inherited (parent) images, for the Rig Photos gallery option
+  // Scan the export folder's own + inherited (parent) images, plus a recursive scan of
+  // descendant subfolders (deduped + size-filtered in the main process), for the Rig Photos
+  // gallery option. Parent/ancestor and child photos are toggled by separate checkboxes.
   useEffect(() => {
     let cancelled = false
-    scanOwnAndInheritedImages(folderPath, rootFolder, window.api.scanImages).then((data) => {
-      if (!cancelled) setFolderImages(data)
-    })
+    const run = async () => {
+      // Set own + inherited first so the "Rig photos" checkbox appears even if the child
+      // scan is unavailable or fails (e.g. before the dev server reloads the new preload).
+      const data = await scanOwnAndInheritedImages(folderPath, rootFolder, window.api.scanImages)
+      if (cancelled) return
+      setFolderImages(data)
+      try {
+        const childRes = await window.api.scanChildImages?.(folderPath)
+        if (!cancelled && childRes?.success) {
+          setFolderImages({ ...data, children: childRes.groups })
+        }
+      } catch {
+        /* child scan unavailable — leave children empty */
+      }
+    }
+    void run()
     return () => { cancelled = true }
   }, [folderPath, rootFolder])
 
@@ -1355,11 +1373,15 @@ export function PackInfoEditor({
   }
 
   const buildExportGallery = async (): Promise<{ label: string | null; images: string[] }[] | undefined> => {
-    if (!pack.exportIncludeGallery) return undefined
-    const groups: { label: string | null; paths: string[] }[] = [
-      { label: null, paths: folderImages.own },
-      ...folderImages.inherited.map((g) => ({ label: g.folderName, paths: g.paths })),
-    ]
+    const groups: { label: string | null; paths: string[] }[] = []
+    if (pack.exportIncludeGallery) {
+      groups.push({ label: null, paths: folderImages.own })
+      groups.push(...folderImages.inherited.map((g) => ({ label: g.folderName, paths: g.paths })))
+    }
+    if (pack.exportIncludeChildGallery) {
+      groups.push(...folderImages.children.map((g) => ({ label: g.folderName, paths: g.paths })))
+    }
+    if (groups.length === 0) return undefined
     const result: { label: string | null; images: string[] }[] = []
     for (const group of groups) {
       const paths = group.paths.filter((p) => !pack.exportExcludedGalleryImages.includes(p))
@@ -1620,6 +1642,113 @@ export function PackInfoEditor({
   const releasedOnTime = !!pack.liveDate && !!pack.targetDate && pack.liveDate <= pack.targetDate
   const isPositiveStatus = !!status && (/^saved$/i.test(status) || /^synced\b/i.test(status))
 
+  // Rig photos export chooser — rendered in the header next to the PDF export controls.
+  const galleryChooser = (() => {
+    const parentGroups = [
+      { label: null as string | null, paths: folderImages.own, child: false },
+      ...folderImages.inherited.map((g) => ({ label: g.folderName as string | null, paths: g.paths, child: false })),
+    ].filter((g) => g.paths.length > 0)
+    const childGroups = folderImages.children
+      .filter((g) => g.paths.length > 0)
+      .map((g) => ({ label: g.folderName as string | null, paths: g.paths, child: true }))
+    const parentCount = parentGroups.reduce((n, g) => n + g.paths.length, 0)
+    const childCount = childGroups.reduce((n, g) => n + g.paths.length, 0)
+    if (parentCount === 0 && childCount === 0) return null
+
+    const allGroups = [...parentGroups, ...childGroups]
+    const allPaths = allGroups.flatMap((g) => g.paths)
+    const totalCount = parentCount + childCount
+    const includedCount = allPaths.filter((p) => !pack.exportExcludedGalleryImages.includes(p)).length
+
+    const toggle = (label: string, count: number, checked: boolean, onToggle: () => void) => (
+      <label className="flex items-center gap-1.5 cursor-pointer select-none" title={`Include ${label.toLowerCase()} in export`}>
+        <span className="text-xs text-gray-500 dark:text-gray-400">{label}</span>
+        <span className="text-gray-400 dark:text-gray-500 text-[10px]">({count})</span>
+        <div
+          onClick={onToggle}
+          className={`relative w-7 h-4 rounded-full transition-colors ${checked ? 'bg-orange-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+        >
+          <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${checked ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+        </div>
+      </label>
+    )
+
+    return (
+      <div className="relative flex items-center gap-2.5" ref={galleryRef}>
+        {parentCount > 0 && toggle('Rig photos', parentCount, pack.exportIncludeGallery, () => update('exportIncludeGallery', !pack.exportIncludeGallery))}
+        {childCount > 0 && toggle('Subfolders', childCount, pack.exportIncludeChildGallery, () => update('exportIncludeChildGallery', !pack.exportIncludeChildGallery))}
+        <button
+          onClick={() => setGalleryOpen((v) => !v)}
+          title="Choose which photos to include"
+          className="flex items-center gap-1 px-1.5 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:border-teal-500 dark:hover:border-teal-500 transition-colors"
+        >
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14M14 8h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+          <span className="text-gray-400 dark:text-gray-500 text-[10px]">{includedCount}/{totalCount}</span>
+          <svg className={`w-2.5 h-2.5 transition-transform ${galleryOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {galleryOpen && (
+          <div className="absolute top-full right-0 mt-1 z-30 w-72 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-gray-700">
+              <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">
+                {includedCount} of {totalCount} photos in export
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => update('exportExcludedGalleryImages', pack.exportExcludedGalleryImages.filter((p) => !allPaths.includes(p)))}
+                  className="text-[10px] text-teal-600 dark:text-teal-400 hover:underline"
+                >All</button>
+                <button
+                  onClick={() => update('exportExcludedGalleryImages', [...new Set([...pack.exportExcludedGalleryImages, ...allPaths])])}
+                  className="text-[10px] text-gray-400 hover:underline"
+                >None</button>
+              </div>
+            </div>
+            <div className="overflow-y-auto max-h-72 py-1">
+              {allGroups.map((group) => (
+                <div key={(group.child ? 'child:' : 'parent:') + (group.label ?? '__own__')}>
+                  {group.label && (
+                    <div className="px-3 pt-2 pb-1 text-[10px] text-gray-400 dark:text-gray-500">
+                      {group.child ? 'Subfolder' : 'From'} {group.label}
+                    </div>
+                  )}
+                  <div className="grid grid-cols-4 gap-1.5 px-3 py-1">
+                    {group.paths.map((p) => {
+                      const excluded = pack.exportExcludedGalleryImages.includes(p)
+                      return (
+                        <label key={p} className="relative cursor-pointer select-none group">
+                          <img
+                            src={`local-file://${p.startsWith('/') ? '' : '/'}${p}`}
+                            alt=""
+                            className={`w-full aspect-square object-cover rounded ${excluded ? 'opacity-30' : ''}`}
+                          />
+                          <input
+                            type="checkbox"
+                            checked={!excluded}
+                            onChange={(e) => {
+                              const next = e.target.checked
+                                ? pack.exportExcludedGalleryImages.filter((x) => x !== p)
+                                : [...pack.exportExcludedGalleryImages, p]
+                              update('exportExcludedGalleryImages', next)
+                            }}
+                            className="absolute top-1 right-1 w-3 h-3 rounded accent-teal-600"
+                          />
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  })()
+
   return (
     <div className="h-full flex flex-col overflow-hidden" onContextMenu={showNativeTextContextMenu}>
         {/* Header */}
@@ -1636,6 +1765,7 @@ export function PackInfoEditor({
           )}
             {mode === 'info' && (
               <>
+                {galleryChooser}
                 <label className="flex items-center gap-1.5 cursor-pointer select-none" title="Dark mode export">
                   <span className="text-xs text-gray-500 dark:text-gray-400">Dark</span>
                   <div
@@ -2221,92 +2351,6 @@ export function PackInfoEditor({
             </div>
           )}
         </div>
-        {/* Rig photos gallery chooser */}
-        {(folderImages.own.length > 0 || folderImages.inherited.some((g) => g.paths.length > 0)) && (() => {
-          const allImages: { label: string | null; paths: string[] }[] = [
-            { label: null, paths: folderImages.own },
-            ...folderImages.inherited.map((g) => ({ label: g.folderName, paths: g.paths })),
-          ]
-          const totalCount = allImages.reduce((n, g) => n + g.paths.length, 0)
-          const includedCount = totalCount - pack.exportExcludedGalleryImages.length
-          return (
-            <div className="relative" ref={galleryRef}>
-              <button
-                onClick={() => setGalleryOpen((v) => !v)}
-                className="flex items-center gap-1.5 px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:border-teal-500 dark:hover:border-teal-500 transition-colors"
-              >
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14M14 8h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-                <input
-                  type="checkbox"
-                  checked={pack.exportIncludeGallery}
-                  onChange={(e) => update('exportIncludeGallery', e.target.checked)}
-                  onClick={(e) => e.stopPropagation()}
-                  className="w-3 h-3 rounded accent-teal-600"
-                />
-                Rig photos
-                <span className="text-gray-400 dark:text-gray-500 text-[10px]">({totalCount})</span>
-                <svg className={`w-2.5 h-2.5 transition-transform ${galleryOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-              {galleryOpen && (
-                <div className="absolute top-full left-0 mt-1 z-30 w-72 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl">
-                  <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-gray-700">
-                    <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">
-                      {includedCount} of {totalCount} photos in export
-                    </span>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => update('exportExcludedGalleryImages', [])}
-                        className="text-[10px] text-teal-600 dark:text-teal-400 hover:underline"
-                      >All</button>
-                      <button
-                        onClick={() => update('exportExcludedGalleryImages', allImages.flatMap((g) => g.paths))}
-                        className="text-[10px] text-gray-400 hover:underline"
-                      >None</button>
-                    </div>
-                  </div>
-                  <div className="overflow-y-auto max-h-72 py-1">
-                    {allImages.filter((g) => g.paths.length > 0).map((group) => (
-                      <div key={group.label ?? '__own__'}>
-                        {group.label && (
-                          <div className="px-3 pt-2 pb-1 text-[10px] text-gray-400 dark:text-gray-500">From {group.label}</div>
-                        )}
-                        <div className="grid grid-cols-4 gap-1.5 px-3 py-1">
-                          {group.paths.map((p) => {
-                            const excluded = pack.exportExcludedGalleryImages.includes(p)
-                            return (
-                              <label key={p} className="relative cursor-pointer select-none group">
-                                <img
-                                  src={`local-file://${p.startsWith('/') ? '' : '/'}${p}`}
-                                  alt=""
-                                  className={`w-full aspect-square object-cover rounded ${excluded ? 'opacity-30' : ''}`}
-                                />
-                                <input
-                                  type="checkbox"
-                                  checked={!excluded}
-                                  onChange={(e) => {
-                                    const next = e.target.checked
-                                      ? pack.exportExcludedGalleryImages.filter((x) => x !== p)
-                                      : [...pack.exportExcludedGalleryImages, p]
-                                    update('exportExcludedGalleryImages', next)
-                                  }}
-                                  className="absolute top-1 right-1 w-3 h-3 rounded accent-teal-600"
-                                />
-                              </label>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )
-        })()}
         </div>{/* end filter+columns row */}
 
         <div>

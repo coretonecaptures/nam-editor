@@ -6313,6 +6313,87 @@ app.whenReady().then(async () => {
     }
   })
 
+  // IPC: Recursively scan a folder's descendant subfolders for rig photos (Pack Info export).
+  // Skips the folder's own top-level images (those come from folder:scanImages), ampcover art,
+  // very small files (thumbnails/icons), and content-duplicate images. Returns images grouped
+  // by their relative subfolder path so the export picker can label each group.
+  ipcMain.handle('folder:scanChildImages', async (_event, folderPath: string) => {
+    try {
+      const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif'])
+      const MIN_BYTES = 15 * 1024 // skip tiny thumbnails/icons
+      const AMPCOVER = /^ampcover\.(png|jpe?g|webp|gif|avif)$/i
+      const norm = (p: string) => p.replace(/\\/g, '/')
+      const rootNorm = norm(folderPath)
+      const isImage = (name: string) => IMAGE_EXTS.has(extname(name).toLowerCase()) && !AMPCOVER.test(name)
+
+      const seenHashes = new Set<string>()
+      const hashFile = async (p: string): Promise<string | null> => {
+        try {
+          return crypto.createHash('md5').update(await fs.promises.readFile(p)).digest('hex')
+        } catch {
+          return null
+        }
+      }
+
+      // Seed the dedup set with the pack folder's OWN images (not returned here — those come
+      // from folder:scanImages) so a copy of a top-level photo inside a subfolder is dropped.
+      try {
+        const ownEntries = await fs.promises.readdir(folderPath, { withFileTypes: true })
+        for (const e of ownEntries) {
+          if (e.isFile() && isImage(e.name)) {
+            const h = await hashFile(join(folderPath, e.name))
+            if (h) seenHashes.add(h)
+          }
+        }
+      } catch {
+        /* ignore own-level read failure */
+      }
+
+      const groupsMap = new Map<string, string[]>() // relative subfolder path -> image paths
+      const walk = async (dir: string): Promise<void> => {
+        const entries = await fs.promises.readdir(dir, { withFileTypes: true }).catch(() => [])
+        for (const e of entries) {
+          const full = join(dir, e.name)
+          if (e.isDirectory()) {
+            if (e.name.startsWith('.') || e.name === '_duplicates') continue
+            await walk(full)
+            continue
+          }
+          if (!e.isFile() || !isImage(e.name)) continue
+          let size = 0
+          try {
+            size = (await fs.promises.stat(full)).size
+          } catch {
+            continue
+          }
+          if (size < MIN_BYTES) continue
+          const h = await hashFile(full)
+          if (!h || seenHashes.has(h)) continue
+          seenHashes.add(h)
+          const relFolder = norm(dir).slice(rootNorm.length).replace(/^\/+/, '')
+          const arr = groupsMap.get(relFolder) ?? []
+          arr.push(norm(full))
+          groupsMap.set(relFolder, arr)
+        }
+      }
+
+      const topEntries = await fs.promises.readdir(folderPath, { withFileTypes: true })
+      for (const e of topEntries) {
+        if (e.isDirectory() && !e.name.startsWith('.') && e.name !== '_duplicates') {
+          await walk(join(folderPath, e.name))
+        }
+      }
+
+      const groups = [...groupsMap.entries()]
+        .map(([folderName, paths]) => ({ folderName, paths: paths.sort() }))
+        .filter((g) => g.paths.length > 0)
+        .sort((a, b) => a.folderName.localeCompare(b.folderName))
+      return { success: true, groups }
+    } catch {
+      return { success: false, groups: [] as { folderName: string; paths: string[] }[] }
+    }
+  })
+
   // IPC: Scan a folder and return a tree structure for the Librarian
   // hiddenFolders: comma-separated folder names to skip entirely (case-insensitive)
   ipcMain.handle('folder:scanTree', async (_event, folderPath: string, hiddenFolders?: string) => {

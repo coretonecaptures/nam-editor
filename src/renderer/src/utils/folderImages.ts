@@ -1,6 +1,9 @@
 export interface FolderImagesData {
   own: string[]
   inherited: { folderName: string; paths: string[] }[]
+  // Images collected from descendant subfolders (populated separately via
+  // window.api.scanChildImages; scanOwnAndInheritedImages leaves this empty).
+  children: { folderName: string; paths: string[] }[]
 }
 
 export const AMPCOVER_PATTERN = /^ampcover\.(png|jpe?g|webp|gif|avif)$/i
@@ -50,5 +53,5 @@ export async function scanOwnAndInheritedImages(
     }
   }
 
-  return { own, inherited }
+  return { own, inherited, children: [] }
 }

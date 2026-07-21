@@ -114,6 +114,7 @@ const api = {
   showMessageBox: (options: { type?: 'none' | 'info' | 'error' | 'question' | 'warning'; title?: string; message: string; detail?: string; buttons: string[]; defaultId?: number; cancelId?: number; noLink?: boolean }): Promise<{ response: number }> =>
     ipcRenderer.invoke('app:showMessageBox', options),
   scanImages: (folderPath: string): Promise<{ success: boolean; images: string[] }> => ipcRenderer.invoke('folder:scanImages', folderPath),
+  scanChildImages: (folderPath: string): Promise<{ success: boolean; groups: { folderName: string; paths: string[] }[] }> => ipcRenderer.invoke('folder:scanChildImages', folderPath),
   detectNamPlayer: (): Promise<boolean> => ipcRenderer.invoke('app:detectNamPlayer'),
   detectNamVersion: (pythonPath: string): Promise<{ version: 'a1' | 'a2' | 'unknown' }> => ipcRenderer.invoke('trainer:detectNamVersion', pythonPath),
   browseExecutable: (): Promise<string | null> => ipcRenderer.invoke('dialog:browseExecutable'),
