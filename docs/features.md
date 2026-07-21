@@ -176,8 +176,26 @@ Each folder can have a `nam-pack.json` Pack Info document with:
 - captures table
 - export column choices
 - color/accent styling
+- rig photos gallery
 
-Pack Info can export to styled HTML for printing to PDF.
+Pack Info can export to styled HTML for printing to PDF, in a Simple or Advanced layout.
+
+### Rig Photos in exports
+
+Both PDF exports can include a framed photo gallery page (or pages, if there are many
+photos) at the end of the document, drawing on the same images already surfaced by the
+in-app gallery:
+
+- **Rig photos** — the export folder's own images plus any inherited from parent/ancestor
+  folders (so exporting a DI-only subfolder can still pull in amp/cab/mic photos kept at the
+  parent bundle/session folder).
+- **Subfolders** — a recursive scan of descendant subfolders (e.g. per-capture or per-version
+  folders), deduplicated by content and filtered to skip thumbnails/icons.
+
+Each source is toggled independently, and a picker lets you include or exclude individual
+photos before exporting. `ampcover.*` is always excluded (it's reserved for pack cover art).
+Photos are laid out in a centered, evenly sized grid with a thin accent-colored frame around
+each one, matching the pack's accent color.
 
 Related tools:
 - Read Me tab
@@ -687,6 +705,7 @@ NAM Lab supports:
 - lightbox viewing
 - OS image viewer launch
 - metadata cover images through `ampcover.*`
+- including rig photos as a framed gallery page in Pack Info PDF exports (see the Pack Info section above)
 
 `ampcover.*` is intentionally excluded from the gallery view so it can act as pack cover art instead.
 
