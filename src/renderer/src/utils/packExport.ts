@@ -40,9 +40,6 @@ export function chunkGalleryPages(groups: PackGalleryGroup[], perPage: number): 
   return pages
 }
 
-function galleryGridCols(count: number): string {
-  return count >= 5 ? '3' : count === 1 ? '1' : '2'
-}
 
 const COLOR_TOKENS: Record<string, { light: string; dark: string }> = {
   orange:  { light: '#e07020', dark: '#f97316' },
@@ -161,13 +158,12 @@ export function generatePackHtml(
 
   const galleryPages = chunkGalleryPages(gallery ?? [], 6)
   const galleryHtml = galleryPages.map((page, idx) => {
-    const cols = galleryGridCols(page.images.length)
-    const frames = page.images.map((src) => `<div class="gallery-frame"><img src="${src}" alt="" /></div>`).join('')
+    const frames = page.images.map((src) => `<div class="gallery-frame"><div class="gallery-mat"><img src="${src}" alt="" /></div></div>`).join('')
     const captionText = page.label ? `From ${esc(page.label)}${page.continued ? ' (cont.)' : ''}` : ''
     return `<div class="section gallery-page break">
       ${idx === 0 ? '<div class="section-title">Rig Photos</div>' : ''}
       ${captionText ? `<div class="gallery-caption">${captionText}</div>` : ''}
-      <div class="gallery-grid" style="grid-template-columns: repeat(${cols}, 1fr)">${frames}</div>
+      <div class="gallery-grid">${frames}</div>
     </div>`
   }).join('')
 
@@ -234,9 +230,10 @@ export function generatePackHtml(
   .footer { margin-top: 24px; padding-top: 8px; border-top: 1px solid ${t.footerBorder}; font-size: 9.5px; color: ${t.footerColor}; }
   .gallery-page.break { break-before: page; }
   .gallery-caption { font-size: 9.5px; color: ${t.footerColor}; text-align: center; margin: 0 0 8px; }
-  .gallery-grid { display: grid; gap: 8px; }
-  .gallery-frame { overflow: hidden; border-radius: 6px; border: 1px solid ${t.sectionBorder}; break-inside: avoid; page-break-inside: avoid; }
-  .gallery-frame img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; }
+  .gallery-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 190px)); gap: 14px; justify-content: center; }
+  .gallery-frame { break-inside: avoid; page-break-inside: avoid; }
+  .gallery-mat { padding: 4px; border-radius: 6px; border: 1.5px solid ${dark ? darkAccentColor : '#c46010'}; overflow: hidden; }
+  .gallery-mat img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 3px; }
   @page { margin: 0; }
   @media print {
     html, body { background: ${t.bodyBg}; }

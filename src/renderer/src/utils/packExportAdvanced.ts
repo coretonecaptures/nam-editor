@@ -121,10 +121,6 @@ function deriveStats(captures: NamFile[]) {
   return { presets, epochValue, avgEsr, refLevel, refGear, toneTypes, channels }
 }
 
-function galleryGridCols(count: number): number {
-  return count >= 5 ? 3 : count === 1 ? 1 : 2
-}
-
 export function generatePackHtmlAdvanced(
   info: PackInfo,
   folderPath: string,
@@ -256,13 +252,12 @@ export function generatePackHtmlAdvanced(
   // ── Rig photos gallery ──
   const galleryPages = chunkGalleryPages(gallery ?? [], 6)
   const galleryHtml = galleryPages.map((page, idx) => {
-    const cols = galleryGridCols(page.images.length)
-    const frames = page.images.map((src) => `<div class="gallery-frame"><img src="${src}" alt="" /></div>`).join('')
+    const frames = page.images.map((src) => `<div class="gallery-frame"><div class="gallery-mat"><img src="${src}" alt="" /></div></div>`).join('')
     const captionText = page.label ? `From ${esc(page.label)}${page.continued ? ' (cont.)' : ''}` : ''
     return `<div class="section break">
       ${idx === 0 ? `<div class="section-head"><div><h2><span class="section-num">&middot;</span> Rig Photos</h2></div><div class="micro">${gallery?.reduce((n, g) => n + g.images.length, 0) ?? 0} photos</div></div>` : ''}
       ${captionText ? `<div class="gallery-caption">${captionText}</div>` : ''}
-      <div class="gallery-grid" style="grid-template-columns: repeat(${cols}, 1fr)">${frames}</div>
+      <div class="gallery-grid">${frames}</div>
     </div>`
   }).join('')
 
@@ -375,9 +370,10 @@ export function generatePackHtmlAdvanced(
 
   /* Rig photos gallery */
   .gallery-caption { font-family: "IBM Plex Mono", monospace; font-size: 8pt; letter-spacing: 0.18em; text-transform: uppercase; color: ${t.dim}; margin: 10pt 0 8pt; }
-  .gallery-grid { display: grid; gap: 10pt; margin-top: 6pt; }
-  .gallery-frame { overflow: hidden; border: 1px solid ${t.rule}; break-inside: avoid; page-break-inside: avoid; }
-  .gallery-frame img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; }
+  .gallery-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150pt, 190pt)); gap: 14pt; justify-content: center; margin-top: 6pt; }
+  .gallery-frame { break-inside: avoid; page-break-inside: avoid; }
+  .gallery-mat { padding: 4pt; border: 1.5pt solid ${t.accent}; overflow: hidden; }
+  .gallery-mat img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; }
 
   /* Footer colophon (last page only &mdash; distinct from @page footer chrome) */
   .colophon { margin-top: 24pt; padding-top: 14pt; border-top: 1px solid ${t.rule}; display: flex; justify-content: space-between; align-items: flex-end; gap: 18pt; break-inside: avoid; }
