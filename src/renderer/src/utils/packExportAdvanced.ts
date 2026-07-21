@@ -370,9 +370,9 @@ export function generatePackHtmlAdvanced(
 
   /* Rig photos gallery */
   .gallery-caption { font-family: "IBM Plex Mono", monospace; font-size: 8pt; letter-spacing: 0.18em; text-transform: uppercase; color: ${t.dim}; margin: 10pt 0 8pt; }
-  .gallery-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150pt, 190pt)); gap: 14pt; justify-content: center; margin-top: 6pt; }
+  .gallery-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260pt, 32%)); gap: 22pt; justify-content: center; margin-top: 6pt; }
   .gallery-frame { break-inside: avoid; page-break-inside: avoid; }
-  .gallery-mat { padding: 4pt; border: 1.5pt solid ${t.accent}; overflow: hidden; }
+  .gallery-mat { padding: 7pt; border: 2.5pt solid ${t.accent}; overflow: hidden; }
   .gallery-mat img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; }
 
   /* Footer colophon (last page only &mdash; distinct from @page footer chrome) */

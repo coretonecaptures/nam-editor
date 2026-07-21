@@ -230,10 +230,10 @@ export function generatePackHtml(
   .footer { margin-top: 24px; padding-top: 8px; border-top: 1px solid ${t.footerBorder}; font-size: 9.5px; color: ${t.footerColor}; }
   .gallery-page.break { break-before: page; }
   .gallery-caption { font-size: 9.5px; color: ${t.footerColor}; text-align: center; margin: 0 0 8px; }
-  .gallery-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 190px)); gap: 14px; justify-content: center; }
+  .gallery-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 32%)); gap: 22px; justify-content: center; }
   .gallery-frame { break-inside: avoid; page-break-inside: avoid; }
-  .gallery-mat { padding: 4px; border-radius: 6px; border: 1.5px solid ${dark ? darkAccentColor : '#c46010'}; overflow: hidden; }
-  .gallery-mat img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 3px; }
+  .gallery-mat { padding: 7px; border-radius: 8px; border: 2.5px solid ${dark ? darkAccentColor : '#c46010'}; overflow: hidden; }
+  .gallery-mat img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 4px; }
   @page { margin: 0; }
   @media print {
     html, body { background: ${t.bodyBg}; }
