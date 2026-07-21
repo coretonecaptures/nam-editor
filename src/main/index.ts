@@ -4120,6 +4120,16 @@ function resetTrainingWatchProfiles(profiles: TrainingProfile[], retainGraphs: b
         if (!nextName || !/\.wav$/i.test(nextName)) return
         scheduleTrainingWatcherFile(profile, join(sourceFolder, nextName))
       })
+      // fs.watch is an EventEmitter — an 'error' event with no listener throws and crashes the
+      // whole process (not just this watcher), bypassing process.on('uncaughtException') in some
+      // cases. Real risk here: these folders are frequently on mapped network drives, and
+      // fs.watch on Windows is known to throw 'error' when a network path briefly drops.
+      watcher.on('error', (error) => {
+        log(`training watcher runtime error "${profile.name}" source="${sourceFolder}": ${String(error)}`)
+        trainingWatchers.delete(profile.id)
+        trainingWatcherRunning.delete(profile.id)
+        emitTrainerState()
+      })
       trainingWatchers.set(profile.id, watcher)
       trainingWatcherRunning.add(profile.id)
       if ((profile.initialScanMode ?? 'process-existing') === 'process-existing') {
@@ -4549,6 +4559,14 @@ function resetFolderWatchRules(rules: FolderWatchRule[]): void {
           void copyWatchedFile({ ...rule, sourceFolder, destFolder }, fullPath)
         }, 1200)
         pendingTimers.set(lowerName, timer)
+      })
+      // fs.watch is an EventEmitter — an 'error' event with no listener throws and crashes the
+      // whole process. This watcher runs once per active rule (up to 10+ concurrently here), all
+      // frequently pointed at mapped network drives (F:\, Y:\), which is exactly where fs.watch
+      // on Windows is known to emit 'error' when a network path drops or is slow to respond.
+      watcher.on('error', (error) => {
+        log(`folderWatch runtime error source="${sourceFolder}" dest="${destFolder}": ${String(error)}`)
+        folderWatchers.delete(`${sourceFolder}=>${destFolder}`)
       })
       folderWatchers.set(`${sourceFolder}=>${destFolder}`, watcher)
       void syncExistingWatchedFiles({ ...rule, sourceFolder, destFolder })
@@ -6516,6 +6534,16 @@ app.whenReady().then(async () => {
         }
         debounceTimer = setTimeout(fireOrReschedule, 1500)
       })
+      // fs.watch is an EventEmitter — an 'error' event with no listener throws and crashes the
+      // whole process, not just this watcher. This one runs recursive:true against the library
+      // root folder (often a mapped network drive here), which is exactly the combination
+      // Node's fs.watch is least stable with on Windows (ReadDirectoryChangesW over SMB).
+      folderWatcher.on('error', (error) => {
+        log(`folder:watch runtime error folderPath="${folderPath}": ${String(error)}`)
+        if (debounceTimer) clearTimeout(debounceTimer)
+        folderWatcher = null
+      })
+      log(`folder:watch active folderPath="${folderPath}"`)
     } catch (err) {
       log(`folder:watch error: ${String(err)}`)
     }
