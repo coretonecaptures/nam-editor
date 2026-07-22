@@ -1,4 +1,4 @@
-import { useState, useRef, useLayoutEffect, type MouseEvent } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, type MouseEvent } from 'react'
 
 // Survives component remounts (caused by key={filePath} in App.tsx)
 let sharedScrollTop = 0
@@ -172,12 +172,43 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
   const [isEditingName, setIsEditingName] = useState(false)
   const [nameEditValue, setNameEditValue] = useState('')
   const [showA2SubmodelMetadata, setShowA2SubmodelMetadata] = useState(false)
+  const [tone3000Open, setTone3000Open] = useState(false)
+  const [tone3000Status, setTone3000Status] = useState<string | null>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const tone3000Ref = useRef<HTMLDivElement>(null)
 
   useLayoutEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = sharedScrollTop
   }, [file.filePath])
+
+  // Close the "Share to Tone3000" popover on outside click
+  useEffect(() => {
+    if (!tone3000Open) return
+    const handler = (e: MouseEvent) => {
+      if (tone3000Ref.current && !tone3000Ref.current.contains(e.target as Node)) {
+        setTone3000Open(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [tone3000Open])
+
+  const copyTone3000Info = async () => {
+    const lines = [
+      m.gear_make ? `Make: ${m.gear_make}` : null,
+      m.gear_model ? `Model: ${m.gear_model}` : null,
+      m.nl_comments ? `Description: ${m.nl_comments}` : null,
+    ].filter((l): l is string => !!l)
+    const text = lines.length ? lines.join('\n') : `${m.name || file.fileName}`
+    try {
+      await navigator.clipboard.writeText(text)
+      setTone3000Status('Copied')
+    } catch {
+      setTone3000Status('Copy failed')
+    }
+    setTimeout(() => setTone3000Status(null), 1500)
+  }
 
   const update = (key: keyof NamMetadata, value: unknown) => {
     onChange({ ...m, [key]: value === '' ? null : value })
@@ -352,6 +383,43 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
             </svg>
             Revert
           </button>
+          <div className="relative" ref={tone3000Ref}>
+            <button
+              onClick={() => setTone3000Open((v) => !v)}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap"
+              title="Share this capture to Tone3000"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342a4 4 0 100-2.684m0 2.684a4 4 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a4 4 0 105.36-1.11 4 4 0 00-5.36 1.11zm0 12.632a4 4 0 105.36 1.11 4 4 0 00-5.36-1.11z" />
+              </svg>
+              Share to Tone3000
+            </button>
+            {tone3000Open && (
+              <div className="absolute top-full left-0 mt-1 z-30 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl py-1">
+                <div className="px-3 py-1.5 text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">
+                  Tone3000 doesn't have an upload API &mdash; these just speed up the manual form
+                </div>
+                <button
+                  onClick={() => { onRevealInFinder(); setTone3000Open(false) }}
+                  className="w-full text-left px-3 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50"
+                >
+                  Reveal .nam file (for drag &amp; drop)
+                </button>
+                <button
+                  onClick={copyTone3000Info}
+                  className="w-full text-left px-3 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50"
+                >
+                  {tone3000Status ?? 'Copy make / model / description'}
+                </button>
+                <button
+                  onClick={() => { void window.api.openExternal('https://www.tone3000.com/upload'); setTone3000Open(false) }}
+                  className="w-full text-left px-3 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50"
+                >
+                  Open Tone3000 Upload page
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
