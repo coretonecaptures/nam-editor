@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { NamFile, GEAR_TYPES, TONE_TYPES } from '../types/nam'
 import { FolderNode } from '../types/librarian'
 
@@ -558,6 +558,38 @@ function TreeNode({
 
 interface ContextMenuState { x: number; y: number }
 
+const MENU_COLLAPSED_SECTIONS_KEY = 'nam-tree-menu-collapsed-sections'
+
+function loadCollapsedMenuSections(): Set<string> {
+  try {
+    const raw = localStorage.getItem(MENU_COLLAPSED_SECTIONS_KEY)
+    if (raw) return new Set(JSON.parse(raw))
+  } catch { /* ignore */ }
+  return new Set(['folder-more', 'metadata', 'maintenance', 'organize'])
+}
+
+// Collapsible context-menu section: click the header to expand/collapse. Collapse state is
+// shared (via localStorage) across every folder's menu so it doesn't reset per right-click.
+function MenuSection({
+  id, label, collapsed, onToggle, children,
+}: { id: string; label: string; collapsed: boolean; onToggle: (id: string) => void; children: ReactNode }) {
+  return (
+    <>
+      <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
+      <button
+        className="w-full flex items-center justify-between px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+        onClick={(e) => { e.stopPropagation(); onToggle(id) }}
+      >
+        {label}
+        <svg className={`w-2.5 h-2.5 transition-transform ${collapsed ? '' : 'rotate-180'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {!collapsed && children}
+    </>
+  )
+}
+
 function FolderRow({
   label, folderPath, isRoot, isSelected, totalCount, dirtyCount, depth,
   hasChildren, expanded, onToggleExpand, onClick, onSave, onRevert,
@@ -627,6 +659,16 @@ function FolderRow({
   const [isCreating, setIsCreating] = useState(false)
   const [createValue, setCreateValue] = useState('')
   const createInputRef = useRef<HTMLInputElement>(null)
+  const [collapsedMenuSections, setCollapsedMenuSections] = useState<Set<string>>(loadCollapsedMenuSections)
+  const toggleMenuSection = (id: string) => {
+    setCollapsedMenuSections((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      try { localStorage.setItem(MENU_COLLAPSED_SECTIONS_KEY, JSON.stringify([...next])) } catch { /* ignore */ }
+      return next
+    })
+  }
 
   useEffect(() => {
     if (!menu) return
@@ -883,41 +925,18 @@ function FolderRow({
             /* Full menu for single folder */
             <>
               <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Folder</div>
-              {onCleanThisFolder && (
-                <button
-                  className="w-full text-left px-3 py-1.5 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-600/40 transition-colors"
-                  onClick={() => { setMenu(null); onCleanThisFolder() }}
-                >
-                  Clean this folder...
-                </button>
-              )}
-              <button
-                className={`w-full text-left px-3 py-1.5 transition-colors ${dirtyCount > 0 ? 'text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40' : 'text-gray-400 dark:text-gray-600 cursor-default'}`}
-                disabled={dirtyCount === 0}
-                onClick={() => { setMenu(null); onSave() }}
-              >
-                Save all in folder
-                {dirtyCount > 0 && <span className="ml-2 text-amber-500">{dirtyCount}</span>}
-              </button>
-              <button
-                className={`w-full text-left px-3 py-1.5 transition-colors ${dirtyCount > 0 ? 'text-gray-800 dark:text-gray-200 hover:bg-red-900/40' : 'text-gray-400 dark:text-gray-600 cursor-default'}`}
-                disabled={dirtyCount === 0}
-                onClick={() => { setMenu(null); onRevert() }}
-              >
-                Revert all in folder
-              </button>
               <button
                 className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
-                onClick={() => { setMenu(null); onBatchEdit() }}
+                onClick={() => { setMenu(null); onReveal() }}
               >
-                Batch edit...
+                Reveal in Explorer
               </button>
-              {onSelectAll && (
+              {onImportMetadata && (
                 <button
-                  className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
-                  onClick={() => { setMenu(null); onSelectAll() }}
+                  className="w-full text-left px-3 py-1.5 text-teal-700 dark:text-teal-400 hover:bg-indigo-600/40 transition-colors"
+                  onClick={() => { setMenu(null); onImportMetadata() }}
                 >
-                  Select all in folder
+                  Import metadata from spreadsheet...
                 </button>
               )}
               {onCreateFolder && (
@@ -936,48 +955,72 @@ function FolderRow({
                   Rename folder...
                 </button>
               )}
-              {!isRoot && onDeleteEmptyFolder && (
-                <button
-                  className={`w-full text-left px-3 py-1.5 transition-colors ${canDeleteEmptyFolder ? 'text-red-600 dark:text-red-400 hover:bg-red-600/20' : 'text-gray-400 dark:text-gray-600 cursor-default'}`}
-                  disabled={!canDeleteEmptyFolder}
-                  onClick={() => { setMenu(null); void onDeleteEmptyFolder() }}
-                >
-                  Delete empty folder tree...
-                </button>
-              )}
               <button
-                className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
-                onClick={() => { setMenu(null); onReveal() }}
+                className={`w-full text-left px-3 py-1.5 transition-colors ${dirtyCount > 0 ? 'text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40' : 'text-gray-400 dark:text-gray-600 cursor-default'}`}
+                disabled={dirtyCount === 0}
+                onClick={() => { setMenu(null); onSave() }}
               >
-                Reveal in Explorer
+                Save all in folder
+                {dirtyCount > 0 && <span className="ml-2 text-amber-500">{dirtyCount}</span>}
               </button>
-              {onBrowseCards && (
-                <button
-                  className="w-full text-left px-3 py-1.5 text-teal-700 dark:text-teal-400 hover:bg-indigo-600/40 transition-colors"
-                  onClick={() => { setMenu(null); onBrowseCards() }}
-                >
-                  Browse cards
-                </button>
-              )}
 
-              {(onGenerateTemplate || onImportMetadata || onSuggestMetadata || onCopyMetadataFromFolder || onEditSuggestRules || onCopySuggestRules || onPasteSuggestRules) && (
-                <>
-                  <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
-                  <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Metadata</div>
+              <MenuSection id="folder-more" label="More folder actions" collapsed={collapsedMenuSections.has('folder-more')} onToggle={toggleMenuSection}>
+                {onCleanThisFolder && (
+                  <button
+                    className="w-full text-left px-3 py-1.5 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-600/40 transition-colors"
+                    onClick={() => { setMenu(null); onCleanThisFolder() }}
+                  >
+                    Clean this folder...
+                  </button>
+                )}
+                <button
+                  className={`w-full text-left px-3 py-1.5 transition-colors ${dirtyCount > 0 ? 'text-gray-800 dark:text-gray-200 hover:bg-red-900/40' : 'text-gray-400 dark:text-gray-600 cursor-default'}`}
+                  disabled={dirtyCount === 0}
+                  onClick={() => { setMenu(null); onRevert() }}
+                >
+                  Revert all in folder
+                </button>
+                <button
+                  className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
+                  onClick={() => { setMenu(null); onBatchEdit() }}
+                >
+                  Batch edit...
+                </button>
+                {onSelectAll && (
+                  <button
+                    className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
+                    onClick={() => { setMenu(null); onSelectAll() }}
+                  >
+                    Select all in folder
+                  </button>
+                )}
+                {!isRoot && onDeleteEmptyFolder && (
+                  <button
+                    className={`w-full text-left px-3 py-1.5 transition-colors ${canDeleteEmptyFolder ? 'text-red-600 dark:text-red-400 hover:bg-red-600/20' : 'text-gray-400 dark:text-gray-600 cursor-default'}`}
+                    disabled={!canDeleteEmptyFolder}
+                    onClick={() => { setMenu(null); void onDeleteEmptyFolder() }}
+                  >
+                    Delete empty folder tree...
+                  </button>
+                )}
+                {onBrowseCards && (
+                  <button
+                    className="w-full text-left px-3 py-1.5 text-teal-700 dark:text-teal-400 hover:bg-indigo-600/40 transition-colors"
+                    onClick={() => { setMenu(null); onBrowseCards() }}
+                  >
+                    Browse cards
+                  </button>
+                )}
+              </MenuSection>
+
+              {(onGenerateTemplate || onSuggestMetadata || onCopyMetadataFromFolder || onEditSuggestRules || onCopySuggestRules || onPasteSuggestRules) && (
+                <MenuSection id="metadata" label="Metadata" collapsed={collapsedMenuSections.has('metadata')} onToggle={toggleMenuSection}>
                   {onGenerateTemplate && (
                     <button
                       className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
                       onClick={() => { setMenu(null); onGenerateTemplate() }}
                     >
                       Generate import template...
-                    </button>
-                  )}
-                  {onImportMetadata && (
-                    <button
-                      className="w-full text-left px-3 py-1.5 text-teal-700 dark:text-teal-400 hover:bg-indigo-600/40 transition-colors"
-                      onClick={() => { setMenu(null); onImportMetadata() }}
-                    >
-                      Import metadata from spreadsheet...
                     </button>
                   )}
                   {onCopyMetadataFromFolder && (
@@ -1021,13 +1064,11 @@ function FolderRow({
                       Paste folder suggestion rules
                     </button>
                   )}
-                </>
+                </MenuSection>
               )}
 
               {(onFindDuplicates || onCoverageReport || onSetWatchSource || onClearWatchSource) && (
-                <>
-                  <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
-                  <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Maintenance</div>
+                <MenuSection id="maintenance" label="Maintenance" collapsed={collapsedMenuSections.has('maintenance')} onToggle={toggleMenuSection}>
                   {onFindDuplicates && (
                     <button
                       className="w-full text-left px-3 py-1.5 text-gray-800 dark:text-gray-200 hover:bg-indigo-600/40 transition-colors"
@@ -1065,13 +1106,11 @@ function FolderRow({
                       Stop watching source
                     </button>
                   )}
-                </>
+                </MenuSection>
               )}
 
               {(onExportFolder || onCreateBundle || onDeleteBundle || onDeletePackInfo || (!isRoot && onSetFolderColor)) && (
-                <>
-                  <div className="my-1 border-t border-gray-300 dark:border-gray-700" />
-                  <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Organize / Export</div>
+                <MenuSection id="organize" label="Organize / Export" collapsed={collapsedMenuSections.has('organize')} onToggle={toggleMenuSection}>
                   {onExportFolder && (
                     <>
                       <button
@@ -1130,7 +1169,7 @@ function FolderRow({
                       Set folder color...
                     </button>
                   )}
-                </>
+                </MenuSection>
               )}
             </>
           )}
