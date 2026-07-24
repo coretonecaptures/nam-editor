@@ -4608,9 +4608,17 @@ log(`isDev: ${isDev}`)
 // ---- File metadata cache ----
 // Persists parsed .nam metadata keyed by file path so reopening the same
 // folder only IPC-reads files whose mtime or size changed since last open.
-interface CacheEntry { mtimeMs: number; size: number; data: unknown }
+// `atime` is a best-effort last-access timestamp used only for LRU eviction.
+interface CacheEntry { mtimeMs: number; size: number; atime?: number; data: unknown }
 let _fileCache: Record<string, CacheEntry> | null = null
 let _fileCacheLoadPromise: Promise<Record<string, CacheEntry>> | null = null
+
+// Upper bound on cached entries. The folder-scan prune only removes files that vanish from a
+// folder still being actively scanned; entries for files moved/deleted outside those folders
+// would otherwise accumulate forever (a real library here reached ~16k entries / 360 MB).
+// This LRU cap bounds total growth: once over the cap, the least-recently-accessed entries are
+// evicted. Set comfortably above a large real library so active files are never evicted.
+const FILE_CACHE_MAX_ENTRIES = 24000
 
 function fileCachePath(): string {
   return join(app.getPath('userData'), 'nam-file-cache.json')
@@ -4629,15 +4637,29 @@ function loadFileCache(): Promise<Record<string, CacheEntry>> {
   return _fileCacheLoadPromise
 }
 
+// Evict least-recently-accessed entries when over the cap. Legacy entries without an `atime`
+// sort as oldest (treated as 0), so they're reclaimed first once the cap is exceeded.
+function pruneFileCacheToCap(): void {
+  if (!_fileCache) return
+  const keys = Object.keys(_fileCache)
+  if (keys.length <= FILE_CACHE_MAX_ENTRIES) return
+  keys.sort((a, b) => (_fileCache![a].atime ?? 0) - (_fileCache![b].atime ?? 0))
+  const evictCount = keys.length - FILE_CACHE_MAX_ENTRIES
+  for (let i = 0; i < evictCount; i++) delete _fileCache[keys[i]]
+  log(`file cache pruned: evicted ${evictCount} least-recently-used entries (cap ${FILE_CACHE_MAX_ENTRIES})`)
+}
+
 // Debounced + async: callers (e.g. cache-pruning during folder scans, which can fire every
 // time a watcher moves/renames a file) may call this repeatedly in quick succession — coalesce
-// into one write every 2s rather than blocking the main thread on every call.
+// into one write every 2s rather than blocking the main thread on every call. Cap enforcement
+// runs here (off the hot path) right before serializing.
 let fileCacheSaveTimer: NodeJS.Timeout | null = null
 function saveFileCache(): void {
   if (!_fileCache || fileCacheSaveTimer) return
   fileCacheSaveTimer = setTimeout(() => {
     fileCacheSaveTimer = null
     if (!_fileCache) return
+    pruneFileCacheToCap()
     void fs.promises.writeFile(fileCachePath(), JSON.stringify(_fileCache), 'utf-8').catch(() => { /* non-fatal */ })
   }, 2000)
 }
@@ -6000,6 +6022,7 @@ app.whenReady().then(async () => {
       const cache = await loadFileCache()
       const cached = cache[filePath]
       if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+        cached.atime = Date.now() // touch for LRU (in-memory only; persisted on the next save)
         const cachedData = { ...(cached.data as Record<string, unknown>) }
         const cachedMeta = cachedData.metadata && typeof cachedData.metadata === 'object'
           ? liftUiMetadata({ ...(cachedData.metadata as Record<string, unknown>) }, cachedData)
@@ -6022,8 +6045,10 @@ app.whenReady().then(async () => {
         birthtimeMs: stat.birthtimeMs,
         sizeBytes: stat.size,
       }
-      // Update cache entry — save lazily (written on app quit or folder scan)
-      cache[filePath] = { mtimeMs: stat.mtimeMs, size: stat.size, data: { version: result.version, notes: result.notes, metadata: meta, architecture: result.architecture, config: result.config } }
+      // Update cache entry, then trigger a debounced save so new entries persist (previously they
+      // only survived on quit/folder-scan) and the LRU cap gets enforced off the hot path.
+      cache[filePath] = { mtimeMs: stat.mtimeMs, size: stat.size, atime: Date.now(), data: { version: result.version, notes: result.notes, metadata: meta, architecture: result.architecture, config: result.config } }
+      saveFileCache()
       return result
     } catch (err) {
       const line = `[${new Date().toISOString()}] ${filePath}\n  ${String(err)}\n`
@@ -8244,6 +8269,7 @@ app.on('will-quit', () => {
   // actual quit time doesn't hurt UX the way blocking during normal use does.
   if (fileCacheSaveTimer) { clearTimeout(fileCacheSaveTimer); fileCacheSaveTimer = null }
   if (_fileCache) {
+    pruneFileCacheToCap()
     try { fs.writeFileSync(fileCachePath(), JSON.stringify(_fileCache), 'utf-8') } catch { /* non-fatal */ }
   }
   if (trainerQueueSaveTimer) { clearTimeout(trainerQueueSaveTimer); trainerQueueSaveTimer = null }
