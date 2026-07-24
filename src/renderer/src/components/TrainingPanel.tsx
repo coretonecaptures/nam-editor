@@ -2425,7 +2425,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
               {queuedCount > 0 && !isRunning && (
                 <button
                   onClick={async () => { await window.api.startQueuedTrainerRuns() }}
-                  className="h-[34px] inline-flex items-center gap-1.5 px-3 rounded-[9px] text-xs font-semibold bg-nm-accent hover:opacity-90 text-accent-text transition-opacity"
+                  className="h-[34px] inline-flex items-center gap-1.5 px-3 rounded-[9px] text-xs font-semibold bg-nm-accent hover:opacity-90 text-white transition-opacity"
                 >
                   Start queue
                 </button>
@@ -2722,7 +2722,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
 
                   <button
                     onClick={handleQuickAdd}
-                    className="w-full h-11 flex items-center justify-center gap-2 rounded-[11px] text-[14px] font-[650] bg-nm-accent hover:opacity-90 text-accent-text border-transparent border transition-opacity"
+                    className="w-full h-11 flex items-center justify-center gap-2 rounded-[11px] text-[14px] font-[650] bg-nm-accent hover:opacity-90 text-white border-transparent border transition-opacity"
                   >
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
                     Pick WAVs &amp; queue batch
@@ -2780,7 +2780,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                   {queuedCount > 0 && !isRunning && (
                     <button
                       onClick={async () => { await window.api.startQueuedTrainerRuns() }}
-                      className="w-full h-10 flex items-center justify-center gap-2 rounded-[11px] text-[13px] font-[650] bg-nm-accent hover:opacity-90 text-accent-text transition-opacity"
+                      className="w-full h-10 flex items-center justify-center gap-2 rounded-[11px] text-[13px] font-[650] bg-nm-accent hover:opacity-90 text-white transition-opacity"
                     >
                       <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
                       Start queue
@@ -3568,7 +3568,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                     {groupedStagedQueue.length > 1 && (
                       <button
                         onClick={() => { groupedStagedQueue.forEach(g => { void handleUnstageSubmission(g.jobs[0]?.submissionId ?? '') }) }}
-                        className="h-9 inline-flex items-center gap-1.5 px-3.5 rounded-[9px] text-[12.5px] font-semibold bg-nm-accent hover:opacity-90 text-accent-text transition-opacity"
+                        className="h-9 inline-flex items-center gap-1.5 px-3.5 rounded-[9px] text-[12.5px] font-semibold bg-nm-accent hover:opacity-90 text-white transition-opacity"
                       >
                         <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 6.82v10.36c0 .79.87 1.27 1.54.84l8.14-5.18c.62-.39.62-1.29 0-1.69L9.54 5.98C8.87 5.55 8 6.03 8 6.82z"/></svg>
                         Queue all
@@ -3719,7 +3719,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                               </button>
                               <button
                                 onClick={e => { e.stopPropagation(); void handleUnstageSubmission(group.jobs[0]?.submissionId ?? '') }}
-                                className="h-7 inline-flex items-center gap-1 px-2.5 rounded-[7px] text-[11px] font-semibold bg-nm-accent hover:opacity-90 text-accent-text transition-opacity"
+                                className="h-7 inline-flex items-center gap-1 px-2.5 rounded-[7px] text-[11px] font-semibold bg-nm-accent hover:opacity-90 text-white transition-opacity"
                               >
                                 <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M8 6.82v10.36c0 .79.87 1.27 1.54.84l8.14-5.18c.62-.39.62-1.29 0-1.69L9.54 5.98C8.87 5.55 8 6.03 8 6.82z"/></svg>
                                 Queue now
@@ -5033,7 +5033,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
           </div>
           <div className="px-5 py-4 border-t border-nm-border flex justify-end gap-2">
             <button onClick={() => { setShowSavePresetModal(false); setPresetSaveError('') }} className="px-4 py-2 rounded-lg text-[13px] font-medium bg-field border border-field-bd hover:bg-hov text-nm-text transition-colors">Cancel</button>
-            <button onClick={handleConfirmSavePreset} className="px-4 py-2 rounded-lg text-[13px] font-semibold bg-nm-accent hover:opacity-90 text-accent-text transition-colors">Save preset</button>
+            <button onClick={handleConfirmSavePreset} className="px-4 py-2 rounded-lg text-[13px] font-semibold bg-nm-accent hover:opacity-90 text-white transition-colors">Save preset</button>
           </div>
         </div>
       </div>
