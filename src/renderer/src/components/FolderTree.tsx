@@ -698,9 +698,11 @@ function FolderRow({
   // Re-clamp on every menu open, not just when x changes — right-clicks in a vertical
   // list tend to land at nearly the same x each time, so keying off x alone left stale
   // clamps in place and let tall menus (many sections) render past the window bottom
-  // with their bottom items unclickable.
+  // with their bottom items unclickable. Also re-clamp when a collapsible section is
+  // expanded/collapsed — that changes the menu's rendered height after it's already open,
+  // without changing `menu` itself, so it needs its own trigger here.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [menu])
+  }, [menu, collapsedMenuSections])
 
   useEffect(() => {
     if (isRenaming) {
