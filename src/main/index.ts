@@ -3810,7 +3810,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
         JSON.parse(patched)
         suppressWatcher()
         await fs.promises.writeFile(trainerState.outputModelPath, patched, 'utf-8')
-        delete loadFileCache()[trainerState.outputModelPath]
+        delete (await loadFileCache())[trainerState.outputModelPath]
       } catch (metadataError) {
         trainerState = {
           ...trainerState,
@@ -4610,26 +4610,36 @@ log(`isDev: ${isDev}`)
 // folder only IPC-reads files whose mtime or size changed since last open.
 interface CacheEntry { mtimeMs: number; size: number; data: unknown }
 let _fileCache: Record<string, CacheEntry> | null = null
+let _fileCacheLoadPromise: Promise<Record<string, CacheEntry>> | null = null
 
 function fileCachePath(): string {
   return join(app.getPath('userData'), 'nam-file-cache.json')
 }
 
-function loadFileCache(): Record<string, CacheEntry> {
-  if (_fileCache) return _fileCache
-  try {
-    _fileCache = JSON.parse(fs.readFileSync(fileCachePath(), 'utf-8'))
-  } catch {
-    _fileCache = {}
-  }
-  return _fileCache!
+// This cache file can grow to hundreds of MB for large libraries. Reading/writing it
+// synchronously blocks the entire Electron main process — every IPC call, every click —
+// until the read/parse/write finishes, which manifests as the whole app freezing/spinning.
+// Load is memoized (one read per app session); async so that first read doesn't stall the UI.
+function loadFileCache(): Promise<Record<string, CacheEntry>> {
+  if (_fileCache) return Promise.resolve(_fileCache)
+  if (_fileCacheLoadPromise) return _fileCacheLoadPromise
+  _fileCacheLoadPromise = fs.promises.readFile(fileCachePath(), 'utf-8')
+    .then((raw) => { _fileCache = JSON.parse(raw); return _fileCache! })
+    .catch(() => { _fileCache = {}; return _fileCache! })
+  return _fileCacheLoadPromise
 }
 
+// Debounced + async: callers (e.g. cache-pruning during folder scans, which can fire every
+// time a watcher moves/renames a file) may call this repeatedly in quick succession — coalesce
+// into one write every 2s rather than blocking the main thread on every call.
+let fileCacheSaveTimer: NodeJS.Timeout | null = null
 function saveFileCache(): void {
-  if (!_fileCache) return
-  try {
-    fs.writeFileSync(fileCachePath(), JSON.stringify(_fileCache), 'utf-8')
-  } catch { /* non-fatal */ }
+  if (!_fileCache || fileCacheSaveTimer) return
+  fileCacheSaveTimer = setTimeout(() => {
+    fileCacheSaveTimer = null
+    if (!_fileCache) return
+    void fs.promises.writeFile(fileCachePath(), JSON.stringify(_fileCache), 'utf-8').catch(() => { /* non-fatal */ })
+  }, 2000)
 }
 
 // Persist window size and maximized state between launches
@@ -5987,7 +5997,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('file:read', async (_event, filePath: string) => {
     try {
       const stat = await fs.promises.stat(filePath)
-      const cache = loadFileCache()
+      const cache = await loadFileCache()
       const cached = cache[filePath]
       if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
         const cachedData = { ...(cached.data as Record<string, unknown>) }
@@ -6198,7 +6208,7 @@ app.whenReady().then(async () => {
         return { success: false, error: `Saved file failed verification for: ${mismatches.join(', ')}` }
       }
       log(`writeMetadata verify-ok source="${writeSource}" batch="${writeBatchId}" file="${filePath}" fields="${incomingKeys.join(',')}"`)
-      delete loadFileCache()[filePath]
+      delete (await loadFileCache())[filePath]
       return { success: true }
     } catch (err) {
       return { success: false, error: String(err) }
@@ -6233,7 +6243,7 @@ app.whenReady().then(async () => {
       // Prune cache entries for files no longer in this folder
       const fileSet = new Set(files)
       const normFolder = folderPath.replace(/\\/g, '/')
-      const cache = loadFileCache()
+      const cache = await loadFileCache()
       let pruned = false
       for (const key of Object.keys(cache)) {
         if (key.startsWith(normFolder + '/') && !fileSet.has(key)) {
@@ -6515,7 +6525,7 @@ app.whenReady().then(async () => {
         if (migrated.changed) {
           suppressWatcher()
           fs.writeFileSync(filePath, migrated.content, 'utf8')
-          delete loadFileCache()[filePath]
+          delete (await loadFileCache())[filePath]
         }
         results.push({ filePath, success: true, changed: migrated.changed })
       } catch (err) {
@@ -8229,7 +8239,13 @@ app.whenReady().then(async () => {
 })
 
 app.on('will-quit', () => {
-  saveFileCache()
+  // saveFileCache() is debounced/async now (see definition) so it won't reliably complete
+  // before the process exits — flush synchronously here instead, since blocking briefly at
+  // actual quit time doesn't hurt UX the way blocking during normal use does.
+  if (fileCacheSaveTimer) { clearTimeout(fileCacheSaveTimer); fileCacheSaveTimer = null }
+  if (_fileCache) {
+    try { fs.writeFileSync(fileCachePath(), JSON.stringify(_fileCache), 'utf-8') } catch { /* non-fatal */ }
+  }
   if (trainerQueueSaveTimer) { clearTimeout(trainerQueueSaveTimer); trainerQueueSaveTimer = null }
   saveTrainerQueue()
   stopCompanionBridgeServer()
