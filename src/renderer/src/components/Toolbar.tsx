@@ -159,7 +159,7 @@ export function Toolbar({
           className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 cursor-pointer select-none"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
           onClick={onOpenTrainingLive}
-          title="Training in progress \u2014 click to open live run"
+          title={"Training in progress \u2014 click to open live run"}
         >
           <span className="w-2 h-2 rounded-full bg-emerald-400 nm-lpulse flex-shrink-0" />
           <span className="text-[11px] font-[580] text-emerald-400 whitespace-nowrap">

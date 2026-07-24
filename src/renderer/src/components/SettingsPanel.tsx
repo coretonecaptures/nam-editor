@@ -1825,7 +1825,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab, onOpenTra
 
               {draft.enableExperimentalTraining && (
                 <>
-                  <SettingsField label="NAM Python executable" hint="Python executable with neural-amp-modeler installed (\u2265 0.12.3 recommended)" help={<>Point this to the <code>python.exe</code> (Windows) or <code>python</code> binary inside your NAM conda or venv environment &mdash; <em>not</em> your system Python.<br /><br />Example: <code className="break-all">C:\Users\you\.conda\envs\nam\python.exe</code><br /><br />Requires <strong>neural-amp-modeler &ge; 0.12.3</strong> installed in that environment.</>}>
+                  <SettingsField label="NAM Python executable" hint={"Python executable with neural-amp-modeler installed (\u2265 0.12.3 recommended)"} help={<>Point this to the <code>python.exe</code> (Windows) or <code>python</code> binary inside your NAM conda or venv environment &mdash; <em>not</em> your system Python.<br /><br />Example: <code className="break-all">C:\Users\you\.conda\envs\nam\python.exe</code><br /><br />Requires <strong>neural-amp-modeler &ge; 0.12.3</strong> installed in that environment.</>}>
                     <div className="flex items-center gap-2">
                       <input
                         type="text"
@@ -1892,7 +1892,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab, onOpenTra
                     <div className="ml-6 border-l-2 border-gray-200 dark:border-gray-700 pl-4">
                       <CheckboxField
                         label="Skip auto-start if queue was paused"
-                        description="If you manually paused the queue before closing NAM Lab, don't auto-start on the next launch \u2014 wait for you to click Resume."
+                        description={"If you manually paused the queue before closing NAM Lab, don't auto-start on the next launch \u2014 wait for you to click Resume."}
                         checked={draft.trainingAutoStartSkipIfPaused}
                         onChange={(v) => update('trainingAutoStartSkipIfPaused', v)}
                       />
@@ -1934,7 +1934,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab, onOpenTra
                           suggestionFormula="../../NAM/{folder}/{architecture}"
                         />
                       </SettingsField>
-                      <SettingsField label="Default Input DI" hint="Skip the DI picker in Quick Add \u2014 always use this WAV as the reference capture">
+                      <SettingsField label="Default Input DI" hint={"Skip the DI picker in Quick Add \u2014 always use this WAV as the reference capture"}>
                         <div className="flex items-center gap-2">
                           <input
                             type="text"

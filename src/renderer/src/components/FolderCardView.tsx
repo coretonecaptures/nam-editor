@@ -635,7 +635,7 @@ function GetCoverModal({ node, isDark, onClose, onSaved }: {
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') handleUrl(url) }}
-            placeholder="Paste image URL\u2026"
+            placeholder={"Paste image URL\u2026"}
             className={`flex-1 text-sm px-3 py-2 rounded-lg border outline-none focus:ring-1 focus:ring-teal-500 ${isDark ? 'bg-gray-800 border-gray-700 text-gray-100 placeholder-gray-600' : 'bg-gray-50 border-gray-300 text-gray-900 placeholder-gray-400'}`}
           />
           <button
@@ -744,7 +744,7 @@ function FolderPreviewPanel({
             ) : (
               <>
                 {stats.esrGood > 0 && <BarRow label="Excellent < 0.01" count={stats.esrGood} maxCount={esrMaxCount} color="#22c55e" />}
-                {stats.esrOk > 0 && <BarRow label="OK 0.01\u20130.05" count={stats.esrOk} maxCount={esrMaxCount} color="#f59e0b" />}
+                {stats.esrOk > 0 && <BarRow label={"OK 0.01\u20130.05"} count={stats.esrOk} maxCount={esrMaxCount} color="#f59e0b" />}
                 {stats.esrReview > 0 && <BarRow label="Review > 0.05" count={stats.esrReview} maxCount={esrMaxCount} color="#dc2626" />}
               </>
             )}

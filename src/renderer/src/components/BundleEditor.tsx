@@ -339,14 +339,14 @@ export function BundleEditor({
             type="text"
             value={bundle.title}
             onChange={(e) => update({ title: e.target.value })}
-            placeholder="Bundle title\u2026"
+            placeholder={"Bundle title\u2026"}
             className={inputCls}
           />
           <input
             type="text"
             value={bundle.subtitle}
             onChange={(e) => update({ subtitle: e.target.value })}
-            placeholder="Subtitle (optional)\u2026"
+            placeholder={"Subtitle (optional)\u2026"}
             className={inputCls}
           />
         </div>
@@ -357,7 +357,7 @@ export function BundleEditor({
           <textarea
             value={bundle.description}
             onChange={(e) => update({ description: e.target.value })}
-            placeholder="Describe this collection of amp captures\u2026"
+            placeholder={"Describe this collection of amp captures\u2026"}
             rows={7}
             className={`${inputCls} resize-y leading-relaxed min-h-[80px] font-mono text-xs`}
           />
@@ -402,7 +402,7 @@ export function BundleEditor({
                       type="text"
                       value={pickerSearch}
                       onChange={(e) => setPickerSearch(e.target.value)}
-                      placeholder="Filter packs\u2026"
+                      placeholder={"Filter packs\u2026"}
                       className="w-full px-2 py-1 text-xs rounded bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:border-teal-500"
                     />
                   </div>
@@ -474,7 +474,7 @@ export function BundleEditor({
                       type="text"
                       value={lp.overrideName}
                       onChange={(e) => setOverrideName(idx, e.target.value)}
-                      placeholder="Display name\u2026"
+                      placeholder={"Display name\u2026"}
                       className="w-28 flex-shrink-0 px-1.5 py-0.5 text-xs rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:border-teal-500"
                     />
                     {/* Export this pack PDF */}
@@ -532,7 +532,7 @@ export function BundleEditor({
           <textarea
             value={bundle.footer}
             onChange={(e) => update({ footer: e.target.value })}
-            placeholder="© 2025 Your Name \u00b7 yoursite.com"
+            placeholder={"© 2025 Your Name \u00b7 yoursite.com"}
             rows={2}
             className={`${inputCls} resize-none font-mono text-xs`}
           />

@@ -1052,7 +1052,7 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
                   {show('nl_pedal_settings') && (
                     <div className={fieldClass('nl_pedal_settings')}>
                       <Field label="Pedal Settings" hint="Boost pedal + any other pedals in chain">
-                        <TextInput value={m.nl_pedal_settings ?? ''} onChange={(v) => update('nl_pedal_settings', v)} placeholder="e.g. Klon \u2014 Gain 10, Vol 9 \u00b7 TS9 \u2014 Drive 5, Tone 12" changed={isManuallyChanged('nl_pedal_settings')} />
+                        <TextInput value={m.nl_pedal_settings ?? ''} onChange={(v) => update('nl_pedal_settings', v)} placeholder={"e.g. Klon \u2014 Gain 10, Vol 9 \u00b7 TS9 \u2014 Drive 5, Tone 12"} changed={isManuallyChanged('nl_pedal_settings')} />
                       </Field>
                     </div>
                   )}
@@ -1062,7 +1062,7 @@ export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, 
                       <textarea
                         value={m.nl_comments ?? ''}
                         onChange={(e) => update('nl_comments', e.target.value)}
-                        placeholder="Any additional notes about this capture\u2026"
+                        placeholder={"Any additional notes about this capture\u2026"}
                         rows={3}
                         maxLength={500}
                         className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none transition-colors resize-none ${inputClass(isManuallyChanged('nl_comments'))}`}
