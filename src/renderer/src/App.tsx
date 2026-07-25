@@ -2800,19 +2800,62 @@ INSTRUCTIONS:
     }
   }
 
-  const handleApplyDefaultsToSelection = (paths: string[]) => {
+  const handleApplyDefaultsToSelection = async (paths: string[]) => {
     const pathSet = new Set(paths)
-    setFiles((prev) => prev.map((f) => {
-      if (!pathSet.has(f.filePath)) return f
+    const targets = files.filter((f) => pathSet.has(f.filePath))
+    const prepared = targets.map((f) => {
       const baseName = f.fileName.replace(/\.nam$/i, '')
       const newMeta = applyDefaults({ ...f.metadata }, baseName, settings)
       const newAutoFilled = (Object.keys(newMeta) as (keyof NamFile['metadata'])[]).filter(
         (k) => newMeta[k] != null && (f.metadata[k] == null || f.metadata[k] === '') && !f.autoFilledFields.includes(k)
       )
       const wasChanged = JSON.stringify(newMeta) !== JSON.stringify(f.originalMetadata)
-      return { ...f, metadata: newMeta, isDirty: wasChanged, autoFilledFields: [...f.autoFilledFields, ...newAutoFilled] }
+      return {
+        filePath: f.filePath,
+        newMeta,
+        autoFilledFields: [...f.autoFilledFields, ...newAutoFilled],
+        shouldSave: wasChanged,
+      }
+    })
+
+    const saveTargets = prepared.filter((p) => p.shouldSave)
+    if (saveTargets.length === 0) {
+      setStatus({ message: 'No new defaults to save in the selected files', type: 'info' })
+      return
+    }
+
+    const batchResult = await runMetadataSaveBatch(saveTargets, (p) => p.newMeta, 'Apply defaults')
+    if (!batchResult) return
+    const { savedPaths, failed, savedAt } = batchResult
+    const resultMap = new Map(prepared.map((p) => [p.filePath, p]))
+
+    setFiles((prev) => prev.map((f) => {
+      if (!pathSet.has(f.filePath)) return f
+      const preparedFile = resultMap.get(f.filePath)
+      if (!preparedFile) return f
+      if (!savedPaths.has(f.filePath)) {
+        return {
+          ...f,
+          metadata: preparedFile.newMeta,
+          isDirty: preparedFile.shouldSave,
+          autoFilledFields: preparedFile.autoFilledFields,
+        }
+      }
+      return {
+        ...f,
+        metadata: preparedFile.newMeta,
+        originalMetadata: preparedFile.newMeta,
+        isDirty: false,
+        autoFilledFields: [],
+        mtimeMs: savedAt,
+      }
     }))
-    setStatus({ message: `Applied defaults to ${paths.length} file${paths.length !== 1 ? 's' : ''}`, type: 'success' })
+
+    if (failed > 0) {
+      setStatus({ message: `Applied defaults and saved ${savedPaths.size}, failed ${failed}`, type: 'error' })
+    } else {
+      setStatus({ message: `Applied defaults and saved ${savedPaths.size} file${savedPaths.size !== 1 ? 's' : ''}`, type: 'success' })
+    }
   }
 
   // Fields that make sense to copy ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â editable metadata only, no read-only stats
@@ -5420,13 +5463,14 @@ INSTRUCTIONS:
                 gearModelSuggestions={gearModelSuggestions}
               />
             ) : selectedFiles.length > 1 ? (
-              <MultiSelectEditor
-                files={selectedFiles}
-                onApply={handleMultiSelectApply}
-                skipConfirmation={settings.skipBatchEditConfirmation}
-                gearMakeSuggestions={gearMakeSuggestions}
-                gearModelSuggestions={gearModelSuggestions}
-              />
+            <MultiSelectEditor
+              files={selectedFiles}
+              onApply={handleMultiSelectApply}
+              onSaveDirty={handleSaveSelected}
+              skipConfirmation={settings.skipBatchEditConfirmation}
+              gearMakeSuggestions={gearMakeSuggestions}
+              gearModelSuggestions={gearModelSuggestions}
+            />
             ) : selectedFiles.length === 1 ? (
               <MetadataEditor
                 key={selectedFiles[0].filePath}
