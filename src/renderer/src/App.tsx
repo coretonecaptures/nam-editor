@@ -519,6 +519,7 @@ declare global {
       tone3000Connect: () => Promise<{ ok: boolean; username?: string | null; error?: string }>
       tone3000Disconnect: () => Promise<{ ok: boolean }>
         tone3000Search: (params: { query?: string; page?: number; pageSize?: number; gears?: string[]; sizes?: string[]; sort?: string; architecture?: string; platform?: string; format?: string }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
+        tone3000Trending: (gear: string) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
         tone3000UsersSearch: (params: { query: string; page?: number; pageSize?: number; sort?: string }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
         tone3000Created: (params: { page?: number; pageSize?: number }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
         tone3000Favorited: (params: { page?: number; pageSize?: number }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>

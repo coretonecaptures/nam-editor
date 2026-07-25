@@ -58,6 +58,10 @@ interface SearchResponse {
   total: number
 }
 
+interface TrendingResponse {
+  data: ToneResult[]
+}
+
 interface UserSearchResponse {
   data: ToneUser[]
 }
@@ -68,9 +72,9 @@ const ARCHITECTURE_OPTIONS: Array<{ value: ToneArchitectureFilter; label: string
   { value: '2', label: 'A2' },
   { value: 'custom', label: 'Custom' },
 ]
-const PLATFORM_OPTIONS: Array<{ value: TonePlatform; label: string }> = [
+const FORMAT_OPTIONS: Array<{ value: TonePlatform; label: string }> = [
   { value: 'nam', label: 'NAM' },
-  { value: '', label: 'All Platforms' },
+  { value: '', label: 'All Formats' },
 ]
 const SIZE_FILTER_OPTIONS = [
   { value: '', label: 'All Sizes' },
@@ -122,6 +126,28 @@ function toneEffectiveFormat(tone: Pick<ToneResult, 'format' | 'platform'>): Ton
   return normalizePlatform(tone.format ?? tone.platform)
 }
 
+function mergeToneResults(...lists: ToneResult[][]): ToneResult[] {
+  const merged = new Map<number, ToneResult>()
+  for (const list of lists) {
+    for (const tone of list) {
+      const existing = merged.get(tone.id)
+      if (!existing) {
+        merged.set(tone.id, tone)
+        continue
+      }
+      merged.set(tone.id, {
+        ...existing,
+        ...tone,
+        sizes: Array.from(new Set([...(existing.sizes ?? []), ...(tone.sizes ?? [])])),
+        a1_models_count: Math.max(existing.a1_models_count ?? 0, tone.a1_models_count ?? 0),
+        a2_models_count: Math.max(existing.a2_models_count ?? 0, tone.a2_models_count ?? 0),
+        custom_models_count: Math.max(existing.custom_models_count ?? 0, tone.custom_models_count ?? 0),
+      })
+    }
+  }
+  return Array.from(merged.values())
+}
+
 function filterToneByArchitecture(tone: ToneResult, architecture: ToneArchitectureFilter): boolean {
   if (!architecture) return true
   if (architecture === '1') return (tone.a1_models_count ?? 0) > 0
@@ -146,10 +172,10 @@ const GEAR_OPTIONS = [
   { value: '', label: 'All Gear' },
   { value: 'amp-cab', label: 'Amp + Cab' },
   { value: 'amp', label: 'Amp Head' },
-  { value: 'cab', label: 'Speaker Cab' },
+  { value: 'cab', label: 'Cabinet' },
   { value: 'pedal', label: 'Pedal' },
   { value: 'outboard', label: 'Outboard' },
-  { value: 'space', label: 'Space' },
+  { value: 'space', label: 'Spaces' },
   { value: 'experimental', label: 'Experimental' },
 ]
 // Includes legacy values so gear badges on already-fetched results still render correctly.
@@ -157,11 +183,11 @@ const GEAR_LABELS: Record<string, string> = {
   'amp-cab': 'Amp + Cab',
   'full-rig': 'Amp + Cab',  // legacy alias
   amp: 'Amp Head',
-  cab: 'Speaker Cab',
-  'speaker-cab': 'Speaker Cab',  // email preview used this name; normalise to cab
+  cab: 'Cabinet',
+  'speaker-cab': 'Cabinet',  // email preview used this name; normalise to cab
   pedal: 'Pedal',
   outboard: 'Outboard',
-  space: 'Space',
+  space: 'Spaces',
   experimental: 'Experimental',
   ir: 'IR',  // legacy — ir gear value removed but keep label for cached results
 }
@@ -348,21 +374,77 @@ export function ToneStore({
     const useCreated = searchScope === 'mine'
       || (!!requestedUsername && (requestedUsername === authUsername || (!!savedUsername && requestedUsername === savedUsername)))
     const useFavorited = searchScope === 'favorites'
+    const useDedicatedTrending =
+      !useCreated &&
+      !useFavorited &&
+      !requestedUsername &&
+      !q.trim() &&
+      s === 'trending' &&
+      p === 1 &&
+      !!g
 
     const result = useCreated
       ? await window.api.tone3000Created({ page: p, pageSize: 100 })
       : useFavorited
         ? await window.api.tone3000Favorited({ page: p, pageSize: 100 })
-      : await window.api.tone3000Search({
-          query: q || undefined,
-          page: p,
-          pageSize: 24,
-          gears: g ? [g] : undefined,
-          sizes: searchSizeValue ? [searchSizeValue] : undefined,
-          architecture: arch || undefined,
-          format: plat || undefined,  // use new 'format' param; 'platform' kept as fallback in IPC handler
-          sort: s,
-        })
+      : useDedicatedTrending
+        ? await (async () => {
+            const trendingResult = await window.api.tone3000Trending(g)
+            if (trendingResult.error) return trendingResult
+            const trendingData = trendingResult.data as TrendingResponse
+            let filtered = trendingData.data ?? []
+            if (searchSizeValue) filtered = filtered.filter((tone) => filterToneBySize(tone, searchSizeValue))
+            if (arch) filtered = filtered.filter((tone) => filterToneByArchitecture(tone, arch))
+            if (plat) filtered = filtered.filter((tone) => toneEffectiveFormat(tone) === plat)
+            return {
+              ok: true,
+              data: {
+                data: filtered,
+                page: 1,
+                page_size: filtered.length,
+                total: filtered.length,
+              } satisfies SearchResponse,
+            }
+          })()
+      : arch
+        ? await window.api.tone3000Search({
+            query: q || undefined,
+            page: p,
+            pageSize: 24,
+            gears: g ? [g] : undefined,
+            sizes: searchSizeValue ? [searchSizeValue] : undefined,
+            architecture: arch,
+            format: plat || undefined,  // use new 'format' param; 'platform' kept as fallback in IPC handler
+            sort: s,
+          })
+        : await (async () => {
+            const commonParams = {
+              query: q || undefined,
+              page: p,
+              pageSize: 24,
+              gears: g ? [g] : undefined,
+              sizes: searchSizeValue ? [searchSizeValue] : undefined,
+              format: plat || undefined,
+              sort: s,
+            }
+            const [legacyResult, a2Result] = await Promise.all([
+              window.api.tone3000Search(commonParams),
+              window.api.tone3000Search({ ...commonParams, architecture: '2' }),
+            ])
+            if (legacyResult.error) return legacyResult
+            if (a2Result.error) return a2Result
+            const legacyData = legacyResult.data as SearchResponse
+            const a2Data = a2Result.data as SearchResponse
+            const merged = mergeToneResults(legacyData.data ?? [], a2Data.data ?? [])
+            return {
+              ok: true,
+              data: {
+                ...legacyData,
+                data: merged,
+                total: Math.max(legacyData.total ?? 0, merged.length),
+              },
+            }
+          })()
     setSearching(false)
     if (result.error) { setSearchError(result.error); return }
     const data = result.data as SearchResponse
@@ -945,7 +1027,7 @@ export function ToneStore({
             disabled={queueLocked}
             className="px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
           >
-            {PLATFORM_OPTIONS.map((o) => <option key={o.value || 'all'} value={o.value}>{o.label}</option>)}
+            {FORMAT_OPTIONS.map((o) => <option key={o.value || 'all'} value={o.value}>{o.label}</option>)}
           </select>
           <select value={sort} onChange={(e) => { const s = e.target.value; setSort(s); if (!queueLocked) handleSearch(1, query, gear, architecture, platform, searchSize, s, creatorUsername, scope) }}
             disabled={scope === 'mine' || scope === 'favorites' || queueLocked}

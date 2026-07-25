@@ -8109,6 +8109,19 @@ app.whenReady().then(async () => {
     } catch (e) { return { error: String(e) } }
   })
 
+  ipcMain.handle('tone3000:trending', async (_event, gear: string) => {
+    const valid = await ensureValidToken()
+    if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
+    if (!gear) return { error: 'No gear selected' }
+    const sp = new URLSearchParams()
+    sp.set('gear', gear)
+    try {
+      const res = await fetch(`${T3K_BASE}/api/v1/tones/trending?${sp}`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+      if (!res.ok) return { error: `API error ${res.status}` }
+      return { ok: true, data: await res.json() }
+    } catch (e) { return { error: String(e) } }
+  })
+
   ipcMain.handle('tone3000:usersSearch', async (_event, params: { query: string; page?: number; pageSize?: number; sort?: string }) => {
     const valid = await ensureValidToken()
     if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
