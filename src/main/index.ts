@@ -319,8 +319,7 @@ function normalizeSlashPath(value: string | null | undefined): string {
 
 function loadEnableCompanionAppSetting(): boolean {
   try {
-    const raw = fs.readFileSync(join(app.getPath('userData'), 'settings.json'), 'utf-8')
-    const parsed = JSON.parse(raw) as { enableCompanionApp?: unknown }
+    const parsed = loadAppSettingsFile() as { enableCompanionApp?: unknown }
     return parsed.enableCompanionApp === true
   } catch {
     return false
@@ -329,11 +328,50 @@ function loadEnableCompanionAppSetting(): boolean {
 
 function loadAlwaysIgnoreTrainingChecksSetting(): boolean {
   try {
-    const raw = fs.readFileSync(join(app.getPath('userData'), 'settings.json'), 'utf-8')
-    const parsed = JSON.parse(raw) as { alwaysIgnoreTrainingChecks?: unknown }
+    const parsed = loadAppSettingsFile() as { alwaysIgnoreTrainingChecks?: unknown }
     return parsed.alwaysIgnoreTrainingChecks === true
   } catch {
     return false
+  }
+}
+
+interface TrainerArtifactRetentionPolicy {
+  successWorkspaceDays: number
+  failedWorkspaceDays: number
+  maxWorkspaceFolders: number
+  failureLogDays: number
+  maxFailureSnapshots: number
+  maxFailureLogLines: number
+}
+
+function loadAppSettingsFile(): Record<string, unknown> {
+  try {
+    const raw = fs.readFileSync(join(app.getPath('userData'), 'settings.json'), 'utf-8')
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}
+
+function coercePositiveInteger(value: unknown, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return Math.floor(value)
+  if (typeof value === 'string') {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed)
+  }
+  return fallback
+}
+
+function loadTrainerArtifactRetentionPolicy(): TrainerArtifactRetentionPolicy {
+  const settings = loadAppSettingsFile()
+  return {
+    successWorkspaceDays: coercePositiveInteger(settings.trainingSuccessWorkspaceRetentionDays, 21),
+    failedWorkspaceDays: coercePositiveInteger(settings.trainingFailedWorkspaceRetentionDays, 60),
+    maxWorkspaceFolders: coercePositiveInteger(settings.trainingMaxWorkspaceFolders, 250),
+    failureLogDays: coercePositiveInteger(settings.trainingFailureLogRetentionDays, 90),
+    maxFailureSnapshots: coercePositiveInteger(settings.trainingMaxFailureSnapshots, 300),
+    maxFailureLogLines: coercePositiveInteger(settings.trainingFailureLogMaxLines, 400),
   }
 }
 
@@ -851,7 +889,6 @@ async function handleCompanionAction(action: string, body: unknown): Promise<{ o
     if (!entry) return { ok: false, error: 'Training history entry not found.' }
     if (!entry.profileId) return { ok: false, error: 'Only profile-backed runs can be retried from mobile right now.' }
     const profile = trainingProfiles.find((item) => item.id === entry.profileId)
-    if (!profile) return { ok: false, error: 'The training profile used by that history entry no longer exists.' }
     if (!trainerConfiguredPythonPath || !trainerConfiguredInputPath) {
       return { ok: false, error: 'Configure the trainer paths on desktop before retrying from mobile.' }
     }
@@ -859,18 +896,21 @@ async function handleCompanionAction(action: string, body: unknown): Promise<{ o
     if (!sourcePath) return { ok: false, error: 'The source WAV for that history entry could not be found.' }
     clearTrainerSkipped(entry.profileId, entry.sourcePath, entry.architecture)
     clearTrainerSkipped(entry.profileId, sourcePath, entry.architecture)
-    const payloads = (await buildTrainerPayloadsForProfile(
-      profile,
-      trainerConfiguredPythonPath,
-      trainerConfiguredInputPath,
-      [sourcePath],
-      entry.sourceMode,
-      {
-        id: crypto.randomUUID(),
-        label: `Retry - ${entry.profileName ?? profile.name}`,
-        createdAt: new Date().toISOString(),
-      }
-    )).filter((payload) => payload.architecture === entry.architecture)
+    const submissionMeta = {
+      id: crypto.randomUUID(),
+      label: `Retry - ${entry.profileName ?? profile?.name ?? entry.finalModelName}`,
+      createdAt: new Date().toISOString(),
+    }
+    const payloads = profile
+      ? (await buildTrainerPayloadsForProfile(
+        profile,
+        trainerConfiguredPythonPath,
+        trainerConfiguredInputPath,
+        [sourcePath],
+        entry.sourceMode,
+        submissionMeta
+      )).filter((payload) => payload.architecture === entry.architecture)
+      : [buildTrainerPayloadFromHistoryEntryFallback(entry, trainerConfiguredPythonPath, trainerConfiguredInputPath, sourcePath, submissionMeta)]
     if (payloads.length === 0) return { ok: false, error: 'That history entry could not be re-queued.' }
     const queued = await enqueueTrainingPayloads(payloads)
     return queued > 0
@@ -1251,6 +1291,24 @@ interface TrainerHistoryEntry {
   // would have raised as an error if checks hadn't been bypassed.
   trainedDespiteWarnings?: boolean
   checkWarnings?: string
+  workspacePath?: string
+}
+
+interface TrainerFailureLogEntry {
+  failureId: string
+  timestamp: string
+  jobId: string
+  modelName: string
+  architecture: TrainerArchitecture
+  sourcePath: string
+  inputPath: string
+  workspacePath: string
+  error: string
+  status: 'error'
+  submissionId: string | null
+  submissionLabel: string | null
+  logPath: string
+  logLineCount: number
 }
 
 interface TrainerSkippedEntry {
@@ -2037,6 +2095,14 @@ function getTrainerQueuePath(): string {
   return join(app.getPath('userData'), TRAINER_QUEUE_FILENAME)
 }
 
+function getTrainerFailureLogDir(): string {
+  return join(app.getPath('userData'), 'trainer-failures')
+}
+
+function getTrainerFailureIndexPath(): string {
+  return join(app.getPath('userData'), 'trainer-failures.ndjson')
+}
+
 const TRAINER_QUEUE_PERSIST_CAP = 2000
 const TRAINER_HISTORY_CAP = 10000
 
@@ -2086,6 +2152,49 @@ function saveTrainerQueue(): void {
   } catch (error) {
     log(`trainer queue save failed: ${String(error)}`)
   }
+}
+
+function loadTrainerFailureIndex(): TrainerFailureLogEntry[] {
+  try {
+    const filePath = getTrainerFailureIndexPath()
+    if (!fs.existsSync(filePath)) return []
+    const lines = fs.readFileSync(filePath, 'utf-8')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+    return lines
+      .map((line) => {
+        try {
+          return JSON.parse(line) as TrainerFailureLogEntry
+        } catch {
+          return null
+        }
+      })
+      .filter((entry): entry is TrainerFailureLogEntry => !!entry)
+  } catch {
+    return []
+  }
+}
+
+function saveTrainerFailureIndex(entries: TrainerFailureLogEntry[]): void {
+  try {
+    fs.mkdirSync(dirname(getTrainerFailureIndexPath()), { recursive: true })
+    const body = entries.map((entry) => JSON.stringify(entry)).join('\n')
+    fs.writeFileSync(getTrainerFailureIndexPath(), body ? `${body}\n` : '', 'utf-8')
+  } catch (error) {
+    log(`trainer failure index save failed: ${String(error)}`)
+  }
+}
+
+function parseIsoTimestampMs(value: string | null | undefined): number | null {
+  if (!value) return null
+  const ms = Date.parse(value)
+  return Number.isFinite(ms) ? ms : null
+}
+
+function toSafeTimestampSegment(value: string): string {
+  const ms = parseIsoTimestampMs(value) ?? Date.now()
+  return new Date(ms).toISOString().replace(/[:.]/g, '-')
 }
 
 function isTrainerQueueTerminalStatus(status: TrainerQueueJobStatus): boolean {
@@ -2282,7 +2391,171 @@ function appendTrainerCanceledHistory(
     submissionId: job.submissionId,
     submissionLabel: job.submissionLabel,
     submissionCreatedAt: job.submissionCreatedAt,
+    workspacePath: job.workspacePath,
   })
+}
+
+async function recordTrainerFailureSnapshot(job: TrainerQueueJob, error: string, logs: string[]): Promise<void> {
+  const policy = loadTrainerArtifactRetentionPolicy()
+  const timestamp = new Date().toISOString()
+  const failureId = crypto.randomUUID()
+  const failureDir = getTrainerFailureLogDir()
+  await fs.promises.mkdir(failureDir, { recursive: true })
+  const snapshotName = `${toSafeTimestampSegment(timestamp)}-${sanitizeTrainerPathPart(job.modelName)}-${sanitizeTrainerPathPart(getTrainerArchitectureFolderName(job.architecture))}-${failureId}.log`
+  const logPath = join(failureDir, snapshotName)
+  const trimmedLogs = logs.slice(-policy.maxFailureLogLines)
+  const body = [
+    `Timestamp: ${timestamp}`,
+    `Model: ${job.modelName}`,
+    `Architecture: ${job.architecture}`,
+    `Submission: ${job.submissionLabel ?? job.submissionId ?? ''}`,
+    `Source WAV: ${job.outputPath}`,
+    `Input DI: ${job.inputPath}`,
+    `Workspace: ${job.workspacePath}`,
+    `Error: ${error}`,
+    '',
+    '--- Raw trainer log ---',
+    ...trimmedLogs,
+    '',
+  ].join('\n')
+  await fs.promises.writeFile(logPath, body, 'utf-8')
+
+  const entries = loadTrainerFailureIndex()
+  entries.push({
+    failureId,
+    timestamp,
+    jobId: job.jobId,
+    modelName: job.modelName,
+    architecture: job.architecture,
+    sourcePath: job.outputPath,
+    inputPath: job.inputPath,
+    workspacePath: job.workspacePath,
+    error,
+    status: 'error',
+    submissionId: job.submissionId,
+    submissionLabel: job.submissionLabel,
+    logPath,
+    logLineCount: trimmedLogs.length,
+  })
+  await pruneTrainerFailureSnapshots(entries, policy)
+}
+
+async function pruneTrainerFailureSnapshots(
+  entries: TrainerFailureLogEntry[] = loadTrainerFailureIndex(),
+  policy = loadTrainerArtifactRetentionPolicy()
+): Promise<void> {
+  const now = Date.now()
+  const cutoffMs = now - (policy.failureLogDays * 24 * 60 * 60 * 1000)
+  const sorted = [...entries].sort((a, b) => (parseIsoTimestampMs(b.timestamp) ?? 0) - (parseIsoTimestampMs(a.timestamp) ?? 0))
+  const keep = sorted
+    .filter((entry) => (parseIsoTimestampMs(entry.timestamp) ?? 0) >= cutoffMs)
+    .slice(0, policy.maxFailureSnapshots)
+  const keepPaths = new Set(keep.map((entry) => normalizePath(entry.logPath)))
+  const dropped = sorted.filter((entry) => !keepPaths.has(normalizePath(entry.logPath)))
+  for (const entry of dropped) {
+    try { await fs.promises.unlink(entry.logPath) } catch { /* ignore missing snapshot */ }
+  }
+
+  try {
+    const failureDir = getTrainerFailureLogDir()
+    if (fs.existsSync(failureDir)) {
+      const dirEntries = await fs.promises.readdir(failureDir, { withFileTypes: true })
+      for (const entry of dirEntries) {
+        if (!entry.isFile()) continue
+        const fullPath = join(failureDir, entry.name)
+        if (!keepPaths.has(normalizePath(fullPath))) {
+          try { await fs.promises.unlink(fullPath) } catch { /* ignore */ }
+        }
+      }
+    }
+  } catch (error) {
+    log(`trainer failure snapshot prune scan failed: ${String(error)}`)
+  }
+
+  saveTrainerFailureIndex(keep.sort((a, b) => (parseIsoTimestampMs(a.timestamp) ?? 0) - (parseIsoTimestampMs(b.timestamp) ?? 0)))
+}
+
+async function pruneTrainerRunWorkspaces(policy = loadTrainerArtifactRetentionPolicy()): Promise<void> {
+  const root = getTrainerRunWorkspaceRoot()
+  if (!fs.existsSync(root)) return
+
+  const protectedPaths = new Set(
+    trainerQueue
+      .filter((job) => job.status === 'queued' || job.status === 'starting' || job.status === 'running')
+      .map((job) => normalizePath(job.workspacePath))
+      .filter(Boolean)
+  )
+  if (trainerState.activeJobId) {
+    const active = getActiveTrainerJob()
+    if (active?.workspacePath) protectedPaths.add(normalizePath(active.workspacePath))
+  }
+
+  const historyByWorkspace = new Map<string, TrainerHistoryEntry>()
+  for (const entry of trainerHistory) {
+    const workspacePath = normalizePath(entry.workspacePath)
+    if (!workspacePath || historyByWorkspace.has(workspacePath)) continue
+    historyByWorkspace.set(workspacePath, entry)
+  }
+
+  const now = Date.now()
+  const successCutoffMs = now - (policy.successWorkspaceDays * 24 * 60 * 60 * 1000)
+  const failedCutoffMs = now - (policy.failedWorkspaceDays * 24 * 60 * 60 * 1000)
+  const dirEntries = await fs.promises.readdir(root, { withFileTypes: true })
+  const folders: Array<{ path: string; sortMs: number; deleteByAge: boolean }> = []
+
+  for (const entry of dirEntries) {
+    if (!entry.isDirectory()) continue
+    const folderPath = join(root, entry.name)
+    const normalized = normalizePath(folderPath)
+    if (protectedPaths.has(normalized)) continue
+    let stats: fs.Stats
+    try {
+      stats = await fs.promises.stat(folderPath)
+    } catch {
+      continue
+    }
+    const history = historyByWorkspace.get(normalized)
+    const eventMs = parseIsoTimestampMs(history?.timestamp) ?? stats.mtimeMs
+    const cutoffMs = history?.status === 'success' ? successCutoffMs : failedCutoffMs
+    folders.push({
+      path: folderPath,
+      sortMs: eventMs,
+      deleteByAge: eventMs < cutoffMs,
+    })
+  }
+
+  const toDelete = new Set(
+    folders
+      .filter((folder) => folder.deleteByAge)
+      .map((folder) => normalizePath(folder.path))
+  )
+
+  const survivors = folders
+    .filter((folder) => !toDelete.has(normalizePath(folder.path)))
+    .sort((a, b) => b.sortMs - a.sortMs)
+
+  for (const folder of survivors.slice(policy.maxWorkspaceFolders)) {
+    toDelete.add(normalizePath(folder.path))
+  }
+
+  for (const folder of folders) {
+    if (!toDelete.has(normalizePath(folder.path))) continue
+    try {
+      await fs.promises.rm(folder.path, { recursive: true, force: true })
+    } catch (error) {
+      log(`trainer workspace prune failed for ${folder.path}: ${String(error)}`)
+    }
+  }
+}
+
+async function pruneTrainerArtifacts(): Promise<void> {
+  try {
+    const policy = loadTrainerArtifactRetentionPolicy()
+    await pruneTrainerFailureSnapshots(undefined, policy)
+    await pruneTrainerRunWorkspaces(policy)
+  } catch (error) {
+    log(`trainer artifact prune failed: ${String(error)}`)
+  }
 }
 
 function makeTrainingWatcherTimerKey(profileId: string, filePath: string): string {
@@ -3347,6 +3620,62 @@ async function buildTrainerPayloadsForProfile(
   return payloads
 }
 
+function buildTrainerPayloadFromHistoryEntryFallback(
+  entry: TrainerHistoryEntry,
+  pythonPath: string,
+  inputPath: string,
+  sourcePath: string,
+  submissionMeta: { id: string; label: string; createdAt: string }
+): TrainerStartPayload {
+  const isA2 = entry.architecture === 'a2'
+  const profileCfg = isA2 ? null : lookupCaptureProfileConfig(entry.architecture, trainerUserCaptureProfiles)
+  const sourceDir = dirname(sourcePath)
+  const finalModelRoot = entry.finalModelPath ? dirname(entry.finalModelPath) : sourceDir
+  const graphRoot = entry.graphPath ? dirname(entry.graphPath) : finalModelRoot
+  return {
+    pythonPath,
+    inputPath,
+    outputPath: sourcePath,
+    trainPath: finalModelRoot,
+    namMode: isA2 ? 'a2' : 'a1',
+    normalizeWav: trainerConfiguredNormalizeWav,
+    normalizeWavTargetDb: trainerConfiguredNormalizeWavTargetDb,
+    architecture: entry.architecture,
+    waveNetConfig: profileCfg?.waveNetConfig ?? null,
+    lr: profileCfg?.lr ?? 0.004,
+    lrDecay: profileCfg?.lrDecay ?? 0.002,
+    batchSize: profileCfg?.batchSize ?? 16,
+    ny: profileCfg?.ny ?? 8192,
+    fitMrstft: profileCfg?.fitMrstft ?? true,
+    captureProfileId: isA2 ? null : entry.architecture,
+    epochs: entry.epochs,
+    latency: entry.latencyMode === 'manual' ? entry.latencyValue : null,
+    thresholdEsr: entry.thresholdEsr,
+    savePlot: true,
+    silent: true,
+    ignoreChecks: false,
+    modeledBy: trainerConfiguredModeledBy || null,
+    inputLevelDbu: trainerConfiguredInputLevelDbu,
+    outputLevelDbu: trainerConfiguredOutputLevelDbu,
+    profileId: null,
+    profileName: entry.profileName ?? null,
+    sourceMode: 'manual-direct',
+    finalModelRoot,
+    processedWavRoot: '',
+    graphRoot,
+    graphRootResolved: false,
+    sourcePostProcess: 'keep',
+    namingTemplate: '{basename}',
+    submissionId: submissionMeta.id,
+    submissionLabel: submissionMeta.label,
+    submissionCreatedAt: submissionMeta.createdAt,
+    appendModelArchitectureFolder: false,
+    appendGraphArchitectureFolder: false,
+    appendProcessedArchitectureFolder: false,
+    backupExisting: true,
+  }
+}
+
 async function enqueueTrainingPayloads(payloads: TrainerStartPayload[], staged = false): Promise<number> {
   if (payloads.length === 0) return 0
   const existingKeys = new Set(
@@ -3894,13 +4223,23 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
       validationEsrLite: job.architecture === 'a2' ? (trainerState.epochValidationEsrLite ?? null) : null,
       trainedDespiteWarnings: effectiveFinalStatus === 'success' && !!trainerState.checkWarnings,
       checkWarnings: trainerState.checkWarnings || undefined,
+      workspacePath: job.workspacePath,
     })
+
+    if (effectiveFinalStatus === 'error') {
+      try {
+        await recordTrainerFailureSnapshot(job, effectiveFinalError ?? finalError ?? 'Training failed', trainerState.logs)
+      } catch (error) {
+        log(`trainer failure snapshot write failed: ${String(error)}`)
+      }
+    }
 
     emitTrainerState()
 
     // Once every non-staged job in this batch is terminal (any outcome), move it out of the queue —
     // its full record lives in history. Failed batches are retried from History, not inline.
     if (pruneFinishedBatchesFromQueue()) emitTrainerState()
+    await pruneTrainerArtifacts()
 
     trainerPostProcessing = false
     if (!trainerPauseAfterCurrent) {
@@ -3951,6 +4290,12 @@ async function pumpTrainerQueue(preferSubmissionId?: string | null): Promise<voi
       error: failureReason,
     })
     appendTrainerCanceledHistory(nextJob, failureReason, '', 'error')
+    try {
+      await recordTrainerFailureSnapshot(nextJob, failureReason, [])
+    } catch (snapshotError) {
+      log(`trainer preflight failure snapshot write failed: ${String(snapshotError)}`)
+    }
+    await pruneTrainerArtifacts()
     // Pause the queue after a start failure (Python path missing, WAV not found, etc.).
     // startTrainerJob only throws for pre-flight checks — these failures will repeat for every
     // subsequent job, so cascading would silently mark the entire queue as error and wipe it
@@ -5718,6 +6063,7 @@ app.whenReady().then(async () => {
   trainerSkipped = loadTrainerSkipped()
   trainerQueue = loadTrainerQueue()
   trainerState = { ...trainerState, history: trainerHistory, queue: trainerQueue, watcherState: makeTrainerWatcherSnapshot() }
+  void pruneTrainerArtifacts()
   startCompanionBridgeServer()
   log(`log file moved to userData: ${logPath}`)
 
@@ -7495,7 +7841,6 @@ app.whenReady().then(async () => {
     if (!entry) return { success: false, error: 'Training history entry not found.' }
     if (!entry.profileId) return { success: false, error: 'Only profile-backed watcher or folder runs can be retried from history right now.' }
     const profile = trainingProfiles.find((item) => item.id === entry.profileId)
-    if (!profile) return { success: false, error: 'The training profile used by that history entry no longer exists.' }
     if (!trainerConfiguredPythonPath || !trainerConfiguredInputPath) {
       return { success: false, error: 'Configure the NAM Python path and input WAV before retrying from history.' }
     }
@@ -7503,18 +7848,21 @@ app.whenReady().then(async () => {
     if (!sourcePath) return { success: false, error: 'The source WAV for that history entry could not be found.' }
     clearTrainerSkipped(entry.profileId, entry.sourcePath, entry.architecture)
     clearTrainerSkipped(entry.profileId, sourcePath, entry.architecture)
-    const payloads = (await buildTrainerPayloadsForProfile(
-      profile,
-      trainerConfiguredPythonPath,
-      trainerConfiguredInputPath,
-      [sourcePath],
-      entry.sourceMode,
-      {
-        id: crypto.randomUUID(),
-        label: `Retry - ${entry.profileName ?? profile.name}`,
-        createdAt: new Date().toISOString(),
-      }
-    )).filter((payload) => payload.architecture === entry.architecture)
+    const submissionMeta = {
+      id: crypto.randomUUID(),
+      label: `Retry - ${entry.profileName ?? profile?.name ?? entry.finalModelName}`,
+      createdAt: new Date().toISOString(),
+    }
+    const payloads = profile
+      ? (await buildTrainerPayloadsForProfile(
+        profile,
+        trainerConfiguredPythonPath,
+        trainerConfiguredInputPath,
+        [sourcePath],
+        entry.sourceMode,
+        submissionMeta
+      )).filter((payload) => payload.architecture === entry.architecture)
+      : [buildTrainerPayloadFromHistoryEntryFallback(entry, trainerConfiguredPythonPath, trainerConfiguredInputPath, sourcePath, submissionMeta)]
     if (payloads.length === 0) {
       return { success: false, error: 'That history entry could not be re-queued.' }
     }
