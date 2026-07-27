@@ -7816,20 +7816,21 @@ app.whenReady().then(async () => {
 
   ipcMain.handle(
     'trainer:editSubmission',
-    async (_event, submissionId: string, changes: { epochs?: number; thresholdEsr?: number | null; lr?: number; lrDecay?: number; submissionLabel?: string }) => {
+    async (_event, submissionId: string, changes: { epochs?: number; thresholdEsr?: number | null; lr?: number; lrDecay?: number; submissionLabel?: string; inputPath?: string }) => {
       const now = new Date().toISOString()
-      const hasSettingsChange = typeof changes.epochs === 'number' || changes.thresholdEsr !== undefined || typeof changes.lr === 'number' || typeof changes.lrDecay === 'number'
+      const hasSettingsChange = typeof changes.epochs === 'number' || changes.thresholdEsr !== undefined || typeof changes.lr === 'number' || typeof changes.lrDecay === 'number' || typeof changes.inputPath === 'string'
       let changed = false
       trainerQueue = trainerQueue.map((job) => {
         if (job.submissionId !== submissionId) return job
         // Label change applies to all jobs in the submission (so the header always shows the new name).
-        // Settings changes (epochs, ESR, LR) and editedAt apply only to queued jobs.
+        // Settings changes (epochs, ESR, LR, input DI) and editedAt apply only to queued jobs.
         const isEditable = job.status === 'queued' || job.status === 'staged'
         const settingsUpdate = isEditable && hasSettingsChange ? {
           ...(typeof changes.epochs === 'number' ? { epochs: changes.epochs, progressEpochTotal: changes.epochs } : {}),
           ...(changes.thresholdEsr !== undefined ? { thresholdEsr: changes.thresholdEsr } : {}),
           ...(typeof changes.lr === 'number' ? { lr: changes.lr } : {}),
           ...(typeof changes.lrDecay === 'number' ? { lrDecay: changes.lrDecay } : {}),
+          ...(typeof changes.inputPath === 'string' ? { inputPath: changes.inputPath } : {}),
           editedAt: now,
         } : {}
         const labelUpdate = typeof changes.submissionLabel === 'string' ? { submissionLabel: changes.submissionLabel } : {}

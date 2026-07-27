@@ -390,12 +390,13 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   const [presetSaveNotice, setPresetSaveNotice] = useState('')
   const [cancelBatchConfirm, setCancelBatchConfirm] = useState<{ submissionId: string; label: string } | null>(null)
   const [dismissBatchConfirm, setDismissBatchConfirm] = useState<{ submissionId: string; label: string; failCount: number; doneCount: number } | null>(null)
-  const [editBatchModal, setEditBatchModal] = useState<{ submissionId: string; label: string; epochs: number; thresholdEsr: number | null; lr: number; lrDecay: number } | null>(null)
+  const [editBatchModal, setEditBatchModal] = useState<{ submissionId: string; label: string; epochs: number; thresholdEsr: number | null; lr: number; lrDecay: number; inputPath: string } | null>(null)
   const [editBatchName, setEditBatchName] = useState('')
   const [editBatchEpochs, setEditBatchEpochs] = useState('')
   const [editBatchThresholdEsr, setEditBatchThresholdEsr] = useState('')
   const [editBatchLr, setEditBatchLr] = useState('')
   const [editBatchLrDecay, setEditBatchLrDecay] = useState('')
+  const [editBatchInputPath, setEditBatchInputPath] = useState('')
   const [elapsedSec, setElapsedSec] = useState(0)
   const rawLogRef = useRef<HTMLDivElement | null>(null)
   const trainerSnapshotSigRef = useRef(buildTrainerSnapshotSignature(IDLE_TRAINER_STATE))
@@ -3333,12 +3334,13 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                 const firstQueued = group.jobs.find(j => j.status === 'queued')
                                 if (!firstQueued) return
                                 const submissionId = group.jobs[0]?.submissionId ?? ''
-                                setEditBatchModal({ submissionId, label: displayLabel, epochs: firstQueued.epochs, thresholdEsr: firstQueued.thresholdEsr, lr: firstQueued.lr, lrDecay: firstQueued.lrDecay })
+                                setEditBatchModal({ submissionId, label: displayLabel, epochs: firstQueued.epochs, thresholdEsr: firstQueued.thresholdEsr, lr: firstQueued.lr, lrDecay: firstQueued.lrDecay, inputPath: firstQueued.inputPath })
                                 setEditBatchName(displayLabel)
                                 setEditBatchEpochs(String(firstQueued.epochs))
                                 setEditBatchThresholdEsr(firstQueued.thresholdEsr != null ? String(firstQueued.thresholdEsr) : '')
                                 setEditBatchLr(String(firstQueued.lr))
                                 setEditBatchLrDecay(String(firstQueued.lrDecay))
+                                setEditBatchInputPath(firstQueued.inputPath ?? '')
                               }}
                               className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border border-nm-border-s text-nm-text-3 hover:bg-hov hover:text-nm-text flex-shrink-0 transition-colors"
                               title="Edit settings for all remaining queued captures in this batch"
@@ -3697,12 +3699,13 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                                   const firstStaged = group.jobs.find(j => j.status === 'staged')
                                   if (!firstStaged) return
                                   const submissionId = group.jobs[0]?.submissionId ?? ''
-                                  setEditBatchModal({ submissionId, label: group.label, epochs: firstStaged.epochs, thresholdEsr: firstStaged.thresholdEsr, lr: firstStaged.lr, lrDecay: firstStaged.lrDecay })
+                                  setEditBatchModal({ submissionId, label: group.label, epochs: firstStaged.epochs, thresholdEsr: firstStaged.thresholdEsr, lr: firstStaged.lr, lrDecay: firstStaged.lrDecay, inputPath: firstStaged.inputPath })
                                   setEditBatchName(group.label)
                                   setEditBatchEpochs(String(firstStaged.epochs))
                                   setEditBatchThresholdEsr(firstStaged.thresholdEsr != null ? String(firstStaged.thresholdEsr) : '')
                                   setEditBatchLr(String(firstStaged.lr))
                                   setEditBatchLrDecay(String(firstStaged.lrDecay))
+                                  setEditBatchInputPath(firstStaged.inputPath ?? '')
                                 }}
                                 className="h-7 inline-flex items-center gap-1 px-2 rounded-[7px] text-[11px] font-medium border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2 transition-colors"
                                 title="Edit settings for all captures in this parked batch"
@@ -5107,6 +5110,18 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 className="w-full h-9 px-3 rounded-xl text-[13px] border border-nm-border-s bg-field text-nm-text focus:outline-none focus:border-nm-accent/60"
               />
             </div>
+            <div>
+              <label className="text-[11px] font-[600] text-nm-text-2 block mb-1.5">Input DI <span className="font-normal text-nm-text-3">(trainer reference file)</span></label>
+              <PathPicker
+                value={editBatchInputPath}
+                placeholder="Select DI WAV"
+                onChange={setEditBatchInputPath}
+                onBrowse={async () => {
+                  const path = await window.api.openAudioFile()
+                  if (path) setEditBatchInputPath(path)
+                }}
+              />
+            </div>
             <details className="group">
               <summary className="text-[11px] font-[600] text-nm-text-3 cursor-pointer select-none list-none flex items-center gap-1">
                 <svg className="w-3 h-3 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>
@@ -5154,7 +5169,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 // Only include a settings field in changes if its value actually differs from the
                 // original — this prevents editedAt being set (and the "edited" pill appearing)
                 // when the user only renames the batch and touches nothing else.
-                const changes: { epochs?: number; thresholdEsr?: number | null; lr?: number; lrDecay?: number; submissionLabel?: string } = {}
+                const changes: { epochs?: number; thresholdEsr?: number | null; lr?: number; lrDecay?: number; submissionLabel?: string; inputPath?: string } = {}
                 if (epochs !== editBatchModal.epochs) changes.epochs = epochs
                 if (thresholdEsr !== editBatchModal.thresholdEsr &&
                     (editBatchThresholdEsr.trim() === '' || (thresholdEsr != null && Number.isFinite(thresholdEsr)))) {
@@ -5162,6 +5177,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 }
                 if (Number.isFinite(lr) && lr !== editBatchModal.lr) changes.lr = lr
                 if (Number.isFinite(lrDecay) && lrDecay !== editBatchModal.lrDecay) changes.lrDecay = lrDecay
+                const trimmedInputPath = editBatchInputPath.trim()
+                if (trimmedInputPath && trimmedInputPath !== editBatchModal.inputPath) changes.inputPath = trimmedInputPath
                 const trimmedName = editBatchName.trim()
                 if (trimmedName && trimmedName !== editBatchModal.label) changes.submissionLabel = trimmedName
                 await window.api.editSubmission(editBatchModal.submissionId, changes)
