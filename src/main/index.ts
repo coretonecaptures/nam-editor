@@ -1560,6 +1560,14 @@ from pathlib import Path
 # (STATUS_ACCESS_VIOLATION, STATUS_STACK_BUFFER_OVERRUN, etc.) that would otherwise be silent.
 faulthandler.enable(file=sys.stderr, all_threads=True)
 
+# Force a non-interactive matplotlib backend before nam (or anything else) can import
+# pyplot with a GUI backend. This process is spawned hidden (windowsHide, no console) —
+# if nam's internal checks hit a failed-check debug plot and call plt.show(), a GUI
+# backend blocks forever waiting for a window that can never be shown or closed, which
+# hangs the trainer with 0% CPU/GPU and no error. Agg makes plt.show() a harmless no-op.
+import matplotlib
+matplotlib.use("Agg")
+
 import numpy as np
 import soundfile as sf
 

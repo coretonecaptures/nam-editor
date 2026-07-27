@@ -231,6 +231,8 @@ Regression check: `grep -rn '="[^{][^"]*\\u[0-9a-fA-F]\{4\}' src --include="*.ts
 
 ## Grid and UI
 
+- Pack Info / Parse Pack Notes guidance + parser follow-up: clarify in the UI that glossary parsing only recognizes `TOKEN = meaning` or `TOKEN: meaning` today (not `TOKEN – meaning`), make the parser more forgiving for human-written legends that use dash separators, document the intended workflow ("parse into Glossary first, then create folder-scoped rules from curated glossary rows"), and review better default field-targeting for shorthand tokens such as `VAR`, `LO`, `BRI`, `WRM`, `SCP` (likely `nl_amp_switches`) versus cab/DI legend tokens like `DI`, `Mars`, `Mars BE`, `Mars 2` (likely glossary-only or `Comments` by default).
+
 - Metadata header path display: consider a second muted/grey full-path presentation or alternate layout that shows more of the real file path without stealing too much editor real estate.
 - Metadata editor: make `Trained By` editable instead of read-only when we are ready to expose trainer/source editing in the normal UI.
 - Metadata editor layout: swap the icon/type and date placement in the stats/header area so the date sits on top and the type/icon treatment moves below it.
