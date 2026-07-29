@@ -203,6 +203,175 @@ function D1BarList({ title, rows, onRowClick, activeKey }: {
   )
 }
 
+// ── Gain / tone gradient strips ───────────────────────────────────────────────
+
+// Clean -> high gain. Ordered by how driven the tone is, not alphabetically, so the strip
+// reads left-to-right as a gain progression. 'other' is deliberately excluded — it has no
+// position on a gain axis.
+const TONE_GAIN_ORDER = ['clean', 'crunch', 'overdrive', 'distortion', 'hi_gain', 'fuzz'] as const
+
+// Cool -> hot, matching the clean -> high-gain progression.
+const TONE_GAIN_COLORS: Record<string, string> = {
+  clean: '#38bdf8',      // sky
+  crunch: '#22c55e',     // green
+  overdrive: '#eab308',  // yellow
+  distortion: '#f97316', // orange
+  hi_gain: '#ef4444',    // red
+  fuzz: '#a855f7',       // purple — off-axis tonally, but reads as "beyond distortion"
+}
+
+/**
+ * Continuous gradient strip of every capture's `metadata.gain`, cleanest to highest.
+ *
+ * Each capture is one segment, ordered by gain, colored by where it sits between the library's
+ * min and max. Shows the shape of your gain coverage at a glance — clustering, and any gaps.
+ */
+function D1GainStrip({ values, title }: { values: number[]; title: string }) {
+  if (values.length === 0) {
+    return (
+      <div className={`${CARD} flex flex-col gap-3`}>
+        <span className={EYEBROW}>{title}</span>
+        <p className="text-[11px] text-gray-400 dark:text-gray-600">
+          No gain data — captures in this folder don&apos;t report a gain value.
+        </p>
+      </div>
+    )
+  }
+
+  const sorted = [...values].sort((a, b) => a - b)
+  const min = sorted[0]
+  const max = sorted[sorted.length - 1]
+  const span = max - min
+
+  // Interpolate sky -> green -> yellow -> orange -> red across the observed gain range.
+  const stops: Array<[number, number, number]> = [
+    [56, 189, 248],
+    [34, 197, 94],
+    [234, 179, 8],
+    [249, 115, 22],
+    [239, 68, 68],
+  ]
+  const colorFor = (t: number) => {
+    const clamped = Math.max(0, Math.min(1, t))
+    const scaled = clamped * (stops.length - 1)
+    const i = Math.min(stops.length - 2, Math.floor(scaled))
+    const f = scaled - i
+    const [r1, g1, b1] = stops[i]
+    const [r2, g2, b2] = stops[i + 1]
+    return `rgb(${Math.round(r1 + (r2 - r1) * f)}, ${Math.round(g1 + (g2 - g1) * f)}, ${Math.round(b1 + (b2 - b1) * f)})`
+  }
+
+  const median = sorted[Math.floor(sorted.length / 2)]
+
+  return (
+    <div className={`${CARD} flex flex-col gap-3`}>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className={EYEBROW}>{title}</span>
+        <span className="font-mono tabular-nums text-[10px] text-gray-400 dark:text-gray-500">
+          {values.length.toLocaleString()} with gain
+        </span>
+      </div>
+
+      <div className="flex h-6 w-full overflow-hidden rounded-md">
+        {sorted.map((value, index) => (
+          <div
+            key={index}
+            className="h-full flex-1"
+            style={{ backgroundColor: colorFor(span > 0 ? (value - min) / span : 0.5) }}
+            title={`${value.toFixed(2)} dB`}
+          />
+        ))}
+      </div>
+
+      <div className="flex items-center justify-between font-mono tabular-nums text-[10px] text-gray-400 dark:text-gray-500">
+        <span>{min.toFixed(1)} dB</span>
+        <span className="text-gray-500 dark:text-gray-400">med {median.toFixed(1)}</span>
+        <span>{max.toFixed(1)} dB</span>
+      </div>
+      <div className="flex items-center justify-between text-[10px] text-gray-400 dark:text-gray-600">
+        <span>Cleanest</span>
+        <span>Highest gain</span>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Proportional strip of tone-type counts, ordered clean -> high gain.
+ *
+ * Segment width is share of the folder, so it reads as "how much of my library is clean vs
+ * hi-gain" — the thing a bar list sorted by count can't show.
+ */
+function D1ToneGainStrip({
+  counts, title, onToneClick, activeTone,
+}: {
+  counts: Map<string, number>
+  title: string
+  onToneClick?: (tone: string) => void
+  activeTone?: string | null
+}) {
+  const ordered = TONE_GAIN_ORDER
+    .map((tone) => ({ tone, count: counts.get(tone) ?? 0 }))
+    .filter((row) => row.count > 0)
+  const totalOrdered = ordered.reduce((sum, row) => sum + row.count, 0)
+  const otherCount = counts.get('other') ?? 0
+
+  return (
+    <div className={`${CARD} flex flex-col gap-3`}>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className={EYEBROW}>{title}</span>
+        {otherCount > 0 && (
+          <span className="font-mono tabular-nums text-[10px] text-gray-400 dark:text-gray-500">
+            +{otherCount.toLocaleString()} other
+          </span>
+        )}
+      </div>
+
+      {totalOrdered === 0 ? (
+        <p className="text-[11px] text-gray-400 dark:text-gray-600">No tone types set</p>
+      ) : (
+        <>
+          <div className="flex h-6 w-full overflow-hidden rounded-md">
+            {ordered.map(({ tone, count }) => (
+              <div
+                key={tone}
+                onClick={() => onToneClick?.(tone)}
+                className={`h-full transition-opacity ${onToneClick ? 'cursor-pointer hover:opacity-80' : ''} ${
+                  activeTone && activeTone !== tone ? 'opacity-40' : ''
+                }`}
+                style={{
+                  width: `${(count / totalOrdered) * 100}%`,
+                  backgroundColor: TONE_GAIN_COLORS[tone] ?? '#94a3b8',
+                }}
+                title={`${TONE_LABELS[tone] ?? tone}: ${count}`}
+              />
+            ))}
+          </div>
+
+          <div className="flex flex-wrap gap-x-3 gap-y-1">
+            {ordered.map(({ tone, count }) => (
+              <button
+                key={tone}
+                onClick={() => onToneClick?.(tone)}
+                className={`flex items-center gap-1.5 text-[10px] transition-opacity ${
+                  onToneClick ? 'cursor-pointer hover:opacity-70' : 'cursor-default'
+                } ${activeTone && activeTone !== tone ? 'opacity-40' : ''}`}
+              >
+                <span
+                  className="w-2 h-2 rounded-sm flex-shrink-0"
+                  style={{ backgroundColor: TONE_GAIN_COLORS[tone] ?? '#94a3b8' }}
+                />
+                <span className="text-gray-600 dark:text-gray-300">{TONE_LABELS[tone] ?? tone}</span>
+                <span className="font-mono tabular-nums text-gray-400 dark:text-gray-500">{count}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export function FolderDashboard({
   files, checklistSummary, hasPackInfo, hasReadme, hasCoverImage, galleryCount = 0,
@@ -270,6 +439,12 @@ export function FolderDashboard({
       .map(([key, count]) => ({ key, count }))
       .sort((a, b) => b.count - a.count)
 
+    // Raw gain values for the clean -> high-gain strip. `gain` is read-only metadata straight
+    // from the .nam, and not every capture reports it, so filter to finite numbers only.
+    const gainValues = files
+      .map((f) => f.metadata.gain)
+      .filter((g): g is number => typeof g === 'number' && Number.isFinite(g))
+
     const health = folderHealth(files, {
       packInfo: !!hasPackInfo,
       readme: !!hasReadme,
@@ -282,7 +457,7 @@ export function FolderDashboard({
     return {
       total, missingCount, totalSizeBytes, newestUpdateMs, recentUpdatedCount,
       dupCount, dupGroups, presets, esrGood, esrOk, esrReview, esrNone,
-      gearRows, toneRows, health, esrRuns,
+      gearRows, toneRows, health, esrRuns, gainValues, toneCounts,
     }
   }, [files, hasPackInfo, hasReadme, hasCoverImage, galleryCount])
 
@@ -511,6 +686,17 @@ export function FolderDashboard({
           }))}
           onRowClick={onToneClick ? (k) => onToneClick(activeTone === k ? null : k) : undefined}
           activeKey={activeTone}
+        />
+      </div>
+
+      {/* 4b. Gain coverage strips — clean to high gain */}
+      <div className="grid grid-cols-2 gap-2.5">
+        <D1GainStrip title="Gain Range" values={stats.gainValues} />
+        <D1ToneGainStrip
+          title="Tone Spread"
+          counts={stats.toneCounts}
+          onToneClick={onToneClick ? (t) => onToneClick(activeTone === t ? null : t) : undefined}
+          activeTone={activeTone}
         />
       </div>
 
