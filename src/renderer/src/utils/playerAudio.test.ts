@@ -4,7 +4,9 @@ import {
   PEAK_CEILING,
   PEAK_FALLBACK_TARGET,
   TARGET_LOUDNESS_DB,
+  GEAR_TYPES_WITH_CAB,
   applyDcBlocker,
+  captureNeedsCabIr,
   base64ToArrayBuffer,
   computePlaybackGain,
   findLoudestWindowStart,
@@ -271,5 +273,35 @@ describe('applyDcBlocker', () => {
   it('handles an empty buffer', () => {
     const empty = new Float32Array(0)
     expect(() => applyDcBlocker(empty, 48000)).not.toThrow()
+  })
+})
+
+describe('captureNeedsCabIr', () => {
+  it('is false for captures that already contain a cabinet', () => {
+    // Applying an IR to these would put two speakers in series.
+    expect(captureNeedsCabIr('amp_cab')).toBe(false)
+    expect(captureNeedsCabIr('amp_pedal_cab')).toBe(false)
+  })
+
+  it('is true for captures that are raw power-amp/preamp signal', () => {
+    expect(captureNeedsCabIr('amp')).toBe(true)
+    expect(captureNeedsCabIr('preamp')).toBe(true)
+    expect(captureNeedsCabIr('pedal_amp')).toBe(true)
+    expect(captureNeedsCabIr('pedal')).toBe(true)
+  })
+
+  it('is false when gear_type is unknown or missing', () => {
+    // Better to leave an unclassifiable capture alone than to colour it wrongly; the user can
+    // still switch the IR on by hand.
+    expect(captureNeedsCabIr(null)).toBe(false)
+    expect(captureNeedsCabIr(undefined)).toBe(false)
+    expect(captureNeedsCabIr('')).toBe(false)
+    expect(captureNeedsCabIr('studio')).toBe(true)
+  })
+
+  it('agrees with the exported cab-inclusive set', () => {
+    for (const gearType of GEAR_TYPES_WITH_CAB) {
+      expect(captureNeedsCabIr(gearType)).toBe(false)
+    }
   })
 })

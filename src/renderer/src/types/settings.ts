@@ -303,6 +303,13 @@ export interface AppSettings {
   //   <diPreviewLibraryPath>/High Gain/riff3.wav
   diPreviewLibraryPath: string
 
+  // Folder of cabinet impulse responses for the preview player. Captures whose gear_type has
+  // no cabinet (amp, preamp, pedal_amp, pedal) are raw power-amp signal and sound fizzy without
+  // one. Same subfolder-as-category convention as diPreviewLibraryPath.
+  irLibraryPath: string
+  /** Cabinet mix 0..1 applied after the model. 1 = fully wet (cab only). */
+  irMix: number
+
   // NAM Standalone
   namStandalonePath: string
 
@@ -429,6 +436,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showFolderImages: true,
   checkForRCBuilds: false,
   diPreviewLibraryPath: '',
+  irLibraryPath: '',
+  irMix: 1,
   namStandalonePath: '',
   enableExperimentalTraining: false,
   namPythonPath: '',

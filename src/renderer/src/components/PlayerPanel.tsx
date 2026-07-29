@@ -5,6 +5,7 @@ import { getCaptureBestEsr, getEsrTone } from '../utils/esr'
 import {
   applyDcBlocker,
   base64ToArrayBuffer,
+  captureNeedsCabIr,
   findLoudestWindowStart,
   normalizeRendered,
   readModelSampleRate
@@ -35,6 +36,9 @@ type PlayerStatus = 'idle' | 'loading-di' | 'rendering' | 'ready' | 'error'
  * clicking a different capture would drop you back to "no clip selected" every time.
  */
 let lastDiPath: string | null = null
+
+/** Same rationale as lastDiPath: survives the per-capture remount. */
+let lastIrPath: string | null = null
 
 function formatError(error: unknown): string {
   if (error instanceof Error) return error.message
@@ -74,6 +78,72 @@ async function resampleTo(
   return out
 }
 
+/**
+ * Convolve `samples` with a cabinet impulse response, blended wet/dry.
+ *
+ * Mirrors upstream's parallel-path topology (source -> convolver -> wetGain -> out, alongside
+ * source -> dryGain -> out with dryGain = 1 - mix) rather than an in-line convolver, so cab
+ * amount is blendable. Runs in an OfflineAudioContext and bakes the result into the cached
+ * preview buffer, which suits render-then-play: no live node graph to rebuild on every play.
+ *
+ * `normalize: false` on the ConvolverNode is deliberate — Web Audio's default normalization
+ * rescales by the IR's energy, which changes the perceived level between different cabs. We do
+ * our own loudness normalization afterwards and want the IR's real relative gain preserved.
+ */
+async function applyCabinetIr(
+  samples: Float32Array,
+  sampleRate: number,
+  irSamples: Float32Array,
+  irSampleRate: number,
+  mix: number
+): Promise<Float32Array<ArrayBuffer>> {
+  const wet = Math.max(0, Math.min(1, mix))
+  const dry = 1 - wet
+  if (samples.length === 0 || irSamples.length === 0 || wet === 0) {
+    const passthrough = new Float32Array(samples.length)
+    passthrough.set(samples)
+    return passthrough
+  }
+
+  // Convolution tail: allow the IR's length so the cab's decay isn't cut off.
+  const offline = new OfflineAudioContext(1, samples.length + irSamples.length, sampleRate)
+
+  const dryBuffer = offline.createBuffer(1, samples.length, sampleRate)
+  dryBuffer.copyToChannel(samples as Float32Array<ArrayBuffer>, 0)
+  const source = offline.createBufferSource()
+  source.buffer = dryBuffer
+
+  // The IR must be at the graph's rate; OfflineAudioContext won't resample a ConvolverNode
+  // buffer for us the way decodeAudioData would.
+  // resampleTo always returns a fresh ArrayBuffer-backed array, and it short-circuits when the
+  // rates already match, so it doubles as the copy needed for copyToChannel's typing.
+  const irAtGraphRate = await resampleTo(irSamples, irSampleRate, sampleRate)
+  const irBuffer = offline.createBuffer(1, irAtGraphRate.length, sampleRate)
+  irBuffer.copyToChannel(irAtGraphRate, 0)
+
+  const convolver = offline.createConvolver()
+  convolver.normalize = false
+  convolver.buffer = irBuffer
+
+  const wetGain = offline.createGain()
+  wetGain.gain.value = wet
+  const dryGain = offline.createGain()
+  dryGain.gain.value = dry
+
+  source.connect(convolver)
+  convolver.connect(wetGain)
+  wetGain.connect(offline.destination)
+
+  source.connect(dryGain)
+  dryGain.connect(offline.destination)
+
+  source.start()
+  const rendered = await offline.startRendering()
+  const out = new Float32Array(rendered.length)
+  rendered.copyFromChannel(out, 0)
+  return out
+}
+
 interface DiCategory {
   name: string
   files: Array<{ name: string; path: string }>
@@ -88,6 +158,10 @@ interface PlayerPanelProps {
    * and noise bursts), which is correct for training and sounds like static as a preview.
    */
   diLibraryPath?: string | null
+  /** Folder of cabinet IR wavs, same subfolder-as-category convention as the DI library. */
+  irLibraryPath?: string | null
+  /** Cabinet wet/dry mix 0..1. */
+  irMix?: number
   /** Amp cover photo (`ampcover.*`), resolved by App the same way the metadata editor does. */
   coverImagePath?: string | null
 }
@@ -117,9 +191,6 @@ const GEAR_LABELS: Record<string, string> = {
   studio: 'Studio'
 }
 
-/** Gear types that already include a cabinet, so no IR is needed to sound right. */
-const GEAR_TYPES_WITH_CAB = new Set(['amp_cab', 'amp_pedal_cab'])
-
 function SummaryRow({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
     <div className="flex items-baseline gap-2 min-w-0">
@@ -140,6 +211,8 @@ export function PlayerPanel({
   file,
   onClose,
   diLibraryPath,
+  irLibraryPath,
+  irMix = 1,
   coverImagePath
 }: PlayerPanelProps & { onClose: () => void }) {
   const [status, setStatus] = useState<PlayerStatus>('idle')
@@ -155,6 +228,11 @@ export function PlayerPanel({
   const [activeCategory, setActiveCategory] = useState<string | null>(null)
   const [clipFilter, setClipFilter] = useState('')
   const panelRef = useRef<HTMLDivElement | null>(null)
+
+  const [irCategories, setIrCategories] = useState<DiCategory[]>([])
+  const [irPath, setIrPath] = useState<string | null>(null)
+  // Auto-enabled for captures without a cab; user can force either way.
+  const [irEnabled, setIrEnabled] = useState(() => captureNeedsCabIr(file.metadata.gear_type))
 
   const audioCtxRef = useRef<AudioContext | null>(null)
   const bufferRef = useRef<AudioBuffer | null>(null)
@@ -280,10 +358,35 @@ export function PlayerPanel({
 
         if (!rendered.ok) throw new Error(rendered.error)
 
-        // 6. DC-block, then normalize — same output stage order as the real plugin. Blocking
+        // 6. Cabinet IR, if this capture needs one (or the user forced it on). Must come
+        // BEFORE normalization: IRs vary wildly in gain, so normalizing first would leave
+        // playback level jumping around as you switch cabs.
+        let processed: Float32Array = rendered.output
+        let usedIrPath: string | null = null
+        if (irEnabled && irPath) {
+          const irResult = await window.api.readFileBinary(irPath)
+          if (irResult.error || !irResult.data) {
+            throw new Error(`Could not read the cabinet IR: ${irResult.error ?? 'no data'}`)
+          }
+          const irDecoded = await ctx.decodeAudioData(base64ToArrayBuffer(irResult.data))
+          const irMono = new Float32Array(irDecoded.length)
+          irDecoded.copyFromChannel(irMono, 0, 0)
+          processed = await applyCabinetIr(
+            processed,
+            modelSampleRate,
+            irMono,
+            irDecoded.sampleRate,
+            irMix
+          )
+          usedIrPath = irPath
+        }
+
+        // 7. DC-block, then normalize — same output stage order as the real plugin. Blocking
         // after normalizing would leave the offset scaled into the signal.
-        applyDcBlocker(rendered.output, modelSampleRate)
-        const normalized = normalizeRendered(rendered.output, rendered.loudnessDb)
+        applyDcBlocker(processed, modelSampleRate)
+        // Loudness metadata describes the model's own output, so it no longer characterises the
+        // signal once a cab has been convolved in. Fall back to peak normalization in that case.
+        const normalized = normalizeRendered(processed, usedIrPath ? null : rendered.loudnessDb)
 
         // Buffer carries the model's rate; Web Audio resamples to the device on playback.
         const audioBuffer = ctx.createBuffer(1, normalized.length, modelSampleRate)
@@ -297,8 +400,27 @@ export function PlayerPanel({
         setStatus('error')
       }
     },
-    [file.filePath, getAudioContext, stopPlayback]
+    [file.filePath, getAudioContext, stopPlayback, irEnabled, irPath, irMix]
   )
+
+  // Scan the IR library and auto-select a cab, mirroring the DI library flow.
+  useEffect(() => {
+    let cancelled = false
+    if (!irLibraryPath) {
+      setIrCategories([])
+      return
+    }
+    void (async () => {
+      const result = await window.api.scanWavLibrary(irLibraryPath)
+      if (cancelled) return
+      setIrCategories(result.categories)
+      const allIrs = result.categories.flatMap((c) => c.files)
+      if (allIrs.length === 0) return
+      const remembered = allIrs.find((f) => f.path === lastIrPath)
+      setIrPath(remembered?.path ?? allIrs[0].path)
+    })()
+    return () => { cancelled = true }
+  }, [irLibraryPath])
 
   // Scan the DI library, then auto-select a clip so the preview renders immediately. Requiring
   // a click first made the panel look broken on open.
@@ -310,7 +432,7 @@ export function PlayerPanel({
       return
     }
     void (async () => {
-      const result = await window.api.scanDiLibrary(diLibraryPath)
+      const result = await window.api.scanWavLibrary(diLibraryPath)
       if (cancelled) return
       setCategories(result.categories)
       setLibraryError(
@@ -433,9 +555,8 @@ export function PlayerPanel({
     return rows
   }, [m, file.config, file.architecture])
 
-  // Non-cab captures render as raw power-amp signal until the IR stage lands, which sounds
-  // harsh and would otherwise be blamed on the capture. Warn rather than mislead.
-  const needsCabIr = !!m.gear_type && !GEAR_TYPES_WITH_CAB.has(m.gear_type)
+  const needsCabIr = captureNeedsCabIr(m.gear_type)
+  const irClips = useMemo(() => irCategories.flatMap((c) => c.files), [irCategories])
 
   return (
     <div ref={panelRef} className="flex flex-col h-full bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 select-none">
@@ -567,14 +688,60 @@ export function PlayerPanel({
               />
             </div>
 
-            {/* No cabinet in this capture — see the IR stage TODO. */}
-            {needsCabIr && (
-              <p className="text-[11px] text-amber-600 dark:text-amber-500 leading-relaxed">
-                This capture has no cabinet ({GEAR_LABELS[m.gear_type as string] ?? m.gear_type}),
-                so it will sound harsh and fizzy until cabinet IR support is added. That's the
-                player, not the capture.
-              </p>
-            )}
+            {/* Cabinet IR */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={irEnabled}
+                    onChange={(e) => setIrEnabled(e.target.checked)}
+                    disabled={busy || irClips.length === 0}
+                    className="w-3.5 h-3.5 rounded accent-teal-500"
+                  />
+                  <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                    Cabinet IR
+                  </span>
+                </label>
+                {needsCabIr && !irEnabled && (
+                  <span className="text-[10px] text-amber-600 dark:text-amber-500">
+                    recommended for {GEAR_LABELS[m.gear_type as string] ?? m.gear_type}
+                  </span>
+                )}
+                {!needsCabIr && irEnabled && (
+                  <span className="text-[10px] text-amber-600 dark:text-amber-500">
+                    capture already has a cab
+                  </span>
+                )}
+              </div>
+
+              {irClips.length === 0 ? (
+                <p className="text-[11px] text-gray-400 dark:text-gray-600 leading-relaxed">
+                  {needsCabIr
+                    ? `This capture has no cabinet (${GEAR_LABELS[m.gear_type as string] ?? m.gear_type}), so it will sound harsh without an IR. Set an IR Library folder in Settings → Library.`
+                    : 'Set an IR Library folder in Settings → Library to audition cabinets.'}
+                </p>
+              ) : (
+                irEnabled && (
+                  <select
+                    value={irPath ?? ''}
+                    onChange={(e) => setIrPath(e.target.value || null)}
+                    disabled={busy}
+                    className="w-full h-7 px-2 rounded-md text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:border-teal-500 disabled:opacity-50"
+                  >
+                    {irCategories.map((category) => (
+                      <optgroup key={category.name} label={category.name}>
+                        {category.files.map((ir) => (
+                          <option key={ir.path} value={ir.path}>
+                            {ir.name.replace(/\.wav$/i, '')}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                )
+              )}
+            </div>
           </>
         )}
 

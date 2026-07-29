@@ -6325,15 +6325,19 @@ app.whenReady().then(async () => {
     return result.filePaths[0] ?? null
   })
 
-  // IPC: Scan the tone-preview DI library into { category, files[] } groups. Category is the
-  // immediate subfolder name (e.g. "Clean", "Medium Gain", "High Gain") -- the folder structure
-  // IS the categorization, deliberately avoiding a separate tagging data model. Loose .wav files
-  // sitting directly in the root (not in a subfolder) are grouped under "Uncategorized".
-  ipcMain.handle('player:scanDiLibrary', async (_event, libraryPath: string) => {
+  // IPC: Scan a folder of .wav files into { category, files[] } groups. Category is the
+  // immediate subfolder name (e.g. "Clean", "Medium Gain", "High Gain" for DI clips; "1x12",
+  // "4x12" for IRs) -- the folder structure IS the categorization, deliberately avoiding a
+  // separate tagging data model. Loose .wav files sitting directly in the root (not in a
+  // subfolder) are grouped under "Uncategorized".
+  //
+  // Shared by the DI clip library and the cabinet IR library: both are "a folder of wavs the
+  // user organized into categories", so they get one implementation.
+  ipcMain.handle('player:scanWavLibrary', async (_event, libraryPath: string) => {
     if (!libraryPath) return { categories: [] }
     try {
       const stat = await fs.promises.stat(libraryPath).catch(() => null)
-      if (!stat || !stat.isDirectory()) return { categories: [], error: 'DI library folder not found.' }
+      if (!stat || !stat.isDirectory()) return { categories: [], error: 'Library folder not found.' }
 
       const topEntries = await fs.promises.readdir(libraryPath, { withFileTypes: true })
       const categories: Array<{ name: string; files: Array<{ name: string; path: string }> }> = []

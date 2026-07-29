@@ -415,7 +415,7 @@ declare global {
       openAudioFiles: () => Promise<string[]>
       openImageFile: () => Promise<string | null>
       readFileBinary: (filePath: string) => Promise<{ data?: string; error?: string }>
-      scanDiLibrary: (libraryPath: string) => Promise<{
+      scanWavLibrary: (libraryPath: string) => Promise<{
         categories: Array<{ name: string; files: Array<{ name: string; path: string }> }>
         error?: string
       }>
@@ -4965,6 +4965,8 @@ INSTRUCTIONS:
               key={playerFile.filePath}
               file={playerFile}
               diLibraryPath={settings.diPreviewLibraryPath || null}
+              irLibraryPath={settings.irLibraryPath || null}
+              irMix={settings.irMix}
               coverImagePath={metadataCoverPath}
               onClose={() => setPlayerFile(null)}
             />

@@ -961,6 +961,63 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab, onOpenTra
                   This is separate from the training Input DI, which is a calibration signal and is not
                   meant to be listened to.
                 </p>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">IR Library</span>
+                  <span className="text-xs text-gray-400 dark:text-gray-500 truncate flex-1 font-mono">
+                    {draft.irLibraryPath || <span className="italic text-gray-400 dark:text-gray-600">Not configured</span>}
+                  </span>
+                  <button
+                    onClick={async () => {
+                      const p = await window.api.openFolder(draft.irLibraryPath || undefined)
+                      if (p) {
+                        const updated = { ...draft, irLibraryPath: p }
+                        setDraft(updated)
+                        onSave(updated)
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 flex-shrink-0"
+                  >
+                    Browse...
+                  </button>
+                  {draft.irLibraryPath && (
+                    <button
+                      onClick={() => {
+                        const updated = { ...draft, irLibraryPath: '' }
+                        setDraft(updated)
+                        onSave(updated)
+                      }}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-red-500/20 text-gray-500 dark:text-gray-400 flex-shrink-0"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">Cabinet mix</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={5}
+                    value={Math.round((draft.irMix ?? 1) * 100)}
+                    onChange={(e) => {
+                      const updated = { ...draft, irMix: Number(e.target.value) / 100 }
+                      setDraft(updated)
+                      onSave(updated)
+                    }}
+                    className="flex-1 accent-teal-500"
+                  />
+                  <span className="text-xs tabular-nums text-gray-400 dark:text-gray-500 w-10 text-right flex-shrink-0">
+                    {Math.round((draft.irMix ?? 1) * 100)}%
+                  </span>
+                </div>
+                <p className="text-[11px] text-gray-400 dark:text-gray-600 leading-relaxed">
+                  Cabinet impulse responses for previewing captures that don&apos;t include a cab
+                  (<span className="font-mono">amp</span>, <span className="font-mono">preamp</span>,{' '}
+                  <span className="font-mono">pedal</span>) — those are raw power-amp signal and sound
+                  harsh without one. Subfolders become categories, same as the DI library. Captures
+                  that already include a cab skip the IR automatically.
+                </p>
               </div>
             </div>
           </div>

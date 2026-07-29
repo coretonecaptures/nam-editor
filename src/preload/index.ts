@@ -20,10 +20,11 @@ const api = {
   openAudioFiles: (): Promise<string[]> => ipcRenderer.invoke('dialog:openAudioFiles'),
   openImageFile: (): Promise<string | null> => ipcRenderer.invoke('dialog:openImageFile'),
   readFileBinary: (filePath: string): Promise<{ data?: string; error?: string }> => ipcRenderer.invoke('file:readBinary', filePath),
-  scanDiLibrary: (
+  // Used for both the DI clip library and the cabinet IR library — same shape, same scan.
+  scanWavLibrary: (
     libraryPath: string
   ): Promise<{ categories: Array<{ name: string; files: Array<{ name: string; path: string }> }>; error?: string }> =>
-    ipcRenderer.invoke('player:scanDiLibrary', libraryPath),
+    ipcRenderer.invoke('player:scanWavLibrary', libraryPath),
   hashFiles: (filePaths: string[]): Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]> =>
     ipcRenderer.invoke('file:hashMany', filePaths),
   hashFilesWithoutMetadata: (filePaths: string[]): Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]> =>

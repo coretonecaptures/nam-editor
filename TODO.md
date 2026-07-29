@@ -1,57 +1,31 @@
 # TODO
 
-## [HIGH PRIORITY] Player: cabinet IR stage for captures that don't include a cab
+## DONE: Player cabinet IR stage
 
-**Correctness gap in the shipped preview player, not a nice-to-have.** The player currently
-renders the DI through the NAM model and plays the result directly. That is only right for
-captures that already include a cabinet. For everything else the output is raw power-amp/preamp
-signal — fizzy and harsh, nothing like the intended tone. Users will hear it and reasonably
-conclude the *capture* is bad.
+**Implemented.** Captures whose `gear_type` has no cabinet (`amp`, `preamp`, `pedal_amp`,
+`pedal`, `studio`) are raw power-amp signal and sound harsh alone; they now get a cabinet IR
+convolved in. `amp_cab`/`amp_pedal_cab` skip it automatically so you never hear two speakers
+in series. Unknown/absent `gear_type` is left alone rather than coloured wrongly, and the user
+can force the IR on or off either way.
 
-Which `gear_type` values need an IR:
-- **Already include a cab — play dry:** `amp_cab`, `amp_pedal_cab`
-- **Need an IR after the model:** `amp`, `preamp`, `pedal_amp`, `pedal`
-- **Ambiguous, needs a rule:** `studio` (and any capture with `gear_type` unset)
+- **IR source:** a user-pointed folder (`irLibraryPath`, Settings -> Library), same
+  subfolder-as-category convention as the DI clip library. Nothing is bundled, which sidesteps
+  the cab-IR licensing question entirely.
+- **Scan IPC:** `player:scanWavLibrary` — the DI handler generalized, since both libraries are
+  "a folder of wavs organized into category subfolders".
+- **Convolution:** Web Audio `ConvolverNode` inside an `OfflineAudioContext`, baked into the
+  cached preview buffer (suits render-then-play; no live graph to rebuild per play). Parallel
+  wet/dry paths with `dryGain = 1 - mix` copied from upstream's topology, so cab amount is
+  blendable via the `irMix` setting. `convolver.normalize = false` so switching cabs doesn't
+  jump the level — our own loudness stage handles that.
+- **Chain order:** model -> IR -> DC blocker -> normalize. IR before normalization because IRs
+  vary wildly in gain. When an IR is applied, loudness metadata no longer describes the signal,
+  so normalization falls back to peak-based.
+- **Verified** against a real IR (`FNDR 2x12 G12-65 MIX.wav`): 6kHz down 21.2dB, 2kHz down
+  5.2dB, fundamental unchanged — a real speaker's rolloff.
 
-**Upstream already solves this and we can copy the design.** `tone-3000/neural-amp-modeler-wasm`
-does it entirely in Web Audio — no C++, no WASM changes:
-- `ui/public/irs/` ships 6 IRs, listed in `ui/src/constants/index.ts` (mesa, celestion, eminence,
-  ampeg + plate/spring reverbs — so the same mechanism doubles as an FX/reverb slot, not just
-  cabs).
-- `ui/src/context/T3kPlayerContext.tsx` (~line 583) fetches the IR, `decodeAudioData`s it, and
-  assigns it to a `ConvolverNode`.
-- Notably it's a **parallel wet/dry topology with a mix control**, not a plain in-line convolver:
-  `source -> IR -> irGain -> irWetGain -> output` alongside `source -> irDryGain -> output`,
-  with `irDryGain = 1 - mix`. Worth copying — blendable cab amount is more useful than on/off,
-  and it degrades gracefully when the model already has a cab baked in.
-
-This is pure Web Audio on the already-rendered buffer, so **no need to port convolution code
-from the separate ir-lab project** (C++/C#) — `ConvolverNode` does the FFT convolution natively
-and correctly. That code would only matter if we wanted to *capture/generate* IRs, which is a
-different feature. The genuinely reusable thing from ir-lab would be a curated IR set with clear
-licensing, not the DSP.
-
-Design questions to settle before building:
-- **Where do IRs come from?** Bundle a small default set (licensing must be checked — cab IRs
-  are frequently commercial), let users point at their own IR folder (mirrors the new
-  `diPreviewLibraryPath` DI Clip Library, so the pattern already exists), or both with a
-  sensible default.
-- **Auto-select or manual?** Suggested: pick automatically from `gear_type` so the common case
-  needs no thought, but let the user override per-capture — the IR massively colors the tone, so
-  A/B'ing cabs is genuinely useful, same as the DI clip picker.
-- **Signal chain and level.** Convolution goes after the model, before the existing loudness
-  normalization (normalizing pre-IR would leave levels inconsistent since IRs have wildly
-  different gains). Worth re-checking the peak-limiter behavior once an IR is in the chain.
-- **Where to convolve?** Settled: Web Audio `ConvolverNode`, as upstream does. No new WASM, no
-  C++, runs on the already-rendered buffer. Since our player renders offline rather than in
-  real time, an `OfflineAudioContext` can bake the IR into the cached preview buffer instead of
-  rebuilding the node graph on every play — simpler than upstream's live-node approach, though
-  it does mean re-rendering when the IR or mix changes.
-- **Also affects `nl_cabinet` metadata:** captures that name a cab in NAM Lab's extended fields
-  could suggest a matching IR.
-
-Until this lands, preview playback of non-cab captures is misleading; consider surfacing a note
-in the player for those `gear_type`s so the harshness isn't mistaken for a bad capture.
+Follow-ups worth considering: per-capture IR memory (currently one selection for the session),
+suggesting an IR from `nl_cabinet` metadata, and IR support in the future tone map.
 
 ---
 

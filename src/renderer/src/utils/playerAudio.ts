@@ -110,6 +110,24 @@ export function applyDcBlocker(samples: Float32Array, sampleRate: number): void 
   }
 }
 
+/** Gear types whose capture already includes a cabinet, so applying an IR would double it up. */
+export const GEAR_TYPES_WITH_CAB = new Set(['amp_cab', 'amp_pedal_cab'])
+
+/**
+ * Whether a capture needs a cabinet IR to sound right.
+ *
+ * A capture of just an amp/preamp/pedal is raw power-amp signal — harsh and fizzy on its own,
+ * because a real rig's speaker is doing heavy low-pass filtering that isn't in the model. The
+ * ones that already contain a cab must NOT get another, or you hear two speakers in series.
+ *
+ * Unknown/absent gear_type returns false: silently colouring a capture we can't classify is
+ * worse than leaving it alone, and the user can still enable an IR manually.
+ */
+export function captureNeedsCabIr(gearType: string | null | undefined): boolean {
+  if (!gearType) return false
+  return !GEAR_TYPES_WITH_CAB.has(gearType)
+}
+
 /** Decode a base64 payload (as returned by the readFileBinary IPC) into an ArrayBuffer. */
 export function base64ToArrayBuffer(base64: string): ArrayBuffer {
   const binary = atob(base64)
