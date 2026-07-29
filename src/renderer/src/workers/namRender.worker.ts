@@ -32,7 +32,7 @@ export type NamRenderResponse =
     }
   | { ok: false; error: string }
 
-interface NamWasmModule {
+export interface NamWasmModule {
   _malloc(size: number): number
   _free(ptr: number): void
   _namLoadModel(jsonPtr: number): number
@@ -64,15 +64,17 @@ async function getModule(): Promise<NamWasmModule> {
   return modulePromise
 }
 
-async function render(request: NamRenderRequest): Promise<NamRenderResponse> {
+/**
+ * Run one render against an already-loaded module.
+ *
+ * Split out from the message handler (and exported) so it can be unit tested against a fake
+ * module without Emscripten output or a browser — see namRender.worker.test.ts.
+ */
+export function renderWithModule(
+  Module: NamWasmModule,
+  request: NamRenderRequest
+): NamRenderResponse {
   const { modelJson, input, sampleRate, slimmableSize } = request
-
-  let Module: NamWasmModule
-  try {
-    Module = await getModule()
-  } catch (error) {
-    return { ok: false, error: `Failed to load the NAM inference module: ${String(error)}` }
-  }
 
   let handle = 0
   let inPtr = 0
@@ -125,18 +127,32 @@ async function render(request: NamRenderRequest): Promise<NamRenderResponse> {
   } catch (error) {
     return { ok: false, error: `Rendering failed: ${String(error)}` }
   } finally {
-    if (inPtr !== 0) Module!._free(inPtr)
-    if (outPtr !== 0) Module!._free(outPtr)
-    if (handle !== 0) Module!._namFreeModel(handle)
+    if (inPtr !== 0) Module._free(inPtr)
+    if (outPtr !== 0) Module._free(outPtr)
+    if (handle !== 0) Module._namFreeModel(handle)
   }
 }
 
-self.onmessage = async (event: MessageEvent<NamRenderRequest>) => {
-  const response = await render(event.data)
-  if (response.ok) {
-    // Transfer the rendered buffer rather than copying it across the boundary.
-    self.postMessage(response, { transfer: [response.output.buffer] })
-  } else {
-    self.postMessage(response)
+async function render(request: NamRenderRequest): Promise<NamRenderResponse> {
+  let Module: NamWasmModule
+  try {
+    Module = await getModule()
+  } catch (error) {
+    return { ok: false, error: `Failed to load the NAM inference module: ${String(error)}` }
+  }
+  return renderWithModule(Module, request)
+}
+
+// Guarded so the module can be imported by unit tests under Node, where there is no worker
+// global. In a real Worker this always registers.
+if (typeof self !== 'undefined' && typeof self.postMessage === 'function') {
+  self.onmessage = async (event: MessageEvent<NamRenderRequest>) => {
+    const response = await render(event.data)
+    if (response.ok) {
+      // Transfer the rendered buffer rather than copying it across the boundary.
+      self.postMessage(response, { transfer: [response.output.buffer] })
+    } else {
+      self.postMessage(response)
+    }
   }
 }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { NamFile } from '../types/nam'
+import { base64ToArrayBuffer, normalizeRendered } from '../utils/playerAudio'
 import type { NamRenderRequest, NamRenderResponse } from '../workers/namRender.worker'
 
 /**
@@ -16,58 +17,11 @@ import type { NamRenderRequest, NamRenderResponse } from '../workers/namRender.w
 // 12s of audio is ~1.7s of compute — long enough to judge a tone, short enough to feel snappy.
 const MAX_PREVIEW_SECONDS = 12
 
-// Match the level the shipping NAM plugin normalizes models to.
-const TARGET_LOUDNESS_DB = -18
-
 type PlayerStatus = 'idle' | 'loading-di' | 'rendering' | 'ready' | 'error'
 
 function formatError(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
-}
-
-function base64ToArrayBuffer(base64: string): ArrayBuffer {
-  const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-  return bytes.buffer
-}
-
-/**
- * Scale rendered audio to a sane playback level.
- *
- * Model output is NOT normalized — an A2 model can render a peak of ~10.0 from a 0.25-amplitude
- * input, which would be violently loud and clip hard. Prefer the model's own loudness metadata
- * (same approach as the real plugin); fall back to peak normalization when it has none.
- */
-function normalizeRendered(
-  samples: Float32Array,
-  loudnessDb: number | null
-): Float32Array<ArrayBuffer> {
-  let gain: number
-
-  if (loudnessDb !== null && Number.isFinite(loudnessDb)) {
-    gain = Math.pow(10, (TARGET_LOUDNESS_DB - loudnessDb) * 0.05)
-  } else {
-    let peak = 0
-    for (let i = 0; i < samples.length; i++) {
-      const abs = Math.abs(samples[i])
-      if (abs > peak) peak = abs
-    }
-    gain = peak > 0 ? 0.7 / peak : 1
-  }
-
-  // Safety net: never let an outlier loudness value produce a damaging playback level.
-  let peakAfter = 0
-  for (let i = 0; i < samples.length; i++) {
-    const abs = Math.abs(samples[i]) * gain
-    if (abs > peakAfter) peakAfter = abs
-  }
-  if (peakAfter > 0.99) gain *= 0.99 / peakAfter
-
-  const out = new Float32Array(samples.length)
-  for (let i = 0; i < samples.length; i++) out[i] = samples[i] * gain
-  return out
 }
 
 interface PlayerPanelProps {
