@@ -1,12 +1,13 @@
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
 import { NamFile, GEAR_TYPES, TONE_TYPES } from '../types/nam'
-import { gearChipClass, toneChipClass, getGearImageSrc } from '../assets/gear'
+import { gearChipClass, toneChipClass, getGearImageSrc, namGearChipClass, namToneChipClass, namCreatorChipClass } from '../assets/gear'
 import { detectPreset } from '../utils/detectPreset'
+import { getCaptureBestEsr, getEsrTone } from '../utils/esr'
 import { BatchRenameModal } from './BatchRenameModal'
 
-type FilterMode = 'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited' | 'incomplete' | 'complete' | 'rated'
+type FilterMode = 'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited' | 'incomplete' | 'complete' | 'rated' | 'duplicates'
 
 // Completeness: 7 core shareable fields (output level and epochs are optional/technical)
 const COMPLETENESS_FIELDS: (keyof NamFile['metadata'])[] = [
@@ -14,7 +15,7 @@ const COMPLETENESS_FIELDS: (keyof NamFile['metadata'])[] = [
 ]
 function getCompletenessColor(meta: NamFile['metadata']): string | null {
   const filled = COMPLETENESS_FIELDS.filter((k) => meta[k] != null && meta[k] !== '').length
-  if (filled === COMPLETENESS_FIELDS.length) return null // fully complete — no dot
+  if (filled === COMPLETENESS_FIELDS.length) return null // fully complete - no dot
   if (filled >= 6) return 'bg-amber-400'  // 1 missing
   return 'bg-red-500'                     // 2+ missing
 }
@@ -33,6 +34,7 @@ interface FileListProps {
   onTrimSelection: (visiblePaths: string[]) => void
   onRemove?: (id: string) => void
   onBatchEditSelected?: (paths: string[]) => void
+  onSuggestMetadataSelected?: (paths: string[]) => void
   onSaveSelected?: (paths: string[]) => void
   onBatchRename?: (renames: { filePath: string; newBaseName: string }[], renameFiles: boolean) => void
   onTrashSelected?: (paths: string[]) => Promise<void>
@@ -44,6 +46,7 @@ interface FileListProps {
   onCopyMetadata?: (filePath: string) => void
   onPasteMetadata?: (filePaths: string[]) => void
   onClearNamLab?: (filePaths: string[]) => void
+  onCleanOutdatedNamBot?: (filePaths: string[]) => void
   namPlayerAvailable?: boolean
   onOpenInNam?: (filePath: string) => void
   onPlay?: (file: NamFile) => void
@@ -67,6 +70,9 @@ interface FileListProps {
   onPresetFilterClear?: () => void
   onFilterModeClear?: () => void
   onRatingFilterClear?: () => void
+  activeFolderPath?: string | null
+  directFilesOnly?: boolean
+  onDirectFilesOnlyChange?: (value: boolean) => void
 }
 
 const ALL_GRID_COLUMNS: { key: string; label: string; minWidth: number; defaultVisible: boolean }[] = [
@@ -107,6 +113,35 @@ export { ALL_GRID_COLUMNS }
 const DEFAULT_VISIBLE_COLS = ALL_GRID_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key)
 const GRID_COL_STORAGE_KEY = 'nam-lab-grid-columns'
 const SORT_STORAGE_KEY = 'nam-lab-sort'
+const DETECTED_PRESET_COLORS: Record<string, string> = {
+  'A2': '#ec4899',
+  Complex: '#a855f7',
+  Standard: '#3b82f6',
+  Lite: '#22c55e',
+  Feather: '#f59e0b',
+  Nano: '#f97316',
+  REVySTD: '#06b6d4',
+  REVyHI: '#0ea5e9',
+  REVxSTD: '#8b5cf6',
+  Unknown: '#6b7280',
+}
+
+function detectedPresetChipStyle(preset: string): React.CSSProperties {
+  const color = DETECTED_PRESET_COLORS[preset] ?? DETECTED_PRESET_COLORS.Unknown
+  return {
+    color,
+    borderColor: color,
+    boxShadow: `0 0 0 1px ${color}33 inset, 0 0 10px ${color}22`,
+  }
+}
+
+function mergedEsrMeta(file: NamFile): Record<string, unknown> {
+  return { ...(file.metadata as Record<string, unknown>), architecture: file.architecture, config: file.config }
+}
+
+function getFileBestEsr(file: NamFile) {
+  return getCaptureBestEsr(mergedEsrMeta(file))
+}
 
 function loadSort(): { key: string | null; dir: SortDir } {
   try {
@@ -135,6 +170,10 @@ function saveVisibleCols(cols: string[]): void {
   localStorage.setItem(GRID_COL_STORAGE_KEY, JSON.stringify(cols))
 }
 
+function normalizeLooseSearch(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '')
+}
+
 function getCellValue(file: NamFile, key: string): string {
   const m = file.metadata
   switch (key) {
@@ -150,8 +189,8 @@ function getCellValue(file: NamFile, key: string): string {
     case 'input_level_dbu':  return m.input_level_dbu  != null ? String(m.input_level_dbu)  : ''
     case 'output_level_dbu': return m.output_level_dbu != null ? String(m.output_level_dbu) : ''
     case 'validation_esr': {
-      const esr = (m.training as Record<string, unknown> | undefined)?.validation_esr
-      return esr != null ? (esr as number).toFixed(6) : ''
+      const esr = getFileBestEsr(file).value
+      return esr != null ? esr.toFixed(6) : ''
     }
     case 'loudness':    return m.loudness != null ? m.loudness.toFixed(2) : ''
     case 'gain':        return m.gain != null ? m.gain.toFixed(2) : ''
@@ -202,15 +241,22 @@ export { getCellValue, buildExportRows, doExportCSV, doExportXLSX }
 function getSortValue(file: NamFile, key: string): string | number {
   if (key === 'date') {
     const d = file.metadata.date
-    return d ? d.year * 10000 + d.month * 100 + d.day : 0
+    return d
+      ? (d.year * 10000000000)
+        + (d.month * 100000000)
+        + (d.day * 1000000)
+        + ((d.hour ?? 0) * 10000)
+        + ((d.minute ?? 0) * 100)
+        + (d.second ?? 0)
+      : 0
   }
   if (key === 'loudness') return file.metadata.loudness ?? -Infinity
   if (key === 'gain') return file.metadata.gain ?? -Infinity
   if (key === 'input_level_dbu') return file.metadata.input_level_dbu ?? -Infinity
   if (key === 'output_level_dbu') return file.metadata.output_level_dbu ?? -Infinity
   if (key === 'validation_esr') {
-    const esr = (file.metadata.training as Record<string, unknown> | undefined)?.validation_esr
-    return esr != null ? (esr as number) : Infinity
+    const esr = getFileBestEsr(file).value
+    return esr != null ? esr : Infinity
   }
   return getCellValue(file, key).toLowerCase()
 }
@@ -269,6 +315,7 @@ export function FileList({
   onTrimSelection,
   onRemove = undefined,
   onBatchEditSelected,
+  onSuggestMetadataSelected,
   onSaveSelected,
   onBatchRename,
   onTrashSelected,
@@ -283,6 +330,7 @@ export function FileList({
   onCopyMetadata,
   onPasteMetadata,
   onClearNamLab,
+  onCleanOutdatedNamBot,
   namPlayerAvailable,
   onOpenInNam,
   onPlay,
@@ -303,6 +351,9 @@ export function FileList({
   onPresetFilterClear,
   onFilterModeClear,
   onRatingFilterClear,
+  activeFolderPath = null,
+  directFilesOnly = false,
+  onDirectFilesOnlyChange,
 }: FileListProps) {
   const [search, setSearch] = useState(defaultSearch)
   const [nameSearch, setNameSearch] = useState('')
@@ -320,25 +371,42 @@ export function FileList({
   const anchorIndexRef = useRef<number>(-1)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; filePath: string } | null>(null)
   const ctxMenuRef = useRef<HTMLDivElement>(null)
+  const [jsonModal, setJsonModal] = useState<{ fileName: string; json: string } | null>(null)
   const [showBatchRename, setShowBatchRename] = useState(false)
   const exportRef = useRef<HTMLDivElement>(null)
   const chooserRef = useRef<HTMLDivElement>(null)
+  const duplicateFileKeys = useMemo(() => new Set(
+    [...files.reduce((map, file) => {
+      const key = file.fileName.trim().toLowerCase()
+      if (!key) return map
+      map.set(key, (map.get(key) ?? 0) + 1)
+      return map
+    }, new Map<string, number>()).entries()]
+      .filter(([, count]) => count >= 2)
+      .map(([key]) => key)
+  ), [files])
 
   // Compute filtered + sorted here (before hooks) so the trim useEffect can reference sorted.
-  const filtered = files.filter((f) => {
+  const filtered = useMemo(() => files.filter((f) => {
     const m = f.metadata
     const o = f.originalMetadata
     if (search) {
       const q = search.toLowerCase()
       const haystack = [f.fileName, m.name, m.gear_make, m.gear_model, m.modeled_by]
         .filter(Boolean).join(' ').toLowerCase()
-      if (!haystack.includes(q)) return false
+      if (!haystack.includes(q)) {
+        const normalizedQuery = normalizeLooseSearch(search)
+        const normalizedHaystack = normalizeLooseSearch(haystack)
+        if (!normalizedQuery || !normalizedHaystack.includes(normalizedQuery)) return false
+      }
     }
     if (viewMode === 'list') {
       if (gearFilter && m.gear_type !== gearFilter) return false
       if (toneFilter && m.tone_type !== toneFilter) return false
       if (presetFilter === '__none__' && detectPreset(f.config) !== null) return false
-      else if (presetFilter && presetFilter !== '__none__' && detectPreset(f.config) !== presetFilter) return false
+      else if (presetFilter === '__a2__' && detectPreset(f.config) !== 'A2') return false
+      else if (presetFilter === '__a1__' && detectPreset(f.config) === 'A2') return false
+      else if (presetFilter && presetFilter !== '__none__' && presetFilter !== '__a1__' && presetFilter !== '__a2__' && detectPreset(f.config) !== presetFilter) return false
       if (mfrFilter && m.gear_make !== mfrFilter) return false
       if (nameSearch) {
         const q = nameSearch.toLowerCase()
@@ -356,12 +424,12 @@ export function FileList({
       }
     }
     if (esrFilter) {
-      const esrVal = (f.metadata.training as Record<string, unknown> | undefined)?.validation_esr
-      const esrNum = typeof esrVal === 'number' ? esrVal : null
-      if (esrFilter === 'good'   && !(esrNum !== null && esrNum < 0.01)) return false
-      if (esrFilter === 'ok'     && !(esrNum !== null && esrNum >= 0.01 && esrNum < 0.05)) return false
-      if (esrFilter === 'review' && !(esrNum !== null && esrNum >= 0.05)) return false
-      if (esrFilter === 'none'   && esrNum !== null) return false
+      const best = getFileBestEsr(f)
+      const tone = getEsrTone(best.value, best.kind).tone
+      if (esrFilter === 'good' && tone !== 'green') return false
+      if (esrFilter === 'ok' && tone !== 'amber') return false
+      if (esrFilter === 'review' && tone !== 'red') return false
+      if (esrFilter === 'none' && tone !== 'none') return false
     }
     if (ratingFilter !== null && ratingFilter !== undefined) {
       const r = f.metadata.nl_rating ?? 0
@@ -374,14 +442,15 @@ export function FileList({
       case 'no-maker':   return !o.gear_make && !o.gear_model
       case 'no-tone':    return !o.tone_type
       case 'edited':     return f.isDirty
+      case 'duplicates': return duplicateFileKeys.has(f.fileName.trim().toLowerCase())
       case 'incomplete': return COMPLETENESS_FIELDS.some((k) => m[k] == null || m[k] === '')
       case 'complete':   return !COMPLETENESS_FIELDS.some((k) => m[k] == null || m[k] === '')
       case 'rated':      return (m.nl_rating ?? 0) > 0
       default:           return true
     }
-  })
+  }), [files, search, viewMode, gearFilter, toneFilter, presetFilter, mfrFilter, nameSearch, columnFilters, esrFilter, ratingFilter, filter, duplicateFileKeys])
 
-  const sorted = [...filtered].sort((a, b) => {
+  const sorted = useMemo(() => [...filtered].sort((a, b) => {
     if (sortKey) {
       const av = getSortValue(a, sortKey)
       const bv = getSortValue(b, sortKey)
@@ -394,9 +463,8 @@ export function FileList({
       const result = sortDir === 'asc' ? cmp : -cmp
       if (result !== 0) return result
     }
-    // Secondary (or sole) sort: name A→Z
     return (a.metadata.name || a.fileName).localeCompare(b.metadata.name || b.fileName)
-  })
+  }), [filtered, sortKey, sortDir])
 
   useEffect(() => {
     if (!showExport) return
@@ -477,14 +545,6 @@ export function FileList({
   }, [sorted])
 
 
-  if (files.length === 0) {
-    return (
-      <div className="flex-1 flex items-center justify-center p-4">
-        <p className="text-gray-400 dark:text-gray-600 text-xs text-center">No files loaded</p>
-      </div>
-    )
-  }
-
   // Only files that are both selected AND currently visible in the filtered list.
   // Prevents stale selectedIds (from pre-filter selections) affecting bulk actions.
   const selectedVisible = sorted.filter((f) => selectedIds.has(f.filePath)).map((f) => f.filePath)
@@ -499,10 +559,11 @@ export function FileList({
 
   const editedCount = files.filter((f) => f.isDirty).length
   const incompleteCount = files.filter((f) => COMPLETENESS_FIELDS.some((k) => f.metadata[k] == null || f.metadata[k] === '')).length
-  const filterOptions: { value: FilterMode; label: string }[] = [
-    { value: 'all',        label: 'All' },
+  const duplicateCount = files.filter((f) => duplicateFileKeys.has(f.fileName.trim().toLowerCase())).length
+  const statusFilterOptions: { value: Exclude<FilterMode, 'all'>; label: string }[] = [
     { value: 'edited',     label: editedCount > 0 ? `Edited (${editedCount})` : 'Edited' },
     { value: 'incomplete', label: incompleteCount > 0 ? `Incomplete (${incompleteCount})` : 'Incomplete' },
+    { value: 'duplicates', label: duplicateCount > 0 ? `Duplicates (${duplicateCount})` : 'Duplicates' },
     { value: 'unnamed',    label: 'Unnamed' },
     { value: 'no-gear',    label: 'No Type' },
     { value: 'no-maker',   label: 'No Maker' },
@@ -556,7 +617,7 @@ export function FileList({
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search files…"
+            placeholder="Search files..."
             title="Searches: filename, capture name, manufacturer, model, modeled by"
             className="w-full pl-7 pr-7 py-1.5 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-500 transition-colors"
           />
@@ -696,34 +757,57 @@ export function FileList({
         </div>
       </div>
 
-      {/* Filter chips */}
-      <div className="px-3 pb-1 flex gap-1 flex-wrap flex-shrink-0">
-        {filterOptions.map(({ value, label }) => (
-          <button
-            key={value}
-            onClick={() => setFilter(value)}
-            className={`text-xs px-2 py-0.5 rounded-full transition-colors ${
-              filter === value
-                ? 'bg-indigo-600 text-white'
-                : 'bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
+      {/* All filters in one wrapping row &mdash; no artificial row break */}
+      <div className="px-3 pb-2 flex gap-1.5 flex-wrap items-center flex-shrink-0">
+        <button
+          onClick={() => setFilter('all')}
+          className={`text-xs px-2 py-0.5 rounded-full transition-colors ${
+            filter === 'all'
+              ? 'bg-indigo-600 text-white'
+              : 'bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+          }`}
+        >
+          All
+        </button>
+        <select
+          value={filter === 'all' ? '' : filter}
+          onChange={(e) => setFilter((e.target.value || 'all') as FilterMode)}
+          className={`text-xs py-0.5 px-2 rounded-full border transition-colors cursor-pointer appearance-none focus:outline-none ${
+            filter !== 'all'
+              ? 'bg-indigo-100 dark:bg-indigo-900/40 border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-400'
+              : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
+          }`}
+        >
+          <option value="">Status...</option>
+          {statusFilterOptions.map(({ value, label }) => (
+            <option key={value} value={value} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">
+              {label}
+            </option>
+          ))}
+        </select>
         {ratingFilter !== null && ratingFilter !== undefined && (
           <button
             onClick={() => onRatingFilterClear?.()}
             className="text-xs px-2 py-0.5 rounded-full bg-amber-500 text-white hover:bg-amber-600 transition-colors"
           >
-            {ratingFilter === 0 ? 'Unrated' : `${'★'.repeat(ratingFilter)}`} ×
+            {ratingFilter === 0 ? 'Unrated' : '*'.repeat(ratingFilter)} x
           </button>
         )}
-      </div>
-
-      {/* Gear + Tone dropdowns — list mode only; grid mode uses per-column header filters */}
-      {viewMode === 'list' && (
-        <div className="px-3 pb-2 flex gap-1.5 flex-shrink-0 flex-wrap">
+        {activeFolderPath && onDirectFilesOnlyChange && (
+          <button
+            onClick={() => onDirectFilesOnlyChange(!directFilesOnly)}
+            className={`text-xs py-0.5 px-2 rounded-full border transition-colors ${
+              directFilesOnly
+                ? 'bg-sky-100 dark:bg-sky-900/30 border-sky-300 dark:border-sky-700 text-sky-700 dark:text-sky-400'
+                : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
+            }`}
+            title={directFilesOnly ? 'Currently showing only files directly inside the selected folder. Click to include subfolders too.' : 'Currently including files from subfolders. Click to show only files directly inside the selected folder.'}
+          >
+            {directFilesOnly ? 'Showing: This Folder Only' : 'Showing: Including Subfolders'}
+          </button>
+        )}
+        {/* Gear + Tone + Preset + Manufacturer + Name &mdash; list mode only; grid uses per-column header filters */}
+        {viewMode === 'list' && (<>
           <select
             value={gearFilter}
             onChange={(e) => { setGearFilter(e.target.value); if (!e.target.value) onGearFilterClear?.() }}
@@ -733,7 +817,7 @@ export function FileList({
                 : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
             }`}
           >
-            <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Gear type…</option>
+            <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Gear type...</option>
             {GEAR_TYPES.map((g) => <option key={g} value={g} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{g}</option>)}
           </select>
           <select
@@ -745,7 +829,7 @@ export function FileList({
                 : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
             }`}
           >
-            <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Tone type…</option>
+            <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Tone type...</option>
             {TONE_TYPES.map((t) => <option key={t} value={t} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{t}</option>)}
           </select>
           <select
@@ -757,11 +841,13 @@ export function FileList({
                 : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
             }`}
           >
-            <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Preset…</option>
+            <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Preset / Gen...</option>
+            <option value="__a1__" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">A1 WaveNet (all)</option>
+            <option value="__a2__" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">A2 WaveNet</option>
             {['Standard', 'Complex', 'Lite', 'Feather', 'Nano', 'REVySTD', 'REVyHI', 'REVxSTD'].map((p) => (
               <option key={p} value={p} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{p}</option>
             ))}
-            <option value="__none__" className="bg-white dark:bg-gray-900 text-gray-500 dark:text-gray-500">— None detected —</option>
+            <option value="__none__" className="bg-white dark:bg-gray-900 text-gray-500 dark:text-gray-500">- None detected -</option>
           </select>
           {/* Manufacturer filter */}
           {(() => {
@@ -777,7 +863,7 @@ export function FileList({
                       : 'bg-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400'
                   }`}
                 >
-                  <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Manufacturer…</option>
+                  <option value="" className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">Manufacturer...</option>
                   {mfrOptions.map((m) => <option key={m} value={m} className="bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300">{m}</option>)}
                 </select>
                 {mfrFilter && (
@@ -800,7 +886,7 @@ export function FileList({
               type="text"
               value={nameSearch}
               onChange={(e) => setNameSearch(e.target.value)}
-              placeholder="Name contains…"
+              placeholder="Name contains..."
               title="Filters to files where the capture name contains this text"
               className={`text-xs py-0.5 pl-2.5 pr-6 rounded-full border transition-colors focus:outline-none focus:border-indigo-500 ${
                 nameSearch
@@ -820,8 +906,9 @@ export function FileList({
               </button>
             )}
           </div>
-        </div>
-      )}
+        </>)}
+      </div>
+
       {/* Grid mode: active column filter indicator */}
       {viewMode === 'grid' && Object.values(columnFilters).some((f) => f.text || f.selected.length > 0) && (
         <div className="px-3 pb-1.5 flex items-center gap-2 flex-shrink-0">
@@ -836,7 +923,7 @@ export function FileList({
           {sorted.length === files.length
             ? `${files.length} file${files.length !== 1 ? 's' : ''}`
             : `${sorted.length} / ${files.length}`}
-          {selectedVisible.length > 0 && ` · ${selectedVisible.length} selected`}
+          {selectedVisible.length > 0 && ` | ${selectedVisible.length} selected`}
         </span>
         <div className="flex items-center gap-1">
           {viewMode === 'list' && (
@@ -851,13 +938,13 @@ export function FileList({
               }}
               className="text-xs py-0.5 px-1.5 rounded border bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400 appearance-none focus:outline-none mr-1"
             >
-              <option value="">Sort…</option>
+              <option value="">Sort...</option>
               <option value="date-desc">Date: newest</option>
               <option value="date-asc">Date: oldest</option>
-              <option value="name-asc">Name: A→Z</option>
-              <option value="name-desc">Name: Z→A</option>
-              <option value="gear_make-asc">Manufacturer: A→Z</option>
-              <option value="modeled_by-asc">Modeled By: A→Z</option>
+              <option value="name-asc">Name: A-Z</option>
+              <option value="name-desc">Name: Z-A</option>
+              <option value="gear_make-asc">Manufacturer: A-Z</option>
+              <option value="modeled_by-asc">Modeled By: A-Z</option>
             </select>
           )}
           {gridMaximized && selectedVisible.length >= 1 && onOpenEditor && (
@@ -869,7 +956,7 @@ export function FileList({
             </button>
           )}
           <button onClick={() => onSelectAll(sorted.map((f) => f.filePath))} className="text-xs text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 px-1 transition-colors">All</button>
-          <span className="text-gray-400 dark:text-gray-700">·</span>
+          <span className="text-gray-400 dark:text-gray-700">|</span>
           <button onClick={onDeselectAll} className="text-xs text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 px-1 transition-colors">None</button>
         </div>
       </div>
@@ -904,12 +991,14 @@ export function FileList({
           }}
         />
       ) : (
-        <div className="flex-1 overflow-y-auto">
-          {sorted.length === 0 ? (
-            <div className="flex items-center justify-center h-20">
-              <p className="text-gray-400 dark:text-gray-600 text-xs">No matches</p>
-            </div>
-          ) : (
+          <div className="flex-1 overflow-y-auto">
+            {sorted.length === 0 ? (
+              <div className="flex items-center justify-center h-20">
+                <p className="text-gray-400 dark:text-gray-600 text-xs">
+                  {directFilesOnly ? 'No files directly in this folder' : 'No matches'}
+                </p>
+              </div>
+            ) : (
             sorted.map((file, index) => (
               <FileItem
                 key={file.filePath}
@@ -964,6 +1053,33 @@ export function FileList({
             </svg>
             Show in folder
           </button>
+          {selectedVisible.length === 1 && (
+            <button
+              className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
+              onClick={async () => {
+                const file = sorted.find((f) => f.filePath === ctxMenu.filePath)
+                const raw = await window.api.readFile(ctxMenu.filePath)
+                setCtxMenu(null)
+                const source = typeof raw === 'string' ? JSON.parse(raw) : (() => {
+                  // file:read returns a parsed object; strip IPC-only keys before display
+                  const { success: _s, filePath: _fp, mtimeMs: _m, birthtimeMs: _b, sizeBytes: _sz, ...fileData } = raw as Record<string, unknown>
+                  return fileData
+                })()
+                const pruned = JSON.parse(JSON.stringify(source, (_key, val) => {
+                  if (Array.isArray(val) && val.length > 8 && typeof val[0] === 'number') {
+                    return `[\u2026 ${val.length} values \u2026]`
+                  }
+                  return val
+                }))
+                setJsonModal({ fileName: file?.fileName ?? ctxMenu.filePath, json: JSON.stringify(pruned, null, 2) })
+              }}
+            >
+              <svg className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+              </svg>
+              View JSON
+            </button>
+          )}
           {onShowInFolderTree && selectedVisible.length === 1 && (
             <button
               className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
@@ -997,7 +1113,7 @@ export function FileList({
               <svg className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
-              Copy {selectedVisible.length > 1 ? `${selectedVisible.length} files` : 'file'} to folder…
+              Copy {selectedVisible.length > 1 ? `${selectedVisible.length} files` : 'file'} to folder...
             </button>
           )}
           {onMoveToFolder && (
@@ -1008,7 +1124,7 @@ export function FileList({
               <svg className="w-3.5 h-3.5 text-orange-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
               </svg>
-              Move {selectedVisible.length > 1 ? `${selectedVisible.length} files` : 'file'} to folder…
+              Move {selectedVisible.length > 1 ? `${selectedVisible.length} files` : 'file'} to folder...
             </button>
           )}
           {onApplyDefaults && (
@@ -1019,7 +1135,7 @@ export function FileList({
               <svg className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
-              Apply defaults to {selectedVisible.length > 1 ? `${selectedVisible.length} files` : 'file'}
+              Apply defaults + save to {selectedVisible.length > 1 ? `${selectedVisible.length} files` : 'file'}
             </button>
           )}
           {onTrashSelected && (
@@ -1041,7 +1157,7 @@ export function FileList({
               <svg className="w-3.5 h-3.5 text-purple-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
               </svg>
-              Rename {selectedVisible.length} selected…
+              Rename {selectedVisible.length} selected...
             </button>
           )}
           {(onCopyMetadata || onPasteMetadata) && (
@@ -1094,7 +1210,18 @@ export function FileList({
               Remove NAM Lab Custom Metadata
             </button>
           )}
-          {(onSaveSelected || onBatchEditSelected) && (
+          {onCleanOutdatedNamBot && (
+            <button
+              className="w-full text-left px-3 py-2 text-sm text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors flex items-center gap-2"
+              onClick={() => { onCleanOutdatedNamBot(selectedVisible); setCtxMenu(null) }}
+            >
+              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M4.93 19h14.14c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.2 16c-.77 1.33.19 3 1.73 3z" />
+              </svg>
+              Clean Outdated Metadata
+            </button>
+          )}
+          {(onSaveSelected || onBatchEditSelected || onSuggestMetadataSelected) && (
             <div className="border-t border-gray-200 dark:border-gray-700 my-1" />
           )}
           {onSaveSelected && (
@@ -1125,6 +1252,20 @@ export function FileList({
               Batch edit {selectedVisible.length} selected
             </button>
           )}
+          {onSuggestMetadataSelected && (
+            <button
+              className="w-full text-left px-3 py-2 text-sm text-violet-700 dark:text-violet-400 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
+              onClick={() => {
+                onSuggestMetadataSelected(selectedVisible)
+                setCtxMenu(null)
+              }}
+            >
+              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h7m-7 4h5M5 5h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2z" />
+              </svg>
+              Suggest metadata for {selectedVisible.length} selected
+            </button>
+          )}
           <div className="border-t border-gray-200 dark:border-gray-700 my-1" />
           <button
             className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 transition-colors ${namPlayerAvailable && onOpenInNam ? 'text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800' : 'text-gray-400 dark:text-gray-600 cursor-default'}`}
@@ -1132,12 +1273,12 @@ export function FileList({
             onClick={() => {
               if (namPlayerAvailable && onOpenInNam && ctxMenu) { onOpenInNam(ctxMenu.filePath); setCtxMenu(null) }
             }}
-            title={namPlayerAvailable ? 'Launch Neural Amp Modeler standalone — load the file manually once it opens' : 'Neural Amp Modeler not found — set path in Settings'}
+            title={namPlayerAvailable ? 'Launch Neural Amp Modeler standalone - load the file manually once it opens' : 'Neural Amp Modeler not found - set path in Settings'}
           >
             <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
             </svg>
-            Launch Neural Amp Modeler standalone…
+            Launch Neural Amp Modeler standalone...
           </button>
         </div>
       )}
@@ -1149,6 +1290,47 @@ export function FileList({
           onApply={(renames, renameFiles) => { onBatchRename(renames, renameFiles); setShowBatchRename(false) }}
           onClose={() => setShowBatchRename(false)}
         />
+      )}
+
+      {jsonModal && createPortal(
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70"
+          onClick={() => setJsonModal(null)}
+        >
+          <div
+            className="relative flex flex-col bg-gray-950 border border-gray-700 rounded-xl shadow-2xl"
+            style={{ width: 'min(860px, 92vw)', maxHeight: '88vh' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800 flex-shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                </svg>
+                <span className="text-sm font-medium text-gray-200 truncate">{jsonModal.fileName}</span>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  onClick={() => navigator.clipboard.writeText(jsonModal.json)}
+                  className="px-2.5 py-1 rounded text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors"
+                  title="Copy JSON"
+                >
+                  Copy
+                </button>
+                <button
+                  onClick={() => setJsonModal(null)}
+                  className="p-1.5 rounded hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <pre className="flex-1 overflow-auto p-4 text-xs text-gray-300 font-mono leading-relaxed whitespace-pre">{jsonModal.json}</pre>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   )
@@ -1212,16 +1394,53 @@ function GridView({
   onContextMenu: (e: React.MouseEvent, filePath: string) => void
 }) {
   const [colWidths, setColWidths] = useState<Record<string, number>>(DEFAULT_COL_WIDTHS)
-  const [dragOverCol, setDragOverCol] = useState<string | null>(null)
+  const [columnDrag, setColumnDrag] = useState<{ from: string; over: string | null; side: 'before' | 'after' } | null>(null)
   const [openFilterCol, setOpenFilterCol] = useState<string | null>(null)
   const [filterSearch, setFilterSearch] = useState('')
   const filterPopupRef = useRef<HTMLDivElement>(null)
   const filterAnchorRef = useRef<{ top: number; left: number; width: number } | null>(null)
-  const dragColRef = useRef<string | null>(null)
   const resizingRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null)
+  const headerRefs = useRef<Record<string, HTMLTableCellElement | null>>({})
+  const dragIntentRef = useRef<{ key: string; startX: number; startY: number } | null>(null)
+  const columnDragRef = useRef<typeof columnDrag>(null)
+  const topScrollRef = useRef<HTMLDivElement>(null)
+  const bottomScrollRef = useRef<HTMLDivElement>(null)
+  const syncScrollRef = useRef<'top' | 'bottom' | null>(null)
 
   // Order-preserving: visibleCols drives display order
   const activeColumns = visibleCols.map((k) => ALL_GRID_COLUMNS.find((c) => c.key === k)).filter((c): c is typeof ALL_GRID_COLUMNS[0] => c != null)
+  const tableWidth = activeColumns.reduce((s, c) => s + colWidths[c.key], 24)
+
+  useEffect(() => {
+    const topEl = topScrollRef.current
+    const bottomEl = bottomScrollRef.current
+    if (!topEl || !bottomEl) return
+
+    const onTopScroll = () => {
+      if (syncScrollRef.current === 'bottom') {
+        syncScrollRef.current = null
+        return
+      }
+      syncScrollRef.current = 'top'
+      bottomEl.scrollLeft = topEl.scrollLeft
+    }
+
+    const onBottomScroll = () => {
+      if (syncScrollRef.current === 'top') {
+        syncScrollRef.current = null
+        return
+      }
+      syncScrollRef.current = 'bottom'
+      topEl.scrollLeft = bottomEl.scrollLeft
+    }
+
+    topEl.addEventListener('scroll', onTopScroll, { passive: true })
+    bottomEl.addEventListener('scroll', onBottomScroll, { passive: true })
+    return () => {
+      topEl.removeEventListener('scroll', onTopScroll)
+      bottomEl.removeEventListener('scroll', onBottomScroll)
+    }
+  }, [])
 
   useEffect(() => {
     if (!openFilterCol) return
@@ -1284,53 +1503,117 @@ function GridView({
     return [...vals].sort()
   }
 
-  return (
-    <div className="flex-1 overflow-auto relative">
-      <table className="border-collapse text-xs" style={{ tableLayout: 'fixed', width: activeColumns.reduce((s, c) => s + colWidths[c.key], 24) }}>
-        <thead className="sticky top-0 z-10">
-          <tr className="bg-gray-100 dark:bg-gray-900 border-b-2 border-gray-300 dark:border-gray-700">
-            <th className="border-r border-gray-200 dark:border-gray-700" style={{ width: 24 }} />
+  useEffect(() => {
+    columnDragRef.current = columnDrag
+  }, [columnDrag])
+
+  const getDropTarget = (clientX: number): { over: string; side: 'before' | 'after' } | null => {
+    const movable = activeColumns.filter((c) => c.key !== 'name')
+    for (const col of movable) {
+      const el = headerRefs.current[col.key]
+      if (!el) continue
+      const rect = el.getBoundingClientRect()
+      if (clientX >= rect.left && clientX <= rect.right) {
+        return { over: col.key, side: clientX < rect.left + rect.width / 2 ? 'before' : 'after' }
+      }
+    }
+    return null
+  }
+
+  const handleColumnGripMouseDown = (event: React.MouseEvent, key: string) => {
+    if (key === 'name' || event.button !== 0 || resizingRef.current) return
+    event.preventDefault()
+    event.stopPropagation()
+    dragIntentRef.current = { key, startX: event.clientX, startY: event.clientY }
+    document.body.style.cursor = 'grabbing'
+
+    const onMove = (moveEvent: MouseEvent) => {
+      const intent = dragIntentRef.current
+      if (!intent) return
+      const dx = moveEvent.clientX - intent.startX
+      const dy = moveEvent.clientY - intent.startY
+      if (!columnDragRef.current && Math.abs(dx) + Math.abs(dy) < 4) return
+      const drop = getDropTarget(moveEvent.clientX)
+      setColumnDrag({
+        from: intent.key,
+        over: drop?.over ?? null,
+        side: drop?.side ?? 'after',
+      })
+    }
+
+    const onUp = () => {
+      const activeDrag = columnDragRef.current
+      dragIntentRef.current = null
+      document.body.style.cursor = ''
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+
+      if (activeDrag && activeDrag.over && activeDrag.over !== activeDrag.from) {
+        const next = visibleCols.filter((col) => col !== activeDrag.from)
+        const targetIdx = next.indexOf(activeDrag.over)
+        if (targetIdx >= 0) {
+          const insertIdx = activeDrag.side === 'after' ? targetIdx + 1 : targetIdx
+          next.splice(insertIdx, 0, activeDrag.from)
+          onVisibleColsChange(next)
+        }
+      }
+
+      setColumnDrag(null)
+    }
+
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+    return (
+      <div className="flex-1 min-h-0 flex flex-col relative">
+        <div
+          ref={topScrollRef}
+          className="h-4 overflow-x-auto overflow-y-hidden border-b border-gray-200 dark:border-gray-800 bg-gray-50/40 dark:bg-gray-900/30"
+        >
+          <div style={{ width: tableWidth, height: 1 }} />
+        </div>
+        <div ref={bottomScrollRef} className="flex-1 overflow-auto relative">
+        <table className="border-collapse text-xs" style={{ tableLayout: 'fixed', width: tableWidth }}>
+          <thead className="sticky top-0 z-10">
+            <tr className="border-b-2" style={{ background: 'var(--panel-2, #171c22)', borderColor: 'var(--border, #242b34)' }}>
+              <th className="border-r" style={{ width: 24, borderColor: 'var(--border, #242b34)' }} />
             {activeColumns.map((col) => {
               const hasFilter = !!(columnFilters[col.key]?.text || columnFilters[col.key]?.selected?.length)
               const isFilterOpen = openFilterCol === col.key
-              const isDragOver = dragOverCol === col.key
+              const dragMarkerSide = columnDrag?.over === col.key ? columnDrag.side : null
+              const isDraggedColumn = columnDrag?.from === col.key
               return (
               <th
                 key={col.key}
-                className={`relative text-left font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-r border-gray-200 dark:border-gray-700 select-none transition-colors ${isDragOver ? 'bg-indigo-100 dark:bg-indigo-900/40' : ''}`}
-                style={{ width: colWidths[col.key] }}
-                draggable={col.key !== 'name'}
-                onDragStart={(e) => {
-                  if (col.key === 'name') { e.preventDefault(); return }
-                  dragColRef.current = col.key
-                  e.dataTransfer.effectAllowed = 'move'
-                  e.dataTransfer.setData('text/plain', col.key)
-                }}
-                onDragOver={(e) => {
-                  e.preventDefault()
-                  if (col.key !== 'name') setDragOverCol(col.key)
-                }}
-                onDragLeave={() => setDragOverCol(null)}
-                onDrop={(e) => {
-                  e.preventDefault()
-                  const from = e.dataTransfer.getData('text/plain')
-                  setDragOverCol(null)
-                  dragColRef.current = null
-                  if (!from || from === col.key) return
-                  const newOrder = [...visibleCols]
-                  const fromIdx = newOrder.indexOf(from)
-                  const toIdx = newOrder.indexOf(col.key)
-                  if (fromIdx < 0 || toIdx < 0) return
-                  newOrder.splice(fromIdx, 1)
-                  newOrder.splice(toIdx, 0, from)
-                  onVisibleColsChange(newOrder)
-                }}
-                onDragEnd={() => { dragColRef.current = null; setDragOverCol(null) }}
+                ref={(el) => { headerRefs.current[col.key] = el }}
+                className={`nam-th relative text-left select-none transition-colors border-r ${columnDrag?.over === col.key ? 'bg-indigo-100 dark:bg-indigo-900/40' : ''} ${isDraggedColumn ? 'opacity-60' : ''}`}
+                style={{ width: colWidths[col.key], borderColor: 'var(--border, #242b34)' }}
+                onDragStart={(e) => e.preventDefault()}
               >
+                {col.key !== 'name' && (
+                  <button
+                    type="button"
+                    draggable={false}
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation() }}
+                    onMouseDown={(e) => handleColumnGripMouseDown(e, col.key)}
+                    onDragStart={(e) => e.preventDefault()}
+                    title={`Drag to reorder ${col.label}`}
+                    className="absolute left-0 top-0 z-20 flex h-full w-6 items-center justify-center border-r cursor-grab active:cursor-grabbing hover:text-indigo-300"
+                    style={{ borderColor: 'var(--border-soft)', background: 'var(--panel-2)', color: 'var(--text-3)' }}
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" draggable={false}>
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01" />
+                    </svg>
+                  </button>
+                )}
                 <div
-                  className={`flex items-center gap-1 px-3 py-2 whitespace-nowrap overflow-hidden hover:text-gray-800 dark:hover:text-gray-200 ${col.key !== 'name' ? 'cursor-grab' : 'cursor-pointer'}`}
-                  style={{ paddingRight: 28 }}
-                  onClick={() => onSortClick(col.key)}
+                  className={`flex items-center gap-1 px-3 py-2 whitespace-nowrap overflow-hidden ${col.key !== 'name' ? 'pl-8 cursor-pointer' : 'cursor-pointer'}`}
+                  style={{ color: 'inherit', paddingRight: 28 }}
+                  onDragStart={(e) => e.preventDefault()}
+                  onClick={() => {
+                    onSortClick(col.key)
+                  }}
                 >
                   <span className="truncate">{col.label}</span>
                   {sortKey === col.key && (
@@ -1340,6 +1623,11 @@ function GridView({
                     </svg>
                   )}
                 </div>
+                {dragMarkerSide && col.key !== 'name' && (
+                  <div
+                    className={`absolute top-1 bottom-1 w-1 rounded-full bg-indigo-500 z-40 ${dragMarkerSide === 'before' ? 'left-0 -translate-x-1/2' : 'right-0 translate-x-1/2'}`}
+                  />
+                )}
                 {/* Filter icon */}
                 <button
                   className={`absolute right-2.5 top-1/2 -translate-y-1/2 z-20 p-0.5 rounded transition-colors ${hasFilter ? 'text-indigo-400' : 'text-gray-400 dark:text-gray-600 hover:text-gray-600 dark:hover:text-gray-400'}`}
@@ -1358,13 +1646,13 @@ function GridView({
                       setFilterSearch('')
                     }
                   }}
-                  title={hasFilter ? 'Filter active — click to edit' : 'Filter column'}
+                  title={hasFilter ? 'Filter active - click to edit' : 'Filter column'}
                 >
                   <svg className="w-3 h-3" fill={hasFilter ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
                   </svg>
                 </button>
-                {/* Filter popup — rendered via portal so it never lives inside <th>, keeping drag events clean */}
+                {/* Filter popup - rendered via portal so it never lives inside <th>, keeping drag events clean */}
                 {isFilterOpen && filterAnchorRef.current && createPortal((() => {
                   const state = columnFilters[col.key] ?? { text: '', selected: [] }
                   const allVals = getUniqueValues(col.key)
@@ -1383,7 +1671,7 @@ function GridView({
                           type="text"
                           value={filterSearch}
                           onChange={(e) => setFilterSearch(e.target.value)}
-                          placeholder="Search values…"
+                          placeholder="Search values..."
                           className="flex-1 text-xs px-2 py-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded focus:outline-none focus:border-indigo-500 text-gray-900 dark:text-gray-100"
                         />
                         {(state.text || state.selected.length > 0) && (
@@ -1401,7 +1689,7 @@ function GridView({
                               type="text"
                               value={state.text}
                               onChange={(e) => onColumnFilterChange(col.key, { ...state, text: e.target.value })}
-                              placeholder="Contains text…"
+                              placeholder="Contains text..."
                               className={`w-full text-xs px-2 py-1 rounded border focus:outline-none focus:border-indigo-500 ${state.text ? 'bg-indigo-50 dark:bg-indigo-900/30 border-indigo-300 dark:border-indigo-700 text-indigo-800 dark:text-indigo-200' : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300'}`}
                             />
                           </div>
@@ -1496,12 +1784,12 @@ function GridView({
                     return (
                       <td key={col.key} className="px-3 py-2 border-r border-gray-200 dark:border-gray-700/60 overflow-hidden" style={{ width: colWidths[col.key], maxWidth: colWidths[col.key] }}>
                         {col.key === 'tone_type' && val ? (
-                          <span className={`px-1.5 py-0.5 rounded text-xs ${toneChipClass(val, solidPills)}`}>{val}</span>
+                          <span className={`nam-chip ${namToneChipClass(val)}`}><span className="nam-dot" />{val}</span>
                         ) : col.key === 'gear_type' && val ? (
-                          <span className={`px-1.5 py-0.5 rounded text-xs ${gearChipClass(val, solidPills)}`}>{val}</span>
+                          <span className={`nam-chip ${namGearChipClass(val)}`}><span className="nam-dot" />{val}</span>
                         ) : col.key === 'name' ? (
                           <span className={`truncate block text-sm font-semibold ${val ? 'text-gray-900 dark:text-gray-100' : 'text-gray-400 dark:text-gray-600'}`}>
-                            {val || '—'}
+                            {val || '-'}
                           </span>
                         ) : col.key === 'nl_rating' ? (
                           <span className="flex gap-px">
@@ -1512,14 +1800,21 @@ function GridView({
                             ))}
                           </span>
                         ) : col.key === 'validation_esr' && val ? (
-                          <span className={`truncate block font-mono ${
-                            parseFloat(val) < 0.01  ? 'text-green-500' :
-                            parseFloat(val) < 0.05  ? 'text-amber-400' :
-                                                      'text-red-400'
-                          }`}>{val}</span>
+                          (() => {
+                            const best = getFileBestEsr(file)
+                            const tone = getEsrTone(best.value, best.kind)
+                            return (
+                              <span
+                                className={`truncate block font-mono ${tone.classes}`}
+                                title={best.label}
+                              >
+                                {val}
+                              </span>
+                            )
+                          })()
                         ) : (
                           <span className={`truncate block ${val ? 'text-gray-700 dark:text-gray-300' : 'text-gray-400 dark:text-gray-600'}`}>
-                            {val || '—'}
+                            {val || '-'}
                           </span>
                         )}
                       </td>
@@ -1529,11 +1824,12 @@ function GridView({
               )
             })
           )}
-        </tbody>
-      </table>
-    </div>
-  )
-}
+          </tbody>
+        </table>
+        </div>
+      </div>
+    )
+  }
 
 // ---- List item ----
 
@@ -1557,7 +1853,13 @@ function FileItem({
   onContextMenu?: (e: React.MouseEvent) => void
 }) {
   const meta = file.metadata
-  const subtitle = [meta.gear_make, meta.gear_model].filter(Boolean).join(' ') || meta.tone_type || file.architecture || ''
+  // Real bug: falling back to file.architecture showed the raw internal NAM model class name
+  // (e.g. "SlimmableContainer" for A2/PackedWaveNet files) as if it were gear/tone info once
+  // gear_make/gear_model/tone_type were all unset — meaningless to a user, unlike the labeled
+  // "Architecture" stat shown elsewhere (MetadataEditor). Just leave the subtitle blank instead.
+  const subtitle = [meta.gear_make, meta.gear_model].filter(Boolean).join(' ') || meta.tone_type || ''
+  const detectedPreset = detectPreset(file.config) ?? meta.nb_preset_name ?? null
+  const epochCount = typeof meta.nb_trained_epochs === 'number' ? meta.nb_trained_epochs : null
   const TRACKED: { key: keyof typeof meta; label: string }[] = [
     { key: 'name', label: 'Name' },
     { key: 'gear_type', label: 'Gear Type' },
@@ -1568,7 +1870,6 @@ function FileItem({
   ]
   const missingFields = TRACKED.filter((f) => !meta[f.key])
   const missing = missingFields.length
-
   return (
     <div
       className={`group flex items-start gap-2 px-3 py-2.5 cursor-pointer border-b border-gray-200/80 dark:border-gray-800/50 hover:bg-gray-100/80 dark:hover:bg-gray-800/50 transition-colors ${
@@ -1592,19 +1893,29 @@ function FileItem({
         }
       </div>
 
-      <div className="flex-1 min-w-0">
-        <div className={`text-sm font-semibold truncate ${file.isDirty ? 'text-amber-500 dark:text-amber-400' : 'text-gray-900 dark:text-gray-100'}`} title={file.fileName}>
-          {meta.name || file.fileName}
+      <div className="flex-1 min-w-0 flex flex-col justify-between py-0 pr-2">
+        <div>
+          <div className={`text-sm leading-tight font-semibold truncate ${file.isDirty ? 'text-amber-500 dark:text-amber-400' : 'text-gray-900 dark:text-gray-100'}`} title={file.fileName}>
+            {meta.name || file.fileName}
+          </div>
+          {subtitle && (
+            <div className="text-xs text-gray-500 dark:text-gray-500 truncate mt-0.5">{subtitle}</div>
+          )}
         </div>
-        {subtitle && (
-          <div className="text-xs text-gray-500 dark:text-gray-500 truncate mt-0.5">{subtitle}</div>
-        )}
-        <div className="flex items-center gap-1.5 mt-1">
+        <div className="flex items-center gap-1.5 mt-1.5">
+          {meta.modeled_by && (
+            <span
+              className={`nam-chip ${namCreatorChipClass()}`}
+              title={`Creator: ${meta.modeled_by}`}
+            >
+              <span className="nam-dot" />{meta.modeled_by}
+            </span>
+          )}
           {meta.gear_type && (
-            <span className={`text-xs px-1.5 py-0.5 rounded ${gearChipClass(meta.gear_type, solidPills)}`}>{meta.gear_type}</span>
+            <span className={`nam-chip ${namGearChipClass(meta.gear_type)}`}><span className="nam-dot" />{meta.gear_type}</span>
           )}
           {meta.tone_type && (
-            <span className={`text-xs px-1.5 py-0.5 rounded ${toneChipClass(meta.tone_type, solidPills)}`}>{meta.tone_type}</span>
+            <span className={`nam-chip ${namToneChipClass(meta.tone_type)}`}><span className="nam-dot" />{meta.tone_type}</span>
           )}
           {missing > 0 && !file.isDirty && (
             <span
@@ -1617,12 +1928,6 @@ function FileItem({
         </div>
       </div>
 
-      {meta.date && (
-        <div className="flex-shrink-0 text-xs text-gray-400 dark:text-gray-600 mt-0.5 tabular-nums">
-          {`${meta.date.year}-${String(meta.date.month).padStart(2, '0')}-${String(meta.date.day).padStart(2, '0')}`}
-        </div>
-      )}
-
       {(meta.nl_rating ?? 0) > 0 && (
         <div className="flex-shrink-0 flex items-center gap-px mt-1.5">
           {[1,2,3,4,5].map((s) => (
@@ -1633,10 +1938,42 @@ function FileItem({
         </div>
       )}
 
-      {meta.gear_type && (() => {
-        const src = getGearImageSrc(meta.gear_type)
-        return src ? <img src={src} alt={meta.gear_type} className="flex-shrink-0 h-6 w-auto object-contain opacity-60" /> : null
-      })()}
+      {(meta.gear_type || meta.date || detectedPreset || epochCount != null) && (
+        <div className="flex-shrink-0 min-w-[96px] self-stretch flex flex-col items-end justify-between py-0">
+          <div className="flex flex-col items-end gap-0.5">
+            {meta.date && (
+              <div className="text-xs text-gray-400 dark:text-gray-300 tabular-nums text-right">
+                {`${meta.date.year}-${String(meta.date.month).padStart(2, '0')}-${String(meta.date.day).padStart(2, '0')}`}
+              </div>
+            )}
+            {meta.gear_type && (() => {
+              const src = getGearImageSrc(meta.gear_type)
+              return src ? <img src={src} alt={meta.gear_type} className="h-7 w-auto object-contain opacity-60" /> : null
+            })()}
+          </div>
+          {(detectedPreset || epochCount != null) && (
+            <div className="flex items-center justify-end gap-1.5 text-right mt-1">
+                {detectedPreset && (
+                  <span
+                    className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-[2px] rounded border bg-transparent"
+                    style={detectedPresetChipStyle(detectedPreset)}
+                    title={`Detected preset: ${detectedPreset}`}
+                  >
+                    {detectedPreset}
+                  </span>
+                )}
+                {epochCount != null && (
+                  <span
+                    className="text-[11px] text-gray-400 dark:text-gray-500 tabular-nums leading-none"
+                    title="Trained epochs"
+                  >
+                    {epochCount}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {onPlay && (
         <button

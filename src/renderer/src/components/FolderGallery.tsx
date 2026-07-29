@@ -1,9 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
+import type { FolderImagesData } from '../utils/folderImages'
 
-export interface FolderImagesData {
-  own: string[]
-  inherited: { folderName: string; paths: string[] }[]
-}
+export type { FolderImagesData }
 
 function toFileUrl(p: string): string {
   return p.startsWith('/') ? `local-file://${p}` : `local-file:///${p}`

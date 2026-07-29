@@ -2,29 +2,10 @@ import { useMemo } from 'react'
 import type { NamFile } from '../types/nam'
 import { detectPreset } from '../utils/detectPreset'
 import { getGearImageSrc } from '../assets/gear'
+import { Gauge, TrendLine } from './dashboard/Charts'
+import { folderHealth, buildEsrRuns, getEsrBucketTone } from './dashboard/dashboardMetrics'
 
-interface Props {
-  files: NamFile[]
-  folderName: string
-  activeGear?: string | null
-  activeTone?: string | null
-  activePreset?: string | null
-  activeMissing?: boolean
-  activeEsr?: string | null
-  activeRating?: number | null
-  onGearClick?: (gear: string | null) => void
-  onToneClick?: (tone: string | null) => void
-  onPresetClick?: (preset: string | null) => void
-  onMissingClick?: (on: boolean) => void
-  onEsrClick?: (tier: string | null) => void
-  onRatingClick?: (rating: number | null) => void
-}
-
-const CORE_FIELDS = [
-  'name', 'modeled_by', 'gear_make', 'gear_model',
-  'gear_type', 'tone_type', 'input_level_dbu',
-] as const
-
+// ── Design tokens ────────────────────────────────────────────────────────────
 const GEAR_COLORS: Record<string, string> = {
   amp:           '#f97316',
   amp_cab:       '#3b82f6',
@@ -39,7 +20,6 @@ const GEAR_LABELS: Record<string, string> = {
   pedal_amp: 'Pedal + Amp', amp_pedal_cab: 'Amp + Pedal + Cab',
   preamp: 'Preamp', studio: 'Studio',
 }
-
 const TONE_COLORS: Record<string, string> = {
   clean:      '#0ea5e9',
   crunch:     '#f59e0b',
@@ -53,8 +33,6 @@ const TONE_LABELS: Record<string, string> = {
   clean: 'Clean', crunch: 'Crunch', hi_gain: 'Hi Gain',
   fuzz: 'Fuzz', overdrive: 'Overdrive', distortion: 'Distortion', other: 'Other',
 }
-
-const PRESET_ORDER = ['Complex', 'Standard', 'Lite', 'Feather', 'Nano', 'REVySTD', 'REVyHI', 'REVxSTD', 'Unknown']
 const PRESET_COLORS: Record<string, string> = {
   Complex:  '#a855f7',
   Standard: '#3b82f6',
@@ -67,311 +45,588 @@ const PRESET_COLORS: Record<string, string> = {
   Unknown:  '#6b7280',
 }
 
-function getEsr(file: NamFile): number | null {
-  const esr = (file.metadata.training as Record<string, unknown> | undefined)?.validation_esr
-  return typeof esr === 'number' ? esr : null
+// ── Props ────────────────────────────────────────────────────────────────────
+interface Props {
+  files: NamFile[]
+  folderName: string
+  checklistSummary?: {
+    total: number
+    completed: number
+    percent: number
+    targetDate: string
+    liveDate: string
+    isOverdue: boolean
+    releasedLate: boolean
+    releasedOnTime: boolean
+  } | null
+  hasPackInfo?: boolean
+  hasReadme?: boolean
+  hasCoverImage?: boolean
+  galleryCount?: number
+  watchSource?: string | null
+  deliverySummary?: {
+    totalRows: number
+    lastImportedAt: string
+    tonexIncluded: number
+    namIncluded: number
+    proxyIncluded: number
+    qcIncluded: number
+  } | null
+  activeDuplicate?: boolean
+  activeGear?: string | null
+  activeTone?: string | null
+  activePreset?: string | null
+  activeMissing?: boolean
+  activeEsr?: string | null
+  activeRating?: number | null
+  onDuplicateClick?: (on: boolean) => void
+  onGearClick?: (gear: string | null) => void
+  onToneClick?: (tone: string | null) => void
+  onPresetClick?: (preset: string | null) => void
+  onMissingClick?: (on: boolean) => void
+  onEsrClick?: (tier: string | null) => void
+  onRatingClick?: (rating: number | null) => void
+  onRemoveWatch?: () => void
+  onSyncWatch?: () => void
+  onOpenWatchSource?: (path: string) => void
 }
 
-function StatBox({ value, label, sub }: { value: number | string; label: string; sub?: string }) {
+const CORE_FIELDS = [
+  'name', 'modeled_by', 'gear_make', 'gear_model',
+  'gear_type', 'tone_type', 'input_level_dbu',
+] as const
+
+// ── Shared style tokens ──────────────────────────────────────────────────────
+const EYEBROW = 'text-[10px] font-semibold uppercase tracking-[0.07em] text-gray-400 dark:text-gray-500'
+const CARD = 'bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-3.5'
+const STAT_CARD = 'bg-gray-100 dark:bg-gray-800/60 rounded-xl p-3.5 flex flex-col gap-1'
+
+function gaugeColor(score: number): string {
+  return score >= 85 ? '#22c55e' : score >= 70 ? '#14b8a6' : score >= 50 ? '#f59e0b' : '#ef4444'
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let value = bytes, unitIndex = 0
+  while (value >= 1024 && unitIndex < units.length - 1) { value /= 1024; unitIndex++ }
+  return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
+}
+
+function formatDateTime(ms: number): string | null {
+  if (!ms) return null
+  return new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+// ── Sub-components ────────────────────────────────────────────────────────────
+
+function D1Health({ score, parts, label }: { score: number; parts: Array<{ label: string; pct: number; weight: string }>; label?: string }) {
+  const color = gaugeColor(score)
+  const grade = score >= 85 ? 'Excellent' : score >= 70 ? 'Healthy' : score >= 50 ? 'Needs work' : 'At risk'
   return (
-    <div className="flex-1 rounded-xl bg-gray-800/60 border border-gray-700/40 px-3 py-2.5 text-center">
-      <div className="text-2xl font-bold text-white leading-none">{value}</div>
-      <div className="text-[10px] text-gray-400 mt-1 leading-tight">{label}</div>
-      {sub && <div className="text-[9px] text-gray-600 mt-0.5">{sub}</div>}
+    <div className={`${CARD} flex flex-row gap-4 items-start`}>
+      <div className="flex-shrink-0">
+        <Gauge value={score} size={132} thickness={13} color={color}>
+          <span className="text-4xl font-bold tabular-nums text-gray-900 dark:text-gray-100 leading-none">{score}</span>
+          <span className="font-mono text-[9px] tracking-widest uppercase text-gray-400 dark:text-gray-500 mt-1">/ 100</span>
+        </Gauge>
+      </div>
+      <div className="flex flex-col gap-3 flex-1 min-w-0 pt-1">
+        <div className="flex flex-col gap-0.5">
+          <span className={EYEBROW}>{label ?? 'Pack Health'}</span>
+          <span className="text-sm font-semibold leading-tight" style={{ color }}>{grade}</span>
+        </div>
+        <div className="flex flex-col gap-2">
+          {parts.map((p) => (
+            <div key={p.label} className="flex items-center gap-2">
+              <span className="text-[11px] text-gray-500 dark:text-gray-400 w-32 flex-shrink-0 truncate">{p.label}</span>
+              <div className="flex-1 h-1.5 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
+                <div className="h-full rounded-full transition-all" style={{ width: `${p.pct}%`, backgroundColor: color, opacity: 0.85 }} />
+              </div>
+              <span className="font-mono tabular-nums text-[11px] text-gray-700 dark:text-gray-300 w-8 text-right flex-shrink-0">{p.pct}%</span>
+              <span className="font-mono text-[9px] text-gray-400 dark:text-gray-500 w-6 text-right flex-shrink-0">{p.weight}</span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }
 
-function BudgetRow({
-  icon, label, count, maxCount, color, isActive, onClick,
-}: {
-  icon?: React.ReactNode
-  label: string
-  count: number
-  maxCount: number
-  color: string
-  isActive?: boolean
-  onClick?: () => void
+function D1StatCard({ label, value, sub, onClick }: {
+  label: string; value: string | number; sub?: string; onClick?: () => void
 }) {
-  const pct = maxCount > 0 ? count / maxCount : 0
   return (
     <div
-      className={`flex items-center gap-2 min-h-[26px] rounded-md transition-colors ${onClick ? 'cursor-pointer' : ''} ${isActive ? 'ring-1 ring-inset' : 'hover:bg-white/5'}`}
-      style={isActive ? { outline: `1px solid ${color}55`, outlineOffset: '-1px' } : undefined}
+      className={`${STAT_CARD} ${onClick ? 'cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700/60 transition-colors' : ''}`}
       onClick={onClick}
     >
-      <div className="w-5 flex-shrink-0 flex items-center justify-center">
-        {icon ?? <span style={{ color }} className="text-[9px] leading-none">●</span>}
-      </div>
-      <div className="flex-1 relative rounded overflow-hidden">
-        <div
-          className="absolute inset-y-0 left-0 rounded transition-all"
-          style={{ width: `${Math.max(pct * 100, 6)}%`, backgroundColor: isActive ? color + '55' : color + '2e' }}
-        />
-        <span
-          className="relative block px-2 py-0.5 text-[11px] font-semibold truncate"
-          style={{ color, opacity: isActive ? 1 : 0.85 }}
-        >
-          {label}
-        </span>
-      </div>
-      <span className="text-[11px] text-gray-500 w-7 text-right flex-shrink-0 tabular-nums">{count}</span>
+      <span className={EYEBROW}>{label}</span>
+      <span className="text-2xl font-bold tabular-nums text-gray-900 dark:text-gray-100 leading-none">
+        {typeof value === 'number' ? value.toLocaleString() : value}
+      </span>
+      {sub && <span className="text-[10px] text-gray-400 dark:text-gray-500">{sub}</span>}
     </div>
   )
 }
 
-function MiniBar({ label, count, maxCount, color, isActive, onClick }: { label: string; count: number; maxCount: number; color: string; isActive?: boolean; onClick?: () => void }) {
-  const pct = maxCount > 0 ? count / maxCount : 0
+function D1BarList({ title, rows, onRowClick, activeKey }: {
+  title: string
+  rows: Array<{ key: string; label: string; count: number; color: string }>
+  onRowClick?: (key: string) => void
+  activeKey?: string | null
+}) {
+  const max = Math.max(...rows.map((r) => r.count), 1)
   return (
-    <div
-      className={`flex items-center gap-2 min-h-[22px] rounded px-1 transition-colors ${onClick ? 'cursor-pointer' : ''} ${isActive ? 'bg-white/8' : 'hover:bg-white/5'}`}
-      onClick={onClick}
-    >
-      <span className="text-[10px] w-16 text-right flex-shrink-0 truncate font-medium" style={{ color: isActive ? color : undefined, opacity: isActive ? 1 : 0.6 }}>{label}</span>
-      <div className="flex-1 h-2 rounded-full bg-gray-700/50 overflow-hidden">
-        <div className="h-full rounded-full transition-all" style={{ width: `${Math.max(pct * 100, 2)}%`, backgroundColor: color, opacity: isActive ? 1 : 0.7 }} />
-      </div>
-      <span className="text-[10px] text-gray-500 w-5 text-right flex-shrink-0 tabular-nums">{count}</span>
+    <div className={`${CARD} flex flex-col gap-3`}>
+      <span className={EYEBROW}>{title}</span>
+      {rows.length === 0 ? (
+        <p className="text-[11px] text-gray-400 dark:text-gray-600">No data</p>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {rows.map((row) => (
+            <div
+              key={row.key}
+              className={`flex items-center gap-2 rounded px-1 py-0.5 ${onRowClick ? 'cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800/60' : ''} ${activeKey === row.key ? 'bg-gray-100 dark:bg-gray-800/60' : ''} transition-colors`}
+              onClick={() => onRowClick?.(row.key)}
+            >
+              <span className="text-[11px] text-gray-600 dark:text-gray-300 w-28 truncate flex-shrink-0" title={row.label}>{row.label}</span>
+              <div className="flex-1 h-2 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
+                <div className="h-full rounded-full transition-all" style={{ width: `${Math.max(2, Math.round((row.count / max) * 100))}%`, backgroundColor: row.color }} />
+              </div>
+              <span className="font-mono tabular-nums text-[10px] text-gray-400 dark:text-gray-500 w-6 text-right flex-shrink-0">{row.count.toLocaleString()}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
 
+// ── Main component ────────────────────────────────────────────────────────────
 export function FolderDashboard({
-  files, activeGear, activeTone, activePreset, activeMissing, activeEsr, activeRating,
-  onGearClick, onToneClick, onPresetClick, onMissingClick, onEsrClick, onRatingClick,
+  files, checklistSummary, hasPackInfo, hasReadme, hasCoverImage, galleryCount = 0,
+  watchSource, deliverySummary, activeDuplicate, activeGear, activeTone, activePreset,
+  activeMissing, activeEsr, activeRating: _activeRating,
+  onDuplicateClick, onGearClick, onToneClick, onPresetClick, onMissingClick, onEsrClick,
+  onRatingClick: _onRatingClick, onRemoveWatch, onSyncWatch, onOpenWatchSource,
 }: Props) {
   const stats = useMemo(() => {
     const total = files.length
-    const missing = files.filter((f) =>
+    const missingCount = files.filter((f) =>
       CORE_FIELDS.some((field) => !f.metadata[field] && f.metadata[field] !== 0)
     ).length
+    const totalSizeBytes = files.reduce((sum, file) => sum + (file.sizeBytes ?? 0), 0)
+    const newestUpdateMs = files.reduce((max, file) => Math.max(max, file.mtimeMs ?? 0), 0)
+    const recentThreshold = Date.now() - (7 * 24 * 60 * 60 * 1000)
+    const recentUpdatedCount = files.filter((file) => (file.mtimeMs ?? 0) >= recentThreshold).length
 
-    // Preset distribution
-    const presetMap = new Map<string, number>()
+    const duplicateNameCounts = new Map<string, number>()
+    for (const f of files) {
+      const key = f.fileName.trim().toLowerCase()
+      if (!key) continue
+      duplicateNameCounts.set(key, (duplicateNameCounts.get(key) ?? 0) + 1)
+    }
+    const dupCount = [...duplicateNameCounts.values()].filter((c) => c > 1).reduce((sum, c) => sum + c, 0)
+    const dupGroups = [...duplicateNameCounts.values()].filter((c) => c > 1).length
+
+    const presetCounts = new Map<string, number>()
     for (const f of files) {
       const p = detectPreset(f.config) ?? 'Unknown'
-      presetMap.set(p, (presetMap.get(p) ?? 0) + 1)
+      presetCounts.set(p, (presetCounts.get(p) ?? 0) + 1)
     }
-    const presets = PRESET_ORDER
-      .filter((k) => presetMap.has(k))
-      .map((k) => ({ key: k, count: presetMap.get(k)! }))
+    const presets = [...presetCounts.entries()]
+      .map(([key, count]) => ({ key, count }))
+      .sort((a, b) => b.count - a.count)
 
-    // ESR buckets
+    // getEsrBucketTone applies kind-aware thresholds (strict for A1/A2-Full, looser for a
+    // genuine A2 aggregate) instead of one hardcoded band for every capture — see
+    // dashboardMetrics.ts for the real bug this replaced (A2 could never be detected here at
+    // all since architecture/config weren't passed through).
     let esrGood = 0, esrOk = 0, esrReview = 0, esrNone = 0
     for (const f of files) {
-      const esr = getEsr(f)
-      if (esr === null) esrNone++
-      else if (esr < 0.01) esrGood++
-      else if (esr < 0.05) esrOk++
+      const tone = getEsrBucketTone(f)
+      if (tone === 'none') esrNone++
+      else if (tone === 'green') esrGood++
+      else if (tone === 'amber') esrOk++
       else esrReview++
     }
 
-    // Gear type distribution
-    const gearMap = new Map<string, number>()
+    const gearCounts = new Map<string, number>()
     for (const f of files) {
-      const g = f.metadata.gear_type
-      if (g) gearMap.set(g, (gearMap.get(g) ?? 0) + 1)
+      const g = f.metadata.gear_type as string | undefined
+      if (g) gearCounts.set(g, (gearCounts.get(g) ?? 0) + 1)
     }
-    const gearRows = [...gearMap.entries()]
-      .sort((a, b) => b[1] - a[1])
+    const gearRows = [...gearCounts.entries()]
       .map(([key, count]) => ({ key, count }))
+      .sort((a, b) => b.count - a.count)
 
-    // Tone type distribution
-    const toneMap = new Map<string, number>()
+    const toneCounts = new Map<string, number>()
     for (const f of files) {
-      const t = f.metadata.tone_type
-      if (t) toneMap.set(t, (toneMap.get(t) ?? 0) + 1)
+      const t = f.metadata.tone_type as string | undefined
+      if (t) toneCounts.set(t, (toneCounts.get(t) ?? 0) + 1)
     }
-    const toneRows = [...toneMap.entries()]
-      .sort((a, b) => b[1] - a[1])
+    const toneRows = [...toneCounts.entries()]
       .map(([key, count]) => ({ key, count }))
+      .sort((a, b) => b.count - a.count)
 
-    // Rating distribution
-    const ratingCounts: Record<number, number> = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0, 0: 0 }
-    for (const f of files) {
-      const r = f.metadata.nl_rating ?? 0
-      const key = (r >= 1 && r <= 5) ? r : 0
-      ratingCounts[key] = (ratingCounts[key] ?? 0) + 1
+    const health = folderHealth(files, {
+      packInfo: !!hasPackInfo,
+      readme: !!hasReadme,
+      cover: !!hasCoverImage,
+      gallery: galleryCount,
+    })
+
+    const esrRuns = buildEsrRuns(files, 18)
+
+    return {
+      total, missingCount, totalSizeBytes, newestUpdateMs, recentUpdatedCount,
+      dupCount, dupGroups, presets, esrGood, esrOk, esrReview, esrNone,
+      gearRows, toneRows, health, esrRuns,
     }
-    const ratingRows = ([5, 4, 3, 2, 1] as const)
-      .filter((r) => ratingCounts[r] > 0)
-      .map((r) => ({ rating: r, count: ratingCounts[r] }))
-    const unratedCount = ratingCounts[0]
-    const maxRating = Math.max(...ratingRows.map((r) => r.count), unratedCount, 1)
-
-    const maxPreset = Math.max(...presets.map((p) => p.count), 1)
-    const maxGear = Math.max(...gearRows.map((r) => r.count), 1)
-    const maxTone = Math.max(...toneRows.map((r) => r.count), 1)
-
-    return { total, missing, presets, maxPreset, esrGood, esrOk, esrReview, esrNone, gearRows, maxGear, toneRows, maxTone, ratingRows, unratedCount, maxRating }
-  }, [files])
-
-  if (files.length === 0) {
-    return (
-      <div className="h-full flex items-center justify-center text-gray-500 text-sm">
-        No captures in this folder
-      </div>
-    )
-  }
+  }, [files, hasPackInfo, hasReadme, hasCoverImage, galleryCount])
 
   const esrCovered = stats.esrGood + stats.esrOk + stats.esrReview
-  const esrMaxCount = Math.max(stats.esrGood, stats.esrOk, stats.esrReview, stats.esrNone, 1)
+  const esrTotal = esrCovered + stats.esrNone
+  const esrPassPct = esrTotal > 0 ? Math.round(((stats.esrGood + stats.esrOk) / esrTotal) * 100) : null
+  const esrMax = Math.max(stats.esrGood, stats.esrOk, stats.esrReview, stats.esrNone, 1)
+
+  // ESR trend direction
+  const esrRuns = stats.esrRuns
+  const esrImproving = esrRuns.length >= 2 && esrRuns[esrRuns.length - 1] < esrRuns[0]
 
   return (
-    <div className="h-full overflow-y-auto p-4 flex flex-col gap-4">
+    <div className="h-full overflow-y-auto p-4 flex flex-col gap-2.5">
 
-      {/* Stat boxes */}
-      <div className="flex gap-3">
-        <StatBox value={stats.total} label="captures" />
-        <div
-          className={`flex-1 rounded-xl border px-3 py-2.5 text-center transition-colors ${onMissingClick ? 'cursor-pointer hover:bg-gray-700/40' : ''} ${activeMissing ? 'bg-gray-700/60 border-gray-500/60' : 'bg-gray-800/60 border-gray-700/40'}`}
-          onClick={stats.missing > 0 && onMissingClick ? () => onMissingClick(!activeMissing) : undefined}
-        >
-          <div className={`text-2xl font-bold leading-none ${stats.missing === 0 ? 'text-green-400' : activeMissing ? 'text-amber-300' : 'text-amber-400'}`}>{stats.missing}</div>
-          <div className="text-[10px] text-gray-400 mt-1 leading-tight">missing metadata</div>
-          <div className="text-[9px] text-gray-600 mt-0.5">{stats.missing === 0 ? 'all complete' : `${Math.round(stats.missing / stats.total * 100)}% incomplete`}</div>
+      {/* 1. Hero row */}
+      <div className="flex flex-row gap-2.5">
+        {/* Left &mdash; health gauge */}
+        <div style={{ flex: '0 0 47%' }}>
+          <D1Health score={stats.health.score} parts={stats.health.parts} label="Pack Health" />
+        </div>
+        {/* Right &mdash; 2×2 stat cards */}
+        <div className="flex-1 grid grid-cols-2 gap-2">
+          <D1StatCard label="Captures" value={stats.total} sub="in this pack" />
+          <div
+            className={`${STAT_CARD} ${stats.dupCount > 0 && onDuplicateClick ? 'cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700/60 transition-colors' : ''} ${activeDuplicate ? 'ring-1 ring-amber-400 dark:ring-amber-500/60' : ''}`}
+            onClick={stats.dupCount > 0 && onDuplicateClick ? () => onDuplicateClick(!activeDuplicate) : undefined}
+          >
+            <span className={EYEBROW}>Duplicates</span>
+            <span className={`text-2xl font-bold tabular-nums leading-none ${stats.dupCount === 0 ? 'text-green-600 dark:text-green-400' : 'text-amber-500 dark:text-amber-400'}`}>
+              {stats.dupCount.toLocaleString()}
+            </span>
+            <span className="text-[10px] text-gray-400 dark:text-gray-500">
+              {stats.dupCount === 0 ? 'no collisions' : `${stats.dupGroups} collision${stats.dupGroups !== 1 ? 's' : ''}`}
+            </span>
+          </div>
+          <div
+            className={`${STAT_CARD} ${onMissingClick ? 'cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700/60 transition-colors' : ''} ${activeMissing ? 'ring-1 ring-amber-400 dark:ring-amber-500/60' : ''}`}
+            onClick={onMissingClick ? () => onMissingClick(!activeMissing) : undefined}
+          >
+            <span className={EYEBROW}>Missing Metadata</span>
+            <span className={`text-2xl font-bold tabular-nums leading-none ${stats.missingCount === 0 ? 'text-green-600 dark:text-green-400' : 'text-amber-500 dark:text-amber-400'}`}>
+              {stats.missingCount.toLocaleString()}
+            </span>
+            <span className="text-[10px] text-gray-400 dark:text-gray-500">
+              {stats.total > 0 ? `${Math.round(stats.missingCount / stats.total * 100)}% incomplete` : ''}
+            </span>
+          </div>
+          <D1StatCard
+            label="Total Size"
+            value={formatBytes(stats.totalSizeBytes)}
+            sub={stats.total > 0 ? `${formatBytes(stats.totalSizeBytes / stats.total)} avg / capture` : undefined}
+          />
         </div>
       </div>
 
-      {/* Formats + ESR row */}
-      <div className="flex gap-3">
-        {/* Preset formats */}
-        <div className="flex-1 rounded-xl bg-gray-800/40 border border-gray-700/40 p-3">
-          <h3 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">Formats</h3>
-          {stats.presets.length === 0 ? (
-            <p className="text-[11px] text-gray-600">No preset data</p>
-          ) : (
-            <div className="flex flex-col gap-1">
-              {stats.presets.map(({ key, count }) => (
-                <MiniBar
-                  key={key}
-                  label={key}
-                  count={count}
-                  maxCount={stats.maxPreset}
-                  color={PRESET_COLORS[key] ?? '#6b7280'}
-                  isActive={activePreset === key}
-                  onClick={onPresetClick ? () => onPresetClick(activePreset === key ? null : key) : undefined}
-                />
-              ))}
+      {/* 2. Readiness / Watch / Activity */}
+      <div className="grid grid-cols-3 gap-2.5">
+        {/* Pack Readiness */}
+        <div className={`${CARD} flex flex-col gap-2.5`}>
+          <span className={EYEBROW}>Pack Readiness</span>
+          <div className="flex flex-wrap gap-1.5">
+            {[
+              { label: 'Pack Info', ok: !!hasPackInfo },
+              { label: 'Read Me', ok: !!hasReadme },
+              { label: 'Cover', ok: !!hasCoverImage },
+              { label: galleryCount > 0 ? `Gallery \u00b7 ${galleryCount} image${galleryCount !== 1 ? 's' : ''}` : 'Gallery', ok: galleryCount > 0 },
+            ].map((item) => (
+              <span
+                key={item.label}
+                className={`text-[10px] px-2 py-0.5 rounded-full ${item.ok ? 'bg-teal-100 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300' : 'bg-gray-100 dark:bg-gray-700/70 text-gray-500 dark:text-gray-400'}`}
+              >
+                {item.label} {item.ok ? 'ready' : 'missing'}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {/* Folder Watch */}
+        <div className={`${CARD} flex flex-col gap-2`}>
+          <div className="flex items-center justify-between gap-2">
+            <span className={EYEBROW}>Folder Watch</span>
+            {watchSource && (
+              <div className="flex items-center gap-1">
+                {onSyncWatch && (
+                  <button onClick={onSyncWatch} className="text-[10px] px-1.5 py-0.5 rounded border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                    Sync Now
+                  </button>
+                )}
+                {onRemoveWatch && (
+                  <button onClick={onRemoveWatch} className="text-[10px] px-1.5 py-0.5 rounded border border-red-400/60 dark:border-red-500/30 text-red-600 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors">
+                    Remove
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+          {watchSource ? (
+            <div className="space-y-1">
+              <button
+                onClick={() => onOpenWatchSource?.(watchSource)}
+                className="w-full text-left rounded bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 px-2 py-1.5 text-[10px] font-mono text-gray-600 dark:text-gray-300 break-all hover:bg-gray-100 dark:hover:bg-gray-700/60 transition-colors truncate"
+                title={watchSource}
+              >
+                {watchSource}
+              </button>
             </div>
+          ) : (
+            <span className="text-[11px] text-gray-500 dark:text-gray-400">No watch source configured.</span>
           )}
         </div>
 
-        {/* ESR quality */}
-        <div className="flex-1 rounded-xl bg-gray-800/40 border border-gray-700/40 p-3">
-          <h3 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">ESR Quality</h3>
-          <div className="flex flex-col gap-1">
-            {esrCovered === 0 && stats.esrNone === stats.total ? (
-              <p className="text-[11px] text-gray-600">No ESR data</p>
-            ) : (
-              <>
-                {stats.esrGood > 0 && (
-                  <BudgetRow label="Excellent  < 0.01" count={stats.esrGood} maxCount={esrMaxCount} color="#22c55e"
-                    isActive={activeEsr === 'good'}
-                    onClick={onEsrClick ? () => onEsrClick(activeEsr === 'good' ? null : 'good') : undefined} />
-                )}
-                {stats.esrOk > 0 && (
-                  <BudgetRow label="OK  0.01–0.05" count={stats.esrOk} maxCount={esrMaxCount} color="#f59e0b"
-                    isActive={activeEsr === 'ok'}
-                    onClick={onEsrClick ? () => onEsrClick(activeEsr === 'ok' ? null : 'ok') : undefined} />
-                )}
-                {stats.esrReview > 0 && (
-                  <BudgetRow label="Review  > 0.05" count={stats.esrReview} maxCount={esrMaxCount} color="#ef4444"
-                    isActive={activeEsr === 'review'}
-                    onClick={onEsrClick ? () => onEsrClick(activeEsr === 'review' ? null : 'review') : undefined} />
-                )}
-                {stats.esrNone > 0 && (
-                  <BudgetRow label="No data" count={stats.esrNone} maxCount={esrMaxCount} color="#4b5563"
-                    isActive={activeEsr === 'none'}
-                    onClick={onEsrClick ? () => onEsrClick(activeEsr === 'none' ? null : 'none') : undefined} />
-                )}
-              </>
-            )}
+        {/* Recent Activity */}
+        <div className={`${CARD} flex flex-col gap-2.5`}>
+          <span className={EYEBROW}>Recent Activity</span>
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[11.5px] text-gray-600 dark:text-gray-300">Updated in last 7 days</span>
+              <span className="font-mono tabular-nums text-[11.5px] text-gray-900 dark:text-gray-100">{stats.recentUpdatedCount}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[11.5px] text-gray-600 dark:text-gray-300">Latest file update</span>
+              <span className="font-mono text-[11.5px] text-gray-900 dark:text-gray-100">{formatDateTime(stats.newestUpdateMs) ?? 'Unknown'}</span>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Gear + Tone columns */}
-      <div className="flex gap-3">
-        {/* Gear type */}
-        <div className="flex-1 rounded-xl bg-gray-800/40 border border-gray-700/40 p-3">
-          <h3 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">Gear Type</h3>
-          {stats.gearRows.length === 0 ? (
-            <p className="text-[11px] text-gray-600">No gear data</p>
-          ) : (
-            <div className="flex flex-col">
-              {stats.gearRows.map(({ key, count }) => {
-                const imgSrc = getGearImageSrc(key)
-                const color = GEAR_COLORS[key] ?? '#6b7280'
-                return (
-                  <BudgetRow
-                    key={key}
-                    icon={
-                      imgSrc
-                        ? <img src={imgSrc} alt={key} className="h-4 w-4 object-contain opacity-70" />
-                        : <span style={{ color }} className="text-[9px] leading-none">●</span>
-                    }
-                    label={GEAR_LABELS[key] ?? key}
-                    count={count}
-                    maxCount={stats.maxGear}
-                    color={color}
-                    isActive={activeGear === key}
-                    onClick={onGearClick ? () => onGearClick(activeGear === key ? null : key) : undefined}
-                  />
-                )
-              })}
-            </div>
-          )}
-        </div>
+      {/* 3. Formats | ESR Quality */}
+      <div className="grid grid-cols-2 gap-2.5">
+        {/* Formats */}
+        <D1BarList
+          title="Formats"
+          rows={stats.presets.map((p) => ({
+            key: p.key,
+            label: p.key,
+            count: p.count,
+            color: PRESET_COLORS[p.key] ?? '#6b7280',
+          }))}
+          onRowClick={onPresetClick ? (k) => onPresetClick(activePreset === k ? null : k) : undefined}
+          activeKey={activePreset}
+        />
 
-        {/* Tone type */}
-        <div className="flex-1 rounded-xl bg-gray-800/40 border border-gray-700/40 p-3">
-          <h3 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">Tone Type</h3>
-          {stats.toneRows.length === 0 ? (
-            <p className="text-[11px] text-gray-600">No tone data</p>
+        {/* ESR Quality */}
+        <div className={`${CARD} flex flex-col gap-3`}>
+          <div className="flex items-baseline justify-between">
+            <span className={EYEBROW}>ESR Quality</span>
+            {esrPassPct !== null && esrCovered > 0 && (
+              <span className="font-mono text-[10px]" style={{ color: '#34d399' }}>{esrPassPct}% pass</span>
+            )}
+          </div>
+          {esrCovered === 0 && stats.esrNone === stats.total ? (
+            <p className="text-[11px] text-gray-400 dark:text-gray-600">No ESR data</p>
           ) : (
-            <div className="flex flex-col">
-              {stats.toneRows.map(({ key, count }) => (
-                <BudgetRow
-                  key={key}
-                  label={TONE_LABELS[key] ?? key}
-                  count={count}
-                  maxCount={stats.maxTone}
-                  color={TONE_COLORS[key] ?? '#6b7280'}
-                  isActive={activeTone === key}
-                  onClick={onToneClick ? () => onToneClick(activeTone === key ? null : key) : undefined}
-                />
-              ))}
+            <div className="flex flex-col gap-1.5">
+              {stats.esrGood > 0 && (
+                <div
+                  className={`flex items-center gap-2 rounded px-1 py-0.5 ${onEsrClick ? 'cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800/60' : ''} ${activeEsr === 'good' ? 'bg-gray-100 dark:bg-gray-800/60' : ''} transition-colors`}
+                  onClick={() => onEsrClick?.(activeEsr === 'good' ? null : 'good')}
+                >
+                  <span className="text-[11px] font-semibold w-28 flex-shrink-0 truncate" style={{ color: '#22c55e' }}>Excellent <span className="font-normal opacity-70">&lt;0.01</span></span>
+                  <div className="flex-1 h-2 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${Math.max(2, Math.round((stats.esrGood / esrMax) * 100))}%`, backgroundColor: '#22c55e' }} />
+                  </div>
+                  <span className="font-mono tabular-nums text-[10px] text-gray-400 dark:text-gray-500 w-6 text-right flex-shrink-0">{stats.esrGood}</span>
+                </div>
+              )}
+              {stats.esrOk > 0 && (
+                <div
+                  className={`flex items-center gap-2 rounded px-1 py-0.5 ${onEsrClick ? 'cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800/60' : ''} ${activeEsr === 'ok' ? 'bg-gray-100 dark:bg-gray-800/60' : ''} transition-colors`}
+                  onClick={() => onEsrClick?.(activeEsr === 'ok' ? null : 'ok')}
+                >
+                  <span className="text-[11px] font-semibold w-28 flex-shrink-0 truncate" style={{ color: '#f59e0b' }}>OK <span className="font-normal opacity-70">0.01&ndash;0.05</span></span>
+                  <div className="flex-1 h-2 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${Math.max(2, Math.round((stats.esrOk / esrMax) * 100))}%`, backgroundColor: '#f59e0b' }} />
+                  </div>
+                  <span className="font-mono tabular-nums text-[10px] text-gray-400 dark:text-gray-500 w-6 text-right flex-shrink-0">{stats.esrOk}</span>
+                </div>
+              )}
+              {stats.esrReview > 0 && (
+                <div
+                  className={`flex items-center gap-2 rounded px-1 py-0.5 ${onEsrClick ? 'cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800/60' : ''} ${activeEsr === 'review' ? 'bg-gray-100 dark:bg-gray-800/60' : ''} transition-colors`}
+                  onClick={() => onEsrClick?.(activeEsr === 'review' ? null : 'review')}
+                >
+                  <span className="text-[11px] font-semibold w-28 flex-shrink-0 truncate" style={{ color: '#ef4444' }}>Review <span className="font-normal opacity-70">&gt;0.05</span></span>
+                  <div className="flex-1 h-2 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${Math.max(2, Math.round((stats.esrReview / esrMax) * 100))}%`, backgroundColor: '#ef4444' }} />
+                  </div>
+                  <span className="font-mono tabular-nums text-[10px] text-gray-400 dark:text-gray-500 w-6 text-right flex-shrink-0">{stats.esrReview}</span>
+                </div>
+              )}
+              {stats.esrNone > 0 && (
+                <div className="flex items-center gap-2 rounded px-1 py-0.5">
+                  <span className="text-[11px] text-gray-500 dark:text-gray-400 w-28 flex-shrink-0 truncate">No data</span>
+                  <div className="flex-1 h-2 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${Math.max(2, Math.round((stats.esrNone / esrMax) * 100))}%`, backgroundColor: '#4b5563' }} />
+                  </div>
+                  <span className="font-mono tabular-nums text-[10px] text-gray-400 dark:text-gray-500 w-6 text-right flex-shrink-0">{stats.esrNone}</span>
+                </div>
+              )}
             </div>
           )}
         </div>
       </div>
 
-      {/* Rating */}
-      {(stats.ratingRows.length > 0 || stats.unratedCount > 0) && (
-        <div className="rounded-xl bg-gray-800/40 border border-gray-700/40 p-3">
-          <h3 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">Rating</h3>
-          <div className="flex flex-col gap-1">
-            {stats.ratingRows.map(({ rating, count }) => (
-              <MiniBar
-                key={rating}
-                label={'★'.repeat(rating)}
-                count={count}
-                maxCount={stats.maxRating}
-                color="#f59e0b"
-                isActive={activeRating === rating}
-                onClick={onRatingClick ? () => onRatingClick(activeRating === rating ? null : rating) : undefined}
-              />
-            ))}
-            {stats.unratedCount > 0 && (
-              <MiniBar
-                label="Unrated"
-                count={stats.unratedCount}
-                maxCount={stats.maxRating}
-                color="#6b7280"
-                isActive={activeRating === 0}
-                onClick={onRatingClick ? () => onRatingClick(activeRating === 0 ? null : 0) : undefined}
-              />
+      {/* 4. Gear | Tone */}
+      <div className="grid grid-cols-2 gap-2.5">
+        <D1BarList
+          title="Gear Type"
+          rows={stats.gearRows.map(({ key, count }) => ({
+            key,
+            label: GEAR_LABELS[key] ?? key,
+            count,
+            color: GEAR_COLORS[key] ?? '#6b7280',
+          }))}
+          onRowClick={onGearClick ? (k) => onGearClick(activeGear === k ? null : k) : undefined}
+          activeKey={activeGear}
+        />
+        <D1BarList
+          title="Tone Type"
+          rows={stats.toneRows.map(({ key, count }) => ({
+            key,
+            label: TONE_LABELS[key] ?? key,
+            count,
+            color: TONE_COLORS[key] ?? '#6b7280',
+          }))}
+          onRowClick={onToneClick ? (k) => onToneClick(activeTone === k ? null : k) : undefined}
+          activeKey={activeTone}
+        />
+      </div>
+
+      {/* 5. Training Quality Trend | Delivery Targets */}
+      <div className="grid grid-cols-2 gap-2.5">
+        {/* ESR Trend */}
+        <div className={`${CARD} flex flex-col gap-2.5`}>
+          <div className="flex items-baseline justify-between">
+            <div>
+              <span className={EYEBROW}>Training Quality Trend</span>
+              <span className="block text-[9.5px] text-gray-400 dark:text-gray-500 mt-0.5">avg ESR &middot; lower is better</span>
+            </div>
+            {esrRuns.length >= 2 && (
+              <span className="font-mono text-[10px]" style={{ color: esrImproving ? '#34d399' : '#f87171' }}>
+                {esrImproving ? '▼ improving' : '▲ degrading'}
+              </span>
+            )}
+          </div>
+          {esrRuns.length >= 2 ? (
+            <>
+              <TrendLine data={esrRuns} color="#22c55e" height={104} invert />
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[9.5px] text-gray-400 dark:text-gray-500">
+                  oldest &middot; {esrRuns[0].toFixed(4)}
+                </span>
+                <span className="font-mono text-[9.5px]" style={{ color: '#34d399' }}>
+                  latest &middot; {esrRuns[esrRuns.length - 1].toFixed(4)}
+                </span>
+              </div>
+            </>
+          ) : (
+            <p className="text-[11px] text-gray-400 dark:text-gray-600">Not enough ESR data</p>
+          )}
+        </div>
+
+        {/* Delivery Targets */}
+        {deliverySummary ? (
+          <div className={`${CARD} flex flex-col gap-3`}>
+            <div className="flex items-start justify-between">
+              <div>
+                <span className={EYEBROW}>Delivery Targets</span>
+                <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
+                  {deliverySummary.totalRows} matrix row{deliverySummary.totalRows !== 1 ? 's' : ''} stored
+                </p>
+              </div>
+              {deliverySummary.lastImportedAt && (
+                <span className="text-[10px] text-gray-400 dark:text-gray-500 text-right">
+                  {new Date(deliverySummary.lastImportedAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                ['ToneX', deliverySummary.tonexIncluded],
+                ['NAM', deliverySummary.namIncluded],
+                ['Proxy', deliverySummary.proxyIncluded],
+                ['QC', deliverySummary.qcIncluded],
+              ].map(([label, count]) => (
+                <div key={String(label)} className="bg-gray-100 dark:bg-gray-800/60 rounded-xl px-3 py-2.5 flex flex-col gap-0.5">
+                  <span className="text-xl font-bold tabular-nums text-gray-900 dark:text-gray-100 leading-none">{count}</span>
+                  <span className="text-[10px] text-gray-400 dark:text-gray-500">{label} included</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className={`${CARD} flex flex-col gap-2`}>
+            <span className={EYEBROW}>Delivery Targets</span>
+            <p className="text-[11px] text-gray-400 dark:text-gray-600">No delivery data imported.</p>
+          </div>
+        )}
+      </div>
+
+      {/* 6. Checklist Progress */}
+      {checklistSummary && checklistSummary.total > 0 && (
+        <div className={`${CARD} flex flex-col gap-3`}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex flex-col gap-0.5">
+              <span className={EYEBROW}>Checklist Progress</span>
+              <span className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
+                {checklistSummary.completed} of {checklistSummary.total} steps complete
+              </span>
+            </div>
+            <div className="text-right flex-shrink-0">
+              <div className="text-xl font-bold tabular-nums text-gray-900 dark:text-gray-100 leading-none">{checklistSummary.percent}%</div>
+              <div className="text-[10px] mt-0.5" style={{ color: checklistSummary.liveDate ? '#34d399' : undefined }}>
+                {checklistSummary.liveDate
+                  ? 'Released'
+                  : checklistSummary.isOverdue ? 'Overdue'
+                  : checklistSummary.targetDate ? 'Scheduled'
+                  : 'No target'}
+              </div>
+            </div>
+          </div>
+          <div className="w-full h-2 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
+            <div className="h-full rounded-full transition-all" style={{ width: `${checklistSummary.percent}%`, backgroundColor: '#14b8a6' }} />
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            {checklistSummary.targetDate && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800/60 text-gray-500 dark:text-gray-400">
+                Target {checklistSummary.targetDate}
+              </span>
+            )}
+            {checklistSummary.liveDate && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800/60 text-gray-500 dark:text-gray-400">
+                Live {checklistSummary.liveDate}
+              </span>
+            )}
+            {checklistSummary.releasedOnTime && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-teal-100 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300">Released on time</span>
+            )}
+            {checklistSummary.releasedLate && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300">Released late</span>
+            )}
+            {checklistSummary.isOverdue && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300">Target date passed</span>
             )}
           </div>
         </div>
@@ -380,3 +635,6 @@ export function FolderDashboard({
     </div>
   )
 }
+
+// Suppress unused import — kept for icons in gear type
+void getGearImageSrc

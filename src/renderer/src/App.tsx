@@ -1,7 +1,8 @@
-﻿import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef, startTransition } from 'react'
 import beakerTransparent from './assets/images/beaker.only.transparent.png'
 import { NamFile, NamMetadata, TONE_TYPES, GEAR_TYPES } from './types/nam'
-import { AppSettings, loadSettings, saveSettings } from './types/settings'
+import { AppSettings, FolderWatchImportEntry, FolderWatchRule, MetadataSuggestRule, TrainingBundle, TrainingPreset, TrainingProfile, loadSettings, saveSettings } from './types/settings'
+import { effectiveFormula } from './utils/resolveOutputFormula'
 import { loadLayout, saveLayout } from './types/layout'
 import { LibrarianState } from './types/librarian'
 import { FileList, ALL_GRID_COLUMNS, doExportCSV, doExportXLSX } from './components/FileList'
@@ -11,20 +12,36 @@ import { BatchEditor, BatchApplyOptions } from './components/BatchEditor'
 import { MultiSelectEditor } from './components/MultiSelectEditor'
 import { StatusBar } from './components/StatusBar'
 import { SettingsPanel } from './components/SettingsPanel'
-import { ToneStore } from './components/ToneStore'
+import { ToneStore, type ToneModel, type ToneStoreDownloadQueueJob } from './components/ToneStore'
 import { FolderTree } from './components/FolderTree'
 import { DuplicatesModal } from './components/DuplicatesModal'
 import { ImportMetadataModal, ImportMatch } from './components/ImportMetadataModal'
+import { SuggestMetadataModal } from './components/SuggestMetadataModal'
 import { TrainingCoverageModal } from './components/TrainingCoverageModal'
 import { FolderCompareModal } from './components/FolderCompareModal'
-import { FolderGallery, FolderImagesData } from './components/FolderGallery'
+import { FolderGallery } from './components/FolderGallery'
 import { FolderDashboard } from './components/FolderDashboard'
-import { PackInfoEditor } from './components/PackInfoEditor'
+import { FolderReadmePanel } from './components/FolderReadmePanel'
+import { WavCoverageTab } from './components/WavCoverageTab'
+import { PackInfoEditor, type DeliveryMatrixData, type PackInfo, type PackChecklistItem } from './components/PackInfoEditor'
+import { PackTargetsEditor } from './components/PackTargetsEditor'
 import { PlayerPanel } from './components/PlayerPanel'
+import { TrainingPanel } from './components/TrainingPanel'
+import { TrainingSetupGuide } from './components/TrainingSetupGuide'
+import { FolderSuggestRulesModal } from './components/FolderSuggestRulesModal'
 import { BundleEditor } from './components/BundleEditor'
 import { NamDashboard } from './components/NamDashboard'
+import { FolderCardView } from './components/FolderCardView'
 import { SessionHistoryPanel } from './components/SessionHistoryPanel'
+import { LibraryCleanupModal, type LibraryCleanupFolderEntry, type LibraryCleanupLayout, type LibraryCleanupPreviewRow } from './components/LibraryCleanupModal'
+import { HelpModal, type HelpModalTab } from './components/HelpModal'
+import { CompanionInboxPanel, type CompanionInboxItem } from './components/CompanionInboxPanel'
 import * as XLSX from 'xlsx'
+import { buildMetadataSuggestionMatches, MetadataSuggestionMatch } from './utils/metadataSuggest'
+import { cloneMetadataSuggestRule, isMetadataSuggestRuleComplete, isMetadataSuggestRuleLibraryCandidate, metadataSuggestRuleSignature } from './utils/metadataSuggestRuleLibrary'
+import { detectPreset } from './utils/detectPreset'
+import { scanOwnAndInheritedImages, type FolderImagesData } from './utils/folderImages'
+import { IDLE_TRAINER_STATE, TRAINER_ARCHITECTURES, type TrainerArchitecture, type TrainerHistoryEntry, type TrainerProfilesStateSnapshot, type TrainerStartPayload, type TrainerStateSnapshot } from './types/trainer'
 
 export interface HistoryEntry {
   id: string
@@ -32,6 +49,346 @@ export interface HistoryEntry {
   operation: string
   summary: string
 }
+
+interface ChecklistSummary {
+  total: number
+  completed: number
+  percent: number
+  targetDate: string
+  liveDate: string
+  isOverdue: boolean
+  releasedLate: boolean
+  releasedOnTime: boolean
+}
+
+interface DashboardChecklistEntry {
+  folderPath: string
+  folderLabel: string
+  status: string
+  progressLabel: string
+  percent: number
+}
+
+interface DeliveryMatrixSummary {
+  totalRows: number
+  lastImportedAt: string
+  tonexIncluded: number
+  namIncluded: number
+  proxyIncluded: number
+  qcIncluded: number
+}
+
+interface SaveProgressState {
+  label: string
+  completed: number
+  total: number
+}
+
+interface FolderReadinessSummary {
+  hasReadme: boolean
+  galleryCount: number
+  hasCoverImage: boolean
+  recentUpdatedCount: number
+}
+
+interface LibraryCleanupClassifiedFile {
+  sourcePath: string
+  destinationDir: string
+  destinationBaseName: string
+  needsReview: boolean
+  note: string | null
+}
+
+function cleanupSourceBaseName(sourcePath: string): string {
+  const normalized = sourcePath.replace(/\\/g, '/')
+  const baseName = normalized.split('/').pop() ?? normalized
+  return /\.nam$/i.test(baseName) ? baseName : `${baseName}.nam`
+}
+
+function inferCleanupDiCabFromFile(file: NamFile): 'DI' | 'CAB' | null {
+  const gearType = file.metadata.gear_type ?? ''
+  if (gearType === 'amp') return 'DI'
+  if (gearType.includes('cab')) return 'CAB'
+
+  const hay = `${file.fileName} ${file.metadata.name ?? ''}`.toLowerCase()
+  if (/\bdi\b/.test(hay) || /\bdirect\b/.test(hay)) return 'DI'
+  if (/\b(?:1x12|2x12|4x12|8x10|112|212|410|412)\b/.test(hay) || /\bcab\b/.test(hay)) return 'CAB'
+  return null
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+// Subscribe to a window.api.onXxx event without crashing the whole app if that method doesn't
+// exist on the currently-loaded preload script. This happens for real: preload only executes
+// once per webContents load, so in a dev session it can go stale relative to the renderer (which
+// hot-reloads instantly) whenever the main/preload watcher misses a rebuild — e.g. after the app
+// was previously force-killed and `npm run dev` wasn't fully restarted. A missing method used to
+// throw "X is not a function" straight out of a useEffect, which is an uncaught render-time error
+// that blanks the entire UI via the root ErrorBoundary. Warn and no-op instead; the boundary is
+// still there as a last resort for anything this doesn't catch.
+function safeOn<Args extends unknown[]>(
+  name: string,
+  subscribe: ((cb: (...args: Args) => void) => () => void) | undefined,
+  cb: (...args: Args) => void
+): () => void {
+  if (typeof subscribe !== 'function') {
+    console.error(`window.api.${name} is not available — preload is out of sync with the renderer. Fully restart the dev server (not just reload the window) to pick up recent preload/main changes.`)
+    return () => {}
+  }
+  return subscribe(cb)
+}
+
+function makeSubmissionId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2, 10)}`
+}
+
+function buildTone3000FileName(name: string): string {
+  const safeName = name.replace(/[^\w.\- ]/g, '_').trim() || 'tone'
+  return safeName.toLowerCase().endsWith('.nam') ? safeName : `${safeName}.nam`
+}
+
+function buildTrainerSnapshotSignature(state: TrainerStateSnapshot): string {
+  const queueSig = state.queue.map((job) => (
+    `${job.jobId}:${job.status}:${job.progressEpochCurrent ?? ''}:${job.progressBatchCurrent ?? ''}:${job.validationEsr ?? ''}:${job.validationEsrFull ?? ''}:${job.submissionLabel ?? ''}:${job.editedAt ?? ''}`
+  )).join('|')
+  const historySig = state.history.slice(-3).map((entry) => (
+    `${entry.jobId}:${entry.status}:${entry.finishedAt ?? ''}:${entry.validationEsr ?? ''}:${entry.validationEsrFull ?? ''}`
+  )).join('|')
+  return [
+    state.status,
+    state.activeJobId ?? '',
+    state.startedAt ?? '',
+    state.finishedAt ?? '',
+    state.modelName ?? '',
+    state.outputModelPath ?? '',
+    state.progressPercent ?? '',
+    state.progressEpochCurrent ?? '',
+    state.progressEpochTotal ?? '',
+    state.progressBatchCurrent ?? '',
+    state.progressBatchTotal ?? '',
+    state.progressRate ?? '',
+    state.validationEsr ?? '',
+    state.epochValidationEsr ?? '',
+    state.epochValidationEsrFull ?? '',
+    state.epochValidationEsrLite ?? '',
+    state.epochValidationEsrAggregate ?? '',
+    state.logs.length,
+    state.pauseAfterCurrent ? 'paused' : 'live',
+    state.queue.length,
+    queueSig,
+    state.history.length,
+    historySig,
+  ].join('~')
+}
+
+function migrateLegacyNamBotInMemory(meta: NamFile['metadata']): NamFile['metadata'] {
+  const training = meta.training as Record<string, unknown> | undefined
+  const legacy = training?.nam_bot as Record<string, unknown> | undefined
+  if (!legacy) return meta
+
+  const topLevel = (meta as Record<string, unknown>).nam_bot
+  const nextTopLevel = topLevel && typeof topLevel === 'object' && !Array.isArray(topLevel)
+    ? { ...legacy, ...(topLevel as Record<string, unknown>) }
+    : { ...legacy }
+
+  const nextMeta = {
+    ...meta,
+    nam_bot: nextTopLevel,
+    nb_trained_epochs: (nextTopLevel.trained_epochs as number | undefined) ?? meta.nb_trained_epochs ?? null,
+    nb_preset_name: (nextTopLevel.preset_name as string | undefined) ?? meta.nb_preset_name ?? null,
+  } as NamFile['metadata'] & { nam_bot?: Record<string, unknown> }
+  const nextTraining = { ...(training ?? {}) }
+  delete nextTraining.nam_bot
+  if (Object.keys(nextTraining).length === 0) delete nextMeta.training
+  else nextMeta.training = nextTraining
+  return nextMeta
+}
+
+function summarizeChecklist(packData: unknown): ChecklistSummary | null {
+  if (!packData || typeof packData !== 'object') return null
+  const pack = packData as Partial<PackInfo> & { checklistItems?: Partial<PackChecklistItem>[] }
+  const items = Array.isArray(pack.checklistItems) ? pack.checklistItems : []
+  if (items.length === 0) return null
+  const completed = items.filter((item) => item?.completed === true).length
+  const total = items.length
+  const percent = total > 0 ? Math.round((completed / total) * 100) : 0
+  const targetDate = typeof pack.targetDate === 'string' ? pack.targetDate : ''
+  const liveDate = typeof pack.liveDate === 'string' ? pack.liveDate : ''
+  const today = new Date().toISOString().slice(0, 10)
+  const isReleased = !!liveDate
+  return {
+    total,
+    completed,
+    percent,
+    targetDate,
+    liveDate,
+    isOverdue: !isReleased && !!targetDate && targetDate < today,
+    releasedLate: !!liveDate && !!targetDate && liveDate > targetDate,
+    releasedOnTime: !!liveDate && !!targetDate && liveDate <= targetDate,
+  }
+}
+
+function formatChecklistStatus(summary: ChecklistSummary): string {
+  if (summary.liveDate) {
+    return summary.releasedLate ? 'Released late' : summary.releasedOnTime ? 'Released on time' : 'Released'
+  }
+  if (summary.isOverdue) return 'Overdue'
+  if (summary.targetDate) return `Target ${summary.targetDate}`
+  return 'In progress'
+}
+
+function summarizeDeliveryMatrix(packData: unknown): DeliveryMatrixSummary | null {
+  if (!packData || typeof packData !== 'object') return null
+  const matrix = (packData as { deliveryMatrix?: Partial<DeliveryMatrixData> }).deliveryMatrix
+  if (!matrix || !Array.isArray(matrix.rows) || matrix.rows.length === 0) return null
+  const rows = matrix.rows
+  return {
+    totalRows: rows.length,
+    lastImportedAt: typeof matrix.lastImportedAt === 'string' ? matrix.lastImportedAt : '',
+    tonexIncluded: rows.filter((row) => row?.includeToneX === true).length,
+    namIncluded: rows.filter((row) => row?.includeNam === true).length,
+    proxyIncluded: rows.filter((row) => row?.includeProxy === true).length,
+    qcIncluded: rows.filter((row) => row?.includeQc === true).length,
+  }
+}
+
+function formatPathLabel(path: string): string {
+  const normalized = path.replace(/\\/g, '/')
+  const parts = normalized.split('/').filter(Boolean)
+  return parts.length <= 3 ? normalized : `.../${parts.slice(-3).join('/')}`
+}
+
+function folderDisplayName(path: string | null): string {
+  if (!path) return 'All loaded files'
+  const normalized = path.replace(/\\/g, '/')
+  const parts = normalized.split('/').filter(Boolean)
+  return parts[parts.length - 1] || normalized
+}
+
+function parentFolderPath(path: string): string {
+  const normalized = path.replace(/\\/g, '/')
+  const parts = normalized.split('/').filter(Boolean)
+  if (parts.length <= 1) return normalized
+  const rootPrefix = normalized.match(/^[A-Za-z]:/)?.[0] ?? ''
+  const parentParts = parts.slice(0, -1)
+  if (rootPrefix) return `${rootPrefix}/${parentParts.slice(1).join('/')}`.replace(/\/+/g, '/')
+  return parentParts.join('/')
+}
+
+async function buildUniqueFileName(destDir: string, collisionBaseName: string): Promise<string> {
+  let desiredBaseName = collisionBaseName
+  let targetPath = `${destDir.replace(/\\/g, '/')}/${desiredBaseName}`
+  let suffix = 2
+  while ((await window.api.readFile(targetPath)).success) {
+    const dotIndex = collisionBaseName.lastIndexOf('.')
+    const stem = dotIndex > 0 ? collisionBaseName.slice(0, dotIndex) : collisionBaseName
+    const ext = dotIndex > 0 ? collisionBaseName.slice(dotIndex) : ''
+    desiredBaseName = `${stem} (${suffix})${ext}`
+    targetPath = `${destDir.replace(/\\/g, '/')}/${desiredBaseName}`
+    suffix += 1
+  }
+  return desiredBaseName
+}
+
+function sanitizeCleanupPathPart(value: string): string {
+  return value
+    .replace(/[\\/]+/g, ' - ')
+    .replace(/[:*?"<>|]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/g, '')
+}
+
+function isPathWithin(path: string, ancestor: string): boolean {
+  const normalizedPath = path.replace(/\\/g, '/')
+  const normalizedAncestor = ancestor.replace(/\\/g, '/')
+  return normalizedPath === normalizedAncestor || normalizedPath.startsWith(normalizedAncestor + '/')
+}
+
+function relativePathWithin(path: string, root: string): string {
+  const normalizedPath = path.replace(/\\/g, '/')
+  const normalizedRoot = root.replace(/\\/g, '/')
+  if (normalizedPath === normalizedRoot) return ''
+  if (normalizedPath.startsWith(normalizedRoot + '/')) return normalizedPath.slice(normalizedRoot.length + 1)
+  return normalizedPath
+}
+
+function flattenFolderTree(node: FolderNode, depth = 0): Array<{ path: string; label: string; depth: number }> {
+  const rows: Array<{ path: string; label: string; depth: number }> = []
+  for (const child of node.children) {
+    rows.push({ path: child.path.replace(/\\/g, '/'), label: child.name, depth })
+    rows.push(...flattenFolderTree(child, depth + 1))
+  }
+  return rows
+}
+
+function makeFolderWatchKey(sourceFolder: string, destFolder: string): string {
+  return `${sourceFolder.replace(/\\/g, '/')}=>${destFolder.replace(/\\/g, '/')}`
+}
+
+const BUNDLE_PRESET_PREFIX = 'bundle:'
+
+function buildWatcherTrainingProfile(
+  watchProfile: { id: string; name: string; enabled: boolean; autoRun: boolean; initialScanMode: string; watchFolder: string; sourcePostProcess: string; processedWavRoot: string; graphRoot: string; finalModelRoot: string },
+  preset: TrainingPreset,
+  globalOutputFormula: string,
+  globalGraphFormula: string,
+  profileIdOverride?: string,
+  profileNameOverride?: string,
+): TrainingProfile {
+  return {
+    id: profileIdOverride ?? watchProfile.id,
+    name: profileNameOverride ?? watchProfile.name,
+    sourceMode: 'watcher' as const,
+    enabled: watchProfile.enabled,
+    autoRun: watchProfile.autoRun,
+    initialScanMode: watchProfile.initialScanMode as 'process-existing' | 'new-only',
+    namingTemplate: preset.namingTemplate,
+    architectures: preset.architectures,
+    epochs: preset.epochs,
+    thresholdEsr: preset.thresholdEsr,
+    latencyMode: preset.latencyMode,
+    latencyValue: preset.latencyValue,
+    savePlot: preset.savePlot,
+    ignoreChecks: preset.ignoreChecks,
+    sourcePostProcess: watchProfile.sourcePostProcess as 'move' | 'copy' | 'keep',
+    watchFolder: watchProfile.watchFolder,
+    processedWavRoot: watchProfile.processedWavRoot,
+    graphRoot: watchProfile.graphRoot,
+    effectiveOutputFormula: effectiveFormula(globalOutputFormula, preset.outputFormulaOverride),
+    effectiveGraphFormula: effectiveFormula(globalGraphFormula, preset.graphOutputFormulaOverride),
+    finalModelRoot: watchProfile.finalModelRoot,
+  }
+}
+
+function resolveTrainingWatcherProfiles(settings: AppSettings): TrainingProfile[] {
+  const presetMap = new Map(settings.trainingPresets.map((preset) => [preset.id, preset]))
+  const bundleMap = new Map((settings.trainingBundles ?? []).map((b: TrainingBundle) => [b.id, b]))
+  const globalOutputFormula = settings.trainingOutputFormula ?? ''
+  const globalGraphFormula = settings.trainingGraphFormula ?? ''
+  return settings.trainingWatchProfiles.flatMap((watchProfile) => {
+    if (watchProfile.presetId.startsWith(BUNDLE_PRESET_PREFIX)) {
+      const bundleId = watchProfile.presetId.slice(BUNDLE_PRESET_PREFIX.length)
+      const bundle = bundleMap.get(bundleId)
+      if (!bundle) return []
+      return bundle.presetIds
+        .map((pid: string) => presetMap.get(pid))
+        .filter((preset): preset is TrainingPreset => Boolean(preset) && preset.architectures.length > 0)
+        .map((preset) => buildWatcherTrainingProfile(
+          watchProfile, preset, globalOutputFormula, globalGraphFormula,
+          `${watchProfile.id}::${preset.id}`,
+          `${watchProfile.name} / ${preset.name}`,
+        ))
+    }
+    const preset = presetMap.get(watchProfile.presetId)
+    if (!preset) return []
+    return [buildWatcherTrainingProfile(watchProfile, preset, globalOutputFormula, globalGraphFormula)]
+  })
+}
+
+const AMPCOVER_PATTERN = /^ampcover\.(png|jpe?g|webp|gif|avif)$/i
 
 const HISTORY_STORAGE_KEY = 'nam-lab-history'
 const HISTORY_MAX = 100
@@ -54,8 +411,12 @@ declare global {
       openFiles: () => Promise<string[]>
       openFolder: (defaultPath?: string) => Promise<string | null>
       openImportFile: () => Promise<string | null>
+      openAudioFile: () => Promise<string | null>
+      openAudioFiles: () => Promise<string[]>
       openImageFile: () => Promise<string | null>
       readFileBinary: (filePath: string) => Promise<{ data?: string; error?: string }>
+      hashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
+      hashFilesWithoutMetadata: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
       revealFile: (filePath: string) => Promise<void>
       openFile: (filePath: string) => Promise<{ success: boolean; error?: string }>
       readFile: (filePath: string) => Promise<{
@@ -67,9 +428,11 @@ declare global {
         architecture?: string
         config?: unknown
         mtimeMs?: number
+        birthtimeMs?: number
+        sizeBytes?: number
       }>
-      writeMetadata: (filePath: string, metadata: unknown) => Promise<{ success: boolean; error?: string }>
-      moveFile: (sourcePath: string, destDir: string, force?: boolean) => Promise<{ success: boolean; error?: string; destPath?: string }>
+      writeMetadata: (filePath: string, metadata: unknown, context?: unknown) => Promise<{ success: boolean; error?: string }>
+      moveFile: (sourcePath: string, destDir: string, force?: boolean, destBaseName?: string) => Promise<{ success: boolean; error?: string; destPath?: string }>
       scanFolder: (folderPath: string, hiddenFolders?: string) => Promise<{ success: boolean; error?: string; files?: string[] }>
       scanTree: (folderPath: string, hiddenFolders?: string) => Promise<{ success: boolean; error?: string; tree?: FolderNode }>
       getErrorLogPath: () => Promise<string>
@@ -78,29 +441,77 @@ declare global {
       getStartupLogPath: () => Promise<string>
       refocusWindow: () => Promise<void>
       statPath: (p: string) => Promise<{ isDirectory: boolean }>
+      getDeleteBehavior: (filePaths: string[]) => Promise<{ permanentOnly: boolean; reason?: string }>
       getPathForFile: (file: File) => string
       renameFile: (oldPath: string, newBaseName: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       watchFolder: (path: string | null) => Promise<void>
       onFolderChanged: (cb: () => void) => () => void
+      setFolderWatchState: (payload: { rules: FolderWatchRule[]; imports: Record<string, FolderWatchImportEntry[]> }) => Promise<void>
+      onFolderWatchCopied: (cb: (event: { sourcePath: string; destPath: string; sourceFolder: string; destFolder: string; importEntry: FolderWatchImportEntry }) => void) => () => void
+      onFolderWatchError: (cb: (event: { sourceFolder: string; destFolder: string; message: string }) => void) => () => void
+      onFolderWatchDestMissing: (cb: (event: { sourceFolder: string; destFolder: string }) => void) => () => void
       createFolder: (parentPath: string, name: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
       renameFolder: (folderPath: string, newName: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
-      moveFolder: (sourcePath: string, destParentPath: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
-      trashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; error?: string }[]>
-      copyFiles: (filePaths: string[], destDir: string) => Promise<{ filePath: string; success: boolean; destPath?: string; error?: string }[]>
+      moveFolder: (sourcePath: string, destParentPath: string, allowMerge?: boolean) => Promise<{ success: boolean; newPath?: string; error?: string; mergedIntoExisting?: boolean; mergeTargetPath?: string; skippedPaths?: string[] }>
+      deleteEmptyFolder: (folderPath: string) => Promise<{ success: boolean; error?: string; removedCount?: number }>
+      trashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; error?: string; deleteMode?: 'trash' | 'delete' }[]>
+      copyFiles: (filePaths: string[], destDir: string, destBaseNames?: string[]) => Promise<{ filePath: string; success: boolean; destPath?: string; error?: string }[]>
       clearNamLab: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; error?: string }[]>
+      cleanOutdatedNamBot: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; error?: string; changed?: boolean }[]>
       getPendingFiles: () => Promise<string[]>
       onOpenFiles: (cb: (paths: string[]) => void) => () => void
       checkForUpdates: (includeRc: boolean) => Promise<{ hasUpdate?: boolean; latestVersion?: string; releaseUrl?: string; error?: string }>
       openExternal: (url: string) => Promise<void>
+      showMessageBox: (options: { type?: 'none' | 'info' | 'error' | 'question' | 'warning'; title?: string; message: string; detail?: string; buttons: string[]; defaultId?: number; cancelId?: number; noLink?: boolean }) => Promise<{ response: number }>
       detectNamPlayer: () => Promise<boolean>
       browseExecutable: () => Promise<string | null>
+      getTrainerState: () => Promise<TrainerStateSnapshot>
+      startTrainerRun: (payload: TrainerStartPayload) => Promise<{ success: boolean; error?: string }>
+      enqueueTrainerRuns: (payloads: TrainerStartPayload[]) => Promise<{ success: boolean; error?: string; queued?: number }>
+      setTrainerProfilesState: (payload: {
+        pythonPath: string
+        inputPath: string
+        modeledBy: string
+        inputLevelDbu: number | null
+        outputLevelDbu: number | null
+        retainGraphs: boolean
+        normalizeWav: boolean
+        normalizeWavTargetDb: number
+        profiles: TrainingProfile[]
+      }) => Promise<{ success: boolean }>
+      getTrainerProfilesState: () => Promise<TrainerProfilesStateSnapshot>
+      markTrainingWatchCurrentContentsSeen: (profileId: string) => Promise<{ success: boolean; error?: string; marked?: number }>
+      setTrainerProfileRunning: (profileId: string, running: boolean) => Promise<{ success: boolean; error?: string }>
+      runTrainerFolderOnce: (payload: { profile: TrainingProfile; folderPath: string; pythonPath: string; inputPath: string; submissionId?: string; submissionLabel?: string; submissionCreatedAt?: string }) => Promise<{ success: boolean; error?: string; queued?: number; scanned?: number }>
+      cancelTrainerRun: () => Promise<{ success: boolean; error?: string }>
+      setTrainerPauseAfterCurrent: (pause: boolean) => Promise<{ success: boolean }>
+      retryFailedTrainerRuns: () => Promise<{ success: boolean; retried?: number }>
+      stageTrainerSubmission: (submissionId: string) => Promise<{ success: boolean; error?: string }>
+      retryTrainerJob: (jobId: string) => Promise<{ success: boolean; error?: string }>
+      clearFinishedTrainerRuns: () => Promise<{ success: boolean }>
+      removeQueuedTrainerRuns: () => Promise<{ success: boolean }>
+      clearWatcherTrainerJobs: () => Promise<{ success: boolean; removed: number }>
+      removeTrainerJob: (jobId: string) => Promise<{ success: boolean; error?: string }>
+      watcherQueueAction: (jobId: string, action: 'remove' | 'skip' | 'move-canceled' | 'retry-now') => Promise<{ success: boolean; error?: string }>
+      moveTrainerJob: (jobId: string, direction: 'up' | 'down') => Promise<{ success: boolean; error?: string }>
+      makeTrainerJobNext: (jobId: string) => Promise<{ success: boolean; error?: string }>
+      reorderTrainerJob: (jobId: string, beforeJobId: string) => Promise<{ success: boolean; error?: string }>
+      moveSubmissionBefore: (submissionId: string, beforeSubmissionId: string) => Promise<{ success: boolean; error?: string }>
+      retryTrainerHistoryEntry: (historyId: string) => Promise<{ success: boolean; error?: string; queued?: number }>
+      markHistoryRetried: (historyIds: string[]) => Promise<{ success: boolean }>
+      clearSupersededQueueRows: (refs: Array<{ submissionId?: string | null; sourcePath: string; architecture: string }>) => Promise<{ success: boolean; removed: number }>
+      onTrainerUpdate: (cb: (state: TrainerStateSnapshot) => void) => () => void
+      onTrainerHistory: (cb: (history: TrainerHistoryEntry[]) => void) => () => void
       openInNam: (filePath: string, standalonePath: string) => Promise<{ success: boolean; error?: string }>
       scanImages: (folderPath: string) => Promise<{ success: boolean; images: string[] }>
+      scanChildImages: (folderPath: string) => Promise<{ success: boolean; groups: { folderName: string; paths: string[] }[] }>
       findPackOwner: (folderPath: string, rootPath: string) => Promise<string | null>
       findPackFolders: (rootPath: string) => Promise<string[]>
       readPackInfo: (folderPath: string) => Promise<{ success: boolean; data: unknown }>
       writePackInfo: (folderPath: string, data: unknown) => Promise<{ success: boolean; error?: string }>
       deletePackInfo: (folderPath: string) => Promise<{ success: boolean; error?: string }>
+      readReadme: (folderPath: string) => Promise<{ success: boolean; exists: boolean; fileName: string; content: string; error?: string }>
+      writeReadme: (folderPath: string, fileName: string, content: string) => Promise<{ success: boolean; fileName?: string; error?: string }>
       exportPackSheet: (html: string) => Promise<{ success: boolean; error?: string }>
       readBundle: (folderPath: string) => Promise<{ success: boolean; data: unknown }>
       writeBundle: (folderPath: string, data: unknown) => Promise<{ success: boolean; error?: string }>
@@ -110,12 +521,19 @@ declare global {
       tone3000Status: () => Promise<{ connected: boolean; username: string | null }>
       tone3000Connect: () => Promise<{ ok: boolean; username?: string | null; error?: string }>
       tone3000Disconnect: () => Promise<{ ok: boolean }>
-      tone3000Search: (params: { query?: string; page?: number; pageSize?: number; gears?: string[]; sizes?: string[]; sort?: string }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
-      tone3000UsersSearch: (params: { query: string; page?: number; pageSize?: number; sort?: string }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
-      tone3000Created: (params: { page?: number; pageSize?: number }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
-      tone3000GetTone: (toneId: number) => Promise<{ ok?: boolean; tone?: unknown; error?: string }>
-      tone3000GetModels: (toneId: number) => Promise<{ ok?: boolean; models?: unknown[]; error?: string }>
+        tone3000Search: (params: { query?: string; page?: number; pageSize?: number; gears?: string[]; sizes?: string[]; sort?: string; architecture?: string; platform?: string; format?: string }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
+        tone3000Trending: (gear: string) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
+        tone3000UsersSearch: (params: { query: string; page?: number; pageSize?: number; sort?: string }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
+        tone3000Created: (params: { page?: number; pageSize?: number }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
+        tone3000Favorited: (params: { page?: number; pageSize?: number }) => Promise<{ ok?: boolean; data?: unknown; error?: string }>
+        tone3000GetTone: (toneId: number) => Promise<{ ok?: boolean; tone?: unknown; error?: string }>
+      tone3000GetModels: (toneId: number, architecture?: string) => Promise<{ ok?: boolean; models?: unknown[]; error?: string }>
       tone3000Download: (modelUrl: string, name: string) => Promise<{ ok?: boolean; localPath?: string; error?: string }>
+      tone3000FileExists: (destDir: string, name: string) => Promise<{ exists: boolean; destPath?: string }>
+      tone3000SaveCoverImage: (imageUrl: string, destDir: string) => Promise<{ ok?: boolean; skipped?: boolean; destPath?: string; error?: string }>
+      getCompanionInbox: () => Promise<{ success: boolean; items: CompanionInboxItem[] }>
+      markCompanionInboxReviewed: (itemId: string) => Promise<{ success: boolean; error?: string; item?: CompanionInboxItem }>
+      deleteCompanionInboxItem: (itemId: string) => Promise<{ success: boolean; error?: string }>
       platform: string
       initialSettings: unknown
       saveSettingsToFile: (json: string) => void
@@ -124,7 +542,9 @@ declare global {
 }
 
 
-function applyDefaults(meta: NamFile['metadata'], baseName: string, settings: AppSettings): NamFile['metadata'] {
+// onLoad=true: per-field fillOnLoad flags are enforced (auto-fill on open)
+// onLoad=false: manual re-apply / training Ã¢â‚¬â€ always apply if enableCaptureDefaults is on
+function applyDefaults(meta: NamFile['metadata'], baseName: string, settings: AppSettings, onLoad = false): NamFile['metadata'] {
   const m = { ...meta }
 
   // Name from filename
@@ -133,15 +553,15 @@ function applyDefaults(meta: NamFile['metadata'], baseName: string, settings: Ap
 
   // Capture Defaults section
   if (settings.enableCaptureDefaults) {
-    if (!m.modeled_by && settings.defaultModeledBy)
+    if (!m.modeled_by && settings.defaultModeledBy && (!onLoad || settings.fillOnLoadModeledBy))
       m.modeled_by = settings.defaultModeledBy
 
-    if (m.input_level_dbu == null && settings.defaultInputLevel !== '') {
+    if (m.input_level_dbu == null && settings.defaultInputLevel !== '' && (!onLoad || settings.fillOnLoadInputLevel)) {
       const n = parseFloat(settings.defaultInputLevel)
       if (!isNaN(n)) m.input_level_dbu = n
     }
 
-    if (m.output_level_dbu == null && settings.defaultOutputLevel !== '') {
+    if (m.output_level_dbu == null && settings.defaultOutputLevel !== '' && (!onLoad || settings.fillOnLoadOutputLevel)) {
       const n = parseFloat(settings.defaultOutputLevel)
       if (!isNaN(n)) m.output_level_dbu = n
     }
@@ -173,7 +593,7 @@ function applyDefaults(meta: NamFile['metadata'], baseName: string, settings: Ap
   return m
 }
 
-// Keywords that map to each tone type — order within each array doesn't matter,
+// Keywords that map to each tone type ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â order within each array doesn't matter,
 // detection picks the keyword that appears latest in the filename (rightmost wins)
 const TONE_KEYWORDS: Record<typeof TONE_TYPES[number], string[]> = {
   'clean':      ['clean'],
@@ -203,6 +623,15 @@ function normalizeCreatorName(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '')
 }
 
+function formatBatchEditHistorySummary(batchFields: Partial<NamFile['metadata']>, fileCount: number): string {
+  const entries = Object.entries(batchFields) as Array<[keyof NamFile['metadata'], unknown]>
+  const details = entries.map(([field, value]) => {
+    if (value === null || value === undefined || value === '') return `${field}=(cleared)`
+    return `${field}=${String(value)}`
+  })
+  return `Batch edited ${fileCount} file${fileCount !== 1 ? 's' : ''} (${details.join(', ')})`
+}
+
 
 const EMPTY_LIBRARIAN: LibrarianState = {
   rootFolder: null,
@@ -211,19 +640,34 @@ const EMPTY_LIBRARIAN: LibrarianState = {
 }
 
 export default function App() {
+  const [helpView, setHelpView] = useState<HelpModalTab | null>(null)
   const [files, setFiles] = useState<NamFile[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [status, setStatus] = useState<{ message: string; type: 'info' | 'success' | 'error'; logPath?: string }>({
     message: 'Open .nam files or a folder to get started',
     type: 'info'
   })
+  const statusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const saveInFlightRef = useRef(false)
+  const [saveProgress, setSaveProgress] = useState<SaveProgressState | null>(null)
+  const folderWatchBatchTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const [batchFolder, setBatchFolder] = useState<{ path: string | null; name: string; filePaths?: string[] } | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [playerFile, setPlayerFile] = useState<NamFile | null>(null)
+  const [selectedFilePanelTab, setSelectedFilePanelTab] = useState<'metadata' | 'training'>('metadata')
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
   const [namPlayerDetected, setNamPlayerDetected] = useState(false)
   const [librarian, setLibrarian] = useState<LibrarianState>(EMPTY_LIBRARIAN)
   const [libraryFilter, setLibraryFilter] = useState<Set<string> | null>(null)
+  const [cardView, setCardView] = useState(false)
+  const [cardViewInitialPath, setCardViewInitialPath] = useState<string | null>(null)
+  const [overviewMaximized, setOverviewMaximized] = useState(false)
+  const [toneStoreDefaultDir, setToneStoreDefaultDir] = useState<string | null>(null)
+  const [cardRescanSignal, setCardRescanSignal] = useState(0)
+  const [toneStorePanelWidth, setToneStorePanelWidth] = useState(() => {
+    const saved = localStorage.getItem('toneStorePanelWidth')
+    return saved ? Math.max(300, Math.min(700, Number(saved))) : 380
+  })
   const initialLayout = loadLayout()
   const initialSettings = loadSettings()
   const [treeWidth, setTreeWidth] = useState(initialLayout.treeWidth)
@@ -236,6 +680,7 @@ export default function App() {
   const loadGenRef = useRef(0)  // increments on every new folder load; stale scans discard results
   const draggingRef = useRef<null | { panel: 'tree' | 'list'; startX: number; startWidth: number }>(null)
   const mainContentRef = useRef<HTMLDivElement>(null)
+  const preserveFolderTabRef = useRef<'pack' | null>(null)
   const [treeCollapsed, setTreeCollapsed] = useState(false)
   const [listCollapsed, setListCollapsed] = useState(false)
   const [gridMaximized, setGridMaximized] = useState(false)
@@ -243,9 +688,28 @@ export default function App() {
   const [treeScrollTarget, setTreeScrollTarget] = useState<string | null>(null)
   const treeScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [folderChanged, setFolderChanged] = useState(false)
+  const [activeFolderChecklistSummary, setActiveFolderChecklistSummary] = useState<ChecklistSummary | null>(null)
+  const [activeFolderDeliverySummary, setActiveFolderDeliverySummary] = useState<DeliveryMatrixSummary | null>(null)
+  const [dashboardChecklistEntries, setDashboardChecklistEntries] = useState<DashboardChecklistEntry[]>([])
+  const [metadataCoverPath, setMetadataCoverPath] = useState<string | null>(null)
   const [showDuplicates, setShowDuplicates] = useState(false)
+  const [duplicatesScopeFolder, setDuplicatesScopeFolder] = useState<string | null>(null)
   const [metadataClipboard, setMetadataClipboard] = useState<{ sourceName: string; metadata: Partial<NamFile['metadata']> } | null>(null)
   const [importModal, setImportModal] = useState<{ folderName: string; exactMatches: ImportMatch[]; prefixMatches: ImportMatch[]; unmatchedNames: string[] } | null>(null)
+  const [suggestMetadataModal, setSuggestMetadataModal] = useState<{ folderName: string; matches: MetadataSuggestionMatch[] } | null>(null)
+  const [suggestRulesEditorPath, setSuggestRulesEditorPath] = useState<string | null>(null)
+  const [suggestRulesClipboard, setSuggestRulesClipboard] = useState<{ sourceFolderPath: string; rules: MetadataSuggestRule[] } | null>(null)
+  const [showLibraryCleanup, setShowLibraryCleanup] = useState(false)
+  const [libraryCleanupOpenMode, setLibraryCleanupOpenMode] = useState<'library' | 'folder'>('library')
+  const [libraryCleanupSourceRoot, setLibraryCleanupSourceRoot] = useState<string | null>(null)
+  const [libraryCleanupDestinationRoot, setLibraryCleanupDestinationRoot] = useState<string | null>(null)
+  const [libraryCleanupActionMode, setLibraryCleanupActionMode] = useState<'copy' | 'move'>('copy')
+  const [libraryCleanupLayout, setLibraryCleanupLayout] = useState<LibraryCleanupLayout>('creator-amp-di-cab')
+  const [libraryCleanupFolderEntries, setLibraryCleanupFolderEntries] = useState<LibraryCleanupFolderEntry[]>([])
+  const [libraryCleanupFilePaths, setLibraryCleanupFilePaths] = useState<string[]>([])
+  const [libraryCleanupPreviewRows, setLibraryCleanupPreviewRows] = useState<LibraryCleanupPreviewRow[] | null>(null)
+  const [libraryCleanupBusyLabel, setLibraryCleanupBusyLabel] = useState<string | null>(null)
+  const [libraryCleanupRememberUnchecked, setLibraryCleanupRememberUnchecked] = useState(true)
   const [coverageReport, setCoverageReport] = useState<{ folderPath: string } | null>(null)
   const [watcherKey, setWatcherKey] = useState(0)
   const [recentFolders, setRecentFolders] = useState<string[]>(() => {
@@ -258,12 +722,13 @@ export default function App() {
   })
 
   const [folderImages, setFolderImages] = useState<FolderImagesData | null>(null)
-  const [folderPanelTab, setFolderPanelTab] = useState<'overview' | 'pack' | 'gallery'>(settings.defaultFolderTab)
+  const [activeFolderReadiness, setActiveFolderReadiness] = useState<FolderReadinessSummary | null>(null)
+  const [folderPanelTab, setFolderPanelTab] = useState<'overview' | 'pack' | 'checklist' | 'gallery' | 'readme' | 'targets'>(settings.defaultFolderTab)
   // Path of the ancestor that owns the pack info for the current folder (null = current folder may own one)
   const [packInfoAncestor, setPackInfoAncestor] = useState<string | null>(null)
-  // Set of folder paths that have a valid nam-pack.json (non-empty title) — drives blue dot in tree
+  // Set of folder paths that have a valid nam-pack.json (non-empty title) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â drives blue dot in tree
   const [packInfoFolders, setPackInfoFolders] = useState<Set<string>>(new Set())
-  // Set of folder paths that have a nam-bundle.json — drives chain-link icon in tree
+  // Set of folder paths that have a nam-bundle.json ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â drives chain-link icon in tree
   const [bundleFolders, setBundleFolders] = useState<Set<string>>(new Set())
   // Folder compare modal: array of paths to compare (null = closed)
   const [compareFolderPaths, setCompareFolderPaths] = useState<string[] | null>(null)
@@ -271,51 +736,423 @@ export default function App() {
   // Suppress auto-selection of the first file on startup when the dashboard is shown on launch,
   // so the dashboard stays visible after the default folder loads.
   const suppressStartupAutoSelectRef = useRef(settings.showDashboardOnLaunch)
+  const showDashboardRef = useRef(showDashboard)
+  useEffect(() => { showDashboardRef.current = showDashboard }, [showDashboard])
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [companionInboxOpen, setCompanionInboxOpen] = useState(false)
+  const [companionInboxItems, setCompanionInboxItems] = useState<CompanionInboxItem[]>([])
   const [showToneStore, setShowToneStore] = useState(false)
+  const [showTrainingWorkspace, setShowTrainingWorkspace] = useState(false)
+  const [showTrainingSetupGuide, setShowTrainingSetupGuide] = useState(false)
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'training' | 'ai' | 'companion' | undefined>(undefined)
+  const [trainingWorkspaceMode, setTrainingWorkspaceMode] = useState<'files' | 'folder' | 'queue' | 'history' | 'presets'>('files')
+  const [globalTrainerState, setGlobalTrainerState] = useState<TrainerStateSnapshot>(IDLE_TRAINER_STATE)
+  const trainerWatcherAutoStartRecoveryRef = useRef('')
+  const [toneStoreMounted, setToneStoreMounted] = useState(false)
+  const [toneStoreQueueJob, setToneStoreQueueJob] = useState<ToneStoreDownloadQueueJob | null>(null)
+  const toneStoreQueueRunningRef = useRef(false)
+  const toneStoreQueueAbortRef = useRef(0)
+  const loadFilesRef = useRef<null | ((paths: string[], mode: 'replace' | 'append' | 'append-passive', genToken?: number) => Promise<void>)>(null)
+  const refreshFolderTreeRef = useRef<null | (() => Promise<void>)>(null)
+  const [directFilesOnly, setDirectFilesOnly] = useState(false)
   const [toneStoreSearchRequest, setToneStoreSearchRequest] = useState<{ key: number; query: string } | null>(null)
   const [sessionHistory, setSessionHistory] = useState<HistoryEntry[]>(() => loadHistory())
   const [creatorFilter, setCreatorFilter] = useState<string | null>(null)
   const [gearTypeFilter, setGearTypeFilter] = useState<string | null>(null)
   const [toneTypeFilter, setToneTypeFilter] = useState<string | null>(null)
   const [presetFilterOverride, setPresetFilterOverride] = useState<string | null>(null)
-  const [filterModeOverride, setFilterModeOverride] = useState<'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited' | 'incomplete' | 'complete' | 'rated' | null>(null)
+  const [filterModeOverride, setFilterModeOverride] = useState<'all' | 'unnamed' | 'no-gear' | 'no-maker' | 'no-tone' | 'edited' | 'incomplete' | 'complete' | 'rated' | 'duplicates' | null>(null)
   const [esrFilterOverride, setEsrFilterOverride] = useState<string | null>(null)
   const [ratingFilter, setRatingFilter] = useState<number | null>(null)
+
+  const runToneStoreQueueStep = useCallback(async (
+    toneId: number,
+    model: ToneModel
+  ): Promise<{ localPath?: string; error?: string; retryable403?: boolean; refreshedModel?: ToneModel }> => {
+    const initial = await window.api.tone3000Download(model.model_url, model.name)
+    if (!initial.error || !/\(403\)/.test(initial.error)) return initial
+
+    await wait(1500)
+    const refreshedModels = await window.api.tone3000GetModels(toneId, model.architecture_version)
+    if (refreshedModels.error || !refreshedModels.models) return { ...initial, retryable403: true }
+    const refreshed = (refreshedModels.models as ToneModel[]).find((entry) => entry.id === model.id)
+    if (!refreshed) return { ...initial, retryable403: true }
+    const retried = await window.api.tone3000Download(refreshed.model_url, refreshed.name)
+    if (retried.error && /\(403\)/.test(retried.error)) {
+      return { ...retried, retryable403: true, refreshedModel: refreshed }
+    }
+    return { ...retried, refreshedModel: refreshed }
+  }, [])
+
+  useEffect(() => {
+    if (!toneStoreQueueJob || toneStoreQueueJob.status !== 'cooldown') return
+    const backoffMs = Math.min(5000 * Math.max(toneStoreQueueJob.resumePass, 1), 30000)
+    const timer = window.setTimeout(() => {
+      setToneStoreQueueJob((prev) => prev && prev.status === 'cooldown'
+        ? { ...prev, status: 'running', message: `Resuming at file ${prev.nextIndex + 1} of ${prev.items.length}...` }
+        : prev)
+    }, backoffMs)
+    return () => window.clearTimeout(timer)
+  }, [toneStoreQueueJob])
+
+  useEffect(() => {
+    if (!toneStoreQueueJob) return
+    if (toneStoreQueueJob.status === 'error') {
+      setStatus({ message: toneStoreQueueJob.message, type: 'error' })
+    }
+  }, [toneStoreQueueJob])
+
+  useEffect(() => {
+    if (!toneStoreQueueJob || toneStoreQueueJob.status !== 'running' || toneStoreQueueRunningRef.current) return
+    toneStoreQueueRunningRef.current = true
+
+    const runQueue = async () => {
+      const abortToken = toneStoreQueueAbortRef.current
+      const items = [...toneStoreQueueJob.items]
+      const downloadedPaths = [...toneStoreQueueJob.downloadedPaths]
+      let skipped = toneStoreQueueJob.skipped
+
+      for (let i = toneStoreQueueJob.nextIndex; i < items.length; i++) {
+        if (toneStoreQueueAbortRef.current !== abortToken) return
+        const model = items[i]
+
+        setToneStoreQueueJob((prev) => prev ? { ...prev, nextIndex: i, message: `Downloading ${i + 1} of ${items.length}...` } : prev)
+
+        const dlResult = await runToneStoreQueueStep(toneStoreQueueJob.toneId, model)
+        if (toneStoreQueueAbortRef.current !== abortToken) return
+        if (dlResult.refreshedModel) items[i] = dlResult.refreshedModel
+
+        if (dlResult.retryable403) {
+          const nextPass = toneStoreQueueJob.resumePass + 1
+          if (nextPass > 10) {
+            const errorMessage = `Tone3000 kept returning 403 near "${model.name}". Please retry this batch in a moment.`
+            setToneStoreQueueJob((prev) => prev ? { ...prev, items, nextIndex: i, resumePass: nextPass, status: 'error', message: errorMessage } : prev)
+            return
+          }
+          setToneStoreQueueJob((prev) => prev ? {
+            ...prev,
+            items,
+            nextIndex: i,
+            resumePass: nextPass,
+            status: 'cooldown',
+            message: `Tone3000 paused downloads near "${model.name}". Waiting for Tone3000 access to resume before retry ${nextPass} of 10...`
+          } : prev)
+          return
+        }
+
+        if (dlResult.error || !dlResult.localPath) {
+          const errorMessage = `Failed on "${model.name}": ${dlResult.error ?? 'unknown error'}`
+          setToneStoreQueueJob((prev) => prev ? { ...prev, items, nextIndex: i, status: 'error', message: errorMessage } : prev)
+          return
+        }
+
+        const collisionBaseName = buildTone3000FileName(model.name)
+        const existingDest = await window.api.tone3000FileExists(toneStoreQueueJob.destDir, model.name)
+        if (toneStoreQueueAbortRef.current !== abortToken) return
+
+        let desiredBaseName: string | undefined
+        if (existingDest.exists && existingDest.destPath) {
+          const hashResults = await window.api.hashFilesWithoutMetadata([dlResult.localPath, existingDest.destPath])
+          if (toneStoreQueueAbortRef.current !== abortToken) return
+          const localHash = hashResults.find((result) => result.filePath === dlResult.localPath && result.success)?.hash
+          const existingHash = hashResults.find((result) => result.filePath === existingDest.destPath && result.success)?.hash
+          if (localHash && existingHash && localHash === existingHash) {
+            skipped++
+            setToneStoreQueueJob((prev) => prev ? {
+              ...prev,
+              items,
+              downloadedPaths: [...downloadedPaths],
+              skipped,
+              nextIndex: i + 1,
+              resumePass: 0,
+              message: `Skipping exact duplicate ${i + 1} of ${items.length}...`
+            } : prev)
+            continue
+          }
+          desiredBaseName = await buildUniqueFileName(toneStoreQueueJob.destDir, collisionBaseName)
+          if (toneStoreQueueAbortRef.current !== abortToken) return
+        }
+
+        let copyResults = await window.api.copyFiles(
+          [dlResult.localPath],
+          toneStoreQueueJob.destDir,
+          desiredBaseName ? [desiredBaseName] : undefined
+        )
+        if (toneStoreQueueAbortRef.current !== abortToken) return
+        let copied = copyResults[0]
+        if (copied.error === 'exists') {
+          const retryBaseName = await buildUniqueFileName(toneStoreQueueJob.destDir, desiredBaseName ?? collisionBaseName)
+          if (toneStoreQueueAbortRef.current !== abortToken) return
+          copyResults = await window.api.copyFiles([dlResult.localPath], toneStoreQueueJob.destDir, [retryBaseName])
+          if (toneStoreQueueAbortRef.current !== abortToken) return
+          copied = copyResults[0]
+        }
+        if (copied.success && copied.destPath) {
+          downloadedPaths.push(copied.destPath)
+        } else {
+          const errorMessage = `Failed on "${model.name}": ${copied.error ?? 'copy failed'}`
+          setToneStoreQueueJob((prev) => prev ? { ...prev, items, nextIndex: i, skipped, status: 'error', message: errorMessage } : prev)
+          return
+        }
+
+        setToneStoreQueueJob((prev) => prev ? {
+          ...prev,
+          items,
+          downloadedPaths: [...downloadedPaths],
+          skipped,
+          nextIndex: i + 1,
+          resumePass: 0,
+          message: `Downloading ${Math.min(i + 2, items.length)} of ${items.length}...`
+        } : prev)
+        if (i < items.length - 1) {
+          await wait(350)
+          if (toneStoreQueueAbortRef.current !== abortToken) return
+        }
+      }
+
+      let coverSaved = false
+      if (toneStoreQueueJob.coverImageUrl) {
+        const coverResult = await window.api.tone3000SaveCoverImage(toneStoreQueueJob.coverImageUrl, toneStoreQueueJob.destDir)
+        if (toneStoreQueueAbortRef.current !== abortToken) return
+        if (!coverResult.error && !coverResult.skipped) coverSaved = true
+      }
+
+      if (toneStoreQueueJob.packInfoSeed) {
+        const existingPack = await window.api.readPackInfo(toneStoreQueueJob.destDir)
+        if (toneStoreQueueAbortRef.current !== abortToken) return
+        const seededPackInfo = {
+          title: toneStoreQueueJob.packInfoSeed.title,
+          subtitle: '',
+          capturedBy: toneStoreQueueJob.packInfoSeed.capturedBy,
+          description: toneStoreQueueJob.packInfoSeed.description,
+          equipment: [],
+          pedals: [],
+          switches: [],
+          glossary: [],
+          footer: '',
+          exportExcludedSubfolders: [],
+          exportExcludedCaptures: [],
+          exportColumns: ['name', 'maker', 'model', 'tone', 'input', 'output'],
+          recommendedInputGain: '',
+          checklistItems: [],
+          checklistNotes: '',
+          targetDate: '',
+          liveDate: '',
+          versionInfo: '',
+        }
+
+        let packToWrite: unknown | null = null
+        if (existingPack.success && !existingPack.data) {
+          packToWrite = seededPackInfo
+        } else if (existingPack.success && existingPack.data && typeof existingPack.data === 'object') {
+          const existingData = existingPack.data as Record<string, unknown>
+          const existingTitle = typeof existingData.title === 'string' ? existingData.title.trim() : ''
+          const existingCapturedBy = typeof existingData.capturedBy === 'string' ? existingData.capturedBy.trim() : ''
+          const existingDescription = typeof existingData.description === 'string' ? existingData.description : ''
+          const incomingTitle = toneStoreQueueJob.packInfoSeed.title.trim()
+          const incomingCapturedBy = toneStoreQueueJob.packInfoSeed.capturedBy.trim()
+          const looksDifferent =
+            (incomingTitle && incomingTitle !== existingTitle) ||
+            (incomingCapturedBy && incomingCapturedBy !== existingCapturedBy)
+
+          if (looksDifferent) {
+            const choice = await window.api.showMessageBox({
+              type: 'question',
+              title: 'Tone3000 Pack Info Already Exists',
+              message: 'This destination folder already has Pack Info.',
+              detail:
+                `Existing title: ${existingTitle || '(blank)'}\n` +
+                `Incoming title: ${incomingTitle || '(blank)'}\n\n` +
+                'Choose how NAM Lab should handle the new Tone3000 notes.',
+              buttons: ['Keep Existing', 'Append Notes', 'Replace Pack Info'],
+              defaultId: 1,
+              cancelId: 0,
+              noLink: true,
+            })
+            if (toneStoreQueueAbortRef.current !== abortToken) return
+
+            if (choice.response === 1) {
+              const existingDescTrimmed = existingDescription.trim()
+              const incomingDescTrimmed = toneStoreQueueJob.packInfoSeed.description.trim()
+              const joinedDescription = [existingDescTrimmed, incomingDescTrimmed]
+                .filter(Boolean)
+                .join('\n\n---\n\n')
+              packToWrite = {
+                ...existingData,
+                description: joinedDescription,
+              }
+            } else if (choice.response === 2) {
+              packToWrite = seededPackInfo
+            }
+          }
+        }
+
+        if (packToWrite) {
+          const writeResult = await window.api.writePackInfo(toneStoreQueueJob.destDir, packToWrite)
+          if (toneStoreQueueAbortRef.current !== abortToken) return
+          if (writeResult.success && toneStoreQueueJob.packInfoSeed.title.trim()) {
+            const normalizedDest = toneStoreQueueJob.destDir.replace(/\\/g, '/')
+            setPackInfoFolders((prev) => {
+              const next = new Set(prev)
+              next.add(normalizedDest)
+              return next
+            })
+          }
+        }
+      }
+
+      const selectedCount = items.length
+      const msg = skipped > 0
+        ? `${selectedCount} model${selectedCount !== 1 ? 's' : ''} selected, ${downloadedPaths.length} saved, ${skipped} skipped (exact duplicates)${coverSaved ? ', ampcover image added' : ''}`
+        : `${selectedCount} model${selectedCount !== 1 ? 's' : ''} selected, ${downloadedPaths.length} saved${coverSaved ? ', ampcover image added' : ''}`
+      setToneStoreQueueJob((prev) => prev ? { ...prev, items, downloadedPaths, skipped, nextIndex: items.length, status: 'done', message: msg } : prev)
+      setStatus({ message: `Tone3000 download complete: ${msg}`, type: 'success' })
+      if (downloadedPaths.length > 0) await loadFilesRef.current?.(downloadedPaths, 'append')
+      setCardRescanSignal((s) => s + 1)
+      await refreshFolderTreeRef.current?.()
+    }
+
+    void runQueue().finally(() => {
+      toneStoreQueueRunningRef.current = false
+    })
+  }, [runToneStoreQueueStep, toneStoreQueueJob])
+
+  useEffect(() => {
+    if (!settings.enableExperimentalTraining && selectedFilePanelTab === 'training') {
+      setSelectedFilePanelTab('metadata')
+    }
+  }, [settings.enableExperimentalTraining, selectedFilePanelTab])
+
+  useEffect(() => {
+    if (!settings.enableExperimentalTraining && showTrainingWorkspace) {
+      setShowTrainingWorkspace(false)
+    }
+  }, [settings.enableExperimentalTraining, showTrainingWorkspace])
+
+  // Collapse overview maximize when neither dashboard is visible
+  useEffect(() => {
+    const folderOverviewVisible = !showDashboard && selectedIds.size === 0 && folderPanelTab === 'overview'
+    if (!showDashboard && !folderOverviewVisible) setOverviewMaximized(false)
+  }, [showDashboard, selectedIds.size, folderPanelTab])
 
   // Reset folder panel tab and check for pack-owning ancestor when selected folder changes
   useEffect(() => {
     const sf = librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null
     const rf = librarian.rootFolder
+    const nextFolderTab = preserveFolderTabRef.current ?? settings.defaultFolderTab
+    preserveFolderTabRef.current = null
     if (!sf || !rf || sf === rf) {
       setPackInfoAncestor(null)
-      setFolderPanelTab(settings.defaultFolderTab)
+      setFolderPanelTab(nextFolderTab)
       return
     }
     let cancelled = false
     window.api.findPackOwner(sf, rf).then((owner) => {
       if (cancelled) return
       setPackInfoAncestor(owner)
-      // Always use the user's default tab; gallery auto-override is skipped when a preference is set
-      setFolderPanelTab(settings.defaultFolderTab)
+      setFolderPanelTab(nextFolderTab)
     })
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [librarian.selectedFolders, librarian.rootFolder])
 
-  // Scan all pack-info folders when root folder changes (drives blue dot in tree)
   useEffect(() => {
+    setDirectFilesOnly(false)
+  }, [librarian.selectedFolders, librarian.rootFolder])
+
+  useEffect(() => {
+    const activeFolderPath = ((librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null) ?? librarian.rootFolder)
+    if (!activeFolderPath || !packInfoFolders.has(activeFolderPath)) {
+      setActiveFolderChecklistSummary(null)
+      return
+    }
+    let cancelled = false
+    window.api.readPackInfo(activeFolderPath).then((res) => {
+      if (cancelled) return
+      setActiveFolderChecklistSummary(res.success ? summarizeChecklist(res.data) : null)
+    }).catch(() => {
+      if (!cancelled) setActiveFolderChecklistSummary(null)
+    })
+    return () => { cancelled = true }
+  }, [librarian.selectedFolders, librarian.rootFolder, packInfoFolders])
+
+  useEffect(() => {
+    const activeFolderPath = ((librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null) ?? librarian.rootFolder)
+    if (!activeFolderPath || !packInfoFolders.has(activeFolderPath)) {
+      setActiveFolderDeliverySummary(null)
+      return
+    }
+    let cancelled = false
+    window.api.readPackInfo(activeFolderPath).then((res) => {
+      if (cancelled) return
+      setActiveFolderDeliverySummary(res.success ? summarizeDeliveryMatrix(res.data) : null)
+    }).catch(() => {
+      if (!cancelled) setActiveFolderDeliverySummary(null)
+    })
+    return () => { cancelled = true }
+  }, [librarian.selectedFolders, librarian.rootFolder, packInfoFolders])
+
+  useEffect(() => {
+    const activeFolderPath = ((librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null) ?? librarian.rootFolder)
+    if (!activeFolderPath) return
+    if (!packInfoFolders.has(activeFolderPath) && (folderPanelTab === 'checklist' || folderPanelTab === 'targets')) {
+      setFolderPanelTab('pack')
+    }
+  }, [folderPanelTab, librarian.selectedFolders, librarian.rootFolder, packInfoFolders])
+
+  useEffect(() => {
+    const rootPath = librarian.rootFolder
+    if (!rootPath || packInfoFolders.size === 0) {
+      setDashboardChecklistEntries([])
+      return
+    }
+    let cancelled = false
+    Promise.all(
+      [...packInfoFolders].map(async (folderPath) => {
+        const res = await window.api.readPackInfo(folderPath)
+        const summary = res.success ? summarizeChecklist(res.data) : null
+        if (!summary || summary.completed >= summary.total) return null
+        const normalizedRoot = rootPath.replace(/\\/g, '/')
+        const normalizedFolder = folderPath.replace(/\\/g, '/')
+        const relative = normalizedFolder === normalizedRoot
+          ? normalizedFolder.split('/').pop() ?? normalizedFolder
+          : normalizedFolder.startsWith(normalizedRoot + '/')
+            ? `${normalizedRoot.split('/').pop() ?? normalizedRoot}\\${normalizedFolder.slice(normalizedRoot.length + 1).replace(/\//g, '\\')}`
+            : normalizedFolder.replace(/\//g, '\\')
+        return {
+          folderPath,
+          folderLabel: relative,
+          status: formatChecklistStatus(summary),
+          progressLabel: `${summary.completed}/${summary.total} complete`,
+          percent: summary.percent,
+        } satisfies DashboardChecklistEntry
+      })
+    ).then((entries) => {
+      if (cancelled) return
+      setDashboardChecklistEntries(entries.filter((entry): entry is DashboardChecklistEntry => entry !== null).sort((a, b) => a.folderLabel.localeCompare(b.folderLabel)))
+    }).catch(() => {
+      if (!cancelled) setDashboardChecklistEntries([])
+    })
+    return () => { cancelled = true }
+  }, [librarian.rootFolder, packInfoFolders])
+
+  // Scan all pack-info folders under the current root (drives blue dot in tree)
+  const refreshPackInfoFolders = useCallback(() => {
     const rf = librarian.rootFolder
     if (!rf) {
       setPackInfoFolders(new Set())
       return
     }
-    let cancelled = false
     window.api.findPackFolders(rf).then((paths) => {
-      if (!cancelled) setPackInfoFolders(new Set(paths))
+      setPackInfoFolders(new Set(paths))
+    }).catch(() => {
+      setPackInfoFolders(new Set())
     })
-    return () => { cancelled = true }
   }, [librarian.rootFolder])
+
+  useEffect(() => {
+    refreshPackInfoFolders()
+  }, [refreshPackInfoFolders])
 
   // Scan bundle folders when root folder changes (drives chain-link icon in tree)
   const refreshBundleFolders = useCallback(() => {
@@ -355,46 +1192,84 @@ export default function App() {
       return
     }
     let cancelled = false
-    const norm = (p: string) => p.replace(/\\/g, '/')
+    // Only walk ancestors when a specific subfolder is selected (not root).
     const scan = async () => {
-      const ownResult = await window.api.scanImages(targetFolder)
-      if (cancelled) return
-      const own = ownResult.success ? ownResult.images : []
-      const inherited: { folderName: string; paths: string[] }[] = []
-      // Only walk ancestors when a specific subfolder is selected (not root).
-      // Stop BEFORE reaching root so root-level images don't cascade into every subfolder.
-      if (sf && rf && norm(sf) !== norm(rf)) {
-        let current = norm(sf)
-        const normRoot = norm(rf)
-        while (true) {
-          const lastSlash = current.lastIndexOf('/')
-          if (lastSlash <= 0) break
-          const parent = current.substring(0, lastSlash)
-          if (!parent.startsWith(normRoot) || parent.length < normRoot.length) break
-          if (parent === normRoot) break  // stop before root — root images only show at root
-          const parentResult = await window.api.scanImages(parent)
-          if (cancelled) return
-          if (parentResult.success && parentResult.images.length > 0) {
-            const folderName = parent.substring(parent.lastIndexOf('/') + 1)
-            inherited.push({ folderName, paths: parentResult.images })
-          }
-          current = parent
-        }
-      }
-      setFolderImages({ own, inherited })
+      const data = await scanOwnAndInheritedImages(targetFolder, sf ? rf : null, window.api.scanImages)
+      if (!cancelled) setFolderImages(data)
     }
     scan()
     return () => { cancelled = true }
   }, [librarian.selectedFolders, librarian.rootFolder, settings.showFolderImages])
 
-  // Apply dark/light class to <html> whenever theme setting changes
   useEffect(() => {
-    if (settings.theme === 'dark') {
-      document.documentElement.classList.add('dark')
-    } else {
-      document.documentElement.classList.remove('dark')
+    const targetFolder = (librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null) ?? librarian.rootFolder
+    if (!targetFolder) {
+      setActiveFolderReadiness(null)
+      return
     }
-  }, [settings.theme])
+    let cancelled = false
+    Promise.all([
+      window.api.readReadme(targetFolder),
+      window.api.scanImages(targetFolder),
+    ]).then(([readmeRes, imagesRes]) => {
+      if (cancelled) return
+      const imagePaths = imagesRes.success ? imagesRes.images : []
+      const galleryCount = imagePaths.filter((imagePath) => {
+        const fileName = imagePath.replace(/\\/g, '/').split('/').pop() ?? ''
+        return !AMPCOVER_PATTERN.test(fileName)
+      }).length
+      const hasCoverImage = imagePaths.some((imagePath) => {
+        const fileName = imagePath.replace(/\\/g, '/').split('/').pop() ?? ''
+        return AMPCOVER_PATTERN.test(fileName)
+      })
+      const folderFiles = files.filter((file) => {
+        const normalized = file.filePath.replace(/\\/g, '/')
+        return normalized.startsWith(targetFolder.replace(/\\/g, '/') + '/')
+      })
+      const recentThreshold = Date.now() - (7 * 24 * 60 * 60 * 1000)
+      const recentUpdatedCount = folderFiles.filter((file) => (file.mtimeMs ?? 0) >= recentThreshold).length
+      setActiveFolderReadiness({
+        hasReadme: !!readmeRes.success && !!readmeRes.exists,
+        galleryCount,
+        hasCoverImage,
+        recentUpdatedCount,
+      })
+    }).catch(() => {
+      if (!cancelled) setActiveFolderReadiness(null)
+    })
+    return () => { cancelled = true }
+  }, [files, librarian.selectedFolders, librarian.rootFolder])
+
+  useEffect(() => {
+    if (!settings.enableCompanionApp) return
+    void window.api.setCompanionContext({
+      rootFolder: librarian.rootFolder ?? '',
+      activeFolder: (librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null) ?? librarian.rootFolder ?? '',
+    })
+  }, [librarian.rootFolder, librarian.selectedFolders, settings.enableCompanionApp])
+
+  // Apply theme data-attributes and Tailwind dark class to <html>
+  useEffect(() => {
+    const html = document.documentElement
+    const theme = settings.uiTheme ?? (settings.theme === 'dark' ? 'dark' : settings.theme === 'charcoal' ? 'charcoal' : 'light')
+    const accent = settings.uiAccent ?? 'indigo'
+    const chip = settings.chipStyle ?? (settings.solidPillColors ? 'solid' : 'soft')
+
+    // Suppress transitions during theme switch to prevent CSS-var freeze
+    html.classList.add('theme-switching')
+    void html.offsetHeight
+
+    html.setAttribute('data-theme', theme)
+    html.setAttribute('data-accent', accent)
+    html.setAttribute('data-chip', chip)
+
+    // Keep .dark class for backward-compat with Tailwind dark: variants
+    const isDark = theme !== 'light'
+    html.classList.toggle('dark', isDark)
+    html.classList.toggle('charcoal', theme === 'charcoal')
+
+    html.classList.remove('theme-switching')
+  }, [settings.uiTheme, settings.theme, settings.uiAccent, settings.chipStyle, settings.solidPillColors])
 
   // Watch folder for new .nam files when watchFolder setting is on.
   // watcherKey increments after each refresh so the effect re-runs even when rootFolder stays the same.
@@ -408,25 +1283,298 @@ export default function App() {
 
   // Subscribe to folder:changed IPC event
   useEffect(() => {
-    const unsub = window.api.onFolderChanged(() => setFolderChanged(true))
+    const unsub = safeOn('onFolderChanged', window.api.onFolderChanged, () => setFolderChanged(true))
     return unsub
   }, [])
+
+  const showTransientStatus = useCallback((next: { message: string; type: 'info' | 'success' | 'error'; logPath?: string }, ms = 5000) => {
+    if (statusTimeoutRef.current) {
+      clearTimeout(statusTimeoutRef.current)
+      statusTimeoutRef.current = null
+    }
+    setStatus(next)
+    statusTimeoutRef.current = setTimeout(() => {
+      setStatus((prev) => (
+        prev.message === next.message && prev.type === next.type && prev.logPath === next.logPath
+          ? { message: '', type: 'info' }
+          : prev
+      ))
+      statusTimeoutRef.current = null
+    }, ms)
+  }, [])
+
+  const runMetadataSaveBatch = useCallback(async function <T extends { filePath: string }>(
+    items: T[],
+    getMetadata: (item: T) => unknown,
+    label = 'Saving'
+  ) {
+    if (saveInFlightRef.current) {
+      setStatus({ message: 'A save is already in progress', type: 'info' })
+      return null
+    }
+
+    saveInFlightRef.current = true
+    const total = items.length
+    const savedPaths = new Set<string>()
+    let failed = 0
+    const savedAt = Date.now()
+    const batchId = `${label.replace(/\s+/g, '-').toLowerCase()}-${savedAt}`
+
+    setSaveProgress({ label, completed: 0, total })
+    setStatus({ message: `${label} 0 / ${total} file(s)...`, type: 'info' })
+
+    try {
+      for (let i = 0; i < items.length; i += 1) {
+        const item = items[i]
+        const metadata = getMetadata(item)
+        const result = await window.api.writeMetadata(item.filePath, metadata, {
+          source: label,
+          batchId,
+          index: i + 1,
+          total,
+        })
+        if (result.success) savedPaths.add(item.filePath)
+        else failed += 1
+
+        const completed = i + 1
+        setSaveProgress({ label, completed, total })
+        if (completed === total || completed === 1 || completed % 10 === 0) {
+          setStatus({ message: `${label} ${completed} / ${total} file(s)...`, type: 'info' })
+        }
+      }
+
+      return { savedPaths, failed, savedAt }
+    } finally {
+      saveInFlightRef.current = false
+      setSaveProgress(null)
+    }
+  }, [])
+
+  const loadCompanionInbox = useCallback(async () => {
+    if (!settings.enableCompanionApp) {
+      setCompanionInboxItems([])
+      return
+    }
+    try {
+      const result = await window.api.getCompanionInbox()
+      if (result.success) setCompanionInboxItems(result.items)
+    } catch {
+      // Keep showing the last-known inbox contents if refresh fails.
+    }
+  }, [settings.enableCompanionApp])
+
+  useEffect(() => {
+    if (!settings.enableCompanionApp) {
+      setCompanionInboxOpen(false)
+      setCompanionInboxItems([])
+      return
+    }
+    void loadCompanionInbox()
+  }, [loadCompanionInbox, settings.enableCompanionApp])
+
+  useEffect(() => {
+    if (!settings.enableCompanionApp || !companionInboxOpen) return
+    void loadCompanionInbox()
+    const timer = window.setInterval(() => { void loadCompanionInbox() }, 15000)
+    return () => window.clearInterval(timer)
+  }, [companionInboxOpen, loadCompanionInbox, settings.enableCompanionApp])
+
+  useEffect(() => {
+    void window.api.setFolderWatchState({
+      rules: settings.folderWatchRules,
+      imports: settings.folderWatchImports,
+    })
+  }, [settings.folderWatchImports, settings.folderWatchRules])
+
+  useEffect(() => {
+    const captureDefaultsEnabled = settings.enableCaptureDefaults
+    const defaultInputLevel = captureDefaultsEnabled && settings.defaultInputLevel.trim() !== ''
+      ? Number.parseFloat(settings.defaultInputLevel.trim())
+      : null
+    const defaultOutputLevel = captureDefaultsEnabled && settings.defaultOutputLevel.trim() !== ''
+      ? Number.parseFloat(settings.defaultOutputLevel.trim())
+      : null
+
+    void window.api.setTrainerProfilesState({
+      pythonPath: settings.namPythonPath,
+      inputPath: settings.namTrainingInputWav,
+      modeledBy: captureDefaultsEnabled ? settings.defaultModeledBy : '',
+      inputLevelDbu: Number.isFinite(defaultInputLevel) ? defaultInputLevel : null,
+      outputLevelDbu: Number.isFinite(defaultOutputLevel) ? defaultOutputLevel : null,
+      retainGraphs: settings.trainingRetainGraphs,
+      normalizeWav: settings.normalizeWavBeforeTraining ?? true,
+      normalizeWavTargetDb: settings.normalizeWavTargetDb ?? -5.0,
+      profiles: settings.enableExperimentalTraining ? resolveTrainingWatcherProfiles(settings) : [],
+      userCaptureProfiles: settings.userCaptureProfiles ?? [],
+    })
+  }, [
+    settings.enableCaptureDefaults,
+    settings.enableExperimentalTraining,
+    settings.namPythonPath,
+    settings.namTrainingInputWav,
+    settings.defaultModeledBy,
+    settings.defaultInputLevel,
+    settings.defaultOutputLevel,
+    settings.trainingPresets,
+    settings.trainingBundles,
+    settings.trainingWatchProfiles,
+    settings.trainingRetainGraphs,
+    settings.normalizeWavBeforeTraining,
+    settings.normalizeWavTargetDb,
+    settings.userCaptureProfiles,
+  ])
+
+  useEffect(() => {
+    const pendingBatches = new Map<string, {
+      count: number
+      sourceFolder: string
+      destFolder: string
+      lastFileName: string
+    }>()
+
+    const pushWatchHistoryEntry = (summary: string) => {
+      setSessionHistory((current) => {
+        const next: HistoryEntry = {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          timestamp: new Date(),
+          operation: 'watch-copy',
+          summary,
+        }
+        return [next, ...current].slice(0, HISTORY_MAX)
+      })
+    }
+
+    const unsubCopied = safeOn('onFolderWatchCopied', window.api.onFolderWatchCopied, async ({ destPath, destFolder, sourceFolder, importEntry }) => {
+      const normalizedDestPath = destPath.replace(/\\/g, '/')
+      const normalizedDestFolder = destFolder.replace(/\\/g, '/')
+      const normalizedRoot = librarian.rootFolder?.replace(/\\/g, '/')
+      const watchKey = makeFolderWatchKey(sourceFolder, destFolder)
+      setSettings((prev) => {
+        const existingEntries = prev.folderWatchImports[watchKey] ?? []
+        const nextEntries = existingEntries
+          .filter((entry) => entry.sourcePath !== importEntry.sourcePath)
+          .concat(importEntry)
+        const next = {
+          ...prev,
+          folderWatchImports: {
+            ...prev.folderWatchImports,
+            [watchKey]: nextEntries,
+          },
+        }
+        saveSettings(next)
+        return next
+      })
+      if (normalizedRoot && (normalizedDestFolder === normalizedRoot || normalizedDestFolder.startsWith(normalizedRoot + '/'))) {
+        await loadFilesRef.current?.([normalizedDestPath], 'append-passive')
+        await refreshFolderTreeRef.current?.()
+      }
+      const batchKey = `${sourceFolder}=>${normalizedDestFolder}`
+      const fileName = normalizedDestPath.split('/').pop() ?? 'file'
+      const batch = pendingBatches.get(batchKey) ?? {
+        count: 0,
+        sourceFolder,
+        destFolder: normalizedDestFolder,
+        lastFileName: fileName,
+      }
+      batch.count += 1
+      batch.lastFileName = fileName
+      pendingBatches.set(batchKey, batch)
+
+      const existingTimer = folderWatchBatchTimersRef.current.get(batchKey)
+      if (existingTimer) clearTimeout(existingTimer)
+      const timer = setTimeout(() => {
+        folderWatchBatchTimersRef.current.delete(batchKey)
+        const current = pendingBatches.get(batchKey)
+        if (!current) return
+        pendingBatches.delete(batchKey)
+        const summary = current.count === 1
+          ? `Watch copied ${current.lastFileName} from ${formatPathLabel(current.sourceFolder)} to ${formatPathLabel(current.destFolder)}`
+          : `Watch copied ${current.count} files from ${formatPathLabel(current.sourceFolder)} to ${formatPathLabel(current.destFolder)}`
+        showTransientStatus({ message: summary, type: 'success' })
+        pushWatchHistoryEntry(summary)
+      }, 1500)
+      folderWatchBatchTimersRef.current.set(batchKey, timer)
+    })
+    const unsubBackfilled = safeOn('onFolderWatchImportsBackfilled', window.api.onFolderWatchImportsBackfilled, ({ key, entries }) => {
+      setSettings((prev) => {
+        const existing = prev.folderWatchImports[key] ?? []
+        const backfilledByPath = new Map(entries.map((e) => [e.sourcePath, e]))
+        // Merge: update existing entries that gained a contentHash, keep entries not in backfill
+        const merged = existing.map((e) => backfilledByPath.get(e.sourcePath) ?? e)
+        const existingPaths = new Set(existing.map((e) => e.sourcePath))
+        for (const e of entries) { if (!existingPaths.has(e.sourcePath)) merged.push(e) }
+        const unchanged =
+          merged.length === existing.length &&
+          merged.every((entry, index) => {
+            const prior = existing[index]
+            return prior &&
+              prior.sourcePath === entry.sourcePath &&
+              prior.sizeBytes === entry.sizeBytes &&
+              prior.mtimeMs === entry.mtimeMs &&
+              prior.importedAt === entry.importedAt &&
+              prior.contentHash === entry.contentHash
+          })
+        if (unchanged) return prev
+        const next = { ...prev, folderWatchImports: { ...prev.folderWatchImports, [key]: merged } }
+        saveSettings(next)
+        return next
+      })
+    })
+    const unsubError = safeOn('onFolderWatchError', window.api.onFolderWatchError, ({ destFolder, message }) => {
+      setStatus({
+        message: `Folder watch for ${formatPathLabel(destFolder)} failed: ${message}`,
+        type: 'error'
+      })
+    })
+    return () => {
+      for (const timer of folderWatchBatchTimersRef.current.values()) clearTimeout(timer)
+      folderWatchBatchTimersRef.current.clear()
+      unsubCopied()
+      unsubBackfilled()
+      unsubError()
+    }
+  }, [librarian.rootFolder, showTransientStatus])
 
 
   // Electron on Windows loses keyboard focus when the focused DOM element is removed
   // (e.g. BatchEditor unmounts) or after native confirm dialogs close. Chromium's
-  // internal focus state gets stale. Fix: DOM focus as first attempt, then a blur→focus
+  // internal focus state gets stale. Fix: DOM focus as first attempt, then a blurÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢focus
   // cycle in main process which resets OS-level keyboard routing (same as Alt+Tab).
   useEffect(() => {
     mainContentRef.current?.focus()
   }, [showSettings, batchFolder])
 
   useEffect(() => {
-    if (selectedIds.size > 0) {
+    if (selectedIds.size > 0 && !cardView) {
       setShowDashboard(false)
       setHistoryOpen(false)
+      setShowToneStore(false)
     }
-  }, [selectedIds])
+  }, [selectedIds, cardView])
+
+  const handleMarkCompanionInboxReviewed = useCallback(async (item: CompanionInboxItem) => {
+    const result = await window.api.markCompanionInboxReviewed(item.id)
+    if (!result.success) {
+      setStatus({ message: result.error ?? 'Could not update inbox item.', type: 'error' })
+      return
+    }
+    setCompanionInboxItems((prev) => prev.map((entry) => (
+      entry.id === item.id ? { ...entry, status: 'reviewed' } : entry
+    )))
+    showTransientStatus({ message: `Marked "${item.title}" as reviewed.`, type: 'success' })
+  }, [showTransientStatus])
+
+  const handleDeleteCompanionInboxItem = useCallback(async (item: CompanionInboxItem) => {
+    const confirmed = window.confirm(`Delete "${item.title}" from the companion inbox?`)
+    if (!confirmed) return
+    const result = await window.api.deleteCompanionInboxItem(item.id)
+    if (!result.success) {
+      setStatus({ message: result.error ?? 'Could not delete inbox item.', type: 'error' })
+      return
+    }
+    setCompanionInboxItems((prev) => prev.filter((entry) => entry.id !== item.id))
+    showTransientStatus({ message: `Deleted "${item.title}" from the companion inbox.`, type: 'success' })
+  }, [showTransientStatus])
 
   const onDragStart = (panel: 'tree' | 'list', e: React.MouseEvent) => {
     e.preventDefault()
@@ -448,7 +1596,7 @@ export default function App() {
     }
     const onUp = () => {
       draggingRef.current = null
-      // Persist layout — save per-mode list width
+      // Persist layout ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â save per-mode list width
       saveLayout({
         treeWidth: latestTree,
         listWidthList: listViewMode === 'list' ? latestList : loadLayout().listWidthList,
@@ -471,6 +1619,81 @@ export default function App() {
     }
   }
 
+  const mergeRulesIntoLibrary = useCallback((existingLibrary: MetadataSuggestRule[], sourceRules: MetadataSuggestRule[]) => {
+    const existing = new Set(existingLibrary.map(metadataSuggestRuleSignature))
+    const additions = sourceRules
+      .filter(isMetadataSuggestRuleLibraryCandidate)
+      .filter((rule) => !existing.has(metadataSuggestRuleSignature(rule)))
+      .map((rule) => cloneMetadataSuggestRule(rule, 'library'))
+    return additions.length > 0 ? [...existingLibrary, ...additions] : existingLibrary
+  }, [])
+
+  const updateFolderWatchRules = useCallback((updater: (rules: FolderWatchRule[]) => FolderWatchRule[]) => {
+    setSettings((prev) => {
+      const nextRules = updater(prev.folderWatchRules)
+      const validKeys = new Set(nextRules.map((rule) => makeFolderWatchKey(rule.sourceFolder, rule.destFolder)))
+      const nextImports = Object.fromEntries(
+        Object.entries(prev.folderWatchImports).filter(([key]) => validKeys.has(key))
+      ) as AppSettings['folderWatchImports']
+      const next = { ...prev, folderWatchRules: nextRules, folderWatchImports: nextImports }
+      saveSettings(next)
+      return next
+    })
+  }, [])
+
+  // A watch rule's destination folder was deleted/moved out from under it (e.g. in Explorer), so
+  // the main process can no longer copy into it — it would ENOENT on every file, every poll, forever.
+  // Auto-cancel the rule here (the user otherwise has no way to clear an invalid watch). Separate
+  // effect from the other folderWatch listeners because it needs updateFolderWatchRules, defined above.
+  useEffect(() => {
+    const unsub = safeOn('onFolderWatchDestMissing', window.api.onFolderWatchDestMissing, ({ sourceFolder, destFolder }) => {
+      const normalizedDest = destFolder.replace(/\\/g, '/')
+      const normalizedSource = sourceFolder.replace(/\\/g, '/')
+      updateFolderWatchRules((rules) => rules.filter((rule) =>
+        !(rule.destFolder.replace(/\\/g, '/') === normalizedDest && rule.sourceFolder.replace(/\\/g, '/') === normalizedSource)
+      ))
+      setStatus({
+        message: `Watch canceled — destination folder no longer exists: ${formatPathLabel(normalizedDest)}`,
+        type: 'error'
+      })
+    })
+    return unsub
+  }, [updateFolderWatchRules])
+
+  const handleSetWatchSource = useCallback(async (destFolder: string) => {
+    const existing = settings.folderWatchRules.find((rule) => rule.destFolder === destFolder && rule.enabled)
+    const picked = await window.api.openFolder(existing?.sourceFolder ?? destFolder)
+    if (!picked) return
+    const normalizedSource = picked.replace(/\\/g, '/')
+    const normalizedDest = destFolder.replace(/\\/g, '/')
+    if (normalizedSource === normalizedDest) {
+      setStatus({ message: 'Watch source cannot be the same as the destination folder', type: 'error' })
+      return
+    }
+    if (normalizedDest.startsWith(normalizedSource + '/') || normalizedSource.startsWith(normalizedDest + '/')) {
+      setStatus({ message: 'Watch source and destination cannot be nested inside each other', type: 'error' })
+      return
+    }
+    updateFolderWatchRules((rules) => {
+      const next = rules.filter((rule) => rule.destFolder !== normalizedDest)
+      next.push({ sourceFolder: normalizedSource, destFolder: normalizedDest, enabled: true })
+      return next
+    })
+    showTransientStatus({
+      message: `Watching ${formatPathLabel(normalizedSource)} for new .nam files into ${formatPathLabel(normalizedDest)}`,
+      type: 'success'
+    })
+  }, [settings.folderWatchRules, showTransientStatus, updateFolderWatchRules])
+
+  const handleClearWatchSource = useCallback((destFolder: string) => {
+    const normalizedDest = destFolder.replace(/\\/g, '/')
+    updateFolderWatchRules((rules) => rules.filter((rule) => rule.destFolder !== normalizedDest))
+    showTransientStatus({
+      message: `Stopped watching source for ${normalizedDest.split('/').pop()}`,
+      type: 'info'
+    })
+  }, [showTransientStatus, updateFolderWatchRules])
+
   const handleDeletePackInfo = async (folderPath: string) => {
     if (!window.confirm(`Delete the Pack Info file for "${folderPath.split('/').pop()}"?\n\nThis cannot be undone.`)) return
     const res = await window.api.deletePackInfo(folderPath)
@@ -478,7 +1701,7 @@ export default function App() {
     else setStatus({ message: `Failed to delete pack info: ${res.error}`, type: 'error' })
   }
 
-  // Called by PackInfoEditor after saving — updates the blue-dot set in the tree
+  // Called by PackInfoEditor after saving ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â updates the blue-dot set in the tree
   const handlePackSaved = (folderPath: string, hasData: boolean) => {
     setPackInfoFolders((prev) => {
       const next = new Set(prev)
@@ -488,13 +1711,13 @@ export default function App() {
     })
   }
 
-  // Auto-load default folder on startup (moved below loadFolderByPath — see combined startup effect)
+  // Auto-load default folder on startup (moved below loadFolderByPath ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â see combined startup effect)
 
   // mode='replace': clear existing, load fresh (open folder/files)
   // Shared: turn raw IPC read results into NamFile[] and update state
   const applyParsedResults = useCallback(async (
-    results: { success: boolean; filePath?: string; metadata?: NamFile['metadata']; version?: string; architecture?: string; config?: unknown; error?: string; mtimeMs?: number; birthtimeMs?: number }[],
-    mode: 'replace' | 'append'
+    results: { success: boolean; filePath?: string; metadata?: NamFile['metadata']; version?: string; architecture?: string; config?: unknown; error?: string; mtimeMs?: number; birthtimeMs?: number; sizeBytes?: number }[],
+    mode: 'replace' | 'append' | 'append-passive'
   ) => {
     const loaded: NamFile[] = []
     let errors = 0
@@ -508,12 +1731,12 @@ export default function App() {
         if (typeof workingMeta.output_level_dbu === 'string') workingMeta.output_level_dbu = parseFloat(workingMeta.output_level_dbu as unknown as string)
         if (workingMeta.tone_type && !(TONE_TYPES as readonly string[]).includes(workingMeta.tone_type)) workingMeta.tone_type = null
         if (workingMeta.gear_type && !(GEAR_TYPES as readonly string[]).includes(workingMeta.gear_type)) workingMeta.gear_type = null
-        const meta = applyDefaults(workingMeta, baseName, settings)
+        const meta = applyDefaults(workingMeta, baseName, settings, true)
         const wasChanged = JSON.stringify(meta) !== JSON.stringify(rawMeta)
         const autoFilledFields = (Object.keys(meta) as (keyof NamFile['metadata'])[]).filter(
           (k) => meta[k] != null && (workingMeta[k] == null || workingMeta[k] === '')
         )
-        loaded.push({ filePath: r.filePath, fileName: baseName, version: r.version ?? '?', metadata: meta, originalMetadata: rawMeta, autoFilledFields, architecture: r.architecture ?? '?', config: r.config, isDirty: wasChanged, mtimeMs: r.mtimeMs, birthtimeMs: r.birthtimeMs })
+        loaded.push({ filePath: r.filePath, fileName: baseName, version: r.version ?? '?', notes: (r as Record<string, unknown>).notes as string[] | undefined, metadata: meta, originalMetadata: rawMeta, autoFilledFields, architecture: r.architecture ?? '?', config: r.config, isDirty: wasChanged, mtimeMs: r.mtimeMs, birthtimeMs: r.birthtimeMs, sizeBytes: r.sizeBytes })
       } else {
         errors++
       }
@@ -523,26 +1746,28 @@ export default function App() {
       const existing = new Set(prev.map((f) => f.filePath))
       return [...prev, ...loaded.filter((f) => !existing.has(f.filePath))]
     })
-    // Read and clear outside the updater — updaters can be called multiple times in Concurrent Mode
+    // Read and clear outside the updater ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â updaters can be called multiple times in Concurrent Mode
     const shouldSuppressSelect = suppressStartupAutoSelectRef.current
     suppressStartupAutoSelectRef.current = false
     setSelectedIds((prev) => {
       if (loaded.length === 0) return prev
       if (shouldSuppressSelect) return prev
+      if (showDashboardRef.current && mode === 'replace') return prev
       if (mode === 'replace') return new Set([loaded[0].filePath])
+      if (mode === 'append-passive') return prev
       if (prev.size === 0) return new Set([loaded[0].filePath])
       return prev
     })
     if (errors > 0) {
       const logPath = await window.api.getErrorLogPath()
-      setStatus({ message: `Loaded ${loaded.length} file(s) — ${errors} could not be parsed (skipped)`, type: 'error', logPath })
+      setStatus({ message: `Loaded ${loaded.length} file(s) - ${errors} could not be parsed (skipped)`, type: 'error', logPath })
     } else {
       setStatus({ message: `Loaded ${loaded.length} file(s)`, type: 'success' })
     }
   }, [settings])
 
   // mode='append': dedup against current files (drag & drop)
-  const loadFiles = useCallback(async (paths: string[], mode: 'replace' | 'append' = 'append', genToken?: number) => {
+  const loadFiles = useCallback(async (paths: string[], mode: 'replace' | 'append' | 'append-passive' = 'append', genToken?: number) => {
     setStatus({ message: `Loading ${paths.length} file(s)...`, type: 'info' })
     const CONCURRENCY = 50
     const results: Awaited<ReturnType<typeof window.api.readFile>>[] = []
@@ -552,16 +1777,39 @@ export default function App() {
       const batchResults = await Promise.all(batch.map((p) => window.api.readFile(p)))
       results.push(...batchResults)
       if (paths.length > CONCURRENCY) {
-        setStatus({ message: `Loading files… ${Math.min(i + CONCURRENCY, paths.length)} / ${paths.length}`, type: 'info' })
+        setStatus({ message: `Loading files... ${Math.min(i + CONCURRENCY, paths.length)} / ${paths.length}`, type: 'info' })
       }
     }
     if (genToken !== undefined && genToken !== loadGenRef.current) return
     await applyParsedResults(results, mode)
   }, [applyParsedResults]) // no longer depends on files or selectedIds
 
+  useEffect(() => {
+    loadFilesRef.current = loadFiles
+  }, [loadFiles])
+
+  const handleStartToneStoreQueue = useCallback((job: ToneStoreDownloadQueueJob) => {
+    setToneStoreQueueJob(job)
+    setStatus({
+      message: `Tone3000 background download started: ${job.items.length} file${job.items.length !== 1 ? 's' : ''}`,
+      type: 'info'
+    })
+  }, [])
+
+  const handleCancelToneStoreQueue = useCallback(() => {
+    toneStoreQueueAbortRef.current += 1
+    toneStoreQueueRunningRef.current = false
+    setToneStoreQueueJob(null)
+    setStatus({
+      message: 'Tone3000 download queue cancelled',
+      type: 'info'
+    })
+  }, [])
+
   // Shared logic for opening a folder by path (used by Open Folder and Refresh)
   const loadFolderByPath = useCallback(async (folder: string) => {
     const gen = ++loadGenRef.current
+    setCardView(false)
     setStatus({ message: 'Scanning folder... (large or network folders may take a minute)', type: 'info' })
     setFolderChanged(false)
     // Stop watcher during reload so the scan itself doesn't re-trigger the banner
@@ -607,9 +1855,34 @@ export default function App() {
     setWatcherKey((k) => k + 1)
   }, [loadFiles, settings])
 
-  // Subscribe to app:openFiles — for files opened while app is already running
+  // Defined after loadFolderByPath so its dependency array doesn't hit the temporal
+  // dead zone during render (was crashing the app on startup).
+  const handleOpenCompanionInboxFolder = useCallback(async (item: CompanionInboxItem) => {
+    const folderPath = item.folderPath.replace(/\\/g, '/')
+    if (!folderPath) {
+      setStatus({ message: 'This inbox item does not have a folder attached yet.', type: 'error' })
+      return
+    }
+    const currentRoot = librarian.rootFolder?.replace(/\\/g, '/')
+    setCompanionInboxOpen(false)
+    if (currentRoot && (folderPath === currentRoot || folderPath.startsWith(`${currentRoot}/`))) {
+      setLibrarian((prev) => ({ ...prev, selectedFolders: [folderPath] }))
+      setShowDashboard(false)
+      setHistoryOpen(false)
+      setShowSettings(false)
+      setShowToneStore(false)
+      setShowTrainingWorkspace(false)
+      setBatchFolder(null)
+      setCardView(false)
+      showTransientStatus({ message: `Opened ${folderDisplayName(folderPath)} in the library.`, type: 'info' })
+      return
+    }
+    await loadFolderByPath(folderPath)
+  }, [librarian.rootFolder, loadFolderByPath, showTransientStatus])
+
+  // Subscribe to app:openFiles ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â for files opened while app is already running
   useEffect(() => {
-    const unsub = window.api.onOpenFiles((paths) => loadFiles(paths, 'append'))
+    const unsub = safeOn('onOpenFiles', window.api.onOpenFiles, (paths) => loadFiles(paths, 'append'))
     return unsub
   }, [loadFiles])
 
@@ -623,22 +1896,35 @@ export default function App() {
   useEffect(() => {
     window.api.getPendingFiles().then((paths) => {
       if (paths.length > 0) {
-        // File was opened via double-click / file association — load just those files
+        // File was opened via double-click / file association ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â load just those files
         loadFiles(paths, 'replace')
       } else if (settings.enableDefaultFolder && settings.defaultFolder) {
-        // No pending files — restore last folder as normal
+        // No pending files ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â restore last folder as normal
         loadFolderByPath(settings.defaultFolder)
       }
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // intentionally empty — runs once on mount after React is ready
+  }, []) // intentionally empty ÃƒÆ&rsquo;Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â runs once on mount after React is ready
 
   // Returns false if user cancels, true if safe to proceed
   const confirmDiscardChanges = (): boolean => {
     const dirty = files.filter((f) => f.isDirty)
     if (dirty.length === 0) return true
+    const manuallyDirty = dirty.filter((f) => {
+      const keys = new Set<keyof NamFile['metadata']>([
+        ...(Object.keys(f.metadata) as (keyof NamFile['metadata'])[]),
+        ...(Object.keys(f.originalMetadata) as (keyof NamFile['metadata'])[])
+      ])
+      for (const key of keys) {
+        const current = f.metadata[key] ?? null
+        const original = f.originalMetadata[key] ?? null
+        if (current !== original && !f.autoFilledFields.includes(key)) return true
+      }
+      return false
+    })
+    if (manuallyDirty.length === 0) return true
     return window.confirm(
-      `You have unsaved changes in ${dirty.length} file${dirty.length !== 1 ? 's' : ''}.\n\nDiscard changes and continue?`
+      `You have manual unsaved changes in ${manuallyDirty.length} file${manuallyDirty.length !== 1 ? 's' : ''}.\n\nDiscard changes and continue?`
     )
   }
 
@@ -649,8 +1935,9 @@ export default function App() {
     setBatchFolder(null)
     setShowSettings(false)
     setLibrarian(EMPTY_LIBRARIAN)
+    setCardView(false)
     setStatus({ message: 'Open .nam files or a folder to get started', type: 'info' })
-    // Don't reopen on next launch — user explicitly closed
+    // Don't reopen on next launch ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â user explicitly closed
     setSettings((prev) => {
       const updated = { ...prev, enableDefaultFolder: false }
       saveSettings(updated)
@@ -679,7 +1966,21 @@ export default function App() {
     await loadFolderByPath(librarian.rootFolder)
   }
 
-  // OS drag/drop — use React synthetic onDrop on the root div (works in Electron;
+  const refreshFolderTree = useCallback(async () => {
+    if (!librarian.rootFolder) return
+    const treeResult = await window.api.scanTree(librarian.rootFolder, settings.hiddenFolders ?? '')
+    if (treeResult.success && treeResult.tree) {
+      setLibrarian((prev) => ({ ...prev, folderTree: treeResult.tree! }))
+    }
+    refreshPackInfoFolders()
+    refreshBundleFolders()
+  }, [librarian.rootFolder, settings.hiddenFolders, refreshPackInfoFolders, refreshBundleFolders])
+
+  useEffect(() => {
+    refreshFolderTreeRef.current = refreshFolderTree
+  }, [refreshFolderTree])
+
+  // OS drag/drop ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â use React synthetic onDrop on the root div (works in Electron;
   // native document-level listeners do NOT receive OS file drops in Electron 41+).
   // Guard against intra-app drags (application/x-nam-files) which are handled by FolderTree.
   const handleOsDrop = async (e: React.DragEvent) => {
@@ -712,8 +2013,7 @@ export default function App() {
     if (folders.length === 0 && namFiles.length === 0) return
 
     if (folders.length > 0) {
-      const dirty = files.filter((f) => f.isDirty)
-      if (dirty.length > 0 && !window.confirm(`You have unsaved changes in ${dirty.length} file${dirty.length !== 1 ? 's' : ''}.\n\nDiscard changes and continue?`)) return
+      if (!confirmDiscardChanges()) return
       await loadFolderByPath(folders[0])
     } else {
       await loadFiles(namFiles, files.length === 0 ? 'replace' : 'append')
@@ -745,14 +2045,44 @@ export default function App() {
     )
   }
 
+  const clearAutoFilledFieldsFromMeta = (file: NamFile) => {
+    if (file.autoFilledFields.length === 0) return file
+    const metadata = { ...file.metadata }
+    for (const key of file.autoFilledFields) {
+      metadata[key] = file.originalMetadata[key] ?? null
+    }
+    const isDirty = JSON.stringify(metadata) !== JSON.stringify(file.originalMetadata)
+    return { ...file, metadata, isDirty, autoFilledFields: [] }
+  }
+
+  const handleClearSuggestionsForFile = (filePath: string) => {
+    setFiles((prev) => prev.map((file) => file.filePath === filePath ? clearAutoFilledFieldsFromMeta(file) : file))
+    setStatus({ message: 'Cleared auto-filled suggestions for the selected file', type: 'success' })
+  }
+
+  const handleClearSuggestionsAll = () => {
+    const affected = files.filter((file) => file.autoFilledFields.length > 0).length
+    if (affected === 0) {
+      setStatus({ message: 'No auto-filled suggestions to clear', type: 'info' })
+      return
+    }
+    setFiles((prev) => prev.map((file) => clearAutoFilledFieldsFromMeta(file)))
+    setStatus({ message: `Cleared auto-filled suggestions on ${affected} file${affected !== 1 ? 's' : ''}`, type: 'success' })
+  }
+
   const handleSave = async (filePath: string) => {
+    if (saveInFlightRef.current) {
+      setStatus({ message: 'A save is already in progress', type: 'info' })
+      return
+    }
     const file = files.find((f) => f.filePath === filePath)
     if (!file) return
-    const result = await window.api.writeMetadata(filePath, file.metadata)
+    const result = await window.api.writeMetadata(filePath, file.metadata, { source: 'Single file save' })
     if (result.success) {
+      const savedAt = Date.now()
       setFiles((prev) => prev.map((f) =>
         f.filePath === filePath
-          ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [] }
+          ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [], mtimeMs: savedAt }
           : f
       ))
       addHistoryEntry({ operation: 'save', summary: `Saved ${file.fileName}` })
@@ -764,10 +2094,14 @@ export default function App() {
 
   const handleSaveAndAdvance = async (filePath: string) => {
     await handleSave(filePath)
-    // Use same visibility logic as visibleFiles (folder filter only — no FileList internal filters)
+    // Use same visibility logic as visibleFiles (folder filter only ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â no FileList internal filters)
     const currentVisible = files.filter((f) => {
       const norm = f.filePath.replace(/\\/g, '/')
       if (librarian.selectedFolders.length > 0 && !librarian.selectedFolders.some((sf) => norm.startsWith(sf + '/'))) return false
+      if (directFilesOnly && librarian.selectedFolders.length === 1) {
+        const parentFolder = norm.split('/').slice(0, -1).join('/')
+        if (parentFolder !== librarian.selectedFolders[0]) return false
+      }
       return true
     })
     const idx = currentVisible.findIndex((f) => f.filePath === filePath)
@@ -797,23 +2131,18 @@ export default function App() {
     {
       const autoFillCount = dirty.filter((f) => f.autoFilledFields.length > 0).length
       const autoFillNote = autoFillCount > 0
-        ? `\n\n⚠️ ${autoFillCount} file${autoFillCount !== 1 ? 's have' : ' has'} auto-filled fields (from Settings defaults) that will also be written.`
+        ? `\n\nWarning: ${autoFillCount} file${autoFillCount !== 1 ? 's have' : ' has'} auto-filled fields (from Settings defaults) that will also be written.`
         : ''
       if (!settings.skipSaveAllConfirmation) {
         const confirmed = window.confirm(
-          `⚠️ Save ALL changes across every loaded folder?\n\nThis will write ${dirty.length} file${dirty.length !== 1 ? 's' : ''} to disk — including files in all subfolders. This cannot be undone.${autoFillNote}\n\n(This warning can be toggled off in Settings → Behavior)`
+          `Warning: Save ALL changes across every loaded folder?\n\nThis will write ${dirty.length} file${dirty.length !== 1 ? 's' : ''} to disk - including files in all subfolders. This cannot be undone.${autoFillNote}\n\n(This warning can be toggled off in Settings -> Behavior)`
         )
         if (!confirmed) return
       }
     }
-    setStatus({ message: `Saving ${dirty.length} file(s)...`, type: 'info' })
-    const savedPaths = new Set<string>()
-    let failed = 0
-    for (const f of dirty) {
-      const result = await window.api.writeMetadata(f.filePath, f.metadata)
-      if (result.success) savedPaths.add(f.filePath)
-      else failed++
-    }
+    const batchResult = await runMetadataSaveBatch(dirty, (f) => f.metadata, 'Save All')
+    if (!batchResult) return
+    const { savedPaths, failed } = batchResult
     setFiles((prev) => prev.map((f) =>
       savedPaths.has(f.filePath)
         ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [] }
@@ -836,6 +2165,86 @@ export default function App() {
     })
   }
 
+  const makeGenerateAbout = (file: NamFile) => async (): Promise<string | null> => {
+    const { gear_make, gear_model, gear_type } = file.metadata
+    if (!gear_make || !gear_model) return null
+    const gearLabel = gear_type ? `${gear_type.replace(/_/g, ' ')} ` : ''
+    const prompt = `You are an expert in guitar amplifiers, pedals, and audio gear. Write exactly 2-3 sentences describing the ${gearLabel}"${gear_make} ${gear_model}". Cover its tonal character, gain range or key modes/channels, and what genres or playing styles it's best known for. Be factual and specific. Write in present tense. Do not start with "The".`
+    const provider = settings.aiProvider ?? 'anthropic'
+    const model = provider === 'anthropic' ? (settings.aiAnthropicModel || 'claude-haiku-4-5-20251001') : (settings.aiOpenAiModel || 'gpt-4o-mini')
+    const res = await window.api.aiEnrich({ prompt, provider, model })
+    if (res.success && res.text) return res.text.trim()
+    throw new Error(res.error ?? 'No response')
+  }
+
+  const makeGenerateAboutForFolder = (folderFiles: NamFile[]) => async (ctx: { existingDescription: string; capturedBy: string }): Promise<string | null> => {
+    const mostCommon = (key: 'gear_make' | 'gear_model' | 'gear_type') => {
+      const counts = new Map<string, number>()
+      for (const f of folderFiles) {
+        const v = f.metadata[key]
+        if (v) counts.set(v, (counts.get(v) ?? 0) + 1)
+      }
+      let best = ''; let max = 0
+      for (const [v, n] of counts) if (n > max) { best = v; max = n }
+      return best
+    }
+    const gear_make = mostCommon('gear_make')
+    const gear_model = mostCommon('gear_model')
+    const gear_type = mostCommon('gear_type')
+    if (!gear_make || !gear_model) return null
+
+    // Build capture context from metadata
+    const totalCaptures = folderFiles.length
+
+    // Tone type breakdown
+    const toneCounts = new Map<string, number>()
+    for (const f of folderFiles) { const t = f.metadata.tone_type; if (t) toneCounts.set(t, (toneCounts.get(t) ?? 0) + 1) }
+    const toneBreakdown = [...toneCounts.entries()].sort((a, b) => b[1] - a[1]).map(([t, n]) => `${n} ${t.replace(/_/g, ' ')}`).join(', ')
+
+    // Unique channel names from nl_amp_channel and capture names (top 12, deduplicated)
+    const channelNames = [...new Set(folderFiles.map(f => f.metadata.nl_amp_channel).filter(Boolean) as string[])].slice(0, 8)
+    const captureNames = [...new Set(folderFiles.map(f => f.metadata.name).filter(Boolean) as string[])].slice(0, 12)
+
+    // Unique boost pedals, mics, cabinet, settings
+    const boostPedals = [...new Set(folderFiles.map(f => f.metadata.nl_boost_pedal).filter(Boolean) as string[])]
+    const mics = [...new Set(folderFiles.map(f => f.metadata.nl_mics).filter(Boolean) as string[])]
+    const cabinets = [...new Set(folderFiles.map(f => f.metadata.nl_cabinet).filter(Boolean) as string[])]
+    const ampSettings = [...new Set(folderFiles.map(f => f.metadata.nl_amp_settings).filter(Boolean) as string[])].slice(0, 4)
+
+    const lines: string[] = []
+    lines.push(`Gear: ${gear_make} ${gear_model}${gear_type ? ` (${gear_type.replace(/_/g, ' ')})` : ''}`)
+    lines.push(`Total captures in this pack: ${totalCaptures}`)
+    if (toneBreakdown) lines.push(`Tone breakdown: ${toneBreakdown}`)
+    if (channelNames.length) lines.push(`Amp channels captured: ${channelNames.join(', ')}`)
+    if (captureNames.length) lines.push(`Capture names: ${captureNames.join(', ')}`)
+    if (boostPedals.length) lines.push(`Boost/pedal used: ${boostPedals.join(', ')}`)
+    if (cabinets.length) lines.push(`Cabinet: ${cabinets.join(', ')}`)
+    if (mics.length) lines.push(`Mic setup: ${mics.join(', ')}`)
+    if (ampSettings.length) lines.push(`Amp settings noted: ${ampSettings.join(' | ')}`)
+    if (ctx.capturedBy) lines.push(`Captured by: ${ctx.capturedBy}`)
+    if (ctx.existingDescription.trim()) lines.push(`Pack description (use as context): ${ctx.existingDescription.trim()}`)
+
+    const captureContext = lines.join('\n')
+
+    const prompt = `You are writing a factual "About this gear" blurb for a neural amp modeler (NAM) capture pack library. The blurb should describe the real piece of gear and what was captured in this specific pack.
+
+CAPTURE PACK DATA:
+${captureContext}
+
+INSTRUCTIONS:
+- Write 3-5 sentences total.
+- Paragraph 1 (2-3 sentences): Describe the real ${gear_make} ${gear_model} - its character, key specs, notable channels or modes, and what it's known for. Draw on accurate knowledge of this specific piece of gear. If you are NOT familiar with this exact model or it appears to be a custom/boutique/fictional piece of gear, say so honestly (e.g. "This appears to be a boutique or custom design...") rather than inventing facts.
+- Paragraph 2 (1-2 sentences): Summarize what was captured in this pack - number of captures, tone types covered, channels captured, any pedals or special setups used. Ground this in the capture data above.
+- Be specific and factual. Do not use filler phrases like "This amp is renowned for" or "This versatile unit". Do not start with "The".
+- Write in present tense. Plain text only, no markdown.`
+
+    const provider = settings.aiProvider ?? 'anthropic'
+    const model = provider === 'anthropic' ? (settings.aiAnthropicModel || 'claude-haiku-4-5-20251001') : (settings.aiOpenAiModel || 'gpt-4o-mini')
+    const res = await window.api.aiEnrich({ prompt, provider, model })
+    if (res.success && res.text) return res.text.trim()
+    throw new Error(res.error ?? 'No response')
+  }
+
   const handleBatchApply = async (batchFields: Partial<NamFile['metadata']>, options?: BatchApplyOptions) => {
     const folderPath = batchFolder?.path ?? null
     const batchPaths = batchFolder?.filePaths
@@ -850,55 +2259,73 @@ export default function App() {
         : files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(folderPath + '/'))
     }
 
-    // For each target:
-    //   toWrite  = originalMetadata + batch fields only (what gets saved to disk)
-    //   newMeta  = current working metadata with batch fields applied (keeps auto-fills)
-    //   newOriginal = toWrite (reflects new on-disk state)
-    //   isDirty  = newMeta still differs from newOriginal (auto-fills remain pending)
+    // Apply writes the current working metadata plus the batch fields. That preserves
+    // auto-populated values that are visible in the UI instead of leaving them pending.
     const prepared = targets.map((f) => {
-      const toWrite = { ...f.originalMetadata }
       const newMeta = { ...f.metadata }
       if (options?.revertToFilename) {
         const nameFromFile = f.fileName.replace(/\.nam$/i, '')
-        ;(toWrite as Record<string, unknown>)['name'] = nameFromFile
         ;(newMeta as Record<string, unknown>)['name'] = nameFromFile
       }
       for (const [k, v] of Object.entries(batchFields)) {
-        const val = v === '' ? null : v
-        ;(toWrite as Record<string, unknown>)[k] = val
+        let val: unknown
+        if (options?.appendFields?.has(k as keyof NamFile['metadata']) && v && v !== '') {
+          const existing = (newMeta as Record<string, unknown>)[k]
+          val = existing && typeof existing === 'string' && existing.trim() !== ''
+            ? `${existing.trim()} ${v}`
+            : v
+        } else {
+          val = v === '' ? null : v
+        }
         ;(newMeta as Record<string, unknown>)[k] = val
       }
-      const newIsDirty = JSON.stringify(newMeta) !== JSON.stringify(toWrite)
-      return { filePath: f.filePath, toWrite, newMeta, newOriginal: toWrite, newIsDirty }
+      return { filePath: f.filePath, toWrite: newMeta, newMeta }
     })
 
     setBatchFolder(null)
-    setStatus({ message: `Saving ${prepared.length} file(s)...`, type: 'info' })
+    const batchResult = await runMetadataSaveBatch(prepared, (p) => p.toWrite, 'Batch saving')
+    if (!batchResult) return
+    const { savedPaths, failed, savedAt } = batchResult
 
-    const savedPaths = new Set<string>()
-    let failed = 0
-    for (const p of prepared) {
-      const result = await window.api.writeMetadata(p.filePath, p.toWrite)
-      if (result.success) savedPaths.add(p.filePath)
-      else failed++
-    }
-
-    // Fields that were actually written by this batch edit
-    const savedBatchKeys = new Set(Object.keys(batchFields) as (keyof NamFile['metadata'])[])
     const resultMap = new Map(prepared.map((p) => [p.filePath, p]))
     setFiles((prev) => prev.map((f) => {
       if (!savedPaths.has(f.filePath)) return f
       const p = resultMap.get(f.filePath)!
-      // Remove batch-saved fields from autoFilledFields always
-      const autoFilledFields = f.autoFilledFields.filter((k) => !savedBatchKeys.has(k))
-      return { ...f, metadata: p.newMeta, originalMetadata: p.newOriginal, isDirty: p.newIsDirty, autoFilledFields }
+      return { ...f, metadata: p.newMeta, originalMetadata: p.newMeta, isDirty: false, autoFilledFields: [], mtimeMs: savedAt }
     }))
 
     if (failed > 0) {
       setStatus({ message: `Batch saved ${savedPaths.size}, failed ${failed}`, type: 'error' })
     } else {
-      addHistoryEntry({ operation: 'batch-edit', summary: `Batch edited ${savedPaths.size} file${savedPaths.size !== 1 ? 's' : ''} (${Object.keys(batchFields).join(', ')})` })
+      addHistoryEntry({ operation: 'batch-edit', summary: formatBatchEditHistorySummary(batchFields, savedPaths.size) })
       setStatus({ message: `Batch saved ${savedPaths.size} file(s)`, type: 'success' })
+    }
+  }
+
+  // Save the CURRENT in-memory metadata (including any auto-filled values already computed
+  // by the suggestion-rule engine) for exactly the given files, scoped to just those files —
+  // not every dirty file across the whole loaded library like handleSaveAll. Real report: no
+  // way existed to write pending auto-fill values for a folder's selection without using
+  // "Save All", which the confirm dialog itself describes as writing "every loaded folder".
+  const handleSaveSelected = async (filePaths: string[]) => {
+    const pathSet = new Set(filePaths)
+    const targets = files.filter((f) => pathSet.has(f.filePath) && f.isDirty)
+    if (targets.length === 0) {
+      setStatus({ message: 'No unsaved changes in the selected files', type: 'info' })
+      return
+    }
+    const batchResult = await runMetadataSaveBatch(targets, (f) => f.metadata, 'Save selected')
+    if (!batchResult) return
+    const { savedPaths, failed, savedAt } = batchResult
+    setFiles((prev) => prev.map((f) =>
+      savedPaths.has(f.filePath)
+        ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [], mtimeMs: savedAt }
+        : f
+    ))
+    if (failed > 0) {
+      setStatus({ message: `Saved ${savedPaths.size}, failed ${failed}`, type: 'error' })
+    } else {
+      setStatus({ message: `Saved ${savedPaths.size} file(s)`, type: 'success' })
     }
   }
 
@@ -911,37 +2338,27 @@ export default function App() {
     const targets = files.filter((f) => pathSet.has(f.filePath))
 
     const prepared = targets.map((f) => {
-      const toWrite = { ...f.originalMetadata }
       const newMeta = { ...f.metadata }
       if (options?.revertToFilename) {
         const nameFromFile = f.fileName.replace(/\.nam$/i, '')
-        ;(toWrite as Record<string, unknown>)['name'] = nameFromFile
         ;(newMeta as Record<string, unknown>)['name'] = nameFromFile
       }
       for (const [k, v] of Object.entries(fields)) {
         const val = v === '' ? null : v
-        ;(toWrite as Record<string, unknown>)[k] = val
         ;(newMeta as Record<string, unknown>)[k] = val
       }
-      const newIsDirty = JSON.stringify(newMeta) !== JSON.stringify(toWrite)
-      return { filePath: f.filePath, toWrite, newMeta, newOriginal: toWrite, newIsDirty }
+      return { filePath: f.filePath, toWrite: newMeta, newMeta }
     })
 
-    setStatus({ message: `Saving ${prepared.length} file(s)...`, type: 'info' })
-
-    const savedPaths = new Set<string>()
-    let failed = 0
-    for (const p of prepared) {
-      const result = await window.api.writeMetadata(p.filePath, p.toWrite)
-      if (result.success) savedPaths.add(p.filePath)
-      else failed++
-    }
+    const batchResult = await runMetadataSaveBatch(prepared, (p) => p.toWrite, 'Multi-select apply')
+    if (!batchResult) return
+    const { savedPaths, failed, savedAt } = batchResult
 
     const resultMap = new Map(prepared.map((p) => [p.filePath, p]))
     setFiles((prev) => prev.map((f) => {
       if (!savedPaths.has(f.filePath)) return f
       const p = resultMap.get(f.filePath)!
-      return { ...f, metadata: p.newMeta, originalMetadata: p.newOriginal, isDirty: p.newIsDirty, autoFilledFields: p.newIsDirty ? f.autoFilledFields : [] }
+      return { ...f, metadata: p.newMeta, originalMetadata: p.newMeta, isDirty: false, autoFilledFields: [], mtimeMs: savedAt }
     }))
 
     if (failed > 0) {
@@ -982,7 +2399,7 @@ export default function App() {
 
     if (moved.length === 0) return
 
-    // Update files state — repath moved files, clear dirty flag
+    // Update files state ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â repath moved files, clear dirty flag
     const movedMap = new Map(moved.map((m) => [m.oldPath, m.newPath]))
     setFiles((prev) =>
       prev.map((f) => {
@@ -1066,7 +2483,7 @@ export default function App() {
       }
 
       // Write updated name to disk (surgical patch of the name field only)
-      const writeResult = await window.api.writeMetadata(targetPath, { ...file.metadata, name: newBaseName })
+      const writeResult = await window.api.writeMetadata(targetPath, { ...file.metadata, name: newBaseName }, { source: 'Rename file metadata sync' })
       if (writeResult.success) {
         saved.set(filePath, { newBaseName, newPath: targetPath })
       } else {
@@ -1154,9 +2571,31 @@ export default function App() {
     return result
   }
 
-  const handleMoveFolder = async (sourcePath: string, destParentPath: string) => {
-    const result = await window.api.moveFolder(sourcePath, destParentPath)
+  const handleMoveFolder = async (sourcePath: string, destParentPath: string, allowMerge = false) => {
+    const result = await window.api.moveFolder(sourcePath, destParentPath, allowMerge)
+    if (!result.success && result.error === 'merge-required' && result.mergeTargetPath) {
+      const sourceName = folderDisplayName(sourcePath)
+      const targetName = folderDisplayName(result.mergeTargetPath)
+      const confirmed = window.confirm(
+        `A folder named "${targetName}" already exists in the destination.\n\nMerge "${sourceName}" into it?\n\nSame-name subfolders will be merged. Existing same-name files will be left where they are.`
+      )
+      if (!confirmed) return result
+      return handleMoveFolder(sourcePath, destParentPath, true)
+    }
+
     if (result.success && result.newPath) {
+      if (result.mergedIntoExisting) {
+        if (librarian.rootFolder) await loadFolderByPath(librarian.rootFolder)
+        const skippedCount = result.skippedPaths?.length ?? 0
+        setStatus({
+          message: skippedCount > 0
+            ? `Folder merged with ${skippedCount} existing file${skippedCount !== 1 ? 's' : ''} left in place`
+            : 'Folder merged',
+          type: skippedCount > 0 ? 'info' : 'success'
+        })
+        return result
+      }
+
       const oldPrefix = sourcePath.replace(/\\/g, '/') + '/'
       const newPrefix = result.newPath + '/'
       setFiles((prev) => prev.map((f) => {
@@ -1180,18 +2619,41 @@ export default function App() {
     return result
   }
 
+  const handleDeleteEmptyFolder = async (folderPath: string) => {
+    const confirmed = window.confirm(
+      `Delete the empty folder tree "${folderDisplayName(folderPath)}"?\n\nThis removes the selected folder and any empty child folders underneath it. It will stop if any files remain anywhere in that subtree.`
+    )
+    if (!confirmed) return { success: false, error: 'Cancelled' }
+
+    const result = await window.api.deleteEmptyFolder(folderPath)
+    if (result.success) {
+      if (librarian.rootFolder) await loadFolderByPath(librarian.rootFolder)
+      const removed = result.removedCount ?? 1
+      setStatus({ message: `Deleted empty folder tree: ${folderDisplayName(folderPath)} (${removed} folder${removed !== 1 ? 's' : ''})`, type: 'success' })
+    } else {
+      setStatus({ message: `Delete failed: ${result.error}`, type: 'error' })
+    }
+    return result
+  }
+
   const handleTrashFiles = async (paths: string[]) => {
     const fileNames = paths.map((p) => {
       const parts = p.replace(/\\/g, '/').split('/')
       return parts.length >= 2 ? parts.slice(-2).join('/') : parts[parts.length - 1]
     }).join('\n')
+    const deleteBehavior = await window.api.getDeleteBehavior(paths)
+    const actionLabel = deleteBehavior.permanentOnly ? 'Delete' : 'Move'
+    const tailMessage = deleteBehavior.permanentOnly
+      ? 'These files are on a shared or network-backed drive, so Recycle Bin is not available.'
+      : 'This can be recovered from the trash.'
     const confirmed = window.confirm(
-      `Move ${paths.length} file${paths.length !== 1 ? 's' : ''} to trash?\n\n${fileNames}\n\nThis can be recovered from the trash.`
+      `${actionLabel} ${paths.length} file${paths.length !== 1 ? 's' : ''}?\n\n${fileNames}\n\n${tailMessage}`
     )
     if (!confirmed) return
     const results = await window.api.trashFiles(paths)
     const trashed = results.filter((r) => r.success).map((r) => r.filePath)
     const failed = results.filter((r) => !r.success).length
+    const permanentlyDeleted = results.filter((r) => r.success && r.deleteMode === 'delete').length
     if (trashed.length > 0) {
       const trashedSet = new Set(trashed)
       setFiles((prev) => prev.filter((f) => !trashedSet.has(f.filePath)))
@@ -1205,6 +2667,11 @@ export default function App() {
       const errors = results.filter((r) => !r.success).map((r) => r.error).filter(Boolean)
       const detail = errors.length > 0 ? `: ${errors[0]}` : ''
       setStatus({ message: `Trashed ${trashed.length}, failed ${failed}${detail}`, type: 'error' })
+    } else if (permanentlyDeleted > 0) {
+      setStatus({
+        message: `Deleted ${trashed.length} file${trashed.length !== 1 ? 's' : ''} permanently (${permanentlyDeleted} could not be moved to trash)`,
+        type: 'info'
+      })
     } else {
       setStatus({ message: `Moved ${trashed.length} file${trashed.length !== 1 ? 's' : ''} to trash`, type: 'success' })
     }
@@ -1240,6 +2707,33 @@ export default function App() {
     }
   }
 
+  const handleCleanOutdatedNamBot = async (paths: string[]) => {
+    const confirmed = window.confirm(
+      `Clean outdated NAM-BOT metadata in ${paths.length} file${paths.length !== 1 ? 's' : ''}?\n\nNAM-BOT moved its custom fields from metadata.training.nam_bot to metadata.nam_bot for better compatibility.\n\nThis will rewrite older exports to the new format. This cannot currently be undone.`
+    )
+    if (!confirmed) return
+    const results = await window.api.cleanOutdatedNamBot(paths)
+    const cleaned = results.filter((r) => r.success).map((r) => r.filePath)
+    const changed = results.filter((r) => r.success && r.changed).map((r) => r.filePath)
+    const failed = results.filter((r) => !r.success).length
+    if (cleaned.length > 0) {
+      const changedSet = new Set(changed)
+      setFiles((prev) => prev.map((f) => {
+        if (!changedSet.has(f.filePath)) return f
+        const newMeta = migrateLegacyNamBotInMemory(f.metadata)
+        const newOrig = migrateLegacyNamBotInMemory(f.originalMetadata)
+        return { ...f, metadata: newMeta, originalMetadata: newOrig, isDirty: false, mtimeMs: Date.now() }
+      }))
+    }
+    if (failed > 0) {
+      setStatus({ message: `Cleaned ${changed.length} file${changed.length !== 1 ? 's' : ''}, failed ${failed}`, type: 'error' })
+    } else if (changed.length > 0) {
+      setStatus({ message: `Updated ${changed.length} file${changed.length !== 1 ? 's' : ''} to the current NAM-BOT metadata format`, type: 'success' })
+    } else {
+      setStatus({ message: 'No outdated NAM-BOT metadata found in the selected file(s)', type: 'info' })
+    }
+  }
+
   const handleMoveToFolder = async (paths: string[]) => {
     const lastMove = localStorage.getItem('nam-lab-last-folder-move') ?? undefined
     const destFolder = await window.api.openFolder(lastMove)
@@ -1250,7 +2744,7 @@ export default function App() {
     const conflictPaths: string[] = []
     let failed = 0
 
-    // First pass — move non-conflicting files
+    // First pass ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â move non-conflicting files
     for (const p of paths) {
       const result = await window.api.moveFile(p, destFolder)
       if (result.success) movedPaths.add(p)
@@ -1275,12 +2769,13 @@ export default function App() {
 
     if (movedPaths.size > 0) {
       setFiles((prev) => prev.filter((f) => !movedPaths.has(f.filePath)))
+      await refreshFolderTree()
     }
     const skipped = conflictPaths.length - conflictPaths.filter((p) => movedPaths.has(p)).length
     if (failed > 0) {
       setStatus({ message: `Moved ${movedPaths.size}, failed ${failed}`, type: 'error' })
     } else if (skipped > 0) {
-      setStatus({ message: `Moved ${movedPaths.size} file${movedPaths.size !== 1 ? 's' : ''} to ${destName} — ${skipped} skipped (already exist)`, type: 'info' })
+      setStatus({ message: `Moved ${movedPaths.size} file${movedPaths.size !== 1 ? 's' : ''} to ${destName} - ${skipped} skipped (already exist)`, type: 'info' })
     } else {
       setStatus({ message: `Moved ${movedPaths.size} file${movedPaths.size !== 1 ? 's' : ''} to ${destName}`, type: 'success' })
     }
@@ -1302,6 +2797,7 @@ export default function App() {
     const results = await window.api.copyFiles(paths, destFolder)
     const copied = results.filter((r) => r.success).length
     const failed = results.filter((r) => !r.success).length
+    if (copied > 0) await refreshFolderTree()
     if (failed > 0) {
       setStatus({ message: `Copied ${copied}, failed ${failed}`, type: 'error' })
     } else {
@@ -1309,22 +2805,65 @@ export default function App() {
     }
   }
 
-  const handleApplyDefaultsToSelection = (paths: string[]) => {
+  const handleApplyDefaultsToSelection = async (paths: string[]) => {
     const pathSet = new Set(paths)
-    setFiles((prev) => prev.map((f) => {
-      if (!pathSet.has(f.filePath)) return f
+    const targets = files.filter((f) => pathSet.has(f.filePath))
+    const prepared = targets.map((f) => {
       const baseName = f.fileName.replace(/\.nam$/i, '')
       const newMeta = applyDefaults({ ...f.metadata }, baseName, settings)
       const newAutoFilled = (Object.keys(newMeta) as (keyof NamFile['metadata'])[]).filter(
         (k) => newMeta[k] != null && (f.metadata[k] == null || f.metadata[k] === '') && !f.autoFilledFields.includes(k)
       )
       const wasChanged = JSON.stringify(newMeta) !== JSON.stringify(f.originalMetadata)
-      return { ...f, metadata: newMeta, isDirty: wasChanged, autoFilledFields: [...f.autoFilledFields, ...newAutoFilled] }
+      return {
+        filePath: f.filePath,
+        newMeta,
+        autoFilledFields: [...f.autoFilledFields, ...newAutoFilled],
+        shouldSave: wasChanged,
+      }
+    })
+
+    const saveTargets = prepared.filter((p) => p.shouldSave)
+    if (saveTargets.length === 0) {
+      setStatus({ message: 'No new defaults to save in the selected files', type: 'info' })
+      return
+    }
+
+    const batchResult = await runMetadataSaveBatch(saveTargets, (p) => p.newMeta, 'Apply defaults')
+    if (!batchResult) return
+    const { savedPaths, failed, savedAt } = batchResult
+    const resultMap = new Map(prepared.map((p) => [p.filePath, p]))
+
+    setFiles((prev) => prev.map((f) => {
+      if (!pathSet.has(f.filePath)) return f
+      const preparedFile = resultMap.get(f.filePath)
+      if (!preparedFile) return f
+      if (!savedPaths.has(f.filePath)) {
+        return {
+          ...f,
+          metadata: preparedFile.newMeta,
+          isDirty: preparedFile.shouldSave,
+          autoFilledFields: preparedFile.autoFilledFields,
+        }
+      }
+      return {
+        ...f,
+        metadata: preparedFile.newMeta,
+        originalMetadata: preparedFile.newMeta,
+        isDirty: false,
+        autoFilledFields: [],
+        mtimeMs: savedAt,
+      }
     }))
-    setStatus({ message: `Applied defaults to ${paths.length} file${paths.length !== 1 ? 's' : ''}`, type: 'success' })
+
+    if (failed > 0) {
+      setStatus({ message: `Applied defaults and saved ${savedPaths.size}, failed ${failed}`, type: 'error' })
+    } else {
+      setStatus({ message: `Applied defaults and saved ${savedPaths.size} file${savedPaths.size !== 1 ? 's' : ''}`, type: 'success' })
+    }
   }
 
-  // Fields that make sense to copy — editable metadata only, no read-only stats
+  // Fields that make sense to copy ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â editable metadata only, no read-only stats
   const COPYABLE_FIELDS: (keyof NamFile['metadata'])[] = [
     'modeled_by', 'gear_type', 'gear_make', 'gear_model', 'tone_type',
     'input_level_dbu', 'output_level_dbu', 'nb_trained_epochs',
@@ -1379,7 +2918,7 @@ export default function App() {
     else doExportXLSX(targets, ALL_GRID_COLUMNS, filename)
   }
 
-  // Column definition for import/export template — editable fields only, in user-preferred order
+  // Column definition for import/export template ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â editable fields only, in user-preferred order
   const IMPORT_COLUMNS: { header: string; field: keyof NamFile['metadata'] | null }[] = [
     { header: 'Capture Name',       field: 'name' },
     { header: 'Modeled By',         field: 'modeled_by' },
@@ -1397,18 +2936,42 @@ export default function App() {
     { header: 'Reamp Send (dBu)',   field: 'input_level_dbu' },
     { header: 'Reamp Return (dBu)', field: 'output_level_dbu' },
     { header: 'Trained Epochs',     field: 'nb_trained_epochs' },
-    { header: 'NAM-BOT Preset',     field: null }, // read-only — shown in template, skipped on import
+    { header: 'NAM-BOT Preset',     field: null }, // read-only ÃƒÆ&rsquo;Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â shown in template, skipped on import
     { header: 'Mic(s)',             field: 'nl_mics' },
     { header: 'Comments',           field: 'nl_comments' },
   ]
+
+  const TARGET_MATRIX_TEMPLATE_HEADERS = [
+    'ToneX',
+    'NAM',
+    'Proxy',
+    'QC',
+    'Capture Name',
+    'Alt Proxy Name',
+    'Alt QC Name',
+  ] as const
+
+  const uniqueTemplateValues = (values: Array<string | null | undefined>): string[] =>
+    [...new Set(values.map((value) => String(value ?? '').trim()).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
 
   const handleGenerateTemplate = (folderPath: string | null) => {
     const targets = folderPath === null
       ? files
       : files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(folderPath.replace(/\\/g, '/') + '/') || f.filePath.replace(/\\/g, '/') === folderPath.replace(/\\/g, '/'))
+    const templateHeaders = [...TARGET_MATRIX_TEMPLATE_HEADERS, ...IMPORT_COLUMNS.map((c) => c.header).filter((header) => header !== 'Capture Name')]
     const rows = targets.map((f) => {
-      const row: Record<string, unknown> = {}
+      const row: Record<string, unknown> = {
+        ToneX: '',
+        NAM: 'X',
+        Proxy: '',
+        QC: '',
+        'Capture Name': f.metadata.name ?? '',
+        'Alt Proxy Name': '',
+        'Alt QC Name': '',
+      }
       for (const col of IMPORT_COLUMNS) {
+        if (col.header === 'Capture Name') continue
         if (col.field === null) {
           // NAM-BOT Preset is read-only
           row[col.header] = f.metadata.nb_preset_name ?? ''
@@ -1419,9 +2982,31 @@ export default function App() {
       }
       return row
     })
-    const ws = XLSX.utils.json_to_sheet(rows, { header: IMPORT_COLUMNS.map((c) => c.header) })
+    const ws = XLSX.utils.json_to_sheet(rows, { header: templateHeaders })
     const wb = XLSX.utils.book_new()
+    ws['!cols'] = templateHeaders.map((header) => ({ wch: Math.max(header.length + 2, 16) }))
     XLSX.utils.book_append_sheet(wb, ws, 'Import Template')
+
+    const lookupColumns: Record<string, string[]> = {
+      'Include Marker': ['X'],
+      'Modeled By': uniqueTemplateValues(targets.map((f) => f.metadata.modeled_by)),
+      Manufacturer: uniqueTemplateValues(targets.map((f) => f.metadata.gear_make)),
+      Model: uniqueTemplateValues(targets.map((f) => f.metadata.gear_model)),
+      'Gear Type': [...GEAR_TYPES],
+      'Tone Type': [...TONE_TYPES],
+    }
+    const lookupHeaders = Object.keys(lookupColumns)
+    const lookupRowCount = Math.max(...lookupHeaders.map((header) => lookupColumns[header].length), 1)
+    const lookupData = [
+      lookupHeaders,
+      ...Array.from({ length: lookupRowCount }, (_, rowIndex) =>
+        lookupHeaders.map((header) => lookupColumns[header][rowIndex] ?? '')
+      ),
+    ]
+    const lookupWs = XLSX.utils.aoa_to_sheet(lookupData)
+    lookupWs['!cols'] = lookupHeaders.map((header) => ({ wch: Math.max(header.length + 2, 18) }))
+    XLSX.utils.book_append_sheet(wb, lookupWs, 'Lookup Values')
+
     const folderName = folderPath ? folderPath.replace(/\\/g, '/').split('/').pop() : (librarian.rootFolder ? librarian.rootFolder.replace(/\\/g, '/').split('/').pop() : 'library')
     const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
@@ -1429,7 +3014,7 @@ export default function App() {
     const a = document.createElement('a')
     a.href = url; a.download = `nam-import-template-${folderName}.xlsx`; a.click()
     URL.revokeObjectURL(url)
-    setStatus({ message: `Template generated with ${rows.length} capture${rows.length !== 1 ? 's' : ''}`, type: 'success' })
+    setStatus({ message: `Template generated with ${rows.length} capture${rows.length !== 1 ? 's' : ''} and a Lookup Values sheet`, type: 'success' })
   }
 
   const handleImportMetadata = async (folderPath: string | null) => {
@@ -1449,7 +3034,7 @@ export default function App() {
       return
     }
 
-    // Build lookup: name (lowercase) → NamFile[], scoped to folderPath.
+    // Build lookup: name (lowercase) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ NamFile[], scoped to folderPath.
     // Stores arrays to handle multiple files sharing the same capture name (different subfolders).
     const scopedFiles = folderPath === null
       ? files
@@ -1464,12 +3049,12 @@ export default function App() {
       }
     }
 
-    // Fields skipped for prefix (variant-specific) matches — nl_ cabinet/mic fields vary
+    // Fields skipped for prefix (variant-specific) matches ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â nl_ cabinet/mic fields vary
     // per variant. gear_type is handled separately with cab-upgrade logic below.
-    // tone_type is NOT skipped — it's the same across DI/cab variants of the same session.
+    // tone_type is NOT skipped ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â it's the same across DI/cab variants of the same session.
     const PREFIX_SKIP: Set<keyof NamFile['metadata']> = new Set(['nl_cabinet', 'nl_cabinet_config', 'nl_mics'])
 
-    // For prefix matches only: amp→amp_cab, pedal_amp→amp_pedal_cab. All other gear_types skipped.
+    // For prefix matches only: ampÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢amp_cab, pedal_ampÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢amp_pedal_cab. All other gear_types skipped.
     const CAB_UPGRADE: Record<string, string> = { amp: 'amp_cab', pedal_amp: 'amp_pedal_cab' }
 
     // Defined early so Pass 1 can use it to detect DI files by their own name suffix.
@@ -1491,7 +3076,7 @@ export default function App() {
         if (strVal === '') continue
         if (col.field === 'gear_type') {
           if (isPrefix) {
-            // Prefix match: upgrade amp→amp_cab / pedal_amp→amp_pedal_cab; skip everything else
+            // Prefix match: upgrade ampÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢amp_cab / pedal_ampÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢amp_pedal_cab; skip everything else
             const upgraded = CAB_UPGRADE[strVal]
             if (upgraded) (incoming as Record<string, unknown>)[col.field] = upgraded
             continue
@@ -1506,7 +3091,7 @@ export default function App() {
       return incoming
     }
 
-    // Pass 1: exact matches — all files sharing a name get claimed; track which have explicit gear_type
+    // Pass 1: exact matches ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â all files sharing a name get claimed; track which have explicit gear_type
     const exactMatches: ImportMatch[] = []
     const exactMatchedPaths = new Set<string>()
     const exactGearTypePaths = new Set<string>()  // files where exact row explicitly set gear_type
@@ -1516,12 +3101,12 @@ export default function App() {
       const matchedFiles = nameToFiles.get(captureName.toLowerCase())
       if (!matchedFiles || matchedFiles.length === 0) continue
       for (const file of matchedFiles) {
-        // Always mark exact-matched — prevents prefix from a different row overriding it
+        // Always mark exact-matched ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â prevents prefix from a different row overriding it
         exactMatchedPaths.add(file.filePath)
         const incoming = buildIncoming(row)
         // Block Pass 3 cab upgrade if:
         //   (a) gear_type is already a cab-inclusive type (amp_cab / amp_pedal_cab), OR
-        //   (b) this file's own name ends with a configured DI suffix — it IS the DI capture,
+        //   (b) this file's own name ends with a configured DI suffix ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â it IS the DI capture,
         //       not a cab variant, so it must keep its gear_type unchanged.
         // Non-DI files with amp/pedal_amp are left unprotected so Pass 3 can upgrade them.
         const fileWords = (file.metadata.name || file.fileName || '').trim().split(/\s+/)
@@ -1537,7 +3122,7 @@ export default function App() {
       }
     }
 
-    // Pass 1.5: full-name prefix matches — file name starts with "{rowName} "
+    // Pass 1.5: full-name prefix matches ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â file name starts with "{rowName} "
     // Treated as direct matches (all fields, no cab upgrade). Covers variants like
     // "FMAN100V2 BE HG C45 DI HYPER" when the row is "FMAN100V2 BE HG C45 DI".
     const fullPrefixMatchedRowNames = new Set<string>()
@@ -1559,7 +3144,7 @@ export default function App() {
       }
     }
 
-    // Pass 2: prefix matches — only for files WITHOUT an exact match row.
+    // Pass 2: prefix matches ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â only for files WITHOUT an exact match row.
     // Sort by prefix length descending so the most specific (longest) DI row wins
     // when multiple DI rows share a common base prefix.
     const prefixMatches: ImportMatch[] = []
@@ -1592,7 +3177,7 @@ export default function App() {
     // Pass 3: supplement gear_type for exact-matched files whose Excel row had no gear_type.
     // These files are blocked from prefix matching above, but should still inherit
     // the CAB_UPGRADE gear_type from a matching DI row (e.g. "BE100 Mars" has its own row
-    // with tone_type set but no gear_type → "BE100 DI" row contributes amp_cab).
+    // with tone_type set but no gear_type ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ "BE100 DI" row contributes amp_cab).
     const pathToFile = new Map(scopedFiles.map(f => [f.filePath, f]))
     const exactMatchByPath = new Map(exactMatches.map(m => [m.file.filePath, m]))
     // Sort DI rows longest-prefix-first so the most specific row wins when multiple
@@ -1661,6 +3246,134 @@ export default function App() {
     setImportModal({ folderName, exactMatches, prefixMatches, unmatchedNames })
   }
 
+  // Fill blank metadata fields on files in `targetFolderPath` from a same-named file in a
+  // user-chosen source folder — e.g. copying real gear/tone metadata that's already been
+  // filled in for a REVxSTD training pass over to the A2 pass of the same captures. Real
+  // ask: "i filled it all out for REVxSTD files and they have the same name...so just copy
+  // folder metadata from one to the other." Matches by (metadata.name || fileName), same key
+  // handleImportMetadata already uses for its own name lookup. NEVER overwrites a value the
+  // target file already has — only fills fields that are currently blank — and immediately
+  // writes the updated metadata to disk after confirmation so the action behaves like a real
+  // copy/import rather than leaving behind easy-to-miss unsaved changes.
+  const handleCopyMetadataFromFolder = async (targetFolderPath: string | null) => {
+    const sourceFolderPath = await window.api.openFolder(librarian.rootFolder ?? undefined)
+    if (!sourceFolderPath) return
+
+    const normalizedSource = sourceFolderPath.replace(/\\/g, '/').replace(/\/$/, '')
+    const normalizedTarget = targetFolderPath ? targetFolderPath.replace(/\\/g, '/').replace(/\/$/, '') : null
+
+    if (normalizedTarget && normalizedSource.toLowerCase() === normalizedTarget.toLowerCase()) {
+      setStatus({ message: 'Source and destination folders are the same', type: 'error' })
+      return
+    }
+
+    const targetFiles = normalizedTarget === null
+      ? files
+      : files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(normalizedTarget + '/'))
+    const sourceFiles = files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(normalizedSource + '/'))
+
+    const sourceByName = new Map<string, NamFile>()
+    for (const f of sourceFiles) {
+      const key = (f.metadata.name || f.fileName || '').toLowerCase().trim()
+      if (key && !sourceByName.has(key)) sourceByName.set(key, f)
+    }
+
+    const COPY_FIELDS: (keyof NamFile['metadata'])[] = [
+      'name', 'modeled_by', 'gear_type', 'gear_make', 'gear_model', 'tone_type',
+      'input_level_dbu', 'output_level_dbu',
+      'nl_mics', 'nl_cabinet', 'nl_cabinet_config', 'nl_amp_channel', 'nl_boost_pedal',
+      'nl_amp_settings', 'nl_pedal_settings', 'nl_amp_switches', 'nl_comments', 'nl_about', 'nl_rating',
+    ]
+
+    const planned = new Map<string, Partial<NamFile['metadata']>>()
+    let matchedCount = 0
+    for (const f of targetFiles) {
+      const key = (f.metadata.name || f.fileName || '').toLowerCase().trim()
+      if (!key) continue
+      const src = sourceByName.get(key)
+      if (!src) continue
+      matchedCount++
+      const fields: Partial<NamFile['metadata']> = {}
+      for (const field of COPY_FIELDS) {
+        // Decide whether the destination is blank from the saved/on-disk metadata,
+        // not from UI defaults. Otherwise an auto-filled value can hide a real blank.
+        const targetVal = f.originalMetadata[field]
+        const sourceVal = src.originalMetadata[field]
+        const targetEmpty = targetVal == null || targetVal === ''
+        const sourceHasValue = sourceVal != null && sourceVal !== ''
+        if (targetEmpty && sourceHasValue) {
+          (fields as Record<string, unknown>)[field] = sourceVal
+        }
+      }
+      if (Object.keys(fields).length > 0) planned.set(f.filePath, fields)
+    }
+
+    if (matchedCount === 0) {
+      setStatus({ message: 'No files matched by name between these two folders', type: 'info' })
+      return
+    }
+    if (planned.size === 0) {
+      setStatus({ message: `${matchedCount} file(s) matched by name, but nothing was blank to fill in`, type: 'info' })
+      return
+    }
+
+    const totalFields = [...planned.values()].reduce((sum, fields) => sum + Object.keys(fields).length, 0)
+    const sourceLabel = normalizedSource.split('/').pop() ?? normalizedSource
+    const targetLabel = normalizedTarget
+      ? (normalizedTarget.split('/').pop() ?? normalizedTarget)
+      : (librarian.rootFolder?.replace(/\\/g, '/').split('/').pop() ?? 'this folder')
+    const confirmed = window.confirm(
+      `Copy metadata from "${sourceLabel}"?\n\n${matchedCount} of ${targetFiles.length} file(s) in "${targetLabel}" matched by name.\n${planned.size} file(s) will get ${totalFields} blank field(s) filled in and saved to disk — existing values are never overwritten.`
+    )
+    if (!confirmed) return
+
+    const prepared = targetFiles
+      .filter((f) => planned.has(f.filePath))
+      .map((f) => {
+        const fields = planned.get(f.filePath)!
+        const newMeta = { ...f.metadata, ...fields }
+        return { filePath: f.filePath, fields, newMeta }
+      })
+
+    const batchResult = await runMetadataSaveBatch(prepared, (item) => item.fields, 'Copying metadata')
+    if (!batchResult) return
+    const { savedPaths, failed, savedAt } = batchResult
+
+    setFiles((prev) => prev.map((f) => {
+      const preparedFile = prepared.find((item) => item.filePath === f.filePath)
+      if (!preparedFile || !savedPaths.has(f.filePath)) return f
+      const savedKeys = new Set(Object.keys(preparedFile.fields) as (keyof NamFile['metadata'])[])
+      const originalMetadata = { ...f.originalMetadata, ...preparedFile.fields }
+      const isDirty = JSON.stringify(preparedFile.newMeta) !== JSON.stringify(originalMetadata)
+      return {
+        ...f,
+        metadata: preparedFile.newMeta,
+        originalMetadata,
+        isDirty,
+        autoFilledFields: f.autoFilledFields.filter((key) => !savedKeys.has(key)),
+        mtimeMs: savedAt,
+      }
+    }))
+
+    const pendingAutoFilledCount = prepared.reduce((sum, item) => {
+      if (!savedPaths.has(item.filePath)) return sum
+      const file = targetFiles.find((f) => f.filePath === item.filePath)
+      if (!file) return sum
+      const savedKeys = new Set(Object.keys(item.fields) as (keyof NamFile['metadata'])[])
+      return sum + file.autoFilledFields.filter((key) => !savedKeys.has(key)).length
+    }, 0)
+    const pendingNote = pendingAutoFilledCount > 0
+      ? `; ${pendingAutoFilledCount} auto-filled field${pendingAutoFilledCount !== 1 ? 's' : ''} still need Save/Apply`
+      : ''
+
+    if (failed > 0) {
+      setStatus({ message: `Copied metadata to ${savedPaths.size} file(s), failed ${failed}${pendingNote}`, type: 'error' })
+    } else {
+      addHistoryEntry({ operation: 'save-all', summary: `Copied metadata from ${sourceLabel} to ${savedPaths.size} file${savedPaths.size !== 1 ? 's' : ''}` })
+      setStatus({ message: `Copied and saved ${totalFields} field(s) across ${savedPaths.size} file(s)${pendingNote}`, type: 'success' })
+    }
+  }
+
   const handleImportConfirm = async (matches: ImportMatch[]) => {
     const unmatched = importModal?.unmatchedNames.length ?? 0
     setImportModal(null)
@@ -1668,7 +3381,11 @@ export default function App() {
     const successMap = new Map<string, NamFile['metadata']>()
     for (const { file, incoming } of matches) {
       const newMeta = { ...file.metadata, ...incoming }
-      const result = await window.api.writeMetadata(file.filePath, newMeta)
+      const result = await window.api.writeMetadata(file.filePath, newMeta, {
+        source: 'Spreadsheet metadata import',
+        index: updated + failed + 1,
+        total: matches.length,
+      })
       if ((result as { success: boolean }).success) {
         updated++
         successMap.set(file.filePath, newMeta)
@@ -1682,15 +3399,657 @@ export default function App() {
     }
     let msg = `Imported metadata for ${updated} capture${updated !== 1 ? 's' : ''}`
     if (failed > 0) msg += `, ${failed} failed`
-    if (unmatched > 0) msg += ` · ${unmatched} unmatched`
+    if (unmatched > 0) msg += ` - ${unmatched} unmatched`
     setStatus({ message: msg, type: failed > 0 ? 'error' : 'success' })
   }
 
-  const handleMoveDuplicates = async (moves: { filePath: string; destName: string }[]) => {
+  const handleSuggestMetadata = (folderPath: string | null) => {
+    const normalizedFolder = folderPath ? folderPath.replace(/\\/g, '/') : null
+    const scopedFiles = normalizedFolder === null
+      ? files
+      : files.filter((f) => f.filePath.replace(/\\/g, '/').startsWith(normalizedFolder + '/'))
+
+    openSuggestMetadataModal(scopedFiles, folderDisplayName(folderPath))
+  }
+
+  const handleSuggestMetadataForSelection = (paths: string[]) => {
+    const pathSet = new Set(paths)
+    const scopedFiles = files.filter((file) => pathSet.has(file.filePath))
+    const label = paths.length === 1 ? '1 selected capture' : `${paths.length} selected captures`
+    openSuggestMetadataModal(scopedFiles, label)
+  }
+
+  const handleOpenSuggestRulesEditor = (folderPath: string) => {
+    setSuggestRulesEditorPath(folderPath.replace(/\\/g, '/'))
+  }
+
+  const handleCopyScopedSuggestRules = (folderPath: string) => {
+    const normalizedPath = folderPath.replace(/\\/g, '/')
+    const rules = settings.metadataSuggestScopedRules.find((set) => set.scopePath.replace(/\\/g, '/') === normalizedPath)?.rules ?? []
+    if (rules.length === 0) {
+      setStatus({ message: `No folder suggestion rules to copy from ${folderDisplayName(folderPath)}`, type: 'info' })
+      return
+    }
+    setSuggestRulesClipboard({
+      sourceFolderPath: normalizedPath,
+      rules: rules.map((rule) => cloneMetadataSuggestRule(rule, 'scoped-clipboard')),
+    })
+    setStatus({
+      message: `Copied ${rules.length} folder suggestion rule${rules.length !== 1 ? 's' : ''} from ${folderDisplayName(folderPath)}`,
+      type: 'success',
+    })
+  }
+
+  const handlePasteScopedSuggestRules = (folderPath: string) => {
+    if (!suggestRulesClipboard || suggestRulesClipboard.rules.length === 0) return
+    const normalizedPath = folderPath.replace(/\\/g, '/')
+    const existingRules = settings.metadataSuggestScopedRules.find((set) => set.scopePath.replace(/\\/g, '/') === normalizedPath)?.rules ?? []
+    if (existingRules.length > 0) {
+      const confirmed = window.confirm(
+        `WARNING: ${folderDisplayName(folderPath)} already has ${existingRules.length} folder suggestion rule${existingRules.length !== 1 ? 's' : ''}.\n\nPasting will OVERWRITE the existing rules for this folder and cannot be undone.\n\nContinue?`
+      )
+      if (!confirmed) return
+    }
+    const pastedRules = suggestRulesClipboard.rules.map((rule) => cloneMetadataSuggestRule(rule, 'scoped-paste'))
+    const nextSets = settings.metadataSuggestScopedRules.filter((set) => set.scopePath.replace(/\\/g, '/') !== normalizedPath)
+    nextSets.push({ scopePath: normalizedPath, rules: pastedRules })
+    handleSaveSettings({
+      ...settings,
+      metadataSuggestScopedRules: nextSets,
+      metadataSuggestRuleLibrary: mergeRulesIntoLibrary(settings.metadataSuggestRuleLibrary, pastedRules),
+    })
+    setStatus({
+      message: `Pasted ${pastedRules.length} folder suggestion rule${pastedRules.length !== 1 ? 's' : ''} into ${folderDisplayName(folderPath)}`,
+      type: 'success',
+    })
+  }
+
+  const handleSaveScopedSuggestRules = (folderPath: string, rules: MetadataSuggestRule[]) => {
+    const normalizedPath = folderPath.replace(/\\/g, '/')
+    const cleanedRules = rules.filter((rule) => rule.value.trim())
+    const nextSets = settings.metadataSuggestScopedRules.filter((set) => set.scopePath.replace(/\\/g, '/') !== normalizedPath)
+    if (cleanedRules.length > 0) {
+      nextSets.push({ scopePath: normalizedPath, rules: cleanedRules })
+    }
+    handleSaveSettings({
+      ...settings,
+      metadataSuggestScopedRules: nextSets,
+      metadataSuggestRuleLibrary: mergeRulesIntoLibrary(settings.metadataSuggestRuleLibrary, cleanedRules),
+    })
+    setSuggestRulesEditorPath(null)
+    setStatus({
+      message: cleanedRules.length > 0
+        ? `Saved ${cleanedRules.length} folder suggestion rule${cleanedRules.length !== 1 ? 's' : ''}`
+        : 'Removed folder suggestion rules',
+      type: 'success',
+    })
+  }
+
+  const handleSaveScopedSuggestRulesAndStayOpen = (folderPath: string, rules: MetadataSuggestRule[]) => {
+    const normalizedPath = folderPath.replace(/\\/g, '/')
+    const cleanedRules = rules.filter((rule) => rule.value.trim())
+    const nextSets = settings.metadataSuggestScopedRules.filter((set) => set.scopePath.replace(/\\/g, '/') !== normalizedPath)
+    if (cleanedRules.length > 0) {
+      nextSets.push({ scopePath: normalizedPath, rules: cleanedRules })
+    }
+    handleSaveSettings({
+      ...settings,
+      metadataSuggestScopedRules: nextSets,
+      metadataSuggestRuleLibrary: mergeRulesIntoLibrary(settings.metadataSuggestRuleLibrary, cleanedRules),
+    })
+    setStatus({
+      message: cleanedRules.length > 0
+        ? `Saved ${cleanedRules.length} folder suggestion rule${cleanedRules.length !== 1 ? 's' : ''}`
+        : 'Removed folder suggestion rules',
+      type: 'success',
+    })
+  }
+
+  const getLibraryCleanupSavedIgnores = useCallback(() => {
+    return (settings.libraryCleanupIgnoredPaths ?? []).map((path) => path.replace(/\\/g, '/'))
+  }, [settings.libraryCleanupIgnoredPaths])
+
+  const applyLibraryCleanupSavedIgnores = useCallback((entries: LibraryCleanupFolderEntry[]) => {
+    const saved = new Set(getLibraryCleanupSavedIgnores())
+    return entries.map((entry) => ({
+      ...entry,
+      savedIgnore: saved.has(entry.path),
+      checked: saved.has(entry.path) ? false : entry.checked,
+    }))
+  }, [getLibraryCleanupSavedIgnores])
+
+  const scanLibraryCleanupSourceRoot = useCallback(async (normalized: string) => {
+    setLibraryCleanupBusyLabel('Scanning source root...')
+    setLibraryCleanupPreviewRows(null)
+    const [flatResult, treeResult] = await Promise.all([
+      window.api.scanFolder(normalized, settings.hiddenFolders),
+      window.api.scanTree(normalized, settings.hiddenFolders),
+    ])
+    setLibraryCleanupBusyLabel(null)
+    if (!flatResult.success || !treeResult.success || !treeResult.tree || !flatResult.files) {
+      setStatus({ message: `Library cleanup scan failed: ${flatResult.error ?? treeResult.error ?? 'Unknown error'}`, type: 'error' })
+      return false
+    }
+    const entries = applyLibraryCleanupSavedIgnores(
+      flattenFolderTree(treeResult.tree).map((entry) => ({
+        ...entry,
+        checked: true,
+        savedIgnore: false,
+      }))
+    )
+    setLibraryCleanupSourceRoot(normalized)
+    setLibraryCleanupFolderEntries(entries)
+    setLibraryCleanupFilePaths(flatResult.files.map((filePath) => filePath.replace(/\\/g, '/')))
+    return true
+  }, [applyLibraryCleanupSavedIgnores, settings.hiddenFolders])
+
+  const handleOpenLibraryCleanup = () => {
+    setLibraryCleanupOpenMode('library')
+    setLibraryCleanupActionMode('copy')
+    setShowLibraryCleanup(true)
+    setLibraryCleanupPreviewRows(null)
+  }
+
+  const handleOpenFolderCleanup = async (folderPath: string) => {
+    const normalized = folderPath.replace(/\\/g, '/')
+    const folderName = folderDisplayName(normalized).toLowerCase()
+    const defaultDestinationRoot = folderName === 'needs review'
+      ? parentFolderPath(normalized)
+      : normalized
+    setLibraryCleanupOpenMode('folder')
+    setLibraryCleanupDestinationRoot(defaultDestinationRoot)
+    setLibraryCleanupActionMode('move')
+    setShowLibraryCleanup(true)
+    await scanLibraryCleanupSourceRoot(normalized)
+  }
+
+  const handlePickLibraryCleanupSourceRoot = async () => {
+    const picked = await window.api.openFolder(libraryCleanupSourceRoot ?? librarian.rootFolder ?? undefined)
+    if (!picked) return
+    const normalized = picked.replace(/\\/g, '/')
+    await scanLibraryCleanupSourceRoot(normalized)
+  }
+
+  const handlePickLibraryCleanupDestinationRoot = async () => {
+    const picked = await window.api.openFolder(libraryCleanupDestinationRoot ?? librarian.rootFolder ?? undefined)
+    if (!picked) return
+    const normalized = picked.replace(/\\/g, '/')
+    setLibraryCleanupDestinationRoot(normalized)
+    setLibraryCleanupPreviewRows(null)
+    setLibraryCleanupFolderEntries((prev) => applyLibraryCleanupSavedIgnores(
+      prev.map((entry) => ({ ...entry, checked: true, savedIgnore: false })),
+    ))
+  }
+
+  const buildLibraryCleanupExcludedPaths = useCallback(() => {
+    return new Set(
+      libraryCleanupFolderEntries
+        .filter((entry) => !entry.checked)
+        .map((entry) => entry.path.replace(/\\/g, '/'))
+    )
+  }, [libraryCleanupFolderEntries])
+
+  const classifyLibraryCleanupFile = useCallback((file: NamFile): LibraryCleanupClassifiedFile => {
+    const creator = file.metadata.modeled_by?.trim() ?? ''
+    const make = file.metadata.gear_make?.trim() ?? ''
+    const model = file.metadata.gear_model?.trim() ?? ''
+    const fileName = cleanupSourceBaseName(file.filePath)
+    const destParts: string[] = []
+    let note: string | null = null
+    let needsReview = false
+
+    const requireCreator = libraryCleanupLayout !== 'flat'
+    const requireAmp = libraryCleanupLayout === 'creator-amp' || libraryCleanupLayout === 'creator-amp-di-cab' || libraryCleanupLayout === 'creator-amp-di-cab-preset'
+    const requireDiCab = libraryCleanupLayout === 'creator-amp-di-cab' || libraryCleanupLayout === 'creator-amp-di-cab-preset'
+    const requirePreset = libraryCleanupLayout === 'creator-amp-di-cab-preset'
+    let stopDeeperClassification = false
+
+    if (requireCreator) {
+      if (!creator) {
+        needsReview = true
+        note = 'Missing creator'
+      } else {
+        const safeCreator = sanitizeCleanupPathPart(creator)
+        if (!safeCreator) {
+          needsReview = true
+          note = 'Creator name not usable as folder'
+        } else {
+          destParts.push(safeCreator)
+        }
+      }
+    }
+
+    if (!needsReview && requireAmp) {
+      if (!make || !model) {
+        stopDeeperClassification = true
+        note = destParts.length > 0 ? 'Stopped at current folder: missing manufacturer/model' : 'Missing manufacturer/model'
+      } else {
+        const safeAmp = sanitizeCleanupPathPart(`${make} ${model}`.trim())
+        if (!safeAmp) {
+          needsReview = true
+          note = 'Manufacturer/model not usable as folder'
+        } else {
+          destParts.push(safeAmp)
+        }
+      }
+    }
+
+    if (!needsReview && !stopDeeperClassification && requireDiCab) {
+      const diCab = inferCleanupDiCabFromFile(file)
+      if (diCab) destParts.push(diCab)
+      else {
+        stopDeeperClassification = true
+        note = destParts.length > 0 ? 'Stopped at current folder: missing DI/CAB classification' : 'Missing DI/CAB classification'
+      }
+    }
+
+    if (!needsReview && !stopDeeperClassification && requirePreset) {
+      const preset = detectPreset(file.config)
+      if (!preset) {
+        stopDeeperClassification = true
+        note = destParts.length > 0 ? 'Stopped at current folder: preset type not detected' : 'Preset type not detected'
+      } else {
+        const safePreset = sanitizeCleanupPathPart(preset)
+        if (!safePreset) {
+          needsReview = true
+          note = 'Preset type not usable as folder'
+        } else {
+          destParts.push(safePreset)
+        }
+      }
+    }
+
+    const finalParts = [...destParts]
+    if (
+      libraryCleanupOpenMode === 'folder' &&
+      librarian.rootFolder &&
+      libraryCleanupSourceRoot &&
+      finalParts.length > 0
+    ) {
+      const rootPath = librarian.rootFolder.replace(/\\/g, '/')
+      const sourcePath = libraryCleanupSourceRoot.replace(/\\/g, '/')
+      const relativeSource = sourcePath.startsWith(rootPath + '/')
+        ? sourcePath.slice(rootPath.length + 1)
+        : sourcePath === rootPath
+          ? ''
+          : sourcePath
+      const sourceSegments = relativeSource
+        .split('/')
+        .filter(Boolean)
+        .map((segment) => sanitizeCleanupPathPart(segment))
+        .filter(Boolean)
+
+      while (
+        sourceSegments.length > 0 &&
+        finalParts.length > 0 &&
+        sourceSegments[0].toLowerCase() === finalParts[0].toLowerCase()
+      ) {
+        sourceSegments.shift()
+        finalParts.shift()
+      }
+    }
+
+    const destinationDir = needsReview
+      ? [libraryCleanupDestinationRoot!, ...finalParts, 'Needs Review'].join('/')
+      : [libraryCleanupDestinationRoot!, ...finalParts].join('/')
+
+    return {
+      sourcePath: file.filePath.replace(/\\/g, '/'),
+      destinationDir,
+      destinationBaseName: fileName,
+      needsReview,
+      note,
+    }
+  }, [libraryCleanupLayout, libraryCleanupDestinationRoot, libraryCleanupOpenMode, libraryCleanupSourceRoot, librarian.rootFolder])
+
+  const handlePreviewLibraryCleanup = async () => {
+    if (!libraryCleanupSourceRoot || !libraryCleanupDestinationRoot) {
+      setStatus({ message: 'Pick both a source root and a destination library root first', type: 'error' })
+      return
+    }
+    const sameRoot = libraryCleanupSourceRoot === libraryCleanupDestinationRoot
+    const allowNestedFolderCleanup =
+      libraryCleanupOpenMode === 'folder' &&
+      isPathWithin(libraryCleanupSourceRoot, libraryCleanupDestinationRoot)
+    if (!sameRoot && !allowNestedFolderCleanup && (isPathWithin(libraryCleanupSourceRoot, libraryCleanupDestinationRoot) || isPathWithin(libraryCleanupDestinationRoot, libraryCleanupSourceRoot))) {
+      setStatus({ message: 'Source root and destination library root cannot be nested inside each other', type: 'error' })
+      return
+    }
+    const excluded = Array.from(buildLibraryCleanupExcludedPaths())
+    const candidatePaths = libraryCleanupFilePaths.filter((filePath) => !excluded.some((excludedPath) => isPathWithin(filePath, excludedPath)))
+    const loadedFileMap = new Map(files.map((file) => [file.filePath.replace(/\\/g, '/'), file]))
+    setLibraryCleanupBusyLabel(`Analyzing ${candidatePaths.length} file(s)...`)
+    const validFiles: NamFile[] = []
+    const diskPaths: string[] = []
+    for (const filePath of candidatePaths) {
+      const loaded = loadedFileMap.get(filePath.replace(/\\/g, '/'))
+      if (loaded) validFiles.push(loaded)
+      else diskPaths.push(filePath)
+    }
+
+    const results: Array<Awaited<ReturnType<typeof window.api.readFile>>> = []
+    const concurrency = 40
+    for (let i = 0; i < diskPaths.length; i += concurrency) {
+      const chunk = diskPaths.slice(i, i + concurrency)
+      const chunkResults = await Promise.all(chunk.map((filePath) => window.api.readFile(filePath)))
+      results.push(...chunkResults)
+    }
+    const diskFiles: NamFile[] = results
+      .filter((result): result is Awaited<ReturnType<typeof window.api.readFile>> & { success: true; filePath: string; version: string; metadata: NamFile['metadata']; architecture: string; config: unknown } =>
+        !!result.success && !!result.filePath && !!result.version && !!result.metadata && !!result.architecture
+      )
+      .map((result) => ({
+        filePath: result.filePath,
+        fileName: result.filePath.replace(/\\/g, '/').split('/').pop() ?? result.filePath,
+        version: result.version,
+        notes: (result as Record<string, unknown>).notes as string[] | undefined,
+        metadata: migrateLegacyNamBotInMemory(result.metadata),
+        originalMetadata: migrateLegacyNamBotInMemory(result.metadata),
+        autoFilledFields: [],
+        architecture: result.architecture,
+        config: result.config ?? null,
+        isDirty: false,
+        mtimeMs: result.mtimeMs,
+        birthtimeMs: result.birthtimeMs,
+        sizeBytes: result.sizeBytes,
+      }))
+
+    validFiles.push(...diskFiles)
+
+    const previewRows = validFiles.map((file) => {
+      const classified = classifyLibraryCleanupFile(file)
+      const destinationPath = `${classified.destinationDir}/${classified.destinationBaseName}`.replace(/\\/g, '/')
+      const sourcePath = classified.sourcePath.replace(/\\/g, '/')
+      const actionable = libraryCleanupOpenMode === 'folder' && libraryCleanupSourceRoot && libraryCleanupDestinationRoot
+        ? relativePathWithin(sourcePath, libraryCleanupSourceRoot) !== relativePathWithin(destinationPath, libraryCleanupDestinationRoot)
+        : sourcePath !== destinationPath
+      return {
+        sourcePath,
+        destinationPath,
+        note: actionable
+          ? classified.note
+          : (classified.note ?? (libraryCleanupOpenMode === 'folder'
+              ? 'Already matches selected structure beneath this folder'
+              : 'Already matches selected structure')),
+        needsReview: classified.needsReview,
+        actionable,
+      } satisfies LibraryCleanupPreviewRow
+    })
+    setLibraryCleanupBusyLabel(null)
+    setLibraryCleanupPreviewRows(previewRows)
+    setStatus({ message: `Library cleanup preview built for ${previewRows.length} file${previewRows.length !== 1 ? 's' : ''}`, type: 'success' })
+  }
+
+  const handleExportLibraryCleanupNeedsReview = (format: 'csv' | 'xlsx') => {
+    const needsReviewRows = (libraryCleanupPreviewRows ?? []).filter((row) => row.needsReview)
+    if (needsReviewRows.length === 0) {
+      setStatus({ message: 'No Needs Review rows available to export', type: 'info' })
+      return
+    }
+
+    const rows = needsReviewRows.map((row) => ({
+      Capture: row.sourcePath.replace(/\\/g, '/').split('/').pop() ?? row.sourcePath,
+      SourceFolder: row.sourcePath.replace(/\\/g, '/').split('/').slice(0, -1).join('/'),
+      SourcePath: row.sourcePath,
+      DestinationPath: row.destinationPath,
+      Reason: row.note ?? 'Needs review',
+      Status: 'Needs Review',
+    }))
+
+    const worksheet = XLSX.utils.json_to_sheet(rows, {
+      header: ['Capture', 'SourceFolder', 'SourcePath', 'DestinationPath', 'Reason', 'Status'],
+    })
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Needs Review')
+    const rootLabel = folderDisplayName(libraryCleanupSourceRoot ?? librarian.rootFolder ?? 'library')
+    const fileName = `needs-review-${rootLabel || 'library'}.${format}`
+    XLSX.writeFile(workbook, fileName, { bookType: format })
+    setStatus({
+      message: `Exported ${needsReviewRows.length} Needs Review row${needsReviewRows.length !== 1 ? 's' : ''} to ${fileName}`,
+      type: 'success',
+    })
+  }
+
+  const ensureCleanupDestinationDir = async (destinationDir: string) => {
+    const normalized = destinationDir.replace(/\\/g, '/')
+    const parts = normalized.split('/').filter(Boolean)
+    if (parts.length === 0) return
+    let current = normalized.startsWith('//') ? '//' : ''
+    let driveRoot = ''
+    if (/^[A-Za-z]:$/.test(parts[0])) {
+      current = parts[0]
+      driveRoot = `${parts[0]}/`
+      parts.shift()
+    }
+    for (const part of parts) {
+      current = current ? `${current}/${part}` : part
+      const stat = await window.api.statPath(current)
+      if (!stat.isDirectory) {
+        const currentParts = current.replace(/\\/g, '/').split('/').filter(Boolean)
+        let parent = currentParts.slice(0, -1).join('/')
+        if (driveRoot && currentParts.length === 2 && /^[A-Za-z]:$/.test(currentParts[0])) {
+          parent = driveRoot
+        } else if (!parent) {
+          parent = current.match(/^[A-Za-z]:\//)?.[0] ?? ''
+        }
+        const name = current.replace(/\\/g, '/').split('/').pop() ?? current
+        const result = await window.api.createFolder(parent, name)
+        if (!result.success && !(await window.api.statPath(current)).isDirectory) {
+          throw new Error(result.error ?? `Could not create ${current}`)
+        }
+      }
+    }
+  }
+
+  const handleRunLibraryCleanup = async () => {
+    if (!libraryCleanupPreviewRows || libraryCleanupPreviewRows.length === 0 || !libraryCleanupDestinationRoot) return
+    const actionableRows = libraryCleanupPreviewRows.filter((row) => row.actionable)
+    if (actionableRows.length === 0) {
+      setStatus({ message: 'Nothing to do - the selected files already match the current cleanup structure', type: 'info' })
+      return
+    }
+    if (libraryCleanupActionMode === 'move') {
+      const confirmed = window.confirm('WARNING: Move will relocate the source files and cannot be undone by NAM Lab.\n\nContinue?')
+      if (!confirmed) return
+    }
+    const uncheckedPaths = libraryCleanupFolderEntries.filter((entry) => !entry.checked).map((entry) => entry.path.replace(/\\/g, '/'))
+    if (libraryCleanupRememberUnchecked) {
+      const mergedIgnored = Array.from(new Set([
+        ...getLibraryCleanupSavedIgnores(),
+        ...uncheckedPaths,
+      ]))
+      handleSaveSettings({
+        ...settings,
+        libraryCleanupIgnoredPaths: mergedIgnored,
+      })
+    }
+
+    setLibraryCleanupBusyLabel(`Running ${libraryCleanupActionMode} cleanup...`)
+    let completed = 0
+    let failed = 0
+    let skipped = 0
+    let autoSuffixed = 0
+    let packInfoTransferred: 'copied' | 'moved' | 'kept-destination' | null = null
+    const usedDestinations = new Set<string>()
+    for (const row of actionableRows) {
+      const normalizedDest = row.destinationPath.replace(/\\/g, '/')
+      const destDir = normalizedDest.split('/').slice(0, -1).join('/')
+      await ensureCleanupDestinationDir(destDir)
+      const originalBaseName = normalizedDest.split('/').pop() ?? ''
+      const sourceBaseName = cleanupSourceBaseName(row.sourcePath)
+      let desiredBaseName = originalBaseName
+      if (/\.nam$/i.test(sourceBaseName) && !/\.nam$/i.test(desiredBaseName)) {
+        desiredBaseName = `${desiredBaseName}.nam`
+      }
+      const collisionBaseName = desiredBaseName
+      let targetPath = `${destDir}/${desiredBaseName}`
+      let suffix = 2
+      // Avoid collisions with files already planned this run and with files already sitting in the destination.
+      // `readFile` is enough here because the destination should only contain `.nam` files we care about organizing.
+      while (usedDestinations.has(targetPath) || (await window.api.readFile(targetPath)).success) {
+        const dotIndex = collisionBaseName.lastIndexOf('.')
+        const stem = dotIndex > 0 ? collisionBaseName.slice(0, dotIndex) : collisionBaseName
+        const ext = dotIndex > 0 ? collisionBaseName.slice(dotIndex) : ''
+        desiredBaseName = `${stem} (${suffix})${ext}`
+        targetPath = `${destDir}/${desiredBaseName}`
+        suffix += 1
+      }
+      const normalizedSource = row.sourcePath.replace(/\\/g, '/')
+      if (normalizedSource === targetPath) {
+        usedDestinations.add(targetPath)
+        skipped += 1
+        continue
+      }
+      const result = libraryCleanupActionMode === 'copy'
+        ? (await window.api.copyFiles([row.sourcePath], destDir, [desiredBaseName]))[0]
+        : await window.api.moveFile(row.sourcePath, destDir, false, desiredBaseName)
+      if (!result.success || !result.destPath) {
+        failed += 1
+        continue
+      }
+      const actualBaseName = result.destPath.replace(/\\/g, '/').split('/').pop() ?? ''
+      if (actualBaseName !== desiredBaseName) {
+        const renameResult = await window.api.renameFile(result.destPath, desiredBaseName.replace(/\.[^.]+$/, ''))
+        if (!renameResult.success || !renameResult.newPath) {
+          failed += 1
+          continue
+        }
+        if (desiredBaseName !== actualBaseName) autoSuffixed += 1
+      } else if (desiredBaseName !== originalBaseName) {
+        autoSuffixed += 1
+      }
+      usedDestinations.add(targetPath)
+      completed += 1
+    }
+
+    if (completed > 0 && libraryCleanupSourceRoot && libraryCleanupDestinationRoot && libraryCleanupSourceRoot !== libraryCleanupDestinationRoot) {
+      const sourcePack = await window.api.readPackInfo(libraryCleanupSourceRoot)
+      const destinationPack = await window.api.readPackInfo(libraryCleanupDestinationRoot)
+      const sourcePackData = sourcePack.success ? sourcePack.data : null
+      const destinationPackData = destinationPack.success ? destinationPack.data : null
+      const destinationHasPackInfo = !!destinationPackData && typeof destinationPackData === 'object' && Object.keys(destinationPackData as Record<string, unknown>).length > 0
+
+      if (sourcePackData && !destinationHasPackInfo) {
+        const writeResult = await window.api.writePackInfo(libraryCleanupDestinationRoot, sourcePackData)
+        if (writeResult.success) {
+          if (libraryCleanupActionMode === 'move') {
+            const deleteResult = await window.api.deletePackInfo(libraryCleanupSourceRoot)
+            packInfoTransferred = deleteResult.success ? 'moved' : 'copied'
+          } else {
+            packInfoTransferred = 'copied'
+          }
+        }
+      } else if (sourcePackData && destinationHasPackInfo) {
+        packInfoTransferred = 'kept-destination'
+      }
+    }
+
+    setLibraryCleanupBusyLabel(null)
+    let message = `Library cleanup complete: ${completed} ${libraryCleanupActionMode === 'copy' ? 'copied' : 'moved'}, ${skipped} skipped, ${autoSuffixed} auto-suffixed, ${failed} failed`
+    if (packInfoTransferred === 'moved') {
+      message += ', Pack Info moved to destination root'
+    } else if (packInfoTransferred === 'copied') {
+      message += ', Pack Info copied to destination root'
+    } else if (packInfoTransferred === 'kept-destination') {
+      message += ', destination Pack Info kept'
+    }
+    setStatus({
+      message,
+      type: failed > 0 ? 'error' : 'success',
+    })
+    if (completed > 0) {
+      setShowLibraryCleanup(false)
+      if (libraryCleanupOpenMode === 'library') {
+        await loadFolderByPath(libraryCleanupDestinationRoot)
+      } else if (librarian.rootFolder) {
+        await loadFolderByPath(librarian.rootFolder)
+      }
+    } else if (librarian.rootFolder) {
+      await refreshFolderTree()
+    }
+  }
+
+  const openSuggestMetadataModal = (scopedFiles: NamFile[], folderName: string) => {
+    const scopeLabel = folderName
+
+    if (scopedFiles.length === 0) {
+      const message = `No files available in ${scopeLabel} to analyze`
+      setStatus({ message, type: 'info' })
+      window.alert(message)
+      return
+    }
+
+    const matches = buildMetadataSuggestionMatches(scopedFiles, settings.metadataSuggestRules, settings.metadataSuggestScopedRules)
+    if (matches.length === 0) {
+      const message = `No metadata suggestions found for blank fields in ${scopeLabel}. Try adding a rule in Settings -> Metadata Suggestions, or test on files missing tone type / gear type.`
+      setStatus({ message, type: 'info' })
+      window.alert(message)
+      return
+    }
+
+    setSuggestMetadataModal({
+      folderName: scopeLabel,
+      matches,
+    })
+  }
+
+  const handleSuggestMetadataConfirm = async (matches: MetadataSuggestionMatch[]) => {
+    setSuggestMetadataModal(null)
+    let updated = 0
+    let failed = 0
+    const successMap = new Map<string, { writtenFields: Partial<NamFile['metadata']> }>()
+
+    for (const match of matches) {
+      const incoming = Object.fromEntries(match.suggestions.map((suggestion) => [suggestion.field, suggestion.value])) as Partial<NamFile['metadata']>
+      if (Object.keys(incoming).length === 0) continue
+      const result = await window.api.writeMetadata(match.file.filePath, incoming, {
+        source: 'Suggest metadata',
+        fields: match.suggestions.map((suggestion) => String(suggestion.field)),
+        index: updated + failed + 1,
+        total: matches.length,
+      })
+      if (result.success) {
+        updated++
+        successMap.set(match.file.filePath, { writtenFields: incoming })
+      } else {
+        failed++
+      }
+    }
+
+    if (successMap.size > 0) {
+      setFiles((prev) => prev.map((file) => {
+        const saved = successMap.get(file.filePath)
+        if (!saved) return file
+        const metadata = { ...file.metadata, ...saved.writtenFields }
+        const originalMetadata = { ...file.originalMetadata, ...saved.writtenFields }
+        const savedKeys = new Set(Object.keys(saved.writtenFields) as (keyof NamFile['metadata'])[])
+        const autoFilledFields = file.autoFilledFields.filter((k) => !savedKeys.has(k))
+        const isDirty = JSON.stringify(metadata) !== JSON.stringify(originalMetadata)
+        return { ...file, metadata, originalMetadata, isDirty, autoFilledFields }
+      }))
+    }
+
+    if (updated > 0) {
+      addHistoryEntry({
+        operation: 'suggest-metadata',
+        summary: `Applied metadata suggestions to ${updated} file${updated !== 1 ? 's' : ''}`,
+      })
+    }
+
+    let message = `Applied metadata suggestions to ${updated} file${updated !== 1 ? 's' : ''}`
+    if (failed > 0) message += `, ${failed} failed`
+    setStatus({ message, type: failed > 0 ? 'error' : 'success' })
+  }
+
+  const handleMoveDuplicates = async (moves: { filePath: string; destName: string }[], destFolder?: string) => {
     if (!librarian.rootFolder) return
-    // Create _Duplicates folder (ignore error if already exists)
-    await window.api.createFolder(librarian.rootFolder, '_Duplicates')
-    const destDir = librarian.rootFolder + '/_Duplicates'
+    let destDir: string
+    if (destFolder) {
+      destDir = destFolder
+    } else {
+      await window.api.createFolder(librarian.rootFolder, '_Duplicates')
+      destDir = librarian.rootFolder + '/_Duplicates'
+    }
 
     // Move each file; if destName differs from original basename, rename after move via the rename API
     const movedPairs: { oldPath: string; newPath: string }[] = []
@@ -1714,6 +4073,7 @@ export default function App() {
       }
     }
 
+    const destLabel = destDir.replace(/\\/g, '/').split('/').pop() ?? '_Duplicates'
     if (movedPairs.length > 0) {
       const movedMap = new Map(movedPairs.map((m) => [m.oldPath, m.newPath]))
       setFiles((prev) => prev.map((f) => {
@@ -1722,12 +4082,11 @@ export default function App() {
         const newBaseName = newPath.replace(/\\/g, '/').split('/').pop()?.replace(/\.nam$/i, '') ?? f.fileName
         return { ...f, filePath: newPath, fileName: newBaseName, isDirty: false, autoFilledFields: [] }
       }))
-      // _Duplicates is hardcoded-hidden in scan, so no need to rescan tree
     }
     if (failed > 0) {
-      setStatus({ message: `Moved ${movedPairs.length} to _Duplicates, failed ${failed}`, type: 'error' })
+      setStatus({ message: `Moved ${movedPairs.length} to ${destLabel}, failed ${failed}`, type: 'error' })
     } else {
-      setStatus({ message: `Moved ${movedPairs.length} duplicate${movedPairs.length !== 1 ? 's' : ''} to _Duplicates`, type: 'success' })
+      setStatus({ message: `Moved ${movedPairs.length} duplicate${movedPairs.length !== 1 ? 's' : ''} to ${destLabel}`, type: 'success' })
     }
   }
 
@@ -1735,6 +4094,7 @@ export default function App() {
     // Confirmation is handled inside DuplicatesModal per-group; just execute
     const results = await window.api.trashFiles(filePaths)
     const trashed = results.filter((r) => r.success).map((r) => r.filePath)
+    const permanentlyDeleted = results.filter((r) => r.success && r.deleteMode === 'delete').length
     if (trashed.length > 0) {
       const trashedSet = new Set(trashed)
       setFiles((prev) => prev.filter((f) => !trashedSet.has(f.filePath)))
@@ -1747,10 +4107,20 @@ export default function App() {
     const failed = filePaths.length - trashed.length
     if (failed > 0) {
       setStatus({ message: `Trashed ${trashed.length}, failed ${failed}`, type: 'error' })
+    } else if (permanentlyDeleted > 0) {
+      setStatus({
+        message: `Deleted ${trashed.length} duplicate${trashed.length !== 1 ? 's' : ''} permanently (${permanentlyDeleted} could not be moved to trash)`,
+        type: 'info'
+      })
     } else {
       setStatus({ message: `Trashed ${trashed.length} duplicate${trashed.length !== 1 ? 's' : ''}`, type: 'success' })
     }
   }
+
+  const handleFindDuplicatesInFolder = useCallback((folderPath: string) => {
+    setDuplicatesScopeFolder(folderPath.replace(/\\/g, '/'))
+    setShowDuplicates(true)
+  }, [])
 
   const handleFilterLocalCreator = (creator: string) => {
     const target = normalizeCreatorName(creator)
@@ -1792,21 +4162,295 @@ export default function App() {
     setShowDashboard(false)
   }
 
-  // Filter files by selected folder and/or library search filter
-  const visibleFiles = files.filter((f) => {
+  // Filter files by selected folder and/or library search filter.
+  // Memoized: these were plain `const`s recomputed (new array reference) on every render,
+  // which several effects below take as a dependency — that made those effects re-fire on
+  // every render regardless of whether the actual selection/visible-set changed, not just
+  // wasted work but a real risk of update-depth cascades if the resulting async state
+  // setters ever raced each other across back-to-back renders (e.g. while a training job's
+  // frequent progress updates are also re-rendering this component).
+  const visibleFiles = useMemo(() => files.filter((f) => {
     const norm = f.filePath.replace(/\\/g, '/')
     if (librarian.selectedFolders.length > 0 && !librarian.selectedFolders.some((sf) => norm.startsWith(sf + '/'))) return false
+    if (directFilesOnly && librarian.selectedFolders.length === 1) {
+      const parentFolder = norm.split('/').slice(0, -1).join('/')
+      if (parentFolder !== librarian.selectedFolders[0]) return false
+    }
     if (libraryFilter && !libraryFilter.has(norm)) return false
     return true
-  })
+  }), [files, librarian.selectedFolders, directFilesOnly, libraryFilter])
 
-  const selectedFiles = visibleFiles.filter((f) => selectedIds.has(f.filePath))
+  const selectedFiles = useMemo(
+    () => visibleFiles.filter((f) => selectedIds.has(f.filePath)),
+    [visibleFiles, selectedIds]
+  )
+
+  // Defined after selectedFiles so its dependency array doesn't hit the temporal
+  // dead zone during render (was crashing the app on startup).
+  const handleUseCompanionInboxAsCover = useCallback(async (item: CompanionInboxItem) => {
+    const folderPath = item.folderPath.replace(/\\/g, '/')
+    if (!item.assetPath || !folderPath) {
+      setStatus({ message: 'This inbox item needs both an image and a target folder.', type: 'error' })
+      return
+    }
+    const result = await window.api.copyLocalCoverFile(item.assetPath, folderPath)
+    if (!result.success) {
+      setStatus({ message: result.error ?? 'Could not copy cover image.', type: 'error' })
+      return
+    }
+    if (result.destPath) {
+      const selectionUsesFolder = selectedFiles.some((file) => file.filePath.replace(/\\/g, '/').startsWith(`${folderPath}/`))
+      if (selectionUsesFolder) setMetadataCoverPath(result.destPath)
+      setLibrarian((prev) => ({ ...prev, selectedFolders: [...prev.selectedFolders] }))
+    }
+    await window.api.markCompanionInboxReviewed(item.id)
+    setCompanionInboxItems((prev) => prev.map((entry) => (
+      entry.id === item.id ? { ...entry, status: 'reviewed' } : entry
+    )))
+    showTransientStatus({ message: `Saved "${item.title}" as the folder cover image.`, type: 'success' })
+  }, [selectedFiles, showTransientStatus])
+
+  const selectedSingleFilePath = selectedFiles.length === 1 ? selectedFiles[0].filePath : null
+  const selectedFileSignature = selectedFiles.map((f) => f.filePath).sort().join('|')
+  const skipNextTrainingWorkspaceSelectionCloseRef = useRef(false)
+  const trainerSnapshotSigRef = useRef(buildTrainerSnapshotSignature(IDLE_TRAINER_STATE))
+  const previousSelectionSignatureRef = useRef(selectedFileSignature)
+
+  useEffect(() => {
+    let alive = true
+    const applyTrainerState = (state: TrainerStateSnapshot) => {
+      const nextSig = buildTrainerSnapshotSignature(state)
+      if (trainerSnapshotSigRef.current === nextSig) return
+      trainerSnapshotSigRef.current = nextSig
+      startTransition(() => {
+        setGlobalTrainerState((prev) => (
+          buildTrainerSnapshotSignature(prev) === nextSig ? prev : state
+        ))
+      })
+    }
+    void window.api.getTrainerState().then((state) => {
+      if (alive) applyTrainerState(state)
+    }).catch(() => null)
+    const unsubscribe = safeOn('onTrainerUpdate', window.api.onTrainerUpdate, (state) => {
+      if (alive) applyTrainerState(state)
+    })
+    return () => {
+      alive = false
+      unsubscribe()
+    }
+  }, [])
+
+  const handleOpenExperimentalTraining = (mode: 'files' | 'folder' | 'queue' | 'history' | 'presets' = 'files') => {
+    setShowSettings(false)
+    setShowDashboard(false)
+    setHistoryOpen(false)
+    setShowToneStore(false)
+    setBatchFolder(null)
+    setCardView(false)
+    setTrainingWorkspaceMode(mode)
+    skipNextTrainingWorkspaceSelectionCloseRef.current = true
+    setShowTrainingWorkspace(true)
+
+    if (!settings.enableExperimentalTraining) {
+      setStatus({ message: 'Enable Local Training in Settings first.', type: 'info' })
+      return
+    }
+    setStatus({ message: 'Opened the training workspace.', type: 'info' })
+  }
+
+  const handleTrainWavsFromCoverage = useCallback(async (wavPaths: string[]) => {
+    if (!settings.enableExperimentalTraining) {
+      setStatus({ message: 'Enable Local Training in Settings first.', type: 'info' })
+      return
+    }
+    if (!settings.namPythonPath.trim() || !settings.namTrainingInputWav.trim()) {
+      setStatus({ message: 'Configure Python path and input WAV in Settings before training.', type: 'info' })
+      return
+    }
+    const folderPath = ((librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null) ?? librarian.rootFolder)
+    if (!folderPath) return
+    const preset = settings.trainingPresets[0] ?? null
+    const architectures = (preset?.architectures ?? ['standard']).filter(
+      (a): a is TrainerArchitecture => TRAINER_ARCHITECTURES.includes(a as TrainerArchitecture)
+    )
+    const epochs = preset?.epochs ?? 1000
+    const latency = preset?.latencyMode === 'manual' ? (preset?.latencyValue ?? null) : null
+    const thresholdEsr = preset?.thresholdEsr ?? null
+    const savePlot = preset?.savePlot ?? false
+    const ignoreChecks = preset?.ignoreChecks ?? false
+    const modeledBy = settings.enableCaptureDefaults && settings.defaultModeledBy.trim() ? settings.defaultModeledBy.trim() : null
+    const submissionId = makeSubmissionId('wav-check')
+    const submissionLabel = `WAV Check \u2013 ${wavPaths.length} capture${wavPaths.length !== 1 ? 's' : ''}`
+    const submissionCreatedAt = new Date().toISOString()
+    const payloads: TrainerStartPayload[] = wavPaths.flatMap((wavPath) =>
+      architectures.map((architecture) => ({
+        pythonPath: settings.namPythonPath.trim(),
+        inputPath: settings.namTrainingInputWav.trim(),
+        outputPath: wavPath,
+        trainPath: folderPath,
+        architecture,
+        epochs,
+        latency,
+        thresholdEsr,
+        savePlot,
+        silent: true,
+        ignoreChecks,
+        sourceMode: 'manual-direct' as const,
+        finalModelRoot: folderPath,
+        processedWavRoot: '',
+        graphRoot: folderPath,
+        sourcePostProcess: 'keep' as const,
+        namingTemplate: '{basename}',
+        profileId: preset?.id ?? null,
+        profileName: preset?.name ?? null,
+        modeledBy,
+        inputLevelDbu: null,
+        outputLevelDbu: null,
+        submissionId,
+        submissionLabel,
+        submissionCreatedAt,
+      }))
+    )
+    const result = await window.api.enqueueTrainerRuns(payloads)
+    if (result.success) {
+      handleOpenExperimentalTraining('queue')
+      setStatus({ message: `Queued ${result.queued ?? payloads.length} training job${payloads.length !== 1 ? 's' : ''}.`, type: 'success' })
+    } else {
+      setStatus({ message: result.error ?? 'Failed to queue training jobs.', type: 'error' })
+    }
+  }, [settings, librarian, handleOpenExperimentalTraining])
+
+  useEffect(() => {
+    if (selectedFiles.length !== 1 && selectedFilePanelTab === 'training') {
+      setSelectedFilePanelTab('metadata')
+    }
+  }, [selectedFiles.length, selectedFilePanelTab])
+  const previousSelectedSingleFilePathRef = useRef<string | null>(null)
+  useEffect(() => {
+    const previous = previousSelectedSingleFilePathRef.current
+    if (
+      previous &&
+      selectedSingleFilePath &&
+      previous !== selectedSingleFilePath &&
+      selectedFilePanelTab === 'training'
+    ) {
+      setSelectedFilePanelTab('metadata')
+    }
+    previousSelectedSingleFilePathRef.current = selectedSingleFilePath
+  }, [selectedFilePanelTab, selectedSingleFilePath])
+  useEffect(() => {
+    const previous = previousSelectionSignatureRef.current
+    const changed = previous !== selectedFileSignature
+    if (showTrainingWorkspace && changed) {
+      if (trainingWorkspaceMode === 'files') {
+        previousSelectionSignatureRef.current = selectedFileSignature
+        return
+      }
+      if (skipNextTrainingWorkspaceSelectionCloseRef.current) {
+        skipNextTrainingWorkspaceSelectionCloseRef.current = false
+      } else {
+        setShowTrainingWorkspace(false)
+      }
+    } else if (skipNextTrainingWorkspaceSelectionCloseRef.current && showTrainingWorkspace) {
+      skipNextTrainingWorkspaceSelectionCloseRef.current = false
+    }
+    previousSelectionSignatureRef.current = selectedFileSignature
+  }, [selectedFileSignature, showTrainingWorkspace, trainingWorkspaceMode])
+  const showToneStorePanel = showToneStore && !showSettings && !showDashboard && !historyOpen && !companionInboxOpen && batchFolder === null
+  const activeTrainingQueueCount = globalTrainerState.queue.filter((job) => ['queued', 'starting', 'running'].includes(job.status)).length
+  const trainingQueueIsActive = globalTrainerState.status === 'starting' || globalTrainerState.status === 'running'
+
+  useEffect(() => {
+    const autoRunWatcherIds = new Set(
+      settings.enableExperimentalTraining
+        ? settings.trainingWatchProfiles
+            .filter((profile) => profile.enabled && profile.autoRun)
+            .map((profile) => profile.id)
+        : []
+    )
+    const queuedWatcherJobs = globalTrainerState.queue.filter(
+      (job) => job.status === 'queued' && job.sourceMode === 'watcher' && !!job.profileId && autoRunWatcherIds.has(job.profileId)
+    )
+    if (queuedWatcherJobs.length === 0 || trainingQueueIsActive) {
+      trainerWatcherAutoStartRecoveryRef.current = ''
+      return
+    }
+    const recoveryKey = queuedWatcherJobs.map((job) => job.jobId).join('|')
+    if (!recoveryKey || trainerWatcherAutoStartRecoveryRef.current === recoveryKey) return
+    trainerWatcherAutoStartRecoveryRef.current = recoveryKey
+    void window.api.startQueuedTrainerRuns().catch(() => {
+      trainerWatcherAutoStartRecoveryRef.current = ''
+    })
+  }, [
+    globalTrainerState.queue,
+    settings.enableExperimentalTraining,
+    settings.trainingWatchProfiles,
+    trainingQueueIsActive,
+  ])
+
+  useEffect(() => {
+    if (showToneStore || toneStoreSearchRequest) setToneStoreMounted(true)
+  }, [showToneStore, toneStoreSearchRequest])
+  useEffect(() => {
+    // Depend on the stable derived path, not the `selectedFiles` array — that array is a
+    // fresh reference on every render (see visibleFiles/selectedFiles above), which used to
+    // make this effect re-run and re-kick-off async scanImages() calls on every render,
+    // not just when the selection actually changed.
+    if (selectedSingleFilePath == null) {
+      setMetadataCoverPath(null)
+      return
+    }
+    let cancelled = false
+    const normalized = selectedSingleFilePath.replace(/\\/g, '/')
+    const fileFolder = normalized.split('/').slice(0, -1).join('/')
+    const normalizedRoot = librarian.rootFolder.replace(/\\/g, '/')
+    const candidates: string[] = []
+    let current: string | null = fileFolder
+    while (current) {
+      if (!candidates.includes(current)) candidates.push(current)
+      if (current === normalizedRoot) break
+      const lastSlash = current.lastIndexOf('/')
+      if (lastSlash <= 0) break
+      const parent = current.slice(0, lastSlash)
+      if (!parent.startsWith(normalizedRoot) || parent.length < normalizedRoot.length) break
+      current = parent
+    }
+    const resolveCover = async () => {
+      for (const folderPath of candidates) {
+        const result = await window.api.scanImages(folderPath)
+        if (!result.success) continue
+        const match = result.images.find((imagePath) => {
+          const fileName = imagePath.replace(/\\/g, '/').split('/').pop() ?? ''
+          return AMPCOVER_PATTERN.test(fileName)
+        })
+        if (match) {
+          if (!cancelled) setMetadataCoverPath(match)
+          return
+        }
+      }
+      if (!cancelled) setMetadataCoverPath(null)
+    }
+    void resolveCover()
+    return () => { cancelled = true }
+  }, [librarian.rootFolder, selectedSingleFilePath])
   // Close slide panel if selection is empty (and no batch edit active)
   if (gridSlideOpen && selectedFiles.length === 0 && batchFolder === null) setGridSlideOpen(false)
   const dirtyCount = files.filter((f) => f.isDirty).length
+  const autoFilledCount = files.filter((f) => f.autoFilledFields.length > 0).length
   const unnamedCount = files.filter((f) => !f.metadata.name).length
   const hasTree = librarian.folderTree !== null
   const dirtyPaths = new Set(files.filter((f) => f.isDirty).map((f) => f.filePath.replace(/\\/g, '/')))
+  const folderWatchSourceByDest = Object.fromEntries(
+    settings.folderWatchRules
+      .filter((rule) => rule.enabled)
+      .map((rule) => [rule.destFolder.replace(/\\/g, '/'), rule.sourceFolder.replace(/\\/g, '/')])
+  ) as Record<string, string>
+  const duplicateModalFiles = duplicatesScopeFolder
+    ? files.filter((f) => {
+        const normalized = f.filePath.replace(/\\/g, '/')
+        return normalized.startsWith(duplicatesScopeFolder + '/')
+      })
+    : files
 
   const GEAR_MAKE_SEED = ['Marshall', 'Fender', 'Mesa Boogie', 'Bogner', 'Friedman', 'Dumble', 'Vox', 'Orange', 'Peavey', 'EVH', 'Carr', 'Two-Rock', 'Matchless', 'Bad Cat', 'Soldano', 'Dr. Z', 'Diezel', 'Morgan', 'Egnater', 'Suhr', 'Koch', 'Victory', 'Laney', 'Hiwatt', 'Engl', 'Rivera', 'Tone King', 'Divided by 13', 'Cornford', 'Komet', 'PRS', 'Kemper']
   const gearMakeSuggestions = Array.from(new Set([
@@ -1816,6 +4460,13 @@ export default function App() {
   const gearModelSuggestions = Array.from(new Set(
     files.map((f) => f.metadata.gear_model).filter((v): v is string => !!v)
   )).sort()
+  const suggestRulesEditorExample = suggestRulesEditorPath
+    ? (() => {
+        const exampleFile = files.find((file) => file.filePath.replace(/\\/g, '/').startsWith(suggestRulesEditorPath + '/'))
+        if (!exampleFile) return ''
+        return exampleFile.metadata.name?.trim() || exampleFile.fileName.replace(/\.nam$/i, '')
+      })()
+    : ''
 
   return (
     <div
@@ -1828,47 +4479,195 @@ export default function App() {
         onOpenFiles={handleOpenFiles}
         onOpenFolder={handleOpenFolder}
         onSaveAll={handleSaveAll}
+        saveProgress={saveProgress}
         dirtyCount={dirtyCount}
+        autoFilledCount={autoFilledCount}
         fileCount={files.length}
         isMac={window.api.platform === 'darwin'}
         showSettings={showSettings}
-        onToggleSettings={() => { setShowSettings((s) => !s); setBatchFolder(null); if (gridMaximized) setGridSlideOpen(true) }}
+        onToggleSettings={() => {
+          setShowSettings((s) => !s)
+          setShowDashboard(false)
+          setCompanionInboxOpen(false)
+          setBatchFolder(null)
+          setShowToneStore(false)
+          setShowTrainingWorkspace(false)
+          setCardView(false)
+          if (gridMaximized) setGridSlideOpen(true)
+        }}
         unnamedCount={unnamedCount}
         onNameFromFilename={handleNameFromFilename}
+        onClearSuggestionsAll={handleClearSuggestionsAll}
         onCloseAll={handleCloseAll}
         rootFolder={librarian.rootFolder}
         onRefresh={handleRefresh}
         recentFolders={recentFolders}
         onOpenRecentFolder={(path) => loadFolderByPath(path)}
-        onFindDuplicates={files.length > 1 ? () => setShowDuplicates(true) : undefined}
+        onFindDuplicates={files.length > 0 ? () => { setDuplicatesScopeFolder(null); setShowDuplicates(true) } : undefined}
+        onOpenLibraryCleanup={handleOpenLibraryCleanup}
+        showExperimentalTraining={settings.enableExperimentalTraining}
+        onOpenExperimentalTraining={() => handleOpenExperimentalTraining('files')}
+        trainingQueueCount={activeTrainingQueueCount}
+        trainingQueueActive={trainingQueueIsActive}
+        trainingModelName={trainingQueueIsActive ? (globalTrainerState.modelName || globalTrainerState.outputModelPath || null) : null}
+        onOpenTrainingQueue={() => handleOpenExperimentalTraining('files')}
+        onOpenTrainingLive={() => handleOpenExperimentalTraining('queue')}
         showDashboard={files.length > 0}
         dashboardActive={showDashboard}
-        onToggleDashboard={() => { setShowDashboard((v) => !v); setHistoryOpen(false) }}
+        onToggleDashboard={() => {
+          setShowDashboard((v) => !v)
+          setHistoryOpen(false)
+          setCompanionInboxOpen(false)
+          setShowSettings(false)
+          setShowToneStore(false)
+          setShowTrainingWorkspace(false)
+          setBatchFolder(null)
+          setCardView(false)
+        }}
         historyOpen={historyOpen}
-        onHistoryToggle={() => { setHistoryOpen((v) => !v); setShowDashboard(false) }}
-        toneStoreActive={showToneStore}
-        onToggleToneStore={() => { setShowToneStore((v) => !v); setShowSettings(false); setBatchFolder(null) }}
+        onHistoryToggle={() => {
+          setHistoryOpen((v) => !v)
+          setShowDashboard(false)
+          setCompanionInboxOpen(false)
+          setShowSettings(false)
+          setShowToneStore(false)
+          setShowTrainingWorkspace(false)
+          setBatchFolder(null)
+          setCardView(false)
+        }}
+        companionInboxOpen={companionInboxOpen}
+        companionInboxCount={companionInboxItems.filter((item) => item.status === 'new').length}
+        onCompanionInboxToggle={settings.enableCompanionApp ? () => {
+          const nextOpen = !companionInboxOpen
+          setCompanionInboxOpen(nextOpen)
+          setShowDashboard(false)
+          setHistoryOpen(false)
+          setShowSettings(false)
+          setShowToneStore(false)
+          setShowTrainingWorkspace(false)
+          setBatchFolder(null)
+          setCardView(false)
+          if (nextOpen) void loadCompanionInbox()
+        } : undefined}
+        toneStoreActive={showToneStorePanel}
+        onToggleToneStore={() => {
+          setToneStoreDefaultDir(null)
+          setShowToneStore((v) => !v)
+          setShowDashboard(false)
+          setHistoryOpen(false)
+          setCompanionInboxOpen(false)
+          setShowSettings(false)
+          setShowTrainingWorkspace(false)
+          setBatchFolder(null)
+          setCardView(false)
+        }}
+        helpOpen={helpView !== null}
+        onOpenHelp={() => setHelpView('workflows')}
+        onOpenFeatureHelp={() => setHelpView('features')}
+        onOpenAbout={() => setHelpView('about')}
+        homeViewActive={!cardView && !showTrainingWorkspace}
+        onGoHomeView={() => { setCardView(false); setShowTrainingWorkspace(false) }}
+        cardViewActive={cardView}
+        cardViewEnabled={!!librarian.rootFolder && !!(librarian.folderTree?.children?.length)}
+        onToggleCardView={() => { setCardViewInitialPath(null); setCardView((v) => !v) }}
       />
 
-      <div className="flex flex-1 overflow-hidden relative">
-        {/* Folder tree — only shown when a folder is open */}
-        {hasTree && (
+      {/* Content area: card view (left) + 3-panel / ToneStore (right) */}
+      <div className="flex flex-1 overflow-hidden">
+        {cardView && librarian.folderTree?.children && librarian.rootFolder && (
+          <FolderCardView
+            rootNode={librarian.folderTree}
+            rootFolder={librarian.rootFolder}
+            files={files}
+            packInfoFolders={packInfoFolders}
+            isDark={(settings.uiTheme ?? settings.theme) !== 'light'}
+            initialPath={cardViewInitialPath}
+            rescanSignal={cardRescanSignal}
+            hidePreviewPanel={showToneStorePanel}
+            onOpenFolder={(path) => {
+              setCardView(false)
+              setCardViewInitialPath(null)
+              setLibrarian((prev) => ({ ...prev, selectedFolders: [path] }))
+            }}
+            onSearchTone3000={(query, folderPath) => {
+              setToneStoreDefaultDir(folderPath)
+              setToneStoreSearchRequest({ key: Date.now(), query })
+              setShowToneStore(true)
+              setShowSettings(false)
+              setBatchFolder(null)
+              setShowDashboard(false)
+              setHistoryOpen(false)
+            }}
+            onRefresh={async () => {
+              await refreshFolderTree()
+              setCardRescanSignal((s) => s + 1)
+            }}
+          />
+        )}
+
+      {/* Drag handle between card grid and ToneStore panel */}
+      {cardView && showToneStorePanel && (
+        <div
+          className="w-1 cursor-col-resize shrink-0 bg-gray-200 dark:bg-gray-800 hover:bg-teal-500/60 active:bg-teal-500 transition-colors"
+          onMouseDown={(e) => {
+            e.preventDefault()
+            const startX = e.clientX
+            const startW = toneStorePanelWidth
+            const onMove = (ev: MouseEvent) => {
+              const next = Math.max(300, Math.min(700, startW - (ev.clientX - startX)))
+              setToneStorePanelWidth(next)
+              localStorage.setItem('toneStorePanelWidth', String(next))
+            }
+            const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+            window.addEventListener('mousemove', onMove)
+            window.addEventListener('mouseup', onUp)
+          }}
+        />
+      )}
+
+      {/* 3-panel layout Ã¢â‚¬â€ hidden in card view unless ToneStore is open (then right-panel only) */}
+      <div className="flex flex-1 overflow-hidden relative" style={
+        cardView && showToneStorePanel ? { width: toneStorePanelWidth, flexBasis: toneStorePanelWidth, flexShrink: 0, flexGrow: 0 }
+        : cardView ? { display: 'none' }
+        : undefined
+      }>
+        {/* Folder tree Ã¢â‚¬â€ only shown when a folder is open */}
+        {hasTree && !(cardView && showToneStorePanel) && (
           <>
-            <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: (treeCollapsed || gridMaximized) ? 0 : treeWidth, overflow: 'hidden' }}>
+            <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: (treeCollapsed || gridMaximized || showTrainingWorkspace || (cardView && showToneStorePanel)) ? 0 : treeWidth, overflow: 'hidden' }}>
               <FolderTree
                 tree={librarian.folderTree!}
                 files={files}
                 selectedFolders={librarian.selectedFolders}
                 dirtyPaths={dirtyPaths}
+                foldersWithSuggestRules={new Set(settings.metadataSuggestScopedRules.map((set) => set.scopePath.replace(/\\/g, '/')))}
                 onFilterChange={(matching) => setLibraryFilter(matching)}
                 onSelect={(path, ctrl) => {
+                  if (!ctrl) {
+                    const isInFolderPanel =
+                      !showSettings &&
+                      !showDashboard &&
+                      !historyOpen &&
+                      !showToneStore &&
+                      batchFolder === null &&
+                      selectedIds.size === 0
+                    preserveFolderTabRef.current = isInFolderPanel && folderPanelTab === 'pack' ? 'pack' : null
+                  }
                   setLibrarian((prev) => {
                     if (path === null || !ctrl) return { ...prev, selectedFolders: path ? [path] : [] }
                     const isIn = prev.selectedFolders.includes(path)
                     return { ...prev, selectedFolders: isIn ? prev.selectedFolders.filter((f) => f !== path) : [...prev.selectedFolders, path] }
                   })
                   setCreatorFilter(null)
-                  if (!ctrl) setSelectedIds(new Set())
+                  if (!ctrl) {
+                    setSelectedIds(new Set())
+                    setShowDashboard(false)
+                    setHistoryOpen(false)
+                    setShowSettings(false)
+                    setShowToneStore(false)
+                    setShowTrainingWorkspace(false)
+                    setBatchFolder(null)
+                  }
                 }}
                 onSaveFolder={async (path) => {
                   const targets = path === null
@@ -1876,19 +4675,15 @@ export default function App() {
                     : files.filter((f) => f.isDirty && f.filePath.replace(/\\/g, '/').startsWith(path + '/'))
                   if (targets.length === 0) return
                   if (!settings.skipSaveAllConfirmation) {
-                    const confirmed = window.confirm(`Save changes to ${targets.length} file${targets.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.\n\n(This warning can be toggled off in Settings → Behavior)`)
+                    const confirmed = window.confirm(`Save changes to ${targets.length} file${targets.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.\n\n(This warning can be toggled off in Settings -> Behavior)`)
                     if (!confirmed) return
                   }
-                  const savedPaths = new Set<string>()
-                  let failed = 0
-                  for (const f of targets) {
-                    const result = await window.api.writeMetadata(f.filePath, f.metadata)
-                    if (result.success) savedPaths.add(f.filePath)
-                    else failed++
-                  }
+                  const batchResult = await runMetadataSaveBatch(targets, (f) => f.metadata, path === null ? 'Save root folder' : 'Save folder')
+                  if (!batchResult) return
+                  const { savedPaths, failed, savedAt } = batchResult
                   setFiles((prev) => prev.map((f) =>
                     savedPaths.has(f.filePath)
-                      ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [] }
+                      ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [], mtimeMs: savedAt }
                       : f
                   ))
                   if (failed > 0) {
@@ -1915,6 +4710,7 @@ export default function App() {
                 onCreateFolder={handleCreateFolder}
                 onRenameFolder={handleRenameFolder}
                 onMoveFolder={handleMoveFolder}
+                onDeleteEmptyFolder={handleDeleteEmptyFolder}
                 onBatchEdit={(path, name) => {
                   setShowSettings(false)
                   const sel = [...selectedIds]
@@ -1931,6 +4727,9 @@ export default function App() {
                 onExportFolder={handleExportFolder}
                 onGenerateTemplate={handleGenerateTemplate}
                 onImportMetadata={handleImportMetadata}
+                onSuggestMetadata={handleSuggestMetadata}
+                onCopyMetadataFromFolder={handleCopyMetadataFromFolder}
+                onEditSuggestRules={handleOpenSuggestRulesEditor}
                 onSelectAllInFolder={handleSelectAllInFolder}
                 onCoverageReport={(folderPath) => setCoverageReport({ folderPath })}
                 scrollToFolder={treeScrollTarget}
@@ -1947,15 +4746,26 @@ export default function App() {
                 bundleFolders={bundleFolders}
                 onCreateBundle={(folderPath) => { void handleCreateBundle(folderPath) }}
                 onDeleteBundle={(folderPath) => handleDeleteBundle(folderPath)}
+                watchSourceByDest={folderWatchSourceByDest}
+                onSetWatchSource={(folderPath) => { void handleSetWatchSource(folderPath) }}
+                onClearWatchSource={handleClearWatchSource}
+                onCopySuggestRules={handleCopyScopedSuggestRules}
+                onPasteSuggestRules={suggestRulesClipboard ? handlePasteScopedSuggestRules : undefined}
+                onFindDuplicates={handleFindDuplicatesInFolder}
+                onCleanThisFolder={(folderPath) => { void handleOpenFolderCleanup(folderPath) }}
+                onBrowseCards={(folderPath) => {
+                  setCardViewInitialPath(folderPath)
+                  setCardView(true)
+                }}
               />
             </div>
             {!gridMaximized && <DragHandle onMouseDown={(e) => onDragStart('tree', e)} onCollapse={() => setTreeCollapsed((v) => !v)} collapsed={treeCollapsed} />}
           </>
         )}
 
-        {/* File list — only shown when files are loaded */}
-        {files.length > 0 && <>
-          <div className={gridMaximized ? 'flex-1 flex flex-col overflow-hidden' : 'flex-shrink-0 flex flex-col overflow-hidden'} style={gridMaximized ? undefined : { width: listCollapsed ? 0 : listWidth }}>
+        {/* File list ÃƒÆ&rsquo;Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â only shown when files are loaded */}
+        {files.length > 0 && !(cardView && showToneStorePanel) && <>
+          <div className={gridMaximized ? 'flex-1 flex flex-col overflow-hidden' : 'flex-shrink-0 flex flex-col overflow-hidden'} style={gridMaximized ? undefined : { width: (overviewMaximized || showTrainingWorkspace) ? 0 : (listCollapsed ? 0 : listWidth), overflow: 'hidden' }}>
             <FileList
               files={visibleFiles}
               selectedIds={selectedIds}
@@ -1995,6 +4805,7 @@ export default function App() {
               onTrimSelection={(visiblePaths) => {
                 const visibleSet = new Set(visiblePaths)
                 setSelectedIds((prev) => {
+                  if (prev.size === 1) return prev
                   const filtered = [...prev].filter((id) => visibleSet.has(id))
                   if (filtered.length === prev.size) return prev
                   return new Set(filtered)
@@ -2011,6 +4822,7 @@ export default function App() {
                 })
                 if (gridMaximized) setGridSlideOpen(true)
               }}
+              onSuggestMetadataSelected={handleSuggestMetadataForSelection}
               onSaveSelected={async (paths) => {
                 const pathSet = new Set(paths)
                 const targets = files.filter((f) => pathSet.has(f.filePath) && f.isDirty)
@@ -2019,17 +4831,12 @@ export default function App() {
                   return
                 }
                 if (!settings.skipSaveAllConfirmation) {
-                  const confirmed = window.confirm(`Save changes to ${targets.length} file${targets.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.\n\n(This warning can be toggled off in Settings → Behavior)`)
+                  const confirmed = window.confirm(`Save changes to ${targets.length} file${targets.length !== 1 ? 's' : ''}?\n\nThis will write to the original .nam files on disk.\n\n(This warning can be toggled off in Settings -> Behavior)`)
                   if (!confirmed) return
                 }
-                setStatus({ message: `Saving ${targets.length} file(s)...`, type: 'info' })
-                const savedPaths = new Set<string>()
-                let failed = 0
-                for (const f of targets) {
-                  const result = await window.api.writeMetadata(f.filePath, f.metadata)
-                  if (result.success) savedPaths.add(f.filePath)
-                  else failed++
-                }
+                const batchResult = await runMetadataSaveBatch(targets, (f) => f.metadata, 'Save grid selection')
+                if (!batchResult) return
+                const { savedPaths, failed } = batchResult
                 setFiles((prev) => prev.map((f) =>
                   savedPaths.has(f.filePath)
                     ? { ...f, isDirty: false, originalMetadata: { ...f.metadata }, autoFilledFields: [] }
@@ -2054,6 +4861,7 @@ export default function App() {
               onCopyMetadata={handleCopyMetadata}
               onPasteMetadata={handlePasteMetadata}
               onClearNamLab={handleClearNamLab}
+              onCleanOutdatedNamBot={handleCleanOutdatedNamBot}
               namPlayerAvailable={namPlayerDetected || !!settings.namStandalonePath}
               onOpenInNam={async (filePath) => {
                 const result = await window.api.openInNam(filePath, settings.namStandalonePath)
@@ -2076,13 +4884,38 @@ export default function App() {
               onPresetFilterClear={() => setPresetFilterOverride(null)}
               onFilterModeClear={() => setFilterModeOverride(null)}
               onRatingFilterClear={() => setRatingFilter(null)}
+              activeFolderPath={librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null}
+              directFilesOnly={directFilesOnly}
+              onDirectFilesOnlyChange={setDirectFilesOnly}
             />
           </div>
-          {!gridMaximized && <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} onCollapse={() => setListCollapsed((v) => !v)} collapsed={listCollapsed} />}
+          {!gridMaximized && !overviewMaximized && <DragHandle onMouseDown={(e: React.MouseEvent) => onDragStart('list', e)} onCollapse={() => setListCollapsed((v) => !v)} collapsed={listCollapsed} />}
         </>}
 
         {/* Main content */}
-        <div ref={mainContentRef} tabIndex={-1} className={`flex-1 overflow-hidden flex flex-col focus:outline-none${gridMaximized ? ' hidden' : ''}`} style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        <div ref={mainContentRef} tabIndex={-1} className={`flex-1 overflow-hidden flex flex-col focus:outline-none${gridMaximized && !cardView ? ' hidden' : ''}`} style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          {toneStoreMounted && (
+            <div
+              className={showToneStorePanel ? 'flex-1 min-h-0 flex flex-col' : 'absolute inset-0 opacity-0 pointer-events-none -z-10'}
+              aria-hidden={!showToneStorePanel}
+            >
+              <ToneStore
+                onClose={() => {
+                  setShowToneStore(false)
+                  setToneStoreDefaultDir(null)
+                  if (cardView) setCardRescanSignal((s) => s + 1)
+                }}
+                onDownloaded={(paths) => { loadFiles(paths, 'append'); if (cardView) setCardRescanSignal((s) => s + 1) }}
+                onFilterLocalCreator={handleFilterLocalCreator}
+                savedTone3000Username={settings.tone3000Username}
+                searchRequest={toneStoreSearchRequest}
+                queueJob={toneStoreQueueJob}
+                onStartQueue={handleStartToneStoreQueue}
+                onCancelQueue={handleCancelToneStoreQueue}
+                defaultDownloadDir={toneStoreDefaultDir}
+              />
+            </div>
+          )}
           {playerFile !== null ? (
             <PlayerPanel
               key={playerFile.filePath}
@@ -2090,20 +4923,57 @@ export default function App() {
               onClose={() => setPlayerFile(null)}
             />
           ) : showSettings ? (
-            <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} />
-          ) : showToneStore ? (
-            <ToneStore
-              onClose={() => setShowToneStore(false)}
-              onDownloaded={(paths) => loadFiles(paths, 'append')}
-              onFilterLocalCreator={handleFilterLocalCreator}
-              savedTone3000Username={settings.tone3000Username}
-              searchRequest={toneStoreSearchRequest}
+            <SettingsPanel
+              settings={settings}
+              onSave={handleSaveSettings}
+              onClose={() => { setShowSettings(false); setSettingsInitialTab(undefined) }}
+              initialTab={settingsInitialTab}
+              onOpenTrainingPresets={() => handleOpenExperimentalTraining('presets')}
+            />
+          ) : showToneStorePanel ? null : showTrainingWorkspace ? (
+            <TrainingPanel
+              settings={settings}
+              onSaveSettings={handleSaveSettings}
+              initialRunMode={trainingWorkspaceMode}
+              onClose={() => setShowTrainingWorkspace(false)}
+              onOpenSetupGuide={() => setShowTrainingSetupGuide(true)}
+              onOpenSettings={(tab) => { setSettingsInitialTab(tab); setShowSettings(true) }}
+            />
+          ) : companionInboxOpen ? (
+            <CompanionInboxPanel
+              items={companionInboxItems}
+              onRefresh={() => { void loadCompanionInbox() }}
+              onMarkReviewed={(item) => { void handleMarkCompanionInboxReviewed(item) }}
+              onDelete={(item) => { void handleDeleteCompanionInboxItem(item) }}
+              onUseAsCover={(item) => { void handleUseCompanionInboxAsCover(item) }}
+              onRevealAsset={(item) => { if (item.assetPath) void window.api.revealFile(item.assetPath) }}
+              onOpenFolder={(item) => { void handleOpenCompanionInboxFolder(item) }}
+              onClose={() => setCompanionInboxOpen(false)}
             />
           ) : showDashboard ? (
-            <NamDashboard
-              files={files}
-              activeCreator={creatorFilter ?? undefined}
-              onCreatorClick={(creator) => {
+            <div className="relative h-full flex flex-col">
+              <button
+                onClick={() => setOverviewMaximized((v) => !v)}
+                title={overviewMaximized ? 'Restore panels' : 'Maximize overview'}
+                className="absolute top-2 right-2 z-10 p-1.5 rounded text-gray-400 hover:text-gray-100 hover:bg-gray-700/60 transition-colors"
+              >
+                {overviewMaximized ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/>
+                    <line x1="10" y1="14" x2="3" y2="21"/><line x1="21" y1="3" x2="14" y2="10"/>
+                  </svg>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
+                    <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+                  </svg>
+                )}
+              </button>
+              <NamDashboard
+                files={files}
+                packChecklistRollup={dashboardChecklistEntries}
+                activeCreator={creatorFilter ?? undefined}
+                onCreatorClick={(creator) => {
                 setCreatorFilter(creator)
                 setGearTypeFilter(null)
                 setToneTypeFilter(null)
@@ -2165,6 +5035,7 @@ export default function App() {
                 setShowDashboard(false)
               }}
             />
+            </div>
           ) : historyOpen ? (
             <SessionHistoryPanel
               entries={sessionHistory}
@@ -2186,54 +5057,128 @@ export default function App() {
               gearModelSuggestions={gearModelSuggestions}
             />
           ) : selectedFiles.length === 1 ? (
-            <MetadataEditor
-              key={selectedFiles[0].filePath}
-              file={selectedFiles[0]}
-              onChange={(m) => handleMetadataChange(selectedFiles[0].filePath, m)}
-              onSave={() => handleSave(selectedFiles[0].filePath)}
-              onSaveAndAdvance={() => handleSaveAndAdvance(selectedFiles[0].filePath)}
-              onRevert={() => {
-                const f = selectedFiles[0]
-                setFiles((prev) => prev.map((x) =>
-                  x.filePath === f.filePath
-                    ? { ...x, metadata: { ...x.originalMetadata }, isDirty: false, autoFilledFields: [] }
-                    : x
-                ))
-              }}
-              onRevealInFinder={() => window.api.revealFile(selectedFiles[0].filePath)}
-              renameTemplate={settings.renameTemplate}
-              onRenameFile={handleRenameFile}
-              gearMakeSuggestions={gearMakeSuggestions}
-              gearModelSuggestions={gearModelSuggestions}
-              showNamLabFields={settings.showNamLabFields}
-              hasActiveDefaults={
-                settings.enableAmpInfo ||
-                settings.enableCaptureDefaults ||
-                settings.populateNameFromFilename ||
-                settings.autoDetectToneType ||
-                !!settings.ampSuffix
-              }
-              onReapplyDefaults={() => {
-                const f = selectedFiles[0]
-                const baseName = f.fileName.replace(/\.nam$/i, '')
-                const currentMeta = f.metadata
-                const newMeta = applyDefaults(currentMeta, baseName, settings)
-                const newAutoFilled = (Object.keys(newMeta) as (keyof NamFile['metadata'])[]).filter(
-                  (k) => newMeta[k] != null && (currentMeta[k] == null || currentMeta[k] === '') && !f.autoFilledFields.includes(k)
-                )
-                const allAutoFilled = [...f.autoFilledFields, ...newAutoFilled]
-                const wasChanged = JSON.stringify(newMeta) !== JSON.stringify(f.originalMetadata)
-                setFiles((prev) => prev.map((x) =>
-                  x.filePath === f.filePath
-                    ? { ...x, metadata: newMeta, isDirty: wasChanged, autoFilledFields: allAutoFilled }
-                    : x
-                ))
-              }}
-            />
+            settings.enableExperimentalTraining ? (
+              <div className="h-full flex flex-col">
+                <div className="flex border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+                  <button
+                    onClick={() => setSelectedFilePanelTab('metadata')}
+                    className={`px-4 py-2 text-xs font-medium transition-colors border-b-2 -mb-px ${
+                      selectedFilePanelTab === 'metadata'
+                        ? 'border-teal-500 text-teal-600 dark:text-teal-400'
+                        : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                    }`}
+                  >
+                    Metadata
+                  </button>
+                  <button
+                    onClick={() => handleOpenExperimentalTraining('files')}
+                    className="px-4 py-2 text-xs font-medium transition-colors border-b-2 -mb-px border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                  >
+                    Training &#x2197;
+                  </button>
+                </div>
+                <div className="flex-1 overflow-hidden">
+                  <MetadataEditor
+                    key={selectedFiles[0].filePath}
+                    file={selectedFiles[0]}
+                    coverImagePath={metadataCoverPath}
+                    onChange={(m) => handleMetadataChange(selectedFiles[0].filePath, m)}
+                    onSave={() => handleSave(selectedFiles[0].filePath)}
+                    onSaveAndAdvance={() => handleSaveAndAdvance(selectedFiles[0].filePath)}
+                    onRevert={() => {
+                      const f = selectedFiles[0]
+                      setFiles((prev) => prev.map((x) =>
+                        x.filePath === f.filePath
+                          ? { ...x, metadata: { ...x.originalMetadata }, isDirty: false, autoFilledFields: [] }
+                          : x
+                      ))
+                    }}
+                    onRevealInFinder={() => window.api.revealFile(selectedFiles[0].filePath)}
+                    renameTemplate={settings.renameTemplate}
+                    onRenameFile={handleRenameFile}
+                    gearMakeSuggestions={gearMakeSuggestions}
+                    gearModelSuggestions={gearModelSuggestions}
+                    showNamLabFields={settings.showNamLabFields}
+                    hasActiveDefaults={
+                      settings.enableAmpInfo ||
+                      settings.enableCaptureDefaults ||
+                      settings.populateNameFromFilename ||
+                      settings.autoDetectToneType ||
+                      !!settings.ampSuffix
+                    }
+                    onReapplyDefaults={() => {
+                      const f = selectedFiles[0]
+                      const baseName = f.fileName.replace(/\.nam$/i, '')
+                      const currentMeta = f.metadata
+                      const newMeta = applyDefaults(currentMeta, baseName, settings)
+                      const newAutoFilled = (Object.keys(newMeta) as (keyof NamFile['metadata'])[]).filter(
+                        (k) => newMeta[k] != null && (currentMeta[k] == null || currentMeta[k] === '') && !f.autoFilledFields.includes(k)
+                      )
+                      const allAutoFilled = [...f.autoFilledFields, ...newAutoFilled]
+                      const wasChanged = JSON.stringify(newMeta) !== JSON.stringify(f.originalMetadata)
+                      setFiles((prev) => prev.map((x) =>
+                        x.filePath === f.filePath
+                          ? { ...x, metadata: newMeta, isDirty: wasChanged, autoFilledFields: allAutoFilled }
+                          : x
+                      ))
+                    }}
+                    onClearSuggestions={() => handleClearSuggestionsForFile(selectedFiles[0].filePath)}
+                  />
+                </div>
+              </div>
+            ) : (
+              <MetadataEditor
+                key={selectedFiles[0].filePath}
+                file={selectedFiles[0]}
+                coverImagePath={metadataCoverPath}
+                onChange={(m) => handleMetadataChange(selectedFiles[0].filePath, m)}
+                onSave={() => handleSave(selectedFiles[0].filePath)}
+                onSaveAndAdvance={() => handleSaveAndAdvance(selectedFiles[0].filePath)}
+                onRevert={() => {
+                  const f = selectedFiles[0]
+                  setFiles((prev) => prev.map((x) =>
+                    x.filePath === f.filePath
+                      ? { ...x, metadata: { ...x.originalMetadata }, isDirty: false, autoFilledFields: [] }
+                      : x
+                  ))
+                }}
+                onRevealInFinder={() => window.api.revealFile(selectedFiles[0].filePath)}
+                renameTemplate={settings.renameTemplate}
+                onRenameFile={handleRenameFile}
+                gearMakeSuggestions={gearMakeSuggestions}
+                gearModelSuggestions={gearModelSuggestions}
+                showNamLabFields={settings.showNamLabFields}
+                hasActiveDefaults={
+                  settings.enableAmpInfo ||
+                  settings.enableCaptureDefaults ||
+                  settings.populateNameFromFilename ||
+                  settings.autoDetectToneType ||
+                  !!settings.ampSuffix
+                }
+                onReapplyDefaults={() => {
+                  const f = selectedFiles[0]
+                  const baseName = f.fileName.replace(/\.nam$/i, '')
+                  const currentMeta = f.metadata
+                  const newMeta = applyDefaults(currentMeta, baseName, settings)
+                  const newAutoFilled = (Object.keys(newMeta) as (keyof NamFile['metadata'])[]).filter(
+                    (k) => newMeta[k] != null && (currentMeta[k] == null || currentMeta[k] === '') && !f.autoFilledFields.includes(k)
+                  )
+                  const allAutoFilled = [...f.autoFilledFields, ...newAutoFilled]
+                  const wasChanged = JSON.stringify(newMeta) !== JSON.stringify(f.originalMetadata)
+                  setFiles((prev) => prev.map((x) =>
+                    x.filePath === f.filePath
+                      ? { ...x, metadata: newMeta, isDirty: wasChanged, autoFilledFields: allAutoFilled }
+                      : x
+                  ))
+                }}
+                onClearSuggestions={() => handleClearSuggestionsForFile(selectedFiles[0].filePath)}
+              />
+            )
           ) : selectedFiles.length > 1 ? (
             <MultiSelectEditor
               files={selectedFiles}
               onApply={handleMultiSelectApply}
+              onSaveDirty={handleSaveSelected}
               skipConfirmation={settings.skipBatchEditConfirmation}
               gearMakeSuggestions={gearMakeSuggestions}
               gearModelSuggestions={gearModelSuggestions}
@@ -2241,6 +5186,7 @@ export default function App() {
           ) : selectedFiles.length === 0 && librarian.rootFolder !== null ? (() => {
             const activeFolderPath = ((librarian.selectedFolders.length === 1 ? librarian.selectedFolders[0] : null) ?? librarian.rootFolder)!
             const activeFolderName = activeFolderPath.split('/').pop() ?? activeFolderPath
+            const activeFolderWatchSource = folderWatchSourceByDest[activeFolderPath] ?? null
             const hasBundle = bundleFolders.has(activeFolderPath.replace(/\\/g, '/'))
             if (hasBundle) {
               return (
@@ -2251,6 +5197,7 @@ export default function App() {
                   dark={(() => { try { return localStorage.getItem('nam-pack-dark-export') === '1' } catch { return false } })()}
                   logoLight={settings.packLogoLight}
                   logoDark={settings.packLogoDark}
+                  darkAccentColor={settings.packExportDarkAccent}
                   defaultCapturedBy={settings.defaultModeledBy}
                   onSaved={() => refreshBundleFolders()}
                   onDeleted={() => handleDeleteBundle(activeFolderPath)}
@@ -2260,15 +5207,15 @@ export default function App() {
             const hasImages = folderImages !== null && (folderImages.own.length > 0 || folderImages.inherited.some((g) => g.paths.length > 0))
             const showGallery = hasImages && settings.showFolderImages
             const hasPack = packInfoFolders.has(activeFolderPath)
-            const showPackEditor = hasPack
-            const showCreatePrompt = !hasPack && packInfoAncestor !== null
+            const showCreatePrompt = !hasPack
             const showGalleryTab = showGallery
+            const availableTabs = (['overview', 'pack', 'checklist', 'gallery', 'readme', 'targets', 'wav-check'] as const)
+              .filter((tab) => (tab !== 'gallery' || showGalleryTab) && (tab !== 'checklist' || hasPack) && (tab !== 'targets' || hasPack))
             return (
               <div className="h-full flex flex-col">
-                <div className="flex border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
-                  {(['overview', 'pack', 'gallery'] as const)
-                    .filter((tab) => tab !== 'gallery' || showGalleryTab)
-                    .map((tab) => (
+                <div className="flex items-stretch border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+                  <div className="flex flex-1">
+                  {availableTabs.map((tab) => (
                       <button
                         key={tab}
                         onClick={() => setFolderPanelTab(tab)}
@@ -2278,42 +5225,148 @@ export default function App() {
                             : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
                         }`}
                       >
-                        {tab === 'overview' ? 'Overview' : tab === 'pack' ? 'Pack Info' : 'Gallery'}
+                        {tab === 'overview'
+                          ? 'Overview'
+                          : tab === 'pack'
+                            ? 'Pack Info'
+                            : tab === 'checklist'
+                              ? 'Checklist'
+                              : tab === 'gallery'
+                                ? 'Gallery'
+                                : tab === 'targets'
+                                  ? 'Targets'
+                                  : tab === 'wav-check'
+                                    ? 'WAV Check'
+                                    : 'Read Me'}
                       </button>
                     ))}
+                  </div>
+                  {folderPanelTab === 'overview' && (
+                    <button
+                      onClick={() => setOverviewMaximized((v) => !v)}
+                      title={overviewMaximized ? 'Restore panels' : 'Maximize overview'}
+                      className="px-2 text-gray-400 hover:text-gray-100 hover:bg-gray-700/40 transition-colors flex items-center"
+                    >
+                      {overviewMaximized ? (
+                        <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/>
+                          <line x1="10" y1="14" x2="3" y2="21"/><line x1="21" y1="3" x2="14" y2="10"/>
+                        </svg>
+                      ) : (
+                        <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
+                          <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+                        </svg>
+                      )}
+                    </button>
+                  )}
                 </div>
                 <div className="flex-1 overflow-hidden">
                   {folderPanelTab === 'overview' ? (
                     <FolderDashboard
                       files={visibleFiles}
                       folderName={activeFolderName}
+                      checklistSummary={activeFolderChecklistSummary}
+                      hasPackInfo={hasPack}
+                      hasReadme={activeFolderReadiness?.hasReadme ?? false}
+                      hasCoverImage={activeFolderReadiness?.hasCoverImage ?? false}
+                      galleryCount={activeFolderReadiness?.galleryCount ?? 0}
+                      deliverySummary={activeFolderDeliverySummary}
+                      watchSource={activeFolderWatchSource}
+                      activeDuplicate={filterModeOverride === 'duplicates'}
                       activeGear={gearTypeFilter}
                       activeTone={toneTypeFilter}
-                      activePreset={presetFilterOverride}
+                      activePreset={presetFilterOverride === '__a2__' ? 'A2' : presetFilterOverride === '__none__' ? 'Unknown' : presetFilterOverride}
                       activeMissing={filterModeOverride === 'incomplete'}
                       activeEsr={esrFilterOverride}
                       activeRating={ratingFilter}
+                      onRemoveWatch={activeFolderPath && activeFolderWatchSource ? () => handleClearWatchSource(activeFolderPath) : undefined}
+                      onSyncWatch={activeFolderWatchSource ? () => { void window.api.folderWatchResync(activeFolderWatchSource) } : undefined}
+                      onOpenWatchSource={(path) => { void window.api.revealFile(path) }}
+                      onDuplicateClick={(on) => {
+                        setFilterModeOverride(on ? 'duplicates' : null)
+                        setGearTypeFilter(null)
+                        setToneTypeFilter(null)
+                        setPresetFilterOverride(null)
+                        setEsrFilterOverride(null)
+                        setRatingFilter(null)
+                        setStatus({ message: on ? 'Showing duplicate captures in the list' : 'Duplicate filter cleared', type: 'info' })
+                      }}
                       onGearClick={(gear) => { setGearTypeFilter(gear); setToneTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setEsrFilterOverride(null); setRatingFilter(null) }}
                       onToneClick={(tone) => { setToneTypeFilter(tone); setGearTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setEsrFilterOverride(null); setRatingFilter(null) }}
-                      onPresetClick={(preset) => { setPresetFilterOverride(preset); setGearTypeFilter(null); setToneTypeFilter(null); setFilterModeOverride(null); setEsrFilterOverride(null); setRatingFilter(null) }}
-                      onMissingClick={(on) => { setFilterModeOverride(on ? 'incomplete' : null); setGearTypeFilter(null); setToneTypeFilter(null); setPresetFilterOverride(null); setEsrFilterOverride(null); setRatingFilter(null) }}
+                      onPresetClick={(preset) => { setPresetFilterOverride(preset === 'A2' ? '__a2__' : preset === 'Unknown' ? '__none__' : preset); setGearTypeFilter(null); setToneTypeFilter(null); setFilterModeOverride(null); setEsrFilterOverride(null); setRatingFilter(null) }}
+                      onMissingClick={(on) => {
+                        setFilterModeOverride(on ? 'incomplete' : null)
+                        setGearTypeFilter(null)
+                        setToneTypeFilter(null)
+                        setPresetFilterOverride(null)
+                        setEsrFilterOverride(null)
+                        setRatingFilter(null)
+                        setStatus({ message: on ? 'Showing captures with missing metadata in the list' : 'Missing metadata filter cleared', type: 'info' })
+                      }}
                       onEsrClick={(tier) => { setEsrFilterOverride(tier); setGearTypeFilter(null); setToneTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setRatingFilter(null) }}
                       onRatingClick={(rating) => { setRatingFilter(rating); setGearTypeFilter(null); setToneTypeFilter(null); setPresetFilterOverride(null); setFilterModeOverride(null); setEsrFilterOverride(null) }}
                     />
-                  ) : folderPanelTab === 'gallery' && showGalleryTab ? (
-                    <FolderGallery data={folderImages!} />
-                  ) : showPackEditor ? (
-                    <PackInfoEditor
+                  ) : folderPanelTab === 'readme' ? (
+                    <FolderReadmePanel
                       key={activeFolderPath}
                       folderPath={activeFolderPath}
                       folderName={activeFolderName}
+                    />
+                  ) : folderPanelTab === 'targets' ? (
+                    <PackTargetsEditor
+                      key={activeFolderPath}
+                      folderPath={activeFolderPath}
+                      folderName={activeFolderName}
+                      targetChecklistTemplates={settings.targetChecklistTemplates}
+                      onPackSaved={handlePackSaved}
+                      logoLight={settings.packLogoLight}
+                      logoDark={settings.packLogoDark}
+                      darkAccentColor={settings.packExportDarkAccent}
+                    />
+                  ) : folderPanelTab === 'gallery' && showGalleryTab ? (
+                    <FolderGallery data={folderImages!} />
+                  ) : folderPanelTab === 'wav-check' ? (
+                    <WavCoverageTab
+                      key={activeFolderPath}
+                      folderPath={activeFolderPath}
+                      namFiles={visibleFiles}
+                      comparisonFolder={settings.folderWavComparisonPaths[activeFolderPath.replace(/\\/g, '/')] ?? null}
+                      onSetComparisonFolder={(path) => {
+                        const next = { ...settings.folderWavComparisonPaths }
+                        const key = activeFolderPath.replace(/\\/g, '/')
+                        if (path) next[key] = path
+                        else delete next[key]
+                        handleSaveSettings({ ...settings, folderWavComparisonPaths: next })
+                      }}
+                      canTrain={settings.enableExperimentalTraining && !!settings.namPythonPath.trim() && !!settings.namTrainingInputWav.trim()}
+                      onTrainWavs={handleTrainWavsFromCoverage}
+                    />
+                  ) : hasPack ? (
+                    <PackInfoEditor
+                      key={`${activeFolderPath}:${folderPanelTab}`}
+                      folderPath={activeFolderPath}
+                      folderName={activeFolderName}
+                      rootFolder={librarian.rootFolder}
                       captures={visibleFiles}
                       defaultCapturedBy={settings.defaultModeledBy}
                       catalog={settings.packGearCatalog}
                       onCatalogChange={(catalog) => handleSaveSettings({ ...settings, packGearCatalog: catalog })}
+                      checklistTemplate={settings.packChecklistTemplate}
+                      onChecklistTemplateChange={(items) => handleSaveSettings({ ...settings, packChecklistTemplate: items })}
                       onPackSaved={handlePackSaved}
                       logoLight={settings.packLogoLight}
                       logoDark={settings.packLogoDark}
+                      darkAccentColor={settings.packExportDarkAccent}
+                      parentPackPath={packInfoAncestor}
+                      mode={folderPanelTab === 'checklist' ? 'checklist' : 'info'}
+                      currentFolderSuggestRules={
+                        settings.metadataSuggestScopedRules.find((set) => set.scopePath.replace(/\\/g, '/') === activeFolderPath.replace(/\\/g, '/'))?.rules ?? []
+                      }
+                      onCurrentFolderSuggestRulesChange={(rules) => handleSaveScopedSuggestRulesAndStayOpen(activeFolderPath, rules)}
+                      onOpenCurrentFolderSuggestRulesEditor={() => handleOpenSuggestRulesEditor(activeFolderPath)}
+                      hasAiKey={settings.hasAnthropicKey || settings.hasOpenAiKey}
+                      onGenerateAbout={makeGenerateAboutForFolder(visibleFiles)}
                       allFolderPaths={(() => {
                         const paths: string[] = []
                         const walk = (node: typeof librarian.folderTree) => {
@@ -2336,12 +5389,26 @@ export default function App() {
                       </div>
                       <button
                         onClick={async () => {
-                          let initial: Record<string, unknown> = {}
+                          const checklistItems = settings.packChecklistTemplate.map((item, index) => ({
+                            id: `check-${Date.now()}-${index}`,
+                            label: item.label,
+                            completed: false,
+                            completedDate: '',
+                            notes: '',
+                          }))
+                          let initial: Record<string, unknown> = {
+                            checklistItems,
+                            checklistNotes: '',
+                            targetDate: '',
+                            liveDate: '',
+                            versionInfo: '',
+                          }
                           if (packInfoAncestor) {
                             const parentRes = await window.api.readPackInfo(packInfoAncestor)
                             if (parentRes.success && parentRes.data) {
                               const p = parentRes.data as Record<string, unknown>
                               initial = {
+                                ...initial,
                                 title: p.title ?? '',
                                 subtitle: p.subtitle ?? '',
                                 description: p.description ?? '',
@@ -2349,6 +5416,7 @@ export default function App() {
                                 pedals: p.pedals ?? [],
                                 glossary: p.glossary ?? [],
                                 footer: p.footer ?? '',
+                                recommendedInputGain: p.recommendedInputGain ?? '',
                               }
                             }
                           }
@@ -2377,19 +5445,25 @@ export default function App() {
           )}
         </div>
 
-        {/* Slide-in editor overlay — maximized grid mode */}
+        {/* Slide-in editor overlay ÃƒÆ&rsquo;Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â maximized grid mode */}
         {gridMaximized && (selectedFiles.length >= 1 || batchFolder !== null || showSettings) && (
           <div className={`absolute top-0 right-0 bottom-0 w-[460px] z-40 flex flex-col bg-white dark:bg-gray-950 border-l border-gray-200 dark:border-gray-700 shadow-2xl transition-transform duration-200 ${gridSlideOpen ? 'translate-x-0' : 'translate-x-full'}`}>
             <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
               <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                {showSettings ? 'Settings' : batchFolder !== null ? `Batch Edit — ${batchFolder.name}` : selectedFiles.length > 1 ? `Edit ${selectedFiles.length} captures` : 'Edit Capture'}
+                {showSettings ? 'Settings' : batchFolder !== null ? `Batch Edit - ${batchFolder.name}` : selectedFiles.length > 1 ? `Edit ${selectedFiles.length} captures` : 'Edit Capture'}
               </span>
               <button onClick={() => { setGridSlideOpen(false); if (batchFolder !== null) setBatchFolder(null); if (showSettings) setShowSettings(false) }} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
             {showSettings ? (
-              <SettingsPanel settings={settings} onSave={handleSaveSettings} onClose={() => { setShowSettings(false); setGridSlideOpen(false) }} />
+              <SettingsPanel
+                settings={settings}
+                onSave={handleSaveSettings}
+                onClose={() => { setShowSettings(false); setGridSlideOpen(false); setSettingsInitialTab(undefined) }}
+                initialTab={settingsInitialTab}
+                onOpenTrainingPresets={() => handleOpenExperimentalTraining('presets')}
+              />
             ) : batchFolder !== null ? (
               <BatchEditor
                 folderName={batchFolder.name}
@@ -2404,13 +5478,14 @@ export default function App() {
                 gearModelSuggestions={gearModelSuggestions}
               />
             ) : selectedFiles.length > 1 ? (
-              <MultiSelectEditor
-                files={selectedFiles}
-                onApply={handleMultiSelectApply}
-                skipConfirmation={settings.skipBatchEditConfirmation}
-                gearMakeSuggestions={gearMakeSuggestions}
-                gearModelSuggestions={gearModelSuggestions}
-              />
+            <MultiSelectEditor
+              files={selectedFiles}
+              onApply={handleMultiSelectApply}
+              onSaveDirty={handleSaveSelected}
+              skipConfirmation={settings.skipBatchEditConfirmation}
+              gearMakeSuggestions={gearMakeSuggestions}
+              gearModelSuggestions={gearModelSuggestions}
+            />
             ) : selectedFiles.length === 1 ? (
               <MetadataEditor
                 key={selectedFiles[0].filePath}
@@ -2454,6 +5529,29 @@ export default function App() {
           </div>
         )}
       </div>
+      </div>{/* end content area wrapper */}
+
+      {helpView && (
+        <HelpModal initialTab={helpView} onClose={() => setHelpView(null)} />
+      )}
+
+      {showTrainingSetupGuide && (
+        <TrainingSetupGuide
+          settings={settings}
+          trainerState={globalTrainerState}
+          rootFolder={librarian.rootFolder}
+          onClose={() => setShowTrainingSetupGuide(false)}
+          onOpenSettings={(tab) => {
+            setShowTrainingSetupGuide(false)
+            setSettingsInitialTab(tab as typeof settingsInitialTab)
+            setShowSettings(true)
+          }}
+          onOpenTraining={(mode) => {
+            setShowTrainingSetupGuide(false)
+            handleOpenExperimentalTraining(mode ?? 'files')
+          }}
+        />
+      )}
 
       <DefaultsPill settings={settings} />
       {folderChanged && (
@@ -2469,7 +5567,7 @@ export default function App() {
             onClick={() => setFolderChanged(false)}
             className="text-xs text-amber-600/60 dark:text-amber-500/60 hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
           >
-            ✕
+            x
           </button>
         </div>
       )}
@@ -2477,13 +5575,18 @@ export default function App() {
 
       {showDuplicates && (
         <DuplicatesModal
-          files={files}
-          rootFolder={librarian.rootFolder}
-          onClose={() => setShowDuplicates(false)}
-          onMoveDuplicates={handleMoveDuplicates}
-          onTrashDuplicates={handleTrashDuplicates}
-        />
-      )}
+            files={duplicateModalFiles}
+            rootFolder={librarian.rootFolder}
+            scopeLabel={duplicatesScopeFolder ? `Selected folder and children: ${duplicatesScopeFolder.split('/').slice(-3).join('/')}` : null}
+            onClose={() => { setShowDuplicates(false); setDuplicatesScopeFolder(null) }}
+            onMoveDuplicates={handleMoveDuplicates}
+            onTrashDuplicates={handleTrashDuplicates}
+            getDeleteBehavior={(filePaths) => window.api.getDeleteBehavior(filePaths)}
+            getContentHashes={(filePaths) => window.api.hashFiles(filePaths)}
+            getModelHashes={(filePaths) => window.api.hashFilesWithoutMetadata(filePaths)}
+            onPickDestFolder={() => window.api.openFolder()}
+          />
+        )}
 
       {importModal && (
         <ImportMetadataModal
@@ -2493,6 +5596,74 @@ export default function App() {
           unmatchedNames={importModal.unmatchedNames}
           onConfirm={handleImportConfirm}
           onClose={() => setImportModal(null)}
+        />
+      )}
+
+      {suggestMetadataModal && (
+        <SuggestMetadataModal
+          folderName={suggestMetadataModal.folderName}
+          matches={suggestMetadataModal.matches}
+          onConfirm={handleSuggestMetadataConfirm}
+          onClose={() => setSuggestMetadataModal(null)}
+        />
+      )}
+
+      {showLibraryCleanup && (
+          <LibraryCleanupModal
+            openMode={libraryCleanupOpenMode}
+            sourceRoot={libraryCleanupSourceRoot}
+            destinationRoot={libraryCleanupDestinationRoot}
+            actionMode={libraryCleanupActionMode}
+            layout={libraryCleanupLayout}
+            folderEntries={libraryCleanupFolderEntries}
+            previewRows={libraryCleanupPreviewRows}
+            busyLabel={libraryCleanupBusyLabel}
+            rememberUncheckedGlobally={libraryCleanupRememberUnchecked}
+            savedIgnoreCount={getLibraryCleanupSavedIgnores().length}
+            onClose={() => {
+              setShowLibraryCleanup(false)
+              setLibraryCleanupBusyLabel(null)
+          }}
+          onPickSourceRoot={handlePickLibraryCleanupSourceRoot}
+          onPickDestinationRoot={handlePickLibraryCleanupDestinationRoot}
+          onActionModeChange={(mode) => {
+            setLibraryCleanupActionMode(mode)
+            setLibraryCleanupPreviewRows(null)
+          }}
+          onLayoutChange={(nextLayout) => {
+            setLibraryCleanupLayout(nextLayout)
+            setLibraryCleanupPreviewRows(null)
+          }}
+          onToggleFolder={(path, checked) => {
+            setLibraryCleanupFolderEntries((prev) => prev.map((entry) => entry.path === path ? { ...entry, checked } : entry))
+            setLibraryCleanupPreviewRows(null)
+          }}
+          onRememberUncheckedChange={setLibraryCleanupRememberUnchecked}
+          onPreview={handlePreviewLibraryCleanup}
+            onRun={handleRunLibraryCleanup}
+            onExportNeedsReview={handleExportLibraryCleanupNeedsReview}
+            onResetSavedIgnores={() => {
+              handleSaveSettings({ ...settings, libraryCleanupIgnoredPaths: [] })
+              setLibraryCleanupFolderEntries((prev) => prev.map((entry) => ({ ...entry, savedIgnore: false, checked: true })))
+              setLibraryCleanupPreviewRows(null)
+            }}
+        />
+      )}
+
+      {suggestRulesEditorPath && (
+        <FolderSuggestRulesModal
+          folderPath={suggestRulesEditorPath}
+          initialExample={suggestRulesEditorExample}
+          globalRules={settings.metadataSuggestRules}
+          scopedRuleSets={settings.metadataSuggestScopedRules}
+          ruleLibrary={settings.metadataSuggestRuleLibrary}
+          initialRules={
+            settings.metadataSuggestScopedRules.find((set) => set.scopePath.replace(/\\/g, '/') === suggestRulesEditorPath)?.rules ?? []
+          }
+          onSaveRuleLibrary={(rules) => handleSaveSettings({ ...settings, metadataSuggestRuleLibrary: rules })}
+          onSave={(rules) => handleSaveScopedSuggestRules(suggestRulesEditorPath, rules)}
+          onSaveAndStayOpen={(rules) => handleSaveScopedSuggestRulesAndStayOpen(suggestRulesEditorPath, rules)}
+          onClose={() => setSuggestRulesEditorPath(null)}
         />
       )}
 
@@ -2561,7 +5732,7 @@ function DragHandle({ onMouseDown, onCollapse, collapsed }: { onMouseDown: (e: R
           onMouseDown={(e) => e.stopPropagation()}
           onClick={onCollapse}
           title={collapsed ? 'Expand library' : 'Collapse library'}
-          className="opacity-0 group-hover:opacity-100 absolute w-4 h-8 flex items-center justify-center rounded bg-indigo-500/60 hover:bg-indigo-500 text-white transition-all z-10"
+          className={`${collapsed ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} absolute w-4 h-8 flex items-center justify-center rounded bg-indigo-500/60 hover:bg-indigo-500 text-white transition-all z-10`}
         >
           <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d={collapsed ? 'M9 5l7 7-7 7' : 'M15 19l-7-7 7-7'} />

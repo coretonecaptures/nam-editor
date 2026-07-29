@@ -1,43 +1,526 @@
+/* ============================================================
+   IBM Plex fonts — vendored via @fontsource
+   @import must precede all other statements
+   ============================================================ */
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-sans/700.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-* {
-  box-sizing: border-box;
+/* ============================================================
+   NAM Lab — CSS variable theme system
+   Driven by [data-theme], [data-accent], [data-chip] on <html>
+   ============================================================ */
+
+:root {
+  --font-ui: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Airy layout (baked in — locked per design sign-off) */
+  --row-h: 38px;
+  --card-pad: 16px;
+  --gap: 10px;
+  --tree-row-h: 28px;
+  --fs-base: 13px;
+  --fs-sm: 12px;
+  --fs-xs: 11px;
+  --radius: 12px;
+  --radius-sm: 8px;
+
+  /* Accent default (indigo) */
+  --accent: #6366f1;
+  --accent-hover: #7c80f7;
+  --accent-fg: #ffffff;
+  --accent-text: #a5abff;
+
+  /* Chart track (fallback) */
+  --chart-track: #1f2937;
 }
+
+/* ============================================================
+   THEMES — [data-theme] on <html>
+   ============================================================ */
+
+[data-theme="dark"] {
+  --app-bg: #0c0f13;
+  --panel: #12161b;
+  --panel-2: #171c22;
+  --raised: #1b212a;
+  --hover: #1d242d;
+  --active: color-mix(in srgb, var(--accent) 16%, transparent);
+  --active-bar: var(--accent);
+  --border: #242b34;
+  --border-soft: #1a2027;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.28);
+  --text: #e7eaef;
+  --text-2: #98a2af;
+  --text-3: #9fa7b1;
+  --field: #0e1217;
+  --field-border: #2a323d;
+  --scroll: #2c333d;
+  --chip-bg-alpha: 20%;
+  --chart-track: #1b212a;
+  color-scheme: dark;
+}
+
+[data-theme="midnight"] {
+  --app-bg: #050608;
+  --panel: #0b0d10;
+  --panel-2: #101317;
+  --raised: #14181d;
+  --hover: #181c22;
+  --active: color-mix(in srgb, var(--accent) 18%, transparent);
+  --active-bar: var(--accent);
+  --border: #1b2026;
+  --border-soft: #121519;
+  --shadow: 0 1px 2px rgba(0,0,0,.6), 0 10px 30px rgba(0,0,0,.5);
+  --text: #e9ebee;
+  --text-2: #8a929b;
+  --text-3: #9fa7b1;
+  --field: #080a0c;
+  --field-border: #23292f;
+  --scroll: #262b31;
+  --chip-bg-alpha: 22%;
+  --chart-track: #14181d;
+  color-scheme: dark;
+}
+
+[data-theme="blue"] {
+  --app-bg: #081225;
+  --panel: #0d1a31;
+  --panel-2: #11203c;
+  --raised: #152743;
+  --hover: #1a2e50;
+  --active: color-mix(in srgb, var(--accent) 22%, transparent);
+  --active-bar: var(--accent);
+  --border: #1f3158;
+  --border-soft: #15243f;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 28px rgba(2,8,23,.45);
+  --text: #e4ecfb;
+  --text-2: #93a6c9;
+  --text-3: #a3b2cf;
+  --field: #0a162c;
+  --field-border: #284069;
+  --scroll: #2b4574;
+  --chip-bg-alpha: 26%;
+  --chart-track: #152743;
+  color-scheme: dark;
+}
+
+[data-theme="charcoal"] {
+  --app-bg: #1e1e1e;
+  --panel: #262626;
+  --panel-2: #2a2a2a;
+  --raised: #2f2f2f;
+  --hover: #343434;
+  --active: color-mix(in srgb, var(--accent) 20%, transparent);
+  --active-bar: var(--accent);
+  --border: #383838;
+  --border-soft: #2e2e2e;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.34);
+  --text: #e4e3e1;
+  --text-2: #989897;
+  --text-3: #a7b0bd;
+  --field: #1c1c1c;
+  --field-border: #3a3a3a;
+  --scroll: #454545;
+  --chip-bg-alpha: 22%;
+  --chart-track: #2f2f2f;
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --app-bg: #eef0f3;
+  --panel: #ffffff;
+  --panel-2: #f8fafc;
+  --raised: #ffffff;
+  --hover: #f1f4f7;
+  --active: color-mix(in srgb, var(--accent) 12%, transparent);
+  --active-bar: var(--accent);
+  --border: #e2e6ec;
+  --border-soft: #eef1f4;
+  --shadow: 0 1px 2px rgba(15,23,42,.06), 0 8px 24px rgba(15,23,42,.08);
+  --text: #131820;
+  --text-2: #5a6472;
+  --text-3: #646d7a;
+  --field: #f7f9fb;
+  --field-border: #dde2e9;
+  --scroll: #cbd2da;
+  --chip-bg-alpha: 13%;
+  --chart-track: #e2e6ec;
+  color-scheme: light;
+}
+
+/* ============================================================
+   ACCENTS — [data-accent] on <html>
+   ============================================================ */
+[data-accent="indigo"] { --accent: #6366f1; --accent-hover: #7c80f7; --accent-text: #a5abff; }
+[data-accent="violet"] { --accent: #8b5cf6; --accent-hover: #a07bf8; --accent-text: #c4b1fb; }
+[data-accent="sky"]    { --accent: #3b82f6; --accent-hover: #5b98f8; --accent-text: #93c0fd; }
+[data-accent="emerald"]{ --accent: #10b981; --accent-hover: #2dcd97; --accent-text: #6ee7b7; }
+[data-accent="orange"] { --accent: #f97316; --accent-hover: #fb8c3a; --accent-text: #fdba74; }
+[data-theme="light"][data-accent="orange"] { --accent-fg: #ffffff; }
+
+/* ============================================================
+   BASE — font and body reset
+   ============================================================ */
+* { box-sizing: border-box; }
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: var(--font-ui);
+  font-size: var(--fs-base, 13px);
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
   user-select: none;
+  font-feature-settings: "cv01", "ss01";
 }
 
-input, textarea {
+input, textarea, select {
+  font-family: inherit;
   user-select: text;
 }
 
-::-webkit-scrollbar {
-  width: 6px;
+/* Allow copying error messages, log output, file paths, and code blocks */
+.selectable,
+pre, code,
+[data-selectable],
+.nm-log-line,
+.nm-error-text,
+.nm-failure-reason {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
 }
 
-::-webkit-scrollbar-track {
-  background: transparent;
-}
+.mono, code { font-family: var(--font-mono); }
 
+/* Scrollbar — theme-aware */
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: #d1d5db;
-  border-radius: 3px;
+  background: var(--scroll, #374151);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
-
 ::-webkit-scrollbar-thumb:hover {
-  background: #9ca3af;
+  background: var(--text-3, #4b5563);
+  background-clip: padding-box;
 }
 
-.dark ::-webkit-scrollbar-thumb {
-  background: #374151;
+/* Legacy Tailwind dark-mode scrollbar fallback (for components not yet converted) */
+.dark ::-webkit-scrollbar-thumb { background: #374151; }
+.dark ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+
+/* ============================================================
+   CHIPS — gear / tone type tags
+   [data-chip] on <html>: soft | solid | minimal
+   Each chip has a --c color var set by class (amp, overdrive, etc.)
+   ============================================================ */
+.nam-chip {
+  --c: #6b7280;
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 19px; padding: 0 8px;
+  font-size: var(--fs-xs, 11px); font-weight: 550; line-height: 1;
+  border-radius: 5px; white-space: nowrap; letter-spacing: .1px;
+}
+.nam-chip .nam-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--c); flex: none;
 }
 
-.dark ::-webkit-scrollbar-thumb:hover {
-  background: #4b5563;
+/* soft: tinted bg + colored text, no dot */
+[data-chip="soft"] .nam-chip {
+  background: color-mix(in srgb, var(--c) var(--chip-bg-alpha, 20%), transparent);
+  color: var(--c);
+}
+[data-chip="soft"] .nam-chip .nam-dot { display: none; }
+[data-theme="light"][data-chip="soft"] .nam-chip { color: color-mix(in srgb, var(--c) 78%, #000); }
+
+/* solid: filled background */
+[data-chip="solid"] .nam-chip { background: var(--c); color: #fff; font-weight: 600; }
+[data-chip="solid"] .nam-chip .nam-dot { display: none; }
+
+/* minimal: dot + neutral label, no background */
+[data-chip="minimal"] .nam-chip {
+  background: transparent; color: var(--text-2, #98a2af);
+  padding-left: 0; padding-right: 6px; font-weight: 500;
+}
+
+/* Gear chip colors */
+.nam-chip.chip-amp           { --c: #f97316; }
+.nam-chip.chip-amp_cab       { --c: #3b82f6; }
+.nam-chip.chip-pedal         { --c: #22c55e; }
+.nam-chip.chip-pedal_amp     { --c: #eab308; }
+.nam-chip.chip-amp_pedal_cab { --c: #a855f7; }
+.nam-chip.chip-preamp        { --c: #f43f5e; }
+.nam-chip.chip-studio        { --c: #14b8a6; }
+
+/* Creator chip color */
+.nam-chip.chip-creator    { --c: #3b82f6; }
+
+/* Tone chip colors */
+.nam-chip.chip-clean      { --c: #0ea5e9; }
+.nam-chip.chip-crunch     { --c: #f59e0b; }
+.nam-chip.chip-hi_gain    { --c: #ef4444; }
+.nam-chip.chip-fuzz       { --c: #a855f7; }
+.nam-chip.chip-overdrive  { --c: #16a34a; }
+.nam-chip.chip-distortion { --c: #f43f5e; }
+.nam-chip.chip-other      { --c: #6b7280; }
+
+/* ============================================================
+   Theme-switch transition suppression
+   Added/removed as a class during theme changes to prevent
+   color-mix(in srgb, var(--accent)...) transition-freeze bug
+   ============================================================ */
+.theme-switching * { transition: none !important; }
+
+/* ============================================================
+   NAM Lab branded toolbar logo chip
+   ============================================================ */
+.nam-logo-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 0 10px 0 4px; margin-right: 4px;
+  height: 32px; border-radius: var(--radius-sm, 8px);
+}
+.nam-logo-icon {
+  width: 26px; height: 26px; border-radius: 7px; flex: none;
+  background: linear-gradient(150deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #000));
+  display: flex; align-items: center; justify-content: center; color: #fff;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.nam-logo-name {
+  font-weight: 650; font-size: 14px; letter-spacing: -.2px;
+  color: var(--text, #e7eaef);
+}
+
+/* ============================================================
+   Toolbar button refresh — less button-like, hover highlight
+   ============================================================ */
+.tb-menu-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 32px; padding: 0 11px; border: none; background: none;
+  border-radius: 7px; font-size: var(--fs-sm, 12px); font-weight: 530;
+  color: var(--text-2, #98a2af); cursor: pointer;
+  transition: background .12s, color .12s; white-space: nowrap;
+}
+.tb-menu-btn:hover { background: var(--hover, #1d242d); color: var(--text, #e7eaef); }
+.tb-menu-btn.active { background: var(--active); color: var(--accent-text); }
+.tb-menu-btn .cv { color: var(--text-3, #626c79); }
+
+/* Toolbar separator */
+.tb-sep-v {
+  width: 1px; height: 20px; flex: none;
+  background: var(--border, #242b34); margin: 0 4px;
+}
+
+/* ============================================================
+   MetadataEditor action row — spread layout
+   ============================================================ */
+.md-action-row {
+  display: flex; align-items: center; gap: 6px; padding: 0 16px 14px;
+}
+.md-action-row .md-action-save { margin-left: auto; }
+
+/* ============================================================
+   Settings Appearance panel — theme cards, accent dots, chip cards
+   ============================================================ */
+.theme-card-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.theme-card {
+  width: 100px; border: none; background: none; padding: 0;
+  cursor: pointer; display: flex; flex-direction: column; gap: 7px;
+}
+.theme-card-preview {
+  height: 62px; border-radius: 10px; border: 2px solid transparent;
+  display: flex; align-items: center; justify-content: center;
+  transition: border-color .12s, box-shadow .12s;
+}
+.theme-card-preview span {
+  width: 44px; height: 32px; border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700; box-shadow: 0 2px 6px rgba(0,0,0,.25);
+}
+.theme-card.selected .theme-card-preview {
+  border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent);
+}
+.theme-card-label {
+  display: flex; align-items: center; justify-content: center; gap: 4px;
+  font-size: var(--fs-sm, 12px); font-weight: 540; color: var(--text-2);
+}
+.theme-card.selected .theme-card-label { color: var(--text); font-weight: 600; }
+
+.accent-swatch-row { display: flex; gap: 14px; flex-wrap: wrap; }
+.accent-swatch {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  border: none; background: none; padding: 0; cursor: pointer;
+}
+.accent-swatch-dot {
+  width: 32px; height: 32px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  transition: box-shadow .12s;
+}
+.accent-swatch.selected .accent-swatch-dot {
+  box-shadow: 0 0 0 2px var(--panel, #12161b), 0 0 0 4px var(--c);
+}
+.accent-swatch-label { font-size: var(--fs-xs, 11px); color: var(--text-2); font-weight: 500; }
+.accent-swatch.selected .accent-swatch-label { color: var(--text); }
+
+.chip-style-row { display: flex; gap: 8px; }
+.chip-style-card {
+  flex: 1; border: 1.5px solid var(--border); background: var(--panel-2);
+  border-radius: 10px; padding: 12px; cursor: pointer;
+  display: flex; flex-direction: column; gap: 8px; text-align: left;
+  transition: border-color .12s, box-shadow .12s;
+}
+.chip-style-card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.chip-style-label { font-size: var(--fs-base, 13px); font-weight: 600; color: var(--text); }
+.chip-style-desc { font-size: var(--fs-xs, 11px); color: var(--text-3); }
+
+/* ============================================================
+   Table header style refresh (grid/table view)
+   ============================================================ */
+.nam-th {
+  font-weight: 600; font-size: var(--fs-xs, 11px); letter-spacing: .4px;
+  color: var(--text-2, #98a2af); text-transform: uppercase;
+  background: var(--panel-2, #171c22);
+}
+
+/* ============================================================
+   Legacy charcoal overrides — kept for Tailwind-styled components
+   not yet migrated to CSS variables. New components use CSS vars.
+   ============================================================ */
+html.charcoal body {
+  background: #1e1e1e !important;
+  color: #efefef !important;
+}
+html.charcoal .dark\:bg-gray-950 { background-color: #1e1e1e !important; }
+html.charcoal .dark\:bg-gray-900 { background-color: #252525 !important; }
+html.charcoal .dark\:bg-gray-800 { background-color: #303030 !important; }
+html.charcoal .dark\:bg-gray-700 { background-color: #3c3c3c !important; }
+html.charcoal .dark\:bg-gray-600 { background-color: #505050 !important; }
+html.charcoal .hover\:dark\:bg-gray-800:hover { background-color: #303030 !important; }
+html.charcoal .hover\:dark\:bg-gray-700:hover { background-color: #3c3c3c !important; }
+html.charcoal .dark\:bg-gray-950\/20 { background-color: rgba(30,30,30,0.2) !important; }
+html.charcoal .dark\:bg-gray-950\/30 { background-color: rgba(30,30,30,0.3) !important; }
+html.charcoal .dark\:bg-gray-950\/60 { background-color: rgba(30,30,30,0.6) !important; }
+html.charcoal .dark\:bg-gray-900\/20 { background-color: rgba(37,37,37,0.2) !important; }
+html.charcoal .dark\:bg-gray-900\/30 { background-color: rgba(37,37,37,0.3) !important; }
+html.charcoal .dark\:bg-gray-900\/40 { background-color: rgba(37,37,37,0.4) !important; }
+html.charcoal .dark\:bg-gray-900\/50 { background-color: rgba(37,37,37,0.5) !important; }
+html.charcoal .dark\:bg-gray-900\/55 { background-color: rgba(37,37,37,0.55) !important; }
+html.charcoal .dark\:bg-gray-900\/70 { background-color: rgba(37,37,37,0.7) !important; }
+html.charcoal .dark\:bg-gray-800\/20 { background-color: rgba(48,48,48,0.2) !important; }
+html.charcoal .dark\:bg-gray-800\/30 { background-color: rgba(48,48,48,0.3) !important; }
+html.charcoal .dark\:bg-gray-800\/40 { background-color: rgba(48,48,48,0.4) !important; }
+html.charcoal .dark\:bg-gray-800\/50 { background-color: rgba(48,48,48,0.5) !important; }
+html.charcoal .dark\:bg-gray-800\/60 { background-color: rgba(48,48,48,0.6) !important; }
+html.charcoal .dark\:bg-gray-800\/80 { background-color: rgba(48,48,48,0.8) !important; }
+html.charcoal .dark\:bg-gray-700\/50 { background-color: rgba(60,60,60,0.5) !important; }
+html.charcoal .dark\:bg-gray-700\/60 { background-color: rgba(60,60,60,0.6) !important; }
+html.charcoal .dark\:bg-gray-700\/70 { background-color: rgba(60,60,60,0.7) !important; }
+html.charcoal .dark\:text-gray-100 { color: #f0f0f0 !important; }
+html.charcoal .dark\:text-gray-200 { color: #e0e0e0 !important; }
+html.charcoal .dark\:text-gray-300 { color: #cccccc !important; }
+html.charcoal .dark\:text-gray-400 { color: #aaaaaa !important; }
+html.charcoal .dark\:text-gray-500 { color: #848484 !important; }
+html.charcoal .dark\:text-gray-600 { color: #6a6a6a !important; }
+html.charcoal .hover\:dark\:text-gray-200:hover { color: #e0e0e0 !important; }
+html.charcoal .hover\:dark\:text-gray-300:hover { color: #cccccc !important; }
+html.charcoal .dark\:border-gray-800 { border-color: #363636 !important; }
+html.charcoal .dark\:border-gray-700 { border-color: #424242 !important; }
+html.charcoal .dark\:border-gray-600 { border-color: #505050 !important; }
+html.charcoal .dark\:border-gray-500 { border-color: #666666 !important; }
+html.charcoal .dark\:border-gray-800\/50 { border-color: rgba(54,54,54,0.5) !important; }
+html.charcoal .dark\:border-gray-800\/60 { border-color: rgba(54,54,54,0.6) !important; }
+html.charcoal .dark\:border-gray-700\/40 { border-color: rgba(66,66,66,0.4) !important; }
+html.charcoal .dark\:border-gray-700\/50 { border-color: rgba(66,66,66,0.5) !important; }
+html.charcoal .dark\:border-gray-700\/60 { border-color: rgba(66,66,66,0.6) !important; }
+html.charcoal .dark\:border-gray-700\/70 { border-color: rgba(66,66,66,0.7) !important; }
+html.charcoal .dark\:border-gray-700\/90 { border-color: rgba(66,66,66,0.9) !important; }
+html.charcoal .dark\:border-gray-500\/60 { border-color: rgba(102,102,102,0.6) !important; }
+html.charcoal .dark\:bg-gray-900 input,
+html.charcoal .dark\:bg-gray-800 input,
+html.charcoal input.dark\:bg-gray-900,
+html.charcoal input.dark\:bg-gray-800 {
+  background-color: #252525 !important;
+  color: #efefef !important;
+}
+html.charcoal ::-webkit-scrollbar-thumb { background: #3c3c3c; }
+html.charcoal ::-webkit-scrollbar-thumb:hover { background: #4c4c4c; }
+
+/* ============================================================
+   Training panel — shared animations & utilities
+   ============================================================ */
+
+@keyframes nm-shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes nm-lpulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
+}
+
+/* Progress bar with gradient + shimmer sweep */
+.nm-progress-fill {
+  position: relative;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--nm-accent, var(--accent)) 70%, #000), var(--nm-accent, var(--accent)));
+  transition: width 0.6s ease;
+}
+.nm-progress-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.22), transparent);
+  animation: nm-shimmer 1.8s linear infinite;
+}
+
+/* Live training dot — subtle pulse */
+.nm-live-dot {
+  animation: nm-lpulse 1.4s ease-in-out infinite;
+}
+
+/* Resume-button pulse — slow expanding accent ring to draw the user's eye while paused. */
+@keyframes nm-resume-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--nm-accent, var(--accent)) 55%, transparent); }
+  50%      { box-shadow: 0 0 0 8px color-mix(in srgb, var(--nm-accent, var(--accent)) 0%, transparent); }
+}
+.nm-resume-pulse {
+  animation: nm-resume-pulse 2.2s ease-in-out infinite;
+}
+
+/* Save-button pulse — gentle indigo ring to signal unsaved changes. */
+@keyframes nm-save-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.55); }
+  50%      { box-shadow: 0 0 0 6px rgba(99, 102, 241, 0); }
+}
+.nm-save-pulse {
+  animation: nm-save-pulse 2s ease-in-out infinite;
+}
+
+/* Dash bar — large progress bar for dashboard hero */
+.nm-dash-bar-fill {
+  position: relative;
+  overflow: hidden;
+  height: 100%;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--nm-accent, var(--accent)) 70%, #000), var(--nm-accent, var(--accent)));
+  transition: width 0.6s ease;
+}
+.nm-dash-bar-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.22), transparent);
+  animation: nm-shimmer 1.8s linear infinite;
 }

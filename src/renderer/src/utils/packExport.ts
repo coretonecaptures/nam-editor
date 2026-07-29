@@ -14,6 +14,33 @@ export const PACK_CAPTURE_COLUMNS: { id: string; label: string; accessor: (f: Na
 
 export const DEFAULT_EXPORT_COLUMNS = ['nl_amp_channel', 'nl_amp_settings', 'nl_amp_switches']
 
+// A gallery group is either the export folder's own photos (label: null) or
+// a set of photos inherited from a named ancestor folder (label: folder name).
+export interface PackGalleryGroup {
+  label: string | null
+  images: string[]
+}
+
+interface GalleryPage {
+  label: string | null
+  images: string[]
+  continued: boolean
+}
+
+// Splits gallery groups into print-page-sized chunks (a group with many photos
+// spans multiple pages; each page after the first for a group is marked continued).
+export function chunkGalleryPages(groups: PackGalleryGroup[], perPage: number): GalleryPage[] {
+  const pages: GalleryPage[] = []
+  for (const group of groups) {
+    if (!group.images.length) continue
+    for (let i = 0; i < group.images.length; i += perPage) {
+      pages.push({ label: group.label, images: group.images.slice(i, i + perPage), continued: i > 0 })
+    }
+  }
+  return pages
+}
+
+
 const COLOR_TOKENS: Record<string, { light: string; dark: string }> = {
   orange:  { light: '#e07020', dark: '#f97316' },
   teal:    { light: '#0d9488', dark: '#2dd4bf' },
@@ -73,7 +100,16 @@ export function parseDescription(raw: string, dark: boolean): string {
   return out.join('\n')
 }
 
-export function generatePackHtml(info: PackInfo, folderPath: string, folderName: string, allCaptures: NamFile[], dark: boolean, logo?: string): string {
+export function generatePackHtml(
+  info: PackInfo,
+  folderPath: string,
+  folderName: string,
+  allCaptures: NamFile[],
+  dark: boolean,
+  logo?: string,
+  darkAccentColor = '#f97316',
+  gallery?: PackGalleryGroup[]
+): string {
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const normBase = folderPath.replace(/\\/g, '/') + '/'
   const captures = allCaptures.filter((f) => {
@@ -120,6 +156,17 @@ export function generatePackHtml(info: PackInfo, folderPath: string, folderName:
     `<tr><td class="kv-label">${esc(g.term)}</td><td>${esc(g.description)}</td></tr>`
   ).join('')
 
+  const galleryPages = chunkGalleryPages(gallery ?? [], 6)
+  const galleryHtml = galleryPages.map((page, idx) => {
+    const frames = page.images.map((src) => `<div class="gallery-frame"><div class="gallery-mat"><img src="${src}" alt="" /></div></div>`).join('')
+    const captionText = page.label ? `From ${esc(page.label)}${page.continued ? ' (cont.)' : ''}` : ''
+    return `<div class="section gallery-page break">
+      ${idx === 0 ? '<div class="section-title">Rig Photos</div>' : ''}
+      ${captionText ? `<div class="gallery-caption">${captionText}</div>` : ''}
+      <div class="gallery-grid">${frames}</div>
+    </div>`
+  }).join('')
+
   const hasCaptures = captures.length > 0
   const hasEquipment = info.equipment.length > 0
   const hasPedals = info.pedals.length > 0
@@ -133,10 +180,10 @@ export function generatePackHtml(info: PackInfo, folderPath: string, folderName:
     bodyBg: '#0d0d0d', bodyColor: '#e8e8e8',
     headerBg: '#000000', headerSub: '#888888',
     descColor: '#c0c0c0',
-    sectionBorder: '#2a2a2a', sectionTitleColor: '#f97316',
-    thBg: '#1a1a1a', thColor: '#f97316', thBorder: '#2a2a2a',
+    sectionBorder: '#2a2a2a', sectionTitleColor: darkAccentColor,
+    thBg: '#1a1a1a', thColor: darkAccentColor, thBorder: '#2a2a2a',
     tdBorder: '#1e1e1e', tdEvenBg: '#141414',
-    kvLabelColor: '#f97316',
+    kvLabelColor: darkAccentColor,
     footerBorder: '#2a2a2a', footerColor: '#555',
   } : {
     bodyBg: '#ffffff', bodyColor: '#1e2235',
@@ -153,7 +200,7 @@ export function generatePackHtml(info: PackInfo, folderPath: string, folderName:
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>${esc(info.title || folderName)} — NAM Pack</title>
+<title>${esc(info.title || folderName)} &mdash; NAM Pack</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -181,18 +228,28 @@ export function generatePackHtml(info: PackInfo, folderPath: string, folderName:
   .col-name { overflow: hidden; }
   .kv-label { font-weight: 600; color: ${t.kvLabelColor}; width: 110px; white-space: nowrap; }
   .footer { margin-top: 24px; padding-top: 8px; border-top: 1px solid ${t.footerBorder}; font-size: 9.5px; color: ${t.footerColor}; }
+  .gallery-page.break { break-before: page; }
+  .gallery-caption { font-size: 9.5px; color: ${t.footerColor}; text-align: center; margin: 0 0 8px; }
+  .gallery-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 32%)); gap: 22px; justify-content: center; }
+  .gallery-frame { break-inside: avoid; page-break-inside: avoid; }
+  .gallery-mat { padding: 7px; border-radius: 8px; border: 2.5px solid ${dark ? darkAccentColor : '#c46010'}; overflow: hidden; }
+  .gallery-mat img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 4px; }
   @page { margin: 0; }
   @media print {
     html, body { background: ${t.bodyBg}; }
     body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
     .header, thead th, tbody tr:nth-child(even) { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .header { padding: 20px 52px 17px; break-inside: avoid; page-break-inside: avoid; }
-    .content { padding: 18px 52px 24px; }
-    .capture-section-page { break-before: page; page-break-before: always; padding-top: 12mm; }
-    .keep-together { break-inside: avoid; page-break-inside: avoid; padding-top: 10mm; }
+    .content {
+      padding: 12mm 52px 24px;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+    }
+    .capture-section-page { margin-top: 8mm; }
+    .keep-together { break-inside: avoid; page-break-inside: avoid; }
     .keep-together table, .keep-together tbody, .keep-together tr { break-inside: avoid; page-break-inside: avoid; }
     .section-title { break-after: avoid; page-break-after: avoid; }
-    thead th { border-top: 9mm solid ${t.bodyBg}; }
+    thead th { border-top: 4mm solid ${t.bodyBg}; }
     tfoot { display: table-footer-group; }
     tfoot td { height: 10mm; padding: 0; border: 0; background: ${t.bodyBg}; }
     .footer { break-inside: avoid; page-break-inside: avoid; margin-top: 10mm; padding-top: 6mm; padding-bottom: 12mm; }
@@ -223,6 +280,8 @@ export function generatePackHtml(info: PackInfo, folderPath: string, folderName:
   ${hasPedals ? `<div class="section keep-together"><div class="section-title">Pedals</div>${kvTable(pedalRows)}</div>` : ''}
   ${hasSwitches ? `<div class="section keep-together"><div class="section-title">Switches &amp; Modes</div>${kvTable(switchRows)}</div>` : ''}
   ${hasGlossary ? `<div class="section keep-together"><div class="section-title">Glossary</div>${kvTable(glossaryRows)}</div>` : ''}
+
+  ${galleryHtml}
 
   <div class="footer">${info.footer.trim() ? parseDescription(info.footer, dark) : 'Generated by NAM Lab'}</div>
 </div>

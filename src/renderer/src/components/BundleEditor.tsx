@@ -23,6 +23,7 @@ interface Props {
   dark: boolean
   logoLight?: string
   logoDark?: string
+  darkAccentColor?: string
   defaultCapturedBy?: string
   onSaved: () => void
   onDeleted: () => void
@@ -49,7 +50,16 @@ function absPath(rel: string, rootFolder: string): string {
   return rel.startsWith('/') ? rel : `${r}/${rel}`
 }
 
-export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark, onSaved, onDeleted }: Props) {
+export function BundleEditor({
+  folderPath,
+  rootFolder,
+  dark,
+  logoLight,
+  logoDark,
+  darkAccentColor = '#f97316',
+  onSaved,
+  onDeleted,
+}: Props) {
   const [bundle, setBundle] = useState<BundleData>(EMPTY_BUNDLE)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -107,7 +117,7 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
   }
 
   const handleDelete = async () => {
-    if (!window.confirm(`Remove the Multi-Amp Bundle from this folder?\n\nThe folder and its contents are untouched — only the bundle config is removed.`)) return
+    if (!window.confirm(`Remove the Multi-Amp Bundle from this folder?\n\nThe folder and its contents are untouched \u2014 only the bundle config is removed.`)) return
     await window.api.deleteBundle(folderPath)
     onDeleted()
   }
@@ -164,7 +174,7 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
       const files: NamFile[] = (Array.isArray(filesRaw) ? filesRaw : []) as NamFile[]
       const folderName = absFolder.replace(/\\/g, '/').split('/').pop() ?? absFolder
       const logo = dark ? (logoDark || undefined) : (logoLight || undefined)
-      const html = generatePackHtml(pack, absFolder, folderName, files, dark, logo)
+      const html = generatePackHtml(pack, absFolder, folderName, files, dark, logo, darkAccentColor)
       await window.api.exportPackSheet(html)
     } finally {
       setExportingPack(null)
@@ -184,8 +194,8 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
         bodyBg: '#0d0d0d', bodyColor: '#e8e8e8',
         headerBg: '#000000', headerSub: '#888888',
         descColor: '#c0c0c0',
-        sectionBorder: '#2a2a2a', sectionTitleColor: '#f97316',
-        thBg: '#1a1a1a', thColor: '#f97316', thBorder: '#2a2a2a',
+        sectionBorder: '#2a2a2a', sectionTitleColor: darkAccentColor,
+        thBg: '#1a1a1a', thColor: darkAccentColor, thBorder: '#2a2a2a',
         tdBorder: '#1e1e1e', tdEvenBg: '#141414',
         footerBorder: '#2a2a2a', footerColor: '#555',
       } : {
@@ -275,7 +285,7 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
   if (loading) {
     return (
       <div className="h-full flex items-center justify-center text-gray-400 dark:text-gray-600 text-sm">
-        Loading…
+        Loading&hellip;
       </div>
     )
   }
@@ -308,7 +318,7 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
               disabled={saving}
               className="px-3 py-1 text-xs rounded bg-teal-600 hover:bg-teal-700 text-white transition-colors disabled:opacity-50"
             >
-              {saving ? 'Saving…' : 'Save'}
+              {saving ? 'Saving\u2026' : 'Save'}
             </button>
           )}
           <button
@@ -317,7 +327,7 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
             className="px-3 py-1 text-xs rounded bg-indigo-600 hover:bg-indigo-700 text-white transition-colors disabled:opacity-50"
             title="Export bundle cover sheet to PDF"
           >
-            {exporting ? 'Exporting…' : 'Export Cover PDF'}
+            {exporting ? 'Exporting\u2026' : 'Export Cover PDF'}
           </button>
         </div>
       </div>
@@ -329,14 +339,14 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
             type="text"
             value={bundle.title}
             onChange={(e) => update({ title: e.target.value })}
-            placeholder="Bundle title…"
+            placeholder={"Bundle title\u2026"}
             className={inputCls}
           />
           <input
             type="text"
             value={bundle.subtitle}
             onChange={(e) => update({ subtitle: e.target.value })}
-            placeholder="Subtitle (optional)…"
+            placeholder={"Subtitle (optional)\u2026"}
             className={inputCls}
           />
         </div>
@@ -347,7 +357,7 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
           <textarea
             value={bundle.description}
             onChange={(e) => update({ description: e.target.value })}
-            placeholder="Describe this collection of amp captures…"
+            placeholder={"Describe this collection of amp captures\u2026"}
             rows={7}
             className={`${inputCls} resize-y leading-relaxed min-h-[80px] font-mono text-xs`}
           />
@@ -360,7 +370,7 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
             {' '}<code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">- bullet</code>
             {' '}<code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">---</code>
             {' '}Color: <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">[orange]text[/orange]</code>
-            {' — '}available: orange, teal, red, blue, green, dim, white
+            {' \u2014 '}available: orange, teal, red, blue, green, dim, white
           </div>
         </div>
 
@@ -392,7 +402,7 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
                       type="text"
                       value={pickerSearch}
                       onChange={(e) => setPickerSearch(e.target.value)}
-                      placeholder="Filter packs…"
+                      placeholder={"Filter packs\u2026"}
                       className="w-full px-2 py-1 text-xs rounded bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:border-teal-500"
                     />
                   </div>
@@ -419,7 +429,7 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
 
           {bundle.linkedPacks.length === 0 ? (
             <div className="text-center py-8 text-xs text-gray-400 dark:text-gray-600 border border-dashed border-gray-200 dark:border-gray-800 rounded-lg">
-              No packs linked yet — click Add Pack to link Pack Info folders
+              No packs linked yet &mdash; click Add Pack to link Pack Info folders
             </div>
           ) : (
             <div className="space-y-1">
@@ -464,7 +474,7 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
                       type="text"
                       value={lp.overrideName}
                       onChange={(e) => setOverrideName(idx, e.target.value)}
-                      placeholder="Display name…"
+                      placeholder={"Display name\u2026"}
                       className="w-28 flex-shrink-0 px-1.5 py-0.5 text-xs rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:border-teal-500"
                     />
                     {/* Export this pack PDF */}
@@ -477,7 +487,7 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
                       <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
                       </svg>
-                      {isExportingThis ? '…' : 'PDF'}
+                      {isExportingThis ? '\u2026' : 'PDF'}
                     </button>
                     {/* Up/Down */}
                     <div className="flex flex-col gap-0.5 flex-shrink-0">
@@ -522,12 +532,12 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
           <textarea
             value={bundle.footer}
             onChange={(e) => update({ footer: e.target.value })}
-            placeholder="© 2025 Your Name · yoursite.com"
+            placeholder={"© 2025 Your Name \u00b7 yoursite.com"}
             rows={2}
             className={`${inputCls} resize-none font-mono text-xs`}
           />
           <div className="mt-1 px-1 text-[10px] text-gray-400 dark:text-gray-500">
-            Supports same formatting — <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">**bold**</code>, <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">[orange]color[/orange]</code>, etc.
+            Supports same formatting &mdash; <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">**bold**</code>, <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">[orange]color[/orange]</code>, etc.
           </div>
         </div>
 
@@ -537,7 +547,7 @@ export function BundleEditor({ folderPath, rootFolder, dark, logoLight, logoDark
             onClick={() => void handleDelete()}
             className="text-xs text-red-500 hover:text-red-700 dark:hover:text-red-400 transition-colors"
           >
-            Remove Multi-Amp Bundle…
+            Remove Multi-Amp Bundle&hellip;
           </button>
         </div>
       </div>

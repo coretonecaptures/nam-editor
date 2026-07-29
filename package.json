@@ -1,6 +1,6 @@
 {
   "name": "nam-lab",
-  "version": "0.5.12-rc1",
+  "version": "0.6.6",
   "description": "NAM (Neural Amp Modeler) metadata editor",
   "main": "out/main/index.js",
   "scripts": {
@@ -12,6 +12,11 @@
     "package:linux": "npm run build && electron-builder --linux --publish never"
   },
   "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "@fontsource/ibm-plex-mono": "^5.2.7",
+    "@fontsource/ibm-plex-sans": "^5.2.8",
     "neural-amp-modeler-wasm": "^1.0.68",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -50,15 +55,18 @@
       }
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "build/icon.ico"
     },
     "mac": {
       "target": "dmg",
-      "category": "public.app-category.music"
+      "category": "public.app-category.music",
+      "icon": "build/icon.icns"
     },
     "linux": {
       "target": "AppImage",
-      "category": "Audio"
+      "category": "Audio",
+      "icon": "build/icon.png"
     },
     "nsis": {
       "oneClick": false,

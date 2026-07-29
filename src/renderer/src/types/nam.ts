@@ -13,6 +13,7 @@ export interface NamMetadata {
   gain?: number | null
   name?: string | null
   modeled_by?: string | null
+  trainer?: string | null
   gear_type?: string | null
   gear_make?: string | null
   gear_model?: string | null
@@ -32,13 +33,18 @@ export interface NamMetadata {
   nl_pedal_settings?: string | null
   nl_amp_switches?: string | null
   nl_comments?: string | null
+  nl_about?: string | null
   nl_rating?: number | null
+  // Latency calibration — stored at metadata.training.data.latency.calibration.recommended
+  // Normally auto-set by the NAM trainer; editable here for pedal/plugin calibration workarounds
+  latency_recommended?: number | null
 }
 
 export interface NamFile {
   filePath: string
   fileName: string
   version: string
+  notes?: string[]          // top-level notes array (A2 files); read-only, not in metadata block
   metadata: NamMetadata
   originalMetadata: NamMetadata  // raw values from file before any defaults applied
   autoFilledFields: (keyof NamMetadata)[]  // fields set by settings rules at load time
@@ -47,6 +53,7 @@ export interface NamFile {
   isDirty: boolean
   mtimeMs?: number
   birthtimeMs?: number
+  sizeBytes?: number
   loadError?: string
 }
 

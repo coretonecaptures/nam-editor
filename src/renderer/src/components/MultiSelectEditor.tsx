@@ -5,6 +5,7 @@ import { ComboInput } from './ComboInput'
 interface MultiSelectEditorProps {
   files: NamFile[]
   onApply: (filePaths: string[], fields: Partial<NamMetadata>, options?: { revertToFilename?: boolean }) => void
+  onSaveDirty?: (filePaths: string[]) => void
   skipConfirmation?: boolean
   gearMakeSuggestions?: string[]
   gearModelSuggestions?: string[]
@@ -36,9 +37,9 @@ const NL_FIELDS: FieldDef[] = [
   { key: 'nl_cabinet_config',label: 'Cabinet Config',     type: 'text', placeholder: 'e.g. 4x12' },
   { key: 'nl_amp_settings',  label: 'Amp Settings',       type: 'text', placeholder: 'e.g. Gain 7, Bass 5' },
   { key: 'nl_boost_pedal',   label: 'Boost Pedal(s)',     type: 'text', placeholder: 'e.g. Klon Centaur - Blues Breaker' },
-  { key: 'nl_pedal_settings',label: 'Pedal Settings',     type: 'text', placeholder: 'e.g. TS9 — Drive 5' },
+  { key: 'nl_pedal_settings',label: 'Pedal Settings',     type: 'text', placeholder: 'e.g. TS9 \u2014 Drive 5' },
   { key: 'nl_amp_switches',  label: 'Amp Switches',       type: 'text', placeholder: 'e.g. Bright on, Fat off' },
-  { key: 'nl_comments',      label: 'Comments',           type: 'text', placeholder: 'Any notes…' },
+  { key: 'nl_comments',      label: 'Comments',           type: 'text', placeholder: 'Any notes\u2026' },
 ]
 
 const ALL_FIELDS = [...FIELDS, ...NL_FIELDS]
@@ -50,7 +51,7 @@ function getShared(files: NamFile[], key: keyof NamMetadata): { same: boolean; v
   return { same, value: same ? (first as string | number | null) : null }
 }
 
-export function MultiSelectEditor({ files, onApply, skipConfirmation, gearMakeSuggestions = [], gearModelSuggestions = [] }: MultiSelectEditorProps) {
+export function MultiSelectEditor({ files, onApply, onSaveDirty, skipConfirmation, gearMakeSuggestions = [], gearModelSuggestions = [] }: MultiSelectEditorProps) {
   // Compute shared values once per file set
   const shared = useMemo(
     () => Object.fromEntries(ALL_FIELDS.map((f) => [f.key, getShared(files, f.key)])),
@@ -70,7 +71,26 @@ export function MultiSelectEditor({ files, onApply, skipConfirmation, gearMakeSu
     setChanged((prev) => new Set(prev).add(key))
   }
 
-  const canApply = changed.size > 0 || revertToFilename
+  const dirtyCount = files.filter((f) => f.isDirty).length
+  // "Typed edits" = new values entered into THIS editor (or the revert-name checkbox). Distinct
+  // from files that are merely dirty from auto-filled/previously-edited values still pending on disk.
+  const hasTypedEdits = changed.size > 0 || revertToFilename
+  // Apply is enabled either when the user has typed edits OR when any selected file has pending
+  // changes to commit (e.g. auto-filled values). Both cases write the same full in-memory metadata,
+  // so this folds the old separate "Save changes to N files" button back into Apply — that button
+  // only existed because Apply used to grey out on pure auto-fills (canApply = typed edits only).
+  const canApply = hasTypedEdits || dirtyCount > 0
+
+  const handleSaveDirty = () => {
+    if (!onSaveDirty || dirtyCount === 0) return
+    if (!skipConfirmation) {
+      const confirmed = window.confirm(
+        `Save pending changes (including any auto-filled fields) for ${dirtyCount} of the ${files.length} selected file${files.length !== 1 ? 's' : ''}?\n\nThis will write directly to the .nam files on disk.\n\n(This warning can be toggled off in Settings → Behavior)`
+      )
+      if (!confirmed) return
+    }
+    onSaveDirty(files.map((f) => f.filePath))
+  }
 
   const handleRevert = () => {
     setEdits(Object.fromEntries(ALL_FIELDS.map((f) => [f.key, shared[f.key].value ?? ''])))
@@ -88,8 +108,12 @@ export function MultiSelectEditor({ files, onApply, skipConfirmation, gearMakeSu
         const fieldNames = [...changed].map((k) => FIELDS.find((f) => f.key === k)?.label ?? k).join(', ')
         parts.push(`${changed.size} field${changed.size !== 1 ? 's' : ''}: ${fieldNames}`)
       }
+      // No typed edits \u2014 this Apply is purely committing pending/auto-filled values to disk.
+      if (parts.length === 0 && dirtyCount > 0) {
+        parts.push(`Save pending changes (including auto-filled fields) for ${dirtyCount} file${dirtyCount !== 1 ? 's' : ''}`)
+      }
       const confirmed = window.confirm(
-        `Apply to ${files.length} selected file${files.length !== 1 ? 's' : ''}:\n  · ${parts.join('\n  · ')}\n\nThis will write changes directly to the .nam files on disk.\n\n(This warning can be toggled off in Settings → Behavior)`
+        `Apply to ${files.length} selected file${files.length !== 1 ? 's' : ''}:\n  \u00b7 ${parts.join('\n  \u00b7 ')}\n\nThis will write changes directly to the .nam files on disk.\n\n(This warning can be toggled off in Settings \u2192 Behavior)`
       )
       if (!confirmed) return
     }
@@ -121,11 +145,20 @@ export function MultiSelectEditor({ files, onApply, skipConfirmation, gearMakeSu
             </h2>
           </div>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5 ml-10">
-            Edit fields below — <span className="text-amber-400">amber</span> = changed · <span className="text-indigo-400">indigo badge</span> = all files share this value
+            Edit fields below &mdash; <span className="text-amber-400">amber</span> = changed &middot; <span className="text-indigo-400">indigo badge</span> = all files share this value
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {canApply && (
+          {onSaveDirty && dirtyCount > 0 && (
+            <button
+              onClick={handleSaveDirty}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-emerald-600 hover:bg-emerald-500 text-white"
+              title="Write each selected file's current pending changes (including auto-filled fields) to disk — scoped to just this selection, not every loaded folder."
+            >
+              Save selected ({dirtyCount})
+            </button>
+          )}
+          {hasTypedEdits && (
             <button
               onClick={handleRevert}
               className="px-3 py-2 rounded-lg text-sm font-medium transition-colors text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
@@ -162,7 +195,7 @@ export function MultiSelectEditor({ files, onApply, skipConfirmation, gearMakeSu
             />
             <label htmlFor="ms-revert-filename" className="text-sm text-gray-600 dark:text-gray-400 cursor-pointer select-none">
               <span className="font-medium">Revert Capture Name to filename</span>
-              <span className="text-gray-400 dark:text-gray-600"> — sets each file's name to its own filename</span>
+              <span className="text-gray-400 dark:text-gray-600"> &mdash; sets each file's name to its own filename</span>
             </label>
           </div>
 
@@ -212,7 +245,7 @@ function renderMsFields(
             >
               {['', ...options].map((o) => (
                 <option key={o} value={o} className="bg-gray-200 dark:bg-gray-800">
-                  {o === '' ? (same ? '— not set —' : '— varies —') : o}
+                  {o === '' ? (same ? '\u2014 not set \u2014' : '\u2014 varies \u2014') : o}
                 </option>
               ))}
             </select>
@@ -221,7 +254,7 @@ function renderMsFields(
               type="number"
               value={val ?? ''}
               onChange={(e) => update(key, e.target.value === '' ? null : parseFloat(e.target.value))}
-              placeholder={same ? (placeholder ?? '') : '— varies —'}
+              placeholder={same ? (placeholder ?? '') : '\u2014 varies \u2014'}
               step={0.5}
               className={`${inputBase} ${isChanged ? inputChanged : ''}`}
             />
@@ -230,7 +263,7 @@ function renderMsFields(
               value={(val as string) ?? ''}
               onChange={(v) => update(key, v)}
               suggestions={key === 'gear_make' ? gearMakeSuggestions : key === 'gear_model' ? gearModelSuggestions : []}
-              placeholder={same ? (placeholder ?? '') : '— varies —'}
+              placeholder={same ? (placeholder ?? '') : '\u2014 varies \u2014'}
               className={`${inputBase} ${isChanged ? inputChanged : ''}`}
             />
           )}

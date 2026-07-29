@@ -1,19 +1,23 @@
-import { useState, useRef, useLayoutEffect } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, type MouseEvent } from 'react'
 
 // Survives component remounts (caused by key={filePath} in App.tsx)
 let sharedScrollTop = 0
 import { NamFile, NamMetadata, GEAR_TYPES, TONE_TYPES } from '../types/nam'
 import { gearImages } from '../assets/gear'
 import { detectPreset } from '../utils/detectPreset'
+import { getCaptureBestEsr, getA2AggregateEsr, getA2FullEsr, getA2LiteEsr, isA2Metadata } from '../utils/esr'
 import { ComboInput } from './ComboInput'
+import { HelpPopover } from './HelpPopover'
 
 interface MetadataEditorProps {
   file: NamFile
+  coverImagePath?: string | null
   onChange: (metadata: NamMetadata) => void
   onSave: () => void
   onRevert: () => void
   onRevealInFinder: () => void
   onReapplyDefaults?: () => void
+  onClearSuggestions?: () => void
   hasActiveDefaults?: boolean
   renameTemplate?: string
   onRenameFile?: (filePath: string, newBaseName: string) => Promise<void>
@@ -23,10 +27,22 @@ interface MetadataEditorProps {
   showNamLabFields?: boolean
 }
 
+function toFileUrl(p: string): string {
+  return p.startsWith('/') ? `local-file://${p}` : `local-file:///${p}`
+}
+
+function showNativeTextContextMenu(event: MouseEvent<HTMLElement>) {
+  const selection = window.getSelection()?.toString().trim() ?? ''
+  const target = event.target as HTMLElement | null
+  const isEditable = !!target?.closest('input, textarea, [contenteditable="true"]')
+  if (!selection && !isEditable) return
+  event.preventDefault()
+  void window.api.showTextContextMenu({ hasSelection: !!selection, isEditable })
+}
+
 type NlKey = 'nl_mics' | 'nl_amp_channel' | 'nl_cabinet' | 'nl_cabinet_config' |
              'nl_amp_settings' | 'nl_boost_pedal' | 'nl_pedal_settings' | 'nl_amp_switches' | 'nl_comments'
 
-// Fields relevant to each gear type. nl_comments always shown regardless.
 const NL_RELEVANT: Record<string, NlKey[]> = {
   amp:          ['nl_amp_channel', 'nl_amp_settings', 'nl_amp_switches', 'nl_comments'],
   pedal:        ['nl_boost_pedal', 'nl_pedal_settings', 'nl_comments'],
@@ -58,18 +74,141 @@ function buildRenamePreview(template: string, meta: NamMetadata, fileName: strin
   return result || fileName
 }
 
-export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFinder, onReapplyDefaults, hasActiveDefaults, renameTemplate, onRenameFile, onSaveAndAdvance, gearMakeSuggestions = [], gearModelSuggestions = [], showNamLabFields = true }: MetadataEditorProps) {
+function formatBytes(bytes?: number): string | null {
+  if (!bytes || !Number.isFinite(bytes)) return null
+  const units = ['B', 'KB', 'MB', 'GB']
+  let value = bytes
+  let unitIndex = 0
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex += 1
+  }
+  return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`
+}
+
+interface A2SubmodelFieldValues {
+  main: number | null
+  full: number | null
+  lite: number | null
+}
+
+function getA2EsrValues(file: NamFile): A2SubmodelFieldValues | null {
+  const meta = { ...(file.metadata as Record<string, unknown>), architecture: file.architecture, config: file.config }
+  if (!meta) return null
+
+  const aggregate = getA2AggregateEsr(meta)
+  const lite = getA2LiteEsr(meta)
+  const full = getA2FullEsr(meta)
+
+  if (
+    typeof aggregate !== 'number' &&
+    typeof full !== 'number' &&
+    typeof lite !== 'number'
+  ) {
+    return null
+  }
+
+  return {
+    main: aggregate,
+    full,
+    lite,
+  }
+}
+
+function readNumericSubmodelField(
+  submodel: unknown,
+  field: 'loudness' | 'gain'
+): number | null {
+  if (!submodel || typeof submodel !== 'object' || Array.isArray(submodel)) return null
+  const model = (submodel as Record<string, unknown>).model
+  if (!model || typeof model !== 'object' || Array.isArray(model)) return null
+  const metadata = (model as Record<string, unknown>).metadata
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null
+  const value = (metadata as Record<string, unknown>)[field]
+  return typeof value === 'number' ? value : null
+}
+
+function getA2SubmodelFieldValues(
+  file: NamFile,
+  field: 'loudness' | 'gain'
+): A2SubmodelFieldValues | null {
+  const config = file.config
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return null
+  const submodels = (config as Record<string, unknown>).submodels
+  if (!Array.isArray(submodels) || submodels.length === 0) return null
+
+  const mainValue = file.metadata[field]
+  const lite = readNumericSubmodelField(submodels[0], field)
+  const full = readNumericSubmodelField(submodels[1], field)
+
+  if (
+    typeof mainValue !== 'number' &&
+    typeof full !== 'number' &&
+    typeof lite !== 'number'
+  ) {
+    return null
+  }
+
+  return {
+    main: typeof mainValue === 'number' ? mainValue : null,
+    full,
+    lite,
+  }
+}
+
+function formatReadOnlyNumeric(value: number | null, digits: number, suffix = ''): string {
+  if (typeof value !== 'number') return '-'
+  return `${value.toFixed(digits)}${suffix}`
+}
+
+export function MetadataEditor({ file, coverImagePath = null, onChange, onSave, onRevert, onRevealInFinder, onReapplyDefaults, onClearSuggestions, hasActiveDefaults, renameTemplate, onRenameFile, onSaveAndAdvance, gearMakeSuggestions = [], gearModelSuggestions = [], showNamLabFields = true }: MetadataEditorProps) {
   const m = file.metadata
   const orig = file.originalMetadata
+  const esrMeta = { ...(m as Record<string, unknown>), architecture: file.architecture, config: file.config }
   const [nlShowAll, setNlShowAll] = useState(false)
+  const [latencyUnlocked, setLatencyUnlocked] = useState(false)
+  const [loudnessUnlocked, setLoudnessUnlocked] = useState(false)
+  const [gainUnlocked, setGainUnlocked] = useState(false)
   const [isEditingName, setIsEditingName] = useState(false)
   const [nameEditValue, setNameEditValue] = useState('')
+  const [showA2SubmodelMetadata, setShowA2SubmodelMetadata] = useState(false)
+  const [tone3000Open, setTone3000Open] = useState(false)
+  const [tone3000Status, setTone3000Status] = useState<string | null>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const tone3000Ref = useRef<HTMLDivElement>(null)
 
   useLayoutEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = sharedScrollTop
   }, [file.filePath])
+
+  // Close the "Share to Tone3000" popover on outside click
+  useEffect(() => {
+    if (!tone3000Open) return
+    const handler = (e: MouseEvent) => {
+      if (tone3000Ref.current && !tone3000Ref.current.contains(e.target as Node)) {
+        setTone3000Open(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [tone3000Open])
+
+  const copyTone3000Info = async () => {
+    const lines = [
+      m.gear_make ? `Make: ${m.gear_make}` : null,
+      m.gear_model ? `Model: ${m.gear_model}` : null,
+      m.nl_comments ? `Description: ${m.nl_comments}` : null,
+    ].filter((l): l is string => !!l)
+    const text = lines.length ? lines.join('\n') : `${m.name || file.fileName}`
+    try {
+      await navigator.clipboard.writeText(text)
+      setTone3000Status('Copied')
+    } catch {
+      setTone3000Status('Copy failed')
+    }
+    setTimeout(() => setTone3000Status(null), 1500)
+  }
 
   const update = (key: keyof NamMetadata, value: unknown) => {
     onChange({ ...m, [key]: value === '' ? null : value })
@@ -97,6 +236,11 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
     }
   }
 
+  const relockTrainerField = (lock: () => void) => {
+    lock()
+    if (file.isDirty) onSave()
+  }
+
   const commitNameEdit = () => {
     update('name', nameEditValue)
     setIsEditingName(false)
@@ -108,16 +252,23 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
     setTimeout(() => { nameInputRef.current?.select() }, 20)
   }
 
+  const a2CanonicalFieldNote = isA2Metadata(esrMeta)
+    ? 'NAM Lab uses the main loudness, gain, and latency values for normal editing. Full and Lite copies can still differ, but they stay read-only here.'
+    : null
+  const a2LoudnessValues = getA2SubmodelFieldValues(file, 'loudness')
+  const a2GainValues = getA2SubmodelFieldValues(file, 'gain')
+  const a2EsrValues = getA2EsrValues(file)
+  const hasA2SubmodelMetadata = !!(a2LoudnessValues || a2GainValues || a2EsrValues)
   const dateStr = m.date
-    ? `${m.date.year}-${String(m.date.month).padStart(2, '0')}-${String(m.date.day).padStart(2, '0')}`
+    ? `${m.date.year}-${String(m.date.month).padStart(2, '0')}-${String(m.date.day).padStart(2, '0')} ${String(m.date.hour ?? 0).padStart(2, '0')}:${String(m.date.minute ?? 0).padStart(2, '0')}:${String(m.date.second ?? 0).padStart(2, '0')}`
     : ''
 
   return (
-    <div className="flex flex-col h-full overflow-hidden" onKeyDown={handleKeyDown}>
+    <div className="flex flex-col h-full overflow-hidden" onKeyDown={handleKeyDown} onContextMenu={showNativeTextContextMenu}>
       {/* File header */}
-      <div className="flex items-start justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 flex-shrink-0 flex-wrap gap-3">
-        <div className="flex items-center gap-4 min-w-0">
-          <div className="min-w-0">
+      <div className="px-6 pt-4 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
+        <div className="flex items-start gap-4 min-w-0 mb-2">
+          <div className="min-w-0 flex-1">
             {isEditingName ? (
               <input
                 ref={nameInputRef}
@@ -140,28 +291,28 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
                 {m.name || file.fileName}
               </h2>
             )}
-            <div className="flex items-center gap-3 mt-1">
+            <div className="flex items-center gap-3 mt-0.5">
               <button
                 onClick={onRevealInFinder}
-                className="text-xs text-gray-500 dark:text-gray-500 hover:text-indigo-400 transition-colors truncate max-w-lg text-left"
-                title="Reveal in Finder / Explorer"
+                className="text-xs text-gray-500 dark:text-gray-500 hover:text-indigo-400 transition-colors text-left flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
+                title={file.filePath}
               >
                 {file.filePath}
               </button>
             </div>
-            <div className="flex items-center gap-2 mt-1">
+            <div className="flex items-center gap-2 mt-0.5">
               <span className="text-xs text-gray-400 dark:text-gray-600">v{file.version}</span>
-              <span className="text-xs text-gray-400 dark:text-gray-600">·</span>
+              <span className="text-xs text-gray-400 dark:text-gray-600">&middot;</span>
               <span className="text-xs text-gray-400 dark:text-gray-600">{file.architecture}</span>
               {m.loudness != null && (
                 <>
-                  <span className="text-xs text-gray-400 dark:text-gray-600">·</span>
+                  <span className="text-xs text-gray-400 dark:text-gray-600">&middot;</span>
                   <span className="text-xs text-gray-400 dark:text-gray-600">loudness: {m.loudness.toFixed(2)} dBFS</span>
                 </>
               )}
               {!!m.training && (m.training as Record<string, unknown>).validation_esr != null && (
                 <>
-                  <span className="text-xs text-gray-400 dark:text-gray-600">·</span>
+                  <span className="text-xs text-gray-400 dark:text-gray-600">&middot;</span>
                   <span className="text-xs text-gray-400 dark:text-gray-600">
                     ESR: {((m.training as Record<string, unknown>).validation_esr as number).toFixed(6)}
                   </span>
@@ -169,14 +320,25 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
               )}
             </div>
           </div>
-          {m.gear_type && gearImages[m.gear_type] && (
-            <GearImage gearType={m.gear_type} size="header" />
-          )}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {m.gear_type && gearImages[m.gear_type] && (
+              <GearImage gearType={m.gear_type} size="header" />
+            )}
+            <button
+              onClick={onSave}
+              disabled={!file.isDirty}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed bg-indigo-600 hover:bg-indigo-500 text-white${file.isDirty ? ' nm-save-pulse' : ''}`}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+              </svg>
+              Save
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {file.isDirty && (
-            <span className="text-xs text-amber-400 font-medium">Unsaved</span>
-          )}
+
+        {/* Action row */}
+        <div className="flex items-center gap-1.5 pb-3">
           {onRenameFile && renameTemplate && (
             <button
               onClick={() => {
@@ -186,7 +348,7 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
                 )
                 if (confirmed) onRenameFile(file.filePath, newBaseName)
               }}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-300 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 whitespace-nowrap"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap"
               title={`Rename to: ${buildRenamePreview(renameTemplate, m, file.fileName)}.nam`}
             >
               Rename
@@ -195,39 +357,87 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
           {hasActiveDefaults && onReapplyDefaults && (
             <button
               onClick={onReapplyDefaults}
-              className="flex items-center gap-1 px-2 py-2 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap"
               title="Re-apply auto-fill rules from Settings to empty fields"
             >
-              ↺ Defaults
+              &#x21BA; Defaults
+            </button>
+          )}
+          {file.autoFilledFields.length > 0 && onClearSuggestions && (
+            <button
+              onClick={onClearSuggestions}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap"
+              title="Clear auto-filled suggestion/default values for this file and restore the on-disk values for those fields"
+            >
+              Clear suggestions
             </button>
           )}
           <button
             onClick={onRevert}
             disabled={!file.isDirty}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-gray-300 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
+            className="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-200"
             title="Discard changes and revert to saved values"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
             </svg>
             Revert
           </button>
-          <button
-            onClick={onSave}
-            disabled={!file.isDirty}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-indigo-600 hover:bg-indigo-500 text-white"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
-            </svg>
-            Save
-          </button>
+          <div className="relative" ref={tone3000Ref}>
+            <button
+              onClick={() => setTone3000Open((v) => !v)}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap"
+              title="Share this capture to Tone3000"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342a4 4 0 100-2.684m0 2.684a4 4 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a4 4 0 105.36-1.11 4 4 0 00-5.36 1.11zm0 12.632a4 4 0 105.36 1.11 4 4 0 00-5.36-1.11z" />
+              </svg>
+              Share to Tone3000
+            </button>
+            {tone3000Open && (
+              <div className="absolute top-full left-0 mt-1 z-30 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl py-1">
+                <div className="px-3 py-1.5 text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">
+                  Tone3000 doesn't have an upload API &mdash; these just speed up the manual form
+                </div>
+                <button
+                  onClick={() => { onRevealInFinder(); setTone3000Open(false) }}
+                  className="w-full text-left px-3 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50"
+                >
+                  Reveal .nam file (for drag &amp; drop)
+                </button>
+                <button
+                  onClick={copyTone3000Info}
+                  className="w-full text-left px-3 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50"
+                >
+                  {tone3000Status ?? 'Copy make / model / description'}
+                </button>
+                <button
+                  onClick={() => { void window.api.openExternal('https://www.tone3000.com/upload'); setTone3000Open(false) }}
+                  className="w-full text-left px-3 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50"
+                >
+                  Open Tone3000 Upload page
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Editor body */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-5" onScroll={(e) => { sharedScrollTop = (e.currentTarget as HTMLDivElement).scrollTop }}>
         <div className="max-w-2xl space-y-6">
+          {coverImagePath && (
+            <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-900">
+              <div className="aspect-[3/1] w-full">
+                <img
+                  src={toFileUrl(coverImagePath)}
+                  alt="Amp cover"
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                />
+              </div>
+            </div>
+          )}
 
           {/* Identity section */}
           <Section title="Identity" icon={
@@ -255,7 +465,7 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
                   title="Revert to filename"
                   className="flex-shrink-0 px-2 py-2 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap"
                 >
-                  ↺ filename
+                  to filename
                 </button>
               </div>
             </Field>
@@ -327,7 +537,18 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
           </Section>
 
           {/* Levels section */}
-          <Section title="Levels" icon="📊">
+          <Section title="Levels" icon={
+            <svg className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16V8" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19V5" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 14V10" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 18V6" />
+              <circle cx="4" cy="16" r="1.5" strokeWidth={1.5} />
+              <circle cx="9" cy="19" r="1.5" strokeWidth={1.5} />
+              <circle cx="15" cy="14" r="1.5" strokeWidth={1.5} />
+              <circle cx="20" cy="18" r="1.5" strokeWidth={1.5} />
+            </svg>
+          }>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Reamp Send Level (dBu)" autoFilled={isAutoFilled('input_level_dbu')}>
                 <NumberInput
@@ -368,15 +589,80 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
                 autoFilled={false}
               />
             </Field>
+            <Field
+              label="Latency (samples)"
+              hint="Auto-set by the NAM trainer. Only edit if you need to override for pedal/plugin output calibration."
+            >
+              <div className="flex items-center gap-2">
+                {!latencyUnlocked ? (
+                  <>
+                    <input
+                      type="text"
+                      readOnly
+                      value={m.latency_recommended != null ? String(m.latency_recommended) : ''}
+                      placeholder="not set"
+                      className="flex-1 px-3 py-1.5 bg-gray-100 dark:bg-gray-800/40 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-500 dark:text-gray-400 font-mono cursor-default placeholder-gray-400 dark:placeholder-gray-600"
+                    />
+                    <button
+                      onClick={() => setLatencyUnlocked(true)}
+                      className="flex-shrink-0 p-1.5 rounded text-gray-400 dark:text-gray-500 hover:text-amber-500 dark:hover:text-amber-400 transition-colors"
+                      title="Unlock to edit latency"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                      </svg>
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <NumberInput
+                      value={m.latency_recommended ?? ''}
+                      onChange={(v) => update('latency_recommended', v)}
+                      placeholder="e.g. 1024"
+                      step={1}
+                      changed={isManuallyChanged('latency_recommended')}
+                      autoFilled={false}
+                    />
+                    <button
+                      onClick={() => relockTrainerField(() => setLatencyUnlocked(false))}
+                      className="flex-shrink-0 p-1.5 rounded text-amber-500 hover:text-amber-600 transition-colors"
+                      title="Lock field"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 00-9 0v3.75M3.75 21.75h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H3.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                      </svg>
+                    </button>
+                  </>
+                )}
+              </div>
+              {latencyUnlocked && (
+                <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
+                  <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                  </svg>
+                  Normally auto-set by the NAM trainer. Only change if overriding for output calibration.
+                </p>
+              )}
+            </Field>
           </Section>
 
           {/* Read-only stats */}
-          <Section title="Capture Stats" icon="📈">
+          <Section title="Capture Stats" icon={
+            <svg className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 19V5" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10 19v-6" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 19V9" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M22 19V3" />
+            </svg>
+          }>
             <div className="grid grid-cols-2 gap-3">
               <StatCard label="Architecture" value={file.architecture} />
               <StatCard label="NAM Version" value={file.version} />
               {(() => {
-                const layers = (file.config as Record<string, unknown> | undefined)?.layers
+                const cfg = file.config as Record<string, unknown> | undefined
+                // A2: layers at config.condition_dsp.config.layers; A1: config.layers
+                const a2Layers = ((cfg?.condition_dsp as Record<string, unknown> | undefined)?.config as Record<string, unknown> | undefined)?.layers
+                const layers = Array.isArray(a2Layers) && a2Layers.length > 0 ? a2Layers : cfg?.layers
                 const channels = (Array.isArray(layers) && layers.length > 0)
                   ? (layers[0] as Record<string, unknown>)?.channels as number | undefined
                   : undefined
@@ -386,19 +672,76 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
               {detectPreset(file.config) != null && (
                 <StatCard label="Detected Preset" value={detectPreset(file.config)!} />
               )}
-              {m.loudness != null && (
-                <StatCard label="Integrated Loudness" value={`${m.loudness.toFixed(2)} dBFS`} />
-              )}
-              {m.gain != null && (
-                <StatCard label="Gain Factor" value={m.gain.toFixed(4)} />
-              )}
-              {(m.training as Record<string, unknown>)?.validation_esr != null && (
-                <StatCard
-                  label="Validation ESR"
-                  value={((m.training as Record<string, unknown>).validation_esr as number).toFixed(6)}
-                  good={((m.training as Record<string, unknown>).validation_esr as number) < 0.01}
-                />
-              )}
+              {(() => {
+                // A1: single Validation ESR card, same as always.
+                // A2: show Full and Lite as their own cards right here (not just inside the
+                // collapsed "A2 sub-model metadata" accordion below) — same at-a-glance
+                // treatment History rows already give A2 captures (FULL / LITE / AGG chips),
+                // so you don't have to expand anything to see whether a capture is good.
+                // Falls back to a single Aggregate card only when no per-submodel breakdown
+                // exists at all (official-trainer / downloaded A2 files with no NAM Lab data).
+                const full = getA2FullEsr(esrMeta)
+                const lite = getA2LiteEsr(esrMeta)
+                if (typeof full === 'number' || typeof lite === 'number') {
+                  return (
+                    <>
+                      {typeof full === 'number' && (
+                        <StatCard label="Validation ESR (A2 Full)" value={full.toFixed(6)} good={full < 0.01} />
+                      )}
+                      {typeof lite === 'number' && (
+                        <StatCard label="Validation ESR (A2 Lite)" value={lite.toFixed(6)} good={lite < 0.01} />
+                      )}
+                    </>
+                  )
+                }
+                const best = getCaptureBestEsr(esrMeta)
+                if (typeof best.value !== 'number') return null
+                return (
+                  <StatCard
+                    label={best.kind === 'a2_aggregate' ? 'Validation ESR (A2 Aggregate)' : 'Validation ESR'}
+                    value={best.value.toFixed(6)}
+                    good={best.kind === 'a2_aggregate' ? best.value < 0.02 : best.value < 0.01}
+                  />
+                )
+              })()}
+              {(() => {
+                const nl = (m as Record<string, unknown>).nam_lab as Record<string, unknown> | undefined
+                if (!nl) return null
+                const isA2 = typeof nl.a2_lite_validation_esr === 'number'
+                  || !!((m.config as Record<string, unknown> | undefined)?.condition_dsp)
+                const mrstft = nl.mrstft
+                const mrstftLite = nl.a2_lite_mrstft
+                const mse = nl.mse
+                const mseLite = nl.a2_lite_mse
+                return (
+                  <>
+                    {typeof mrstft === 'number' && (
+                      <StatCard
+                        label={isA2 ? 'MRSTFT (A2 Full)' : 'MRSTFT'}
+                        value={mrstft.toFixed(6)}
+                      />
+                    )}
+                    {isA2 && typeof mrstftLite === 'number' && (
+                      <StatCard
+                        label="MRSTFT (A2 Lite)"
+                        value={mrstftLite.toFixed(6)}
+                      />
+                    )}
+                    {typeof mse === 'number' && (
+                      <StatCard
+                        label={isA2 ? 'MSE (A2 Full)' : 'MSE'}
+                        value={mse.toExponential(3)}
+                      />
+                    )}
+                    {isA2 && typeof mseLite === 'number' && (
+                      <StatCard
+                        label="MSE (A2 Lite)"
+                        value={mseLite.toExponential(3)}
+                      />
+                    )}
+                  </>
+                )
+              })()}
               {(() => {
                 const t = m.training as Record<string, unknown> | undefined
                 const data = t?.data as Record<string, unknown> | undefined
@@ -415,21 +758,160 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
                 )
               })()}
               {(() => {
-                const t = m.training as Record<string, unknown> | undefined
-                const cal = ((t?.data as Record<string, unknown> | undefined)?.latency as Record<string, unknown> | undefined)?.calibration as Record<string, unknown> | undefined
-                if (cal?.recommended == null) return null
-                return <StatCard label="Calibrated Latency" value={`${cal.recommended} samples`} />
-              })()}
-              {(() => {
-                const nb = ((m.training as Record<string, unknown> | undefined)?.nam_bot as Record<string, unknown> | undefined)
+                const nb = (((m as Record<string, unknown>).nam_bot as Record<string, unknown> | undefined)
+                  ?? ((m.training as Record<string, unknown> | undefined)?.nam_bot as Record<string, unknown> | undefined))
                 if (nb?.preset_name != null) return <StatCard label="NAM-BOT Preset" value={String(nb.preset_name)} />
+                if (m.nb_preset_name != null) return <StatCard label="NAM-BOT Preset" value={String(m.nb_preset_name)} />
                 return null
               })()}
               {dateStr && <StatCard label="Captured On" value={dateStr} />}
+              {file.sizeBytes != null && <StatCard label="File Size" value={formatBytes(file.sizeBytes) ?? '0 B'} />}
+              {m.loudness != null && (
+                <div className={loudnessUnlocked ? 'col-span-2' : undefined}>
+                  {!loudnessUnlocked ? (
+                    <div className="px-3 py-2.5 bg-gray-100/80 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-800">
+                      <div className="flex items-center justify-between mb-0.5">
+                        <div className="text-xs text-gray-500 dark:text-gray-500">Integrated Loudness</div>
+                        <button onClick={() => setLoudnessUnlocked(true)} className="p-0.5 rounded text-gray-400 dark:text-gray-600 hover:text-amber-500 dark:hover:text-amber-400 transition-colors" title="Unlock to edit loudness">
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" /></svg>
+                        </button>
+                      </div>
+                      <div className="text-sm font-mono font-medium text-gray-700 dark:text-gray-300">{m.loudness.toFixed(2)} dBFS</div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div className="text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Integrated Loudness</div>
+                      <div className="flex items-center gap-2">
+                        <NumberInput value={m.loudness ?? ''} onChange={(v) => update('loudness', v)} placeholder="e.g. -18.00" step={0.01} changed={isManuallyChanged('loudness')} autoFilled={false} />
+                        <button onClick={() => relockTrainerField(() => setLoudnessUnlocked(false))} className="flex-shrink-0 p-1.5 rounded text-amber-500 hover:text-amber-600 transition-colors" title="Lock field">
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 00-9 0v3.75M3.75 21.75h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H3.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" /></svg>
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
+                        <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+                        Auto-set by NAM trainer. Only change if correcting an inaccurate value.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+              {m.gain != null && (
+                <div className={gainUnlocked ? 'col-span-2' : undefined}>
+                  {!gainUnlocked ? (
+                    <div className="px-3 py-2.5 bg-gray-100/80 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-800">
+                      <div className="flex items-center justify-between mb-0.5">
+                        <div className="text-xs text-gray-500 dark:text-gray-500">Gain Factor</div>
+                        <button onClick={() => setGainUnlocked(true)} className="p-0.5 rounded text-gray-400 dark:text-gray-600 hover:text-amber-500 dark:hover:text-amber-400 transition-colors" title="Unlock to edit gain factor">
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" /></svg>
+                        </button>
+                      </div>
+                      <div className="text-sm font-mono font-medium text-gray-700 dark:text-gray-300">{m.gain.toFixed(4)}</div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div className="text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Gain Factor</div>
+                      <div className="flex items-center gap-2">
+                        <NumberInput value={m.gain ?? ''} onChange={(v) => update('gain', v)} placeholder="e.g. 1.0000" step={0.0001} changed={isManuallyChanged('gain')} autoFilled={false} />
+                        <button onClick={() => relockTrainerField(() => setGainUnlocked(false))} className="flex-shrink-0 p-1.5 rounded text-amber-500 hover:text-amber-600 transition-colors" title="Lock field">
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 00-9 0v3.75M3.75 21.75h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H3.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" /></svg>
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
+                        <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+                        Auto-set by NAM trainer. Only change if correcting an inaccurate value.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+              {m.trainer && (
+                <StatCard label="Trained By" value={m.trainer} />
+              )}
+              {a2CanonicalFieldNote && (
+                <div className="col-span-2 flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400">
+                  <span>A2 metadata behavior</span>
+                  <HelpPopover title="A2 metadata">
+                    {a2CanonicalFieldNote}
+                  </HelpPopover>
+                </div>
+              )}
+              {hasA2SubmodelMetadata && (
+                <div className="col-span-2 rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-100/70 dark:bg-gray-900/30 overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setShowA2SubmodelMetadata((v) => !v)}
+                    className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-gray-200/60 dark:hover:bg-gray-800/40 transition-colors"
+                  >
+                    <div>
+                      <div className="text-xs font-semibold text-gray-700 dark:text-gray-200">A2 sub-model metadata</div>
+                      <div className="text-[11px] text-gray-500 dark:text-gray-400">Read-only view of the Main, Full, and Lite values stored in the file.</div>
+                    </div>
+                    <svg
+                      className={`w-4 h-4 text-gray-400 transition-transform ${showA2SubmodelMetadata ? 'rotate-180' : ''}`}
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                    </svg>
+                  </button>
+                  {showA2SubmodelMetadata && (
+                    <div className="border-t border-gray-200 dark:border-gray-800 px-3 py-3 space-y-3">
+                      <div className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 text-[11px]">
+                        <div className="text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Field</div>
+                        <div className="text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Main</div>
+                        <div className="text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Full</div>
+                        <div className="text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Lite</div>
+                        {a2LoudnessValues && (
+                          <>
+                            <div className="text-gray-700 dark:text-gray-300">Integrated Loudness</div>
+                            <div className="font-mono text-gray-700 dark:text-gray-300">{formatReadOnlyNumeric(a2LoudnessValues.main, 2, ' dBFS')}</div>
+                            <div className="font-mono text-gray-700 dark:text-gray-300">{formatReadOnlyNumeric(a2LoudnessValues.full, 2, ' dBFS')}</div>
+                            <div className="font-mono text-gray-700 dark:text-gray-300">{formatReadOnlyNumeric(a2LoudnessValues.lite, 2, ' dBFS')}</div>
+                          </>
+                        )}
+                        {a2GainValues && (
+                          <>
+                            <div className="text-gray-700 dark:text-gray-300">Gain Factor</div>
+                            <div className="font-mono text-gray-700 dark:text-gray-300">{formatReadOnlyNumeric(a2GainValues.main, 4)}</div>
+                            <div className="font-mono text-gray-700 dark:text-gray-300">{formatReadOnlyNumeric(a2GainValues.full, 4)}</div>
+                            <div className="font-mono text-gray-700 dark:text-gray-300">{formatReadOnlyNumeric(a2GainValues.lite, 4)}</div>
+                          </>
+                        )}
+                        {a2EsrValues && (
+                          <>
+                            <div className="text-gray-700 dark:text-gray-300">Validation ESR</div>
+                            <div className="font-mono text-gray-700 dark:text-gray-300">{formatReadOnlyNumeric(a2EsrValues.main, 6)}</div>
+                            <div className="font-mono text-gray-700 dark:text-gray-300">{formatReadOnlyNumeric(a2EsrValues.full, 6)}</div>
+                            <div className="font-mono text-gray-700 dark:text-gray-300">{formatReadOnlyNumeric(a2EsrValues.lite, 6)}</div>
+                          </>
+                        )}
+                      </div>
+                      {a2EsrValues && (
+                        <div className="text-[10px] text-gray-500 dark:text-gray-400">
+                          ESR row: Main is the top-level saved <code>validation_esr</code> value in the file, which for A2 is usually the aggregate. Full and Lite are the NAM Lab per-submodel ESR values when present.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
+            {file.notes && file.notes.length > 0 && (
+              <div className="mt-3 rounded-lg border border-pink-200 dark:border-pink-800/40 bg-pink-50/50 dark:bg-pink-900/10 px-3 py-2.5 space-y-1">
+                <div className="flex items-center gap-1.5 mb-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-pink-500 dark:text-pink-400">A2 Model Notes</span>
+                  <span className="text-[9px] text-pink-400 dark:text-pink-500">(read-only)</span>
+                </div>
+                {file.notes.map((note, i) => (
+                  <p key={i} className="text-xs text-gray-600 dark:text-gray-400 leading-snug">{note}</p>
+                ))}
+              </div>
+            )}
           </Section>
 
-          {/* Star rating — always visible */}
+          {/* Star rating &mdash; always visible */}
           <div className="flex items-center gap-3 py-1">
             <span className="text-xs font-medium text-gray-500 dark:text-gray-400 w-28 flex-shrink-0">Rating</span>
             <div className="flex items-center gap-0.5">
@@ -570,17 +1052,17 @@ export function MetadataEditor({ file, onChange, onSave, onRevert, onRevealInFin
                   {show('nl_pedal_settings') && (
                     <div className={fieldClass('nl_pedal_settings')}>
                       <Field label="Pedal Settings" hint="Boost pedal + any other pedals in chain">
-                        <TextInput value={m.nl_pedal_settings ?? ''} onChange={(v) => update('nl_pedal_settings', v)} placeholder="e.g. Klon — Gain 10, Vol 9 · TS9 — Drive 5, Tone 12" changed={isManuallyChanged('nl_pedal_settings')} />
+                        <TextInput value={m.nl_pedal_settings ?? ''} onChange={(v) => update('nl_pedal_settings', v)} placeholder={"e.g. Klon \u2014 Gain 10, Vol 9 \u00b7 TS9 \u2014 Drive 5, Tone 12"} changed={isManuallyChanged('nl_pedal_settings')} />
                       </Field>
                     </div>
                   )}
 
                   {show('nl_comments') && (
-                    <Field label="Comments">
+                    <Field label="Notes / Comments">
                       <textarea
                         value={m.nl_comments ?? ''}
                         onChange={(e) => update('nl_comments', e.target.value)}
-                        placeholder="Any additional notes about this capture…"
+                        placeholder={"Any additional notes about this capture\u2026"}
                         rows={3}
                         maxLength={500}
                         className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none transition-colors resize-none ${inputClass(isManuallyChanged('nl_comments'))}`}
@@ -743,7 +1225,7 @@ function Select({
     >
       {options.map((o) => (
         <option key={o} value={o} className="bg-gray-200 dark:bg-gray-800">
-          {o === '' ? '— not set —' : o}
+          {o === '' ? '\u2014 not set \u2014' : o}
         </option>
       ))}
     </select>
@@ -768,3 +1250,5 @@ function StatCard({
     </div>
   )
 }
+
+

@@ -1,0 +1,5400 @@
+import { useEffect, useMemo, useRef, useState, startTransition, type MouseEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import * as XLSX from 'xlsx'
+import {
+  closestCenter,
+  DndContext,
+  DragOverlay,
+  type DragEndEvent,
+  type DragStartEvent,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core'
+import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import type { AppSettings, TrainingBundle, TrainingPreset, UserCaptureProfile } from '../types/settings'
+import {
+  IDLE_TRAINER_STATE,
+  TRAINER_ARCHITECTURES,
+  BUILT_IN_CAPTURE_PROFILES,
+  type TrainerArchitecture,
+  type TrainerHistoryEntry,
+  type TrainerQueueJob,
+  type TrainerStateSnapshot,
+  type CaptureProfile,
+} from '../types/trainer'
+import { CaptureProfileEditor } from './CaptureProfileEditor'
+import { WatcherFilesModal } from './WatcherFilesModal'
+import { HelpPopover } from './HelpPopover'
+import { TrainingPresetsPage } from './TrainingPresetsPage'
+import { effectiveFormula, resolveOutputFormula } from '../utils/resolveOutputFormula'
+import { getEsrTone as getEsrToneKind, getBestJobEsr, getBestLiveEsr } from '../utils/esr'
+import { EsrCurve, ProgressRing, QualityBars, Sparkline, StackedMeter } from './dashboard/Charts'
+
+type BatchWavItem = { id: string; path: string; name: string; fromFolder?: string }
+
+type RetrainMatchResult = { seedName: string; wavName: string }
+type RetrainSkipped = { seedName: string; reason: 'no-match' | 'ambiguous' }
+type RetrainReview = { matched: RetrainMatchResult[]; skipped: RetrainSkipped[]; duplicatesCollapsed: number }
+
+function normBasenameRetrain(name: string): string {
+  return name.replace(/\.[^.]+$/, '').toLowerCase()
+}
+
+// Thin render-prop wrapper so `useSortable` (a hook) can be called once per batch card
+// without extracting the ~250-line card body into its own component with dozens of
+// threaded props — the callback below still closes over everything the parent's
+// `groupedQueue.map` scope defined, exactly as it did before this migration.
+function SortableBatchCard({
+  id,
+  children,
+}: {
+  id: string
+  children: (args: {
+    setNodeRef: (el: HTMLElement | null) => void
+    style: { transform: string | undefined; transition: string | undefined }
+    dragHandleProps: Record<string, unknown>
+    setActivatorNodeRef: (el: HTMLElement | null) => void
+    isDragging: boolean
+  }) => ReactNode
+}) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const style = { transform: CSS.Transform.toString(transform), transition }
+  return <>{children({ setNodeRef, style, dragHandleProps: { ...attributes, ...listeners }, setActivatorNodeRef, isDragging })}</>
+}
+
+function matchSeedsToWavs(seedNames: string[], wavNames: string[]): RetrainReview {
+  const wavByNorm = new Map<string, string[]>()
+  for (const w of wavNames) {
+    const key = normBasenameRetrain(w)
+    const arr = wavByNorm.get(key)
+    if (arr) arr.push(w)
+    else wavByNorm.set(key, [w])
+  }
+  const matched: RetrainMatchResult[] = []
+  const skipped: RetrainSkipped[] = []
+  const seenWavNorms = new Set<string>()
+  let duplicatesCollapsed = 0
+  for (const seedName of seedNames) {
+    const key = normBasenameRetrain(seedName)
+    const candidates = wavByNorm.get(key) ?? []
+    if (candidates.length === 0) {
+      skipped.push({ seedName, reason: 'no-match' })
+    } else if (candidates.length > 1) {
+      skipped.push({ seedName, reason: 'ambiguous' })
+    } else {
+      if (seenWavNorms.has(key)) {
+        duplicatesCollapsed++
+      } else {
+        seenWavNorms.add(key)
+        matched.push({ seedName, wavName: candidates[0] })
+      }
+    }
+  }
+  return { matched, skipped, duplicatesCollapsed }
+}
+
+interface Props {
+  settings: AppSettings
+  onSaveSettings: (settings: AppSettings) => void
+  onClose?: () => void
+  initialRunMode?: 'files' | 'folder' | 'queue' | 'history' | 'presets'
+  onOpenSetupGuide?: () => void
+  onOpenSettings?: (tab?: 'global' | 'defaults' | 'metadata' | 'pack' | 'training') => void
+}
+
+const ARCHITECTURE_LABELS: Record<TrainerArchitecture, string> = {
+  a2: 'A2',
+  standard: 'Standard',
+  complex: 'Complex',
+  lite: 'Lite',
+  feather: 'Feather',
+  nano: 'Nano',
+  revystd: 'REVySTD',
+  revyhi: 'REVyHI',
+  revxstd: 'REVxSTD',
+}
+
+// Display order for the architecture multi-select — A2 first, then A1 variants in capability order.
+const ARCHITECTURE_DISPLAY_ORDER: TrainerArchitecture[] = ['a2', 'standard', 'complex', 'lite', 'feather', 'nano', 'revystd', 'revyhi', 'revxstd']
+
+// "A1 - Standard" / "A2" — used in pickers where the namMode is non-obvious.
+function architectureFullLabel(arch: string): string {
+  if (arch === 'a2') return 'A2'
+  const short = ARCHITECTURE_LABELS[arch as TrainerArchitecture]
+  return short ? `A1 - ${short}` : arch
+}
+
+// Per-job namMode: 'a2' architecture maps to A2 PackedWaveNet, everything else to A1 WaveNet.
+function deriveNamMode(architecture: string): 'a1' | 'a2' {
+  return architecture === 'a2' ? 'a2' : 'a1'
+}
+
+// Per-architecture identifier color — same palette as ArchitectureProfilePicker so chips read consistently across Queue, Staged Batches, Create Batch, and History.
+const ARCHITECTURE_ACCENT_HEX: Record<string, string> = {
+  a2:       '#f43f5e', // rose
+  standard: '#94a3b8', // slate
+  complex:  '#3b82f6', // blue
+  lite:     '#10b981', // emerald
+  feather:  '#0ea5e9', // sky
+  nano:     '#f59e0b', // amber
+  revystd:  '#8b5cf6', // violet
+  revyhi:   '#a855f7', // purple
+  revxstd:  '#d946ef', // fuchsia
+}
+
+function architectureAccentHex(arch: string): string {
+  return ARCHITECTURE_ACCENT_HEX[arch] ?? 'var(--nm-accent, var(--accent))'
+}
+
+// Tinted background + colored dot + label, for the per-architecture pill used in batch/history rows.
+function archChipStyle(arch: string): { background: string; color: string; borderColor: string } {
+  const c = architectureAccentHex(arch)
+  return {
+    background: `color-mix(in srgb, ${c} 14%, transparent)`,
+    color: c,
+    borderColor: `color-mix(in srgb, ${c} 35%, transparent)`,
+  }
+}
+
+const CUSTOM_PRESET_ID = 'custom'
+const BUNDLE_PREFIX = 'bundle:'
+
+function lookupProfileConfig(
+  profileId: string,
+  userProfiles: UserCaptureProfile[]
+): Pick<CaptureProfile, 'waveNetConfig' | 'lr' | 'lrDecay' | 'batchSize' | 'ny' | 'fitMrstft'> | null {
+  const builtIn = BUILT_IN_CAPTURE_PROFILES.find((p) => p.id === profileId)
+  if (builtIn) return builtIn
+  const user = userProfiles.find((p) => p.id === profileId)
+  return user ?? null
+}
+
+function architectureDisplayLabel(arch: string): string {
+  if (arch === 'a2') return 'A2'
+  return ARCHITECTURE_LABELS[arch as TrainerArchitecture] ?? arch
+}
+
+function architectureEpochNote(architecture: TrainerArchitecture): string | null {
+  if (architecture === 'complex') return 'Official trainer uses its recommended Complex learning settings.'
+  if (architecture === 'revyhi') return 'Official trainer forces the author-recommended REVyHI defaults, including 1500 epochs.'
+  if (architecture === 'revxstd') return 'Official trainer forces the author-recommended REVxSTD defaults, including 1000 epochs.'
+  return null
+}
+
+function effectiveEpochTotal(architecture: TrainerArchitecture | '', configured: number | null): number | null {
+  if (architecture === 'revyhi') return 1500
+  if (architecture === 'revxstd') return 1000
+  return configured
+}
+
+function formatThresholdEsr(value: number | null): string {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '') : ''
+}
+function buildTrainerSnapshotSignature(state: TrainerStateSnapshot): string {
+  const queueSig = state.queue.map((job) => `${job.jobId}:${job.status}:${job.progressEpochCurrent ?? ''}:${job.progressBatchCurrent ?? ''}:${job.validationEsr ?? ''}:${job.validationEsrFull ?? ''}`).join('|')
+  const historySig = state.history.slice(-3).map((entry) => `${entry.jobId}:${entry.status}:${entry.finishedAt ?? ''}:${entry.validationEsr ?? ''}:${entry.validationEsrFull ?? ''}`).join('|')
+  return [
+    state.status,
+    state.activeJobId ?? '',
+    state.startedAt ?? '',
+    state.finishedAt ?? '',
+    state.modelName ?? '',
+    state.outputModelPath ?? '',
+    state.progressPercent ?? '',
+    state.progressEpochCurrent ?? '',
+    state.progressEpochTotal ?? '',
+    state.progressBatchCurrent ?? '',
+    state.progressBatchTotal ?? '',
+    state.progressRate ?? '',
+    state.validationEsr ?? '',
+    state.epochValidationEsr ?? '',
+    state.epochValidationEsrFull ?? '',
+    state.epochValidationEsrLite ?? '',
+    state.epochValidationEsrAggregate ?? '',
+    state.logs.length,
+    state.pauseAfterCurrent ? 'paused' : 'live',
+    state.queue.length,
+    queueSig,
+    state.history.length,
+    historySig,
+  ].join('~')
+}
+
+function MiniEsrPlot({ tone, seed }: { tone: 'green' | 'amber' | 'red' | 'none'; seed: number }) {
+  const color = tone === 'green' ? '#10b981' : tone === 'amber' ? '#f59e0b' : tone === 'red' ? '#ef4444' : '#9ca3af'
+  let s = seed
+  const rnd = () => { s = (s * 9301 + 49297) % 233280; return s / 233280 }
+  const n = 18, w = 44, h = 34, pad = 3
+  const pts: Array<[number, number]> = Array.from({ length: n }, (_, i) => {
+    const frac = i / (n - 1)
+    const base = 0.1 + 0.85 * Math.exp(-3.2 * frac)
+    const v = Math.max(base + base * 0.08 * (rnd() - 0.5), 0.04)
+    return [pad + frac * (w - pad * 2), pad + v * (h - pad * 2)]
+  })
+  const line = pts.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(' ')
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ position: 'absolute', inset: 0 }}>
+      <path d={`${line} L${w - pad} ${h - pad} L${pad} ${h - pad} Z`} fill={color} opacity={0.14} />
+      <path d={line} fill="none" stroke={color} strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function ChartFit({ minH = 220, children }: { minH?: number; children: (w: number) => React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [w, setW] = useState(600)
+  useEffect(() => {
+    if (!ref.current) return
+    const ro = new ResizeObserver(entries => { for (const e of entries) setW(Math.max(e.contentRect.width, 120)) })
+    ro.observe(ref.current)
+    return () => ro.disconnect()
+  }, [])
+  return <div ref={ref} style={{ width: '100%', minHeight: minH }}>{children(w)}</div>
+}
+
+function formatDuration(sec: number): string {
+  if (sec < 60) return `${sec}s`
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  return `${h}h ${m}m`
+}
+
+function jobDurationSec(job: { startedAt: string | null; finishedAt: string | null }): number | null {
+  if (!job.startedAt || !job.finishedAt) return null
+  return Math.floor((new Date(job.finishedAt).getTime() - new Date(job.startedAt).getTime()) / 1000)
+}
+
+function describePreset(preset: TrainingPreset): string {
+  const archText =
+    preset.architectures.length === 0
+      ? 'No architectures'
+      : preset.architectures.map((item) => architectureDisplayLabel(item)).join(', ')
+  const esrText = typeof preset.thresholdEsr === 'number' ? `Target ESR ${formatThresholdEsr(preset.thresholdEsr)}` : 'No ESR target'
+  return `${archText} \u00b7 ${preset.epochs} epochs \u00b7 ${esrText}`
+}
+
+function makePresetId(name: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return `training-preset-${slug || Date.now()}-${Date.now()}`
+}
+
+function makeSubmissionId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2, 10)}`
+}
+
+function extractPlannedCaptureCount(label: string | null | undefined): number | null {
+  if (!label) return null
+  const match = /(?:^| - )(\d+)\s+captures?$/i.exec(label.trim())
+  if (!match) return null
+  const count = Number.parseInt(match[1], 10)
+  return Number.isFinite(count) ? count : null
+}
+
+function stripPlannedCaptureSuffix(label: string | null | undefined): string {
+  if (!label) return ''
+  return label.replace(/\s*-\s*\d+\s+captures?$/i, '').trim()
+}
+
+function getEsrTone(esr: number | null): { text: string; classes: string; tone: 'green' | 'amber' | 'red' | 'none' } {
+  if (typeof esr !== 'number') {
+    return { text: '\u2014', classes: 'text-nm-text-3', tone: 'none' }
+  }
+  if (esr < 0.01) {
+    return { text: esr.toFixed(6), classes: 'text-emerald-400', tone: 'green' }
+  }
+  if (esr < 0.05) {
+    return { text: esr.toFixed(6), classes: 'text-amber-400', tone: 'amber' }
+  }
+  return { text: esr.toFixed(6), classes: 'text-red-400', tone: 'red' }
+}
+
+function esrBadgeClasses(tone: 'green' | 'amber' | 'red' | 'none'): string {
+  if (tone === 'green') return 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+  if (tone === 'amber') return 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+  if (tone === 'red') return 'bg-red-500/15 text-red-400 border-red-500/30'
+  return 'bg-field text-nm-text-3 border-nm-border-s'
+}
+
+function showNativeTextContextMenu(event: MouseEvent<HTMLElement>) {
+  const selection = window.getSelection()?.toString().trim() ?? ''
+  const target = event.target as HTMLElement | null
+  const isEditable = !!target?.closest('input, textarea, [contenteditable="true"]')
+  if (!selection && !isEditable) return
+  event.preventDefault()
+  void window.api.showTextContextMenu({ hasSelection: !!selection, isEditable })
+}
+
+export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMode, onOpenSetupGuide, onOpenSettings }: Props) {
+  const [inputPath, setInputPath] = useState(settings.namTrainingInputWav || '')
+  const [section, setSection] = useState<'dashboard' | 'live' | 'queue' | 'batches' | 'history' | 'new' | 'presets'>('dashboard')
+  const [quickAddOpen, setQuickAddOpen] = useState(false)
+  const [quickAddConfirmed, setQuickAddConfirmed] = useState<{ count: number; label: string }[]>([])
+  const [batchWavList, setBatchWavList] = useState<BatchWavItem[]>([])
+  const [batchName, setBatchName] = useState('')
+  const [separateBatches, setSeparateBatches] = useState(false)
+  const [submittingBatch, setSubmittingBatch] = useState(false)
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set())
+  const [collapsedBatches, setCollapsedBatches] = useState<Set<string>>(new Set())
+  const [esrSeries, setEsrSeries] = useState<{ epoch: number; esr: number }[]>([])
+  const [queueView, setQueueView] = useState<'batches' | 'compact' | 'board'>('batches')
+  const [logExpanded, setLogExpanded] = useState(true)
+  const [watchFoldersExpanded, setWatchFoldersExpanded] = useState(false)
+  const [watcherFilesModal, setWatcherFilesModal] = useState<{ profileId: string; profileName: string; watchFolder: string; architectures: string[] } | null>(null)
+  const [trainPath, setTrainPath] = useState('')
+  const [manualRoutingMode, setManualRoutingMode] = useState<'root' | 'sibling_processed'>('root')
+  const [formulaOverrideActive, setFormulaOverrideActive] = useState(false)
+  const [graphFormulaOverrideActive, setGraphFormulaOverrideActive] = useState(false)
+  const [selectedPresetId, setSelectedPresetId] = useState<string>(() => {
+    const last = (settings.trainingLastSelectedPresetId ?? '').trim()
+    const fav = (settings.trainingFavoritePresetId ?? '').trim()
+    return last || fav || CUSTOM_PRESET_ID
+  })
+  const [architectures, setArchitectures] = useState<string[]>(['a2'])
+  const [normalizeWavOverride, setNormalizeWavOverride] = useState<'global' | 'on' | 'off'>('off')
+  const [normalizeWavTargetDb, setNormalizeWavTargetDb] = useState('')
+  const [captureProfileEditorOpen, setCaptureProfileEditorOpen] = useState(false)
+  const [captureProfileEditorTarget, setCaptureProfileEditorTarget] = useState<UserCaptureProfile | null>(null)
+  const [epochs, setEpochs] = useState('1000')
+  const [latency, setLatency] = useState('')
+  const [thresholdEsr, setThresholdEsr] = useState('')
+  const [savePlot, setSavePlot] = useState(true)
+  const [ignoreChecks, setIgnoreChecks] = useState(false)
+  const [launchError, setLaunchError] = useState('')
+  const [queueActionError, setQueueActionError] = useState('')
+  const [trainerState, setTrainerState] = useState<TrainerStateSnapshot>(IDLE_TRAINER_STATE)
+  const [queueContextMenu, setQueueContextMenu] = useState<{ job: TrainerQueueJob; x: number; y: number } | null>(null)
+  const [historyContextMenu, setHistoryContextMenu] = useState<{ entry: TrainerHistoryEntry; x: number; y: number } | null>(null)
+  const [historyPurgeConfirm, setHistoryPurgeConfirm] = useState<{ ids: string[]; label: string; mode: 'capture' | 'batch' } | null>(null)
+  const [clearQueueConfirm, setClearQueueConfirm] = useState<{ count: number } | null>(null)
+  const [clearWatcherConfirm, setClearWatcherConfirm] = useState<{ count: number } | null>(null)
+  const [graphModalSrc, setGraphModalSrc] = useState<string | null>(null)
+  const [queueProfileFilter, setQueueProfileFilter] = useState<string>('all')
+  const [queueStatusFilter, setQueueStatusFilter] = useState<string>('all')
+  const [queueArchitectureFilter, setQueueArchitectureFilter] = useState<string>('all')
+  const [historyProfileFilter, setHistoryProfileFilter] = useState<string>('all')
+  const [historyStatusFilter, setHistoryStatusFilter] = useState<string>('all')
+  const [historyArchitectureFilter, setHistoryArchitectureFilter] = useState<string>('all')
+  const [historyTimeFilter, setHistoryTimeFilter] = useState<'all' | 'day' | 'week' | 'month' | 'quarter'>('all')
+  const [historyEsrFilter, setHistoryEsrFilter] = useState<'all' | 'green' | 'amber' | 'red' | 'none'>('all')
+  const [historySearch, setHistorySearch] = useState('')
+  const [showSavePresetModal, setShowSavePresetModal] = useState(false)
+  const [presetNameDraft, setPresetNameDraft] = useState('')
+  const [presetSaveError, setPresetSaveError] = useState('')
+  const [presetSaveNotice, setPresetSaveNotice] = useState('')
+  const [cancelBatchConfirm, setCancelBatchConfirm] = useState<{ submissionId: string; label: string } | null>(null)
+  const [dismissBatchConfirm, setDismissBatchConfirm] = useState<{ submissionId: string; label: string; failCount: number; doneCount: number } | null>(null)
+  const [editBatchModal, setEditBatchModal] = useState<{ submissionId: string; label: string; epochs: number; thresholdEsr: number | null; lr: number; lrDecay: number; inputPath: string } | null>(null)
+  const [editBatchName, setEditBatchName] = useState('')
+  const [editBatchEpochs, setEditBatchEpochs] = useState('')
+  const [editBatchThresholdEsr, setEditBatchThresholdEsr] = useState('')
+  const [editBatchLr, setEditBatchLr] = useState('')
+  const [editBatchLrDecay, setEditBatchLrDecay] = useState('')
+  const [editBatchInputPath, setEditBatchInputPath] = useState('')
+  const [elapsedSec, setElapsedSec] = useState(0)
+  const rawLogRef = useRef<HTMLDivElement | null>(null)
+  const trainerSnapshotSigRef = useRef(buildTrainerSnapshotSignature(IDLE_TRAINER_STATE))
+  // History arrives on its own 'trainer:history' channel (not in the high-frequency progress push).
+  // We keep the latest history here and merge it into every trainerState we apply, so the rest of
+  // the component can keep reading trainerState.history unchanged.
+  const trainerHistoryRef = useRef<TrainerHistoryEntry[]>([])
+  const [outputNotices, setOutputNotices] = useState<Array<{ id: string; label: string; folders: string[] }>>([])
+  const prevQueueJobStatusRef = useRef<Map<string, string>>(new Map())
+
+  // Retrain from folder state
+  const [newRunMode, setNewRunMode] = useState<'manual' | 'fromCaptures'>('manual')
+  const [retrainSeedFolder, setRetrainSeedFolder] = useState('')
+  const [retrainWavFolder, setRetrainWavFolder] = useState('')
+  const [retrainArchitectures, setRetrainArchitectures] = useState<string[]>(['a2'])
+  const [retrainReview, setRetrainReview] = useState<RetrainReview | null>(null)
+  const [retrainBusy, setRetrainBusy] = useState(false)
+  const [retrainError, setRetrainError] = useState('')
+  const [retrainQueued, setRetrainQueued] = useState<{ count: number; skipped: number } | null>(null)
+
+  useEffect(() => {
+    if (settings.namTrainingInputWav && !inputPath) setInputPath(settings.namTrainingInputWav)
+  }, [settings.namTrainingInputWav, inputPath])
+
+  useEffect(() => {
+    if (!initialRunMode) return
+    if (initialRunMode === 'queue') setSection('queue')
+    else if (initialRunMode === 'history') setSection('history')
+    else if (initialRunMode === 'presets') setSection('presets')
+    else setSection('dashboard')
+  }, [initialRunMode])
+
+  useEffect(() => {
+    if (selectedPresetId === (settings.trainingLastSelectedPresetId ?? '')) return
+    onSaveSettings({ ...settings, trainingLastSelectedPresetId: selectedPresetId })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPresetId])
+
+  useEffect(() => {
+    if (selectedPresetId === CUSTOM_PRESET_ID || selectedPresetId.startsWith(BUNDLE_PREFIX)) return
+    if (settings.trainingPresets.some((preset) => preset.id === selectedPresetId)) return
+    const fallbackPresetId = (settings.trainingFavoritePresetId ?? '').trim() || CUSTOM_PRESET_ID
+    if (fallbackPresetId !== selectedPresetId) setSelectedPresetId(fallbackPresetId)
+  }, [selectedPresetId, settings.trainingFavoritePresetId, settings.trainingPresets])
+
+  useEffect(() => {
+    let disposed = false
+    let lastActiveJobId: string | null = null
+    const applyTrainerState = (incoming: TrainerStateSnapshot) => {
+      // Progress pushes carry an empty history (see emitTrainerState in main) — re-attach the latest
+      // history delivered on the dedicated channel so trainerState.history stays populated.
+      const state = { ...incoming, history: trainerHistoryRef.current }
+      const nextSig = buildTrainerSnapshotSignature(state)
+      if (trainerSnapshotSigRef.current === nextSig) return
+      trainerSnapshotSigRef.current = nextSig
+      startTransition(() => {
+        setTrainerState(state)
+        if (state.activeJobId !== lastActiveJobId) {
+          lastActiveJobId = state.activeJobId ?? null
+          if (state.activeJobId) setEsrSeries([])
+        }
+        if (state.status === 'running' && state.progressEpochCurrent && typeof state.epochValidationEsr === 'number') {
+          setEsrSeries(prev => {
+            const epoch = state.progressEpochCurrent!
+            if (prev.length > 0 && prev[prev.length - 1].epoch === epoch) return prev
+            const { value: bestEsr } = getBestLiveEsr(state)
+            return [...prev, { epoch, esr: (bestEsr ?? state.epochValidationEsr) as number }]
+          })
+        }
+        if ((state.status === 'success' || state.status === 'error') && typeof state.validationEsr === 'number') {
+          setEsrSeries(prev => {
+            if (prev.length > 0) return prev
+            const epoch = state.progressEpochTotal ?? state.epochs ?? 0
+            return [{ epoch, esr: state.validationEsr as number }]
+          })
+        }
+      })
+    }
+    void window.api.getTrainerState().then((state) => {
+      if (!disposed) {
+        // getTrainerState() returns the full history (one-time, on demand) — seed the ref from it.
+        trainerHistoryRef.current = state.history ?? []
+        applyTrainerState(state)
+        if (state.status === 'running' || state.status === 'starting') setSection('live')
+        else setSection('dashboard')
+      }
+    })
+    const off = window.api.onTrainerUpdate((state) => {
+      if (!disposed) applyTrainerState(state)
+    })
+    const offHistory = window.api.onTrainerHistory((history) => {
+      if (disposed) return
+      trainerHistoryRef.current = history
+      // Bypass the snapshot-signature gate (which only hashes the oldest 3 entries) — a history
+      // change must always re-render the History tab, so patch trainerState.history directly.
+      startTransition(() => { setTrainerState((prev) => ({ ...prev, history })) })
+    })
+    return () => {
+      disposed = true
+      off()
+      offHistory()
+    }
+  }, [])
+
+  useEffect(() => {
+    const node = rawLogRef.current
+    if (!node) return
+    node.scrollTop = node.scrollHeight
+  }, [trainerState.logs.length])
+
+  useEffect(() => {
+    if (!presetSaveNotice) return
+    const timer = window.setTimeout(() => setPresetSaveNotice(''), 2500)
+    return () => window.clearTimeout(timer)
+  }, [presetSaveNotice])
+
+  // Detect newly completed batches and surface output folder notices (TODO #4)
+  useEffect(() => {
+    const queue = trainerState.queue
+    const prevStatuses = prevQueueJobStatusRef.current
+    const terminal = new Set(['success', 'error', 'canceled'])
+
+    // Group jobs by submissionId
+    const bySubmission = new Map<string, TrainerQueueJob[]>()
+    for (const job of queue) {
+      const sid = job.submissionId ?? `solo:${job.jobId}`
+      const arr = bySubmission.get(sid) ?? []
+      arr.push(job)
+      bySubmission.set(sid, arr)
+    }
+
+    for (const [sid, jobs] of bySubmission) {
+      const allTerminalNow = jobs.every((j) => terminal.has(j.status))
+      if (!allTerminalNow) continue
+      const wasAlreadyAllTerminal = jobs.every((j) => terminal.has(prevStatuses.get(j.jobId) ?? ''))
+      if (wasAlreadyAllTerminal) continue
+
+      // This submission just fully completed — collect unique output folders from successful jobs
+      const successFolders = [...new Set(
+        jobs
+          .filter((j) => j.status === 'success' && j.outputModelPath)
+          .map((j) => {
+            const p = j.outputModelPath.replace(/\\/g, '/')
+            return p.substring(0, p.lastIndexOf('/'))
+          })
+          .filter(Boolean)
+      )]
+      if (successFolders.length === 0) continue
+
+      const label = jobs[0].submissionLabel ?? 'Batch'
+      setOutputNotices((prev) => [...prev, { id: sid, label, folders: successFolders }])
+    }
+
+    // Update previous statuses
+    const next = new Map<string, string>()
+    for (const job of queue) next.set(job.jobId, job.status)
+    prevQueueJobStatusRef.current = next
+  }, [trainerState.queue])
+
+  // Clear stale completion toasts when new work starts. Finished batches themselves are pruned
+  // from the queue by the MAIN process once every job in them is terminal (pruneFinishedBatchesFromQueue).
+  // The renderer must NOT call clearFinishedTrainerRuns() on mount/transition — that previously wiped
+  // the terminal rows of paused, partially-finished batches that were correctly restored from disk.
+  const prevHadActiveRef = useRef(false)
+  useEffect(() => {
+    const hasActive = trainerState.queue.some(j => j.status === 'queued' || j.status === 'running' || j.status === 'starting')
+    const wasActive = prevHadActiveRef.current
+    if (hasActive && !wasActive && outputNotices.length > 0) {
+      setOutputNotices([])
+    }
+    prevHadActiveRef.current = hasActive
+  }, [trainerState.queue, outputNotices.length])
+
+  const queueProfileOptions = useMemo(
+    () => Array.from(new Map(trainerState.queue.filter((job) => job.profileId || job.profileName).map((job) => [job.profileId ?? job.profileName ?? 'manual', job.profileName ?? 'Manual'])).entries()),
+    [trainerState.queue]
+  )
+  const filteredQueue = useMemo(
+    () => trainerState.queue.filter((job) => {
+      if (job.status === 'staged') return false  // staged jobs shown in Batches section only
+      if (queueProfileFilter !== 'all' && (job.profileId ?? 'manual') !== queueProfileFilter) return false
+      if (queueStatusFilter !== 'all' && job.status !== queueStatusFilter) return false
+      if (queueArchitectureFilter !== 'all' && job.architecture !== queueArchitectureFilter) return false
+      return true
+    }),
+    [queueArchitectureFilter, queueProfileFilter, queueStatusFilter, trainerState.queue]
+  )
+  const groupedStagedQueue = useMemo(() => {
+    const staged = trainerState.queue.filter((job) => job.status === 'staged')
+    const groups: Array<{ key: string; groupKey: string; label: string; createdAt: string | null; jobs: TrainerQueueJob[] }> = []
+    for (const job of staged) {
+      const groupKey = job.submissionId ?? `ungrouped:${job.jobId}`
+      const existing = groups[groups.length - 1]
+      if (existing && existing.groupKey === groupKey) {
+        existing.jobs.push(job)
+      } else {
+        groups.push({
+          key: `${groupKey}:${job.jobId}`,
+          groupKey,
+          label: job.submissionLabel ?? (job.profileName ?? 'Batch'),
+          createdAt: job.submissionCreatedAt ?? null,
+          jobs: [job],
+        })
+      }
+    }
+    return groups
+  }, [trainerState.queue])
+  const groupedQueue = useMemo(() => {
+    // Group by submissionId regardless of array position so split batches merge into one card.
+    const groupMap = new Map<string, { key: string; groupKey: string; label: string; createdAt: string | null; jobs: TrainerQueueJob[] }>()
+    const groupOrder: string[] = []
+    for (const job of filteredQueue) {
+      const groupKey = job.submissionId ?? `ungrouped:${job.jobId}`
+      const existing = groupMap.get(groupKey)
+      if (existing) {
+        existing.jobs.push(job)
+      } else {
+        groupMap.set(groupKey, {
+          key: `${groupKey}:${job.jobId}`,
+          groupKey,
+          label: job.submissionLabel ?? (job.profileName ?? (job.sourceMode === 'watcher' ? 'Watcher' : job.sourceMode === 'manual-folder-run' ? 'Folder run' : 'Run WAVs')),
+          createdAt: job.submissionCreatedAt ?? null,
+          jobs: [job],
+        })
+        groupOrder.push(groupKey)
+      }
+    }
+    // Sort by position of first active (queued/running) job so the running batch stays on top.
+    // Terminal-only batches fall back to first-occurrence order.
+    const activePos = (gk: string) => {
+      const idx = filteredQueue.findIndex(j =>
+        (j.submissionId ?? `ungrouped:${j.jobId}`) === gk &&
+        (j.status === 'queued' || j.status === 'running' || j.status === 'starting')
+      )
+      return idx === -1 ? Infinity : idx
+    }
+    groupOrder.sort((a, b) => {
+      const diff = activePos(a) - activePos(b)
+      if (diff !== 0) return diff
+      return groupOrder.indexOf(a) - groupOrder.indexOf(b)
+    })
+    return groupOrder.map(k => groupMap.get(k)!)
+  }, [filteredQueue])
+
+
+  // Auto-collapse fully-finished batches (no queued/running items)
+  useEffect(() => {
+    setCollapsedBatches(prev => {
+      const next = new Set(prev)
+      let changed = false
+      for (const group of groupedQueue) {
+        const hasActive = group.jobs.some(j => j.status === 'queued' || j.status === 'running' || j.status === 'starting')
+        if (!hasActive && !next.has(group.key)) {
+          next.add(group.key)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupedQueue.length])
+
+  useEffect(() => {
+    if (!queueContextMenu) return
+    const close = () => setQueueContextMenu(null)
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close()
+    }
+    window.addEventListener('mousedown', close)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [queueContextMenu])
+
+  const isRunning = trainerState.status === 'starting' || trainerState.status === 'running'
+
+  useEffect(() => {
+    if (!isRunning || !trainerState.startedAt) {
+      setElapsedSec((prev) => (prev === 0 ? prev : 0))
+      return
+    }
+    const start = new Date(trainerState.startedAt).getTime()
+    const tick = () => {
+      const next = Math.floor((Date.now() - start) / 1000)
+      setElapsedSec((prev) => (prev === next ? prev : next))
+    }
+    tick()
+    const id = window.setInterval(tick, 1000)
+    return () => window.clearInterval(id)
+  }, [isRunning, trainerState.startedAt])
+  const activeJob = trainerState.activeJobId ? trainerState.queue.find((job) => job.jobId === trainerState.activeJobId) ?? null : null
+  const epochNote = architectures.length === 1 ? architectureEpochNote(architectures[0]) : null
+  const progressEpochTotal = effectiveEpochTotal(
+    (trainerState.architecture || architectures[0] || 'standard') as TrainerArchitecture | '',
+    trainerState.progressEpochTotal ?? trainerState.epochs
+  )
+  const { value: _bestStateEsr, kind: _bestStateEsrKind } = getBestLiveEsr(trainerState)
+  const validationEsrTone = getEsrToneKind(_bestStateEsr, _bestStateEsrKind)
+  const replicateEsrTone = getEsrTone(trainerState.replicateEsr)
+  const liveRunShowsA2Full = trainerState.architecture === 'a2' && _bestStateEsrKind === 'a2_full'
+  const liveChartTarget = typeof trainerState.thresholdEsr === 'number' ? trainerState.thresholdEsr : 0.01
+
+  const resolvedModelName = useMemo(() => {
+    const first = batchWavList[0]?.path ?? ''
+    const base = first.replace(/\\/g, '/').split('/').pop()?.replace(/\.[^.]+$/, '').trim() || 'model'
+    return base
+  }, [batchWavList])
+
+  const manualRoutingSourceFolder = useMemo(() => {
+    const first = batchWavList[0]?.path ?? ''
+    if (!first) return ''
+    return first.replace(/\\/g, '/').split('/').slice(0, -1).join('/')
+  }, [batchWavList])
+
+  const availablePresets = useMemo(
+    () => settings.trainingPresets.filter((preset) => preset.architectures.length > 0),
+    [settings.trainingPresets]
+  )
+  const availableBundles = useMemo(
+    () => (settings.trainingBundles ?? []).filter((b) => b.presetIds.length > 0),
+    [settings.trainingBundles]
+  )
+  const activeBundle = useMemo(
+    () => selectedPresetId.startsWith(BUNDLE_PREFIX)
+      ? availableBundles.find((b) => b.id === selectedPresetId.slice(BUNDLE_PREFIX.length)) ?? null
+      : null,
+    [availableBundles, selectedPresetId]
+  )
+  const bundleActivePresets = useMemo(
+    () => activeBundle
+      ? activeBundle.presetIds
+          .map((pid) => availablePresets.find((p) => p.id === pid))
+          .filter((p): p is TrainingPreset => Boolean(p))
+      : [],
+    [activeBundle, availablePresets]
+  )
+  const activePreset = useMemo(
+    () => (selectedPresetId === CUSTOM_PRESET_ID || selectedPresetId.startsWith(BUNDLE_PREFIX))
+      ? null
+      : availablePresets.find((preset) => preset.id === selectedPresetId) ?? null,
+    [availablePresets, selectedPresetId]
+  )
+
+
+  // Output formula: global setting overridable per preset
+  const activeFormula = useMemo(
+    () => effectiveFormula(settings.trainingOutputFormula ?? '', activePreset?.outputFormulaOverride),
+    [settings.trainingOutputFormula, activePreset]
+  )
+  // Graph formula: global setting overridable per preset
+  const activeGraphFormula = useMemo(
+    () => effectiveFormula(settings.trainingGraphFormula ?? '', activePreset?.graphOutputFormulaOverride),
+    [settings.trainingGraphFormula, activePreset]
+  )
+  // Staging dir = parent directory of the first WAV in the batch list
+  const filesStagingDir = useMemo(() => {
+    if (batchWavList.length === 0) return ''
+    return batchWavList[0].path.replace(/\\/g, '/').split('/').slice(0, -1).join('/')
+  }, [batchWavList])
+  // Pre-resolve formula for files mode preview (uses first arch)
+  const formulaPreviewPath = useMemo(() => {
+    if (!activeFormula || !filesStagingDir) return null
+    const arch = (activePreset?.architectures[0] ?? architectures[0]) || 'Standard'
+    return resolveOutputFormula(activeFormula, filesStagingDir, arch)
+  }, [activeFormula, filesStagingDir, activePreset, architectures])
+  const graphFormulaPreviewPath = useMemo(() => {
+    if (!activeGraphFormula || !filesStagingDir) return null
+    const arch = (activePreset?.architectures[0] ?? architectures[0]) || 'Standard'
+    return resolveOutputFormula(activeGraphFormula, filesStagingDir, arch)
+  }, [activeGraphFormula, filesStagingDir, activePreset, architectures])
+  const previewArchitecture = useMemo<TrainerArchitecture>(() => {
+    const candidate = (activePreset?.architectures[0] ?? architectures[0] ?? 'standard') as TrainerArchitecture
+    return candidate
+  }, [activePreset, architectures])
+  const previewUsesArchitectureSubfolders = useMemo(
+    () => (activePreset?.architectures.length ?? architectures.length) > 1,
+    [activePreset, architectures]
+  )
+  const previewModelUsesArchitectureSubfolders = useMemo(
+    () => previewUsesArchitectureSubfolders && !(activeFormula && /\{architecture\}/i.test(activeFormula)),
+    [activeFormula, previewUsesArchitectureSubfolders]
+  )
+  const previewGraphUsesArchitectureSubfolders = useMemo(
+    () => previewUsesArchitectureSubfolders && !(activeGraphFormula && /\{architecture\}/i.test(activeGraphFormula)),
+    [activeGraphFormula, previewUsesArchitectureSubfolders]
+  )
+  const previewArchitectureFolder = useMemo(
+    () => architectureDisplayLabel(previewArchitecture),
+    [previewArchitecture]
+  )
+  const effectiveFormulaModelRootPreview = useMemo(() => {
+    if (!formulaPreviewPath) return null
+    const root = formulaPreviewPath.replace(/\\/g, '/').replace(/\/+$/, '')
+    return previewModelUsesArchitectureSubfolders ? `${root}/${previewArchitectureFolder}` : root
+  }, [formulaPreviewPath, previewArchitectureFolder, previewModelUsesArchitectureSubfolders])
+
+  const filteredHistory = useMemo(
+    () => trainerState.history.filter((entry) => {
+      if (historyProfileFilter !== 'all' && (entry.profileId ?? 'manual') !== historyProfileFilter) return false
+      if (historyStatusFilter !== 'all' && entry.status !== historyStatusFilter) return false
+      if (historyArchitectureFilter !== 'all' && entry.architecture !== historyArchitectureFilter) return false
+      if (historyTimeFilter !== 'all') {
+        const now = Date.now()
+        const entryTime = new Date(entry.timestamp).getTime()
+        const maxAgeMs =
+          historyTimeFilter === 'day'
+            ? 24 * 60 * 60 * 1000
+            : historyTimeFilter === 'week'
+              ? 7 * 24 * 60 * 60 * 1000
+              : historyTimeFilter === 'month'
+                ? 30 * 24 * 60 * 60 * 1000
+                : 90 * 24 * 60 * 60 * 1000
+        if (!Number.isFinite(entryTime) || now - entryTime > maxAgeMs) return false
+      }
+      if (historyEsrFilter !== 'all') {
+        const { value: fEsr, kind: fKind } = getBestJobEsr(entry)
+        const greenThresh = fKind === 'a2_aggregate' ? 0.02 : 0.01
+        const amberThresh = fKind === 'a2_aggregate' ? 0.07 : 0.05
+        if (historyEsrFilter === 'none') {
+          if (fEsr != null) return false
+        } else if (historyEsrFilter === 'green') {
+          if (fEsr == null || fEsr >= greenThresh) return false
+        } else if (historyEsrFilter === 'amber') {
+          if (fEsr == null || fEsr < greenThresh || fEsr >= amberThresh) return false
+        } else if (historyEsrFilter === 'red') {
+          if (fEsr == null || fEsr < amberThresh) return false
+        }
+      }
+      if (historySearch.trim()) {
+        const hay = `${entry.finalModelName} ${entry.sourcePath} ${entry.finalModelPath} ${entry.profileName ?? ''}`.toLowerCase()
+        if (!hay.includes(historySearch.trim().toLowerCase())) return false
+      }
+      return true
+    }),
+    [historyArchitectureFilter, historyEsrFilter, historyProfileFilter, historySearch, historyStatusFilter, historyTimeFilter, trainerState.history]
+  )
+  const groupedHistory = useMemo(() => {
+    const groups: Array<{ key: string; groupKey: string; label: string; createdAt: string | null; entries: TrainerHistoryEntry[] }> = []
+    for (const entry of filteredHistory) {
+      const groupKey = entry.submissionId ?? `ungrouped:${entry.historyId}`
+      const existing = groups[groups.length - 1]
+      if (existing && existing.groupKey === groupKey) {
+        existing.entries.push(entry)
+      } else {
+        groups.push({
+          key: `${groupKey}:${entry.historyId}`,
+          groupKey,
+          label: entry.submissionLabel ?? (entry.profileName ?? (entry.sourceMode === 'watcher' ? 'Watcher' : entry.sourceMode === 'manual-folder-run' ? 'Folder run' : 'Run WAVs')),
+          createdAt: entry.submissionCreatedAt ?? entry.timestamp,
+          entries: [entry],
+        })
+      }
+    }
+    return groups
+  }, [filteredHistory])
+
+  const canQueue =
+    !!settings.namPythonPath.trim() &&
+    !!inputPath.trim() &&
+    batchWavList.length > 0 &&
+    (
+      activeBundle
+        ? (bundleActivePresets.length > 0 && (!!trainPath.trim() || (!!activeFormula && !formulaOverrideActive && !!filesStagingDir)))
+        : activePreset
+          ? (!!trainPath.trim() || (!!activeFormula && !formulaOverrideActive && !!filesStagingDir))
+          : (architectures.length > 0 && (!!trainPath.trim() || (!!activeFormula && !formulaOverrideActive && !!filesStagingDir)) && Number.isFinite(Number(epochs)) && Number(epochs) > 0)
+    )
+  const exampleFinalModelPath = useMemo(() => {
+    const architectureFolder = previewArchitectureFolder
+    if (manualRoutingMode === 'sibling_processed') {
+      const sourceBase = manualRoutingSourceFolder.replace(/\\/g, '/').replace(/\/+$/, '')
+      const root = sourceBase ? `${sourceBase}/_Processed/Models` : '_Processed/Models'
+      return previewModelUsesArchitectureSubfolders
+        ? `${root}/${architectureFolder}/${resolvedModelName}.nam`
+        : `${root}/${resolvedModelName}.nam`
+    }
+    if (activeFormula && !formulaOverrideActive && effectiveFormulaModelRootPreview) {
+      return `${effectiveFormulaModelRootPreview}/${resolvedModelName}.nam`
+    }
+    const root = trainPath.trim().replace(/\\/g, '/')
+    if (!root) {
+      return previewModelUsesArchitectureSubfolders
+        ? `${architectureFolder}/${resolvedModelName}.nam`
+        : `${resolvedModelName}.nam`
+    }
+    return previewModelUsesArchitectureSubfolders
+      ? `${root}/${architectureFolder}/${resolvedModelName}.nam`
+      : `${root}/${resolvedModelName}.nam`
+  }, [activeFormula, effectiveFormulaModelRootPreview, formulaOverrideActive, manualRoutingMode, manualRoutingSourceFolder, previewArchitectureFolder, previewModelUsesArchitectureSubfolders, resolvedModelName, trainPath])
+
+  const exampleGraphPath = useMemo(() => {
+    const architectureFolder = previewArchitectureFolder
+    if (manualRoutingMode === 'sibling_processed') {
+      const sourceBase = manualRoutingSourceFolder.replace(/\\/g, '/').replace(/\/+$/, '')
+      const root = sourceBase ? `${sourceBase}/_Processed/Graphs` : '_Processed/Graphs'
+      return previewGraphUsesArchitectureSubfolders
+        ? `${root}/${architectureFolder}/${resolvedModelName}.png`
+        : `${root}/${resolvedModelName}.png`
+    }
+    if (activeGraphFormula && !formulaOverrideActive && graphFormulaPreviewPath) {
+      const root = graphFormulaPreviewPath.replace(/\\/g, '/').replace(/\/+$/, '')
+      return previewGraphUsesArchitectureSubfolders
+        ? `${root}/${architectureFolder}/${resolvedModelName}.png`
+        : `${root}/${resolvedModelName}.png`
+    }
+    const root = trainPath.trim().replace(/\\/g, '/')
+    if (!root) {
+      return previewGraphUsesArchitectureSubfolders
+        ? `${architectureFolder}/${resolvedModelName}.png`
+        : `${resolvedModelName}.png`
+    }
+    return previewGraphUsesArchitectureSubfolders
+      ? `${root}/${architectureFolder}/${resolvedModelName}.png`
+      : `${root}/${resolvedModelName}.png`
+  }, [activeGraphFormula, formulaOverrideActive, graphFormulaPreviewPath, manualRoutingMode, manualRoutingSourceFolder, previewArchitectureFolder, previewGraphUsesArchitectureSubfolders, resolvedModelName, trainPath])
+
+  const getManualRoutingForOutput = (outputPath: string, architectureName?: string, fromFolder?: string) => {
+    if (manualRoutingMode === 'sibling_processed') {
+      const sourceDir = outputPath.replace(/\\/g, '/').split('/').slice(0, -1).join('/')
+      const processedRoot = `${sourceDir.replace(/\/+$/, '')}/_Processed`
+      return {
+        finalModelRoot: `${processedRoot}/Models`,
+        processedWavRoot: '',
+        graphRoot: `${processedRoot}/Graphs`,
+        graphRootResolved: false,
+        sourcePostProcess: 'keep' as const,
+      }
+    }
+    // Formula mode: derive output from staging dir + architecture (unless user explicitly overrode)
+    if ((activeFormula && !formulaOverrideActive) || (activeGraphFormula && !graphFormulaOverrideActive)) {
+      const stagingDir = outputPath.replace(/\\/g, '/').split('/').slice(0, -1).join('/')
+      const resolvedNam = (activeFormula && !formulaOverrideActive && architectureName)
+        ? resolveOutputFormula(activeFormula, stagingDir, architectureName)
+        : null
+      const resolvedGraph = (activeGraphFormula && !graphFormulaOverrideActive && architectureName)
+        ? resolveOutputFormula(activeGraphFormula, stagingDir, architectureName)
+        : null
+      if (resolvedNam || resolvedGraph) {
+        return {
+          finalModelRoot: resolvedNam ?? trainPath.trim(),
+          processedWavRoot: '',
+          graphRoot: resolvedGraph ?? trainPath.trim(),
+          graphRootResolved: !!resolvedGraph,
+          sourcePostProcess: 'keep' as const,
+        }
+      }
+    }
+    // Flat root mode: if files came from a folder scan, preserve relative subfolder structure
+    // so /scan-root/amp/clean/di.wav → /output-root/amp/clean/ instead of all into /output-root/
+    const root = trainPath.trim().replace(/\\/g, '/').replace(/\/+$/, '')
+    if (fromFolder) {
+      const normalizedFrom = fromFolder.replace(/\\/g, '/').replace(/\/+$/, '')
+      const sourceDir = outputPath.replace(/\\/g, '/').split('/').slice(0, -1).join('/')
+      const relativeSuffix = sourceDir.toLowerCase().startsWith(normalizedFrom.toLowerCase())
+        ? sourceDir.slice(normalizedFrom.length)
+        : ''
+      const resolvedRoot = relativeSuffix ? `${root}${relativeSuffix}` : root
+      return {
+        finalModelRoot: resolvedRoot,
+        processedWavRoot: '',
+        graphRoot: resolvedRoot,
+        graphRootResolved: false,
+        sourcePostProcess: 'keep' as const,
+      }
+    }
+    return {
+      finalModelRoot: root,
+      processedWavRoot: '',
+      graphRoot: root,
+      graphRootResolved: false,
+      sourcePostProcess: 'keep' as const,
+    }
+  }
+
+
+  const handleBrowseInput = async () => {
+    const path = await window.api.openAudioFile()
+    if (!path) return
+    setInputPath(path)
+    if (path !== settings.namTrainingInputWav) {
+      onSaveSettings({ ...settings, namTrainingInputWav: path })
+    }
+  }
+
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null)
+
+  const handleInputDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDropTargetId(null)
+    const files = Array.from(e.dataTransfer.files)
+    const wavs = files.filter(f => f.name.toLowerCase().endsWith('.wav'))
+    if (wavs.length === 0) return
+    const p = window.api.getPathForFile(wavs[0])
+    if (!p) return
+    setInputPath(p)
+    if (p !== settings.namTrainingInputWav) onSaveSettings({ ...settings, namTrainingInputWav: p })
+  }
+
+  const addWavsToBatchList = (paths: string[], fromFolder?: string) => {
+    setBatchWavList(prev => {
+      const existingPaths = new Set(prev.map(item => item.path))
+      const newItems = paths
+        .filter(p => !existingPaths.has(p))
+        .map(p => ({
+          id: `${Date.now()}-${Math.random()}`,
+          path: p,
+          name: p.replace(/\\/g, '/').split('/').pop() ?? p,
+          fromFolder,
+        }))
+      return [...prev, ...newItems]
+    })
+  }
+
+  const handleOutputWavDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDropTargetId(null)
+    const files = Array.from(e.dataTransfer.files)
+    const wavs = files.filter(f => f.name.toLowerCase().endsWith('.wav'))
+    const paths = wavs.map(f => window.api.getPathForFile(f)).filter(Boolean) as string[]
+    if (paths.length === 0) return
+    addWavsToBatchList(paths)
+  }
+
+  const handleFolderDrop = async (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDropTargetId(null)
+    const files = Array.from(e.dataTransfer.files)
+    if (files.length === 0) return
+    const p = window.api.getPathForFile(files[0])
+    if (!p) return
+    const stat = await window.api.statPath(p)
+    if (stat.isDirectory) {
+      const wavPaths = await window.api.listWavFiles(p)
+      addWavsToBatchList(wavPaths, p)
+    } else if (p.toLowerCase().endsWith('.wav')) {
+      addWavsToBatchList([p])
+    }
+  }
+
+  const handleBrowseOutputs = async () => {
+    const paths = await window.api.openAudioFiles()
+    if (!paths || paths.length === 0) return
+    addWavsToBatchList(paths)
+  }
+
+  const handleBrowseFolder = async () => {
+    const p = await window.api.openFolder(trainPath || undefined)
+    if (!p) return
+    const wavPaths = await window.api.listWavFiles(p)
+    addWavsToBatchList(wavPaths, p)
+  }
+
+  const applyPreset = (presetId: string) => {
+    setSelectedPresetId(presetId)
+    if (presetId === CUSTOM_PRESET_ID || presetId.startsWith(BUNDLE_PREFIX)) return
+    const preset = availablePresets.find((item) => item.id === presetId)
+    if (!preset) return
+    setArchitectures(
+      preset.architectures.filter((item): item is TrainerArchitecture =>
+        TRAINER_ARCHITECTURES.includes(item as TrainerArchitecture)
+      )
+    )
+    setEpochs(String(preset.epochs))
+    setThresholdEsr(formatThresholdEsr(preset.thresholdEsr))
+    setLatency(preset.latencyMode === 'manual' && preset.latencyValue != null ? String(preset.latencyValue) : '')
+    setSavePlot(preset.savePlot)
+    setIgnoreChecks(preset.ignoreChecks)
+  }
+
+  function resolveNormalize(override: 'global' | 'on' | 'off', targetDbStr: string): { normalizeWav: boolean; normalizeWavTargetDb: number } {
+    const globalOn = settings.normalizeWavBeforeTraining ?? true
+    const globalDb = settings.normalizeWavTargetDb ?? -5.0
+    const on = override === 'on' ? true : override === 'off' ? false : globalOn
+    const db = targetDbStr.trim() !== '' ? Number.parseFloat(targetDbStr) : globalDb
+    return { normalizeWav: on, normalizeWavTargetDb: Number.isFinite(db) ? db : globalDb }
+  }
+
+  const handleQueue = async (staged = false) => {
+    if (submittingBatch) return
+    setSubmittingBatch(true)
+    try {
+    setLaunchError('')
+
+    if (batchWavList.length === 0) {
+      setLaunchError('Add at least one WAV file before queueing.')
+      return
+    }
+    if (manualRoutingMode === 'root' && !trainPath.trim() && (!activeFormula || formulaOverrideActive)) {
+      setLaunchError('Choose an output root or set an output formula in Settings before queueing.')
+      return
+    }
+
+    const captureDefaultsEnabled = settings.enableCaptureDefaults
+    const modeledBy = captureDefaultsEnabled && settings.defaultModeledBy.trim() !== ''
+      ? settings.defaultModeledBy.trim()
+      : null
+    const inputLevelDbu = captureDefaultsEnabled && settings.defaultInputLevel.trim() !== ''
+      ? Number.parseFloat(settings.defaultInputLevel.trim())
+      : null
+    const outputLevelDbu = captureDefaultsEnabled && settings.defaultOutputLevel.trim() !== ''
+      ? Number.parseFloat(settings.defaultOutputLevel.trim())
+      : null
+    const resolvedPythonPath = settings.namPythonPath.trim()
+
+    const folders = new Set(batchWavList.map(w => w.fromFolder).filter(Boolean))
+    const autoLabel = batchWavList.length === 1
+      ? batchWavList[0].name
+      : (folders.size === 1 && batchWavList[0].fromFolder)
+        ? (batchWavList[0].fromFolder.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? '')
+        : `Batch - ${batchWavList.length} capture${batchWavList.length === 1 ? '' : 's'}`
+    const sharedLabel = batchName.trim() || autoLabel
+    const sharedCreatedAt = new Date().toISOString()
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let payloads: any[]
+
+    if (activeBundle) {
+      const validPresets = bundleActivePresets.filter((p) => p.architectures.length > 0)
+      if (validPresets.length === 0) {
+        setLaunchError('Bundle has no valid presets with architectures selected.')
+        return
+      }
+      const sharedSubmissionId = separateBatches ? null : makeSubmissionId('bundle')
+      payloads = batchWavList.flatMap((wavItem, idx) => {
+        const submissionId = separateBatches ? makeSubmissionId(`bundle-${idx + 1}`) : sharedSubmissionId!
+        const submissionLabel = separateBatches ? wavItem.name : sharedLabel
+        return validPresets.flatMap((preset) => {
+          const presetArchitectures = preset.architectures
+          const appendModelArchitectureFolder = presetArchitectures.length > 1 && !(activeFormula && /\{architecture\}/i.test(activeFormula))
+          const appendGraphArchitectureFolder = presetArchitectures.length > 1 && !(activeGraphFormula && /\{architecture\}/i.test(activeGraphFormula))
+          const appendProcessedArchitectureFolder = presetArchitectures.length > 1
+          const presetNorm = preset.normalizeWav ?? 'off'
+          const presetNormDb = preset.normalizeWavTargetDb != null ? String(preset.normalizeWavTargetDb) : normalizeWavTargetDb
+          const { normalizeWav: resolvedNormalizeWav, normalizeWavTargetDb: resolvedNormalizeDb } =
+            resolveNormalize(presetNorm as 'global' | 'on' | 'off', presetNormDb)
+          return presetArchitectures.map((architecture) => {
+            const routing = getManualRoutingForOutput(wavItem.path, architecture, wavItem.fromFolder)
+            const jobMode = deriveNamMode(architecture)
+            const profileCfg = jobMode === 'a1' ? lookupProfileConfig(architecture, settings.userCaptureProfiles ?? []) : null
+            return {
+              pythonPath: resolvedPythonPath,
+              inputPath: inputPath.trim(),
+              outputPath: wavItem.path,
+              trainPath: routing.finalModelRoot,
+              namMode: jobMode,
+              architecture,
+              waveNetConfig: profileCfg?.waveNetConfig ?? null,
+              lr: profileCfg?.lr ?? 0.004,
+              lrDecay: profileCfg?.lrDecay ?? 0.002,
+              batchSize: profileCfg?.batchSize ?? 16,
+              ny: profileCfg?.ny ?? 8192,
+              fitMrstft: profileCfg?.fitMrstft ?? true,
+              normalizeWav: resolvedNormalizeWav,
+              normalizeWavTargetDb: resolvedNormalizeDb,
+              captureProfileId: jobMode === 'a1' ? architecture : null,
+              epochs: preset.epochs,
+              latency: preset.latencyMode === 'manual' ? preset.latencyValue : null,
+              thresholdEsr: preset.thresholdEsr,
+              savePlot: preset.savePlot,
+              silent: true,
+              ignoreChecks: preset.ignoreChecks,
+              sourceMode: 'manual-direct' as const,
+              finalModelRoot: routing.finalModelRoot,
+              processedWavRoot: routing.processedWavRoot,
+              graphRoot: routing.graphRoot,
+              graphRootResolved: routing.graphRootResolved,
+              sourcePostProcess: routing.sourcePostProcess,
+              namingTemplate: preset.namingTemplate ?? '{basename}',
+              profileId: preset.id,
+              profileName: preset.name,
+              modeledBy,
+              inputLevelDbu: Number.isFinite(inputLevelDbu) ? inputLevelDbu : null,
+              outputLevelDbu: Number.isFinite(outputLevelDbu) ? outputLevelDbu : null,
+              submissionId,
+              submissionLabel,
+              submissionCreatedAt: sharedCreatedAt,
+              appendModelArchitectureFolder,
+              appendGraphArchitectureFolder,
+              appendProcessedArchitectureFolder,
+            }
+          })
+        })
+      })
+    } else {
+      const parsedEpochs = activePreset ? activePreset.epochs : Number.parseInt(epochs, 10)
+      const parsedLatency = activePreset
+        ? (activePreset.latencyMode === 'manual' ? activePreset.latencyValue : null)
+        : (latency.trim() === '' ? null : Number.parseInt(latency.trim(), 10))
+      const parsedThresholdEsr = activePreset
+        ? activePreset.thresholdEsr
+        : (thresholdEsr.trim() === '' ? null : Number.parseFloat(thresholdEsr.trim()))
+      if (!Number.isFinite(parsedEpochs) || parsedEpochs <= 0) {
+        setLaunchError('Epochs must be a positive whole number.')
+        return
+      }
+      if (!activePreset && latency.trim() !== '' && (!Number.isFinite(parsedLatency) || parsedLatency! < 0)) {
+        setLaunchError('Latency must be blank or a non-negative integer sample offset.')
+        return
+      }
+      if (!activePreset && thresholdEsr.trim() !== '' && (!Number.isFinite(parsedThresholdEsr) || parsedThresholdEsr! <= 0)) {
+        setLaunchError('Target ESR must be blank or a positive number.')
+        return
+      }
+      const targetArchitectures = activePreset ? activePreset.architectures : architectures
+      if (targetArchitectures.length === 0) {
+        setLaunchError('Choose at least one architecture before queueing.')
+        return
+      }
+      const activeNormalizeOverride = activePreset?.normalizeWav ?? normalizeWavOverride
+      const activeNormalizeTargetDb = activePreset?.normalizeWavTargetDb != null
+        ? String(activePreset.normalizeWavTargetDb)
+        : normalizeWavTargetDb
+      const { normalizeWav: resolvedNormalizeWav, normalizeWavTargetDb: resolvedNormalizeDb } =
+        resolveNormalize(activeNormalizeOverride as 'global' | 'on' | 'off', activeNormalizeTargetDb)
+      const sharedSubmissionId = separateBatches ? null : makeSubmissionId('manual-direct')
+      const jobArchitectures = targetArchitectures
+      const appendModelArchitectureFolder = jobArchitectures.length > 1 && !(activeFormula && /\{architecture\}/i.test(activeFormula))
+      const appendGraphArchitectureFolder = jobArchitectures.length > 1 && !(activeGraphFormula && /\{architecture\}/i.test(activeGraphFormula))
+      const appendProcessedArchitectureFolder = jobArchitectures.length > 1
+      payloads = batchWavList.flatMap((wavItem, idx) => {
+        const submissionId = separateBatches ? makeSubmissionId(`manual-direct-${idx + 1}`) : sharedSubmissionId!
+        const submissionLabel = separateBatches ? wavItem.name : sharedLabel
+        return jobArchitectures.map((architecture) => {
+          const routing = getManualRoutingForOutput(wavItem.path, architecture)
+          const jobMode = deriveNamMode(architecture)
+          const profileCfg = jobMode === 'a1' ? lookupProfileConfig(architecture, settings.userCaptureProfiles ?? []) : null
+          return {
+            pythonPath: resolvedPythonPath,
+            inputPath: inputPath.trim(),
+            outputPath: wavItem.path,
+            trainPath: routing.finalModelRoot,
+            namMode: jobMode,
+            architecture,
+            waveNetConfig: profileCfg?.waveNetConfig ?? null,
+            lr: profileCfg?.lr ?? 0.004,
+            lrDecay: profileCfg?.lrDecay ?? 0.002,
+            batchSize: profileCfg?.batchSize ?? 16,
+            ny: profileCfg?.ny ?? 8192,
+            fitMrstft: profileCfg?.fitMrstft ?? true,
+            normalizeWav: resolvedNormalizeWav,
+            normalizeWavTargetDb: resolvedNormalizeDb,
+            captureProfileId: jobMode === 'a1' ? architecture : null,
+            epochs: parsedEpochs,
+            latency: parsedLatency,
+            thresholdEsr: parsedThresholdEsr,
+            savePlot: activePreset?.savePlot ?? savePlot,
+            silent: true,
+            ignoreChecks: activePreset?.ignoreChecks ?? ignoreChecks,
+            sourceMode: 'manual-direct' as const,
+            finalModelRoot: routing.finalModelRoot,
+            processedWavRoot: routing.processedWavRoot,
+            graphRoot: routing.graphRoot,
+            graphRootResolved: routing.graphRootResolved,
+            sourcePostProcess: routing.sourcePostProcess,
+            namingTemplate: '{basename}',
+            profileId: activePreset?.id ?? null,
+            profileName: activePreset?.name ?? null,
+            modeledBy,
+            inputLevelDbu: Number.isFinite(inputLevelDbu) ? inputLevelDbu : null,
+            outputLevelDbu: Number.isFinite(outputLevelDbu) ? outputLevelDbu : null,
+            submissionId,
+            submissionLabel,
+            submissionCreatedAt: sharedCreatedAt,
+            appendModelArchitectureFolder,
+            appendGraphArchitectureFolder,
+            appendProcessedArchitectureFolder,
+          }
+        })
+      })
+    }
+
+    const result = await window.api.enqueueTrainerRuns(payloads, { staged })
+    if (!result.success) {
+      setLaunchError(result.error ?? 'Training jobs could not be queued.')
+      return
+    }
+    // Full reset on success so the next visit to Create Batch is a blank slate.
+    // Training Settings (architectures, epochs, latency, etc) are kept so a similar batch can be re-queued quickly.
+    setLaunchError('')
+    setQueueActionError('')
+    setBatchWavList([])
+    setBatchName('')
+    setInputPath(settings.namTrainingInputWav || '')
+    setTrainPath('')
+    setSeparateBatches(false)
+    setCollapsedFolders(new Set())
+    setFormulaOverrideActive(false)
+    setGraphFormulaOverrideActive(false)
+    setManualRoutingMode('root')
+    setSection(staged ? 'batches' : 'queue')
+    } finally {
+      setSubmittingBatch(false)
+    }
+  }
+
+
+  const queuedCount = trainerState.queue.filter((job) => job.status === 'queued').length
+  const stagedCount = trainerState.queue.filter((job) => job.status === 'staged').length
+  const successCount = trainerState.queue.filter((job) => job.status === 'success').length
+  const failedCount = trainerState.queue.filter((job) => job.status === 'error').length
+  const clearableFinishedCount = (() => {
+    const terminal = new Set(['success', 'error', 'canceled'])
+    const subAllTerminal = new Map<string, boolean>()
+    for (const job of trainerState.queue) {
+      if (!job.submissionId || job.status === 'staged') continue
+      subAllTerminal.set(job.submissionId, (subAllTerminal.get(job.submissionId) ?? true) && terminal.has(job.status))
+    }
+    return trainerState.queue.filter((job) =>
+      terminal.has(job.status) && (!job.submissionId || subAllTerminal.get(job.submissionId) === true)
+    ).length
+  })()
+  const currentPresetId = selectedPresetId
+  const currentRunPreset = activePreset
+  const showsCustomSettings = currentPresetId === CUSTOM_PRESET_ID
+
+  const handleRemoveJob = async (job: TrainerQueueJob) => {
+    const result = await window.api.removeTrainerJob(job.jobId)
+    if (!result.success) {
+      setQueueActionError(result.error ?? 'Could not remove that training queue item.')
+    } else {
+      setQueueActionError('')
+    }
+  }
+
+  const handleCancelBatch = async (submissionId: string) => {
+    const result = await window.api.cancelTrainerBatch(submissionId)
+    if (!result.success) {
+      setQueueActionError(result.error ?? 'Could not cancel that batch.')
+    } else {
+      setQueueActionError('')
+    }
+    setCancelBatchConfirm(null)
+  }
+
+  const handleUnstageSubmission = async (submissionId: string) => {
+    const result = await window.api.unstageTrainerSubmission(submissionId)
+    if (!result.success) {
+      setQueueActionError(result.error ?? 'Could not queue that batch.')
+    } else {
+      setQueueActionError('')
+    }
+  }
+
+  const handleRetrainBrowseSeedFolder = async () => {
+    const folder = await window.api.openFolder()
+    if (folder) { setRetrainSeedFolder(folder); setRetrainReview(null); setRetrainQueued(null); setRetrainError('') }
+  }
+
+  const handleRetrainBrowseWavFolder = async () => {
+    const folder = await window.api.openFolder()
+    if (folder) { setRetrainWavFolder(folder); setRetrainReview(null); setRetrainQueued(null); setRetrainError('') }
+  }
+
+  const handleRetrainAnalyze = async () => {
+    setRetrainError('')
+    setRetrainReview(null)
+    setRetrainQueued(null)
+    if (!retrainSeedFolder.trim()) { setRetrainError('Choose a capture folder.'); return }
+    if (!retrainWavFolder.trim()) { setRetrainError('Choose a WAV folder.'); return }
+    setRetrainBusy(true)
+    try {
+      const seedNames = await window.api.listNamFiles(retrainSeedFolder.trim())
+      const wavNames = await window.api.listWavFiles(retrainWavFolder.trim())
+      if (seedNames.length === 0) { setRetrainError('No .nam files found in the seed folder.'); return }
+      if (wavNames.length === 0) { setRetrainError('No .wav files found in the WAV folder.'); return }
+      setRetrainReview(matchSeedsToWavs(seedNames, wavNames))
+    } catch (e) {
+      setRetrainError(String(e))
+    } finally {
+      setRetrainBusy(false)
+    }
+  }
+
+  const handleRetrainQueue = async (staged = false) => {
+    if (!retrainReview || retrainReview.matched.length === 0) return
+    const wavFolder = retrainWavFolder.trim().replace(/\\/g, '/')
+    const resolvedPythonPath = settings.namPythonPath.trim()
+    const modeledBy = (settings.enableCaptureDefaults && settings.defaultModeledBy.trim()) ? settings.defaultModeledBy.trim() : null
+    const inputLevelDbu = (settings.enableCaptureDefaults && settings.defaultInputLevel.trim()) ? Number.parseFloat(settings.defaultInputLevel.trim()) : null
+    const outputLevelDbu = (settings.enableCaptureDefaults && settings.defaultOutputLevel.trim()) ? Number.parseFloat(settings.defaultOutputLevel.trim()) : null
+    const sharedSubmissionId = makeSubmissionId('retrain')
+    const sharedLabel = `From Captures · ${retrainReview.matched.length} capture${retrainReview.matched.length === 1 ? '' : 's'}`
+    const sharedCreatedAt = new Date().toISOString()
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let payloads: any[]
+
+    if (activeBundle) {
+      const validPresets = bundleActivePresets.filter((p) => p.architectures.length > 0)
+      payloads = retrainReview.matched.flatMap(({ wavName }) => {
+        const wavPath = `${wavFolder.replace(/\/+$/, '')}/${wavName}`
+        return validPresets.flatMap((preset) => {
+          const presetArchitectures = preset.architectures
+          const appendModelArchitectureFolder = presetArchitectures.length > 1 && !(activeFormula && /\{architecture\}/i.test(activeFormula))
+          const appendGraphArchitectureFolder = presetArchitectures.length > 1 && !(activeGraphFormula && /\{architecture\}/i.test(activeGraphFormula))
+          const appendProcessedArchitectureFolder = presetArchitectures.length > 1
+          const presetNorm = preset.normalizeWav ?? 'off'
+          const presetNormDb = preset.normalizeWavTargetDb != null ? String(preset.normalizeWavTargetDb) : normalizeWavTargetDb
+          const { normalizeWav: resolvedNormalizeWav, normalizeWavTargetDb: resolvedNormalizeDb } = resolveNormalize(presetNorm as 'global' | 'on' | 'off', presetNormDb)
+          return presetArchitectures.map((architecture) => {
+            const routing = getManualRoutingForOutput(wavPath, architecture)
+            const jobMode = deriveNamMode(architecture)
+            const profileCfg = jobMode === 'a1' ? lookupProfileConfig(architecture, settings.userCaptureProfiles ?? []) : null
+            return {
+              pythonPath: resolvedPythonPath,
+              inputPath: inputPath.trim(),
+              outputPath: wavPath,
+              trainPath: routing.finalModelRoot,
+              namMode: jobMode, architecture,
+              waveNetConfig: profileCfg?.waveNetConfig ?? null,
+              lr: profileCfg?.lr ?? 0.004, lrDecay: profileCfg?.lrDecay ?? 0.002,
+              batchSize: profileCfg?.batchSize ?? 16, ny: profileCfg?.ny ?? 8192, fitMrstft: profileCfg?.fitMrstft ?? true,
+              normalizeWav: resolvedNormalizeWav, normalizeWavTargetDb: resolvedNormalizeDb,
+              captureProfileId: jobMode === 'a1' ? architecture : null,
+              epochs: preset.epochs, latency: preset.latencyMode === 'manual' ? preset.latencyValue : null,
+              thresholdEsr: preset.thresholdEsr, savePlot: preset.savePlot, silent: true, ignoreChecks: preset.ignoreChecks,
+              sourceMode: 'manual-direct' as const,
+              finalModelRoot: routing.finalModelRoot, processedWavRoot: routing.processedWavRoot,
+              graphRoot: routing.graphRoot, graphRootResolved: routing.graphRootResolved, sourcePostProcess: routing.sourcePostProcess,
+              namingTemplate: preset.namingTemplate ?? '{basename}',
+              profileId: preset.id, profileName: preset.name,
+              modeledBy,
+              inputLevelDbu: Number.isFinite(inputLevelDbu) ? inputLevelDbu : null,
+              outputLevelDbu: Number.isFinite(outputLevelDbu) ? outputLevelDbu : null,
+              submissionId: sharedSubmissionId, submissionLabel: sharedLabel, submissionCreatedAt: sharedCreatedAt,
+              appendModelArchitectureFolder, appendGraphArchitectureFolder, appendProcessedArchitectureFolder,
+            }
+          })
+        })
+      })
+    } else {
+      const targetArchitectures = (activePreset ? activePreset.architectures : retrainArchitectures) as TrainerArchitecture[]
+      const parsedEpochs = activePreset ? activePreset.epochs : Number.parseInt(epochs, 10)
+      const parsedLatency = activePreset
+        ? (activePreset.latencyMode === 'manual' ? activePreset.latencyValue : null)
+        : (latency.trim() === '' ? null : Number.parseInt(latency.trim(), 10))
+      const parsedThresholdEsr = activePreset
+        ? activePreset.thresholdEsr
+        : (thresholdEsr.trim() === '' ? null : Number.parseFloat(thresholdEsr.trim()))
+      const activeNormalizeOverride = activePreset?.normalizeWav ?? normalizeWavOverride
+      const activeNormalizeTargetDb = activePreset?.normalizeWavTargetDb != null
+        ? String(activePreset.normalizeWavTargetDb)
+        : normalizeWavTargetDb
+      const { normalizeWav: resolvedNormalizeWav, normalizeWavTargetDb: resolvedNormalizeDb } =
+        resolveNormalize(activeNormalizeOverride as 'global' | 'on' | 'off', activeNormalizeTargetDb)
+      const appendModelArchitectureFolder = targetArchitectures.length > 1 && !(activeFormula && /\{architecture\}/i.test(activeFormula))
+      const appendGraphArchitectureFolder = targetArchitectures.length > 1 && !(activeGraphFormula && /\{architecture\}/i.test(activeGraphFormula))
+      const appendProcessedArchitectureFolder = targetArchitectures.length > 1
+      payloads = retrainReview.matched.flatMap(({ wavName }) => {
+        const wavPath = `${wavFolder.replace(/\/+$/, '')}/${wavName}`
+        return targetArchitectures.map((architecture) => {
+          const routing = getManualRoutingForOutput(wavPath, architecture)
+          const jobMode = deriveNamMode(architecture)
+          const profileCfg = jobMode === 'a1' ? lookupProfileConfig(architecture, settings.userCaptureProfiles ?? []) : null
+          return {
+            pythonPath: resolvedPythonPath,
+            inputPath: inputPath.trim(),
+            outputPath: wavPath,
+            trainPath: routing.finalModelRoot,
+            namMode: jobMode, architecture,
+            waveNetConfig: profileCfg?.waveNetConfig ?? null,
+            lr: profileCfg?.lr ?? 0.004, lrDecay: profileCfg?.lrDecay ?? 0.002,
+            batchSize: profileCfg?.batchSize ?? 16, ny: profileCfg?.ny ?? 8192, fitMrstft: profileCfg?.fitMrstft ?? true,
+            normalizeWav: resolvedNormalizeWav, normalizeWavTargetDb: resolvedNormalizeDb,
+            captureProfileId: jobMode === 'a1' ? architecture : null,
+            epochs: parsedEpochs, latency: parsedLatency, thresholdEsr: parsedThresholdEsr,
+            savePlot: activePreset?.savePlot ?? savePlot, silent: true, ignoreChecks: activePreset?.ignoreChecks ?? ignoreChecks,
+            sourceMode: 'manual-direct' as const,
+            finalModelRoot: routing.finalModelRoot, processedWavRoot: routing.processedWavRoot,
+            graphRoot: routing.graphRoot, graphRootResolved: routing.graphRootResolved, sourcePostProcess: routing.sourcePostProcess,
+            namingTemplate: '{basename}',
+            profileId: activePreset?.id ?? null, profileName: activePreset?.name ?? null,
+            modeledBy,
+            inputLevelDbu: Number.isFinite(inputLevelDbu) ? inputLevelDbu : null,
+            outputLevelDbu: Number.isFinite(outputLevelDbu) ? outputLevelDbu : null,
+            submissionId: sharedSubmissionId, submissionLabel: sharedLabel, submissionCreatedAt: sharedCreatedAt,
+            appendModelArchitectureFolder, appendGraphArchitectureFolder, appendProcessedArchitectureFolder,
+          }
+        })
+      })
+    }
+    const result = await window.api.enqueueTrainerRuns(payloads, { staged })
+    if (!result.success) { setRetrainError(result.error ?? 'Could not queue the batch.'); return }
+    const queued = result.queued ?? 0
+    const skippedByProtection = payloads.length - queued
+    setRetrainQueued({ count: queued, skipped: skippedByProtection })
+    setRetrainReview(null)
+    setSection(staged ? 'batches' : 'queue')
+  }
+
+  const handleStageJob = async (job: TrainerQueueJob) => {
+    const result = await window.api.stageTrainerJob(job.jobId)
+    if (!result.success) {
+      setQueueActionError(result.error ?? 'Could not move that job to staged batches.')
+    } else {
+      setQueueActionError('')
+    }
+  }
+
+  const handleStageSubmission = async (submissionId: string) => {
+    const result = await window.api.stageTrainerSubmission(submissionId)
+    if (!result.success) {
+      setQueueActionError(result.error ?? 'Could not park that batch.')
+    } else {
+      setQueueActionError('')
+      setSection('batches')
+    }
+  }
+
+  const handleMoveJob = async (job: TrainerQueueJob, direction: 'up' | 'down') => {
+    const result = await window.api.moveTrainerJob(job.jobId, direction)
+    if (!result.success) {
+      setQueueActionError(result.error ?? `Could not move that training queue item ${direction}.`)
+    } else {
+      setQueueActionError('')
+    }
+  }
+
+  const handleMakeNext = async (job: TrainerQueueJob) => {
+    const result = await window.api.makeTrainerJobNext(job.jobId)
+    if (!result.success) {
+      setQueueActionError(result.error ?? 'Could not move that training queue item to the front.')
+    } else {
+      setQueueActionError('')
+    }
+  }
+
+  const handleShowQueueItemInFolder = (job: TrainerQueueJob) => {
+    if (job.outputModelPath) {
+      window.api.revealFile(job.outputModelPath)
+    }
+    setQueueContextMenu(null)
+  }
+
+  const handleRetryQueueItem = async (job: TrainerQueueJob) => {
+    const result = await window.api.retryTrainerJob(job.jobId)
+    if (!result.success) {
+      setQueueActionError(result.error ?? 'Could not retry that training queue item.')
+    } else {
+      setQueueActionError('')
+      setQueueContextMenu(null)
+    }
+  }
+
+  const handleShowHistoryPath = (filePath: string) => {
+    if (filePath) {
+      void window.api.revealFile(filePath)
+    }
+    setHistoryContextMenu(null)
+  }
+
+  const handleShowGraphModal = async (graphPath: string) => {
+    setHistoryContextMenu(null)
+    const result = await window.api.readFileBinary(graphPath)
+    if (result.data) {
+      setGraphModalSrc(`data:image/png;base64,${result.data}`)
+    }
+  }
+
+  const handleWatcherQueueAction = async (job: TrainerQueueJob, action: 'remove' | 'skip' | 'move-canceled' | 'retry-now') => {
+    const result = await window.api.watcherQueueAction(job.jobId, action)
+    if (!result.success) {
+      setQueueActionError(result.error ?? 'Could not update that watcher queue item.')
+    } else {
+      setQueueActionError('')
+      setQueueContextMenu(null)
+    }
+  }
+
+  const handleRetryHistoryEntry = async (entry: TrainerHistoryEntry) => {
+    // Profile-backed entries (watcher / folder-run / preset) go through the existing main-process handler.
+    if (entry.profileId) {
+      const result = await window.api.retryTrainerHistoryEntry(entry.historyId)
+      if (!result.success) {
+        setQueueActionError(result.error ?? 'Could not retry that history item.')
+        return
+      }
+      setQueueActionError('')
+      setHistoryContextMenu(null)
+      return
+    }
+    // Manual-direct (no profileId): reconstruct the payload from the entry + current settings.
+    await handleRetryHistoryBatch([entry], `Retry - ${entry.finalModelName || 'capture'}`)
+  }
+
+  // Re-queue a set of history entries under a single new submission. Used by the per-entry retry
+  // for profile-less manual batches AND by the History group-head "Retry failed / Retry batch" actions.
+  const handleRetryHistoryBatch = async (entries: TrainerHistoryEntry[], submissionLabel: string) => {
+    if (entries.length === 0) return
+    const py = settings.namPythonPath.trim()
+    if (!py) {
+      setQueueActionError('Set the NAM Python path in Settings \u2192 Training before retrying.')
+      return
+    }
+    const inputDi = (settings.trainingDefaultInputDi ?? '').trim() || settings.namTrainingInputWav.trim()
+    if (!inputDi) {
+      setQueueActionError('Set the Input DI (Settings \u2192 Training) before retrying \u2014 the original DI is not stored in the history entry.')
+      return
+    }
+    const outputFormula = (settings.trainingOutputFormula ?? '').trim() || (settings.trainingFavoriteRouting ?? '').trim()
+    const graphFormula = (settings.trainingGraphFormula ?? '').trim()
+    const submissionId = makeSubmissionId('retry')
+    const createdAt = new Date().toISOString()
+    const { normalizeWav: resolvedNormalizeWav, normalizeWavTargetDb: resolvedNormalizeDb } =
+      resolveNormalize(normalizeWavOverride, normalizeWavTargetDb)
+    const appendModelArchitectureFolder = new Set(entries.map((entry) => entry.architecture)).size > 1 && !(outputFormula && /\{architecture\}/i.test(outputFormula))
+    const appendGraphArchitectureFolder = new Set(entries.map((entry) => entry.architecture)).size > 1 && !(graphFormula && /\{architecture\}/i.test(graphFormula))
+    const appendProcessedArchitectureFolder = new Set(entries.map((entry) => entry.architecture)).size > 1
+
+    const payloads = entries.map((entry) => {
+      const arch = entry.architecture
+      const jobMode = deriveNamMode(arch)
+      const profileCfg = jobMode === 'a1' ? lookupProfileConfig(arch, settings.userCaptureProfiles ?? []) : null
+      const stagingDir = entry.sourcePath.replace(/\\/g, '/').split('/').slice(0, -1).join('/')
+      // Prefer the entry's actual prior output dir when present (matches what the user already routed to);
+      // fall back to the current output formula resolved against the source.
+      const priorDir = entry.finalModelPath ? entry.finalModelPath.replace(/\\/g, '/').split('/').slice(0, -1).join('/') : ''
+      const resolvedRoot = priorDir || (outputFormula ? (resolveOutputFormula(outputFormula, stagingDir, arch) ?? outputFormula) : stagingDir)
+      const resolvedGraphRoot = graphFormula
+        ? (resolveOutputFormula(graphFormula, stagingDir, arch) ?? resolvedRoot)
+        : resolvedRoot
+      return {
+        pythonPath: py,
+        inputPath: inputDi,
+        outputPath: entry.sourcePath,
+        trainPath: resolvedRoot,
+        namMode: jobMode,
+        architecture: arch,
+        waveNetConfig: profileCfg?.waveNetConfig ?? null,
+        lr: profileCfg?.lr ?? 0.004,
+        lrDecay: profileCfg?.lrDecay ?? 0.002,
+        batchSize: profileCfg?.batchSize ?? 16,
+        ny: profileCfg?.ny ?? 8192,
+        fitMrstft: profileCfg?.fitMrstft ?? true,
+        normalizeWav: resolvedNormalizeWav,
+        normalizeWavTargetDb: resolvedNormalizeDb,
+        captureProfileId: jobMode === 'a1' ? arch : null,
+        epochs: entry.epochs,
+        latency: entry.latencyValue,
+        thresholdEsr: entry.thresholdEsr,
+        savePlot: true,
+        silent: true,
+        ignoreChecks: false,
+        sourceMode: 'manual-direct' as const,
+        finalModelRoot: resolvedRoot,
+        processedWavRoot: '',
+        graphRoot: resolvedGraphRoot,
+        graphRootResolved: !!outputFormula && !priorDir,
+        sourcePostProcess: 'keep' as const,
+        namingTemplate: '{basename}',
+        profileId: entry.profileId,
+        profileName: entry.profileName,
+        modeledBy: null,
+        inputLevelDbu: null,
+        outputLevelDbu: null,
+        submissionId,
+        submissionLabel,
+        submissionCreatedAt: createdAt,
+        appendModelArchitectureFolder,
+        appendGraphArchitectureFolder,
+        appendProcessedArchitectureFolder,
+        // Protect any already-trained .nam files in the destination folder — the Python promoter
+        // will rename the existing model to <name>.bak.nam before overwriting.
+        backupExisting: true,
+      }
+    })
+
+    const result = await window.api.enqueueTrainerRuns(payloads, { staged: false })
+    if (!result.success) {
+      setQueueActionError(result.error ?? 'Could not re-queue that batch.')
+      return
+    }
+    setQueueActionError('')
+    setHistoryContextMenu(null)
+    void window.api.markHistoryRetried(entries.map((e) => e.historyId))
+    // The retried jobs are now a fresh submission — clear the original finished rows they
+    // supersede from the live queue so a retried failure stops counting as an outstanding
+    // Failed. Only the exact entries retried are cleared (so "Retry failed" leaves a partial
+    // batch's successes and any still-running/queued rows alone); the main process never
+    // touches a running or queued row.
+    void window.api.clearSupersededQueueRows(
+      entries.map((e) => ({ submissionId: e.submissionId, sourcePath: e.sourcePath, architecture: e.architecture }))
+    )
+  }
+
+  const handleSaveAsPreset = () => {
+    const parsedEpochs = Number.parseInt(epochs, 10)
+    const parsedLatency = latency.trim() === '' ? null : Number.parseInt(latency.trim(), 10)
+    const parsedThresholdEsr = thresholdEsr.trim() === '' ? null : Number.parseFloat(thresholdEsr.trim())
+    if (!Number.isFinite(parsedEpochs) || parsedEpochs <= 0) {
+      setLaunchError('Epochs must be a positive whole number before saving a preset.')
+      return
+    }
+    if (latency.trim() !== '' && (!Number.isFinite(parsedLatency) || parsedLatency! < 0)) {
+      setLaunchError('Latency must be blank or a non-negative integer sample offset before saving a preset.')
+      return
+    }
+    if (thresholdEsr.trim() !== '' && (!Number.isFinite(parsedThresholdEsr) || parsedThresholdEsr! <= 0)) {
+      setLaunchError('Target ESR must be blank or a positive number before saving a preset.')
+      return
+    }
+    if (architectures.length === 0) {
+      setLaunchError('Choose at least one architecture before saving a preset.')
+      return
+    }
+    const autoName = `${architectures.map((item) => architectureDisplayLabel(item)).join(' + ')} ${parsedEpochs} epoch`
+    setPresetNameDraft(autoName)
+    setPresetSaveError('')
+    setShowSavePresetModal(true)
+  }
+
+  const handleConfirmSavePreset = () => {
+    const parsedEpochs = Number.parseInt(epochs, 10)
+    const parsedLatency = latency.trim() === '' ? null : Number.parseInt(latency.trim(), 10)
+    const parsedThresholdEsr = thresholdEsr.trim() === '' ? null : Number.parseFloat(thresholdEsr.trim())
+    const name = presetNameDraft.trim()
+    if (!name) {
+      setPresetSaveError('Enter a preset name.')
+      return
+    }
+    if (!Number.isFinite(parsedEpochs) || parsedEpochs <= 0) {
+      setPresetSaveError('Epochs must be a positive whole number.')
+      return
+    }
+    if (latency.trim() !== '' && (!Number.isFinite(parsedLatency) || parsedLatency! < 0)) {
+      setPresetSaveError('Latency must be blank or a non-negative integer sample offset.')
+      return
+    }
+    if (thresholdEsr.trim() !== '' && (!Number.isFinite(parsedThresholdEsr) || parsedThresholdEsr! <= 0)) {
+      setPresetSaveError('Target ESR must be blank or a positive number.')
+      return
+    }
+    if (architectures.length === 0) {
+      setPresetSaveError('Choose at least one architecture.')
+      return
+    }
+    const duplicateName = settings.trainingPresets.some((preset) => preset.name.trim().toLowerCase() === name.toLowerCase())
+    if (duplicateName) {
+      setPresetSaveError('A preset with that name already exists.')
+      return
+    }
+    // Preset namMode is now derived from its architecture list — 'a2' if any architecture is a2, else 'a1'. Mixed presets keep 'a1' here (each job derives its own mode at queue time).
+    const presetNamMode: 'a1' | 'a2' = architectures.every((arch) => arch === 'a2') ? 'a2' : 'a1'
+    const preset: TrainingPreset = {
+      id: makePresetId(name),
+      name,
+      namMode: presetNamMode,
+      architectures,
+      epochs: parsedEpochs,
+      thresholdEsr: parsedThresholdEsr,
+      latencyMode: parsedLatency == null ? 'auto' : 'manual',
+      latencyValue: parsedLatency,
+      savePlot,
+      ignoreChecks,
+      normalizeWav: normalizeWavOverride,
+      normalizeWavTargetDb: normalizeWavTargetDb.trim() !== '' ? Number.parseFloat(normalizeWavTargetDb) : null,
+    }
+    onSaveSettings({
+      ...settings,
+      trainingPresets: [...settings.trainingPresets, preset],
+    })
+    setSelectedPresetId(preset.id)
+    setShowSavePresetModal(false)
+    setPresetNameDraft('')
+    setPresetSaveError('')
+    setLaunchError('')
+    setPresetSaveNotice(`Saved preset "${preset.name}".`)
+  }
+
+  const handleExportHistory = () => {
+    const rows = filteredHistory.map((entry) => ({
+      Timestamp: new Date(entry.timestamp).toLocaleString(),
+      'Model Name': entry.finalModelName,
+      Profile: entry.profileName ?? (entry.sourceMode === 'watcher' ? 'Watcher' : entry.sourceMode === 'manual-folder-run' ? 'Folder run' : 'Manual'),
+      Architecture: architectureDisplayLabel(entry.architecture),
+      Status: entry.status,
+      Epochs: entry.epochs,
+      'Validation ESR': entry.validationEsr ?? '',
+      'Target ESR': entry.thresholdEsr ?? '',
+      'Latency Mode': entry.latencyMode,
+      'Latency Value': entry.latencyValue ?? '',
+      Attempts: entry.attempts,
+      Submission: entry.submissionLabel ?? '',
+      'Source WAV': entry.sourcePath,
+      'Model Path': entry.finalModelPath,
+      'Graph Path': entry.graphPath,
+      'Failure Reason': entry.failureReason,
+    }))
+    const ws = XLSX.utils.json_to_sheet(rows)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Training History')
+    const date = new Date().toISOString().split('T')[0]
+    XLSX.writeFile(wb, `training-history-${date}.xlsx`)
+  }
+
+  const handleQuickAdd = async () => {
+    setLaunchError('')
+    const paths = await window.api.openAudioFiles()
+    if (!paths || paths.length === 0) return
+    const inputDi = (settings.trainingDefaultInputDi ?? '').trim() || settings.namTrainingInputWav.trim()
+    const outputRoot = (settings.trainingFavoriteRouting ?? '').trim() || (settings.trainingOutputFormula ?? '').trim()
+    if (!settings.namPythonPath.trim()) {
+      setLaunchError('Set a Python path in Settings \u2192 Training before using Quick Add.')
+      return
+    }
+    if (!inputDi) {
+      setLaunchError('Set a Default Input DI in Settings \u2192 Training before using Quick Add.')
+      return
+    }
+    if (!outputRoot) {
+      setLaunchError('Set an output path formula in Settings \u2192 Training (NAM output path formula, or Favorite output routing) before using Quick Add.')
+      return
+    }
+    const favPreset = settings.trainingFavoritePresetId
+      ? availablePresets.find(p => p.id === settings.trainingFavoritePresetId) ?? null
+      : null
+    const jobArchitectures: string[] = favPreset ? favPreset.architectures : ['standard']
+    const parsedEpochs = favPreset ? favPreset.epochs : 1000
+    const parsedLatency = favPreset ? (favPreset.latencyMode === 'manual' ? favPreset.latencyValue : null) : null
+    const parsedThresholdEsr = favPreset ? favPreset.thresholdEsr : null
+    const { normalizeWav: resolvedNormalizeWav, normalizeWavTargetDb: resolvedNormalizeDb } = resolveNormalize('global', '')
+    const sharedSubmissionId = makeSubmissionId('quick-add')
+    const sharedLabel = `Quick Add \u00b7 ${paths.length} capture${paths.length === 1 ? '' : 's'}`
+    const sharedCreatedAt = new Date().toISOString()
+    const isFormula = outputRoot.includes('{')
+    const appendModelArchitectureFolder = jobArchitectures.length > 1 && !(isFormula && /\{architecture\}/i.test(outputRoot))
+    const appendGraphArchitectureFolder = appendModelArchitectureFolder
+    const appendProcessedArchitectureFolder = jobArchitectures.length > 1
+    const payloads = paths.flatMap((wavPath) =>
+      jobArchitectures.map((architecture) => {
+        const profileCfg = lookupProfileConfig(architecture, settings.userCaptureProfiles ?? [])
+        const stagingDir = wavPath.replace(/\\/g, '/').split('/').slice(0, -1).join('/')
+        const resolvedModelRoot = isFormula
+          ? (resolveOutputFormula(outputRoot, stagingDir, architecture) ?? outputRoot)
+          : outputRoot
+        return {
+          pythonPath: settings.namPythonPath.trim(),
+          inputPath: inputDi,
+          outputPath: wavPath,
+          trainPath: resolvedModelRoot,
+          namMode: deriveNamMode(architecture),
+          architecture,
+          waveNetConfig: profileCfg?.waveNetConfig ?? null,
+          lr: profileCfg?.lr ?? 0.004,
+          lrDecay: profileCfg?.lrDecay ?? 0.002,
+          batchSize: profileCfg?.batchSize ?? 16,
+          ny: profileCfg?.ny ?? 8192,
+          fitMrstft: profileCfg?.fitMrstft ?? true,
+          normalizeWav: resolvedNormalizeWav,
+          normalizeWavTargetDb: resolvedNormalizeDb,
+          captureProfileId: architecture,
+          epochs: parsedEpochs,
+          latency: parsedLatency,
+          thresholdEsr: parsedThresholdEsr,
+          savePlot: favPreset?.savePlot ?? true,
+          silent: true,
+          ignoreChecks: favPreset?.ignoreChecks ?? false,
+          sourceMode: 'manual-direct' as const,
+          finalModelRoot: resolvedModelRoot,
+          processedWavRoot: '',
+          graphRoot: resolvedModelRoot,
+          graphRootResolved: isFormula,
+          sourcePostProcess: 'keep' as const,
+          namingTemplate: '{basename}',
+          profileId: favPreset?.id ?? null,
+          profileName: favPreset?.name ?? null,
+          modeledBy: null,
+          inputLevelDbu: null,
+          outputLevelDbu: null,
+          submissionId: sharedSubmissionId,
+          submissionLabel: sharedLabel,
+          submissionCreatedAt: sharedCreatedAt,
+          appendModelArchitectureFolder,
+          appendGraphArchitectureFolder,
+          appendProcessedArchitectureFolder,
+        }
+      })
+    )
+    const result = await window.api.enqueueTrainerRuns(payloads, { staged: false })
+    if (!result.success) {
+      setLaunchError(result.error ?? 'Could not queue Quick Add batch.')
+      return
+    }
+    setQuickAddConfirmed(prev => [...prev, { count: paths.length, label: favPreset?.name ?? 'Default' }])
+  }
+
+  // â”€â”€ "This Session" stats â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const todayStats = useMemo(() => {
+    const d = new Date(); d.setHours(0, 0, 0, 0)
+    const todayMs = d.getTime()
+    const today = trainerState.history.filter(e => new Date(e.timestamp).getTime() >= todayMs)
+    const completed = today.filter(e => e.status === 'success').length
+    // Exclude failures the user has already retried (retriedAt set) — "Failed" should read as
+    // "outstanding failures needing attention," not "anything that ever failed today." A retry
+    // that itself fails writes a NEW error entry (no retriedAt), so real unresolved failures
+    // still count; only the superseded original drops off. Matches the queue-row clearing on
+    // retry, so both Failed surfaces agree.
+    const failed = today.filter(e => e.status === 'error' && !e.retriedAt).length
+    const esrs = today.filter(e => getBestJobEsr(e).value != null).map(e => getBestJobEsr(e).value as number)
+    const avgEsr = esrs.length > 0 ? esrs.reduce((a, b) => a + b, 0) / esrs.length : null
+    const oneHrAgo = Date.now() - 3_600_000
+    const throughput = trainerState.history.filter(e => new Date(e.timestamp).getTime() >= oneHrAgo && e.status === 'success').length
+    return { completed, failed, avgEsr, throughput }
+  }, [trainerState.history])
+
+  const qualityBarsData = useMemo(() => {
+    const now = Date.now()
+    return Array.from({ length: 7 }, (_, i) => {
+      const dayStart = now - (6 - i) * 86_400_000
+      const d = new Date(dayStart); d.setHours(0, 0, 0, 0)
+      const ds = d.getTime()
+      const de = ds + 86_400_000
+      const entries = trainerState.history.filter(e => {
+        const t = new Date(e.timestamp).getTime()
+        return t >= ds && t < de && e.status === 'success'
+      })
+      return {
+        label: new Date(ds).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+        green: entries.filter(e => { const { value: v, kind: k } = getBestJobEsr(e); const t = k === 'a2_aggregate' ? 0.02 : 0.01; return v != null && v < t }).length,
+        amber: entries.filter(e => { const { value: v, kind: k } = getBestJobEsr(e); const g = k === 'a2_aggregate' ? 0.02 : 0.01; const a = k === 'a2_aggregate' ? 0.07 : 0.05; return v != null && v >= g && v < a }).length,
+        red: entries.filter(e => { const { value: v, kind: k } = getBestJobEsr(e); const a = k === 'a2_aggregate' ? 0.07 : 0.05; return v != null && v >= a }).length,
+      }
+    })
+  }, [trainerState.history])
+
+  const throughputData = useMemo(() => {
+    const now = Date.now()
+    return Array.from({ length: 12 }, (_, i) => {
+      const hrStart = now - (11 - i) * 3_600_000
+      return trainerState.history.filter(e => {
+        const t = new Date(e.timestamp).getTime()
+        return t >= hrStart && t < hrStart + 3_600_000 && e.status === 'success'
+      }).length
+    })
+  }, [trainerState.history])
+
+  const esrSparkline = useMemo(() =>
+    esrSeries.map(pt => -Math.log10(Math.max(pt.esr, 1e-5))),
+    [esrSeries]
+  )
+
+  const eta = useMemo(() => {
+    if (!isRunning || !trainerState.startedAt || typeof trainerState.progressPercent !== 'number' || trainerState.progressPercent <= 0) return null
+    const elapsed = Date.now() - new Date(trainerState.startedAt).getTime()
+    const remaining = elapsed / (trainerState.progressPercent / 100) - elapsed
+    if (remaining <= 0) return null
+    const mins = Math.ceil(remaining / 60_000)
+    return mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${mins % 60}m`
+  }, [isRunning, trainerState.startedAt, trainerState.progressPercent])
+
+  // Queue-wide remaining time estimate.
+  // Strategy: build a sec/epoch rate per architecture from recent completed jobs (queue + history).
+  // Cap to 20 most-recent samples per arch to stay relevant to current hardware.
+  // For the running job use elapsed-time extrapolation when no history rate exists.
+  const queueEta = useMemo(() => {
+    const MAX_SAMPLES = 20
+    const ratesByArch = new Map<string, number[]>()
+    const addSample = (arch: string, durationSec: number, epochs: number) => {
+      if (!arch || epochs <= 0 || durationSec <= 0) return
+      const arr = ratesByArch.get(arch) ?? []
+      if (arr.length < MAX_SAMPLES) { arr.push(durationSec / epochs); ratesByArch.set(arch, arr) }
+    }
+    for (const job of trainerState.queue) {
+      if (job.status === 'success' && job.startedAt && job.finishedAt) {
+        const dur = (new Date(job.finishedAt).getTime() - new Date(job.startedAt).getTime()) / 1000
+        addSample(job.architecture, dur, job.epochs)
+      }
+    }
+    for (const entry of trainerState.history) {
+      if (entry.status === 'success' && typeof entry.durationSec === 'number' && entry.epochs > 0) {
+        addSample(entry.architecture, entry.durationSec, entry.epochs)
+      }
+    }
+    const avgRate = new Map<string, number>()
+    for (const [arch, rates] of ratesByArch) {
+      avgRate.set(arch, rates.reduce((a, b) => a + b, 0) / rates.length)
+    }
+    if (avgRate.size === 0) return null
+
+    let totalSec = 0
+    let covered = 0
+    let uncovered = 0
+
+    // Running job remainder
+    if (activeJob && isRunning) {
+      const rate = avgRate.get(activeJob.architecture)
+      const pct = typeof trainerState.progressPercent === 'number' ? trainerState.progressPercent / 100 : 0
+      if (rate != null) {
+        totalSec += rate * activeJob.epochs * Math.max(0, 1 - pct)
+        covered++
+      } else if (pct > 0 && trainerState.startedAt) {
+        const elapsed = (Date.now() - new Date(trainerState.startedAt).getTime()) / 1000
+        totalSec += (elapsed / pct) * Math.max(0, 1 - pct)
+        covered++
+      } else {
+        uncovered++
+      }
+    }
+
+    // Queued jobs
+    for (const job of trainerState.queue) {
+      if (job.status !== 'queued') continue
+      const rate = avgRate.get(job.architecture)
+      if (rate != null) { totalSec += rate * job.epochs; covered++ }
+      else uncovered++
+    }
+
+    if (covered === 0 || totalSec <= 0) return null
+
+    const totalMin = Math.ceil(totalSec / 60)
+    const approx = uncovered > 0 ? '>' : '~'  // '>' when some jobs have no rate estimate
+    if (totalMin < 1) return `${approx}1m`
+    if (totalMin < 60) return `${approx}${totalMin}m`
+    const h = Math.floor(totalMin / 60)
+    const m = totalMin % 60
+    return m === 0 ? `${approx}${h}h` : `${approx}${h}h ${m}m`
+  }, [trainerState.queue, trainerState.history, activeJob, isRunning, trainerState.progressPercent, trainerState.startedAt])
+
+  const activeJobName = activeJob
+    ? activeJob.outputPath.replace(/\\/g, '/').split('/').pop() ?? 'Unknown'
+    : 'No active run'
+  // Exclude staged drafts — they live in the Batches tab, not the active queue runway.
+  // Including them in totalJobs made the Now Strip read e.g. "model 7 of 8" when only 2 captures
+  // were actually in flight + 6 sitting unstaged in Batches.
+  const activeQueue = trainerState.queue.filter(j => j.status !== 'staged')
+  const activeJobIdx = activeJob
+    ? activeQueue.findIndex(j => j.jobId === activeJob.jobId) + 1
+    : 0
+  const totalJobs = activeQueue.length
+
+  const lastSuccessEntry = trainerState.history.filter(e => e.status === 'success')[0] ?? null
+  const activeBatchJobs = activeJob ? trainerState.queue.filter(j => j.submissionId === activeJob.submissionId) : []
+  const activeBatchIdx = activeJob ? activeBatchJobs.findIndex(j => j.jobId === activeJob.jobId) + 1 : 0
+  const activeBatchTotal = activeBatchJobs.length
+
+  // drag refs for queue reordering
+  const dragJobRef = useRef<string | null>(null)
+
+  // Batch drag — migrated to @dnd-kit (2026-07-12), replacing the hand-rolled mouse-event
+  // implementation. The old approach sampled `mousemove` to hit-test `[data-submission-id]`
+  // elements, but `mousemove` is rate-limited to the display refresh rate, not actual pixel
+  // distance moved — a collapsed batch card is only ~45-50px tall, so at normal drag speed it
+  // was entirely plausible for zero mousemove samples to ever land within that band, meaning
+  // the cursor's tracked position could jump straight from one card to the next without ever
+  // registering the intended target. @dnd-kit's PointerSensor + closestCenter collision
+  // detection resolves the drop target from the pointer's actual position at drop time
+  // against every registered sortable item's rect, so it doesn't have this sampling gap.
+  const [activeDragBatchId, setActiveDragBatchId] = useState<string | null>(null)
+  const batchDragSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+
+  const handleBatchDragStart = ({ active }: DragStartEvent) => setActiveDragBatchId(String(active.id))
+
+  const handleBatchDragEnd = async (event: DragEndEvent) => {
+    setActiveDragBatchId(null)
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const fromId = String(active.id)
+    const toId = String(over.id)
+    const gq = groupedQueue
+    const fromIdx = gq.findIndex(g => g.groupKey === fromId)
+    const toIdx = gq.findIndex(g => g.groupKey === toId)
+    if (fromIdx === -1 || toIdx === -1) return
+    let result: { success: boolean; error?: string }
+    if (fromIdx > toIdx) {
+      result = await window.api.moveSubmissionBefore(fromId, toId)
+    } else {
+      const nextGroup = gq[toIdx + 1]
+      if (nextGroup) {
+        result = await window.api.moveSubmissionBefore(fromId, nextGroup.groupKey)
+      } else {
+        result = await window.api.moveSubmissionToEnd(fromId)
+      }
+    }
+    setQueueActionError(result.success ? '' : (result.error ?? 'Could not reorder that batch.'))
+  }
+
+
+  const toggleBatchCollapse = (key: string) => {
+    setCollapsedBatches(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const navItem = (
+    id: 'dashboard' | 'live' | 'queue' | 'batches' | 'history' | 'new',
+    label: string,
+    count: number | null,
+    icon: React.ReactNode,
+    opts: { accent?: boolean; simple?: boolean } = {}
+  ) => {
+    const isActive = section === id
+    const isDashboard = id === 'dashboard'
+    return (
+      <button
+        key={id}
+        onClick={() => setSection(id)}
+        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-[9px] text-[13px] font-medium transition-colors relative text-left ${
+          isActive
+            ? isDashboard
+              ? 'bg-nm-accent/15 text-nm-accent font-semibold'
+              : 'bg-active-bg text-nm-accent font-semibold'
+            : 'text-nm-text-2 hover:bg-hov hover:text-nm-text'
+        }`}
+      >
+        {isActive && (
+          <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2.5px] h-5 rounded-r bg-nm-accent" />
+        )}
+        <span className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-nm-accent' : 'text-nm-text-3'}`}>{icon}</span>
+        <span className={`flex-1 truncate ${isDashboard ? 'font-[560]' : ''}`}>{label}</span>
+        {opts.simple && (
+          <span className={`text-[9px] font-[700] uppercase tracking-[.4px] px-1.5 py-0.5 rounded-[5px] flex-shrink-0 ${
+            isActive ? 'bg-nm-accent/25 text-nm-accent' : 'bg-nm-accent/15 text-nm-accent'
+          }`}>Simple</span>
+        )}
+        {!opts.simple && count !== null && count > 0 && (
+          <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none flex-shrink-0 ${
+            opts.accent ? 'bg-nm-accent text-accent-text' : 'bg-panel-2 text-nm-text-2 border border-nm-border-s'
+          }`}>
+            {count}
+          </span>
+        )}
+      </button>
+    )
+  }
+
+  return (
+    <>
+    <div className="flex h-full overflow-hidden bg-app-bg text-nm-text select-text" onContextMenu={showNativeTextContextMenu}>
+      {/* â”€â”€ Left Rail â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      <div className="w-[220px] flex-shrink-0 flex flex-col border-r border-nm-border bg-panel overflow-y-auto">
+        <div className="px-3 pt-3 pb-3 border-b border-nm-border space-y-2.5">
+          {onClose && (
+            <button
+              onClick={onClose}
+              title="Return to the file library (tree / file list / metadata editor)"
+              className="w-full inline-flex items-center gap-1.5 px-2.5 h-8 rounded-[8px] text-[11.5px] font-[600] border border-nm-border-s bg-panel-2 hover:bg-nm-accent/10 hover:border-nm-accent/40 hover:text-nm-accent text-nm-text-2 transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+              </svg>
+              Back to Library
+            </button>
+          )}
+          <div className="px-1">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-nm-text-3 mb-1">NAM Lab</div>
+            <div className="flex items-center gap-2">
+              <svg className="w-4 h-4 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23-.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" />
+              </svg>
+              <span className="text-[16px] font-[680] text-nm-text leading-tight">Local Training</span>
+            </div>
+          </div>
+        </div>
+
+        <nav className="px-2 py-2 space-y-0.5">
+          {navItem('dashboard', 'Dashboard', null, (
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" /></svg>
+          ), { simple: true })}
+          <div className="mx-2 my-1.5 border-t border-nm-border-s" />
+          {navItem('live', 'Live Run', isRunning ? 1 : null, (
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" /></svg>
+          ), { accent: isRunning })}
+          {navItem('queue', 'Queue', trainerState.queue.filter(j => j.status !== 'staged').length, (
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z" /></svg>
+          ))}
+          {navItem('batches', 'Batches', stagedCount > 0 ? stagedCount : null, (
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6.429 9.75L2.25 12l4.179 2.25m0-4.5l5.571 3 5.571-3m-11.142 0L2.25 7.5 12 2.25l9.75 5.25-4.179 2.25m0 0L21.75 12l-4.179 2.25m0 0l4.179 2.25L12 21.75 2.25 16.5l4.179-2.25m11.142 0l-5.571 3-5.571-3" /></svg>
+          ))}
+          {navItem('history', 'History', trainerState.history.length, (
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+          ))}
+          {navItem('presets', 'Presets', settings.trainingPresets.length > 0 ? settings.trainingPresets.length : null, (
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" /></svg>
+          ))}
+          {navItem('new', 'New Run', null, (
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+          ))}
+        </nav>
+
+        <div className="mx-3 my-1 border-t border-nm-border-s" />
+
+        {/* This Session */}
+        <div className="px-3 py-2 space-y-1.5">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-nm-text-3 px-1 mb-2">This Session</div>
+          {[
+            { label: 'Completed', value: String(todayStats.completed), color: 'text-emerald-400' },
+            { label: 'Avg ESR', value: todayStats.avgEsr != null ? todayStats.avgEsr.toFixed(5) : '\u2014', color: 'text-nm-text font-mono' },
+            { label: 'Throughput', value: `${todayStats.throughput}/hr`, color: 'text-nm-text font-mono' },
+            { label: 'Failed', value: String(todayStats.failed), color: todayStats.failed > 0 ? 'text-red-400' : 'text-nm-text-3' },
+          ].map(({ label, value, color }) => (
+            <div key={label} className="flex items-center justify-between gap-2 rounded-[10px] border border-nm-border-s bg-panel-2 px-2.5 py-1.5">
+              <span className="text-[11px] text-nm-text-3">{label}</span>
+              <span className={`text-[13px] font-semibold tabular-nums ${color}`}>{value}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="mx-3 my-1 border-t border-nm-border-s" />
+
+        {/* Watch Folders */}
+        {settings.trainingWatchProfiles.length > 0 && (
+          <div className="px-2 py-2">
+            <button
+              onClick={() => setWatchFoldersExpanded(v => !v)}
+              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-hov text-nm-text-2 transition-colors"
+            >
+              <svg className={`w-3 h-3 transition-transform ${watchFoldersExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+              </svg>
+              <span className="text-[10px] font-semibold uppercase tracking-wider flex-1 text-left">Watch Folders</span>
+              {onOpenSetupGuide && (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onClick={e => { e.stopPropagation(); onOpenSetupGuide() }}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); onOpenSetupGuide() } }}
+                  className="text-[9px] text-nm-accent hover:underline cursor-pointer"
+                >
+                  Setup guide
+                </span>
+              )}
+              {trainerState.watcherState.watchers.some(w => w.skippedCount > 0) && (
+                <span className="text-[9px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-400 font-medium">skipped</span>
+              )}
+              <span className="text-[10px] text-nm-text-3">{settings.trainingWatchProfiles.length}</span>
+            </button>
+            {watchFoldersExpanded && (
+              <div className="mt-1 space-y-1">
+                {settings.trainingWatchProfiles.map((profile) => {
+                  const runtime = trainerState.watcherState.watchers.find(w => w.profileId === profile.id)
+                  const running = runtime?.running ?? false
+                  const skipped = runtime?.skippedCount ?? 0
+                  return (
+                    <div key={profile.id} className="px-2 py-1.5 rounded-lg border border-nm-border-s bg-panel-2 text-[11px]">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${running ? 'bg-emerald-400' : 'bg-nm-text-3'}`} />
+                        <span className="flex-1 truncate text-nm-text">{profile.name}</span>
+                        {skipped > 0 && <span className="text-amber-400 tabular-nums">{skipped}s</span>}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex-1" />
+        {onClose && (
+          <div className="px-3 py-3 border-t border-nm-border-s">
+            <button onClick={onClose} className="w-full py-1.5 rounded-lg text-[12px] font-medium bg-panel-2 hover:bg-hov text-nm-text-2 border border-nm-border-s transition-colors">
+              Close Training
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* â”€â”€ Main Column â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+
+        {/* Dashboard: slim control bar (replaces full strip) */}
+        {section === 'dashboard' && (
+          <div className="flex-shrink-0 border-b border-nm-border bg-panel-2 px-6 py-3.5 flex items-center gap-4">
+            <div className="flex items-center gap-3.5 flex-1 min-w-0">
+              <span className={`inline-flex items-center gap-1.5 h-[30px] px-3.5 rounded-full text-[12.5px] font-[650] flex-shrink-0 ${
+                isRunning ? 'bg-nm-accent/15 text-nm-accent' : 'bg-field text-nm-text-3'
+              }`}>
+                <span className={`w-[7px] h-[7px] rounded-full flex-shrink-0 ${isRunning ? 'bg-nm-accent nm-live-dot' : 'bg-nm-text-3'}`} />
+                {isRunning ? 'Training' : trainerState.pauseAfterCurrent ? 'Paused' : 'Idle'}
+              </span>
+              <span className="text-[15px] font-[600] text-nm-text-2 truncate">{isRunning ? activeJobName : 'Queue idle'}</span>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                onClick={async () => { const r = await window.api.cancelTrainerRun(); if (!r.success) setQueueActionError(r.error ?? 'Could not cancel.') }}
+                disabled={!isRunning && !trainerState.pauseAfterCurrent}
+                className="h-10 inline-flex items-center gap-2 px-4 rounded-[9px] text-[13px] font-[580] border bg-red-500/10 hover:bg-red-500/18 disabled:opacity-40 disabled:cursor-not-allowed text-red-400 border-red-500/35 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" /></svg>
+                Emergency stop
+              </button>
+              {isRunning ? (
+                <button
+                  onClick={async () => { await window.api.setTrainerPauseAfterCurrent(!trainerState.pauseAfterCurrent) }}
+                  title={trainerState.pauseAfterCurrent
+                    ? 'Click to cancel \u2014 queue will keep going after current capture finishes'
+                    : 'Pauses the queue after the current capture finishes (training can\'t be interrupted mid-capture). Use Emergency stop to kill the current run immediately.'}
+                  className={`h-10 inline-flex items-center gap-2 px-4 rounded-[9px] text-[13px] font-[580] border transition-colors ${
+                    trainerState.pauseAfterCurrent
+                      ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border-amber-500/40'
+                      : 'bg-panel hover:bg-hov text-nm-text-2 border-nm-border'
+                  }`}
+                >
+                  {trainerState.pauseAfterCurrent ? (
+                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25v13.5m-7.5-13.5v13.5" /></svg>
+                  )}
+                  {trainerState.pauseAfterCurrent ? 'Pausing after current' : 'Pause'}
+                </button>
+              ) : (
+                <button
+                  onClick={async () => { await window.api.setTrainerPauseAfterCurrent(false) }}
+                  disabled={queuedCount === 0}
+                  title={trainerState.pauseAfterCurrent ? 'Queue is paused \u2014 click to resume training' : 'Start the next queued capture'}
+                  className={`h-10 inline-flex items-center gap-2 px-4 rounded-[9px] text-[13px] font-[680] border bg-nm-accent hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed text-white border-transparent transition-colors ${trainerState.pauseAfterCurrent && queuedCount > 0 ? 'nm-resume-pulse' : ''}`}
+                >
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                  Resume
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Full Now-Training strip (all sections except dashboard) */}
+        {section !== 'dashboard' && (
+        <div className="flex-shrink-0 border-b border-nm-border px-5 py-3 space-y-2.5" style={{ background: 'linear-gradient(180deg, var(--panel-2), var(--panel))' }}>
+          {/* Top row */}
+          <div className="flex items-center gap-3 min-w-0">
+            {/* Model thumbnail */}
+            <div className="w-[42px] h-[42px] rounded-[10px] flex items-center justify-center flex-shrink-0" style={{ background: 'color-mix(in srgb, var(--nm-accent, var(--accent)) 14%, var(--panel-2))', border: '1px solid color-mix(in srgb, var(--nm-accent, var(--accent)) 30%, transparent)' }}>
+              <svg className="w-5 h-5 text-nm-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z" />
+              </svg>
+            </div>
+            {/* Model name + sub */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-[16px] font-[660] text-nm-text truncate">{activeJobName}</span>
+                {isRunning && (
+                  <span className="inline-flex items-center gap-1.5 h-6 px-2.5 rounded-full text-[11px] font-[650] flex-shrink-0" style={{ background: 'color-mix(in srgb, var(--nm-accent, var(--accent)) 16%, transparent)', color: 'var(--accent-text)' }}>
+                    <span className="w-[7px] h-[7px] rounded-full bg-nm-accent flex-shrink-0 nm-live-dot" />
+                    Running
+                  </span>
+                )}
+                {!isRunning && trainerState.pauseAfterCurrent && (
+                  <span className="px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-[11px] font-semibold flex-shrink-0">Paused</span>
+                )}
+                {!isRunning && !trainerState.pauseAfterCurrent && (
+                  <span className="px-2 py-0.5 rounded-full bg-field border border-nm-border-s text-nm-text-3 text-[11px] flex-shrink-0">Idle</span>
+                )}
+              </div>
+              <div className="mt-0.5 flex items-center gap-2 text-[11.5px] text-nm-text-3 truncate">
+                {activeJob && (
+                  <>
+                    <span className="inline-flex items-center h-[19px] px-2 rounded-[5px] text-[10px] font-[700] uppercase tracking-[.3px]" style={{ background: 'color-mix(in srgb, var(--nm-accent, var(--accent)) 16%, transparent)', color: 'var(--accent-text)' }}>{architectureDisplayLabel(activeJob.architecture)}</span>
+                    {activeJob.profileName && (
+                      <span className="inline-flex items-center h-[19px] px-2 rounded-[5px] text-[10.5px] font-[600] bg-field border border-nm-border-s text-nm-text-2">{activeJob.profileName}</span>
+                    )}
+                    <span>model {activeJobIdx} of {totalJobs}</span>
+                    {queuedCount > 0 && <span className="text-nm-text-3">&middot; {queuedCount} more queued{queueEta ? ` · ${queueEta} remaining` : ''}</span>}
+                    <span className="font-mono truncate">{activeJob.outputPath.replace(/\\/g, '/').split('/').slice(-2).join('/')}</span>
+                  </>
+                )}
+                {!activeJob && (
+                  <span>
+                    {queuedCount > 0
+                      ? <>Queue ready &mdash; {queuedCount} capture{queuedCount === 1 ? '' : 's'} waiting{queueEta ? ` · ${queueEta} estimated` : ''}.</>
+                      : <>Queue is idle &mdash; start a run from New Run or the queue.</>
+                    }
+                  </span>
+                )}
+              </div>
+            </div>
+            {/* Control bar */}
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <button
+                onClick={async () => {
+                  const r = await window.api.cancelTrainerRun()
+                  if (!r.success) setQueueActionError(r.error ?? 'Could not cancel.')
+                }}
+                disabled={!isRunning}
+                title="Hard-stop the current run"
+                className="h-[34px] inline-flex items-center gap-1.5 px-3 rounded-[9px] text-xs font-[580] border bg-red-500/10 hover:bg-red-500/18 disabled:opacity-35 disabled:cursor-not-allowed text-red-400 border-red-500/35 transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" /></svg>
+                Emergency stop
+              </button>
+              {isRunning ? (
+                <button
+                  onClick={async () => { await window.api.setTrainerPauseAfterCurrent(!trainerState.pauseAfterCurrent) }}
+                  title={trainerState.pauseAfterCurrent ? 'Click to cancel \u2014 queue will keep going after current run' : 'Stop the queue after the current run finishes'}
+                  className={`h-[34px] inline-flex items-center gap-1.5 px-2.5 rounded-[9px] text-xs font-[580] border transition-colors ${
+                    trainerState.pauseAfterCurrent
+                      ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border-amber-500/40'
+                      : 'bg-panel hover:bg-hov text-nm-text-2 border-nm-border'
+                  }`}
+                >
+                  {trainerState.pauseAfterCurrent ? (
+                    <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                  ) : (
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25v13.5m-7.5-13.5v13.5" /></svg>
+                  )}
+                  {trainerState.pauseAfterCurrent ? 'Pausing after current' : 'Pause after current'}
+                </button>
+              ) : (
+                <button
+                  onClick={async () => { await window.api.setTrainerPauseAfterCurrent(false) }}
+                  disabled={queuedCount === 0}
+                  title={trainerState.pauseAfterCurrent ? 'Queue is paused \u2014 click to resume training' : 'Start the next queued capture'}
+                  className={`h-[34px] inline-flex items-center gap-1.5 px-2.5 rounded-[9px] text-xs font-[680] border bg-nm-accent hover:opacity-90 disabled:opacity-35 disabled:cursor-not-allowed text-white border-transparent transition-colors ${trainerState.pauseAfterCurrent && queuedCount > 0 ? 'nm-resume-pulse' : ''}`}
+                >
+                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                  Resume
+                </button>
+              )}
+              <div className="w-px h-5 bg-nm-border-s mx-0.5" />
+              <button
+                onClick={async () => { await window.api.retryFailedTrainerRuns() }}
+                disabled={!trainerState.queue.some(j => j.status === 'error')}
+                className="h-[34px] inline-flex items-center gap-1.5 px-2.5 rounded-[9px] text-xs font-[580] border bg-panel text-nm-text-2 border-nm-border hover:bg-hov disabled:opacity-35 disabled:cursor-not-allowed transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                Retry failed
+              </button>
+              {queuedCount > 0 && !isRunning && (
+                <button
+                  onClick={async () => { await window.api.startQueuedTrainerRuns() }}
+                  className="h-[34px] inline-flex items-center gap-1.5 px-3 rounded-[9px] text-xs font-semibold bg-nm-accent hover:opacity-90 text-white transition-opacity"
+                >
+                  Start queue
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Progress row */}
+          <div className="flex items-center gap-4 min-w-0">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between text-[11.5px] text-nm-text-3 mb-1.5">
+                <span className="font-[600] text-nm-text">{trainerState.progressPhase || (isRunning ? 'Starting\u2026' : 'Waiting to start')}</span>
+                <span className="font-mono text-nm-text-2">{trainerState.progressEpochCurrent && progressEpochTotal ? `Epoch ${trainerState.progressEpochCurrent} / ${progressEpochTotal}` : ''}</span>
+                <span className="font-mono tabular-nums text-nm-text-2">{typeof trainerState.progressPercent === 'number' ? `${trainerState.progressPercent.toFixed(1)}%` : ''}</span>
+              </div>
+              <div className="h-2 rounded-full bg-field overflow-hidden">
+                <div
+                  className="h-full nm-progress-fill"
+                  style={{ width: `${Math.max(0, Math.min(100, trainerState.progressPercent ?? (trainerState.status === 'success' ? 100 : 0)))}%` }}
+                />
+              </div>
+            </div>
+            {/* Mini-stats */}
+            <div className="flex items-center gap-5 flex-shrink-0">
+              {[
+                { label: 'Rate', value: typeof trainerState.progressRate === 'number' ? `${trainerState.progressRate.toFixed(1)}` : '\u2014', unit: ' it/s' },
+                { label: 'Batch', value: trainerState.progressBatchCurrent && trainerState.progressBatchTotal ? `${trainerState.progressBatchCurrent}/${trainerState.progressBatchTotal}` : '\u2014', unit: '' },
+                (() => { const b = getBestLiveEsr(trainerState); const t = getEsrToneKind(b.value, b.kind); return { label: 'Val ESR', value: t.text, unit: '', color: t.classes } })(),
+                { label: 'ETA', value: eta ?? '\u2014', unit: '' },
+              ].map(({ label, value, unit, color }) => (
+                <div key={label} className="text-right">
+                  <div className="text-[10px] text-nm-text-3 uppercase tracking-[.4px] font-[600]">{label}</div>
+                  <div className={`text-[15px] font-[650] font-mono tabular-nums mt-0.5 ${color ?? 'text-nm-text'}`}>{value}<span className="text-[10px] text-nm-text-3">{unit}</span></div>
+                </div>
+              ))}
+            </div>
+            {/* ESR sparkline */}
+            {esrSparkline.length > 1 && (
+              <div className="flex-shrink-0 pl-4 border-l border-nm-border-s">
+                <Sparkline data={esrSparkline} width={130} height={40} color="var(--nm-accent,#6366f1)" strokeWidth={1.75} fill={true} invert={true} />
+              </div>
+            )}
+          </div>
+        </div>
+        )}
+
+        {/* Section content */}
+        <div className="flex-1 min-h-0 overflow-y-auto">
+
+          {/* â”€â”€ DASHBOARD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {section === 'dashboard' && (
+            <div className="px-6 py-5 flex flex-col gap-5 max-w-[1400px] mx-auto w-full">
+
+              {/* Hero card */}
+              <div className="rounded-[20px] border border-nm-border-s overflow-hidden" style={{ background: 'linear-gradient(135deg, color-mix(in srgb, var(--nm-accent, var(--accent)) 9%, var(--panel-2)), var(--panel-2))' }}>
+                {isRunning ? (
+                  <div className="flex items-center gap-8 px-8 py-7 min-h-[210px]">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[11px] font-[700] uppercase tracking-[.55px] text-nm-text-3 mb-1.5">
+                        Now training &middot; {activeJob?.submissionLabel ?? activeJob?.profileName ?? 'Manual'}
+                      </div>
+                      <div className="text-[34px] font-[720] text-nm-text truncate leading-tight mb-2.5">{activeJobName}</div>
+                      <div className="flex items-center gap-3 text-[12px] text-nm-text-3 mb-4 flex-wrap">
+                        {elapsedSec > 0 && (
+                          <span className="flex items-center gap-1">
+                            <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                            running {formatDuration(elapsedSec)}
+                          </span>
+                        )}
+                        {activeJob && (
+                          <span className="inline-flex items-center h-[20px] px-2 rounded-[5px] text-[10px] font-[700] uppercase tracking-[.3px]" style={{ background: 'color-mix(in srgb, var(--nm-accent, var(--accent)) 16%, transparent)', color: 'var(--accent-text)' }}>
+                            {architectureDisplayLabel(activeJob.architecture)}
+                          </span>
+                        )}
+                        {activeJob?.profileName && (
+                          <span className="inline-flex items-center h-[20px] px-2 rounded-[5px] text-[10.5px] font-[600] bg-field border border-nm-border-s text-nm-text-2">{activeJob.profileName}</span>
+                        )}
+                        {trainerState.checkWarnings && (
+                          <span
+                            className="inline-flex items-center gap-1 h-[20px] px-2 rounded-[5px] text-[10.5px] font-[700] border border-orange-500/30 bg-orange-500/10 text-orange-400"
+                            title={trainerState.checkWarnings}
+                          >
+                            <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+                            Checks failed — training anyway
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center justify-between text-[11.5px] text-nm-text-3 mb-2">
+                        <span className="font-[600] text-nm-text">{trainerState.progressPhase || 'Training\u2026'}</span>
+                        <span className="font-mono">
+                          {trainerState.progressEpochCurrent && progressEpochTotal ? `Epoch ${trainerState.progressEpochCurrent} / ${progressEpochTotal}` : ''}
+                        </span>
+                        <span className="font-mono tabular-nums">{typeof trainerState.progressPercent === 'number' ? `${trainerState.progressPercent.toFixed(1)}%` : ''}</span>
+                      </div>
+                      <div className="h-3.5 rounded-full bg-field overflow-hidden">
+                        <div className="h-full nm-progress-fill" style={{ width: `${Math.max(0, Math.min(100, trainerState.progressPercent ?? 0))}%` }} />
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-center gap-2.5 flex-shrink-0">
+                      <ProgressRing value={trainerState.progressPercent ?? 0} size={168} thickness={13} color="var(--nm-accent, var(--accent))">
+                        <div className="text-center">
+                          <div className="text-[34px] font-[750] tabular-nums leading-none text-nm-text">
+                            {typeof trainerState.progressPercent === 'number' ? Math.round(trainerState.progressPercent) : 0}<span className="text-[18px] text-nm-text-3">%</span>
+                          </div>
+                          <div className="text-[11px] text-nm-text-3 mt-0.5">epoch {trainerState.progressEpochCurrent ?? 0}</div>
+                        </div>
+                      </ProgressRing>
+                      {eta && <div className="text-[12px] text-nm-text-3">~{eta} remaining</div>}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center min-h-[210px] gap-3 px-8 py-7 text-center">
+                    <div className="w-16 h-16 rounded-2xl flex items-center justify-center flex-shrink-0" style={{ background: 'color-mix(in srgb, var(--nm-accent, var(--accent)) 10%, var(--panel-2))', border: '1px solid color-mix(in srgb, var(--nm-accent, var(--accent)) 18%, transparent)' }}>
+                      <svg className="w-7 h-7 text-nm-text-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23-.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" />
+                      </svg>
+                    </div>
+                    <div className="text-[18px] font-[650] text-nm-text">
+                      {trainerState.pauseAfterCurrent ? 'Paused \u2014 queue will not advance' : 'Nothing training right now'}
+                    </div>
+                    <div className="text-[13px] text-nm-text-3 max-w-[420px]">
+                      Add captures below to start a quick batch, or use the New Run tab for full control.
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Big stats 4Ã&mdash;2 grid */}
+              {(() => {
+                const queueFinished = successCount + failedCount
+                const lastBest = lastSuccessEntry ? getBestJobEsr(lastSuccessEntry) : { value: null as number | null, kind: 'a1' as const }
+                const lastEsrTone = getEsrToneKind(lastBest.value, lastBest.kind)
+                const lastDurSec = lastSuccessEntry
+                  ? (typeof lastSuccessEntry.durationSec === 'number' ? lastSuccessEntry.durationSec : null)
+                  : null
+                const accentColor = 'var(--nm-accent, var(--accent))'
+                const bigStats = [
+                  {
+                    label: 'Current epoch',
+                    value: isRunning && trainerState.progressEpochCurrent ? String(trainerState.progressEpochCurrent) : '\u2014',
+                    sub: isRunning && progressEpochTotal ? `of ${progressEpochTotal}` : 'idle',
+                    color: accentColor,
+                    iconColor: accentColor,
+                    icon: <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 006 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0118 16.5h-2.25m-7.5 0h7.5m-7.5 0l-1 3m8.5-3l1 3m0 0l.5 1.5m-.5-1.5h-9.5m0 0l-.5 1.5M9 11.25v1.5M12 9v3.75m3-6v6" />,
+                  },
+                  {
+                    label: 'Queue progress',
+                    value: `${queueFinished} / ${totalJobs}`,
+                    sub: `${groupedQueue.length} batches \u00b7 ${Math.max(totalJobs - queueFinished, 0)} to go`,
+                    color: accentColor,
+                    iconColor: accentColor,
+                    featured: true,
+                    icon: <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941" />,
+                  },
+                  {
+                    label: 'Active batch',
+                    value: activeBatchTotal > 0 ? `${activeBatchIdx} / ${activeBatchTotal}` : '\u2014',
+                    sub: activeJob?.submissionLabel ?? activeJob?.profileName ?? 'idle',
+                    color: accentColor,
+                    iconColor: accentColor,
+                    icon: <path strokeLinecap="round" strokeLinejoin="round" d="M6.429 9.75L2.25 12l4.179 2.25m0-4.5l5.571 3 5.571-3m-11.142 0L2.25 7.5 12 2.25l9.75 5.25-4.179 2.25m0 0L21.75 12l-4.179 2.25m0 0l4.179 2.25L12 21.75 2.25 16.5l4.179-2.25m11.142 0l-5.571 3-5.571-3" />,
+                  },
+                  {
+                    label: 'Current ETA',
+                    value: eta ?? '\u2014',
+                    sub: eta && typeof trainerState.progressRate === 'number' ? `at ${trainerState.progressRate.toFixed(0)} it/s` : 'idle',
+                    color: 'var(--text-3)',
+                    iconColor: 'var(--text-3)',
+                    icon: <><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></>,
+                  },
+                  {
+                    label: 'Completed',
+                    value: String(successCount),
+                    sub: 'across queue \u00b7 click for history',
+                    color: '#10b981',
+                    iconColor: '#10b981',
+                    valueClass: successCount > 0 ? 'text-emerald-400' : undefined,
+                    icon: <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />,
+                    onClick: () => { setHistoryStatusFilter('success'); setSection('history') },
+                  },
+                  {
+                    label: 'Failed',
+                    value: String(failedCount),
+                    sub: 'across queue \u00b7 click for history',
+                    color: failedCount > 0 ? '#ef4444' : 'var(--text-3)',
+                    iconColor: failedCount > 0 ? '#ef4444' : 'var(--text-3)',
+                    valueClass: failedCount > 0 ? 'text-red-400' : undefined,
+                    icon: <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />,
+                    onClick: () => { setHistoryStatusFilter('error'); setSection('history') },
+                  },
+                  {
+                    label: 'Last ESR',
+                    value: lastSuccessEntry ? (lastEsrTone.text !== '\u2014' ? lastEsrTone.text : '\u2014') : '\u2014',
+                    sub: lastSuccessEntry ? (lastSuccessEntry.finalModelName ?? '').split(/[/\\]/).pop()?.replace(/\.nam$/, '') ?? '\u2014' : 'no runs yet',
+                    valueClass: lastEsrTone.classes,
+                    color: lastSuccessEntry && lastEsrTone.classes.includes('emerald') ? '#10b981' : lastEsrTone.classes.includes('amber') ? '#f59e0b' : lastEsrTone.classes.includes('red') ? '#ef4444' : 'var(--text-3)',
+                    iconColor: lastSuccessEntry && lastEsrTone.classes.includes('emerald') ? '#10b981' : lastEsrTone.classes.includes('amber') ? '#f59e0b' : lastEsrTone.classes.includes('red') ? '#ef4444' : 'var(--text-3)',
+                    icon: <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />,
+                    onClick: lastSuccessEntry ? () => { setHistoryStatusFilter('success'); setSection('history') } : undefined,
+                  },
+                  {
+                    label: 'Last item took',
+                    value: lastDurSec != null ? formatDuration(lastDurSec) : '\u2014',
+                    sub: 'most recent run',
+                    color: 'var(--text-3)',
+                    iconColor: 'var(--text-3)',
+                    icon: <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />,
+                  },
+                ]
+                return (
+                  <div className="grid grid-cols-4 gap-3">
+                    {bigStats.map(({ label, value, sub, color, iconColor, icon, featured, valueClass, onClick }) => {
+                      const interactive = typeof onClick === 'function'
+                      return (
+                        <div
+                          key={label}
+                          onClick={interactive ? onClick : undefined}
+                          className={`rounded-[16px] border border-nm-border-s bg-panel px-4 py-3.5 flex flex-col gap-2 ${featured ? 'border-nm-accent/30' : ''} ${interactive ? 'cursor-pointer hover:border-nm-accent/40 hover:bg-hov transition-colors' : ''}`}
+                          style={featured ? { background: 'color-mix(in srgb, var(--nm-accent, var(--accent)) 6%, var(--panel))' } : undefined}
+                        >
+                          <div className="flex items-center gap-2">
+                            <div className="w-[34px] h-[34px] rounded-[9px] flex items-center justify-center flex-shrink-0" style={{ background: `color-mix(in srgb, ${iconColor} 16%, transparent)`, color: iconColor }}>
+                              <svg className="w-[17px] h-[17px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>{icon}</svg>
+                            </div>
+                            <span className="text-[11px] font-[600] uppercase tracking-[.45px] text-nm-text-3">{label}</span>
+                          </div>
+                          <div className={`text-[38px] font-[730] tabular-nums leading-none ${valueClass ?? ''}`} style={!valueClass && color ? { color } : undefined}>
+                            {value}
+                          </div>
+                          <div className="text-[11.5px] text-nm-text-3 truncate">{sub}</div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              })()}
+
+              {/* Quick Add + Up Next */}
+              <div className="grid grid-cols-2 gap-4">
+
+                {/* Quick Add card */}
+                <div className="rounded-[16px] border border-nm-border-s bg-panel-2 p-5 flex flex-col gap-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-[15px] font-[660] text-nm-text">Quick add</div>
+                      <div className="text-[12px] text-nm-text-3 mt-0.5">Picks your favorite defaults &mdash; no setup</div>
+                    </div>
+                    <button
+                      onClick={() => onOpenSettings?.('training')}
+                      title={"Configure favorites in Settings \u2192 Training"}
+                      className="w-7 h-7 flex items-center justify-center rounded-[7px] border border-nm-border-s bg-field hover:bg-hov text-nm-text-3 hover:text-nm-text transition-colors flex-shrink-0 mt-0.5"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 010 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 010-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                    </button>
+                  </div>
+
+                  {/* Favorite settings preview */}
+                  <div className="rounded-[10px] border border-nm-border-s bg-field divide-y divide-nm-border-s text-[12px]">
+                    {[
+                      {
+                        icon: <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>,
+                        label: 'Preset',
+                        value: settings.trainingFavoritePresetId
+                          ? (availablePresets.find(p => p.id === settings.trainingFavoritePresetId)?.name ?? 'Unknown preset')
+                          : <span className="text-nm-text-3 italic">not set &mdash; configure in Settings</span>,
+                        accent: true,
+                      },
+                      {
+                        icon: <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17.25 9.75L19.5 12m0 0l2.25 2.25M19.5 12l2.25-2.25M19.5 12l-2.25 2.25m-10.5-6l4.72-4.72a.75.75 0 011.28.531V19.94a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.506-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z" /></svg>,
+                        label: 'Routing',
+                        value: (settings.trainingFavoriteRouting ?? '').trim()
+                          ? <span className="font-mono truncate max-w-[200px] inline-block align-bottom">{settings.trainingFavoriteRouting}</span>
+                          : (settings.trainingOutputFormula ?? '').trim()
+                            ? <span className="font-mono truncate max-w-[200px] inline-block align-bottom text-nm-text-2">{settings.trainingOutputFormula} <span className="text-nm-text-3">(from Settings)</span></span>
+                            : <span className="text-nm-text-3 italic">not set</span>,
+                      },
+                      {
+                        icon: <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2 12h3l2-7 4 16 3-12 2 5h6" /></svg>,
+                        label: 'Input DI',
+                        value: (settings.trainingDefaultInputDi ?? '').trim()
+                          ? <span className="font-mono truncate max-w-[200px] inline-block align-bottom">&hellip;/{(settings.trainingDefaultInputDi ?? '').replace(/\\/g, '/').split('/').pop()}</span>
+                          : (settings.namTrainingInputWav?.trim()
+                              ? <span className="font-mono truncate max-w-[200px] inline-block align-bottom text-nm-text-2">&hellip;/{settings.namTrainingInputWav.replace(/\\/g, '/').split('/').pop()} <span className="text-nm-text-3">(from Settings)</span></span>
+                              : <span className="text-nm-text-3 italic">not set</span>),
+                      },
+                    ].map(({ icon, label, value, accent }) => (
+                      <div key={label} className="flex items-center gap-2.5 px-3 py-2">
+                        <span className={accent ? 'text-amber-400' : 'text-nm-text-3'}>{icon}</span>
+                        <span className="text-nm-text-3 w-14 flex-shrink-0">{label}</span>
+                        <span className="text-nm-text flex-1 min-w-0">{value}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button
+                    onClick={handleQuickAdd}
+                    className="w-full h-11 flex items-center justify-center gap-2 rounded-[11px] text-[14px] font-[650] bg-nm-accent hover:opacity-90 text-white border-transparent border transition-opacity"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                    Pick WAVs &amp; queue batch
+                  </button>
+
+                  {quickAddConfirmed.length > 0 && (
+                    <div className="space-y-1.5">
+                      {quickAddConfirmed.slice(-3).map((b, i) => (
+                        <div key={i} className="flex items-center gap-2 text-[12px] rounded-[9px] border border-emerald-500/25 bg-emerald-500/8 px-3 py-2">
+                          <svg className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                          <span className="text-emerald-400">Queued <strong>{b.count}</strong> capture{b.count !== 1 ? 's' : ''}</span>
+                          <span className="text-nm-text-3">&middot; {b.label} &middot; auto-queued at end</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {launchError && (
+                    <div className="text-[12px] text-red-400 rounded-[9px] border border-red-500/25 bg-red-500/8 px-3 py-2">{launchError}</div>
+                  )}
+                </div>
+
+                {/* Up Next card */}
+                <div className="rounded-[16px] border border-nm-border-s bg-panel-2 p-5 flex flex-col gap-4">
+                  <div>
+                    <div className="text-[15px] font-[660] text-nm-text">Up next</div>
+                    <div className="text-[12px] text-nm-text-3 mt-0.5">
+                      {queuedCount > 0 ? `${queuedCount} waiting \u00b7 runs in order` : 'Queue is empty'}
+                    </div>
+                  </div>
+
+                  {queuedCount === 0 ? (
+                    <div className="flex-1 flex flex-col items-center justify-center py-8 gap-2 text-center">
+                      <svg className="w-8 h-8 text-nm-text-3 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z" /></svg>
+                      <div className="text-[12px] text-nm-text-3">Nothing queued yet. Use Quick Add or the New Run tab.</div>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {groupedQueue.flatMap(g => g.jobs.filter(j => j.status === 'queued')).slice(0, 8).map((job, i) => (
+                        <div key={job.jobId} className="flex items-center gap-2.5 px-3 py-2 rounded-[9px] hover:bg-hov transition-colors text-[12.5px]">
+                          <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-[700] tabular-nums flex-shrink-0 bg-field border border-nm-border-s text-nm-text-3">{i + 1}</span>
+                          <span className="flex-1 truncate text-nm-text font-mono text-[11.5px]">{job.outputPath.replace(/\\/g, '/').split('/').pop()?.replace(/\.wav$/i, '')}</span>
+                          <span className="inline-flex items-center h-[18px] px-1.5 rounded-[4px] text-[9.5px] font-[700] uppercase tracking-[.3px] flex-shrink-0" style={{ background: 'color-mix(in srgb, var(--nm-accent, var(--accent)) 14%, transparent)', color: 'var(--accent-text)' }}>
+                            {architectureDisplayLabel(job.architecture)}
+                          </span>
+                          <span className="text-nm-text-3 tabular-nums text-[11px] flex-shrink-0">{job.epochs}ep</span>
+                        </div>
+                      ))}
+                      {queuedCount > 8 && (
+                        <div className="text-center text-[12px] text-nm-text-3 py-2">+{queuedCount - 8} more queued</div>
+                      )}
+                    </div>
+                  )}
+
+                  {queuedCount > 0 && !isRunning && (
+                    <button
+                      onClick={async () => { await window.api.startQueuedTrainerRuns() }}
+                      className="w-full h-10 flex items-center justify-center gap-2 rounded-[11px] text-[13px] font-[650] bg-nm-accent hover:opacity-90 text-white transition-opacity"
+                    >
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                      Start queue
+                    </button>
+                  )}
+                </div>
+
+              </div>
+            </div>
+          )}
+
+          {/* â”€â”€ LIVE RUN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {section === 'live' && (
+            <div className="px-6 py-5 space-y-3.5 max-w-[1400px] mx-auto w-full">
+              {/* Section head with legend on the right */}
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-[18px] font-[680] text-nm-text leading-tight">Live Run</h2>
+                  <p className="text-[12px] text-nm-text-3 mt-0.5">Real-time training telemetry for the active model</p>
+                  {liveRunShowsA2Full && (
+                    <p className="text-[11px] text-amber-300/90 mt-1">
+                      A2 live chart is showing the Full sub-model ESR. The green line is a Full-quality reference here; upstream NAM&apos;s A2 early-stop logic is still aggregate-based.
+                    </p>
+                  )}
+                </div>
+                <span className="flex items-center gap-3 text-[10.5px] text-nm-text-3 flex-shrink-0 pt-1">
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-sm" style={{ background: 'var(--nm-accent, var(--accent))' }} />
+                    {liveRunShowsA2Full ? 'validation ESR (Full)' : 'validation ESR'}
+                  </span>
+                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm" style={{ background: '#10b981' }} />{liveRunShowsA2Full ? 'Full target' : 'target'}</span>
+                </span>
+              </div>
+
+              {!isRunning && trainerState.status === 'idle' && esrSeries.length === 0 && (
+                <div className="rounded-2xl border border-nm-border-s bg-panel p-10 flex flex-col items-center gap-3 text-center">
+                  <div className="w-14 h-14 rounded-[14px] flex items-center justify-center bg-panel-2 text-nm-text-3">
+                    <svg className="w-[26px] h-[26px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" /></svg>
+                  </div>
+                  <div className="text-[14px] font-[650] text-nm-text">No run in progress</div>
+                  <div className="text-[12.5px] text-nm-text-3">Start a queue or launch a new run to watch training live here.</div>
+                </div>
+              )}
+
+              {(isRunning || esrSeries.length > 0) && (
+                <div className="rounded-[14px] border border-nm-border-s bg-panel-2">
+                  <div className="flex items-center gap-2 px-4 pt-3.5 pb-2">
+                    <svg className="w-[15px] h-[15px] text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941" /></svg>
+                    <span className="text-[12.5px] font-[650] text-nm-text">ESR over epochs</span>
+                    <span className="flex-1" />
+                    <span className="text-[11px] font-mono text-nm-text-3">log scale &middot; lower is better</span>
+                  </div>
+                  <div className="px-4 pb-4 pt-1">
+                    <ChartFit minH={260}>
+                      {(w) => (
+                        <EsrCurve
+                          data={esrSeries}
+                          width={w}
+                          height={260}
+                          target={liveChartTarget}
+                          labels={true}
+                          variant="area"
+                          logScale={true}
+                        />
+                      )}
+                    </ChartFit>
+                  </div>
+                </div>
+              )}
+
+              {/* Statline &mdash; 4 cells like prototype: Epoch / Rate / Validation ESR / Started */}
+              <div className="rounded-[14px] border border-nm-border-s bg-panel overflow-hidden grid grid-cols-4 divide-x divide-nm-border-s">
+                {(() => {
+                  const { value: liveEsr, kind: liveEsrKind } = getBestLiveEsr(trainerState)
+                  const liveTone = getEsrToneKind(liveEsr, liveEsrKind)
+                  return [
+                    {
+                      label: 'Epoch',
+                      value: trainerState.progressEpochCurrent ? String(trainerState.progressEpochCurrent) : '\u2014',
+                      suffix: progressEpochTotal ? ` / ${progressEpochTotal}` : null,
+                      valueClass: 'text-nm-text',
+                    },
+                    {
+                      label: 'Rate',
+                      value: typeof trainerState.progressRate === 'number' ? trainerState.progressRate.toFixed(2) : '\u2014',
+                      suffix: typeof trainerState.progressRate === 'number' ? ' it/s' : null,
+                      valueClass: 'text-nm-text',
+                    },
+                    {
+                      label: liveRunShowsA2Full ? 'Validation ESR (Full)' : 'Validation ESR',
+                      value: liveTone.text,
+                      suffix: null,
+                      valueClass: liveTone.classes || 'text-nm-text',
+                    },
+                    {
+                      label: 'Started',
+                      value: trainerState.startedAt ? new Date(trainerState.startedAt).toLocaleTimeString() : '\u2014',
+                      suffix: null,
+                      valueClass: 'text-nm-text',
+                      smaller: true,
+                    },
+                  ].map(({ label, value, suffix, valueClass, smaller }) => (
+                    <div key={label} className="bg-panel-2 px-4 py-3.5">
+                      <div className="text-[10.5px] uppercase font-[600] tracking-[.45px] text-nm-text-3">{label}</div>
+                      <div className={`mt-1.5 font-mono tabular-nums font-[680] ${smaller ? 'text-[15px]' : 'text-[19px]'} ${valueClass}`}>
+                        {value}{suffix && <span className="text-[11px] font-medium text-nm-text-3">{suffix}</span>}
+                      </div>
+                    </div>
+                  ))
+                })()}
+              </div>
+
+              {/* Secondary statline &mdash; MRSTFT / MSE diagnostic metrics. Shown only while running and only when the trainer
+                  is actually computing them (A1 default config has both; A2 default has both). */}
+              {(() => {
+                const isA2 = trainerState.architecture === 'a2'
+                const mrstft = trainerState.epochMrstft ?? null
+                const mrstftLite = trainerState.epochMrstftLite ?? null
+                const mse = trainerState.epochMse ?? null
+                const mseLite = trainerState.epochMseLite ?? null
+                if (mrstft == null && mse == null) return null
+                const cells: Array<{ label: string; value: string }> = []
+                if (mrstft != null) cells.push({ label: isA2 ? 'MRSTFT (Full)' : 'MRSTFT', value: mrstft.toFixed(4) })
+                if (isA2 && mrstftLite != null) cells.push({ label: 'MRSTFT (Lite)', value: mrstftLite.toFixed(4) })
+                if (mse != null) cells.push({ label: isA2 ? 'MSE (Full)' : 'MSE', value: mse.toExponential(3) })
+                if (isA2 && mseLite != null) cells.push({ label: 'MSE (Lite)', value: mseLite.toExponential(3) })
+                if (cells.length === 0) return null
+                return (
+                  <div className={`rounded-[14px] border border-nm-border-s bg-panel overflow-hidden grid grid-cols-${cells.length} divide-x divide-nm-border-s`}>
+                    {cells.map(({ label, value }) => (
+                      <div key={label} className="bg-panel-2 px-4 py-2.5">
+                        <div className="text-[10px] uppercase font-[600] tracking-[.45px] text-nm-text-3">{label}</div>
+                        <div className="mt-1 font-mono tabular-nums text-[13px] text-nm-text-2">{value}</div>
+                      </div>
+                    ))}
+                  </div>
+                )
+              })()}
+
+              {/* Final output + Checkpoint export side by side */}
+              <div className="grid grid-cols-2 gap-3.5">
+                <div className="rounded-[14px] border border-nm-border-s bg-panel">
+                  <div className="flex items-center gap-2 px-4 pt-3.5 pb-2">
+                    <svg className="w-[15px] h-[15px] text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 00-1.883 2.542l.857 6a2.25 2.25 0 002.227 1.932H19.05a2.25 2.25 0 002.227-1.932l.857-6a2.25 2.25 0 00-1.883-2.542m-16.5 0V6A2.25 2.25 0 016 3.75h3.879a1.5 1.5 0 011.06.44l2.122 2.12a1.5 1.5 0 001.06.44H18A2.25 2.25 0 0120.25 9v.776" /></svg>
+                    <span className="text-[12.5px] font-[650] text-nm-text">Final output</span>
+                    <span className="flex-1" />
+                    {trainerState.outputModelPath && (
+                      <button
+                        onClick={() => window.api.revealFile(trainerState.outputModelPath)}
+                        title="Reveal in Explorer"
+                        className="w-6 h-6 flex items-center justify-center rounded-md text-nm-text-3 hover:text-nm-text hover:bg-hov transition-colors flex-shrink-0"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>
+                      </button>
+                    )}
+                  </div>
+                  <div className="px-4 pb-3.5 pt-1">
+                    <div className="text-[11.5px] font-mono leading-[1.7] text-nm-text-2 break-all">{trainerState.outputModelPath || '\u2014'}</div>
+                  </div>
+                </div>
+                <div className="rounded-[14px] border border-nm-border-s bg-panel">
+                  <div className="flex items-center gap-2 px-4 pt-3.5 pb-2">
+                    <svg className="w-[15px] h-[15px] text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" /></svg>
+                    <span className="text-[12.5px] font-[650] text-nm-text">Checkpoint export</span>
+                    <span className="flex-1" />
+                    {trainerState.checkpointModelPath && (
+                      <button
+                        onClick={() => { const dir = trainerState.checkpointModelPath.replace(/\\/g, '/').replace(/\/[^/]+$/, ''); void window.api.openFile(dir) }}
+                        title="Open checkpoints folder"
+                        className="w-6 h-6 flex items-center justify-center rounded-md text-nm-text-3 hover:text-nm-text hover:bg-hov transition-colors flex-shrink-0"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>
+                      </button>
+                    )}
+                  </div>
+                  <div className="px-4 pb-3.5 pt-1">
+                    <div className="text-[11.5px] font-mono leading-[1.7] text-nm-text-3 break-all">{trainerState.checkpointModelPath || 'Lightning checkpoint copy will appear here after training starts.'}</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Up next */}
+              {(() => {
+                const upNextJobs = groupedQueue.flatMap(g => g.jobs.filter(j => j.status === 'queued'))
+                if (upNextJobs.length === 0) return null
+                return (
+                  <div className="rounded-[14px] border border-nm-border-s bg-panel">
+                    <div className="flex items-center gap-2 px-4 pt-3.5 pb-2">
+                      <svg className="w-[15px] h-[15px] text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 13.5h3.86a2.25 2.25 0 012.012 1.244l.256.512a2.25 2.25 0 002.013 1.244h3.218a2.25 2.25 0 002.013-1.244l.256-.512a2.25 2.25 0 012.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 00-2.15-1.588H6.911a2.25 2.25 0 00-2.15 1.588L2.35 13.177a2.25 2.25 0 00-.1.661z" /></svg>
+                      <span className="text-[12.5px] font-[650] text-nm-text">Up next</span>
+                      <span className="flex-1" />
+                      <span className="text-[11px] text-nm-text-3">{upNextJobs.length} queued</span>
+                    </div>
+                    <div className="px-3 pb-3 pt-1 space-y-1.5">
+                      {upNextJobs.slice(0, 3).map((job, i) => (
+                        <div key={job.jobId} className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] border border-nm-border-s bg-panel-2">
+                          <span className="w-6 h-6 rounded-full bg-field border border-nm-border-s flex items-center justify-center text-[11px] font-[650] text-nm-text-3 flex-shrink-0">{i + 1}</span>
+                          <span className="flex-1 min-w-0 text-[12.5px] font-[560] text-nm-text truncate">{job.modelName || job.outputPath.replace(/\\/g, '/').split('/').pop()}</span>
+                          <span className="inline-flex items-center h-[19px] px-2 rounded-[5px] text-[10px] font-[700] uppercase tracking-[.3px]" style={{ background: 'color-mix(in srgb, var(--nm-accent, var(--accent)) 16%, transparent)', color: 'var(--accent-text)' }}>{architectureDisplayLabel(job.architecture)}</span>
+                          <span className="text-[11px] font-mono text-nm-text-3 tabular-nums flex-shrink-0">{job.epochs} ep</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {/* Raw log */}
+              <div className="rounded-[14px] border border-nm-border-s bg-panel overflow-hidden">
+                <button
+                  onClick={() => setLogExpanded(v => !v)}
+                  className="w-full flex items-center gap-2 px-4 py-3 text-[12.5px] font-[650] text-nm-text hover:bg-hov transition-colors"
+                >
+                  <svg className={`w-3 h-3 text-nm-text-3 transition-transform ${logExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                  </svg>
+                  <svg className="w-[15px] h-[15px] text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" /></svg>
+                  Raw trainer log
+                </button>
+                {logExpanded && (
+                  <div ref={rawLogRef} className="border-t border-nm-border-s bg-field p-3.5 h-[280px] overflow-y-auto whitespace-pre-wrap break-words text-[11px] font-mono leading-[1.55] text-nm-text-2">
+                    {trainerState.logs.length === 0
+                      ? <span className="text-nm-text-3">Training logs will appear here.</span>
+                      : trainerState.logs.join('\n')}
+                  </div>
+                )}
+              </div>
+
+              {!!trainerState.error && (
+                <div className="nm-error-text rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{trainerState.error}</div>
+              )}
+            </div>
+          )}
+
+          {/* â”€â”€ QUEUE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {section === 'queue' && (
+            <div className="px-6 py-5 space-y-4 max-w-[1400px] mx-auto w-full">
+              <div className="flex items-baseline justify-between">
+                <h2 className="text-[18px] font-[680] text-nm-text">Queue</h2>
+                <div className="flex items-center gap-1 rounded-lg border border-nm-border-s bg-panel-2 p-0.5">
+                  {(['batches', 'compact', 'board'] as const).map(v => (
+                    <button
+                      key={v}
+                      onClick={() => setQueueView(v)}
+                      className={`px-2.5 py-1 rounded-md text-[11px] font-medium capitalize transition-colors ${queueView === v ? 'bg-active-bg text-nm-accent' : 'text-nm-text-3 hover:text-nm-text'}`}
+                    >
+                      {v}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Metric tiles */}
+              {(() => {
+                const batchesByStatus = (status: string) => {
+                  const ids = new Set<string>()
+                  for (const j of trainerState.queue) if (j.status === status) ids.add(j.submissionId ?? j.jobId)
+                  return ids.size
+                }
+                const queuedBatches = batchesByStatus('queued')
+                const doneBatches = batchesByStatus('success')
+                const failedBatches = batchesByStatus('error') + batchesByStatus('canceled')
+                const runningBatches = isRunning && trainerState.activeJobId
+                  ? 1
+                  : 0
+                const tiles = [
+                  { label: 'Queued', count: queuedCount, batches: queuedBatches, color: 'border-l-amber-500/70 text-amber-400' },
+                  { label: 'Running', count: isRunning ? 1 : 0, batches: runningBatches, color: 'border-l-nm-accent text-nm-accent' },
+                  { label: 'Done', count: successCount, batches: doneBatches, color: 'border-l-emerald-500/70 text-emerald-400' },
+                  { label: 'Failed', count: failedCount, batches: failedBatches, color: 'border-l-red-500/70 text-red-400' },
+                ]
+                return (
+                  <div className="grid grid-cols-4 gap-3">
+                    {tiles.map(({ label, count, batches, color }) => {
+                      const showBatches = label !== 'Running'
+                      return (
+                        <div key={label} className={`rounded-xl border border-nm-border-s bg-panel-2 px-3 py-2.5 border-l-[3px] ${color}`}>
+                          <div className="flex items-baseline gap-1.5">
+                            <span className="text-[28px] font-[700] tabular-nums leading-none">{count}</span>
+                            <span className="text-[11px] font-medium text-nm-text-3 leading-none">capture{count === 1 ? '' : 's'}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <span className="text-[10px] uppercase font-medium text-nm-text-3">{label}</span>
+                            {showBatches && (
+                              <>
+                                <span className="text-[10px] text-nm-text-3 opacity-60">&middot;</span>
+                                <span className="text-[10px] font-medium text-nm-text-3 tabular-nums">{batches} batch{batches === 1 ? '' : 'es'}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              })()}
+
+              {/* Filter bar */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <select
+                  value={queueProfileFilter}
+                  onChange={e => setQueueProfileFilter(e.target.value)}
+                  className="h-[34px] px-2.5 bg-field border border-field-bd rounded-[9px] text-[12px] text-nm-text focus:outline-none"
+                >
+                  <option value="all">All profiles</option>
+                  {queueProfileOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                </select>
+                <select
+                  value={queueStatusFilter}
+                  onChange={e => setQueueStatusFilter(e.target.value)}
+                  className="h-[34px] px-2.5 bg-field border border-field-bd rounded-[9px] text-[12px] text-nm-text focus:outline-none"
+                >
+                  <option value="all">All statuses</option>
+                  {['queued', 'running', 'success', 'error', 'canceled'].map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <select
+                  value={queueArchitectureFilter}
+                  onChange={e => setQueueArchitectureFilter(e.target.value)}
+                  className="h-[34px] px-2.5 bg-field border border-field-bd rounded-[9px] text-[12px] text-nm-text focus:outline-none"
+                >
+                  <option value="all">All architectures</option>
+                  {TRAINER_ARCHITECTURES.map(a => <option key={a} value={a}>{ARCHITECTURE_LABELS[a]}</option>)}
+                </select>
+                <span className="text-[11px] text-nm-text-3">drag to reorder &middot; click &#x25b8; to collapse</span>
+                {queueEta && queuedCount > 0 && (
+                  <span className="text-[11px] text-nm-text-2 font-[600] flex items-center gap-1">
+                    <svg className="w-3 h-3 text-nm-text-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    {queueEta} remaining
+                  </span>
+                )}
+                <span className="flex-1" />
+                <button
+                  onClick={() => setCollapsedBatches(new Set())}
+                  className="h-[26px] px-2 rounded-md text-[11px] font-medium border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2 transition-colors"
+                >
+                  Expand all
+                </button>
+                <button
+                  onClick={() => setCollapsedBatches(new Set(groupedQueue.map(g => g.key)))}
+                  className="h-[26px] px-2 rounded-md text-[11px] font-medium border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2 transition-colors"
+                >
+                  Collapse all
+                </button>
+                {clearableFinishedCount > 0 && (
+                  <button
+                    onClick={() => { void window.api.clearFinishedTrainerRuns() }}
+                    title={`Remove ${clearableFinishedCount} row${clearableFinishedCount === 1 ? '' : 's'} from fully-finished batches. Batches with any queued or running captures are left intact. History keeps the full record.`}
+                    className="h-[26px] px-2 rounded-md text-[11px] font-medium border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2 transition-colors inline-flex items-center gap-1"
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 12h-15" /></svg>
+                    Clear finished ({clearableFinishedCount})
+                  </button>
+                )}
+                {(() => {
+                  const activeId = trainerState.activeJobId
+                  const clearable = trainerState.queue.filter(j => j.status !== 'staged' && !(activeId && j.jobId === activeId && (j.status === 'starting' || j.status === 'running'))).length
+                  if (clearable === 0) return null
+                  return (
+                    <button
+                      onClick={() => setClearQueueConfirm({ count: clearable })}
+                      title={`Remove all ${clearable} non-running, non-staged row${clearable === 1 ? '' : 's'} from the queue. Use Emergency stop first if you also want to kill the running job. History keeps the full record.`}
+                      className="h-[26px] px-2 rounded-md text-[11px] font-medium border border-red-500/30 hover:bg-red-500/10 text-red-400 transition-colors inline-flex items-center gap-1"
+                    >
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
+                      Clear queue
+                    </button>
+                  )
+                })()}
+                {(() => {
+                  const activeId = trainerState.activeJobId
+                  const activeRunning = activeId != null && (trainerState.status === 'starting' || trainerState.status === 'running')
+                  const watcherCount = trainerState.queue.filter(j => j.sourceMode === 'watcher' && !(activeRunning && j.jobId === activeId)).length
+                  if (watcherCount === 0) return null
+                  return (
+                    <button
+                      onClick={() => setClearWatcherConfirm({ count: watcherCount })}
+                      title={`Permanently remove all ${watcherCount} watcher-sourced row${watcherCount === 1 ? '' : 's'} from the queue and mark those files as already-seen so the watcher won't re-add them. The running job (if any) is left alone.`}
+                      className="h-[26px] px-2 rounded-md text-[11px] font-medium border border-amber-500/30 hover:bg-amber-500/10 text-amber-400 transition-colors inline-flex items-center gap-1"
+                    >
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                      Clear watcher ({watcherCount})
+                    </button>
+                  )
+                })()}
+              </div>
+
+              {!!queueActionError && (
+                <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{queueActionError}</div>
+              )}
+
+              {/* Output folder notices (new subfolders created by completed batches) */}
+              {outputNotices.map((notice) => (
+                <div key={notice.id} className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-3 py-2.5 flex items-start gap-3">
+                  <svg className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-medium text-emerald-300 mb-1">{notice.label} — training complete</div>
+                    <div className="space-y-0.5">
+                      {notice.folders.map((f) => (
+                        <div key={f} className="flex items-center gap-2">
+                          <span className="font-mono text-[11px] text-nm-text-2 truncate">{f}</span>
+                          <button
+                            onClick={() => window.api.revealFile(f)}
+                            className="text-[10px] text-nm-accent hover:underline flex-shrink-0"
+                          >Show</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setOutputNotices((prev) => prev.filter((n) => n.id !== notice.id))}
+                    className="text-nm-text-3 hover:text-nm-text flex-shrink-0"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+              ))}
+
+              {/* Batch cards */}
+              {groupedQueue.length === 0 ? (
+                <div className="rounded-2xl border border-nm-border bg-panel p-8 text-center text-nm-text-3 text-[13px]">
+                  Queue is empty. Add runs from the New Run tab.
+                </div>
+              ) : queueView === 'board' ? (
+                <div className="grid grid-cols-4 gap-3">
+                  {(['queued', 'running', 'success', 'error'] as const).map(status => (
+                    <div key={status} className="rounded-xl border border-nm-border-s bg-panel-2 p-3 space-y-2">
+                      <div className="text-[11px] font-semibold uppercase text-nm-text-3">{status}</div>
+                      {filteredQueue.filter(j => j.status === status).map(job => (
+                        <div key={job.jobId} className="rounded-lg border border-nm-border-s bg-panel p-2 text-[11px]">
+                          <div className="font-mono truncate text-nm-text">{job.outputPath.replace(/\\/g, '/').split('/').pop()}</div>
+                          <div className="text-nm-text-3 mt-0.5">{architectureDisplayLabel(job.architecture)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              ) : queueView === 'compact' ? (
+                <div className="space-y-1">
+                  {filteredQueue.map((job, idx) => {
+                    const { value: jobEsr, kind: jobEsrKind } = getBestJobEsr(job)
+                    const esrTone = getEsrToneKind(jobEsr, jobEsrKind)
+                    return (
+                      <div key={job.jobId} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12px] border ${job.jobId === trainerState.activeJobId ? 'border-nm-accent/40 bg-nm-accent/5' : 'border-nm-border-s bg-panel-2'}`}>
+                        <span className="w-5 text-center text-nm-text-3 font-mono tabular-nums">{idx + 1}</span>
+                        <span className="flex-1 font-mono truncate text-nm-text">{job.outputPath.replace(/\\/g, '/').split('/').pop()}</span>
+                        <span className="text-nm-text-3">{architectureDisplayLabel(job.architecture)}</span>
+                        {jobEsr != null && <span className={`font-mono ${esrTone.classes}`}>{esrTone.text}</span>}
+                        <span className={`font-semibold uppercase text-[10px] ${job.status === 'success' ? 'text-emerald-400' : job.status === 'error' ? 'text-red-400' : job.status === 'running' ? 'text-nm-accent' : 'text-nm-text-3'}`}>
+                          {job.status}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                /* Batches view */
+                <DndContext
+                  sensors={batchDragSensors}
+                  collisionDetection={closestCenter}
+                  onDragStart={handleBatchDragStart}
+                  onDragEnd={e => { void handleBatchDragEnd(e) }}
+                  onDragCancel={() => setActiveDragBatchId(null)}
+                >
+                <SortableContext items={groupedQueue.map(g => g.groupKey)} strategy={verticalListSortingStrategy}>
+                <div className="space-y-3">
+                  {groupedQueue.map((group) => {
+                    const isCollapsed = collapsedBatches.has(group.key)
+                    const hasActive = group.jobs.some(j => j.jobId === trainerState.activeJobId)
+                    const doneCount = group.jobs.filter(j => j.status === 'success').length
+                    const failCount = group.jobs.filter(j => j.status === 'error' || j.status === 'canceled').length
+                    const runCount = group.jobs.filter(j => j.status === 'running' || j.status === 'starting').length
+                    const queueCount = group.jobs.filter(j => j.status === 'queued').length
+                    const total = group.jobs.length
+                    const plannedCaptureCount = extractPlannedCaptureCount(group.label)
+                    const displayLabel = stripPlannedCaptureSuffix(group.label) || group.label
+                    const activeProgress = hasActive && typeof trainerState.progressPercent === 'number' ? trainerState.progressPercent / 100 : 0
+                    const meterSegs = [
+                      { value: doneCount, color: '#10b981', label: 'done' },
+                      { value: failCount, color: '#ef4444', label: 'failed' },
+                      { value: runCount * activeProgress, color: 'var(--nm-accent,#6366f1)', label: 'training' },
+                      { value: runCount * (1 - activeProgress), color: 'rgba(99,102,241,0.18)', label: 'running' },
+                      { value: queueCount, color: 'var(--field,#1e2433)', label: 'queued' },
+                    ]
+                    const isWatcher = group.jobs[0]?.sourceMode === 'watcher'
+                    return (
+                      <SortableBatchCard key={group.key} id={group.groupKey}>
+                        {({ setNodeRef, style, dragHandleProps, setActivatorNodeRef, isDragging }) => (
+                      <div
+                        ref={setNodeRef}
+                        style={style}
+                        data-submission-id={group.groupKey}
+                        className={`rounded-[13px] border bg-panel overflow-hidden transition-opacity ${
+                          hasActive ? 'border-indigo-400/70' : 'border-indigo-500/30'
+                        } ${isDragging ? 'opacity-50 relative z-10' : ''}`}
+                      >
+                        {/* Batch header */}
+                        <div className="flex items-center bg-panel-2 border-b border-nm-border-s select-none">
+                          {/* Drag handle */}
+                          <div
+                            ref={setActivatorNodeRef}
+                            {...(queueCount > 0 ? dragHandleProps : {})}
+                            className={`px-3 self-stretch flex items-center flex-shrink-0 ${queueCount > 0 ? 'cursor-grab active:cursor-grabbing' : 'cursor-default opacity-30'}`}
+                          >
+                            <svg className="w-3.5 h-3.5 text-nm-text-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9h16.5m-16.5 6.75h16.5" />
+                            </svg>
+                          </div>
+                          {/* Rest of header — click to collapse */}
+                          <div className="flex items-center gap-2 pr-3.5 py-3 flex-1 min-w-0 cursor-pointer" onClick={() => toggleBatchCollapse(group.key)}>
+                          <svg className={`w-3 h-3 text-nm-text-3 flex-shrink-0 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                          </svg>
+                          <svg className={`w-3.5 h-3.5 flex-shrink-0 ${isWatcher ? 'text-amber-400' : 'text-nm-accent'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            {isWatcher
+                              ? <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                              : <path strokeLinecap="round" strokeLinejoin="round" d="M2 12h3l2-7 4 16 3-12 2 5h6" />
+                            }
+                          </svg>
+                          <span className="flex-1 min-w-0 text-[14px] font-[700] text-nm-text truncate">{displayLabel}</span>
+                          <span className="inline-flex items-center h-[19px] px-1.5 rounded-[6px] text-[10px] font-semibold border border-nm-border-s bg-field text-nm-text-2 flex-shrink-0">
+                            {total} row{total === 1 ? '' : 's'}
+                          </span>
+                          {plannedCaptureCount != null && plannedCaptureCount !== total && (
+                            <span
+                              className="inline-flex items-center h-[19px] px-1.5 rounded-[6px] text-[10px] font-semibold border border-amber-500/25 bg-amber-500/10 text-amber-400 flex-shrink-0"
+                              title="This batch label says a larger capture count than the queue currently contains."
+                            >
+                              {plannedCaptureCount} planned
+                            </span>
+                          )}
+                          {hasActive && (
+                            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-nm-accent/15 text-nm-accent text-[10px] font-semibold flex-shrink-0">
+                              <span className="w-1 h-1 rounded-full bg-nm-accent animate-pulse" />active
+                            </span>
+                          )}
+                          {group.jobs.some(j => j.status === 'queued' && j.editedAt) && (
+                            <span className="inline-flex items-center h-[19px] px-1.5 rounded-[6px] text-[10px] font-semibold border border-violet-500/30 bg-violet-500/10 text-violet-300 flex-shrink-0" title="Batch settings were edited after queuing — some captures may use different settings than the original submission">
+                              edited
+                            </span>
+                          )}
+                          <div className="flex items-center gap-1.5 text-[10px] text-nm-text-3 flex-shrink-0">
+                            {doneCount > 0 && <span className="text-emerald-400">{doneCount} done</span>}
+                            {failCount > 0 && <span className="text-red-400">{failCount} failed</span>}
+                            {queueCount > 0 && <span>{queueCount} queued</span>}
+                          </div>
+                          {queueCount > 0 && (
+                            <button
+                              onClick={e => {
+                                e.stopPropagation()
+                                const firstQueued = group.jobs.find(j => j.status === 'queued')
+                                if (!firstQueued) return
+                                const submissionId = group.jobs[0]?.submissionId ?? ''
+                                setEditBatchModal({ submissionId, label: displayLabel, epochs: firstQueued.epochs, thresholdEsr: firstQueued.thresholdEsr, lr: firstQueued.lr, lrDecay: firstQueued.lrDecay, inputPath: firstQueued.inputPath })
+                                setEditBatchName(displayLabel)
+                                setEditBatchEpochs(String(firstQueued.epochs))
+                                setEditBatchThresholdEsr(firstQueued.thresholdEsr != null ? String(firstQueued.thresholdEsr) : '')
+                                setEditBatchLr(String(firstQueued.lr))
+                                setEditBatchLrDecay(String(firstQueued.lrDecay))
+                                setEditBatchInputPath(firstQueued.inputPath ?? '')
+                              }}
+                              className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border border-nm-border-s text-nm-text-3 hover:bg-hov hover:text-nm-text flex-shrink-0 transition-colors"
+                              title="Edit settings for all remaining queued captures in this batch"
+                            >
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.862 4.487z" /></svg>
+                              Edit
+                            </button>
+                          )}
+                          {queueCount > 0 && !hasActive && (() => {
+                            const firstQueuedHere = group.jobs.find(j => j.status === 'queued')
+                            // Find the first queued job in the WHOLE queue across all batches; if this batch's
+                            // first queued isn't already at the front, show "Run next" so the user can jump it.
+                            const firstQueuedAnywhere = trainerState.queue.find(j => j.status === 'queued')
+                            if (!firstQueuedHere || !firstQueuedAnywhere || firstQueuedHere.jobId === firstQueuedAnywhere.jobId) return null
+                            const submissionId = group.jobs[0]?.submissionId
+                            const targetSubmissionId = firstQueuedAnywhere.submissionId
+                            return (
+                              <button
+                                onClick={async e => {
+                                  e.stopPropagation()
+                                  if (submissionId && targetSubmissionId && submissionId !== targetSubmissionId) {
+                                    await window.api.moveSubmissionBefore(submissionId, targetSubmissionId)
+                                  } else {
+                                    // No grouping move possible (orphaned single job) — just bump the first queued job to next.
+                                    await window.api.makeTrainerJobNext(firstQueuedHere.jobId)
+                                  }
+                                }}
+                                className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border border-nm-accent/40 text-nm-accent hover:bg-nm-accent/10 flex-shrink-0 transition-colors"
+                                title="Move this batch to the front of the queue so it runs next (after the currently active capture finishes if any)"
+                              >
+                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5" /></svg>
+                                Run next
+                              </button>
+                            )
+                          })()}
+                          {queueCount > 0 && (
+                            <button
+                              onClick={e => {
+                                e.stopPropagation()
+                                void handleStageSubmission(group.jobs[0]?.submissionId ?? '')
+                              }}
+                              className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border border-amber-500/30 text-amber-300 hover:bg-amber-500/10 flex-shrink-0 transition-colors"
+                              title="Finish the current capture if one is training, then freeze the rest of this batch in Staged Batches until you queue it again. Does NOT stop the active run — use Emergency stop for that. Completed items stay visible here."
+                            >
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+                              </svg>
+                              Park batch
+                            </button>
+                          )}
+                          {queueCount > 0 && (
+                            <button
+                              onClick={e => { e.stopPropagation(); setCancelBatchConfirm({ submissionId: group.jobs[0]?.submissionId ?? '', label: group.label }) }}
+                              className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border border-red-500/30 text-red-400 hover:bg-red-500/10 flex-shrink-0 transition-colors"
+                              title="Cancel all queued jobs in this batch"
+                            >
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                              Cancel batch
+                            </button>
+                          )}
+                          {queueCount === 0 && runCount === 0 && failCount > 0 && !isWatcher && (
+                            <button
+                              onClick={e => { e.stopPropagation(); setDismissBatchConfirm({ submissionId: group.jobs[0]?.submissionId ?? '', label: group.label, failCount, doneCount }) }}
+                              className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border border-slate-600/50 text-slate-400 hover:bg-slate-500/10 flex-shrink-0 transition-colors"
+                              title="Remove this batch from the queue without retrying. All jobs are already in history."
+                            >
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0H10.5a2.25 2.25 0 00-2.15 1.586" /></svg>
+                              Send to history
+                            </button>
+                          )}
+                          </div>
+                        </div>{/* end batch header */}
+                        {/* Progress meter */}
+                        <div className="px-3.5 pt-2 pb-1">
+                          <StackedMeter segments={meterSegs} height={6} radius={3} gap={1} />
+                          <div className="text-[10px] text-nm-text-3 mt-1">{doneCount}/{total} finished {total > 0 ? `\u00b7 ${Math.round(doneCount/total*100)}%` : ''}</div>
+                        </div>
+                        {/* Items */}
+                        {!isCollapsed && (
+                          <div className="px-3 pb-3 space-y-1 mt-1">
+                            {isWatcher && (
+                              <div className="text-[11px] text-nm-text-3 font-mono px-2 py-1">{group.jobs[0]?.outputPath.replace(/\\/g, '/').split('/').slice(0, -1).join('/')} &middot; auto-queues new files as they appear</div>
+                            )}
+                            {group.jobs.map((job, idx) => {
+                              const { value: jobEsr2, kind: jobEsrKind2 } = getBestJobEsr(job)
+                              const esrTone = getEsrToneKind(jobEsr2, jobEsrKind2)
+                              const isActive = job.jobId === trainerState.activeJobId
+                              const isQueued = job.status === 'queued'
+                              return (
+                                <div
+                                  key={job.jobId}
+                                  draggable={isQueued}
+                                  onDragStart={() => { if (isQueued) dragJobRef.current = job.jobId }}
+                                  onDragOver={e => { if (isQueued) e.preventDefault() }}
+                                  onDrop={async () => {
+                                    const fromId = dragJobRef.current
+                                    if (fromId && fromId !== job.jobId && isQueued) {
+                                      await window.api.reorderTrainerJob(fromId, job.jobId)
+                                    }
+                                    dragJobRef.current = null
+                                  }}
+                                  className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-[12px] border transition-colors ${
+                                    isActive ? 'border-nm-accent/40 bg-nm-accent/5' : 'border-nm-border-s bg-panel-2 hover:bg-hov'
+                                  }`}
+                                  onContextMenu={e => {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                    setQueueContextMenu({ job, x: e.clientX, y: e.clientY })
+                                  }}
+                                >
+                                  <svg className={`w-3 h-3 flex-shrink-0 ${isQueued ? 'text-nm-text-3 cursor-grab' : 'opacity-30 text-nm-text-3'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9h16.5m-16.5 6.75h16.5" />
+                                  </svg>
+                                  <span className="w-5 text-center text-nm-text-3 font-mono tabular-nums text-[10px]">{idx + 1}</span>
+                                  {/* Status icon */}
+                                  {job.status === 'success' && <svg className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
+                                  {job.status === 'error' && <svg className="w-3.5 h-3.5 text-red-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>}
+                                  {job.status === 'canceled' && <svg className="w-3.5 h-3.5 text-nm-text-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 7.5A2.25 2.25 0 017.5 5.25h9a2.25 2.25 0 012.25 2.25v9a2.25 2.25 0 01-2.25 2.25h-9a2.25 2.25 0 01-2.25-2.25v-9z" /></svg>}
+                                  {(job.status === 'running' || job.status === 'starting') && <span className="w-3.5 h-3.5 flex-shrink-0 rounded-full bg-nm-accent/30 flex items-center justify-center"><span className="w-1.5 h-1.5 rounded-full bg-nm-accent animate-pulse" /></span>}
+                                  {job.status === 'queued' && <svg className="w-3.5 h-3.5 text-nm-text-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>}
+                                  <div className="flex-1 min-w-0">
+                                    <div className="font-mono truncate text-nm-text">{job.outputPath.replace(/\\/g, '/').split('/').pop()}</div>
+                                    {job.status === 'error' && job.error && <div className="nm-error-text text-red-400 text-[11px] line-clamp-3 whitespace-pre-wrap break-words" title={`${job.error}\n· attempt ${job.attempts}`}>{job.error} &middot; attempt {job.attempts}</div>}
+                                    {(job.status === 'running' || job.status === 'starting') && <div className="text-[11px] text-nm-text-2 font-mono">Epoch {trainerState.progressEpochCurrent ?? '?'}/{progressEpochTotal ?? '?'} &middot; {typeof trainerState.progressRate === 'number' ? `${trainerState.progressRate.toFixed(2)} it/s` : '\u2014'} &middot; {formatDuration(elapsedSec)}</div>}
+                                    {job.status === 'success' && <div className="text-[11px] text-nm-text-2">{architectureDisplayLabel(job.architecture)}{(() => { const d = jobDurationSec(job); return d ? ` \u00b7 ${formatDuration(d)}` : '' })()}</div>}
+                                    {job.status === 'queued' && <div className="text-[11px] text-nm-text-2">Waiting in queue</div>}
+                                  </div>
+                                  {(job.status === 'running' || job.status === 'starting') && typeof job.progressPercent === 'number' && (
+                                    <div className="w-16 h-1 rounded-full bg-field overflow-hidden flex-shrink-0">
+                                      <div className="h-full bg-nm-accent rounded-full" style={{ width: `${job.progressPercent}%` }} />
+                                    </div>
+                                  )}
+                                  {jobEsr2 != null && (
+                                    <span className={`text-[11px] font-mono font-semibold flex-shrink-0 ${esrTone.classes}`}>{esrTone.text}</span>
+                                  )}
+                                  {/* Actions */}
+                                  <div className="flex items-center gap-1 flex-shrink-0">
+                                    {job.status === 'queued' && job.jobId !== trainerState.queue.find(j => j.status === 'queued')?.jobId && (
+                                      <button onClick={() => { void handleMakeNext(job) }} className="px-1.5 py-0.5 rounded text-[10px] border border-nm-border-s text-nm-text-2 hover:bg-hov">Next</button>
+                                    )}
+                                    {job.status === 'queued' && job.sourceMode !== 'watcher' && (
+                                      <button onClick={() => { void handleStageJob(job) }} title="Move to Batches (staged)" className="px-1.5 py-0.5 rounded text-[10px] border border-nm-border-s text-nm-text-2 hover:bg-hov">&#x21e6;</button>
+                                    )}
+                                    {job.status === 'error' && <button onClick={() => { void handleRetryQueueItem(job) }} className="px-1.5 py-0.5 rounded text-[10px] border border-nm-border-s text-nm-text-2 hover:bg-hov">Retry</button>}
+                                    {job.status === 'success' && job.outputModelPath && <button onClick={() => window.api.revealFile(job.outputModelPath)} className="px-1.5 py-0.5 rounded text-[10px] border border-nm-border-s text-nm-text-2 hover:bg-hov">Show</button>}
+                                    {!isActive && <button onClick={() => { void handleRemoveJob(job) }} className="w-5 h-5 flex items-center justify-center rounded text-red-400 hover:bg-red-500/10 flex-shrink-0"><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg></button>}
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                        )}
+                      </SortableBatchCard>
+                    )
+                  })}
+                </div>
+                </SortableContext>
+                <DragOverlay dropAnimation={null}>
+                  {(() => {
+                    if (!activeDragBatchId) return null
+                    const draggedGroup = groupedQueue.find(g => g.groupKey === activeDragBatchId)
+                    if (!draggedGroup) return null
+                    const draggedLabel = stripPlannedCaptureSuffix(draggedGroup.label) || draggedGroup.label
+                    const draggedTotal = draggedGroup.jobs.length
+                    const draggedDone = draggedGroup.jobs.filter(j => j.status === 'success').length
+                    return (
+                      <div className="flex items-center gap-2 px-3.5 py-3 rounded-[13px] border border-nm-accent bg-panel-2 shadow-xl text-[14px] font-[700] text-nm-text">
+                        <svg className="w-3.5 h-3.5 text-nm-text-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9h16.5m-16.5 6.75h16.5" />
+                        </svg>
+                        <span className="truncate">{draggedLabel}</span>
+                        <span className="inline-flex items-center h-[19px] px-1.5 rounded-[6px] text-[10px] font-semibold border border-nm-border-s bg-field text-nm-text-2 flex-shrink-0">
+                          {draggedDone}/{draggedTotal} done
+                        </span>
+                      </div>
+                    )
+                  })()}
+                </DragOverlay>
+                </DndContext>
+              )}
+            </div>
+          )}
+
+          {/* â”€â”€ BATCHES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {section === 'batches' && (() => {
+            const totalCaptures = groupedStagedQueue.reduce((a, g) => a + g.jobs.length, 0)
+            return (
+              <div className="px-6 py-5 space-y-4 max-w-[1400px] mx-auto w-full">
+                {/* Page header */}
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-[18px] font-[680] text-nm-text leading-tight">Staged Batches</h2>
+                    <p className="text-[12px] text-nm-text-3 mt-0.5">
+                      {groupedStagedQueue.length === 0
+                        ? 'Nothing staged'
+                        : `${groupedStagedQueue.length} batch${groupedStagedQueue.length === 1 ? '' : 'es'} \u00b7 ${totalCaptures} capture${totalCaptures === 1 ? '' : 's'} saved, ready to queue`}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {groupedStagedQueue.length > 1 && (
+                      <>
+                        <button
+                          onClick={() => setCollapsedBatches(prev => { const next = new Set(prev); for (const g of groupedStagedQueue) next.delete(`staged:${g.key}`); return next })}
+                          className="h-9 inline-flex items-center px-2.5 rounded-[9px] text-[11.5px] font-medium border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2 transition-colors"
+                        >
+                          Expand all
+                        </button>
+                        <button
+                          onClick={() => setCollapsedBatches(prev => { const next = new Set(prev); for (const g of groupedStagedQueue) next.add(`staged:${g.key}`); return next })}
+                          className="h-9 inline-flex items-center px-2.5 rounded-[9px] text-[11.5px] font-medium border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2 transition-colors"
+                        >
+                          Collapse all
+                        </button>
+                      </>
+                    )}
+                    {groupedStagedQueue.length > 0 && (
+                      <button
+                        onClick={() => setSection('new')}
+                        className="h-9 inline-flex items-center gap-1.5 px-3.5 rounded-[9px] text-[12.5px] font-medium border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2 transition-colors"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                        New batch
+                      </button>
+                    )}
+                    {groupedStagedQueue.length > 1 && (
+                      <button
+                        onClick={() => { groupedStagedQueue.forEach(g => { void handleUnstageSubmission(g.jobs[0]?.submissionId ?? '') }) }}
+                        className="h-9 inline-flex items-center gap-1.5 px-3.5 rounded-[9px] text-[12.5px] font-semibold bg-nm-accent hover:opacity-90 text-white transition-opacity"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 6.82v10.36c0 .79.87 1.27 1.54.84l8.14-5.18c.62-.39.62-1.29 0-1.69L9.54 5.98C8.87 5.55 8 6.03 8 6.82z"/></svg>
+                        Queue all
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {!!queueActionError && (
+                  <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{queueActionError}</div>
+                )}
+
+                {groupedStagedQueue.length === 0 ? (
+                  <div className="rounded-2xl border border-nm-border-s bg-panel p-10 flex flex-col items-center gap-3 text-center">
+                    <div className="w-11 h-11 rounded-[11px] flex items-center justify-center" style={{ background: 'color-mix(in srgb, var(--nm-accent, var(--accent)) 10%, transparent)', color: 'var(--nm-accent, var(--accent))' }}>
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 13.5h3.86a2.25 2.25 0 012.012 1.244l.256.512a2.25 2.25 0 002.013 1.244h3.218a2.25 2.25 0 002.013-1.244l.256-.512a2.25 2.25 0 012.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 00-2.15-1.588H6.911a2.25 2.25 0 00-2.15 1.588L2.35 13.177a2.25 2.25 0 00-.1.661z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <div className="text-[14px] font-[650] text-nm-text mb-1">No staged batches</div>
+                      <div className="text-[12.5px] text-nm-text-3 max-w-[340px]">Build a batch in New Run and choose <span className="font-semibold text-nm-text-2">Stage (save, don&apos;t run)</span> to park it here until you&apos;re ready to queue.</div>
+                    </div>
+                    <button
+                      onClick={() => setSection('new')}
+                      className="mt-1 h-9 inline-flex items-center gap-1.5 px-4 rounded-[9px] text-[12.5px] font-medium border border-nm-accent/50 text-nm-accent hover:bg-nm-accent/10 transition-colors"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                      Create a batch
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {groupedStagedQueue.map((group) => {
+                      const isCollapsed = collapsedBatches.has(`staged:${group.key}`)
+                      const firstJob = group.jobs[0]
+                      const sourceMode = firstJob?.sourceMode ?? 'manual-direct'
+                      const typeIcon =
+                        sourceMode === 'watcher' ? (
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        ) : sourceMode === 'manual-folder-run' ? (
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 00-1.883 2.542l.857 6a2.25 2.25 0 002.227 1.932H19.05a2.25 2.25 0 002.227-1.932l.857-6a2.25 2.25 0 00-1.883-2.542m-16.5 0V6A2.25 2.25 0 016 3.75h3.879a1.5 1.5 0 011.06.44l2.122 2.12a1.5 1.5 0 001.06.44H18A2.25 2.25 0 0120.25 9v.776" />
+                        ) : (
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2 12h3l2-7 4 16 3-12 2 5h6" />
+                        )
+                      const diBasename = (firstJob?.inputPath ?? '').replace(/\\/g, '/').split('/').pop() ?? ''
+                      const routingLabel = firstJob ? (
+                        firstJob.sourcePostProcess === 'move' ? 'Move to output' :
+                        firstJob.sourcePostProcess === 'copy' ? 'Copy to output' : 'Keep in place'
+                      ) : '\u2014'
+                      const uniqueArchitectures = Array.from(new Set(group.jobs.map(j => j.architecture)))
+                      const normalizeLabel = firstJob?.normalizeWav ? 'On' : 'Off'
+                      const epochCount = firstJob?.epochs ?? 0
+                      const createdLabel = group.createdAt ? new Date(group.createdAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
+
+                      return (
+                        <div key={group.key} className="rounded-[13px] border border-nm-border-s bg-panel overflow-hidden">
+                          {/* Card header */}
+                          <div className="flex items-start gap-2.5 px-3.5 pt-3 pb-2.5">
+                            {/* Collapse caret */}
+                            <button
+                              className="w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5 text-nm-text-3 hover:text-nm-text-2 transition-colors"
+                              onClick={() => setCollapsedBatches(prev => {
+                                const next = new Set(prev)
+                                const k = `staged:${group.key}`
+                                if (next.has(k)) { next.delete(k) } else { next.add(k) }
+                                return next
+                              })}
+                            >
+                              <svg className={`w-3.5 h-3.5 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                              </svg>
+                            </button>
+                            {/* Amber type-icon chip */}
+                            <div
+                              className="w-8 h-8 rounded-[9px] flex items-center justify-center flex-shrink-0"
+                              style={{ background: 'color-mix(in srgb, #f59e0b 16%, transparent)', color: '#fbbf24' }}
+                            >
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>{typeIcon}</svg>
+                            </div>
+                            {/* Label + meta */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-[13.5px] font-[660] text-nm-text truncate">{group.label}</span>
+                                {/* Staged pill */}
+                                <span
+                                  className="inline-flex items-center gap-1 h-[19px] px-2 rounded-full text-[10px] font-semibold flex-shrink-0"
+                                  style={{ background: 'color-mix(in srgb, #f59e0b 16%, transparent)', color: '#fbbf24' }}
+                                >
+                                  <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" /></svg>
+                                  Staged
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                <span className="text-[11px] text-nm-text-3">{group.jobs.length} capture{group.jobs.length === 1 ? '' : 's'}</span>
+                                <span className="text-nm-text-3 text-[10px]">&middot;</span>
+                                {firstJob?.profileName && (
+                                  <>
+                                    <span className="inline-flex items-center h-[17px] px-1.5 rounded-[5px] text-[10px] font-medium border border-nm-border-s bg-field text-nm-text-2">{firstJob.profileName}</span>
+                                    <span className="text-nm-text-3 text-[10px]">&middot;</span>
+                                  </>
+                                )}
+                                {uniqueArchitectures.map(arch => (
+                                  <span key={arch} className="inline-flex items-center gap-1 h-[17px] px-1.5 rounded-[5px] text-[10px] font-[650] border" style={archChipStyle(arch)}>
+                                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+                                    {architectureDisplayLabel(arch)}
+                                  </span>
+                                ))}
+                                <span className="text-nm-text-3 text-[10px]">&middot;</span>
+                                <span className="text-[11px] text-nm-text-3">{epochCount} epochs</span>
+                                <span className="text-nm-text-3 text-[10px]">&middot;</span>
+                                <span className="text-[11px] text-nm-text-3">norm {normalizeLabel}</span>
+                                {createdLabel && (
+                                  <>
+                                    <span className="text-nm-text-3 text-[10px]">&middot;</span>
+                                    <span className="text-[11px] text-nm-text-3">{createdLabel}</span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                            {/* Action buttons */}
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              <button
+                                onClick={e => {
+                                  e.stopPropagation()
+                                  const firstStaged = group.jobs.find(j => j.status === 'staged')
+                                  if (!firstStaged) return
+                                  const submissionId = group.jobs[0]?.submissionId ?? ''
+                                  setEditBatchModal({ submissionId, label: group.label, epochs: firstStaged.epochs, thresholdEsr: firstStaged.thresholdEsr, lr: firstStaged.lr, lrDecay: firstStaged.lrDecay, inputPath: firstStaged.inputPath })
+                                  setEditBatchName(group.label)
+                                  setEditBatchEpochs(String(firstStaged.epochs))
+                                  setEditBatchThresholdEsr(firstStaged.thresholdEsr != null ? String(firstStaged.thresholdEsr) : '')
+                                  setEditBatchLr(String(firstStaged.lr))
+                                  setEditBatchLrDecay(String(firstStaged.lrDecay))
+                                  setEditBatchInputPath(firstStaged.inputPath ?? '')
+                                }}
+                                className="h-7 inline-flex items-center gap-1 px-2 rounded-[7px] text-[11px] font-medium border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2 transition-colors"
+                                title="Edit settings for all captures in this parked batch"
+                              >
+                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" /></svg>
+                                Edit
+                              </button>
+                              <button
+                                onClick={e => { e.stopPropagation(); void window.api.dismissTrainerBatch(group.jobs[0]?.submissionId ?? '') }}
+                                className="h-7 inline-flex items-center gap-1 px-2 rounded-[7px] text-[11px] font-medium border border-red-500/25 hover:bg-red-500/10 text-red-400 transition-colors"
+                              >
+                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
+                                Delete
+                              </button>
+                              <button
+                                onClick={e => { e.stopPropagation(); void handleUnstageSubmission(group.jobs[0]?.submissionId ?? '') }}
+                                className="h-7 inline-flex items-center gap-1 px-2.5 rounded-[7px] text-[11px] font-semibold bg-nm-accent hover:opacity-90 text-white transition-opacity"
+                              >
+                                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M8 6.82v10.36c0 .79.87 1.27 1.54.84l8.14-5.18c.62-.39.62-1.29 0-1.69L9.54 5.98C8.87 5.55 8 6.03 8 6.82z"/></svg>
+                                Queue now
+                              </button>
+                            </div>
+                          </div>
+                          {/* Routing line */}
+                          <div className="flex items-center gap-1.5 px-[52px] pb-2.5 text-[11px] text-nm-text-3 font-mono">
+                            <svg className="w-3 h-3 flex-shrink-0 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>
+                            <span>{routingLabel}</span>
+                            <span className="opacity-40">&middot;</span>
+                            <span>DI <span className="opacity-70">&hellip;/{diBasename}</span></span>
+                          </div>
+                          {/* Expanded body: capture list */}
+                          {!isCollapsed && (
+                            <div className="px-3.5 pb-3 pt-0.5 space-y-1.5" style={{ paddingLeft: 52 }}>
+                              {group.jobs.map((job) => {
+                                const wavName = job.outputPath.replace(/\\/g, '/').split('/').pop() ?? job.modelName
+                                return (
+                                  <div key={job.jobId} className="flex items-center gap-2 px-2.5 py-1.5 rounded-[8px] text-[12px] border border-nm-border-s bg-panel-2">
+                                    <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M2 12h3l2-7 4 16 3-12 2 5h6" />
+                                    </svg>
+                                    <span className="flex-1 font-mono truncate text-nm-text text-[11.5px]">{wavName}.wav</span>
+                                    <span className="inline-flex items-center gap-1 h-[17px] px-1.5 rounded-[5px] text-[10px] font-[650] border flex-shrink-0" style={archChipStyle(job.architecture)}>
+                                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+                                      {architectureDisplayLabel(job.architecture)}
+                                    </span>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )
+          })()}
+
+          {/* â”€â”€ HISTORY â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {section === 'history' && (
+            <div className="px-6 py-5 space-y-5 max-w-[1400px] mx-auto w-full">
+              {/* Section head */}
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-[18px] font-[680] text-nm-text leading-tight">History</h2>
+                  <p className="text-[12px] text-nm-text-3 mt-0.5">{filteredHistory.length} completed, failed &amp; canceled runs</p>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {groupedHistory.length > 1 && (
+                    <>
+                      {/* Only touch history-prefixed keys so Queue / Staged collapse state is left alone. */}
+                      <button
+                        onClick={() => setCollapsedBatches(prev => { const next = new Set(prev); for (const g of groupedHistory) next.delete(`history:${g.key}`); return next })}
+                        className="h-9 inline-flex items-center px-2.5 rounded-[9px] text-[11.5px] font-medium border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2 transition-colors"
+                      >
+                        Expand all
+                      </button>
+                      <button
+                        onClick={() => setCollapsedBatches(prev => { const next = new Set(prev); for (const g of groupedHistory) next.add(`history:${g.key}`); return next })}
+                        className="h-9 inline-flex items-center px-2.5 rounded-[9px] text-[11.5px] font-medium border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2 transition-colors"
+                      >
+                        Collapse all
+                      </button>
+                    </>
+                  )}
+                  <button
+                    onClick={handleExportHistory}
+                    disabled={filteredHistory.length === 0}
+                    className="h-9 inline-flex items-center gap-1.5 px-3.5 rounded-[9px] text-[12.5px] font-medium border border-nm-border-s bg-panel-2 hover:bg-hov disabled:opacity-40 disabled:cursor-not-allowed text-nm-text-2 transition-colors"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+                    Export
+                  </button>
+                </div>
+              </div>
+
+              {/* Retry / action errors surface here too — retrying from History sets
+                  queueActionError, which was previously only rendered on the Queue/Batches
+                  tabs, so a failed retry looked like nothing happened. */}
+              {!!queueActionError && (
+                <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{queueActionError}</div>
+              )}
+
+              {/* Twin charts */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="rounded-[14px] border border-nm-border-s bg-panel p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <svg className="w-[15px] h-[15px] text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" /></svg>
+                    <span className="text-[12.5px] font-[650] text-nm-text">ESR quality &middot; last 7 days</span>
+                    <span className="flex-1" />
+                    <span className="flex items-center gap-2.5 text-[10px] text-nm-text-3">
+                      <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm" style={{ background: '#10b981' }} />{'<.01'}</span>
+                      <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm" style={{ background: '#f59e0b' }} />{'<.05'}</span>
+                      <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm" style={{ background: '#ef4444' }} />{'\u2265.05'}</span>
+                    </span>
+                  </div>
+                  <ChartFit minH={155}>
+                    {(w) => <QualityBars groups={qualityBarsData} width={w} height={155} />}
+                  </ChartFit>
+                </div>
+                <div className="rounded-[14px] border border-nm-border-s bg-panel p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <svg className="w-[15px] h-[15px] text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941" /></svg>
+                    <span className="text-[12.5px] font-[650] text-nm-text">Throughput &middot; models / hour</span>
+                  </div>
+                  <ChartFit minH={155}>
+                    {(w) => <Sparkline data={throughputData.map(v => Math.max(v, 0))} width={w} height={155} fill={true} />}
+                  </ChartFit>
+                </div>
+              </div>
+
+              {/* Filter bar */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-2 h-[34px] px-3 bg-field border border-field-bd rounded-[9px] min-w-[220px] flex-1 max-w-[320px]">
+                  <svg className="w-3.5 h-3.5 text-nm-text-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
+                  <input
+                    value={historySearch}
+                    onChange={e => setHistorySearch(e.target.value)}
+                    placeholder="Search name or path..."
+                    className="flex-1 min-w-0 bg-transparent border-0 outline-none text-[12.5px] text-nm-text placeholder:text-nm-text-3"
+                  />
+                </div>
+                {/* Status segmented pill */}
+                <div className="flex items-center gap-0.5 h-[34px] p-[3px] bg-field border border-field-bd rounded-[9px]">
+                  {([['all', 'All'], ['success', 'Done'], ['error', 'Failed'], ['canceled', 'Canceled']] as const).map(([id, lb]) => (
+                    <button
+                      key={id}
+                      onClick={() => setHistoryStatusFilter(id)}
+                      className={`h-[26px] px-3 rounded-[6px] text-[11.5px] font-medium transition-colors ${historyStatusFilter === id ? 'bg-nm-accent text-accent-text font-semibold' : 'text-nm-text-2 hover:text-nm-text'}`}
+                    >
+                      {lb}
+                    </button>
+                  ))}
+                </div>
+                <select value={historyProfileFilter} onChange={e => setHistoryProfileFilter(e.target.value)} className="h-[34px] px-2.5 bg-field border border-field-bd rounded-[9px] text-[12px] text-nm-text-2 focus:outline-none cursor-pointer">
+                  <option value="all">All profiles</option>
+                  {Array.from(new Map(trainerState.history.filter(e => e.profileId || e.profileName).map(e => [e.profileId ?? e.profileName ?? 'manual', e.profileName ?? 'Manual'])).entries()).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+                <select value={historyTimeFilter} onChange={e => setHistoryTimeFilter(e.target.value as typeof historyTimeFilter)} className="h-[34px] px-2.5 bg-field border border-field-bd rounded-[9px] text-[12px] text-nm-text-2 focus:outline-none cursor-pointer">
+                  {[['all','All time'],['day','Today'],['week','This week'],['month','This month'],['quarter','This quarter']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+                <select value={historyEsrFilter} onChange={e => setHistoryEsrFilter(e.target.value as typeof historyEsrFilter)} className="h-[34px] px-2.5 bg-field border border-field-bd rounded-[9px] text-[12px] text-nm-text-2 focus:outline-none cursor-pointer">
+                  {[['all','All ESR'],['green','Green (A1/Full <0.01 \u00b7 A2 Agg <0.02)'],['amber','Amber (A1/Full <0.05 \u00b7 A2 Agg <0.07)'],['red','Red (A1/Full \u22650.05 \u00b7 A2 Agg \u22650.07)'],['none','No ESR']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+              </div>
+
+              {/* Empty state */}
+              {groupedHistory.length === 0 && (
+                <div className="rounded-2xl border border-nm-border-s bg-panel p-10 flex flex-col items-center gap-3 text-center">
+                  <div className="w-14 h-14 rounded-[14px] flex items-center justify-center bg-panel-2 text-nm-text-3">
+                    <svg className="w-[26px] h-[26px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  </div>
+                  <div className="text-[14px] font-[650] text-nm-text">Nothing matches</div>
+                  <div className="text-[12.5px] text-nm-text-3">Try a different filter or search term.</div>
+                </div>
+              )}
+
+              {/* Groups */}
+              {groupedHistory.map(group => {
+                const okN = group.entries.filter(e => e.status === 'success').length
+                const failN = group.entries.filter(e => e.status === 'error').length
+                const firstMode = group.entries[0]?.sourceMode
+                const modeLabel = firstMode === 'watcher' ? 'Watch folder' : firstMode === 'manual-folder-run' ? 'Run Folder' : 'Run WAVs'
+                const plannedCaptureCount = extractPlannedCaptureCount(group.label)
+                const displayLabel = stripPlannedCaptureSuffix(group.label) || group.label
+                const isCollapsed = collapsedBatches.has(`history:${group.key}`)
+                return (
+                  <div key={group.key} className="mb-2">
+                    {/* Group head — chevron + label toggle collapse; retry buttons stay separate */}
+                    <div className="flex items-center gap-2.5 px-0.5 pb-2.5">
+                      <button
+                        onClick={() => toggleBatchCollapse(`history:${group.key}`)}
+                        className="flex items-center gap-2 min-w-0 group/histhead"
+                        title={isCollapsed ? 'Expand this batch' : 'Collapse this batch'}
+                      >
+                        <svg className={`w-3 h-3 text-nm-text-3 flex-shrink-0 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                        </svg>
+                        <span className="text-[13px] font-[650] text-nm-text truncate group-hover/histhead:text-nm-accent transition-colors">{displayLabel}</span>
+                      </button>
+                      <span className="inline-flex items-center h-[19px] px-1.5 rounded-[6px] text-[10px] font-semibold border border-nm-border-s bg-field text-nm-text-2">{modeLabel}</span>
+                      <span className="inline-flex items-center h-[19px] px-1.5 rounded-[6px] text-[10px] font-semibold border border-nm-border-s bg-field text-nm-text-2">
+                        {group.entries.length} recorded
+                      </span>
+                      {plannedCaptureCount != null && plannedCaptureCount !== group.entries.length && (
+                        <span
+                          className="inline-flex items-center h-[19px] px-1.5 rounded-[6px] text-[10px] font-semibold border border-amber-500/25 bg-amber-500/10 text-amber-400"
+                          title="This batch label says a larger capture count than the history currently contains."
+                        >
+                          {plannedCaptureCount} planned
+                        </span>
+                      )}
+                      {okN > 0 && <span className="inline-flex items-center h-[19px] px-1.5 rounded-[6px] text-[10px] font-semibold border border-emerald-500/25 bg-emerald-500/10 text-emerald-400">{okN} done</span>}
+                      {failN > 0 && <span className="inline-flex items-center h-[19px] px-1.5 rounded-[6px] text-[10px] font-semibold border border-red-500/25 bg-red-500/10 text-red-400">{failN} failed</span>}
+                      <span className="flex-1" />
+                      {failN > 0 && (
+                        <button
+                          onClick={() => { void handleRetryHistoryBatch(group.entries.filter(e => e.status === 'error'), `Retry failed - ${group.label}`) }}
+                          title={`Re-queue the ${failN} failed capture${failN === 1 ? '' : 's'} from this batch under a new submission. Uses the current Input DI and output formula from Settings.`}
+                          className="h-7 inline-flex items-center gap-1 px-2 rounded-[7px] text-[11px] font-medium border border-red-500/30 hover:bg-red-500/10 text-red-400 transition-colors"
+                        >
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                          Retry failed
+                        </button>
+                      )}
+                      {group.entries.length > 1 && (
+                        <button
+                          onClick={() => { void handleRetryHistoryBatch(group.entries, `Retry - ${group.label}`) }}
+                          title={`Re-queue all ${group.entries.length} captures from this batch under a new submission.`}
+                          className="h-7 inline-flex items-center gap-1 px-2 rounded-[7px] text-[11px] font-medium border border-nm-border-s hover:bg-hov text-nm-text-2 transition-colors"
+                        >
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                          Retry batch
+                        </button>
+                      )}
+                      <span className="text-[11px] text-nm-text-3 font-mono">{group.createdAt ? new Date(group.createdAt).toLocaleString() : ''}</span>
+                    </div>
+                    {/* Rows */}
+                    {!isCollapsed && (
+                    <div className="rounded-[12px] border border-nm-border-s bg-panel overflow-hidden">
+                      {group.entries.map((entry, idx) => {
+                        const { value: entryEsr, kind: entryEsrKind } = getBestJobEsr(entry)
+                        const tone = getEsrToneKind(entryEsr, entryEsrKind)
+                        const toneKey = tone.classes.includes('emerald') ? 'green' : tone.classes.includes('amber') ? 'amber' : tone.classes.includes('red') ? 'red' : 'none'
+                        const clickable = entry.status === 'success' && !!entry.graphPath
+                        const successIconClass = toneKey === 'green'
+                          ? 'text-emerald-400'
+                          : toneKey === 'amber'
+                            ? 'text-amber-400'
+                            : toneKey === 'red'
+                              ? 'text-red-400'
+                              : 'text-nm-text-3'
+                        return (
+                          <div
+                            key={entry.historyId}
+                            className={`flex items-center gap-3.5 px-4 py-3 ${idx < group.entries.length - 1 ? 'border-b border-nm-border-s' : ''} ${clickable ? 'cursor-pointer' : ''} hover:bg-hov transition-colors`}
+                            onClick={clickable ? () => { void handleShowGraphModal(entry.graphPath) } : undefined}
+                            onContextMenu={e => {
+                              e.preventDefault()
+                              setHistoryContextMenu({ entry, x: e.clientX, y: e.clientY })
+                            }}
+                          >
+                            {/* Thumbnail */}
+                            <div className="w-[44px] h-[34px] rounded-[7px] border border-nm-border-s bg-field flex items-center justify-center flex-shrink-0 relative overflow-hidden">
+                              {/* Previous mini ESR graph, kept here in case we want to restore it later:
+                                  {entry.status === 'success' && entry.graphPath
+                                    ? <MiniEsrPlot tone={toneKey as 'green' | 'amber' | 'red' | 'none'} seed={seed} />
+                                    : ...}
+                              */}
+                              {entry.status === 'success'
+                                ? <svg className={`w-4 h-4 ${successIconClass}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
+                                : entry.status === 'error'
+                                  ? <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="#f87171" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+                                  : <svg className="w-3.5 h-3.5 text-nm-text-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 7.5A2.25 2.25 0 017.5 5.25h9a2.25 2.25 0 012.25 2.25v9a2.25 2.25 0 01-2.25 2.25h-9a2.25 2.25 0 01-2.25-2.25v-9z" /></svg>
+                              }
+                            </div>
+                            {/* Main */}
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[13px] font-[560] text-nm-text truncate">{entry.finalModelName}</div>
+                              {/* Meta line &mdash; shown for ALL statuses so you can see what the failed attempt was. */}
+                              <div className="flex items-center gap-2 flex-wrap mt-[3px] text-[11px] text-nm-text-3">
+                                <span className="inline-flex items-center gap-1 h-[17px] px-1.5 rounded-[5px] text-[10px] font-[650] border" style={archChipStyle(entry.architecture)}>
+                                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+                                  {architectureDisplayLabel(entry.architecture)}
+                                </span>
+                                {entry.profileName && <span className="inline-flex items-center h-[17px] px-1.5 rounded-[5px] text-[10px] font-medium border border-nm-border-s bg-field text-nm-text-2">{entry.profileName}</span>}
+                                <span className="opacity-50">&middot;</span>
+                                <span>{entry.epochs} epochs</span>
+                                {(() => {
+                                  const dur = typeof entry.durationSec === 'number' ? entry.durationSec : null
+                                  if (dur == null) return null
+                                  return <><span className="opacity-50">&middot;</span><span className="font-mono">{formatDuration(dur)}</span></>
+                                })()}
+                              </div>
+                              {entry.status === 'error' && (
+                                <div className="nm-error-text text-[11px] text-red-400 font-mono mt-1 max-w-[520px] break-all whitespace-pre-wrap" title={entry.failureReason || 'Failed'}>{entry.failureReason || 'Failed'}</div>
+                              )}
+                              {entry.retriedAt && (
+                                <div className="inline-flex items-center gap-1 mt-1 h-[17px] px-1.5 rounded-[5px] text-[10px] font-[650] border border-amber-500/30 bg-amber-500/10 text-amber-400">
+                                  <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                                  Retried
+                                </div>
+                              )}
+                              {entry.trainedDespiteWarnings && (
+                                <div
+                                  className="inline-flex items-center gap-1 mt-1 h-[17px] px-1.5 rounded-[5px] text-[10px] font-[650] border border-orange-500/30 bg-orange-500/10 text-orange-400"
+                                  title={entry.checkWarnings || 'NAM\'s pre-training data checks failed for this run, but training proceeded anyway because "Ignore checks" was on. Be skeptical of this model — re-check the capture.'}
+                                >
+                                  <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+                                  Trained despite warnings
+                                </div>
+                              )}
+                            </div>
+                            {/* Right column */}
+                            <div className="flex items-center gap-3.5 flex-shrink-0">
+                              {entry.status === 'success' && typeof entry.validationEsr === 'number' ? (() => {
+                                // For A2 entries, prefer the new sub-model fields (validationEsrFull / validationEsrLite).
+                                // For aggregate-only A2 entries (official trainer / downloads), use the aggregate with the
+                                // A2-specific doubled thresholds so they do not look systematically worse than A1.
+                                const isA2 = entry.architecture === 'a2'
+                                const hasFullBreakdown = isA2 && typeof entry.validationEsrFull === 'number'
+                                const primaryVal = isA2
+                                  ? (hasFullBreakdown ? entry.validationEsrFull ?? null : entry.validationEsr)
+                                  : entry.validationEsr
+                                const liteVal = isA2 ? (typeof entry.validationEsrLite === 'number' ? entry.validationEsrLite : null) : null
+                                const aggVal = isA2 ? entry.validationEsr : null
+                                const primaryKind = isA2
+                                  ? (hasFullBreakdown ? 'a2_full' : 'a2_aggregate')
+                                  : 'a1'
+                                const primaryTone = getEsrToneKind(primaryVal, primaryKind)
+                                const primaryKey: 'green' | 'amber' | 'red' | 'none' = primaryTone.classes.includes('emerald') ? 'green' : primaryTone.classes.includes('amber') ? 'amber' : primaryTone.classes.includes('red') ? 'red' : 'none'
+                                const bgFor = (k: 'green' | 'amber' | 'red' | 'none') => k === 'green' ? 'color-mix(in srgb, #10b981 14%, transparent)' : k === 'amber' ? 'color-mix(in srgb, #f59e0b 14%, transparent)' : k === 'red' ? 'color-mix(in srgb, #ef4444 14%, transparent)' : 'var(--field)'
+                                return (
+                                  <div className="flex items-center gap-1.5">
+                                    <span
+                                      className={`inline-flex items-center gap-1.5 h-[22px] px-2 rounded-full text-[11px] font-mono font-semibold ${primaryTone.classes}`}
+                                      style={{ background: bgFor(primaryKey) }}
+                                      title={
+                                        isA2
+                                          ? (hasFullBreakdown
+                                            ? 'A2 Full sub-model (channels_8) \u2014 what the plugin loads by default'
+                                            : 'A2 Aggregate \u2014 sum of both sub-models\' ESR. Matches the value the official NAM trainer writes to metadata.training.validation_esr.')
+                                          : 'Validation ESR'
+                                      }
+                                    >
+                                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+                                      {isA2 && <span className="text-[9px] font-[700] uppercase tracking-wider opacity-70">{hasFullBreakdown ? 'Full' : 'Agg'}</span>}
+                                      {primaryTone.text}
+                                    </span>
+                                    {isA2 && typeof liteVal === 'number' && (() => {
+                                      const liteTone = getEsrToneKind(liteVal, 'a2_full')
+                                      const liteKey: 'green' | 'amber' | 'red' | 'none' = liteTone.classes.includes('emerald') ? 'green' : liteTone.classes.includes('amber') ? 'amber' : liteTone.classes.includes('red') ? 'red' : 'none'
+                                      return (
+                                        <span
+                                          className={`inline-flex items-center gap-1.5 h-[22px] px-2 rounded-full text-[11px] font-mono font-semibold ${liteTone.classes}`}
+                                          style={{ background: bgFor(liteKey) }}
+                                          title={"A2 Lite sub-model (channels_3) \u2014 smaller, lower-fidelity sub-model packed alongside the Full one"}
+                                        >
+                                          <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+                                          <span className="text-[9px] font-[700] uppercase tracking-wider opacity-70">Lite</span>
+                                          {liteTone.text}
+                                        </span>
+                                      )
+                                    })()}
+                                    {isA2 && hasFullBreakdown && typeof aggVal === 'number' && primaryVal !== aggVal && (
+                                      <span
+                                        className="inline-flex items-center gap-1.5 h-[22px] px-2 rounded-full text-[10px] font-mono text-nm-text-3 border border-nm-border-s"
+                                        title={"A2 Aggregate \u2014 sum of both sub-models' ESR. Matches the value the official NAM trainer writes to metadata.training.validation_esr."}
+                                      >
+                                        <span className="text-[9px] font-[700] uppercase tracking-wider opacity-70">Agg</span>
+                                        {aggVal.toFixed(4)}
+                                      </span>
+                                    )}
+                                  </div>
+                                )
+                              })() : entry.status === 'error' ? (
+                                <span className="inline-flex items-center gap-1.5 h-[22px] px-2 rounded-full text-[11px] font-semibold border border-red-500/25 bg-red-500/10 text-red-400">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-red-400" />Failed
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1.5 h-[22px] px-2 rounded-full text-[11px] font-semibold border border-nm-border-s bg-field text-nm-text-3">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-nm-text-3" />{entry.status}
+                                </span>
+                              )}
+                              <span className="text-[11px] font-mono text-nm-text-3 text-right whitespace-nowrap">
+                                {new Date(entry.timestamp).toLocaleString(undefined, {
+                                  year: 'numeric',
+                                  month: 'short',
+                                  day: 'numeric',
+                                  hour: 'numeric',
+                                  minute: '2-digit',
+                                })}
+                              </span>
+                              <div className="flex items-center gap-1">
+                                {entry.graphPath && (
+                                  <button onClick={e => { e.stopPropagation(); void handleShowGraphModal(entry.graphPath) }} className="w-7 h-7 flex items-center justify-center rounded-[7px] hover:bg-hov text-nm-text-3 hover:text-nm-text transition-colors" title="View ESR plot">
+                                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" /></svg>
+                                  </button>
+                                )}
+                                {entry.status === 'error' && (
+                                  <button onClick={e => { e.stopPropagation(); void handleRetryHistoryEntry(entry) }} className="w-7 h-7 flex items-center justify-center rounded-[7px] hover:bg-hov text-nm-text-3 hover:text-nm-text transition-colors" title="Retry">
+                                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                                  </button>
+                                )}
+                                {entry.finalModelPath && (
+                                  <button onClick={e => { e.stopPropagation(); void window.api.revealFile(entry.finalModelPath) }} className="w-7 h-7 flex items-center justify-center rounded-[7px] hover:bg-hov text-nm-text-3 hover:text-nm-text transition-colors" title="Reveal in folder">
+                                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 00-1.883 2.542l.857 6a2.25 2.25 0 002.227 1.932H19.05a2.25 2.25 0 002.227-1.932l.857-6a2.25 2.25 0 00-1.883-2.542m-16.5 0V6A2.25 2.25 0 016 3.75h3.879a1.5 1.5 0 011.06.44l2.122 2.12a1.5 1.5 0 001.06.44H18A2.25 2.25 0 0120.25 9v.776" /></svg>
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {/* â”€â”€ NEW RUN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {section === 'presets' && (
+            <TrainingPresetsPage
+              settings={settings}
+              onSaveSettings={onSaveSettings}
+              onOpenSettings={onOpenSettings}
+            />
+          )}
+
+          {section === 'new' && (
+            <div className="px-6 py-5 space-y-4 max-w-[1400px] mx-auto w-full">
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-[18px] font-[680] text-nm-text">{newRunMode === 'fromCaptures' ? 'From Captures' : 'Create Batch'}</h2>
+                  {newRunMode === 'manual' && (
+                    <HelpPopover title="Create Batch" side="right">
+                      <strong>Batch name</strong> is just the label for this submission in Queue, Staged Batches, and History. It helps you recognize the run later, but it does not change the source WAVs or the trainer settings.
+                      <br /><br />
+                      Leave Batch name blank if you want NAM Lab to auto-name the batch from the capture name, folder name, or capture count.
+                      <br /><br />
+                      <strong>Input DI</strong> is the clean reference DI WAV the trainer compares against.
+                      <br /><br />
+                      <strong>Output WAVs</strong> are the recorded amp or capture-session result WAVs that will be converted into new <code>.nam</code> models.
+                      <br /><br />
+                      In short:
+                      <br />
+                      <strong>Input DI</strong> = clean source / reference
+                      <br />
+                      <strong>Output WAVs</strong> = recorded results to train from
+                    </HelpPopover>
+                  )}
+                </div>
+                <div className="flex items-center gap-1 p-0.5 rounded-xl bg-panel border border-nm-border-s">
+                  {(['manual', 'fromCaptures'] as const).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => { setNewRunMode(m); setRetrainError(''); setRetrainQueued(null) }}
+                      className={`px-3.5 py-1.5 rounded-[10px] text-[12.5px] font-medium transition-colors ${
+                        newRunMode === m
+                          ? 'bg-nm-accent/15 text-nm-accent font-semibold'
+                          : 'text-nm-text-2 hover:text-nm-text hover:bg-hov'
+                      }`}
+                    >
+                      {m === 'manual' ? 'Manual' : 'From Captures'}
+                    </button>
+                  ))}
+                </div>
+                {newRunMode === 'manual' && presetSaveNotice && <span className="text-[12px] text-emerald-400">{presetSaveNotice}</span>}
+              </div>
+
+              {/* â"€â"€ Retrain from Folder UI â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
+              {/* ── From Captures: source card only ─────────────────────────── */}
+              {newRunMode === 'fromCaptures' && (
+                <div className="rounded-2xl border border-nm-border-s bg-panel-2 p-4 space-y-4">
+                  <div className="flex items-center gap-1.5">
+                    <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25zM6.75 12h.008v.008H6.75V12zm0 3h.008v.008H6.75V15zm0 3h.008v.008H6.75V18z" /></svg>
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-nm-accent">Sources</span>
+                    <HelpPopover title="From Captures" side="right">
+                      Use this mode when you already have trained .nam files and want to re-train them with new settings or architectures — without manually re-adding each WAV.
+                      <br /><br />
+                      <strong>Capture folder</strong> — a folder of <code>.nam</code> files. Their basenames (e.g. <em>Marshall JCM800</em>) are used to locate matching WAVs.
+                      <br /><br />
+                      <strong>WAV folder</strong> — the folder containing the output WAV files used during the original capture session. Each WAV filename must match a capture basename exactly (extension is ignored).
+                    </HelpPopover>
+                  </div>
+                  <Field label="Capture folder" hint="Folder of .nam files — their basenames are used to look up matching WAVs">
+                    <PathPicker
+                      value={retrainSeedFolder}
+                      placeholder="Folder containing .nam files"
+                      onChange={(v) => { setRetrainSeedFolder(v); setRetrainReview(null); setRetrainQueued(null) }}
+                      onBrowse={handleRetrainBrowseSeedFolder}
+                    />
+                  </Field>
+                  <Field label="WAV folder" hint="Folder containing the output WAVs — filenames must match the capture basenames">
+                    <PathPicker
+                      value={retrainWavFolder}
+                      placeholder="Folder containing output WAV files"
+                      onChange={(v) => { setRetrainWavFolder(v); setRetrainReview(null); setRetrainQueued(null) }}
+                      onBrowse={handleRetrainBrowseWavFolder}
+                    />
+                  </Field>
+                </div>
+              )}
+
+              {/* ── Manual: captures card only ───────────────────────────────── */}
+              {newRunMode === 'manual' && <>
+              {/* Captures card */}
+              <div className="rounded-2xl border border-nm-border-s bg-panel-2 p-4 space-y-4">
+                <div className="flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2 12h3l2-7 4 16 3-12 2 5h6" /></svg>
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-nm-accent">Captures</span>
+                </div>
+                <Field label="Batch name" hint={"Optional \u2014 leave blank to auto-name from the capture, folder, or count"}>
+                  {(() => {
+                    const folders = new Set(batchWavList.map(w => w.fromFolder).filter(Boolean))
+                    const placeholder = batchWavList.length === 0
+                      ? 'Auto \u2014 will use capture or folder name'
+                      : batchWavList.length === 1
+                        ? batchWavList[0].name
+                        : (folders.size === 1 && batchWavList[0].fromFolder)
+                          ? (batchWavList[0].fromFolder.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? '')
+                          : `Batch - ${batchWavList.length} captures`
+                    return (
+                      <input
+                        type="text"
+                        value={batchName}
+                        onChange={e => setBatchName(e.target.value)}
+                        placeholder={placeholder}
+                        className="w-full h-9 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text placeholder:text-nm-text-3 focus:outline-none focus:border-nm-accent transition-colors"
+                      />
+                    )
+                  })()}
+                </Field>
+                <Field label="Input DI" hint="Trainer reference / DI file">
+                  <div
+                    onDragOver={e => { e.preventDefault(); setDropTargetId('input-di') }}
+                    onDragLeave={() => setDropTargetId(null)}
+                    onDrop={handleInputDrop}
+                    className={`rounded-lg transition-colors ${dropTargetId === 'input-di' ? 'ring-2 ring-nm-accent bg-nm-accent/10' : ''}`}
+                  >
+                    <PathPicker value={inputPath} placeholder="Select or drop DI WAV here" onChange={setInputPath} onBrowse={handleBrowseInput} />
+                  </div>
+                </Field>
+
+                {/* Unified WAV list */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-medium text-nm-text">
+                      Output WAVs
+                      {batchWavList.length > 0 && (
+                        <span className="ml-1.5 text-[11px] font-semibold text-nm-accent">&middot; {batchWavList.length} selected</span>
+                      )}
+                    </label>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { void handleBrowseOutputs() }}
+                        className="h-7 px-2.5 rounded-lg text-[12px] font-medium bg-nm-accent/15 border border-nm-accent/30 hover:bg-nm-accent/25 text-nm-accent transition-colors"
+                      >+ Add Files</button>
+                      <button
+                        onClick={() => { void handleBrowseFolder() }}
+                        className="h-7 px-2.5 rounded-lg text-[12px] font-medium bg-field border border-field-bd hover:bg-hov text-nm-text transition-colors"
+                      >+ Add Folder</button>
+                      {batchWavList.length > 0 && (
+                        <button
+                          onClick={() => setBatchWavList([])}
+                          className="h-7 px-2.5 rounded-lg text-[12px] font-medium border border-nm-border-s hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/30 text-nm-text-3 transition-colors"
+                        >
+                          <span className="inline-flex items-center gap-1">
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                            Clear
+                          </span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div
+                    onDragOver={e => { e.preventDefault(); setDropTargetId('output-wavs') }}
+                    onDragLeave={() => setDropTargetId(null)}
+                    onDrop={async e => {
+                      e.preventDefault(); e.stopPropagation(); setDropTargetId(null)
+                      const files = Array.from(e.dataTransfer.files)
+                      if (files.length === 0) return
+                      const wavFiles = files.filter(f => f.name.toLowerCase().endsWith('.wav'))
+                      const otherFiles = files.filter(f => !f.name.toLowerCase().endsWith('.wav'))
+                      // WAV files — add directly
+                      if (wavFiles.length > 0) {
+                        const paths = wavFiles.map(f => window.api.getPathForFile(f)).filter(Boolean) as string[]
+                        addWavsToBatchList(paths)
+                      }
+                      // Non-WAV / unknown — check if it's a folder
+                      for (const f of otherFiles) {
+                        const p = window.api.getPathForFile(f)
+                        if (!p) continue
+                        const stat = await window.api.statPath(p)
+                        if (stat.isDirectory) {
+                          const wavPaths = await window.api.listWavFiles(p)
+                          addWavsToBatchList(wavPaths, p)
+                        }
+                      }
+                    }}
+                    className={`rounded-lg border min-h-[80px] max-h-[220px] overflow-y-auto transition-colors ${dropTargetId === 'output-wavs' ? 'border-nm-accent bg-nm-accent/10 ring-2 ring-nm-accent' : 'border-field-bd bg-field'}`}
+                  >
+                    {batchWavList.length === 0 ? (
+                      <div className="px-3 py-4 text-[12px] text-nm-text-3 italic text-center">
+                        {dropTargetId === 'output-wavs' ? 'Drop WAVs or a folder here\u2026' : 'No WAVs \u2014 choose files, add a folder, or drop here.'}
+                      </div>
+                    ) : (
+                      (() => {
+                        // Group by fromFolder, then ungrouped individuals
+                        const folders = Array.from(new Set(batchWavList.map(i => i.fromFolder).filter(Boolean))) as string[]
+                        const ungrouped = batchWavList.filter(i => !i.fromFolder)
+                        return (
+                          <div className="p-1 space-y-0.5">
+                            {ungrouped.map(item => {
+                              const parts = item.path.replace(/\\/g, '/').split('/')
+                              const displayPath = parts.length > 2 ? `\u2026/${parts.slice(-3, -1).join('/')}/${item.name}` : item.name
+                              return (
+                              <div key={item.id} className="flex items-center gap-2 px-2 py-1.5 rounded text-[12px] hover:bg-hov group">
+                                <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M2 12h3l2-7 4 16 3-12 2 5h6" /></svg>
+                                <span className="flex-1 font-mono truncate text-nm-text-2 text-[11.5px]">{displayPath}</span>
+                                <button onClick={() => setBatchWavList(prev => prev.filter(i => i.id !== item.id))} className="w-5 h-5 flex items-center justify-center rounded text-nm-text-3 hover:text-red-400 hover:bg-red-500/10 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                              </div>
+                            )})}
+                            {folders.map(folder => {
+                              const items = batchWavList.filter(i => i.fromFolder === folder)
+                              const folderName = folder.replace(/\\/g, '/').split('/').pop() ?? folder
+                              const isExpanded = !collapsedFolders.has(folder)
+                              return (
+                                <div key={folder}>
+                                  <div className="flex items-center gap-2 px-2 py-1 rounded hover:bg-hov cursor-pointer select-none"
+                                    onClick={() => setCollapsedFolders(prev => { const n = new Set(prev); if (n.has(folder)) n.delete(folder); else n.add(folder); return n })}>
+                                    <svg className={`w-3 h-3 text-nm-text-3 flex-shrink-0 transition-transform ${isExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>
+                                    <svg className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" /></svg>
+                                    <span className="flex-1 text-[12px] font-medium text-nm-text truncate">{folderName}</span>
+                                    <span className="text-[10px] text-nm-text-3">{items.length} file{items.length === 1 ? '' : 's'}</span>
+                                    <button
+                                      onClick={e => { e.stopPropagation(); setBatchWavList(prev => prev.filter(i => i.fromFolder !== folder)) }}
+                                      className="w-5 h-5 flex items-center justify-center rounded text-nm-text-3 hover:text-red-400 hover:bg-red-500/10 flex-shrink-0"
+                                      title="Remove all files from this folder"
+                                    >
+                                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                    </button>
+                                  </div>
+                                  {isExpanded && items.map(item => (
+                                    <div key={item.id} className="flex items-center gap-2 pl-7 pr-2 py-1 rounded text-[12px] hover:bg-hov group">
+                                      <svg className="w-3 h-3 text-nm-accent/60 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M2 12h3l2-7 4 16 3-12 2 5h6" /></svg>
+                                      <span className="flex-1 font-mono truncate text-nm-text-2 text-[11.5px]">{item.name}</span>
+                                      <button onClick={() => setBatchWavList(prev => prev.filter(i => i.id !== item.id))} className="w-5 h-5 flex items-center justify-center rounded text-nm-text-3 hover:text-red-400 hover:bg-red-500/10 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )
+                      })()
+                    )}
+                  </div>
+                </div>
+              </div>
+              </>}
+
+              {/* ── Shared: Training settings + Output routing ───────────────── */}
+              {/* Training settings card */}
+              <div className="rounded-2xl border border-nm-border-s bg-panel-2 p-4 space-y-4">
+                <div className="flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75" /></svg>
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-nm-accent">Training Settings</span>
+                  <HelpPopover title="Training Settings" side="right">
+                    Configure the architecture, epochs, and model type for this run. Choose a saved <strong>Preset</strong> to load a full configuration in one click, or set <strong>Custom</strong> to adjust each field individually.
+                    <br /><br />
+                    Use the dedicated <strong>Presets</strong> page in the left nav to create, edit, duplicate, delete, and star presets for Quick Add / Dashboard.
+                    <br /><br />
+                    The <strong>Architecture(s)</strong> picker includes built-in WaveNet sizes and any <strong>Capture Profiles</strong> you have saved in Settings &rarr; Training. A Capture Profile lets you store a custom layer config alongside an epoch count so you can reuse it.
+                  </HelpPopover>
+                </div>
+
+                <div className="flex items-end gap-3 flex-wrap">
+                  <Field label="Preset / Bundle">
+                    <div className="flex items-center gap-2 min-w-[220px]">
+                      <select
+                        value={currentPresetId}
+                        onChange={e => { applyPreset(e.target.value) }}
+                        className="flex-1 h-10 px-3 pr-8 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none"
+                      >
+                        <option value={CUSTOM_PRESET_ID}>Custom</option>
+                        {availablePresets.length > 0 && (
+                          <optgroup label="Presets">
+                            {availablePresets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                          </optgroup>
+                        )}
+                        {availableBundles.length > 0 && (
+                          <optgroup label="Bundles">
+                            {availableBundles.map(b => <option key={b.id} value={`${BUNDLE_PREFIX}${b.id}`}>{b.name}</option>)}
+                          </optgroup>
+                        )}
+                      </select>
+                      <button
+                        onClick={() => setSection('presets')}
+                        className="h-10 px-3 rounded-lg text-[12px] font-medium bg-panel border border-nm-border-s hover:bg-hov text-nm-text-2 transition-colors whitespace-nowrap"
+                        title="Open preset manager"
+                      >
+                        Manage
+                      </button>
+                    </div>
+                  </Field>
+                  {currentRunPreset && (
+                    <div className="flex-1 min-w-[200px] h-10 rounded-lg border border-nm-border-s bg-field px-3 text-[12px] text-nm-text-2 flex items-center truncate">
+                      {describePreset(currentRunPreset)}
+                    </div>
+                  )}
+                  {activeBundle && (
+                    <div className="flex-1 min-w-[200px] h-10 rounded-lg border border-nm-accent/30 bg-nm-accent/5 px-3 text-[12px] text-nm-text-2 flex items-center gap-2 truncate">
+                      <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z" /></svg>
+                      <span className="truncate">{bundleActivePresets.length} preset{bundleActivePresets.length === 1 ? '' : 's'}: {bundleActivePresets.map(p => p.name).join(', ')}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Architecture chips — shown for single presets */}
+                {currentRunPreset && currentRunPreset.architectures.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 -mt-1.5">
+                    <span className="text-[10.5px] uppercase font-[600] tracking-[.4px] text-nm-text-3 mr-0.5">Architectures</span>
+                    {currentRunPreset.architectures.map(arch => (
+                      <span key={arch} className="inline-flex items-center gap-1 h-[20px] px-2 rounded-full text-[10.5px] font-[650] border" style={archChipStyle(arch)}>
+                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+                        {architectureFullLabel(arch)}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Bundle breakdown — per-preset arch chips */}
+                {activeBundle && bundleActivePresets.length > 0 && (
+                  <div className="space-y-1.5 -mt-1.5">
+                    {bundleActivePresets.map(p => (
+                      <div key={p.id} className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[10.5px] font-[600] text-nm-text-3 min-w-[80px] truncate">{p.name}</span>
+                        {p.architectures.map(arch => (
+                          <span key={arch} className="inline-flex items-center gap-1 h-[18px] px-1.5 rounded-full text-[10px] font-[650] border" style={archChipStyle(arch)}>
+                            <span className="w-1 h-1 rounded-full" style={{ background: 'currentColor' }} />
+                            {architectureFullLabel(arch)}
+                          </span>
+                        ))}
+                        <span className="text-[10px] text-nm-text-3">{p.epochs} ep</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {showsCustomSettings && (
+                  <div className="grid gap-3 grid-cols-[1fr_100px_140px_100px_auto]">
+                    <Field label="Architecture(s)" help={<>Each architecture produces a <code>.nam</code> of different size and quality. <strong>A2</strong> is the modern PackedWaveNet (one file = Full + Lite). <strong>A1 - Standard</strong> = best A1 quality. A1 Lite/Feather/Nano are smaller/faster. You can mix A1 and A2 &mdash; each ticked architecture spawns its own job in the batch.</>}>
+                      <ArchitectureMultiSelect
+                        values={architectures}
+                        onChange={next => {
+                          setArchitectures(next)
+                          setSelectedPresetId(CUSTOM_PRESET_ID)
+                        }}
+                        userProfiles={settings.userCaptureProfiles ?? []}
+                        onCreateProfile={() => { setCaptureProfileEditorTarget(null); setCaptureProfileEditorOpen(true) }}
+                        onEditProfile={profile => { setCaptureProfileEditorTarget(profile); setCaptureProfileEditorOpen(true) }}
+                      />
+                    </Field>
+                    <Field label="Epochs">
+                      <input value={epochs} onChange={e => setEpochs(e.target.value)} className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none" />
+                    </Field>
+                    <Field label="Latency" labelTitle="Leave blank to use Auto">
+                      <input value={latency} onChange={e => setLatency(e.target.value)} className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none" placeholder="Auto" />
+                    </Field>
+                    <Field label="Target ESR" labelTitle="Leave blank to turn it off">
+                      <input value={thresholdEsr} onChange={e => setThresholdEsr(e.target.value)} className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none" placeholder="Off" />
+                    </Field>
+                    <div className="flex flex-row items-end gap-2 pb-0.5 flex-wrap">
+                      <ToggleRow label="Save ESR plot" checked={savePlot} onChange={setSavePlot} />
+                      <ToggleRow label="Ignore checks" checked={ignoreChecks} onChange={setIgnoreChecks} />
+                      <div>
+                        <div className="flex items-center gap-1 mb-1.5">
+                          <label className="text-xs font-medium text-nm-text-2">Normalize</label>
+                        </div>
+                        <div className="flex gap-2">
+                          <select
+                            value={normalizeWavOverride}
+                            onChange={e => setNormalizeWavOverride(e.target.value as typeof normalizeWavOverride)}
+                            className="h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none"
+                          >
+                            <option value="global">Global ({(settings.normalizeWavBeforeTraining ?? true) ? 'on' : 'off'})</option>
+                            <option value="on">On</option>
+                            <option value="off">Off</option>
+                          </select>
+                          {normalizeWavOverride !== 'off' && (
+                            <input
+                              value={normalizeWavTargetDb}
+                              onChange={e => setNormalizeWavTargetDb(e.target.value)}
+                              placeholder={String(settings.normalizeWavTargetDb ?? -5.0)}
+                              className="w-20 h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none font-mono"
+                            />
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {showsCustomSettings && architectures.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[10.5px] uppercase font-[600] tracking-[.4px] text-nm-text-3 mr-0.5">Selected</span>
+                    {architectures.map(arch => {
+                      const isBuiltIn = arch in ARCHITECTURE_ACCENT_HEX
+                      const userProfile = isBuiltIn ? null : (settings.userCaptureProfiles ?? []).find(p => p.id === arch)
+                      const displayLabel = isBuiltIn ? architectureFullLabel(arch) : (userProfile?.name ?? arch)
+                      const style = isBuiltIn ? archChipStyle(arch) : { background: 'color-mix(in srgb, var(--nm-accent, var(--accent)) 14%, transparent)', color: 'var(--nm-accent, var(--accent))', borderColor: 'color-mix(in srgb, var(--nm-accent, var(--accent)) 35%, transparent)' }
+                      return (
+                        <span key={arch} className="inline-flex items-center gap-1 h-[22px] pl-2 pr-1 rounded-full text-[11px] font-[650] border" style={style}>
+                          <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+                          {displayLabel}
+                          <button
+                            onClick={() => { setArchitectures(architectures.filter(a => a !== arch)); setSelectedPresetId(CUSTOM_PRESET_ID) }}
+                            className="w-[15px] h-[15px] rounded-full inline-flex items-center justify-center hover:bg-black/15 ml-0.5"
+                            title={`Remove ${displayLabel}`}
+                          >
+                            <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                          </button>
+                        </span>
+                      )
+                    })}
+                  </div>
+                )}
+                {showsCustomSettings && epochNote && (
+                  <div className="text-[11px] text-amber-400">{epochNote}</div>
+                )}
+                {showsCustomSettings && (
+                  <div className="flex justify-end">
+                    <button onClick={handleSaveAsPreset} className="h-8 inline-flex items-center gap-1.5 px-3 rounded-lg text-[12px] font-semibold border border-nm-accent/35 bg-nm-accent/12 hover:bg-nm-accent/18 text-nm-text transition-colors">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" /></svg>
+                      Save as Preset
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Output routing card */}
+              <div className="rounded-2xl border border-nm-border-s bg-panel-2 p-4 space-y-4">
+                <div className="flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" /></svg>
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-nm-accent">Output Routing</span>
+                  <HelpPopover side="right">
+                    NAM Lab routes the final .nam and ESR graph to the configured destination. You can use a <strong>formula</strong> (from Settings &rarr; Training &rarr; Output Formula) for automatic token-based routing, or specify a fixed folder manually.
+                  </HelpPopover>
+                </div>
+
+                {activeFormula && manualRoutingMode === 'root' && (() => {
+                  const previewPath = formulaPreviewPath
+                  const hasSource = !!filesStagingDir
+                  return (
+                    <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 space-y-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <svg className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        <span className="text-[11px] font-semibold text-emerald-400">NAM output formula active</span>
+                        <code className="text-[10px] font-mono bg-emerald-900/30 px-1.5 py-0.5 rounded text-emerald-300">
+                          {activeFormula.split(/(\{[^}]+\})/).map((part, i) =>
+                            part.startsWith('{') ? <span key={i} className="text-emerald-200 font-bold">{part}</span> : <span key={i} className="text-emerald-500">{part}</span>
+                          )}
+                        </code>
+                      </div>
+                      {previewPath && hasSource && <div className="pl-5 text-[11px] text-emerald-400 font-mono break-all">&rarr; {effectiveFormulaModelRootPreview ?? previewPath}</div>}
+                      {!hasSource && <div className="pl-5 text-[11px] text-emerald-500 italic">Add WAVs to preview output path</div>}
+                      {!formulaOverrideActive && (
+                        <div className="pl-5 flex items-center gap-2">
+                          <span className="text-[11px] text-emerald-300/70">Override for this run:</span>
+                          <button onClick={() => setFormulaOverrideActive(true)} className="text-[11px] text-emerald-300 hover:text-white border border-emerald-500/40 hover:border-emerald-400/70 rounded px-2 py-0.5 transition-colors bg-emerald-900/30 hover:bg-emerald-900/50">Use fixed path&hellip;</button>
+                        </div>
+                      )}
+                      {formulaOverrideActive && (
+                        <div className="pl-5 flex items-center gap-2">
+                          <span className="text-[11px] text-amber-400 font-medium">Override active</span>
+                          <button onClick={() => { setFormulaOverrideActive(false); setTrainPath('') }} className="text-[10px] text-nm-text-3 hover:text-nm-text underline">Cancel</button>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
+
+                {activeGraphFormula && manualRoutingMode === 'root' && (() => {
+                  const previewPath = graphFormulaPreviewPath
+                  const hasSource = !!filesStagingDir
+                  return (
+                    <div className="rounded-lg border border-nm-accent/30 bg-nm-accent/10 px-3 py-2.5 space-y-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        <span className="text-[11px] font-semibold text-nm-accent">Graph formula active</span>
+                        <code className="text-[10px] font-mono bg-nm-accent/15 px-1.5 py-0.5 rounded text-nm-accent">
+                          {activeGraphFormula.split(/(\{[^}]+\})/).map((part, i) =>
+                            part.startsWith('{') ? <span key={i} className="text-accent-text font-bold">{part}</span> : <span key={i} className="text-nm-accent">{part}</span>
+                          )}
+                        </code>
+                      </div>
+                      {previewPath && hasSource && <div className="pl-5 text-[11px] text-nm-accent font-mono break-all">&rarr; {previewPath}</div>}
+                      {!hasSource && <div className="pl-5 text-[11px] text-nm-text-3 italic">Add WAVs to preview graph path</div>}
+                    </div>
+                  )
+                })()}
+
+                <div className={`grid grid-cols-[200px_1fr] gap-3 items-end ${activeFormula && !formulaOverrideActive ? 'opacity-40 pointer-events-none select-none' : ''}`}>
+                  <Field label="Routing Mode">
+                    <select
+                      value={manualRoutingMode}
+                      onChange={e => setManualRoutingMode(e.target.value as typeof manualRoutingMode)}
+                      disabled={!!(activeFormula && !formulaOverrideActive)}
+                      className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none"
+                    >
+                      <option value="root">Choose output root</option>
+                      <option value="sibling_processed">Use sibling _Processed</option>
+                    </select>
+                  </Field>
+                  {manualRoutingMode === 'root' ? (
+                    <Field label="NAM Output Root">
+                      <PathPicker value={trainPath} placeholder="Select a destination folder" onChange={setTrainPath} onBrowse={async () => { const p = await window.api.openFolder(trainPath || undefined); if (p) setTrainPath(p) }} />
+                    </Field>
+                  ) : (
+                    <div className="rounded-lg border border-nm-border-s bg-field px-3 py-2 text-[12px] text-nm-text-3">
+                      Outputs promoted to <code>_Processed/Models</code> and <code>_Processed/Graphs</code> relative to the source.
+                    </div>
+                  )}
+                </div>
+                <div className="text-[11px] text-nm-text-3">
+                  {previewUsesArchitectureSubfolders
+                    ? (previewModelUsesArchitectureSubfolders || previewGraphUsesArchitectureSubfolders
+                      ? `Multiple architectures selected. Outputs will split by architecture automatically where the routing path does not already include {architecture}.`
+                      : 'Multiple architectures selected. Your routing formula already includes {architecture}, so no extra architecture subfolder will be added.')
+                    : 'Single architecture selected. NAM models and graphs will be written directly to the chosen root.'}
+                </div>
+                <div className="text-[11px] text-nm-text-3">
+                  Example model: <code className="font-mono">{exampleFinalModelPath}</code>
+                  <span className="mx-2">&middot;</span>
+                  Example graph: <code className="font-mono">{exampleGraphPath}</code>
+                </div>
+              </div>
+
+              {/* \u2500\u2500 From Captures: analyze + review \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */}
+              {newRunMode === 'fromCaptures' && <>
+                {!retrainReview && (
+                  <button
+                    onClick={() => { void handleRetrainAnalyze() }}
+                    disabled={retrainBusy || !retrainSeedFolder.trim() || !retrainWavFolder.trim()}
+                    className="w-full py-3 rounded-xl text-[14px] font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-white bg-nm-accent hover:opacity-90"
+                  >
+                    {retrainBusy ? 'Analyzing\u2026' : 'Analyze Captures'}
+                  </button>
+                )}
+                {retrainError && (
+                  <div className="rounded-[11px] border border-red-500/30 bg-red-500/8 px-4 py-3 text-[12.5px] text-red-400">{retrainError}</div>
+                )}
+                {retrainReview && (
+                  <div className="rounded-2xl border border-nm-border-s bg-panel-2 p-4 space-y-4">
+                    <div className="flex items-center gap-1.5">
+                      <svg className="w-3.5 h-3.5 text-nm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-nm-accent">Match Summary</span>
+                      <button onClick={() => setRetrainReview(null)} className="ml-auto text-[11px] text-nm-text-3 hover:text-nm-text transition-colors">Re-analyze \u21ba</button>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {[
+                        { label: 'Seeds found', value: retrainReview.matched.length + retrainReview.skipped.length + retrainReview.duplicatesCollapsed, color: 'text-nm-text' },
+                        { label: 'WAVs matched', value: retrainReview.matched.length, color: 'text-emerald-400' },
+                        { label: 'Duplicates collapsed', value: retrainReview.duplicatesCollapsed, color: retrainReview.duplicatesCollapsed > 0 ? 'text-amber-400' : 'text-nm-text-3' },
+                        { label: 'Unmatched / ambiguous', value: retrainReview.skipped.length, color: retrainReview.skipped.length > 0 ? 'text-red-400' : 'text-nm-text-3' },
+                      ].map(({ label, value, color }) => (
+                        <div key={label} className="rounded-xl border border-nm-border-s bg-field px-3 py-2.5">
+                          <div className={`text-[20px] font-[700] tabular-nums leading-none mb-1 ${color}`}>{value}</div>
+                          <div className="text-[10.5px] text-nm-text-3 leading-tight">{label}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {retrainReview.skipped.length > 0 && (
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wider text-red-400 mb-2">
+                          {retrainReview.skipped.length} unmatched capture{retrainReview.skipped.length !== 1 ? 's' : ''} \u2014 no WAV found
+                        </div>
+                        <div className="rounded-xl border border-nm-border-s overflow-hidden max-h-48 overflow-y-auto">
+                          {retrainReview.skipped.map(({ seedName, reason }) => (
+                            <div key={seedName} className="flex items-center justify-between px-3 py-1.5 border-b border-nm-border-s last:border-0 hover:bg-hov">
+                              <span className="text-[11.5px] font-mono text-nm-text-2 truncate">{seedName}</span>
+                              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ml-3 shrink-0 ${reason === 'ambiguous' ? 'bg-amber-500/15 text-amber-400' : 'bg-red-500/15 text-red-400'}`}>
+                                {reason === 'ambiguous' ? 'ambiguous' : 'no match'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {retrainReview.matched.length === 0 ? (
+                      <div className="text-[12.5px] text-nm-text-3 text-center py-2">No WAVs matched \u2014 nothing to queue.</div>
+                    ) : (
+                      <div className="flex gap-3">
+                        <button
+                          onClick={() => { void handleRetrainQueue(true) }}
+                          className="flex-1 py-3 rounded-xl text-[14px] font-semibold transition-colors border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2"
+                        >
+                          Stage (save, don&apos;t run)
+                        </button>
+                        <button
+                          onClick={() => { void handleRetrainQueue(false) }}
+                          className="flex-1 py-3 rounded-xl text-[14px] font-semibold transition-colors text-white bg-nm-accent hover:opacity-90"
+                        >
+                          {(() => {
+                            const fcArchs = activePreset ? activePreset.architectures : retrainArchitectures
+                            const total = retrainReview.matched.length * Math.max(fcArchs.length, 1)
+                            return `Queue ${total} \u00b7 Start`
+                          })()}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>}
+
+              {/* \u2500\u2500 Manual: action section \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */}
+              {newRunMode === 'manual' && <>
+                {launchError && (
+                  <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-400">{launchError}</div>
+                )}
+                <label className="flex items-center gap-2.5 cursor-pointer select-none text-[13px] text-nm-text-2">
+                  <input
+                    type="checkbox"
+                    checked={separateBatches}
+                    onChange={e => setSeparateBatches(e.target.checked)}
+                    className="w-4 h-4 rounded accent-nm-accent"
+                  />
+                  Create all files as separate batches
+                </label>
+                {(() => {
+                  const blockers: string[] = []
+                  if (!settings.namPythonPath.trim()) blockers.push('Python path not set (Settings \u2192 Training)')
+                  if (!inputPath.trim()) blockers.push('No input DI WAV selected')
+                  if (batchWavList.length === 0) blockers.push('No output WAV files added')
+                  if (!activePreset && architectures.length === 0) blockers.push('No architecture selected')
+                  if (!activePreset && (!Number.isFinite(Number(epochs)) || Number(epochs) <= 0)) blockers.push('Invalid epoch count')
+                  if (!trainPath.trim() && !(activeFormula && !formulaOverrideActive)) blockers.push('No output folder or formula set')
+                  const queueTooltip = blockers.length > 0 ? `Cannot queue:\n- ${blockers.join('\n- ')}` : undefined
+                  const allReady = blockers.length === 0
+                  return (
+                    <div className="flex flex-col gap-3">
+                      {!allReady && (
+                        <div className="rounded-[11px] border border-amber-500/30 bg-amber-500/8 px-4 py-3">
+                          <div className="flex items-center gap-2 mb-2">
+                            <svg className="w-4 h-4 text-amber-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+                            <span className="text-[12.5px] font-[650] text-amber-400">Before you can queue</span>
+                          </div>
+                          <ul className="space-y-1">
+                            {blockers.map((b) => (
+                              <li key={b} className="flex items-start gap-2 text-[12px] text-amber-300/90">
+                                <span className="mt-[3px] w-1.5 h-1.5 rounded-full bg-amber-400/70 flex-shrink-0" />
+                                {b}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      <div className="flex gap-3">
+                        <button
+                          onClick={() => { void handleQueue(true) }}
+                          disabled={!canQueue || submittingBatch}
+                          title={queueTooltip}
+                          className="flex-1 py-3 rounded-xl text-[14px] font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2"
+                        >
+                          {submittingBatch ? 'Staging\u2026' : "Stage (save, don't run)"}
+                        </button>
+                        <button
+                          onClick={() => { void handleQueue(false) }}
+                          disabled={!canQueue || submittingBatch}
+                          title={queueTooltip}
+                          className="flex-1 py-3 rounded-xl text-[14px] font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-white bg-nm-accent hover:opacity-90"
+                        >
+                          {submittingBatch ? 'Queueing\u2026' : (() => {
+                            const jobArchCount = activePreset ? activePreset.architectures.length : architectures.length
+                            const total = batchWavList.length * Math.max(jobArchCount, 1)
+                            return total <= 1 ? 'Queue + Start' : `Queue ${total} \u00b7 Start`
+                          })()}
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })()}
+              </>}
+            </div>
+          )}
+
+        </div>
+      </div>
+    </div>
+
+    {/* â”€â”€ Context menus â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+    {queueContextMenu && (
+      <div
+        className="fixed z-50 min-w-[220px] rounded-xl border border-nm-border bg-panel shadow-xl overflow-hidden"
+        style={{ left: queueContextMenu.x, top: queueContextMenu.y }}
+        onMouseDown={e => e.stopPropagation()}
+      >
+        {queueContextMenu.job.sourceMode === 'watcher' && queueContextMenu.job.status === 'queued' && (
+          <>
+            <button onClick={() => { void handleWatcherQueueAction(queueContextMenu.job, 'remove') }} className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov">Remove from queue</button>
+            <button onClick={() => { void handleWatcherQueueAction(queueContextMenu.job, 'skip') }} className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov">Skip until manually retried</button>
+            <button onClick={() => { void handleWatcherQueueAction(queueContextMenu.job, 'move-canceled') }} className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov">Move to _Canceled and remove</button>
+            <button onClick={() => { void handleWatcherQueueAction(queueContextMenu.job, 'retry-now') }} className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov">Retry now</button>
+          </>
+        )}
+        <button
+          onClick={() => handleShowQueueItemInFolder(queueContextMenu.job)}
+          disabled={queueContextMenu.job.status !== 'success' || !queueContextMenu.job.outputModelPath}
+          className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Show in folder
+        </button>
+        <button
+          onClick={() => { void handleRetryQueueItem(queueContextMenu.job) }}
+          disabled={!['error', 'canceled'].includes(queueContextMenu.job.status)}
+          className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Retry
+        </button>
+      </div>
+    )}
+
+    {historyContextMenu && createPortal(
+      <>
+        <div className="fixed inset-0 z-40" onClick={() => setHistoryContextMenu(null)} onContextMenu={e => { e.preventDefault(); setHistoryContextMenu(null) }} />
+        <div
+          className="fixed z-50 min-w-[220px] rounded-xl border border-nm-border bg-panel shadow-xl overflow-hidden py-1"
+          style={{ left: historyContextMenu.x, top: historyContextMenu.y }}
+          onMouseDown={e => e.stopPropagation()}
+        >
+          {historyContextMenu.entry.graphPath && (
+            <button onClick={() => { void handleShowGraphModal(historyContextMenu.entry.graphPath); setHistoryContextMenu(null) }} className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov">View ESR plot</button>
+          )}
+          <button onClick={() => { void handleRetryHistoryEntry(historyContextMenu.entry); setHistoryContextMenu(null) }} className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov">Retry</button>
+          {historyContextMenu.entry.finalModelPath && (
+            <button onClick={() => { handleShowHistoryPath(historyContextMenu.entry.finalModelPath); setHistoryContextMenu(null) }} className="w-full text-left px-3 py-2 text-[13px] text-nm-text hover:bg-hov">Reveal in folder</button>
+          )}
+          <div className="h-px bg-nm-border-s my-1" />
+          <button
+            onClick={() => {
+              const entry = historyContextMenu.entry
+              setHistoryContextMenu(null)
+              setHistoryPurgeConfirm({ ids: [entry.historyId], label: entry.finalModelName || 'this capture', mode: 'capture' })
+            }}
+            className="w-full text-left px-3 py-2 text-[13px] text-red-400 hover:bg-red-500/10"
+          >
+            Purge from history&hellip;
+          </button>
+          {historyContextMenu.entry.submissionId && (() => {
+            const sid = historyContextMenu.entry.submissionId
+            const matches = trainerState.history.filter(e => e.submissionId === sid)
+            if (matches.length <= 1) return null
+            const label = historyContextMenu.entry.submissionLabel || `Batch (${matches.length} captures)`
+            return (
+              <button
+                onClick={() => {
+                  setHistoryContextMenu(null)
+                  setHistoryPurgeConfirm({ ids: matches.map(e => e.historyId), label, mode: 'batch' })
+                }}
+                className="w-full text-left px-3 py-2 text-[13px] text-red-400 hover:bg-red-500/10"
+              >
+                Purge entire batch from history&hellip; <span className="text-nm-text-3 text-[11px]">({matches.length} captures)</span>
+              </button>
+            )
+          })()}
+        </div>
+      </>,
+      document.body
+    )}
+
+    {historyPurgeConfirm && createPortal(
+      <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/70" onClick={() => setHistoryPurgeConfirm(null)}>
+        <div className="rounded-2xl border border-nm-border bg-panel shadow-2xl max-w-[440px] w-full mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+          <div className="px-5 py-4 border-b border-nm-border-s flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-[9px] flex items-center justify-center flex-shrink-0" style={{ background: 'color-mix(in srgb, #ef4444 16%, transparent)', color: '#f87171' }}>
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+            </div>
+            <div>
+              <div className="text-[14.5px] font-[660] text-nm-text">{historyPurgeConfirm.mode === 'batch' ? 'Purge batch from history?' : 'Purge from history?'}</div>
+              <div className="text-[12px] text-nm-text-3 mt-0.5">This can&apos;t be undone.</div>
+            </div>
+          </div>
+          <div className="px-5 py-4 text-[13px] text-nm-text-2 leading-[1.55]">
+            {historyPurgeConfirm.mode === 'batch' ? (
+              <>
+                Removing <span className="font-mono text-nm-text">{historyPurgeConfirm.label}</span> will delete <span className="font-semibold text-nm-text">{historyPurgeConfirm.ids.length} history entries</span> permanently.
+                <br /><br />
+                Only the history record is removed &mdash; the trained <span className="font-mono">.nam</span> files and ESR plots on disk are left alone.
+              </>
+            ) : (
+              <>
+                Removing <span className="font-mono text-nm-text">{historyPurgeConfirm.label}</span> will delete this history entry permanently.
+                <br /><br />
+                Only the history record is removed &mdash; the trained <span className="font-mono">.nam</span> file and ESR plot on disk are left alone.
+              </>
+            )}
+          </div>
+          <div className="px-5 py-3.5 bg-panel-2 border-t border-nm-border-s flex items-center justify-end gap-2">
+            <button onClick={() => setHistoryPurgeConfirm(null)} className="h-9 px-4 rounded-[9px] text-[12.5px] font-medium border border-nm-border-s bg-panel hover:bg-hov text-nm-text-2 transition-colors">Cancel</button>
+            <button
+              onClick={async () => {
+                const target = historyPurgeConfirm
+                setHistoryPurgeConfirm(null)
+                const result = await window.api.purgeTrainerHistoryEntries(target.ids)
+                if (!result.success) setQueueActionError(result.error ?? 'Could not purge history entries.')
+              }}
+              className="h-9 px-4 rounded-[9px] text-[12.5px] font-semibold bg-red-500 hover:bg-red-600 text-white transition-colors"
+            >
+              {historyPurgeConfirm.mode === 'batch' ? `Purge ${historyPurgeConfirm.ids.length} entries` : 'Purge entry'}
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body
+    )}
+
+    {clearQueueConfirm && createPortal(
+      <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/70" onClick={() => setClearQueueConfirm(null)}>
+        <div className="rounded-2xl border border-nm-border bg-panel shadow-2xl max-w-[440px] w-full mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+          <div className="px-5 py-4 border-b border-nm-border-s flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-[9px] flex items-center justify-center flex-shrink-0" style={{ background: 'color-mix(in srgb, #ef4444 16%, transparent)', color: '#f87171' }}>
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
+            </div>
+            <div>
+              <div className="text-[14.5px] font-[660] text-nm-text">Clear the queue?</div>
+              <div className="text-[12px] text-nm-text-3 mt-0.5">This can&apos;t be undone.</div>
+            </div>
+          </div>
+          <div className="px-5 py-4 text-[13px] text-nm-text-2 leading-[1.55]">
+            Removes <span className="font-semibold text-nm-text">{clearQueueConfirm.count}</span> row{clearQueueConfirm.count === 1 ? '' : 's'} from the queue (queued + done + failed + canceled).
+            <br /><br />
+            The currently <span className="font-semibold text-nm-text">running job is left alone</span> &mdash; use Emergency stop first if you want to kill that too. <span className="font-semibold text-nm-text">Staged drafts</span> in the Batches tab are also unaffected. History keeps the full record.
+          </div>
+          <div className="px-5 py-3.5 bg-panel-2 border-t border-nm-border-s flex items-center justify-end gap-2">
+            <button onClick={() => setClearQueueConfirm(null)} className="h-9 px-4 rounded-[9px] text-[12.5px] font-medium border border-nm-border-s bg-panel hover:bg-hov text-nm-text-2 transition-colors">Cancel</button>
+            <button
+              onClick={async () => {
+                setClearQueueConfirm(null)
+                const result = await window.api.clearTrainerQueue()
+                if (!result.success) setQueueActionError('Could not clear the queue.')
+              }}
+              className="h-9 px-4 rounded-[9px] text-[12.5px] font-semibold bg-red-500 hover:bg-red-600 text-white transition-colors"
+            >
+              Clear {clearQueueConfirm.count} row{clearQueueConfirm.count === 1 ? '' : 's'}
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body
+    )}
+
+    {clearWatcherConfirm && createPortal(
+      <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/70" onClick={() => setClearWatcherConfirm(null)}>
+        <div className="rounded-2xl border border-nm-border bg-panel shadow-2xl max-w-[460px] w-full mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+          <div className="px-5 py-4 border-b border-nm-border-s flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-[9px] flex items-center justify-center flex-shrink-0" style={{ background: 'color-mix(in srgb, #f59e0b 16%, transparent)', color: '#fbbf24' }}>
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+            </div>
+            <div>
+              <div className="text-[14.5px] font-[660] text-nm-text">Permanently delete watcher batches?</div>
+              <div className="text-[12px] text-nm-text-3 mt-0.5">This can&apos;t be undone.</div>
+            </div>
+          </div>
+          <div className="px-5 py-4 text-[13px] text-nm-text-2 leading-[1.55]">
+            Removes <span className="font-semibold text-nm-text">{clearWatcherConfirm.count}</span> watcher-sourced row{clearWatcherConfirm.count === 1 ? '' : 's'} from the queue and marks those files as <span className="font-semibold text-nm-text">already-seen</span>, so the watcher will <span className="font-semibold text-nm-text">not re-add them</span> on the next scan.
+            <br /><br />
+            The currently <span className="font-semibold text-nm-text">running job is left alone</span>. Drop a file back into the watch folder (or use Re-scan) if you ever want one trained again.
+          </div>
+          <div className="px-5 py-3.5 bg-panel-2 border-t border-nm-border-s flex items-center justify-end gap-2">
+            <button onClick={() => setClearWatcherConfirm(null)} className="h-9 px-4 rounded-[9px] text-[12.5px] font-medium border border-nm-border-s bg-panel hover:bg-hov text-nm-text-2 transition-colors">Cancel</button>
+            <button
+              onClick={async () => {
+                setClearWatcherConfirm(null)
+                const result = await window.api.clearWatcherTrainerJobs()
+                if (!result.success) setQueueActionError('Could not clear watcher jobs.')
+              }}
+              className="h-9 px-4 rounded-[9px] text-[12.5px] font-semibold bg-amber-500 hover:bg-amber-600 text-white transition-colors"
+            >
+              Delete {clearWatcherConfirm.count} watcher row{clearWatcherConfirm.count === 1 ? '' : 's'}
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body
+    )}
+
+    {/* Graph modal */}
+    {graphModalSrc && createPortal(
+      <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70" onClick={() => setGraphModalSrc(null)}>
+        <div className="relative" onClick={e => e.stopPropagation()}>
+          <img src={graphModalSrc} alt="Training graph" className="block max-w-[90vw] max-h-[88vh] object-contain rounded-xl" />
+          <button onClick={() => setGraphModalSrc(null)} className="absolute top-2 right-2 p-1.5 rounded-full bg-black/50 hover:bg-black/70 text-white transition-colors" title="Close">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+      </div>,
+      document.body
+    )}
+
+    {/* Save preset modal */}
+    {showSavePresetModal && (
+      <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 px-4">
+        <div className="w-full max-w-md rounded-2xl border border-nm-border bg-panel shadow-2xl">
+          <div className="px-5 py-4 border-b border-nm-border">
+            <div className="text-[14px] font-semibold text-nm-text">Save Preset</div>
+            <div className="mt-1 text-[12px] text-nm-text-3">Save the current training recipe so you can reuse it later.</div>
+          </div>
+          <div className="px-5 py-4 space-y-4">
+            <Field label="Preset Name">
+              <input
+                value={presetNameDraft}
+                onChange={e => { setPresetNameDraft(e.target.value); if (presetSaveError) setPresetSaveError('') }}
+                onKeyDown={e => { if (e.key === 'Enter') handleConfirmSavePreset() }}
+                autoFocus
+                className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none"
+              />
+            </Field>
+            {presetSaveError && <div className="text-[12px] text-red-400">{presetSaveError}</div>}
+          </div>
+          <div className="px-5 py-4 border-t border-nm-border flex justify-end gap-2">
+            <button onClick={() => { setShowSavePresetModal(false); setPresetSaveError('') }} className="px-4 py-2 rounded-lg text-[13px] font-medium bg-field border border-field-bd hover:bg-hov text-nm-text transition-colors">Cancel</button>
+            <button onClick={handleConfirmSavePreset} className="px-4 py-2 rounded-lg text-[13px] font-semibold bg-nm-accent hover:opacity-90 text-white transition-colors">Save preset</button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Watcher files modal */}
+    {watcherFilesModal && (
+      <WatcherFilesModal
+        profileId={watcherFilesModal.profileId}
+        profileName={watcherFilesModal.profileName}
+        watchFolder={watcherFilesModal.watchFolder}
+        architectures={watcherFilesModal.architectures}
+        onClose={() => setWatcherFilesModal(null)}
+      />
+    )}
+
+    {captureProfileEditorOpen && (
+      <CaptureProfileEditor
+        profile={captureProfileEditorTarget}
+        onSave={saved => {
+          const existing = settings.userCaptureProfiles ?? []
+          const updated = existing.some(p => p.id === saved.id)
+            ? existing.map(p => p.id === saved.id ? saved : p)
+            : [...existing, saved]
+          onSaveSettings({ ...settings, userCaptureProfiles: updated })
+          setCaptureProfileEditorOpen(false)
+          setCaptureProfileEditorTarget(null)
+        }}
+        onCancel={() => { setCaptureProfileEditorOpen(false); setCaptureProfileEditorTarget(null) }}
+      />
+    )}
+
+    {/* Edit batch settings modal */}
+    {editBatchModal && (
+      <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 px-4">
+        <div className="w-full max-w-sm rounded-2xl border border-nm-border bg-panel shadow-2xl">
+          <div className="px-5 py-4 border-b border-nm-border">
+            <div className="text-[14px] font-semibold text-nm-text">Edit queued captures</div>
+            <div className="mt-1 text-[12px] text-nm-text-3 break-all">{editBatchModal.label}</div>
+          </div>
+          <div className="px-5 py-4 space-y-4">
+            <div>
+              <label className="text-[11px] font-[600] text-nm-text-2 block mb-1.5">Batch name</label>
+              <input
+                type="text"
+                value={editBatchName}
+                onChange={e => setEditBatchName(e.target.value)}
+                className="w-full h-9 px-3 rounded-xl text-[13px] border border-nm-border-s bg-field text-nm-text focus:outline-none focus:border-nm-accent/60"
+              />
+            </div>
+            <div>
+              <label className="text-[11px] font-[600] text-nm-text-2 block mb-1.5">Epochs</label>
+              <input
+                type="number"
+                min={1}
+                step={100}
+                value={editBatchEpochs}
+                onChange={e => setEditBatchEpochs(e.target.value)}
+                className="w-full h-9 px-3 rounded-xl text-[13px] border border-nm-border-s bg-field text-nm-text focus:outline-none focus:border-nm-accent/60"
+              />
+            </div>
+            <div>
+              <label className="text-[11px] font-[600] text-nm-text-2 block mb-1.5">Early stop ESR <span className="font-normal text-nm-text-3">(blank = disabled)</span></label>
+              <input
+                type="number"
+                min={0}
+                step={0.001}
+                value={editBatchThresholdEsr}
+                onChange={e => setEditBatchThresholdEsr(e.target.value)}
+                placeholder="e.g. 0.01"
+                className="w-full h-9 px-3 rounded-xl text-[13px] border border-nm-border-s bg-field text-nm-text focus:outline-none focus:border-nm-accent/60"
+              />
+            </div>
+            <div>
+              <label className="text-[11px] font-[600] text-nm-text-2 block mb-1.5">Input DI <span className="font-normal text-nm-text-3">(trainer reference file)</span></label>
+              <PathPicker
+                value={editBatchInputPath}
+                placeholder="Select DI WAV"
+                onChange={setEditBatchInputPath}
+                onBrowse={async () => {
+                  const path = await window.api.openAudioFile()
+                  if (path) setEditBatchInputPath(path)
+                }}
+              />
+            </div>
+            <details className="group">
+              <summary className="text-[11px] font-[600] text-nm-text-3 cursor-pointer select-none list-none flex items-center gap-1">
+                <svg className="w-3 h-3 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>
+                Advanced (LR / LR decay)
+              </summary>
+              <div className="mt-3 space-y-3">
+                <div>
+                  <label className="text-[11px] font-[600] text-nm-text-2 block mb-1.5">Learning rate</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.0001}
+                    value={editBatchLr}
+                    onChange={e => setEditBatchLr(e.target.value)}
+                    className="w-full h-9 px-3 rounded-xl text-[13px] border border-nm-border-s bg-field text-nm-text focus:outline-none focus:border-nm-accent/60"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-[600] text-nm-text-2 block mb-1.5">LR decay</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.0001}
+                    value={editBatchLrDecay}
+                    onChange={e => setEditBatchLrDecay(e.target.value)}
+                    className="w-full h-9 px-3 rounded-xl text-[13px] border border-nm-border-s bg-field text-nm-text focus:outline-none focus:border-nm-accent/60"
+                  />
+                </div>
+              </div>
+            </details>
+          </div>
+          <div className="px-5 pb-4 flex justify-end gap-2">
+            <button
+              onClick={() => setEditBatchModal(null)}
+              className="h-9 px-4 rounded-xl text-[13px] border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2 transition-colors"
+            >Cancel</button>
+            <button
+              onClick={async () => {
+                if (!editBatchModal) return
+                const epochs = parseInt(editBatchEpochs, 10)
+                const thresholdEsr = editBatchThresholdEsr.trim() === '' ? null : parseFloat(editBatchThresholdEsr)
+                const lr = parseFloat(editBatchLr)
+                const lrDecay = parseFloat(editBatchLrDecay)
+                if (!Number.isFinite(epochs) || epochs < 1) return
+                // Only include a settings field in changes if its value actually differs from the
+                // original — this prevents editedAt being set (and the "edited" pill appearing)
+                // when the user only renames the batch and touches nothing else.
+                const changes: { epochs?: number; thresholdEsr?: number | null; lr?: number; lrDecay?: number; submissionLabel?: string; inputPath?: string } = {}
+                if (epochs !== editBatchModal.epochs) changes.epochs = epochs
+                if (thresholdEsr !== editBatchModal.thresholdEsr &&
+                    (editBatchThresholdEsr.trim() === '' || (thresholdEsr != null && Number.isFinite(thresholdEsr)))) {
+                  changes.thresholdEsr = thresholdEsr
+                }
+                if (Number.isFinite(lr) && lr !== editBatchModal.lr) changes.lr = lr
+                if (Number.isFinite(lrDecay) && lrDecay !== editBatchModal.lrDecay) changes.lrDecay = lrDecay
+                const trimmedInputPath = editBatchInputPath.trim()
+                if (trimmedInputPath && trimmedInputPath !== editBatchModal.inputPath) changes.inputPath = trimmedInputPath
+                const trimmedName = editBatchName.trim()
+                if (trimmedName && trimmedName !== editBatchModal.label) changes.submissionLabel = trimmedName
+                await window.api.editSubmission(editBatchModal.submissionId, changes)
+                setEditBatchModal(null)
+              }}
+              className="h-9 px-4 rounded-xl text-[13px] bg-nm-accent hover:bg-nm-accent/90 text-white font-medium transition-colors"
+            >{trainerState.queue.some(j => j.submissionId === editBatchModal?.submissionId && j.status === 'staged') ? 'Apply to parked' : 'Apply to queued'}</button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Cancel batch confirmation */}
+    {cancelBatchConfirm && (
+      <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 px-4">
+        <div className="w-full max-w-sm rounded-2xl border border-nm-border bg-panel shadow-2xl">
+          <div className="px-5 py-4 border-b border-nm-border">
+            <div className="text-[14px] font-semibold text-nm-text">Cancel batch?</div>
+            <div className="mt-1 text-[12px] text-nm-text-3 break-all">{cancelBatchConfirm.label}</div>
+          </div>
+          <div className="px-5 py-4 text-[13px] text-nm-text-2">
+            All queued jobs in this batch will be canceled. Any currently running job in this batch will also be stopped. Completed jobs are unaffected.
+          </div>
+          <div className="px-5 pb-4 flex justify-end gap-2">
+            <button
+              onClick={() => setCancelBatchConfirm(null)}
+              className="h-9 px-4 rounded-xl text-[13px] border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2 transition-colors"
+            >Keep</button>
+            <button
+              onClick={() => { void handleCancelBatch(cancelBatchConfirm.submissionId) }}
+              className="h-9 px-4 rounded-xl text-[13px] bg-red-500 hover:bg-red-600 text-white font-medium transition-colors"
+            >Cancel batch</button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Dismiss batch confirmation */}
+    {dismissBatchConfirm && (
+      <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 px-4">
+        <div className="w-full max-w-sm rounded-2xl border border-nm-border bg-panel shadow-2xl">
+          <div className="px-5 py-4 border-b border-nm-border">
+            <div className="text-[14px] font-semibold text-nm-text">Send batch to history?</div>
+            <div className="mt-1 text-[12px] text-nm-text-3 break-all">{dismissBatchConfirm.label}</div>
+          </div>
+          <div className="px-5 py-4 text-[13px] text-nm-text-2">
+            {dismissBatchConfirm.failCount} failed job{dismissBatchConfirm.failCount !== 1 ? 's' : ''}
+            {dismissBatchConfirm.doneCount > 0 && ` and ${dismissBatchConfirm.doneCount} completed job${dismissBatchConfirm.doneCount !== 1 ? 's' : ''}`}
+            {' '}will be removed from the queue. They are already saved in history. Failed jobs will not be retried.
+          </div>
+          <div className="px-5 pb-4 flex justify-end gap-2">
+            <button
+              onClick={() => setDismissBatchConfirm(null)}
+              className="h-9 px-4 rounded-xl text-[13px] border border-nm-border-s bg-panel-2 hover:bg-hov text-nm-text-2 transition-colors"
+            >Keep</button>
+            <button
+              onClick={() => {
+                void window.api.dismissTrainerBatch(dismissBatchConfirm.submissionId)
+                setDismissBatchConfirm(null)
+              }}
+              className="h-9 px-4 rounded-xl text-[13px] bg-slate-600 hover:bg-slate-500 text-white font-medium transition-colors"
+            >Send to history</button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
+  )
+}
+
+function Field({ label, hint, labelTitle, help, children }: { label: string; hint?: string; labelTitle?: string; help?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="flex items-center gap-1 mb-1.5">
+        <label title={labelTitle} className={`text-[11px] font-[600] text-nm-text-2 ${labelTitle ? 'cursor-help' : ''}`}>
+          {label}
+          {labelTitle && (
+            <span className="ml-1 inline-flex align-middle text-nm-text-3" aria-hidden="true">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                <circle cx="12" cy="12" r="8.25" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 10.25v5" />
+                <circle cx="12" cy="7.75" r="0.75" fill="currentColor" stroke="none" />
+              </svg>
+            </span>
+          )}
+          {hint && <span className="ml-2 text-nm-text-3 font-normal">{hint}</span>}
+        </label>
+        {help && <HelpPopover>{help}</HelpPopover>}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function ArchitectureMultiSelect({ values, onChange, userProfiles = [], onCreateProfile, onEditProfile }: { values: string[]; onChange: (next: string[]) => void; userProfiles?: import('../types/settings').UserCaptureProfile[]; onCreateProfile?: () => void; onEditProfile?: (profile: import('../types/settings').UserCaptureProfile) => void }) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    return () => document.removeEventListener('mousedown', onPointerDown)
+  }, [open])
+
+  const allOptions = [
+    ...ARCHITECTURE_DISPLAY_ORDER.map((id) => ({ id, name: architectureFullLabel(id) })),
+    ...userProfiles.map((p) => ({ id: p.id, name: p.name })),
+  ]
+  const label =
+    values.length === 0
+      ? 'Choose profiles'
+      : values.length === 1
+        ? (allOptions.find((o) => o.id === values[0])?.name ?? values[0])
+        : `${values.length} selected`
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text focus:outline-none focus:border-nm-accent flex items-center justify-between gap-3"
+      >
+        <span className="truncate">{label}</span>
+        <svg className={`w-3.5 h-3.5 flex-shrink-0 text-nm-text-3 transition-transform duration-150 ${open ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute z-30 mt-2 w-full rounded-xl border border-nm-border bg-panel shadow-xl overflow-hidden">
+          <div className="max-h-64 overflow-y-auto p-2 space-y-1">
+            {ARCHITECTURE_DISPLAY_ORDER.length > 0 && (
+              <div className="px-2.5 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-nm-text-3">Built-in</div>
+            )}
+            {ARCHITECTURE_DISPLAY_ORDER.map((option) => {
+              const checked = values.includes(option)
+              return (
+                <label key={option} className={`flex items-center gap-2 rounded-lg px-2.5 py-2 cursor-pointer text-[13px] ${checked ? 'bg-nm-accent/10 text-nm-accent' : 'text-nm-text-2 hover:bg-hov'}`}>
+                  <input type="checkbox" checked={checked} onChange={(e) => { if (e.target.checked) onChange([...values, option]); else onChange(values.filter((item) => item !== option)) }} className="accent-nm-accent" />
+                  <span>{architectureFullLabel(option)}</span>
+                </label>
+              )
+            })}
+            {userProfiles.length > 0 && (
+              <div className="px-2.5 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-nm-text-3 border-t border-nm-border-s mt-1">Custom</div>
+            )}
+            {userProfiles.map((profile) => {
+              const checked = values.includes(profile.id)
+              return (
+                <div key={profile.id} className={`flex items-center gap-1 rounded-lg px-2.5 py-1.5 ${checked ? 'bg-nm-accent/10' : 'hover:bg-hov'}`}>
+                  <label className="flex items-center gap-2 flex-1 cursor-pointer text-[13px]">
+                    <input type="checkbox" checked={checked} onChange={(e) => { if (e.target.checked) onChange([...values, profile.id]); else onChange(values.filter((item) => item !== profile.id)) }} className="accent-nm-accent" />
+                    <span className={checked ? 'text-nm-accent' : 'text-nm-text-2'}>{profile.name}</span>
+                  </label>
+                  {onEditProfile && (
+                    <button onClick={() => { onEditProfile(profile); setOpen(false) }} className="text-[10px] text-nm-text-3 hover:text-nm-text px-1">Edit</button>
+                  )}
+                </div>
+              )
+            })}
+            {onCreateProfile && (
+              <button onClick={() => { onCreateProfile(); setOpen(false) }} className="w-full text-left px-2.5 py-1.5 text-[11px] text-nm-accent hover:bg-hov border-t border-nm-border-s mt-1">
+                + New capture profile&hellip;
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PathPicker({
+  value,
+  placeholder,
+  onChange,
+  onBrowse,
+}: {
+  value: string
+  placeholder: string
+  onChange: (value: string) => void
+  onBrowse: () => void | Promise<void>
+}) {
+  return (
+    <div className="flex gap-2">
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="flex-1 h-10 px-3 bg-field border border-field-bd rounded-lg text-[13px] text-nm-text placeholder:text-nm-text-3 focus:outline-none focus:border-nm-accent font-mono"
+      />
+      <button
+        onClick={() => { void onBrowse() }}
+        title="Browse for folder"
+        className="h-10 w-10 flex items-center justify-center rounded-lg transition-colors bg-field border border-field-bd hover:bg-hov text-nm-text-2 flex-shrink-0"
+      >
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
+        </svg>
+      </button>
+    </div>
+  )
+}
+
+function ToggleRow({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
+  return (
+    <label className="flex items-center gap-2 rounded-lg border border-nm-border-s bg-field px-3 py-2 cursor-pointer">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="accent-nm-accent"
+      />
+      <span className="text-[12.5px] text-nm-text-2">{label}</span>
+    </label>
+  )
+}

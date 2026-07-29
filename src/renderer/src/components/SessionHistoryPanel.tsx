@@ -12,6 +12,7 @@ const OPERATION_LABELS: Record<string, string> = {
   'batch-edit': 'Batch Edit',
   'rename': 'Rename',
   'batch-rename': 'Batch Rename',
+  'watch-copy': 'Watch Copy',
 }
 
 function formatTime(date: Date): string {
@@ -33,6 +34,7 @@ function OperationBadge({ operation }: { operation: string }) {
     'batch-edit': 'bg-indigo-900/60 text-indigo-300',
     'rename': 'bg-amber-900/60 text-amber-300',
     'batch-rename': 'bg-amber-900/60 text-amber-300',
+    'watch-copy': 'bg-sky-900/60 text-sky-300',
   }
   const color = colors[operation] ?? 'bg-gray-800 text-gray-400'
   const label = OPERATION_LABELS[operation] ?? operation

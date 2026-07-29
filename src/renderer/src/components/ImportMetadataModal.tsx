@@ -36,7 +36,7 @@ export function ImportMetadataModal({
 
         {/* Warning */}
         <div className="mx-5 mt-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-300 dark:border-amber-700 rounded-lg flex-shrink-0">
-          <p className="text-xs font-semibold text-amber-800 dark:text-amber-400 mb-1">⚠ This action cannot be undone</p>
+          <p className="text-xs font-semibold text-amber-800 dark:text-amber-400 mb-1">&#x26a0; This action cannot be undone</p>
           <p className="text-xs text-amber-700 dark:text-amber-500">
             Non-empty cells will overwrite the matching capture's metadata on disk.
             Empty cells are skipped. Read-only fields (NAM-BOT Preset, ESR, etc.) are always ignored.
@@ -84,8 +84,8 @@ export function ImportMetadataModal({
             </label>
             <p className="text-xs text-indigo-600 dark:text-indigo-400 mt-1.5 ml-5">
               When a row's last word is a configured suffix (e.g. "DI"), strips it and matches any capture whose name starts with the remainder.
-              Cabinet, Cab Config, and Mic(s) are skipped. Gear Type is auto-upgraded: amp→amp_cab and pedal_amp→amp_pedal_cab; all other gear types are skipped. Tone Type is applied normally.
-              Configure suffix words in Settings → Library → Import Prefix Suffixes.
+              Cabinet, Cab Config, and Mic(s) are skipped. Gear Type is auto-upgraded: amp&rarr;amp_cab and pedal_amp&rarr;amp_pedal_cab; all other gear types are skipped. Tone Type is applied normally.
+              Configure suffix words in Settings &rarr; Library &rarr; Import Prefix Suffixes.
             </p>
           </div>
         )}

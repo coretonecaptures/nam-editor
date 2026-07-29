@@ -30,6 +30,22 @@ This happens on newer macOS (Ventura/Sonoma) that quarantine downloads more aggr
 
 ---
 
+## macOS — Keychain access prompt ("NAM Lab wants to use your confidential information")
+
+If you have connected a Tone3000 account or stored an AI provider key, macOS may show a Keychain access dialog each time the app launches:
+
+> *"NAM Lab wants to use your confidential information stored in 'NAM Lab' in your keychain."*
+
+**This is expected and is a sign the app is working correctly.** NAM Lab stores your credentials using macOS Secure Storage (the system Keychain) rather than a plain text file, so they are protected at rest and never travel to any server. The dialog is macOS asking you to confirm that NAM Lab is allowed to read its own encrypted data.
+
+**To stop being prompted every launch:**
+1. Click **Always Allow** when the dialog appears — macOS will remember your choice for this app.
+2. If you missed that and clicked Allow instead, open **Keychain Access** (search Spotlight), find the **NAM Lab** entry, right-click → **Get Info** → **Access Control** tab → check **"Allow all applications to access this item"**, then save.
+
+> We are working towards code-signing and notarizing NAM Lab with an Apple Developer certificate. Once signed, macOS will permanently trust the app and will not show this prompt again. Until then, clicking **Always Allow** is the one-time fix.
+
+---
+
 ## Windows — "Windows protected your PC" (SmartScreen)
 
 1. When the SmartScreen dialog appears, click **More info**

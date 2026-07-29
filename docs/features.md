@@ -1,399 +1,757 @@
-# NAM Lab — Full Feature Reference
+# NAM Lab Full Feature Reference
 
-This document covers everything NAM Lab can do. For installation, see [install.md](install.md). For architecture and contributing, see [CLAUDE.md](../CLAUDE.md).
-
----
-
-## Library View (Folder Mode)
-
-- Open a folder and get a three-panel layout: **Folder Tree | File List | Metadata Editor**
-- Folder tree shows all subfolders with file counts; click any folder to filter the file list to that folder
-- Each folder shows a **blue total count** and an **amber dirty count** (unsaved edits)
-- All three panels are **resizable** — drag the dividers to any width
-- **Collapse panels** — hover any divider and click the chevron button to collapse the Library tree or File List panel entirely
-- **Refresh** button rescans the folder for new or removed files (warns about unsaved changes)
-- **Recent folders** — click the dropdown arrow (▾) next to Open Folder to quickly reopen any of your last 10 folders
-- Remembers the last opened folder and reopens it automatically on next launch
-- Panel widths and window size are remembered between sessions
-- **Expand all / Collapse all** — two chevron buttons in the Library header instantly expand or collapse the entire folder tree
-- **Watch folder** — when enabled in Settings → Startup, monitors the open folder for newly added `.nam` files and shows a banner prompting you to refresh. Not supported on Linux
+This document is the clean feature overview for NAM Lab. For first-launch and install notes, see **First Launch / Install** in the left menu.
 
 ---
 
-## Tone3000 Integration
+## Core Library Workflow
 
-- **Find New Tones** opens a built-in Tone3000 browser in the right panel
-- Sign in with your Tone3000 account through OAuth; NAM Lab remembers your local session tokens until you disconnect
-- **All tones** mode searches the public Tone3000 catalog with text query, gear filter, and sort order
-- **My files** mode uses Tone3000’s created-tones endpoint for the currently authenticated user
-- Click any result to open a detail view with description, tags, links, favorites, file variants, and batch download
-- Downloaded models are copied into a folder you choose and then can be loaded into NAM Lab immediately
-- Clicking a Tone3000 creator filters your local NAM Lab library by `modeled_by` without leaving the Tone3000 panel
-- The **Tone3000 username** field helps narrow results by creator username, but this may be incomplete because Tone3000 does not currently expose a direct tones-by-user endpoint
-- **Settings → Library → Tone3000 Username** stores an optional username that helps NAM Lab map Tone3000 creators to your local naming conventions
-- Right-click any local capture in the list or grid and choose **Find Similar Captures on Tone3000** to search Tone3000 using `Manufacturer + Model`
+- Open a folder of `.nam` files and work in a three-panel layout:
+  - **Folder Tree**
+  - **File List / Grid**
+  - **Metadata Editor**
+- Panels are resizable and collapsible.
+- Recent folders are remembered.
+- The app can reopen the last library on launch.
+- Folder-level dashboards and Pack Info tools appear when a folder is selected and no capture is actively open.
 
 ---
 
-## Library Overview Dashboard
+## Library Overview
 
-Click the **≡** (dashboard) button in the toolbar (or enable **Show Library Overview on launch** in Settings → Startup) to open the Library Overview in the right panel.
+The main **Overview** dashboard summarizes the whole open library with clickable filters and drilldowns.
 
-- **Gear type breakdown** — count and percentage bar for each gear type; click a bar to filter the file list
-- **Tone type breakdown** — same for tone type
-- **Creator breakdown** — capture count per Modeled By value; click to filter
-- **Completeness** — Complete vs Incomplete counts; click either to filter
-- **Rating distribution** — bar chart of ★ to ★★★★★ ratings plus Unrated; click a row to filter to that exact rating
-- **Recently Updated** — top 10 files by last-modified date; click to navigate to the file's folder and select it
-- **Recently Added** — top 10 files by file creation date; click to navigate
-- Clicking any dashboard stat clears all other active filters before applying the new one
-- Selecting any capture automatically closes the dashboard and shows its editor
+Highlights:
+- gear type breakdown
+- tone type breakdown
+- creator breakdown
+- completeness / missing metadata summary
+- rating distribution
+- recent additions / updates
+- active checklist rollups
 
----
-
-## Folder Overview Dashboard
-
-Click a folder in the tree (no captures selected) → **Overview** tab in the right panel.
-
-- Gear type, tone type, detected preset, ESR distribution, completeness, and rating bars — all scoped to the selected folder
-- Click any bar to filter the file list to that value
-- Active filter bars are highlighted; click again to clear
+Clicking dashboard stats filters the file list so you can move from summary to cleanup quickly.
 
 ---
 
-## Library Search & Filter
+## Folder Overview
 
-- **Text search** in the Library header — searches folder names
-- Folders with zero matches disappear from the tree; folder counts show match count in sky blue
-- A sky blue **FILTERED** banner with match count appears when any filter is active
+Each folder can show a scoped dashboard with:
 
----
+- gear and tone breakdowns for that folder
+- detected preset and ESR summaries
+- checklist progress
+- pack readiness
+- duplicate counts
+- folder size and average capture size
+- recent updates
+- folder watch status
+- Delivery Target matrix summary when present
 
-## List View & Grid View
-
-Toggle between **List** and **Grid** views using the icons to the right of the search bar.
-
-**List view:**
-- Compact single-row per file with name, subtitle, gear/tone chips, missing-field badge, and capture date
-- **Sort dropdown** in the header bar: Date newest/oldest, Name A→Z/Z→A, Manufacturer A→Z, Modeled By A→Z — persists across sessions
-- **Manufacturer filter** dropdown — filters by gear_make; populates from values in loaded files
-- **Gear Type**, **Tone Type**, and **Detected Preset** dropdown filters
-- **Name contains…** box — filters by capture name only
-
-**Grid view:**
-- Spreadsheet-style table with configurable columns
-- Click any column header to **sort** ascending/descending; sort persists across sessions
-- **Drag column header edges** to resize; **double-click the resize handle** to auto-size the column to fit the widest value
-- **Drag column headers** (except Name) to reorder; order persists across sessions
-- **Per-column filter popup** — click the funnel icon on any column header for a text-contains filter or an exact-match checkbox list of all values in that column. Multiple columns compose with AND logic. Active filters are indicated with a filled indigo funnel icon. A "Column filters active — Clear all" banner shows at the top when any column filter is set
-- **Column chooser** — click the columns icon (⊞) at the far right of the header to show/hide columns; choices persist across launches; **Show all** and **Reset to default** buttons
-- Available columns: Capture Name · Date · Modeled By · Manufacturer · Model · Gear Type · Tone Type · Reamp Send (dBu) · Reamp Return (dBu) · ESR · Loudness · Gain · Architecture · NAM Version · Model Channels · Checks Passed · Latency (samples) · Trained Epochs · NAM-BOT Preset · Detected Preset · Rating · plus all 9 Capture Details fields
-- **ESR column** colour-coded: green < 0.01 · amber 0.01–0.05 · red > 0.05
-- **Maximize grid** — click the expand icon to collapse both the folder tree and editor panels. In maximize mode, select files and click **Edit** to slide in the metadata editor panel. Close with × or by clearing the selection
-
-**Both views:**
-- **All / Edited / Incomplete / Unnamed / No Type / No Maker / No Tone / Rated** filter chips
-- **Ctrl+A / Cmd+A** selects all visible files
-- **↑/↓ arrow keys** navigate; **Shift+↑/↓** extends the selection
-- Filtered count (sky blue "X of Y files") shown when any filter is active
+Empty folders still show the dashboard so watch status and pack tooling do not disappear.
 
 ---
 
-## Export
+## File List and Grid
 
-- **Export button** (download icon, next to list/grid toggles)
-- Choose **CSV** or **Excel (.xlsx)** format
-- Choose **Visible columns** (respects your column chooser selection and column order) or **All columns**
-- Export respects active search and filters — only visible rows are exported
+NAM Lab supports both:
+
+- **List view** for compact browsing
+- **Grid view** for sortable spreadsheet work
+
+List view includes:
+- name and subtitle
+- creator chip
+- gear / tone chips
+- completeness / dirty indicators
+- date
+- detected preset chip
+- trained epoch count
+
+Grid view includes:
+- configurable visible columns
+- column filters
+- sorting
+- drag-to-reorder
+- double-click auto-size
 
 ---
 
 ## Metadata Editing
 
-- **Capture Name** — display name shown in plugins; **double-click** the name in the editor header to edit inline (Enter/blur commits, Escape cancels)
-- **Modeled By**, **Gear Type**, **Tone Type**, **Manufacturer**, **Model** — Manufacturer and Model include **autocomplete suggestions** from a built-in brand list plus values already in your loaded library
-- **Reamp Send Level (dBu)** and **Reamp Return Level (dBu)**
-- **Trained Epochs** — backfillable; written to `metadata.training.nam_bot.trained_epochs`
-- **Rename** button — renames the `.nam` file on disk using a configurable template (default: `{name}`). Shows a from/to preview before committing
-- **Revert** button — discards unsaved changes and restores saved values
-- **↺ Defaults** button — re-applies your Settings rules to the current file's empty fields
-- **File path** in the header is clickable — opens the file's folder in Finder/Explorer
-- Ctrl+S / Cmd+S to save; Ctrl+Enter / Cmd+Enter to save and advance to the next file
+NAM Lab edits metadata inside the `.nam` file without touching model weights.
+
+Supported workflows:
+- single-file editing
+- multi-select editing
+- batch editor
+- copy / paste metadata
+- bulk rename
+- batch comments
+- ratings
+
+Custom NAM Lab fields are stored under `metadata.nam_lab`.
+
+### Apply, Save, and Save All
+
+NAM Lab now treats visible metadata changes more consistently, including values that were auto-filled or suggested in-session.
+
+- **Apply** in the multi-select editor writes the edits you made there and also commits any visible pending auto-filled values for those selected files
+- **Save** writes the current file
+- **Save All** writes all dirty files currently loaded in the library
+
+Important distinction:
+- `Clear suggestions` removes app-added in-session suggestions before they are written
+- once you Apply or Save, those values are persisted like normal metadata
+
+This matters most after auto-fill-on-load, folder suggestions, or other preview-first tools where the values may be visible before they are written to disk.
+
+Locked-field behavior:
+- Some trainer-derived fields such as latency, loudness, and gain factor are shown locked by default.
+- Warning: unlocking them is meant for manual correction only.
+- Warning: when you lock one of those fields again, NAM Lab immediately saves the file so the correction persists without a separate Save click. Relocking does not behave like a normal unsaved edit state.
+- Unlocking lets you make a manual correction.
+- Relocking that field is treated as "done editing" for that value. In practice, once you lock it again, NAM Lab treats the field as settled rather than continuing to highlight it like a normal dirty editable field.
+- This is mainly meant for one-off corrections to trainer-derived values, not ongoing freeform editing.
+- A2 requirement: if a field such as loudness, gain, or latency appears both as a main metadata value and as repeated Full/Lite sub-model values, NAM Lab treats the main field as canonical.
+- A2 requirement: normal metadata editing writes the canonical main field only; NAM Lab does not expose separate editable Full/Lite copies for those trainer-derived fields.
+- A2 requirement: if NAM Lab later surfaces duplicated sub-model copies for inspection, they should be shown as advanced read-only detail rather than as parallel editable fields.
+- A2 requirement: when NAM Lab writes its own trained A2 files, it preserves official-style per-submodel `loudness` and `gain` metadata so the output stays additive rather than subtractive relative to official/Tone3000-style files.
+- A2 requirement: NAM Lab-specific metadata should remain additive under `metadata.nam_lab`, not replace or remove official-compatible fields.
 
 ---
 
-## Capture Stats (Read-Only)
+## Capture Defaults
 
-- Architecture, NAM Version, Integrated Loudness, Gain Factor
-- **Validation ESR** — colour-coded green/amber/red
-- **Model Size** — channels in layer 1 of the WaveNet config
-- **Detected Preset** — fingerprinted from config: Standard, Complex, Lite, Feather, Nano, REVySTD, REVyHI, REVxSTD
-- **Checks Passed** — whether the NAM trainer's quality checks passed; flags bypassed captures
-- **Calibrated Latency** — measured latency in samples
-- **NAM-BOT Preset** — training preset written by NAM-BOT (if present)
-- Captured On date
+Capture defaults supply baseline values for training and manual re-apply.
 
----
+Settings:
+- **Default Modeled By** — your creator / studio name
+- **Default Input Level (dBu)**
+- **Default Output Level (dBu)**
 
-## Completeness Indicator
+Each field has two separate uses, controlled independently:
 
-Each file shows a colored dot:
-- **No dot** — all 7 core fields filled (name, modeled_by, gear_make, gear_model, gear_type, tone_type, input_level_dbu)
-- **Amber dot** — 1 field missing
-- **Red dot** — 2+ fields missing
+| Use | When it applies |
+|-----|-----------------|
+| Training / re-apply | Always used when you queue a training job or hit re-apply defaults |
+| Auto-fill on load | Only if the "Auto-fill blank captures on load" checkbox is checked for that field |
 
----
+The **Auto-fill on load** checkboxes are off by default. This matters if you open other creators' captures — loading them will not overwrite their existing metadata or silently inject your defaults into blank fields.
 
-## Capture Rating
+When auto-fill is enabled for a field, NAM Lab only fills that field if it is completely blank in the loaded file; it never overwrites an existing value.
 
-Rate captures 1–5 stars using the **Rating** field in the Metadata Editor (under Capture Details).
-
-- Stored as `metadata.nam_lab.rating` (integer 1–5; 0 or absent = unrated)
-- Shown as ★ stars in the list view and as a **Rating** column in grid view
-- **Rated** filter chip in the toolbar shows only captures that have any rating set
-- **Rating filter chip** (amber) appears when a specific rating is active; click × to clear
-- Rating distribution bars in the Library Overview and Folder Overview dashboards are clickable to filter by exact rating or Unrated
+Use **Clear suggestions** (per-file) or **Clear Suggestions** (toolbar) to remove auto-filled values without writing to disk.
 
 ---
 
-## Change Tracking & Highlighting
+## NAM-BOT Support
 
-- **Indigo border + "auto-filled"** — field was set by a settings rule at load time
-- **Amber border** — field was manually edited by you
-- Auto-fill highlights clear after saving
-- **Amber dot** in the file list and folder tree counts unsaved edits
+NAM Lab understands both current and legacy NAM-BOT metadata locations.
 
----
+It can:
+- read trained epochs
+- read stored preset name
+- detect the effective preset from the actual NAM config
+- show detected preset / epochs in the UI
+- clean outdated legacy NAM-BOT metadata into the newer layout
 
-## Keyboard Shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| Ctrl+S / Cmd+S | Save current file |
-| Ctrl+Enter / Cmd+Enter | Save current file and advance to the next file |
-| Ctrl+A / Cmd+A | Select all visible files |
-| ↑ / ↓ | Navigate selection in file list |
-| Shift+↑ / Shift+↓ | Extend selection |
-| Escape | Close modal or lightbox |
-| Double-click capture name | Edit capture name inline |
+This includes compatibility for:
+- old `metadata.training.nam_bot`
+- newer `metadata.nam_bot`
 
 ---
 
-## Smart Defaults (Settings)
+## Pack Info
 
-Settings are stored locally and start blank. Each section can be enabled or disabled independently.
+Each folder can have a `nam-pack.json` Pack Info document with:
 
-**Capture Defaults** *(toggleable)*
-- Default Modeled By, Reamp Send Level (dBu), Reamp Return Level (dBu)
+- title
+- subtitle
+- description
+- equipment
+- pedals
+- switches and modes
+- glossary
+- captures table
+- export column choices
+- color/accent styling
+- rig photos gallery
 
-**Behavior**
-- **Populate name from filename** — auto-sets Capture Name to the filename if empty
-- **Auto-detect tone type** — scans the filename for tone keywords; rightmost keyword wins
-- **Amp Suffix** — filename ending that auto-sets Gear Type to Amp (e.g. `DI`)
-- **Default to Cab if no amp suffix match**
-- **File Rename Template** — tokens: `{name}` `{gear_make}` `{gear_model}` `{gear_type}` `{tone_type}` `{modeled_by}`
-- **Confirmation dialogs** — independently skip Save All and Batch Edit dialogs
+Pack Info can export to styled HTML for printing to PDF, in a Simple or Advanced layout.
 
-**Startup**
-- Remember last opened folder / Open default folder on launch / Watch folder for new files
-- **Show Library Overview on launch** — opens the dashboard in the right panel automatically on startup (on by default)
-- **Default folder panel tab** — choose whether clicking a folder shows Overview, Pack Info, or Gallery first
+### Rig Photos in exports
 
-**Library**
-- **Tone3000 Username** — optional username used to improve local creator matching and creator-focused Tone3000 searches
+Both PDF exports can include a framed photo gallery page (or pages, if there are many
+photos) at the end of the document, drawing on the same images already surfaced by the
+in-app gallery:
 
-**Current Amp Info** *(toggleable)*
-- Default Manufacturer and Model — disable when browsing a shared library to avoid stamping your gear info on other people's captures
+- **Rig photos** — the export folder's own images plus any inherited from parent/ancestor
+  folders (so exporting a DI-only subfolder can still pull in amp/cab/mic photos kept at the
+  parent bundle/session folder).
+- **Subfolders** — a recursive scan of descendant subfolders (e.g. per-capture or per-version
+  folders), deduplicated by content and filtered to skip thumbnails/icons.
 
----
+Each source is toggled independently, and a picker lets you include or exclude individual
+photos before exporting. `ampcover.*` is always excluded (it's reserved for pack cover art).
+Photos are laid out in a centered, evenly sized grid with a thin accent-colored frame around
+each one, matching the pack's accent color.
 
-## Saving
+Related tools:
+- Read Me tab
+- gallery tab
+- metadata cover image support via `ampcover.*`
 
-- **Save** (Ctrl+S / Cmd+S) — saves the current file
-- **Save All** in the toolbar — saves all unsaved files
-- **Right-click → Save N selected** — saves selected files only
-- **Right-click folder → Save all in folder**
-- Batch edit writes directly to disk — no separate Save step
+### Read Me
 
----
+Folders can also keep a dedicated Read Me alongside Pack Info.
 
-## File Management
+Use it for:
+- release notes
+- usage notes
+- install or routing guidance
+- anything that does not belong in per-file metadata
 
-- Open individual `.nam` files or an entire folder (recursive)
-- **Drag and drop** `.nam` files or a folder from Explorer/Finder
-- Shift+click and Ctrl+click for range and multi-selection
-- **Drag files between folders** — drag from the list/grid onto a folder in the tree to move on disk; multi-selection moves all selected files; warns on unsaved changes
-
----
-
-## Batch Rename
-
-Right-click one or more files → **Rename N selected…**:
-- **Suffix / Prefix / Find & Replace / Template** modes
-- Live preview for every file with per-directory conflict detection
-- Toggle **Rename files on disk** to also rename the `.nam` file itself
+The Read Me editor tracks unsaved changes and saves directly from within the Pack Info area.
 
 ---
 
-## Right-Click Context Menu (File List)
+## Multi-Amp Bundles
 
-| Action | Description |
-|--------|-------------|
-| Show in Folder | Reveal in Explorer/Finder |
-| Show in folder tree | Scroll tree to file's folder, highlight for 5s |
-| Copy name(s) to clipboard | Capture names as plain text |
-| Copy to folder… | Non-destructive copy to chosen destination |
-| Move to folder… | Move files, remove from current view |
-| Apply defaults | Re-run Settings defaults on selected files |
-| Delete (trash) | Move to OS trash with confirmation |
-| Rename N selected… | Open batch rename dialog |
-| Copy metadata | Copy editable fields to in-memory clipboard (single file) |
-| Paste metadata (from X) | Write clipboard fields to all selected files |
-| Find Similar Captures on Tone3000 | Opens the Tone3000 browser and searches for `Manufacturer + Model` |
-| Remove NAM Lab Custom Metadata | Strip `nam_lab` block from disk |
-| Save N selected | Save selected files |
-| Batch edit N selected | Open batch editor for selection |
-| Launch in Neural Amp Modeler standalone… | Open in NAM standalone player |
+NAM Lab supports bundle folders for grouped releases that combine multiple packs under one umbrella.
+
+Bundle tools can:
+- create or remove a bundle config on a folder
+- set bundle title, subtitle, description, and footer
+- link pack folders into the bundle
+- include or exclude linked packs
+- override displayed pack names
+- reorder linked packs
+- export a bundle cover sheet PDF
+
+This is useful for:
+- multi-amp packs
+- artist or studio collections
+- release bundles that need one top-level presentation layer without flattening the underlying pack folders
+
+---
+
+## Pack Checklists
+
+Pack folders can store release checklists with:
+
+- progress tracking
+- target date
+- live date
+- release notes
+- reorderable checklist rows
+- amber highlighting for unsaved row edits
+- parent-pack sync tools
+- drag-and-drop reordering
+
+Checklist progress also appears in dashboards.
+
+**Checklist templates** — reusable row sets you define once (per delivery target: NAM / ToneX / Proxy / QC) in Settings and apply to any pack's checklist, instead of rebuilding the same rows folder by folder.
+
+---
+
+## Delivery Targets
+
+NAM Lab now supports a **Targets** workflow for pack-level release planning across:
+
+- `ToneX`
+- `NAM`
+- `Proxy`
+- `QC`
+
+What it does:
+- stores a delivery matrix in `nam-pack.json`
+- imports matrix rows from Excel
+- supports target-specific inclusion flags
+- supports alternate names for `Proxy` and `QC`
+- supports target-specific title, subtitle, and description
+- includes sync buttons to pull title / subtitle / description from the base pack
+- filters the matrix by selected target
+- exports target-specific Pack Info PDFs using the selected target subset
+
+This is intentionally virtual in the current pass:
+- no Line 6 clone validation yet
+- no QC file parsing
+- no metadata backfill into actual `.nam` files
+
+---
+
+## Tone3000 Integration
+
+NAM Lab can browse and download Tone3000 captures inside the app.
+
+Key behaviors:
+- all-tones search
+- my-files view
+- favorites view
+- remembered search term
+- open creator / public page
+- local "find similar on Tone3000"
+- architecture filter: `A1` / `A2` / `Custom`
+- search-level size filter
+- platform filter, defaulting to `NAM` since that is the primary NAM Lab workflow
+- creator username lookup with autocomplete suggestions
+- large downloads use a background queue
+- queue survives leaving the Tone3000 panel
+- queue handles retries and cooldowns
+- large runs lock Tone3000 browsing while active
+- duplicate local filenames are skipped before download
+- destination folders can be auto-seeded with Pack Info
+- both `ampcover.*` and original Tone3000 image can be saved
+
+Notes:
+- creator filtering is still best-effort because Tone3000 search does not expose a direct "all tones by arbitrary creator" browse endpoint in the way NAM Lab would ideally want
+- architecture badges on result cards are counts, not versions or ESR values:
+  - `A1 x26` = 26 A1 models in that Tone3000 tone
+  - `A2 x26` = 26 A2 models in that Tone3000 tone
+  - `Custom x3` = 3 custom models in that Tone3000 tone
+- detail view also shows per-model architecture badges when Tone3000 exposes them
+
+---
+
+## Folder Watch Automation
+
+A release folder can watch a separate source folder and auto-copy new `.nam` files into the destination.
+
+Current behavior:
+- initial sync of existing source `.nam` files
+- copies newly appearing files after they finish writing
+- skips duplicate destination filenames
+- shows watch state in the folder dashboard and Settings
+- supports removing watches from dashboard or Settings
+
+Important safety behavior:
+- watch import history uses **SHA-256 content hashes** for deduplication — a file is not re-copied if the same content has already been imported, even if the filename or destination changes
+- content hashes are retroactively backfilled for existing import history on startup so older entries also benefit from hash-based protection
+- watch rules use **import-once semantics**
+- renaming a copied file in the destination will not cause a re-copy because the hash still matches
+
+What it does not do:
+- it does not overwrite existing destination files with source copies
+- it does not keep mirroring metadata changes back and forth
+- it is for importing new source captures into the destination once, not for two-way sync
 
 ---
 
 ## Duplicate Detection
 
-- Toolbar **Duplicates** button — scan for dupes by filename or metadata Capture Name
-- NAM Lab auto-selects the most complete copy to keep; click any copy to change
-- Per-group: **Move non-kept** to `_Duplicates` subfolder or **Trash**
-- Footer **Move all** / **Trash all** handle all groups at once
-- `_Duplicates` folder is always hidden from the tree
+NAM Lab can find duplicates by:
+
+- filename
+- capture name
+- exact file content (full `.nam` file hash)
+- same model, metadata differs
+
+You can run duplicate scans from:
+- the main toolbar
+- folder-scoped right-click actions in the tree
+
+Actions include keeping one file and moving or deleting the rest.
+
+Content mode is exact-match only:
+- it hashes the full `.nam` file
+- matching files are byte-for-byte identical, including metadata and model data
+- this is different from filename or meta-name grouping
+
+Same-model mode is intentionally different:
+- it strips the `metadata` block before hashing
+- matching files share the same model content even if metadata was repaired or changed later
+- this is useful for spotting cases where one file still has placeholders like `tz-make` / `tz-model` and another has already been cleaned up
+
+When NAM Lab picks a default file to keep inside a duplicate group, it still prefers the file with richer core metadata first. If two files tie on metadata completeness, it now prefers cleaner filenames over obvious duplicate suffixes such as `(2)` or `- Copy`.
+
+### Architecture-aware grouping
+
+In filename and capture-name duplicate modes, NAM Lab defaults to **same-architecture-only grouping**. This means a `Standard` and a `REVxSTD` capture with the same name are not flagged as duplicates by default — they are different model formats and are typically kept together intentionally.
+
+To also catch cross-architecture matches (for example finding that you trained the same WAV with multiple architectures and want to thin them out), toggle **Include cross-architecture** in the duplicate scan controls. When enabled, architecture badges appear on each file row in the results so you can tell which format each file is.
 
 ---
 
-## Multi-Select Editor
+## Metadata Suggestions
 
-Select 2+ files to open the multi-select editor:
-- Fields shared across all selected files are pre-filled and marked **shared**
-- Fields that differ show *— varies —*
-- **Apply to N files** writes only changed fields to disk
+NAM Lab includes a preview-first metadata suggestion system for filling or repairing metadata across many captures.
+
+It supports:
+- global rules
+- folder-scoped rules
+- blank-token scope defaults
+- reusable rule library
+- overwrite rules
+- guarded overwrites for junk placeholders
+- filename segment targeting
+- "Build from example..." helpers
+
+### Rule types
+
+Rules can match:
+- exact token
+- contains
+- starts with
+- ends with
+- prefix + value
+
+Rules can look in:
+- filename only
+- folder only
+- filename or folder
+
+Rules can target a specific filename segment:
+- `1` = first space-separated segment
+- `2` = second
+- blank = match anywhere in the full filename
+
+### Overwrite behavior
+
+Rules normally suggest values only for blank fields.
+
+If `Overwrite` is enabled, a rule can also replace existing values.
+
+For safer cleanup, overwrite rules can be guarded so they only apply when the current value matches known junk placeholders such as:
+- `tz-make`
+- `tz-model`
+- `Unknown`
+- `N/A`
+
+### Rule library
+
+Complete non-blank-token rules can be saved into a reusable library and copied into:
+- global rules
+- folder rules
+
+Blank-token scope defaults are intentionally not stored in the library.
+
+### Build from example
+
+The example builder is designed for consistent naming styles.
+
+Example:
+- `JCM800 Lo P6 B8 M4 T7 G10`
+
+You can map that into:
+- make / model
+- amp switches
+- amp settings
+
+`Prefix + value` rules support templates such as:
+- `Gain {value}`
+- `Bass {value}`
+- `Volume {value}`
+
+The folder rule editor now keeps this more visible while you work:
+- a quick guide explains that `{value}` means "the part after the prefix"
+- `{match}` means "the full matched token"
+- live examples update as you type, so `G10` + `Gain {value}` clearly previews as `Gain 10`
+
+So a segment like `V8` can become:
+- `Volume 8`
+
+This works best when a creator or pack uses the same filename structure across many captures.
+
+### Matching source
+
+Filename-style rules are no longer limited to the raw filename on disk.
+
+When available, NAM Lab now prefers the capture's embedded metadata name first, and only falls back to the disk filename when that metadata name is blank. This matters when a capture has a cleaner metadata name like:
+
+- `[AMP] F.PLEX-HV-Hi SLP - BLEND #1`
+
+but the actual filename had to be flattened on disk into something like:
+
+- `_AMP_ F.PLEX-HV-Hi SLP - BLEND _1.nam`
+
+That makes rule building and rule matching behave more like the naming style you actually care about.
+
+### Pack Info as rule source
+
+Pack Info can now help bootstrap folder-scoped metadata rules from structured notes you have already curated.
+
+Current helpers include:
+- build rule seeds from selected text inside Description
+- parse selected `TOKEN = meaning` lines into Glossary
+- create folder rules from selected or all Glossary entries
+- create folder rules from selected or all Switches & Modes entries
+
+These rule-generation tools open the current folder's rule editor immediately after seeding the rules so you can review and tweak before applying them.
+
+### Clearing suggestions
+
+If NAM Lab auto-filled values at load time and you want to see the raw on-disk metadata again:
+- use `Clear suggestions` on a capture
+- or `Clear Suggestions` globally in the toolbar
+
+This only clears app-added auto-fill values in the current session. It does not write to disk by itself.
+
+### Copy metadata from folder
+
+Folder tools include **Copy metadata from folder...** for one-time metadata filling between similar folders.
+
+How it works:
+- choose the destination folder or subtree in the tree first
+- run **Copy metadata from folder...**
+- pick the source folder in the file picker
+- NAM Lab matches files by embedded metadata name first when available, otherwise by filename
+- matching is case-insensitive
+
+Safety behavior:
+- only blank target fields are filled
+- existing target values are not overwritten
+- the copy is persisted to disk after confirmation
+
+This makes it useful for cases like:
+- alternate architectures of the same pack
+- a DI folder and CAB folder with matching filenames
+- rebuilding metadata on a clean duplicate set without damaging fields you already curated
+
+Related folder-tree tools:
+- **Suggest metadata...**
+- **Edit folder suggestion rules...**
+- **Generate import template**
+- **Import metadata from spreadsheet**
+- **Find duplicates**
+- **Training version report**
+- **Set watch source / Change watch source / Stop watching source**
+- **Browse cards**
 
 ---
 
-## Batch Edit
+## Library Cleanup / Build Library
 
-- Right-click a selection → **Batch edit N selected**
-- Right-click a folder → **Batch edit…**
-- Check only the fields you want to change — unchecked fields are untouched
-- Confirmation dialog shows which fields and how many files are affected
+NAM Lab includes a preview-first cleanup and rebuild workflow for reorganizing libraries without manually dragging folders around.
+
+### Entry points
+
+There are two main ways to use it:
+
+- **Library Tools -> Clean Up / Build Library...**
+  - broad intake / collection flow
+  - best for messy or disjointed source roots
+
+- **Right-click folder -> Clean this folder...**
+  - scoped subtree cleanup
+  - best for recategorizing a creator folder, amp folder, or `Needs Review`
+
+### Structure options
+
+Current structure presets include:
+- `Flat`
+- `Creator`
+- `Creator > Amp`
+- `Creator > Amp > DI/CAB`
+- `Creator > Amp > DI/CAB > Preset Type`
+
+Cleanup builds as much path as it can from the metadata available instead of failing the whole file when one deeper level is missing.
+
+Examples:
+- creator known -> move into creator folder
+- creator + amp known -> move into creator / amp
+- creator + amp + DI/CAB known -> move deeper
+- missing deeper data -> route to `Needs Review` at the deepest confident level
+
+### Preview states
+
+Cleanup preview separates rows into:
+- `Ready`
+- `Needs Review`
+- `No Change`
+
+`No Change` means the file already matches the selected structure.
+
+`Needs Review` means NAM Lab cannot confidently place that file all the way into the requested structure with the metadata currently available.
+
+The `Needs Review` subset can be exported to:
+- CSV
+- XLSX
+
+### Folder mode anchor behavior
+
+When you use **Clean this folder...**, NAM Lab treats the selected folder as an anchor.
+
+That means:
+- if the current folder already represents part of the desired path
+- cleanup does not rebuild that same prefix inside it again
+
+This is what makes "clean this creator/amp folder in place" work without generating duplicated parent folders.
+
+### Important destination-root rule
+
+If you are repairing a bad placeholder subtree like:
+- `amalgamaudio/tz-make tz-model/di`
+
+and you fixed the metadata so the files now belong under:
+- `amalgamaudio/gibson g200/di`
+
+set **Destination Library Root** to the parent branch you want to keep, such as:
+- `amalgamaudio`
+
+Do not leave the destination on the placeholder folder, or cleanup will keep rebuilding under that old branch because it is acting as the active anchor.
+
+### Copy vs Move
+
+- `Copy` is the safer default for broad cleanup runs
+- `Move` is often the right choice for folder-scoped recategorize flows
+
+Use `Copy` first whenever you are testing a new structure or naming repair strategy.
 
 ---
 
-## Per-Folder Right-Click Actions
+## Spreadsheet Import / Export
 
-| Action | Description |
-|--------|-------------|
-| Save all in folder | Save all unsaved files under this path |
-| Revert all in folder | Discard unsaved changes |
-| Batch edit… | Batch editor scoped to this folder |
-| Reveal in Explorer | Open folder in Finder/Explorer |
-| Export folder as CSV / Excel | All files in folder, all columns |
-| Select all in folder | Select all files and navigate to folder |
-| Rename folder | Inline rename on disk |
-| New subfolder | Create subfolder with inline name input |
-| Training version report… | Open pivot table for this folder |
-| Generate import template… | Export editable `.xlsx` pre-filled with current metadata |
-| Import metadata from spreadsheet… | Match rows by Capture Name and write non-empty cells back |
+NAM Lab supports spreadsheet workflows for metadata.
+
+Export:
+- CSV
+- XLSX
+- visible columns or all columns
+- respects current filters
+
+Import template:
+- generated as `.xlsx`
+- includes target matrix columns:
+  - `ToneX`
+  - `NAM`
+  - `Proxy`
+  - `QC`
+  - `Capture Name`
+  - `Alt Proxy Name`
+  - `Alt QC Name`
+- includes a second lookup/reference sheet for common values
+
+Import:
+- round-trip metadata edits from Excel back into NAM Lab
 
 ---
 
-## Capture Details (NAM Lab Custom Metadata)
+## Built-in Training Workspace
 
-NAM Lab stores extended capture details in a `nam_lab` block inside the `.nam` file's metadata. Enable via **Settings → Library → Show NAM Lab metadata fields** (on by default).
+NAM Lab orchestrates the NAM Python trainer directly inside the app. Full details are in [docs/training.md](training.md); short version:
 
-| Field | JSON key |
-|-------|----------|
-| Mic(s) | `metadata.nam_lab.mics` |
-| Amp Channel | `metadata.nam_lab.amp_channel` |
-| Cabinet | `metadata.nam_lab.cabinet` |
-| Cabinet Config | `metadata.nam_lab.cabinet_config` |
-| Amp Settings | `metadata.nam_lab.amp_settings` |
-| Amp Switches | `metadata.nam_lab.amp_switches` |
-| Boost Pedal(s) | `metadata.nam_lab.boost_pedal` |
-| Pedal Settings | `metadata.nam_lab.pedal_settings` |
-| Comments | `metadata.nam_lab.comments` |
-
-The editor shows only fields **relevant to the selected Gear Type** by default. Use the **Relevant / All** toggle to see all fields.
-
-Right-click → **Remove NAM Lab Custom Metadata** to permanently strip the `nam_lab` block from selected files.
-
-> **For tool developers:** If you're building a training tool, plugin, or anything that reads/writes `.nam` files, we encourage you to support the `metadata.nam_lab` block. Write only the keys you have, ignore the rest, never overwrite the block unless you intend to.
+- **Dashboard** — single-glance "what's running now" view with 8 big stat tiles (Current epoch, Queue progress, Active batch, Current ETA, Completed, Failed, Last ESR, Last item took), Quick Add card, Up Next card. Completed / Failed / Last ESR tiles are clickable and jump to History pre-filtered.
+- **Live Run** — real-time ESR-over-epochs chart fed by an embedded `pytorch_lightning.Callback` that NAM Lab installs into the trainer so per-epoch validation ESR actually populates (the official NAM trainer's tqdm postfix carries training loss, not validation ESR). Statline cells for Epoch / Rate / Validation ESR / Started; secondary MRSTFT / MSE statline (frequency-domain and time-domain losses) that appears when the trainer reports them, with Full/Lite split for A2 runs; Final output + Checkpoint paths; collapsible Raw trainer log that mirrors what an Anaconda shell would show (tqdm-aware dedupe + filter so each epoch becomes one rolling line instead of hundreds).
+- **Queue** — batch-grouped, with Expand-all / Collapse-all, status / profile / architecture filters, and tiles that count both **captures** and **batches**. Finished / failed / canceled rows auto-clear when a new batch is queued; history is the source of truth. Each batch group shows a **Run next** button when the batch is not already at the front, so you can promote urgent work without canceling anything. The Resume button pulses with an accent ring while the queue is paused and jobs are waiting.
+- **Staged Batches** — drafts saved via **Stage** in Create Batch. Cards with amber type icon + Staged pill + color-coded architecture chips per unique arch in the batch + routing line + Edit / Delete / Queue-now / expand-to-see-captures.
+- **History** — ESR-quality and Throughput trend charts, search bar with magnifier icon, segmented status filter (All / Done / Failed / Canceled), grouped by batch submission with `N done` / `N failed` counts + **Retry failed** + **Retry batch** buttons on every group header. Each row has a compact status icon tinted to the entry ESR tone; failed rows show their architecture chip + profile + epochs + duration on one line and the failure reason in red mono on the next. Right-click → View ESR plot / Retry / Reveal in folder / Purge from history / Purge entire batch (with confirm modal — only the history record is removed, on-disk `.nam` and PNG stay). Whole row click opens the ESR plot modal.
+- **Presets** — dedicated left-rail page to create, edit, duplicate, delete, and star training presets (architectures + epochs + latency + target ESR + normalize + ignore-checks recipe). Also where you build **Training Bundles**: named groups of 2+ presets submitted together as one Create Batch action, so one bundle can queue several architectures/recipes for every source file in a single submission. Bundles appear in their own group in the Create Batch preset picker and can be linked to watcher profiles the same way a single preset can.
+- **New Run** (Create Batch) — optional Batch name field with smart placeholder (capture / folder / count), Input DI, drop-or-pick output WAVs, Preset selector on one line + Architecture multi-select with **A2 first, A1 variants prefixed as `A1 - Standard` / `A1 - Lite` / etc.**, color-coded selection chips below with × buttons to remove. Submitting clears the form and jumps to Queue (or Batches for staged) so duplicate submissions are hard to make by accident.
+- **Mixed A1 + A2 batches** — one ticked architecture spawns one job; one batch can mix A1 variants and A2 freely, all under one shared submission. `namMode` is derived per-job from `architecture` so the right Python runner (`_run_a2` / `_run_a1_v13` / `_run_a1`) fires per capture.
+- **Ignore checks / Trained despite warnings** — a per-preset toggle bypasses NAM's pre-training data checks (sample rate, length, latency alignment, self-ESR) for runs using that preset; a global Settings override (**Always ignore pre-training data checks**) forces every run to bypass them regardless, re-read live at the moment each job launches. A run that would have failed checks but trained anyway gets flagged with an orange **"Trained despite warnings"** badge in History (hover for the actual check-failure text) and a live **"Checks failed — training anyway"** badge on the Dashboard hero card while it's still running.
+- **Quick Add** — Dashboard card that fires a training run from your favorite preset + favorite routing + default DI without opening Create Batch. Falls back to the global output formula if the favorite routing is empty.
+- **Watcher automation** — folder watchers attach a profile to a directory; new WAVs are queued automatically; SHA-256 content tracking prevents re-training after renames / copies. Watcher Files modal per profile with per-file Wipe & retrain / Retrain as new file / Mark as skipped actions.
+- **Persistence** — `trainer-queue.json` saves all queue rows including finished/failed/canceled (capped at 2000, throttled to 1 write per 2 s, flushed on quit); also persists the pause flag. `trainer-history.json` keeps the last 2000 entries newest-first. `trainingLastSelectedPresetId` remembers the Create Batch preset choice across restarts. The session-restore demotes anything that was running when the app died back to `queued` with progress cleared (the Python child is gone). Two Settings toggles (both off by default): **Auto-start queue on launch** and **Skip auto-start if queue was paused**.
+- **Retry safety** — Retry failed / Retry batch / per-row Retry rebuild jobs from history entry metadata + current Settings, submit them as a new `Retry - {label}` batch, and **back up any existing `.nam` to `*.bak.nam` before overwriting**. One backup max, replaced on subsequent retries. Normal queue submissions still overwrite as before.
+- **Live trainer log** — selectable text + native right-click Copy across the entire trainer (overriding the global `body { user-select: none }`). Python child spawned with `PYTHONUNBUFFERED=1`, `PYTHONIOENCODING=utf-8`, `TQDM_MININTERVAL=10`, `TQDM_ASCII=1` so the log looks like an Anaconda terminal even though it's a piped subprocess.
 
 ---
 
 ## Training Version Report
 
-Right-click any folder → **Training version report…** — a pivot table showing training coverage.
+NAM Lab can generate folder-scoped coverage reports showing:
 
-- **DI Captures table** — rows = base capture names, columns = detected preset
-- **Amp+Cab Captures table** — same structure; cells show the variant suffix (e.g. Mars2, Mesa) so you can see which cab was trained at each preset. Epoch count shown where available (e.g. `Mars2 (100)`)
-- Header shows total base count and total capture count per table
-- **Export CSV** and **Export Excel** per table
+- base capture rows
+- detected preset columns
+- DI and Amp+Cab coverage
+- variant suffixes
+- epoch counts where available
 
----
-
-## Pack Info Editor
-
-Click a folder in the tree (no captures selected) to open the **Pack Info** editor — a documentation sheet for that amp pack.
-
-**Pack Info tab:**
-- **Title / Subtitle** — displayed in the exported PDF header
-- **Description** — rich formatting: `**bold**`, `*italic*`, `# Heading`, `---` divider, `- bullet`, color accents (`[orange]text[/orange]`, `[dim]text[/dim]`)
-- **Equipment / Pedals / Switches & Modes / Glossary** — key/value rows
-- **Captures table** — auto-populated from files; subfolder checklist and per-capture checkboxes control what's exported
-- **Column chooser** — choose and reorder columns in the exported captures table
-- **Export PDF…** — generates styled HTML, opens in browser for printing/saving; Dark/Light mode toggle
-
-**Gear Catalog (Settings → Pack Info):**
-- Personal catalog of Equipment, Pedals, and Glossary entries reused across packs
-- **Add from catalog…** inserts entries as rows — no retyping
-
-**Logo (Settings → Pack Info):**
-- Separate logos for light and dark mode exports; appears top-right in the PDF header
+Exports:
+- CSV
+- Excel
 
 ---
 
-## Folder Image Gallery
+## Folder Card View
 
-Click a folder (no captures selected) — images stored in that folder (and parent folders up to the library root) are shown in the right panel.
+The card view gives a gallery-style overview of your library at the folder level.
 
-- Supports jpg, jpeg, png, webp, gif
-- Parent folder images shown below a *"From [folder name]"* divider
-- Adaptive grid: 1 → full width; 2 → side by side; 3 → 2+1; 4 → 2×2; 5+ → 3-column
-- **Click any thumbnail** to open a lightbox; **Open in viewer** button opens in OS default image app
-- Images are read-only — manage them in Finder/Explorer
-- Toggle in **Settings → Library → Show folder images** (on by default)
+Entry point:
+- click the **Cards** (grid) icon in the toolbar (enabled only when a root folder is loaded)
+- clicking again returns to the normal three-panel view
+
+Cards:
+- one card per first-level subfolder
+- shows `ampcover.*` image if present in that folder, or the first cover found one level deeper (up to 5 children checked)
+- folders without any cover show a dark placeholder
+- displays folder name and total `.nam` count badge
+- card size is switchable between **Small / Medium / Large** via a picker in the breadcrumb bar; choice persists between sessions
+
+Interactions:
+- **Single click** — select the card; a resizable preview panel slides in on the right showing the amp cover, folder name, path, counts, and pack title/subtitle if available; panel width persists between sessions
+- **Double click** — drill into that folder's subfolders (stays in card view)
+- **Breadcrumb bar** — shows the current drill path; click any crumb to go back up
+
+Right-click menu:
+- **Open folder** — exits card view and loads the folder in the three-panel view
+- **Find on Tone3000** — opens Tone3000 search in the right preview panel slot without leaving card view; downloads flow through the normal queue and the new folder card appears automatically when done
+- **Get Cover Image** — fetch or set an `ampcover` image for the folder:
+  - paste an image URL
+  - drag-drop an image from a browser or Windows Explorer
+  - click **Browse** to pick a local file via the native file picker
+  - click the Google Images button to open a ready-to-search browser window
+
+Breadcrumb bar also includes a **Refresh** button to rescan the current folder without leaving card view.
 
 ---
 
-## NAM-BOT Integration
+## Images and Gallery
 
-Supports metadata written by [NAM-BOT](https://github.com/nam-bot):
-- **Trained Epochs** (`metadata.training.nam_bot.trained_epochs`) — editable and backfillable
-- **Preset Name** (`metadata.training.nam_bot.preset_name`) — read-only display in Capture Stats
+NAM Lab supports:
+- folder image galleries
+- parent-folder image cascade
+- lightbox viewing
+- OS image viewer launch
+- metadata cover images through `ampcover.*`
+- including rig photos as a framed gallery page in Pack Info PDF exports (see the Pack Info section above)
 
----
-
-## Check for Updates
-
-- **Settings → Check for Updates** — checks GitHub for a newer release
-- **Download** link opens the releases page in your browser (manual install)
-- **Include RC builds** toggle — counts pre-release builds as "newer"
-- Current version always shown next to the button
+`ampcover.*` is intentionally excluded from the gallery view so it can act as pack cover art instead.
 
 ---
 
-## Tech Stack
+## Companion Inbox
 
-- [Electron](https://www.electronjs.org/) — desktop shell
-- [electron-vite](https://electron-vite.org/) — build tooling
-- [React](https://react.dev/) — UI
-- [Tailwind CSS](https://tailwindcss.com/) — styling
-- [electron-builder](https://www.electron.build/) — packaging
-- [xlsx](https://github.com/SheetJS/sheetjs) — Excel export
+NAM Lab includes a Companion Inbox panel for review items coming in from companion flows.
+
+Current item types:
+- notes
+- photos
+- cover candidates
+
+Typical actions:
+- mark reviewed
+- use an image as the folder cover
+- open the related folder
+- reveal the image in the OS
+- delete the inbox item
+
+This is meant to keep loose companion-side notes and images from getting lost before they are attached to the right folder or pack.
+
+---
+
+## Native Text Menus
+
+NAM Lab enables native right-click text menus in places where text selection matters, including:
+
+- Tone3000 detail text
+- metadata text fields
+- Read Me text
+
+That restores copy / paste / select-all behavior users expect from desktop apps.
+
+---
+
+## Update Checking and Packaging
+
+NAM Lab can:
+- check GitHub releases for updates
+- optionally include prerelease builds in update checks
+
+Package targets:
+- Windows installer
+- macOS DMG
+- Linux AppImage
+
+The app is still unsigned at the moment, so first-launch warnings from the OS are expected.
