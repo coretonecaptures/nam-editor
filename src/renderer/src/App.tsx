@@ -4920,6 +4920,7 @@ INSTRUCTIONS:
             <PlayerPanel
               key={playerFile.filePath}
               file={playerFile}
+              defaultDiPath={settings.namTrainingInputWav || null}
               onClose={() => setPlayerFile(null)}
             />
           ) : showSettings ? (
