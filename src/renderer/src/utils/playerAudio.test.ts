@@ -1,12 +1,16 @@
 import { describe, it, expect } from 'vitest'
 import {
+  DEFAULT_MODEL_SAMPLE_RATE,
   PEAK_CEILING,
   PEAK_FALLBACK_TARGET,
   TARGET_LOUDNESS_DB,
+  applyDcBlocker,
   base64ToArrayBuffer,
   computePlaybackGain,
+  findLoudestWindowStart,
   normalizeRendered,
   peakOf,
+  readModelSampleRate,
 } from './playerAudio'
 
 /** Build a buffer whose peak is exactly `peak`. */
@@ -168,5 +172,104 @@ describe('base64ToArrayBuffer', () => {
 
   it('handles an empty payload', () => {
     expect(base64ToArrayBuffer('').byteLength).toBe(0)
+  })
+})
+
+describe('findLoudestWindowStart', () => {
+  const RATE = 48000
+
+  /** Silence with a loud burst placed at `burstStartSec`. */
+  function silenceWithBurst(totalSec: number, burstStartSec: number, burstSec: number) {
+    const out = new Float32Array(totalSec * RATE)
+    const start = Math.floor(burstStartSec * RATE)
+    const end = Math.min(out.length, start + Math.floor(burstSec * RATE))
+    for (let i = start; i < end; i++) out[i] = Math.sin(i * 0.05) * 0.8
+    return out
+  }
+
+  it('returns 0 when the buffer is not longer than the window', () => {
+    expect(findLoudestWindowStart(new Float32Array(1000), 1000)).toBe(0)
+    expect(findLoudestWindowStart(new Float32Array(500), 1000)).toBe(0)
+  })
+
+  // The exact real-world failure: an 84s DI whose first 12s were near-silent, so the preview
+  // rendered silence and read as "quiet, and the high-gain amp has no gain".
+  it('skips a silent intro and finds audio later in the file', () => {
+    const samples = silenceWithBurst(84, 60, 12)
+    const start = findLoudestWindowStart(samples, 12 * RATE)
+    const startSec = start / RATE
+    expect(startSec).toBeGreaterThan(30)
+    expect(startSec).toBeLessThanOrEqual(72)
+  })
+
+  it('picks the louder of two candidate regions', () => {
+    const samples = new Float32Array(30 * RATE)
+    for (let i = 2 * RATE; i < 6 * RATE; i++) samples[i] = 0.1   // quiet early
+    for (let i = 20 * RATE; i < 24 * RATE; i++) samples[i] = 0.9 // loud late
+    const start = findLoudestWindowStart(samples, 4 * RATE)
+    expect(start / RATE).toBeGreaterThan(10)
+  })
+
+  it('never returns a window that runs past the end of the buffer', () => {
+    const samples = silenceWithBurst(20, 18, 5) // burst near the very end
+    const windowSamples = 12 * RATE
+    const start = findLoudestWindowStart(samples, windowSamples)
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(start + windowSamples).toBeLessThanOrEqual(samples.length)
+  })
+
+  it('returns 0 for pure silence rather than failing', () => {
+    expect(findLoudestWindowStart(new Float32Array(20 * RATE), 4 * RATE)).toBe(0)
+  })
+
+  it('tolerates non-finite samples', () => {
+    const samples = silenceWithBurst(20, 10, 4)
+    samples[0] = NaN
+    samples[1] = Infinity
+    const start = findLoudestWindowStart(samples, 4 * RATE)
+    expect(Number.isFinite(start)).toBe(true)
+    expect(start).toBeGreaterThan(0)
+  })
+})
+
+describe('readModelSampleRate', () => {
+  it('reads a declared sample rate', () => {
+    expect(readModelSampleRate('{"sample_rate":48000}')).toBe(48000)
+    expect(readModelSampleRate('{"sample_rate":44100}')).toBe(44100)
+  })
+
+  it('falls back to the NAM default when absent, invalid, or unparseable', () => {
+    expect(readModelSampleRate('{"architecture":"WaveNet"}')).toBe(DEFAULT_MODEL_SAMPLE_RATE)
+    expect(readModelSampleRate('{"sample_rate":null}')).toBe(DEFAULT_MODEL_SAMPLE_RATE)
+    expect(readModelSampleRate('{"sample_rate":"48000"}')).toBe(DEFAULT_MODEL_SAMPLE_RATE)
+    expect(readModelSampleRate('{"sample_rate":0}')).toBe(DEFAULT_MODEL_SAMPLE_RATE)
+    expect(readModelSampleRate('not json')).toBe(DEFAULT_MODEL_SAMPLE_RATE)
+  })
+})
+
+describe('applyDcBlocker', () => {
+  it('removes a constant DC offset', () => {
+    const samples = new Float32Array(48000).fill(0.5)
+    applyDcBlocker(samples, 48000)
+    // Settles toward zero; check well past the filter's startup.
+    expect(Math.abs(samples[samples.length - 1])).toBeLessThan(0.05)
+  })
+
+  it('leaves an audio-band tone essentially intact', () => {
+    const rate = 48000
+    const make = () => {
+      const a = new Float32Array(rate)
+      for (let i = 0; i < a.length; i++) a[i] = Math.sin((2 * Math.PI * 440 * i) / rate) * 0.5
+      return a
+    }
+    const filtered = make()
+    applyDcBlocker(filtered, rate)
+    // A 10Hz high-pass must barely touch 440Hz.
+    expect(peakOf(filtered)).toBeGreaterThan(0.45)
+  })
+
+  it('handles an empty buffer', () => {
+    const empty = new Float32Array(0)
+    expect(() => applyDcBlocker(empty, 48000)).not.toThrow()
   })
 })

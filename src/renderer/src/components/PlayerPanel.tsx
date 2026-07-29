@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { NamFile } from '../types/nam'
-import { base64ToArrayBuffer, normalizeRendered } from '../utils/playerAudio'
+import {
+  applyDcBlocker,
+  base64ToArrayBuffer,
+  findLoudestWindowStart,
+  normalizeRendered,
+  readModelSampleRate
+} from '../utils/playerAudio'
 import type { NamRenderRequest, NamRenderResponse } from '../workers/namRender.worker'
 
 /**
@@ -31,6 +37,39 @@ let lastDiPath: string | null = null
 function formatError(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
+}
+
+/**
+ * Resample mono audio to `targetRate` using an OfflineAudioContext.
+ *
+ * Web Audio's own resampler is better than anything worth hand-rolling here, and this runs on a
+ * short window so the extra render pass is cheap. Returns the input untouched when the rates
+ * already match.
+ */
+async function resampleTo(
+  samples: Float32Array,
+  sourceRate: number,
+  targetRate: number
+): Promise<Float32Array<ArrayBuffer>> {
+  const copy = new Float32Array(samples.length)
+  copy.set(samples)
+  if (sourceRate === targetRate || samples.length === 0) return copy
+
+  const targetLength = Math.max(1, Math.round((samples.length * targetRate) / sourceRate))
+  const offline = new OfflineAudioContext(1, targetLength, targetRate)
+
+  const sourceBuffer = offline.createBuffer(1, samples.length, sourceRate)
+  sourceBuffer.copyToChannel(copy, 0)
+
+  const node = offline.createBufferSource()
+  node.buffer = sourceBuffer
+  node.connect(offline.destination)
+  node.start()
+
+  const resampled = await offline.startRendering()
+  const out = new Float32Array(resampled.length)
+  resampled.copyFromChannel(out, 0)
+  return out
 }
 
 interface DiCategory {
@@ -127,19 +166,32 @@ export function PlayerPanel({ file, onClose, diLibraryPath }: PlayerPanelProps &
           throw new Error(`Could not read the capture: ${modelResult.error ?? 'no data'}`)
         }
 
-        // 2. Decode the DI to raw samples, trimmed to the preview length.
-        const ctx = getAudioContext()
-        const decoded = await ctx.decodeAudioData(base64ToArrayBuffer(diResult.data))
-        const sampleRate = decoded.sampleRate
-        const maxSamples = Math.min(decoded.length, Math.floor(MAX_PREVIEW_SECONDS * sampleRate))
-        // NAM models are mono; use the first channel. copyFromChannel fills at most
-        // input.length samples, which is already clamped to the preview length.
-        const input = new Float32Array(maxSamples)
-        decoded.copyFromChannel(input, 0, 0)
-
         const modelJson = new TextDecoder().decode(base64ToArrayBuffer(modelResult.data))
 
-        // 3. Render through the model off the UI thread.
+        // 2. Decode the DI. NAM models are mono, so we take the first channel.
+        const ctx = getAudioContext()
+        const decoded = await ctx.decodeAudioData(base64ToArrayBuffer(diResult.data))
+        const diSampleRate = decoded.sampleRate
+        const wholeChannel = new Float32Array(decoded.length)
+        decoded.copyFromChannel(wholeChannel, 0, 0)
+
+        // 3. Pick the most energetic window rather than the first N seconds. DI tracks commonly
+        // open with silence or a quiet count-in, and rendering that reads as "quiet, and the amp
+        // has no gain" rather than "you rendered a silent intro".
+        const windowSamples = Math.min(
+          wholeChannel.length,
+          Math.floor(MAX_PREVIEW_SECONDS * diSampleRate)
+        )
+        const windowStart = findLoudestWindowStart(wholeChannel, windowSamples)
+        const diWindow = wholeChannel.subarray(windowStart, windowStart + windowSamples)
+
+        // 4. Resample to the rate the model was trained at. A model's receptive field and
+        // filters are fixed at its training rate, so feeding 44.1k audio to a 48k model shifts
+        // its entire frequency response — it sounds wrong, not just slightly off.
+        const modelSampleRate = readModelSampleRate(modelJson)
+        const input = await resampleTo(diWindow, diSampleRate, modelSampleRate)
+
+        // 5. Render through the model off the UI thread.
         setStatus('rendering')
         const rendered = await new Promise<NamRenderResponse>((resolve, reject) => {
           workerRef.current?.terminate()
@@ -151,15 +203,19 @@ export function PlayerPanel({ file, onClose, diLibraryPath }: PlayerPanelProps &
           worker.onmessage = (event: MessageEvent<NamRenderResponse>) => resolve(event.data)
           worker.onerror = (event) => reject(new Error(event.message || 'Render worker crashed'))
 
-          const request: NamRenderRequest = { modelJson, input, sampleRate }
+          const request: NamRenderRequest = { modelJson, input, sampleRate: modelSampleRate }
           worker.postMessage(request, [input.buffer])
         })
 
         if (!rendered.ok) throw new Error(rendered.error)
 
-        // 4. Normalize and hand to Web Audio.
+        // 6. DC-block, then normalize — same output stage order as the real plugin. Blocking
+        // after normalizing would leave the offset scaled into the signal.
+        applyDcBlocker(rendered.output, modelSampleRate)
         const normalized = normalizeRendered(rendered.output, rendered.loudnessDb)
-        const audioBuffer = ctx.createBuffer(1, normalized.length, sampleRate)
+
+        // Buffer carries the model's rate; Web Audio resamples to the device on playback.
+        const audioBuffer = ctx.createBuffer(1, normalized.length, modelSampleRate)
         audioBuffer.copyToChannel(normalized, 0)
 
         bufferRef.current = audioBuffer
