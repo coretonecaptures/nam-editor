@@ -42,8 +42,9 @@ also what the previous attempt already failed to achieve.
 NAM/                  Vendored DSP core from tone-3000/neural-amp-modeler-wasm (MIT)
 vendor/nlohmann/      Vendored nlohmann/json single header
 src/nam_offline.cpp   Our entry point — the only file that isn't upstream
-CMakeLists.txt        Single-threaded Emscripten target
-build.sh              Fetches Eigen, configures, builds, copies output
+build.sh              Fetches Eigen, builds, copies output to renderer/public
+test/test.cjs         Smoke test: real models render + memory is a plain ArrayBuffer
+test/models/          Representative A1 / A2 / LSTM models for the test
 deps/                 Eigen, fetched by build.sh (gitignored)
 build/                Build output (gitignored)
 ```
@@ -64,13 +65,47 @@ source ./emsdk_env.sh
 Then:
 
 ```bash
-./build.sh
+./build.sh                     # ~620KB .wasm + ~72KB .js glue
+./build.sh --with-test-build   # also builds the Node module used by the test
+node test/test.cjs
 ```
 
 Writes `nam-offline.js` + `nam-offline.wasm` into `src/renderer/public/`.
 
 The build output is committed so contributors don't all need Emscripten installed — only rerun
 `build.sh` when `src/nam_offline.cpp` or the vendored `NAM/` sources change.
+
+### Verified behavior
+
+`node test/test.cjs` against real models:
+
+```
+PASS lstm.nam                 peak=0.0198 rms=0.0134 loudness=-37.84dB   184x realtime
+PASS wavenet_a1_standard.nam  peak=0.3746 rms=0.1614 loudness=n/a          7x realtime
+PASS wavenet_a2_max.nam       peak=10.0976 rms=9.1598 loudness=-20.00dB   17x realtime
+
+WASM memory backing: ArrayBuffer  <- not SharedArrayBuffer, so no isolation needed
+```
+
+Worst-case render is ~7x realtime, i.e. about 1.4s of compute for a 10s preview — fine for
+render-then-play, and the test asserts the ArrayBuffer property so a stray `-pthread` can't
+silently reintroduce the Electron blocker.
+
+### Playback levels — important
+
+Model output is **not** normalized. `wavenet_a2_max.nam` above renders a peak of ~10.0 from a
+0.25-amplitude input — playing that back raw would be violently loud and would clip hard.
+
+Callers must apply loudness normalization before playback. Upstream's real-time module
+normalizes to −18 dB using the model's own reported loudness:
+
+```js
+const adjustmentDb = -18 - loudness   // when namHasLoudness() is true
+const gain = Math.pow(10, adjustmentDb * 0.05)
+```
+
+For models where `namHasLoudness()` is false (several above), there's no metadata to normalize
+against, so fall back to scaling by the rendered buffer's measured peak.
 
 ## API
 
