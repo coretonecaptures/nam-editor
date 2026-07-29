@@ -4925,6 +4925,7 @@ INSTRUCTIONS:
               key={playerFile.filePath}
               file={playerFile}
               diLibraryPath={settings.diPreviewLibraryPath || null}
+              coverImagePath={metadataCoverPath}
               onClose={() => setPlayerFile(null)}
             />
           ) : showSettings ? (

@@ -86,9 +86,57 @@ interface PlayerPanelProps {
    * and noise bursts), which is correct for training and sounds like static as a preview.
    */
   diLibraryPath?: string | null
+  /** Amp cover photo (`ampcover.*`), resolved by App the same way the metadata editor does. */
+  coverImagePath?: string | null
 }
 
-export function PlayerPanel({ file, onClose, diLibraryPath }: PlayerPanelProps & { onClose: () => void }) {
+/** Matches the metadata editor's local-file:// scheme for serving images off disk. */
+function toFileUrl(p: string): string {
+  return p.startsWith('/') ? `local-file://${p}` : `local-file:///${p}`
+}
+
+const TONE_LABELS: Record<string, string> = {
+  clean: 'Clean',
+  crunch: 'Crunch',
+  hi_gain: 'Hi Gain',
+  fuzz: 'Fuzz',
+  overdrive: 'Overdrive',
+  distortion: 'Distortion',
+  other: 'Other'
+}
+
+const GEAR_LABELS: Record<string, string> = {
+  amp: 'Amp',
+  amp_cab: 'Amp + Cab',
+  pedal: 'Pedal',
+  pedal_amp: 'Pedal + Amp',
+  amp_pedal_cab: 'Amp + Pedal + Cab',
+  preamp: 'Preamp',
+  studio: 'Studio'
+}
+
+/** Gear types that already include a cabinet, so no IR is needed to sound right. */
+const GEAR_TYPES_WITH_CAB = new Set(['amp_cab', 'amp_pedal_cab'])
+
+function SummaryRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline gap-2 min-w-0">
+      <span className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500 w-20 flex-shrink-0">
+        {label}
+      </span>
+      <span className="text-xs text-gray-700 dark:text-gray-200 truncate" title={value}>
+        {value}
+      </span>
+    </div>
+  )
+}
+
+export function PlayerPanel({
+  file,
+  onClose,
+  diLibraryPath,
+  coverImagePath
+}: PlayerPanelProps & { onClose: () => void }) {
   const [status, setStatus] = useState<PlayerStatus>('idle')
   const [errorMsg, setErrorMsg] = useState('')
   const [categories, setCategories] = useState<DiCategory[]>([])
@@ -304,6 +352,26 @@ export function PlayerPanel({ file, onClose, diLibraryPath }: PlayerPanelProps &
   const busy = status === 'loading-di' || status === 'rendering'
   const hasLibrary = categories.length > 0
 
+  // Top-line metadata, mirroring the fields the metadata editor leads with. Only rows that
+  // actually have a value are shown, so a sparsely-tagged capture doesn't render a wall of "—".
+  const summaryRows = useMemo(() => {
+    const rows: Array<{ label: string; value: string }> = []
+    const gear = [m.gear_make, m.gear_model].filter(Boolean).join(' ')
+    if (gear) rows.push({ label: 'Gear', value: gear })
+    if (m.gear_type) rows.push({ label: 'Type', value: GEAR_LABELS[m.gear_type] ?? m.gear_type })
+    if (m.tone_type) rows.push({ label: 'Tone', value: TONE_LABELS[m.tone_type] ?? m.tone_type })
+    if (m.nl_amp_channel) rows.push({ label: 'Channel', value: String(m.nl_amp_channel) })
+    if (m.nl_cabinet) rows.push({ label: 'Cabinet', value: String(m.nl_cabinet) })
+    if (m.nl_mics) rows.push({ label: 'Mics', value: String(m.nl_mics) })
+    if (m.nl_amp_settings) rows.push({ label: 'Settings', value: String(m.nl_amp_settings) })
+    if (m.modeled_by) rows.push({ label: 'Modeled by', value: String(m.modeled_by) })
+    return rows
+  }, [m])
+
+  // Non-cab captures render as raw power-amp signal until the IR stage lands, which sounds
+  // harsh and would otherwise be blamed on the capture. Warn rather than mislead.
+  const needsCabIr = !!m.gear_type && !GEAR_TYPES_WITH_CAB.has(m.gear_type)
+
   return (
     <div className="flex flex-col h-full bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 select-none">
       {/* Header */}
@@ -375,6 +443,29 @@ export function PlayerPanel({ file, onClose, diLibraryPath }: PlayerPanelProps &
 
         {status === 'ready' && (
           <>
+            {/* Amp cover photo — same image and source the metadata editor shows. */}
+            {coverImagePath && (
+              <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-900">
+                <div className="aspect-[3/1] w-full">
+                  <img
+                    src={toFileUrl(coverImagePath)}
+                    alt="Amp cover"
+                    className="w-full h-full object-cover"
+                    loading="lazy"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Top metadata summary */}
+            {summaryRows.length > 0 && (
+              <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 px-3 py-2.5 space-y-1.5">
+                {summaryRows.map((row) => (
+                  <SummaryRow key={row.label} label={row.label} value={row.value} />
+                ))}
+              </div>
+            )}
+
             {/* Play / Stop */}
             <div className="flex items-center justify-center">
               <button
@@ -405,6 +496,15 @@ export function PlayerPanel({ file, onClose, diLibraryPath }: PlayerPanelProps &
                 style={{ width: `${progress * 100}%`, transition: isPlaying ? 'none' : 'width 150ms' }}
               />
             </div>
+
+            {/* No cabinet in this capture — see the IR stage TODO. */}
+            {needsCabIr && (
+              <p className="text-[11px] text-amber-600 dark:text-amber-500 leading-relaxed">
+                This capture has no cabinet ({GEAR_LABELS[m.gear_type as string] ?? m.gear_type}),
+                so it will sound harsh and fizzy until cabinet IR support is added. That's the
+                player, not the capture.
+              </p>
+            )}
           </>
         )}
 
