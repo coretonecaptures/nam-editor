@@ -1,5 +1,126 @@
 # TODO
 
+## [HIGH PRIORITY] In-app tone player — offline WASM render (no real-time AudioWorklet)
+
+**Status: IN PROGRESS on `feature/player`.** Prior attempt on this branch (see
+`docs/player-investigation.md`, checkpoint `5c84181`) tried to embed Tone3000's
+`neural-amp-modeler-wasm` React player (`T3kPlayer`) for real-time playback via
+`AudioWorkletNode`. That's permanently blocked in Electron: the WASM module is built with
+`-pthread -sAUDIO_WORKLET -sWASM_WORKERS` (see upstream `wasm/CMakeLists.txt`), which requires
+`self.crossOriginIsolated === true` to transfer `SharedArrayBuffer` into the worklet thread.
+Every approach tried to get `crossOriginIsolated` to `true` in Electron 41/Chromium 130 failed
+(COOP/COEP via `onHeadersReceived`, custom `app://` protocol, Vite middleware, `sandbox: true`
+— which additionally broke preload since the current preload does synchronous `fs`-based
+settings bootstrap incompatible with a sandboxed preload). Do not re-attempt the real-time
+AudioWorklet path without a fundamentally different preload/window architecture.
+
+**New approach — fork the DSP core, drop threading entirely:**
+
+The actual neural-net inference in `tone-3000/neural-amp-modeler-wasm` (MIT licensed,
+https://github.com/tone-3000/neural-amp-modeler-wasm) is an ordinary synchronous C++ call —
+`wasm/t3k-wasm-module.cpp`'s `process(float* in, float* out, int n_samples)`, backed by
+`nam::get_dsp(jsonStr)` and `nam::DSP::process()` from the vendored `NAM/*.cpp` sources. It has
+**no threading requirement of its own** — the `-pthread`/`AudioWorklet` machinery only exists to
+schedule that call every 128 samples from the browser's real-time audio thread. Since a preview
+player doesn't need real-time bounded latency (render once, then play back), we don't need any
+of that scaffolding.
+
+Plan:
+1. Vendor `NAM/*.cpp` + `NAM/*.h` and the `Dependencies/eigen` / `Dependencies/nlohmann` headers
+   from the upstream repo (MIT — freely forkable) into this repo, e.g. under `native/nam-wasm/`.
+2. Write a new, small entry point (not present upstream) exposing three C functions:
+   `loadModel(jsonStr) -> handle`, `processBuffer(handle, in, out, n)`,
+   `freeModel(handle)` — directly wrapping `nam::get_dsp` / `nam::DSP::process`. No
+   `emscripten/webaudio.h`, no `EMSCRIPTEN_WEBAUDIO_T`, no click-to-resume handler, none of the
+   AudioWorklet plumbing.
+3. Compile with plain `emcc` (Emscripten SDK — not yet installed on this machine, needs
+   confirmation before installing) — **no** `-pthread`, `-sAUDIO_WORKLET`, or `-sWASM_WORKERS`.
+   Just `-sMODULARIZE -sEXPORT_ES6=1 -sALLOW_MEMORY_GROWTH -sEXPORTED_FUNCTIONS=...`. Produces an
+   ordinary single-threaded `.wasm` that never allocates `SharedArrayBuffer` — so
+   `crossOriginIsolated` is never checked and never needs to be true. This is not "bypassing" the
+   COOP/COEP security gate (which exists to gate Spectre-class side-channels via shared memory +
+   high-res timers) — it's not using the feature that requires the gate at all, which is the
+   correct fix, not a workaround.
+4. Renderer side: a plain Web Worker loads the module, is handed the `.nam` file's JSON contents
+   and the DI reference WAV's samples, calls `processBuffer` once over the whole buffer (NAM
+   inference is cheap; expect well under a second for a several-second capture on any modern
+   CPU, even single-threaded), gets back rendered float samples, builds a WAV/`AudioBuffer`.
+5. Playback: normal `AudioBufferSourceNode` (or encode to WAV blob + `<audio>`). No
+   `AudioWorkletNode`, no COI requirement, no dependency on the Python/conda `nam` env at all —
+   this stays fully client-side and is bit-accurate to the real NAM plugin since it's the same
+   DSP core.
+6. Wire into `PlayerPanel.tsx`: replace the AudioWorklet init path with "render once, cache
+   result, play the rendered buffer." Simpler UI too — no live mic input needed for a library
+   preview player (could be a v2 addition once offline render works).
+
+**Not yet installed / needs a decision before compiling:** Emscripten SDK (`emsdk`) is not on
+this machine — sizable download + first-time toolchain setup. Vendoring the C++ sources and
+writing the new entry point + CMake target can happen without it; actually producing a `.wasm`
+needs `emcc` installed and confirmed first.
+
+---
+
+## [HIGH PRIORITY] Report / brainstorm: "Tone Map" — organic clickable tone-browsing dashboard(s)
+
+**Not scoped for implementation yet — needs the visualization design flushed out further before
+building anything.** Capturing the idea while it's fresh.
+
+**Immediate, concrete first step (separate, smaller item — see the folder-dashboard gain strip
+entry below):** two simple 1D gradient/heat strips on the folder dashboard — one for gain level
+(clean → high gain, using `metadata.gain`) and one showing tone-type category counts as a
+heat/gradient strip (how many captures fall into each `tone_type` bucket). That's the concrete
+near-term deliverable and is tracked separately so it doesn't get stuck behind this bigger idea.
+
+**The bigger idea — a real explorable map, not just a strip:** an "organic chart" view that plots
+*all* tones in the library (or a scoped subset) on some kind of 2D field — e.g. gain on one axis,
+brightness/character or gear type on another — where visually-close points represent
+similar-sounding captures, clustered rather than just linearly sorted. The user should be able to:
+- **Filter** the map before/while browsing — e.g. "only Marshall-type amps" — and watch the map
+  narrow to just that cluster.
+- **Click a point (or a cluster)** to get oriented — "here's the cluster of upper-mid-gain
+  Marshall tones" — as a way to *discover* tones you might like, not just find a specific one you
+  already know the name of.
+- **Play a clicked tone immediately**, using the in-app player above — this is explicitly called
+  out as the feature that would make the whole thing "REALLY useful": click a point in the map,
+  hear it right there, no separate load/select step.
+
+**Open design questions to resolve before scoping real implementation:**
+- What determines position on the "map" — is it purely metadata-driven (gain, tone_type, gear
+  fields — all already on `NamFile`/`.nam` metadata, no new extraction needed), or does it need an
+  actual similarity/clustering computation (e.g. fingerprinting `waveNetConfig`/architecture the
+  way `detectPreset.ts` already does for preset matching)? Metadata-driven is far cheaper to ship
+  first; true similarity clustering is a "v2" if the metadata-driven version doesn't feel
+  "organic" enough.
+- Is this one dashboard or several purpose-built ones (a "by gain" map, a "by gear" map, a "by
+  quality/ESR" map)? The user brainstorm mentioned "some sort of new dashboard(s)" — plural is on
+  the table.
+- Where does this live in the app — a new top-level view, or a mode within the existing folder
+  dashboard?
+- How does filtering compose with the existing folder-tree scope — is the map always
+  library-wide, or does it respect "currently browsing this folder"?
+
+Do not start building the big map until these are actually answered; the gain/tone-type strips
+below are the right-sized next step.
+
+---
+
+## [MEDIUM] Folder dashboard: gain + tone-type gradient strips
+
+Two 1D gradient/heat strips on the folder dashboard (not the big Tone Map above — this is the
+concrete, buildable slice of it):
+1. **Gain strip**: every capture in scope placed along a clean → high-gain gradient using
+   `metadata.gain` (already a read-only field on `NamFile`, no new extraction needed). Color
+   intensity or position = gain value.
+2. **Tone-type strip**: count of captures per `tone_type` category, rendered as a heat/gradient
+   strip (which categories are well-represented in this folder/library vs. sparse).
+Scope: folder dashboard (i.e. respects current folder-tree scope, not necessarily library-wide —
+confirm against the Tone Map's "library-wide vs. scoped" open question above so the two don't
+diverge in behavior later). Keep this intentionally simple (a strip, not a full scatter/map) —
+it's the fast, obviously-useful version; the bigger clickable/filterable map is tracked
+separately above.
+
+---
+
 ## DONE: Option to include folder images (amp/cab/mic photos etc.) in the pack PDF
 
 **Implemented.** Pack Info export now has a "Rig photos (N)" checkbox + thumbnail picker next
