@@ -4437,6 +4437,15 @@ INSTRUCTIONS:
     void resolveCover()
     return () => { cancelled = true }
   }, [librarian.rootFolder, selectedSingleFilePath])
+  // While the player is open, follow the selection: clicking another capture should preview
+  // THAT capture, not keep showing the one whose play button was originally clicked.
+  useEffect(() => {
+    if (playerFile === null) return
+    if (selectedFiles.length !== 1) return
+    const selected = selectedFiles[0]
+    if (selected.filePath !== playerFile.filePath) setPlayerFile(selected)
+  }, [playerFile, selectedFiles])
+
   // Close slide panel if selection is empty (and no batch edit active)
   if (gridSlideOpen && selectedFiles.length === 0 && batchFolder === null) setGridSlideOpen(false)
   const dirtyCount = files.filter((f) => f.isDirty).length
@@ -4920,15 +4929,7 @@ INSTRUCTIONS:
               />
             </div>
           )}
-          {playerFile !== null ? (
-            <PlayerPanel
-              key={playerFile.filePath}
-              file={playerFile}
-              diLibraryPath={settings.diPreviewLibraryPath || null}
-              coverImagePath={metadataCoverPath}
-              onClose={() => setPlayerFile(null)}
-            />
-          ) : showSettings ? (
+          {showSettings ? (
             <SettingsPanel
               settings={settings}
               onSave={handleSaveSettings}
@@ -4955,6 +4956,17 @@ INSTRUCTIONS:
               onRevealAsset={(item) => { if (item.assetPath) void window.api.revealFile(item.assetPath) }}
               onOpenFolder={(item) => { void handleOpenCompanionInboxFolder(item) }}
               onClose={() => setCompanionInboxOpen(false)}
+            />
+          ) : playerFile !== null ? (
+            // Deliberately placed AFTER settings/tone store/training/companion inbox: opening
+            // any of those should replace the player, not be blocked by it. But it still wins
+            // over the dashboard and metadata editor, so it survives clicking between captures.
+            <PlayerPanel
+              key={playerFile.filePath}
+              file={playerFile}
+              diLibraryPath={settings.diPreviewLibraryPath || null}
+              coverImagePath={metadataCoverPath}
+              onClose={() => setPlayerFile(null)}
             />
           ) : showDashboard ? (
             <div className="relative h-full flex flex-col">

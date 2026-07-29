@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { NamFile } from '../types/nam'
+import { detectPreset } from '../utils/detectPreset'
+import { getCaptureBestEsr, getEsrTone } from '../utils/esr'
 import {
   applyDcBlocker,
   base64ToArrayBuffer,
@@ -118,13 +120,16 @@ const GEAR_LABELS: Record<string, string> = {
 /** Gear types that already include a cabinet, so no IR is needed to sound right. */
 const GEAR_TYPES_WITH_CAB = new Set(['amp_cab', 'amp_pedal_cab'])
 
-function SummaryRow({ label, value }: { label: string; value: string }) {
+function SummaryRow({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
     <div className="flex items-baseline gap-2 min-w-0">
-      <span className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500 w-20 flex-shrink-0">
+      <span className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500 w-[4.5rem] flex-shrink-0">
         {label}
       </span>
-      <span className="text-xs text-gray-700 dark:text-gray-200 truncate" title={value}>
+      <span
+        className={`text-xs truncate ${tone ?? 'text-gray-700 dark:text-gray-200'}`}
+        title={value}
+      >
         {value}
       </span>
     </div>
@@ -145,6 +150,11 @@ export function PlayerPanel({
   const [renderMs, setRenderMs] = useState<number | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [progress, setProgress] = useState(0)
+
+  const [summaryColumns, setSummaryColumns] = useState(2)
+  const [activeCategory, setActiveCategory] = useState<string | null>(null)
+  const [clipFilter, setClipFilter] = useState('')
+  const panelRef = useRef<HTMLDivElement | null>(null)
 
   const audioCtxRef = useRef<AudioContext | null>(null)
   const bufferRef = useRef<AudioBuffer | null>(null)
@@ -179,6 +189,19 @@ export function PlayerPanel({
     }
     setIsPlaying(false)
     setProgress(0)
+  }, [])
+
+  // Track the panel's own width so the summary can reflow. Each column needs roughly 210px to
+  // fit a label plus a readable value without truncating everything.
+  useEffect(() => {
+    const element = panelRef.current
+    if (!element || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0
+      setSummaryColumns(width >= 640 ? 3 : width >= 420 ? 2 : 1)
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
   }, [])
 
   // Tear everything down on unmount so a closed panel can't keep audio or a worker alive.
@@ -277,9 +300,8 @@ export function PlayerPanel({
     [file.filePath, getAudioContext, stopPlayback]
   )
 
-  // Scan the DI library once per library path. Nothing is auto-selected: which clip you want to
-  // hear a capture through is a taste decision (a clean model through a metal riff tells you
-  // little), so the user picks and we remember it for the session via lastDiPathRef.
+  // Scan the DI library, then auto-select a clip so the preview renders immediately. Requiring
+  // a click first made the panel look broken on open.
   useEffect(() => {
     let cancelled = false
     if (!diLibraryPath) {
@@ -295,12 +317,12 @@ export function PlayerPanel({
         result.error ??
           (result.categories.length === 0 ? 'No .wav files found in the DI library folder.' : '')
       )
-      // Re-select the previous clip if it's still present, so switching captures doesn't
-      // silently reset which DI you were auditioning through.
-      const remembered = lastDiPath
-      if (remembered && result.categories.some((c) => c.files.some((f) => f.path === remembered))) {
-        setDiPath(remembered)
-      }
+
+      const allClips = result.categories.flatMap((c) => c.files)
+      if (allClips.length === 0) return
+      // Prefer the clip auditioned last (kept across captures), else the first available.
+      const remembered = allClips.find((f) => f.path === lastDiPath)
+      setDiPath(remembered?.path ?? allClips[0].path)
     })()
     return () => { cancelled = true }
   }, [diLibraryPath])
@@ -352,28 +374,71 @@ export function PlayerPanel({
   const busy = status === 'loading-di' || status === 'rendering'
   const hasLibrary = categories.length > 0
 
+  // Flatten once, tagging each clip with its category so the "All" view can label them.
+  const allClips = useMemo(
+    () => categories.flatMap((c) => c.files.map((f) => ({ ...f, category: c.name }))),
+    [categories]
+  )
+  const totalClipCount = allClips.length
+
+  const visibleClips = useMemo(() => {
+    const needle = clipFilter.trim().toLowerCase()
+    return allClips.filter((clip) => {
+      if (activeCategory !== null && clip.category !== activeCategory) return false
+      if (needle && !clip.name.toLowerCase().includes(needle)) return false
+      return true
+    })
+  }, [allClips, activeCategory, clipFilter])
+
   // Top-line metadata, mirroring the fields the metadata editor leads with. Only rows that
   // actually have a value are shown, so a sparsely-tagged capture doesn't render a wall of "—".
   const summaryRows = useMemo(() => {
-    const rows: Array<{ label: string; value: string }> = []
+    const rows: Array<{ label: string; value: string; tone?: string }> = []
     const gear = [m.gear_make, m.gear_model].filter(Boolean).join(' ')
     if (gear) rows.push({ label: 'Gear', value: gear })
     if (m.gear_type) rows.push({ label: 'Type', value: GEAR_LABELS[m.gear_type] ?? m.gear_type })
     if (m.tone_type) rows.push({ label: 'Tone', value: TONE_LABELS[m.tone_type] ?? m.tone_type })
+
+    // Preset (A2 / Standard / Lite / ...) is fingerprinted from the model config, not metadata.
+    const preset = detectPreset(file.config)
+    if (preset) rows.push({ label: 'Preset', value: preset })
+
+    // ESR: reuse the shared helper so the player agrees with the grid on which ESR to show
+    // for A2 captures (full vs aggregate), and colour it with the same thresholds.
+    const esr = getCaptureBestEsr({
+      ...(m as Record<string, unknown>),
+      architecture: file.architecture,
+      config: file.config
+    })
+    if (esr.value != null) {
+      const toneInfo = getEsrTone(esr.value, esr.kind)
+      const toneClass =
+        toneInfo.tone === 'green'
+          ? 'text-emerald-600 dark:text-emerald-400'
+          : toneInfo.tone === 'amber'
+            ? 'text-amber-600 dark:text-amber-400'
+            : toneInfo.tone === 'red'
+              ? 'text-red-600 dark:text-red-400'
+              : undefined
+      rows.push({ label: 'ESR', value: esr.value.toFixed(6), tone: toneClass })
+    }
+
     if (m.nl_amp_channel) rows.push({ label: 'Channel', value: String(m.nl_amp_channel) })
     if (m.nl_cabinet) rows.push({ label: 'Cabinet', value: String(m.nl_cabinet) })
     if (m.nl_mics) rows.push({ label: 'Mics', value: String(m.nl_mics) })
     if (m.nl_amp_settings) rows.push({ label: 'Settings', value: String(m.nl_amp_settings) })
+    if (m.nl_amp_switches) rows.push({ label: 'Switches', value: String(m.nl_amp_switches) })
+    if (m.nl_boost_pedal) rows.push({ label: 'Boost', value: String(m.nl_boost_pedal) })
     if (m.modeled_by) rows.push({ label: 'Modeled by', value: String(m.modeled_by) })
     return rows
-  }, [m])
+  }, [m, file.config, file.architecture])
 
   // Non-cab captures render as raw power-amp signal until the IR stage lands, which sounds
   // harsh and would otherwise be blamed on the capture. Warn rather than mislead.
   const needsCabIr = !!m.gear_type && !GEAR_TYPES_WITH_CAB.has(m.gear_type)
 
   return (
-    <div className="flex flex-col h-full bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 select-none">
+    <div ref={panelRef} className="flex flex-col h-full bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 select-none">
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
         <div className="flex-1 min-w-0">
@@ -457,11 +522,16 @@ export function PlayerPanel({
               </div>
             )}
 
-            {/* Top metadata summary */}
+            {/* Top metadata summary. Columns follow the PANEL's measured width, not the
+                viewport — the right panel is user-resizable, so viewport breakpoints would be
+                wrong at exactly the widths that matter. 1 col when narrow, up to 3 when wide. */}
             {summaryRows.length > 0 && (
-              <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 px-3 py-2.5 space-y-1.5">
+              <div
+                className="rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 px-3 py-2.5 grid gap-x-5 gap-y-1.5"
+                style={{ gridTemplateColumns: `repeat(${summaryColumns}, minmax(0, 1fr))` }}
+              >
                 {summaryRows.map((row) => (
-                  <SummaryRow key={row.label} label={row.label} value={row.value} />
+                  <SummaryRow key={row.label} label={row.label} value={row.value} tone={row.tone} />
                 ))}
               </div>
             )}
@@ -508,44 +578,97 @@ export function PlayerPanel({
           </>
         )}
 
-        {/* DI clip picker — always visible so clips can be A/B'd against the same capture. */}
+        {/* DI clip picker. Scales to a large library: filter by category, narrow by name, and
+            the list scrolls — instead of rendering every clip in the library as a button. */}
         {hasLibrary && (
-          <div className="space-y-3">
-            <div className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-              Play Through
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                Play Through
+              </span>
+              <span className="text-[10px] text-gray-400 dark:text-gray-600">
+                {totalClipCount} clip{totalClipCount === 1 ? '' : 's'}
+              </span>
             </div>
 
-            {categories.map((category) => (
-              <div key={category.name} className="space-y-1.5">
-                <div className="text-[11px] font-medium text-gray-400 dark:text-gray-500">
-                  {category.name}
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {category.files.map((clip) => {
-                    const selected = clip.path === diPath
-                    return (
-                      <button
-                        key={clip.path}
-                        onClick={() => setDiPath(clip.path)}
-                        disabled={busy}
-                        title={clip.name}
-                        className={`h-7 px-2.5 rounded-md text-xs font-medium border transition-colors disabled:opacity-50 max-w-full truncate ${
+            {/* Category tabs — only when there's more than one to choose between. */}
+            {categories.length > 1 && (
+              <div className="flex flex-wrap gap-1">
+                {['All', ...categories.map((c) => c.name)].map((name) => (
+                  <button
+                    key={name}
+                    onClick={() => setActiveCategory(name === 'All' ? null : name)}
+                    className={`h-6 px-2 rounded text-[11px] font-medium transition-colors ${
+                      (name === 'All' ? null : name) === activeCategory
+                        ? 'bg-teal-500 text-white'
+                        : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
+                    }`}
+                  >
+                    {name}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Name filter — only worth the space once the library is big enough to scan. */}
+            {totalClipCount > 8 && (
+              <input
+                type="text"
+                value={clipFilter}
+                onChange={(e) => setClipFilter(e.target.value)}
+                placeholder="Filter clips…"
+                className="w-full h-7 px-2 rounded-md text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-200 placeholder:text-gray-400 focus:outline-none focus:border-teal-500"
+              />
+            )}
+
+            <div className="max-h-52 overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-800 divide-y divide-gray-100 dark:divide-gray-800/60">
+              {visibleClips.length === 0 ? (
+                <p className="px-2.5 py-3 text-[11px] text-gray-400">No clips match that filter.</p>
+              ) : (
+                visibleClips.map((clip) => {
+                  const selected = clip.path === diPath
+                  return (
+                    <button
+                      key={clip.path}
+                      onClick={() => setDiPath(clip.path)}
+                      disabled={busy}
+                      title={clip.path}
+                      className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-left transition-colors disabled:opacity-50 ${
+                        selected
+                          ? 'bg-teal-500/10 dark:bg-teal-500/15'
+                          : 'hover:bg-gray-50 dark:hover:bg-gray-800/60'
+                      }`}
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        className={`w-3 h-3 flex-shrink-0 ${selected ? 'text-teal-500' : 'text-gray-300 dark:text-gray-600'}`}
+                        fill="currentColor"
+                      >
+                        <path d="M8 5.14v14l11-7-11-7z" />
+                      </svg>
+                      <span
+                        className={`flex-1 min-w-0 truncate text-xs ${
                           selected
-                            ? 'border-teal-500 bg-teal-500 text-white'
-                            : 'border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
+                            ? 'text-teal-700 dark:text-teal-300 font-medium'
+                            : 'text-gray-600 dark:text-gray-300'
                         }`}
                       >
                         {clip.name.replace(/\.wav$/i, '')}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            ))}
+                      </span>
+                      {activeCategory === null && categories.length > 1 && (
+                        <span className="text-[10px] text-gray-400 dark:text-gray-600 flex-shrink-0">
+                          {clip.category}
+                        </span>
+                      )}
+                    </button>
+                  )
+                })
+              )}
+            </div>
 
             {diPath && (
-              <p className="text-[11px] text-gray-400 pt-1">
-                First {MAX_PREVIEW_SECONDS}s of{' '}
+              <p className="text-[11px] text-gray-400">
+                Loudest {MAX_PREVIEW_SECONDS}s of{' '}
                 <span className="font-mono">{diLabel}</span> rendered through this capture
                 {renderMs !== null ? ` · took ${(renderMs / 1000).toFixed(1)}s` : ''}
               </p>
