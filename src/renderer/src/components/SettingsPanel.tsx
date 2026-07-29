@@ -923,6 +923,44 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab, onOpenTra
                     </button>
                   )}
                 </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">DI Clip Library</span>
+                  <span className="text-xs text-gray-400 dark:text-gray-500 truncate flex-1 font-mono">
+                    {draft.diPreviewLibraryPath || <span className="italic text-gray-400 dark:text-gray-600">Not configured</span>}
+                  </span>
+                  <button
+                    onClick={async () => {
+                      const p = await window.api.openFolder(draft.diPreviewLibraryPath || undefined)
+                      if (p) {
+                        const updated = { ...draft, diPreviewLibraryPath: p }
+                        setDraft(updated)
+                        onSave(updated)
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 flex-shrink-0"
+                  >
+                    Browse...
+                  </button>
+                  {draft.diPreviewLibraryPath && (
+                    <button
+                      onClick={() => {
+                        const updated = { ...draft, diPreviewLibraryPath: '' }
+                        setDraft(updated)
+                        onSave(updated)
+                      }}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-red-500/20 text-gray-500 dark:text-gray-400 flex-shrink-0"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <p className="text-[11px] text-gray-400 dark:text-gray-600 leading-relaxed">
+                  Guitar DI recordings used by the tone preview player. Organize them into subfolders
+                  (<span className="font-mono">Clean/</span>, <span className="font-mono">Medium Gain/</span>,{' '}
+                  <span className="font-mono">High Gain/</span>) — each becomes a category in the player.
+                  This is separate from the training Input DI, which is a calibration signal and is not
+                  meant to be listened to.
+                </p>
               </div>
             </div>
           </div>

@@ -415,6 +415,10 @@ declare global {
       openAudioFiles: () => Promise<string[]>
       openImageFile: () => Promise<string | null>
       readFileBinary: (filePath: string) => Promise<{ data?: string; error?: string }>
+      scanDiLibrary: (libraryPath: string) => Promise<{
+        categories: Array<{ name: string; files: Array<{ name: string; path: string }> }>
+        error?: string
+      }>
       hashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
       hashFilesWithoutMetadata: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
       revealFile: (filePath: string) => Promise<void>
@@ -4920,7 +4924,7 @@ INSTRUCTIONS:
             <PlayerPanel
               key={playerFile.filePath}
               file={playerFile}
-              defaultDiPath={settings.namTrainingInputWav || null}
+              diLibraryPath={settings.diPreviewLibraryPath || null}
               onClose={() => setPlayerFile(null)}
             />
           ) : showSettings ? (

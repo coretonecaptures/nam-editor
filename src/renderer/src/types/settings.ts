@@ -293,6 +293,16 @@ export interface AppSettings {
   // Updates
   checkForRCBuilds: boolean
 
+  // Tone preview player
+  // Folder of musical guitar DI clips to render captures against for preview playback.
+  // Distinct from namTrainingInputWav, which is NAM's calibration/reamp test signal (sine
+  // sweeps + noise bursts) -- correct for training, unlistenable as a preview.
+  // Expected layout: subfolders name the category shown in the player, e.g.
+  //   <diPreviewLibraryPath>/Clean/riff1.wav
+  //   <diPreviewLibraryPath>/Medium Gain/riff2.wav
+  //   <diPreviewLibraryPath>/High Gain/riff3.wav
+  diPreviewLibraryPath: string
+
   // NAM Standalone
   namStandalonePath: string
 
@@ -418,6 +428,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showNamLabFields: true,
   showFolderImages: true,
   checkForRCBuilds: false,
+  diPreviewLibraryPath: '',
   namStandalonePath: '',
   enableExperimentalTraining: false,
   namPythonPath: '',

@@ -37,14 +37,55 @@ export interface NamWasmModule {
   _free(ptr: number): void
   _namLoadModel(jsonPtr: number): number
   _namFreeModel(handle: number): void
-  _namResetModel(handle: number, sampleRate: number, maxBlock: number): void
+  _namResetModel(handle: number, sampleRate: number, maxBlock: number): number
   _namProcessBuffer(handle: number, inPtr: number, outPtr: number, numSamples: number): number
   _namGetLoudness(handle: number): number
   _namHasLoudness(handle: number): number
   _namSetSlimmableSize(handle: number, size: number): void
+  _namGetLastError(): number
   HEAPF32: Float32Array
   stringToUTF8(str: string, ptr: number, maxBytes: number): void
   lengthBytesUTF8(str: string): number
+  UTF8ToString(ptr: number): string
+}
+
+/**
+ * Read the module's last-error message (set by namLoadModel/namResetModel/namProcessBuffer on
+ * failure). This is what makes render failures readable — without it, an exception thrown deep
+ * in the C++ DSP crosses the Emscripten export boundary as an opaque JS value that stringifies
+ * to "[object Object]" instead of a real message.
+ */
+function readLastError(Module: NamWasmModule, fallback: string): string {
+  try {
+    const message = Module.UTF8ToString(Module._namGetLastError())
+    return message || fallback
+  } catch {
+    return fallback
+  }
+}
+
+/**
+ * Stringify a caught value defensively. `String(error)` on a plain object (which is what some
+ * failure paths — e.g. a rejected wasm instantiation — can throw instead of a real Error)
+ * produces the useless "[object Object]". Try the fields an Error-like value would have before
+ * falling back to JSON, so a future unexpected failure is still readable instead of opaque.
+ */
+function describeUnknownError(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  if (typeof error === 'number' || typeof error === 'boolean') return String(error)
+  if (error && typeof error === 'object') {
+    const withMessage = error as { message?: unknown; name?: unknown }
+    if (typeof withMessage.message === 'string' && withMessage.message) {
+      return typeof withMessage.name === 'string' ? `${withMessage.name}: ${withMessage.message}` : withMessage.message
+    }
+    try {
+      return JSON.stringify(error)
+    } catch {
+      return Object.prototype.toString.call(error)
+    }
+  }
+  return String(error)
 }
 
 type ModuleFactory = () => Promise<NamWasmModule>
@@ -90,8 +131,10 @@ export function renderWithModule(
     if (handle === 0) {
       return {
         ok: false,
-        error:
+        error: readLastError(
+          Module,
           'This model could not be loaded. Its architecture or file version may not be supported by the bundled NAM core.'
+        )
       }
     }
 
@@ -103,7 +146,9 @@ export function renderWithModule(
     const loudnessDb = hasLoudness ? Module._namGetLoudness(handle) : null
 
     // Resets AND prewarms, so output is correct from sample 0 with no frames to discard.
-    Module._namResetModel(handle, sampleRate, input.length)
+    if (Module._namResetModel(handle, sampleRate, input.length) === 0) {
+      return { ok: false, error: readLastError(Module, 'Failed to reset the model for rendering.') }
+    }
 
     const bytes = input.length * 4
     inPtr = Module._malloc(bytes)
@@ -115,7 +160,7 @@ export function renderWithModule(
     const renderMs = performance.now() - started
 
     if (ok === 0) {
-      return { ok: false, error: 'The model failed to process the input buffer.' }
+      return { ok: false, error: readLastError(Module, 'The model failed to process the input buffer.') }
     }
 
     // Copy out of the heap immediately — any later allocation can grow (and detach) the view.
@@ -125,7 +170,7 @@ export function renderWithModule(
 
     return { ok: true, output, loudnessDb, renderMs }
   } catch (error) {
-    return { ok: false, error: `Rendering failed: ${String(error)}` }
+    return { ok: false, error: `Rendering failed: ${describeUnknownError(error)}` }
   } finally {
     if (inPtr !== 0) Module._free(inPtr)
     if (outPtr !== 0) Module._free(outPtr)
@@ -138,7 +183,7 @@ async function render(request: NamRenderRequest): Promise<NamRenderResponse> {
   try {
     Module = await getModule()
   } catch (error) {
-    return { ok: false, error: `Failed to load the NAM inference module: ${String(error)}` }
+    return { ok: false, error: `Failed to load the NAM inference module: ${describeUnknownError(error)}` }
   }
   return renderWithModule(Module, request)
 }

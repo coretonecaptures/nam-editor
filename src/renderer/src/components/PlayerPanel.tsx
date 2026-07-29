@@ -19,21 +19,42 @@ const MAX_PREVIEW_SECONDS = 12
 
 type PlayerStatus = 'idle' | 'loading-di' | 'rendering' | 'ready' | 'error'
 
+/**
+ * Last DI clip the user auditioned through, remembered for the session.
+ *
+ * Module-level rather than a ref because App mounts PlayerPanel with `key={filePath}`, so the
+ * component fully remounts on every capture change. Without this, picking a DI and then
+ * clicking a different capture would drop you back to "no clip selected" every time.
+ */
+let lastDiPath: string | null = null
+
 function formatError(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
 }
 
-interface PlayerPanelProps {
-  file: NamFile
-  /** Reference DI WAV to render through the model. Usually the configured training Input DI. */
-  defaultDiPath?: string | null
+interface DiCategory {
+  name: string
+  files: Array<{ name: string; path: string }>
 }
 
-export function PlayerPanel({ file, onClose, defaultDiPath }: PlayerPanelProps & { onClose: () => void }) {
+interface PlayerPanelProps {
+  file: NamFile
+  /**
+   * Folder of musical guitar DI clips, organized into category subfolders.
+   *
+   * Deliberately NOT the training Input DI: that's NAM's calibration/reamp signal (sine sweeps
+   * and noise bursts), which is correct for training and sounds like static as a preview.
+   */
+  diLibraryPath?: string | null
+}
+
+export function PlayerPanel({ file, onClose, diLibraryPath }: PlayerPanelProps & { onClose: () => void }) {
   const [status, setStatus] = useState<PlayerStatus>('idle')
   const [errorMsg, setErrorMsg] = useState('')
-  const [diPath, setDiPath] = useState<string | null>(defaultDiPath ?? null)
+  const [categories, setCategories] = useState<DiCategory[]>([])
+  const [libraryError, setLibraryError] = useState('')
+  const [diPath, setDiPath] = useState<string | null>(null)
   const [renderMs, setRenderMs] = useState<number | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [progress, setProgress] = useState(0)
@@ -152,10 +173,42 @@ export function PlayerPanel({ file, onClose, defaultDiPath }: PlayerPanelProps &
     [file.filePath, getAudioContext, stopPlayback]
   )
 
+  // Scan the DI library once per library path. Nothing is auto-selected: which clip you want to
+  // hear a capture through is a taste decision (a clean model through a metal riff tells you
+  // little), so the user picks and we remember it for the session via lastDiPathRef.
+  useEffect(() => {
+    let cancelled = false
+    if (!diLibraryPath) {
+      setCategories([])
+      setLibraryError('')
+      return
+    }
+    void (async () => {
+      const result = await window.api.scanDiLibrary(diLibraryPath)
+      if (cancelled) return
+      setCategories(result.categories)
+      setLibraryError(
+        result.error ??
+          (result.categories.length === 0 ? 'No .wav files found in the DI library folder.' : '')
+      )
+      // Re-select the previous clip if it's still present, so switching captures doesn't
+      // silently reset which DI you were auditioning through.
+      const remembered = lastDiPath
+      if (remembered && result.categories.some((c) => c.files.some((f) => f.path === remembered))) {
+        setDiPath(remembered)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [diLibraryPath])
+
   // Render as soon as we have a DI to work with.
   useEffect(() => {
-    if (diPath) void renderPreview(diPath)
-    else setStatus('idle')
+    if (diPath) {
+      lastDiPath = diPath
+      void renderPreview(diPath)
+    } else {
+      setStatus('idle')
+    }
   }, [diPath, renderPreview])
 
   const handlePlayStop = useCallback(() => {
@@ -187,17 +240,13 @@ export function PlayerPanel({ file, onClose, defaultDiPath }: PlayerPanelProps &
     rafRef.current = requestAnimationFrame(tick)
   }, [isPlaying, getAudioContext, stopPlayback])
 
-  const handleChooseDi = useCallback(async () => {
-    const picked = await window.api.openAudioFile()
-    if (picked) setDiPath(picked)
-  }, [])
-
   const diLabel = useMemo(() => {
     if (!diPath) return null
     return diPath.replace(/\\/g, '/').split('/').pop() ?? diPath
   }, [diPath])
 
   const busy = status === 'loading-di' || status === 'rendering'
+  const hasLibrary = categories.length > 0
 
   return (
     <div className="flex flex-col h-full bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 select-none">
@@ -227,18 +276,19 @@ export function PlayerPanel({ file, onClose, defaultDiPath }: PlayerPanelProps &
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
-        {status === 'idle' && (
-          <div className="rounded-lg bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-800 p-4 text-center">
-            <p className="text-sm text-gray-600 dark:text-gray-300 mb-1">No reference DI selected</p>
-            <p className="text-xs text-gray-500 mb-3">
-              Pick a clean DI WAV to hear this capture. Set a default in Settings → Training.
+        {/* No library configured, or it's empty/unreadable. */}
+        {!hasLibrary && (
+          <div className="rounded-lg bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-800 p-4">
+            <p className="text-sm text-gray-600 dark:text-gray-300 mb-1">No DI clips available</p>
+            <p className="text-xs text-gray-500">
+              {libraryError ||
+                'Set a DI Clip Library folder in Settings → Library to preview captures.'}
             </p>
-            <button
-              onClick={handleChooseDi}
-              className="h-8 px-3 rounded-lg text-xs font-medium bg-teal-500 hover:bg-teal-600 text-white transition-colors"
-            >
-              Choose DI WAV…
-            </button>
+            <p className="text-[11px] text-gray-400 dark:text-gray-600 mt-2 leading-relaxed">
+              Put guitar DI recordings in subfolders — e.g. <span className="font-mono">Clean/</span>,{' '}
+              <span className="font-mono">Medium Gain/</span>, <span className="font-mono">High Gain/</span>{' '}
+              — and each subfolder becomes a category here.
+            </p>
           </div>
         )}
 
@@ -302,31 +352,48 @@ export function PlayerPanel({ file, onClose, defaultDiPath }: PlayerPanelProps &
           </>
         )}
 
-        {/* Reference DI — always visible once one is chosen, so it can be swapped. */}
-        {diPath && (
-          <div className="space-y-2">
+        {/* DI clip picker — always visible so clips can be A/B'd against the same capture. */}
+        {hasLibrary && (
+          <div className="space-y-3">
             <div className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-              Reference DI
+              Play Through
             </div>
-            <div className="flex items-center gap-2">
-              <span
-                className="flex-1 min-w-0 truncate text-xs font-mono text-gray-600 dark:text-gray-300"
-                title={diPath}
-              >
-                {diLabel}
-              </span>
-              <button
-                onClick={handleChooseDi}
-                disabled={busy}
-                className="flex-shrink-0 h-7 px-2.5 rounded-md text-xs font-medium border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50 transition-colors"
-              >
-                Change…
-              </button>
-            </div>
-            <p className="text-[11px] text-gray-400">
-              First {MAX_PREVIEW_SECONDS}s rendered through the model
-              {renderMs !== null ? ` · took ${(renderMs / 1000).toFixed(1)}s` : ''}
-            </p>
+
+            {categories.map((category) => (
+              <div key={category.name} className="space-y-1.5">
+                <div className="text-[11px] font-medium text-gray-400 dark:text-gray-500">
+                  {category.name}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {category.files.map((clip) => {
+                    const selected = clip.path === diPath
+                    return (
+                      <button
+                        key={clip.path}
+                        onClick={() => setDiPath(clip.path)}
+                        disabled={busy}
+                        title={clip.name}
+                        className={`h-7 px-2.5 rounded-md text-xs font-medium border transition-colors disabled:opacity-50 max-w-full truncate ${
+                          selected
+                            ? 'border-teal-500 bg-teal-500 text-white'
+                            : 'border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
+                        }`}
+                      >
+                        {clip.name.replace(/\.wav$/i, '')}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+
+            {diPath && (
+              <p className="text-[11px] text-gray-400 pt-1">
+                First {MAX_PREVIEW_SECONDS}s of{' '}
+                <span className="font-mono">{diLabel}</span> rendered through this capture
+                {renderMs !== null ? ` · took ${(renderMs / 1000).toFixed(1)}s` : ''}
+              </p>
+            )}
           </div>
         )}
       </div>

@@ -6325,6 +6325,42 @@ app.whenReady().then(async () => {
     return result.filePaths[0] ?? null
   })
 
+  // IPC: Scan the tone-preview DI library into { category, files[] } groups. Category is the
+  // immediate subfolder name (e.g. "Clean", "Medium Gain", "High Gain") -- the folder structure
+  // IS the categorization, deliberately avoiding a separate tagging data model. Loose .wav files
+  // sitting directly in the root (not in a subfolder) are grouped under "Uncategorized".
+  ipcMain.handle('player:scanDiLibrary', async (_event, libraryPath: string) => {
+    if (!libraryPath) return { categories: [] }
+    try {
+      const stat = await fs.promises.stat(libraryPath).catch(() => null)
+      if (!stat || !stat.isDirectory()) return { categories: [], error: 'DI library folder not found.' }
+
+      const topEntries = await fs.promises.readdir(libraryPath, { withFileTypes: true })
+      const categories: Array<{ name: string; files: Array<{ name: string; path: string }> }> = []
+
+      const collectWavs = async (dirPath: string): Promise<Array<{ name: string; path: string }>> => {
+        const entries = await fs.promises.readdir(dirPath, { withFileTypes: true }).catch(() => [])
+        return entries
+          .filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.wav'))
+          .map((e) => ({ name: e.name, path: join(dirPath, e.name) }))
+          .sort((a, b) => a.name.localeCompare(b.name))
+      }
+
+      const rootWavs = await collectWavs(libraryPath)
+      if (rootWavs.length > 0) categories.push({ name: 'Uncategorized', files: rootWavs })
+
+      for (const entry of topEntries) {
+        if (!entry.isDirectory()) continue
+        const files = await collectWavs(join(libraryPath, entry.name))
+        if (files.length > 0) categories.push({ name: entry.name, files })
+      }
+
+      return { categories }
+    } catch (err) {
+      return { categories: [], error: String(err) }
+    }
+  })
+
   // IPC: Read any file as base64 (used for xlsx import parsing)
   ipcMain.handle('file:readBinary', async (_event, filePath: string) => {
     try {

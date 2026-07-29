@@ -18,15 +18,26 @@ import type { NamRenderRequest, NamRenderResponse, NamWasmModule } from './namRe
 interface FakeModuleOptions {
   /** Return 0 from namLoadModel, as the real module does for unsupported architectures. */
   failLoad?: boolean
+  /** Return 0 from namResetModel. */
+  failReset?: boolean
   /** Return 0 from namProcessBuffer. */
   failProcess?: boolean
   loudnessDb?: number | null
   /** Value written to every output sample. */
   outputValue?: number
+  /** What namGetLastError() reports after a failure. */
+  lastError?: string
 }
 
 function createFakeModule(options: FakeModuleOptions = {}) {
-  const { failLoad = false, failProcess = false, loudnessDb = null, outputValue = 0.5 } = options
+  const {
+    failLoad = false,
+    failReset = false,
+    failProcess = false,
+    loudnessDb = null,
+    outputValue = 0.5,
+    lastError = 'fake module error',
+  } = options
 
   const HEAP_FLOATS = 1 << 20
   const heap = new Float32Array(HEAP_FLOATS)
@@ -57,7 +68,7 @@ function createFakeModule(options: FakeModuleOptions = {}) {
     _namFreeModel(handle: number) {
       if (handle !== 0) freedModels.push(handle)
     },
-    _namResetModel: vi.fn(),
+    _namResetModel: vi.fn(() => (failReset ? 0 : 1)),
     _namProcessBuffer(_h: number, _in: number, outPtr: number, n: number) {
       if (failProcess) return 0
       for (let i = 0; i < n; i++) heap[(outPtr >> 2) + i] = outputValue
@@ -70,6 +81,12 @@ function createFakeModule(options: FakeModuleOptions = {}) {
       return loudnessDb === null ? 0 : 1
     },
     _namSetSlimmableSize: vi.fn(),
+    // Real namGetLastError() returns a heap pointer; UTF8ToString decodes it. The fake skips
+    // the pointer indirection and has UTF8ToString ignore its argument and return the fixed
+    // message directly -- what matters here is the worker reads and surfaces it, not how the
+    // real module encodes strings on the heap (that's covered by native/nam-wasm/test/test.cjs).
+    _namGetLastError: vi.fn(() => -1),
+    UTF8ToString: vi.fn(() => lastError),
     stringToUTF8: vi.fn(),
     lengthBytesUTF8: (s: string) => s.length,
   }
@@ -113,20 +130,44 @@ describe('namRender worker', () => {
     expect(response.ok && response.loudnessDb).toBeNull()
   })
 
-  it('returns a readable error when the model cannot be loaded', () => {
-    const response = runWorker(makeRequest(), createFakeModule({ failLoad: true }))
-
+  // These four all cover the same real bug: a user saw "Rendering failed: [object Object]"
+  // because a C++-side failure crossed the Emscripten boundary as an opaque, unstringifiable
+  // JS value. Every failure path must now surface namGetLastError()'s real message instead.
+  it('surfaces the module\'s real error message when the model cannot be loaded', () => {
+    const response = runWorker(
+      makeRequest(),
+      createFakeModule({ failLoad: true, lastError: 'Unsupported architecture: FooNet' })
+    )
     expect(response.ok).toBe(false)
-    if (response.ok) return
-    // The player shows this verbatim, so it has to explain itself to a user.
-    expect(response.error).toMatch(/could not be loaded/i)
-    expect(response.error).toMatch(/architecture|version/i)
+    if (!response.ok) expect(response.error).toBe('Unsupported architecture: FooNet')
   })
 
-  it('returns an error when processing fails', () => {
-    const response = runWorker(makeRequest(), createFakeModule({ failProcess: true }))
+  it('surfaces the module\'s real error message when reset fails', () => {
+    const response = runWorker(
+      makeRequest(),
+      createFakeModule({ failReset: true, lastError: 'Prewarm threw: bad sample rate' })
+    )
     expect(response.ok).toBe(false)
-    if (!response.ok) expect(response.error).toMatch(/failed to process/i)
+    if (!response.ok) expect(response.error).toBe('Prewarm threw: bad sample rate')
+  })
+
+  it('surfaces the module\'s real error message when processing fails', () => {
+    const response = runWorker(
+      makeRequest(),
+      createFakeModule({ failProcess: true, lastError: 'process() threw: dimension mismatch' })
+    )
+    expect(response.ok).toBe(false)
+    if (!response.ok) expect(response.error).toBe('process() threw: dimension mismatch')
+  })
+
+  it('falls back to a generic message when the module reports no error text', () => {
+    const response = runWorker(makeRequest(), createFakeModule({ failLoad: true, lastError: '' }))
+    expect(response.ok).toBe(false)
+    if (!response.ok) {
+      expect(response.error).toMatch(/could not be loaded/i)
+      // Must never be the raw, unhelpful stringification that motivated this whole mechanism.
+      expect(response.error).not.toBe('[object Object]')
+    }
   })
 
   it('frees every heap allocation it makes on the success path', () => {
@@ -183,5 +224,31 @@ describe('namRender worker', () => {
     const mod = createFakeModule()
     runWorker(makeRequest({ sampleRate: 44100 }), mod)
     expect(mod._namResetModel).toHaveBeenCalledWith(0xbeef, 44100, 128)
+  })
+
+  // The outer catch is defense-in-depth for anything that throws before/outside the C++
+  // boundary (e.g. a malloc call itself). It must never regress to raw String(error).
+  it('never lets an outer-catch failure surface as "[object Object]"', () => {
+    const mod = createFakeModule()
+    mod._malloc = () => {
+      // A plain thrown object, as some browser APIs do instead of throwing a real Error.
+      throw { code: 'OOM', detail: 'heap exhausted' }
+    }
+    const response = runWorker(makeRequest(), mod)
+    expect(response.ok).toBe(false)
+    if (!response.ok) {
+      expect(response.error).not.toBe('Rendering failed: [object Object]')
+      expect(response.error).toContain('OOM')
+    }
+  })
+
+  it('unwraps a real Error thrown outside the C++ boundary to its message, not its toString', () => {
+    const mod = createFakeModule()
+    mod._malloc = () => {
+      throw new RangeError('requested size exceeds heap')
+    }
+    const response = runWorker(makeRequest(), mod)
+    expect(response.ok).toBe(false)
+    if (!response.ok) expect(response.error).toBe('Rendering failed: requested size exceeds heap')
   })
 })

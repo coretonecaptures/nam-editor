@@ -73,8 +73,8 @@ LINK_FLAGS=(
   -sINITIAL_MEMORY=64MB
   -sSTACK_SIZE=8MB
   -sDISABLE_EXCEPTION_CATCHING=0
-  "-sEXPORTED_FUNCTIONS=_namLoadModel,_namProcessBuffer,_namFreeModel,_namResetModel,_namGetLoudness,_namHasLoudness,_namSetSlimmableSize,_malloc,_free"
-  "-sEXPORTED_RUNTIME_METHODS=ccall,cwrap,HEAPF32,stringToUTF8,lengthBytesUTF8"
+  "-sEXPORTED_FUNCTIONS=_namLoadModel,_namProcessBuffer,_namFreeModel,_namResetModel,_namGetLoudness,_namHasLoudness,_namSetSlimmableSize,_namGetLastError,_malloc,_free"
+  "-sEXPORTED_RUNTIME_METHODS=ccall,cwrap,HEAPF32,stringToUTF8,lengthBytesUTF8,UTF8ToString"
 )
 
 SOURCES=(src/nam_offline.cpp NAM/*.cpp NAM/wavenet/*.cpp)

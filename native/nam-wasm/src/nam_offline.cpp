@@ -52,6 +52,34 @@ struct OfflineModel
 };
 
 bool g_activationsInitialized = false;
+
+// Set whenever a call below catches an exception, so JS can retrieve a real message via
+// namGetLastError() instead of whatever Emscripten's default JS<->C++ exception bridging
+// produces for an uncaught throw (frequently an object with no usable toString/.message,
+// which is exactly what surfaced to the user as "[object Object]").
+std::string g_lastError;
+
+/// Run `fn`, catching anything it throws into g_lastError instead of letting it cross the
+/// Emscripten export boundary as an opaque, hard-to-stringify JS value.
+template <typename Fn>
+bool guarded(Fn&& fn)
+{
+  try
+  {
+    fn();
+    return true;
+  }
+  catch (const std::exception& e)
+  {
+    g_lastError = e.what();
+    return false;
+  }
+  catch (...)
+  {
+    g_lastError = "Unknown error in NAM inference module";
+    return false;
+  }
+}
 } // namespace
 
 extern "C" {
@@ -68,7 +96,10 @@ EMSCRIPTEN_KEEPALIVE
 void* namLoadModel(const char* jsonStr)
 {
   if (jsonStr == nullptr)
+  {
+    g_lastError = "namLoadModel called with a null pointer";
     return nullptr;
+  }
 
   if (!g_activationsInitialized)
   {
@@ -86,21 +117,52 @@ void* namLoadModel(const char* jsonStr)
     // get_dsp(std::filesystem::path) and try to open a *file* whose name is the entire JSON
     // blob. We hold the .nam contents in memory, so the json overload is the correct one.
     const nlohmann::json config = nlohmann::json::parse(jsonStr);
+
+    // Validate the keys get_dsp() reads with operator[] BEFORE calling it.
+    //
+    // This is not belt-and-braces: nlohmann's const operator[] uses assert(), not exceptions.
+    // On a missing key that fires Emscripten's abort(), which tears down the whole module
+    // instance -- unrecoverable, and not catchable by try/catch or the guarded() helper. A
+    // truncated or hand-edited .nam would take the player down for the rest of the session
+    // instead of showing an error. get_dsp reads "version", "architecture" and "config" this
+    // way; "weights" is safe because GetWeights() uses find() and throws properly.
+    for (const char* required : {"version", "architecture", "config"})
+    {
+      if (!config.contains(required))
+      {
+        g_lastError = std::string("This .nam file is missing its \"") + required
+                      + "\" field, so it can't be loaded. The file may be corrupt or truncated.";
+        return nullptr;
+      }
+    }
+    if (!config["version"].is_string() || !config["architecture"].is_string())
+    {
+      g_lastError = "This .nam file's \"version\" or \"architecture\" field is not text, so it "
+                    "can't be loaded. The file may be corrupt.";
+      return nullptr;
+    }
+
     std::unique_ptr<nam::DSP> dsp = nam::get_dsp(config);
     if (dsp == nullptr)
+    {
+      g_lastError = "This .nam file's architecture is not supported by the bundled NAM core";
       return nullptr;
+    }
 
     auto* model = new OfflineModel{std::move(dsp)};
     return static_cast<void*>(model);
   }
-  catch (const std::exception&)
+  catch (const std::exception& e)
   {
-    // get_dsp throws on unsupported/invalid models. Report failure as nullptr rather than
-    // letting the exception unwind into JS, where it would surface as an opaque abort.
+    // get_dsp throws on unsupported/invalid models (and json::parse throws on malformed JSON).
+    // Report failure as nullptr rather than letting the exception unwind into JS, where it
+    // would surface as an opaque, hard-to-stringify value instead of e.what()'s real message.
+    g_lastError = e.what();
     return nullptr;
   }
   catch (...)
   {
+    g_lastError = "Unknown error while loading the model";
     return nullptr;
   }
 }
@@ -159,14 +221,19 @@ void namSetSlimmableSize(void* handle, float size)
  *
  * @param sampleRate  Sample rate of the audio about to be rendered.
  * @param maxBlock    Largest block size that will be passed to namProcessBuffer().
+ * @return 1 on success, 0 on invalid arguments or if the model threw. Check
+ *         namGetLastError() on failure.
  */
 EMSCRIPTEN_KEEPALIVE
-void namResetModel(void* handle, float sampleRate, int maxBlock)
+int namResetModel(void* handle, float sampleRate, int maxBlock)
 {
   auto* model = static_cast<OfflineModel*>(handle);
   if (model == nullptr || model->dsp == nullptr || maxBlock <= 0)
-    return;
-  model->dsp->ResetAndPrewarm(static_cast<double>(sampleRate), maxBlock);
+  {
+    g_lastError = "namResetModel called with an invalid handle or maxBlock";
+    return 0;
+  }
+  return guarded([&] { model->dsp->ResetAndPrewarm(static_cast<double>(sampleRate), maxBlock); }) ? 1 : 0;
 }
 
 /**
@@ -179,21 +246,39 @@ void namResetModel(void* handle, float sampleRate, int maxBlock)
  * (or in large chunks) instead of 128 frames at a time, which is exactly what lets us avoid the
  * real-time audio thread and its SharedArrayBuffer requirement.
  *
- * @return 1 on success, 0 if the handle or arguments were invalid.
+ * @return 1 on success, 0 if the handle/arguments were invalid or the model threw. Check
+ *         namGetLastError() on failure.
  */
 EMSCRIPTEN_KEEPALIVE
 int namProcessBuffer(void* handle, float* in, float* out, int numSamples)
 {
   auto* model = static_cast<OfflineModel*>(handle);
   if (model == nullptr || model->dsp == nullptr || in == nullptr || out == nullptr || numSamples <= 0)
+  {
+    g_lastError = "namProcessBuffer called with an invalid handle or buffer";
     return 0;
+  }
 
   // nam::DSP::process() takes NAM_SAMPLE** (an array of channel pointers). NAM models are mono,
   // so we pass single-element arrays.
-  NAM_SAMPLE* inputPtr = in;
-  NAM_SAMPLE* outputPtr = out;
-  model->dsp->process(&inputPtr, &outputPtr, numSamples);
-  return 1;
+  return guarded([&] {
+    NAM_SAMPLE* inputPtr = in;
+    NAM_SAMPLE* outputPtr = out;
+    model->dsp->process(&inputPtr, &outputPtr, numSamples);
+  }) ? 1 : 0;
+}
+
+/**
+ * Retrieve the message from the most recent failure in this module (namLoadModel returning
+ * nullptr, or namResetModel/namProcessBuffer returning 0). Valid until the next failing call.
+ *
+ * Returned pointer is owned by the module; JS should read it with UTF8ToString() immediately,
+ * not hold onto it.
+ */
+EMSCRIPTEN_KEEPALIVE
+const char* namGetLastError()
+{
+  return g_lastError.c_str();
 }
 
 /**
