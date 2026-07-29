@@ -242,9 +242,15 @@ int namResetModel(void* handle, float sampleRate, int maxBlock)
  * `in` and `out` are pointers into the WASM heap (allocate with _malloc from JS and write the
  * input samples there via HEAPF32). They may be the same pointer for in-place processing.
  *
- * This is the single hot call — for a preview render, JS hands over the whole DI buffer at once
- * (or in large chunks) instead of 128 frames at a time, which is exactly what lets us avoid the
- * real-time audio thread and its SharedArrayBuffer requirement.
+ * This is the single hot call. Callers should feed consecutive blocks no larger than the
+ * maxBlock they passed to namResetModel() — NOT the entire clip in one call. Reset() sizes
+ * per-layer scratch buffers from maxBlock, so a whole-clip maxBlock allocates
+ * channels x totalSamples floats in every conv layer and throws std::bad_alloc.
+ *
+ * Block size does not affect the output: the model carries its state across calls, so
+ * consecutive blocks produce the same samples one giant call would. What buys us the escape
+ * from the real-time audio thread (and its SharedArrayBuffer requirement) is rendering ahead
+ * of time, not the size of each block.
  *
  * @return 1 on success, 0 if the handle/arguments were invalid or the model threw. Check
  *         namGetLastError() on failure.

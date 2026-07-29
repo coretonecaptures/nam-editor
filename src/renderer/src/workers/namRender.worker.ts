@@ -12,6 +12,15 @@
  * need for any of that.
  */
 
+/**
+ * Samples per process() call.
+ *
+ * Matches NAM's own NAM_DEFAULT_MAX_BUFFER_SIZE. This is a memory ceiling, not just a tuning
+ * knob: the model allocates per-layer scratch proportional to this value, so it must stay small
+ * regardless of how long the clip is.
+ */
+const RENDER_BLOCK_SIZE = 4096
+
 export interface NamRenderRequest {
   /** Full text of the .nam file (it's JSON). */
   modelJson: string
@@ -146,27 +155,44 @@ export function renderWithModule(
     const loudnessDb = hasLoudness ? Module._namGetLoudness(handle) : null
 
     // Resets AND prewarms, so output is correct from sample 0 with no frames to discard.
-    if (Module._namResetModel(handle, sampleRate, input.length) === 0) {
+    //
+    // maxBlock is RENDER_BLOCK_SIZE, not input.length. Reset() propagates its maxBufferSize
+    // down to every Conv1x1, each of which does _output.resize(channels, maxBufferSize) --
+    // so passing the whole 12s buffer (576k samples) made every conv layer in the network try
+    // to allocate channels x 576000 x 4 bytes. Across a WaveNet's dozens of layers that's
+    // gigabytes, and it threw std::bad_alloc.
+    if (Module._namResetModel(handle, sampleRate, RENDER_BLOCK_SIZE) === 0) {
       return { ok: false, error: readLastError(Module, 'Failed to reset the model for rendering.') }
     }
 
-    const bytes = input.length * 4
-    inPtr = Module._malloc(bytes)
-    outPtr = Module._malloc(bytes)
-    Module.HEAPF32.set(input, inPtr >> 2)
+    // Only ever RENDER_BLOCK_SIZE of scratch on the heap, regardless of clip length.
+    const blockBytes = RENDER_BLOCK_SIZE * 4
+    inPtr = Module._malloc(blockBytes)
+    outPtr = Module._malloc(blockBytes)
 
+    const output = new Float32Array(input.length)
     const started = performance.now()
-    const ok = Module._namProcessBuffer(handle, inPtr, outPtr, input.length)
-    const renderMs = performance.now() - started
 
-    if (ok === 0) {
-      return { ok: false, error: readLastError(Module, 'The model failed to process the input buffer.') }
+    // Chunked, but NOT independent chunks: the model carries its internal state (ring buffers,
+    // recurrent state) across process() calls, which is exactly how it runs in a real-time
+    // host. Feeding consecutive blocks yields the same samples a single giant call would.
+    for (let offset = 0; offset < input.length; offset += RENDER_BLOCK_SIZE) {
+      const blockLength = Math.min(RENDER_BLOCK_SIZE, input.length - offset)
+
+      Module.HEAPF32.set(input.subarray(offset, offset + blockLength), inPtr >> 2)
+
+      if (Module._namProcessBuffer(handle, inPtr, outPtr, blockLength) === 0) {
+        return {
+          ok: false,
+          error: readLastError(Module, 'The model failed to process the input buffer.')
+        }
+      }
+
+      // Copy each block out before the next iteration overwrites the scratch buffer.
+      output.set(Module.HEAPF32.subarray(outPtr >> 2, (outPtr >> 2) + blockLength), offset)
     }
 
-    // Copy out of the heap immediately — any later allocation can grow (and detach) the view.
-    const output = new Float32Array(
-      Module.HEAPF32.subarray(outPtr >> 2, (outPtr >> 2) + input.length)
-    )
+    const renderMs = performance.now() - started
 
     return { ok: true, output, loudnessDb, renderMs }
   } catch (error) {

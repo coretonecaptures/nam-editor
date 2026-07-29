@@ -45,10 +45,13 @@ function createFakeModule(options: FakeModuleOptions = {}) {
   const allocations = new Map<number, number>()
   const freed: number[] = []
   const freedModels: number[] = []
+  /** Every size ever passed to _malloc, so tests can assert scratch stays bounded. */
+  const allocSizes: number[] = []
 
   return {
     HEAPF32: heap,
     allocations,
+    allocSizes,
     freed,
     freedModels,
 
@@ -56,6 +59,7 @@ function createFakeModule(options: FakeModuleOptions = {}) {
       const ptr = nextPtr
       nextPtr += Math.ceil(size / 4) * 4 + 16
       allocations.set(ptr, size)
+      allocSizes.push(size)
       return ptr
     },
     _free(ptr: number) {
@@ -68,7 +72,10 @@ function createFakeModule(options: FakeModuleOptions = {}) {
     _namFreeModel(handle: number) {
       if (handle !== 0) freedModels.push(handle)
     },
-    _namResetModel: vi.fn(() => (failReset ? 0 : 1)),
+    // Args typed explicitly so tests can read mock.calls[n][2] (the maxBlock argument).
+    _namResetModel: vi.fn((_handle: number, _sampleRate: number, _maxBlock: number) =>
+      failReset ? 0 : 1
+    ),
     _namProcessBuffer(_h: number, _in: number, outPtr: number, n: number) {
       if (failProcess) return 0
       for (let i = 0; i < n; i++) heap[(outPtr >> 2) + i] = outputValue
@@ -223,7 +230,42 @@ describe('namRender worker', () => {
   it('resets (and prewarms) the model before rendering', () => {
     const mod = createFakeModule()
     runWorker(makeRequest({ sampleRate: 44100 }), mod)
-    expect(mod._namResetModel).toHaveBeenCalledWith(0xbeef, 44100, 128)
+    expect(mod._namResetModel).toHaveBeenCalledWith(0xbeef, 44100, expect.any(Number))
+  })
+
+  // Regression: the reset block size was originally the whole clip length. Reset() sizes
+  // per-layer scratch from it, so every conv layer allocated channels x totalSamples floats
+  // and a 12s clip died with std::bad_alloc. It must stay bounded and independent of length.
+  it('resets with a bounded block size, not the clip length', () => {
+    const mod = createFakeModule()
+    const longClip = new Float32Array(48000 * 12) // 12s at 48k, the real preview length
+    runWorker(makeRequest({ input: longClip, sampleRate: 48000 }), mod)
+
+    const maxBlock = mod._namResetModel.mock.calls[0][2]
+    expect(maxBlock).toBeLessThanOrEqual(8192)
+    expect(maxBlock).toBeLessThan(longClip.length)
+  })
+
+  it('keeps heap scratch bounded regardless of clip length', () => {
+    const longMod = createFakeModule()
+    runWorker(makeRequest({ input: new Float32Array(48000 * 12) }), longMod)
+
+    // Largest single allocation must be block-sized scratch, not the whole 12s clip
+    // (576k samples x 4 bytes = 2.3MB) -- and nowhere near the per-layer blowup that
+    // caused std::bad_alloc.
+    expect(Math.max(...longMod.allocSizes)).toBeLessThanOrEqual(8192 * 4)
+  })
+
+  it('renders long clips in consecutive blocks covering every sample', () => {
+    const mod = createFakeModule({ outputValue: 0.25 })
+    const samples = 48000 * 12
+    const response = runWorker(makeRequest({ input: new Float32Array(samples) }), mod)
+
+    expect(response.ok).toBe(true)
+    if (!response.ok) return
+    expect(response.output).toHaveLength(samples)
+    // Every sample written, including the final partial block.
+    expect(response.output.every((v) => v === 0.25)).toBe(true)
   })
 
   // The outer catch is defense-in-depth for anything that throws before/outside the C++
