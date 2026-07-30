@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import ampPlaceholder from '../assets/images/amp_placeholder.png'
 import { NamFile } from '../types/nam'
 import { detectPreset } from '../utils/detectPreset'
 import { getCaptureBestEsr, getEsrTone } from '../utils/esr'
@@ -726,19 +727,25 @@ export function PlayerPanel({
           </div>
         )}
 
-          {/* Amp cover photo — same image and source the metadata editor shows. */}
-          {coverImagePath && (
-            <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-900">
-              <div className="aspect-[3/1] w-full">
-                <img
-                  src={toFileUrl(coverImagePath)}
-                  alt="Amp cover"
-                  className="w-full h-full object-cover"
-                  loading="lazy"
-                />
-              </div>
+          {/* Amp cover photo — same image and source the metadata editor shows, falling back to
+              a bundled placeholder so the panel's layout doesn't jump between captures that have
+              a folder cover and ones that don't. */}
+          <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-900">
+            <div className="aspect-[3/1] w-full">
+              <img
+                src={coverImagePath ? toFileUrl(coverImagePath) : ampPlaceholder}
+                alt={coverImagePath ? 'Amp cover' : 'No amp cover photo for this folder'}
+                className="w-full h-full object-cover"
+                loading="lazy"
+                // A cover can go missing after the path resolves (renamed/deleted on disk).
+                // Swap to the placeholder rather than showing a broken-image icon.
+                onError={(e) => {
+                  const img = e.currentTarget
+                  if (img.src !== ampPlaceholder) img.src = ampPlaceholder
+                }}
+              />
             </div>
-          )}
+          </div>
 
           {/* Top metadata summary. Columns follow the PANEL's measured width, not the
               viewport — the right panel is user-resizable, so viewport breakpoints would be
