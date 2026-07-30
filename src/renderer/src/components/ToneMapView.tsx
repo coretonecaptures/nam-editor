@@ -18,7 +18,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { NamFile } from '../types/nam'
 import { rankAmpsByHeaviness, rankModelsByHeaviness, type AmpRow } from '../utils/ampHeaviness'
 import { UNTAGGED_KEY, groupByCreator, isJunkMake, normalizeMakeKey } from '../utils/gearMake'
-import { TONE_GRID_ROW_HEIGHT, ToneGrid, toneGridHeight, type ToneGridMark } from './dashboard/ToneGrid'
+import {
+  TONE_GRID_ROW_HEIGHT,
+  ToneGrid,
+  toneGridCellKey,
+  toneGridHeight,
+  type ToneGridCell,
+  type ToneGridMark
+} from './dashboard/ToneGrid'
 import { paddedDomain } from './dashboard/scales'
 
 const TONE_COLORS: Record<string, string> = {
@@ -210,6 +217,15 @@ export function ToneMapView({
   /** When set, rows become that amp's models instead of makes — one level of zoom in. */
   const [expandedMake, setExpandedMake] = useState<string | null>(null)
   const [hover, setHover] = useState<{ mark: ToneGridMark; x: number; y: number } | null>(null)
+  /** Hovered heat cell, so it can be highlighted and described. */
+  const [hoverCell, setHoverCell] = useState<{ cell: ToneGridCell; x: number; y: number } | null>(
+    null
+  )
+  /**
+   * Saturation window, set by clicking a heat cell. This is the actual zoom: narrowing the X range
+   * spreads the remaining captures across the full width until they separate into clickable dots.
+   */
+  const [xWindow, setXWindow] = useState<[number, number] | null>(null)
 
   const plotRef = useRef<HTMLDivElement | null>(null)
   const [plotWidth, setPlotWidth] = useState(900)
@@ -257,9 +273,16 @@ export function ToneMapView({
         const tone = f.metadata.tone_type ?? 'other'
         if (!toneKeys.has(tone)) return false
       }
+
+      if (xWindow !== null) {
+        const gain = f.metadata.gain as number
+        // Inclusive on both ends: the window comes from real capture values, so an exclusive
+        // bound would drop the very captures that were clicked on.
+        if (gain < xWindow[0] || gain > xWindow[1]) return false
+      }
       return true
     })
-  }, [positionable, makeKeys, creatorKeys, toneKeys, showUntagged])
+  }, [positionable, makeKeys, creatorKeys, toneKeys, showUntagged, xWindow])
 
   /**
    * Rows are makes, or one amp's models when drilled in.
@@ -303,12 +326,14 @@ export function ToneMapView({
     return out
   }, [filtered, rows, rowKeyOf])
 
-  // Domain from the whole positionable set, not the filtered subset, so the axis doesn't rescale
-  // under you as you narrow — a capture would appear to move when it hasn't.
-  const xDomain = useMemo(
-    () => paddedDomain(positionable.map((f) => f.metadata.gain as number)),
-    [positionable]
-  )
+  // Normally the domain spans the whole positionable set, so the axis doesn't rescale under you as
+  // you filter — a capture appearing to move when it hasn't is disorienting. The exception is an
+  // explicit saturation window: there, rescaling IS the point, since spreading a narrow range over
+  // the full width is what separates overlapping captures into individual dots.
+  const xDomain = useMemo<[number, number]>(() => {
+    if (xWindow !== null) return paddedDomain(xWindow, 0.15)
+    return paddedDomain(positionable.map((f) => f.metadata.gain as number))
+  }, [positionable, xWindow])
 
   const byPath = useMemo(() => {
     const map = new Map<string, NamFile>()
@@ -359,10 +384,15 @@ export function ToneMapView({
     setToneKeys(new Set())
     setExpandedMake(null)
     setShowUntagged(true)
+    setXWindow(null)
   }
 
   const hasNarrowing =
-    makeKeys.size > 0 || creatorKeys.size > 0 || toneKeys.size > 0 || expandedMake !== null
+    makeKeys.size > 0 ||
+    creatorKeys.size > 0 ||
+    toneKeys.size > 0 ||
+    expandedMake !== null ||
+    xWindow !== null
 
   // ── Drill-down offers, derived from the capture currently playing ───────────────
   const nowPlayingMakeKey = nowPlaying
@@ -390,6 +420,38 @@ export function ToneMapView({
       if (file) onPlay(file)
     },
     [byPath, onPlay]
+  )
+
+  /**
+   * Clicking a heat cell zooms into it.
+   *
+   * A single capture in a cell can be played straight away — there's nothing to disambiguate. For
+   * several, narrow to that row and that saturation slice; the axis rescales to the slice, which is
+   * what pulls the overlapping captures apart into individual dots.
+   */
+  const handleDrillCell = useCallback(
+    (cell: ToneGridCell) => {
+      if (cell.ids.length === 1) {
+        const only = byPath.get(cell.ids[0])
+        if (only) {
+          onPlay(only)
+          return
+        }
+      }
+      if (expandedMake === null) setMakeKeys(new Set([cell.rowKey]))
+      setXWindow([cell.xMin, cell.xMax])
+      setHoverCell(null)
+    },
+    [byPath, onPlay, expandedMake]
+  )
+
+  /** Clicking a row label isolates that amp — the coarse version of the same zoom. */
+  const handleSelectRow = useCallback(
+    (rowKey: string) => {
+      if (expandedMake === null) setMakeKeys(new Set([rowKey]))
+      setXWindow(null)
+    },
+    [expandedMake]
   )
 
   const gridHeight = toneGridHeight(rows.length, TONE_GRID_ROW_HEIGHT)
@@ -553,6 +615,11 @@ export function ToneMapView({
               {TONE_LABELS[key] ?? key} ✕
             </Chip>
           ))}
+          {xWindow !== null && (
+            <Chip active onClick={() => setXWindow(null)} title="Widen back to the full range">
+              saturation {xWindow[0].toFixed(2)}–{xWindow[1].toFixed(2)} ✕
+            </Chip>
+          )}
         </div>
       )}
 
@@ -625,8 +692,14 @@ export function ToneMapView({
                 height={gridHeight}
                 selectedId={nowPlaying?.filePath ?? null}
                 hoveredId={hover?.mark.id ?? null}
-                onHoverChange={(mark, x, y) => setHover(mark ? { mark, x, y } : null)}
+                hoveredCellKey={hoverCell ? toneGridCellKey(hoverCell.cell) : null}
+                onHoverChange={(mark, x, y, cell) => {
+                  setHover(mark ? { mark, x, y } : null)
+                  setHoverCell(cell ? { cell, x, y } : null)
+                }}
                 onSelect={handleSelect}
+                onDrillCell={handleDrillCell}
+                onSelectRow={handleSelectRow}
               />
             </div>
           )}
@@ -642,7 +715,8 @@ export function ToneMapView({
               </span>
             ))}
             <span className="text-[10px] text-gray-400 dark:text-gray-600 ml-2">
-              rows marked * have under 3 measured captures · dense rows draw as heat instead of dots
+              rows marked * have under 3 measured captures · click a heat band or an amp name to
+              zoom in until captures separate into clickable dots
             </span>
           </div>
         </div>
@@ -660,6 +734,26 @@ export function ToneMapView({
           <div className="font-medium truncate">{hover.mark.label}</div>
           <div className="text-[10px] text-gray-300 dark:text-gray-400">
             saturation {hover.mark.x.toFixed(2)} · click to play
+          </div>
+        </div>
+      )}
+
+      {/* Heat cells get their own tooltip — otherwise a dense row gives no feedback at all and
+          looks unclickable, which is exactly how it behaved before. */}
+      {!hover && hoverCell && (
+        <div
+          className="fixed z-50 pointer-events-none px-2 py-1 rounded-md bg-gray-900 dark:bg-gray-800 text-white text-[11px] shadow-lg"
+          style={{
+            left: Math.min(hoverCell.x + 12, window.innerWidth - 240),
+            top: Math.max(8, hoverCell.y - 34)
+          }}
+        >
+          <div className="font-medium">
+            {hoverCell.cell.count} capture{hoverCell.cell.count === 1 ? '' : 's'}
+          </div>
+          <div className="text-[10px] text-gray-300 dark:text-gray-400">
+            saturation {hoverCell.cell.xMin.toFixed(2)}–{hoverCell.cell.xMax.toFixed(2)} ·{' '}
+            {hoverCell.cell.count === 1 ? 'click to play' : 'click to zoom in'}
           </div>
         </div>
       )}

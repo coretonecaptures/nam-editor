@@ -31,7 +31,14 @@ export interface ToneGridMark {
   label: string
 }
 
-interface DensityCell {
+/**
+ * A heat cell standing in for several overlapping captures.
+ *
+ * Cells are first-class hit targets, not decoration: a dense row would otherwise be completely
+ * inert, since hit-testing only finds individual dots. Clicking a cell is how you zoom in, so it
+ * carries the range it covers and the captures inside it.
+ */
+export interface ToneGridCell {
   rowKey: string
   px: number
   py: number
@@ -39,6 +46,19 @@ interface DensityCell {
   h: number
   opacity: number
   color: string
+  count: number
+  /** Saturation range this cell spans, used to narrow on click. */
+  xMin: number
+  xMax: number
+  ids: string[]
+}
+
+/**
+ * Stable identity for a heat cell, so the parent can mark which one is hovered without holding a
+ * reference to an object rebuilt on every render.
+ */
+export function toneGridCellKey(cell: ToneGridCell): string {
+  return `${cell.rowKey}@${cell.px.toFixed(1)}`
 }
 
 export const TONE_GRID_ROW_HEIGHT = 26
@@ -62,7 +82,10 @@ export function ToneGrid({
   densityThreshold = 140,
   densityBins = 60,
   onHoverChange,
-  onSelect
+  onSelect,
+  onDrillCell,
+  onSelectRow,
+  hoveredCellKey = null
 }: {
   /** Cleanest first; rendered reversed so the heaviest row sits at the top. */
   rows: ToneGridRow[]
@@ -76,8 +99,18 @@ export function ToneGrid({
   hoveredId?: string | null
   densityThreshold?: number
   densityBins?: number
-  onHoverChange?: (mark: ToneGridMark | null, clientX: number, clientY: number) => void
+  onHoverChange?: (
+    mark: ToneGridMark | null,
+    clientX: number,
+    clientY: number,
+    cell?: ToneGridCell | null
+  ) => void
   onSelect?: (mark: ToneGridMark) => void
+  /** Clicking a heat cell — the zoom-in affordance for a row too dense to show dots. */
+  onDrillCell?: (cell: ToneGridCell) => void
+  /** Clicking a row label, to isolate that amp. */
+  onSelectRow?: (rowKey: string) => void
+  hoveredCellKey?: string | null
 }) {
   const plotW = Math.max(10, width - PAD.l - PAD.r)
   const plotH = Math.max(10, height - PAD.t - PAD.b)
@@ -106,7 +139,7 @@ export function ToneGrid({
     }
 
     const pts: Array<ToneGridMark & PlottedPoint> = []
-    const dense: DensityCell[] = []
+    const dense: ToneGridCell[] = []
 
     for (const [rowKey, rowMarks] of byRow) {
       const cy = rowY.get(rowKey)!
@@ -117,17 +150,25 @@ export function ToneGrid({
       }
 
       const binW = plotW / densityBins
-      const buckets = new Map<number, { count: number; colors: Map<string, number> }>()
+      const buckets = new Map<
+        number,
+        { count: number; colors: Map<string, number>; xMin: number; xMax: number; ids: string[] }
+      >()
       for (const mark of rowMarks) {
         const frac = (xScale(mark.x) - PAD.l) / plotW
         const bin = Math.max(0, Math.min(densityBins - 1, Math.floor(frac * densityBins)))
         let bucket = buckets.get(bin)
         if (!bucket) {
-          bucket = { count: 0, colors: new Map() }
+          bucket = { count: 0, colors: new Map(), xMin: mark.x, xMax: mark.x, ids: [] }
           buckets.set(bin, bucket)
         }
         bucket.count++
         bucket.colors.set(mark.color, (bucket.colors.get(mark.color) ?? 0) + 1)
+        // Track the ACTUAL value range, not the bin's nominal edges: narrowing to the real span
+        // means the captures can't fall outside the new domain due to rounding.
+        if (mark.x < bucket.xMin) bucket.xMin = mark.x
+        if (mark.x > bucket.xMax) bucket.xMax = mark.x
+        bucket.ids.push(mark.id)
       }
 
       const maxCount = Math.max(...[...buckets.values()].map((b) => b.count), 1)
@@ -148,7 +189,11 @@ export function ToneGrid({
           h: rowHeight * 0.68,
           // sqrt keeps sparse bins visible; a linear ramp made them vanish beside a peak.
           opacity: 0.15 + 0.85 * Math.sqrt(bucket.count / maxCount),
-          color
+          color,
+          count: bucket.count,
+          xMin: bucket.xMin,
+          xMax: bucket.xMax,
+          ids: bucket.ids
         })
       }
     }
@@ -158,13 +203,33 @@ export function ToneGrid({
   const overlayRef = React.useRef<SVGRectElement | null>(null)
   const rafRef = React.useRef<number | null>(null)
 
-  /** Convert a mouse event to plot-space coords and find what is under it. */
-  const hitAt = (clientX: number, clientY: number) => {
+  /**
+   * What is under the cursor: an individual capture, a heat cell, or nothing.
+   *
+   * Dots win over cells when both are in range, since a dot is the more specific target. Cells are
+   * included at all because a dense row used to be entirely inert — nothing to hover, nothing to
+   * click, no way to zoom in — which made most of a large library unreachable.
+   */
+  const hitAt = (
+    clientX: number,
+    clientY: number
+  ): { mark: (ToneGridMark & PlottedPoint) | null; cell: ToneGridCell | null } => {
     const target = overlayRef.current
-    if (!target) return null
+    if (!target) return { mark: null, cell: null }
     const box = target.getBoundingClientRect()
     // The overlay starts at (PAD.l, PAD.t), so add those back to get SVG-space coords.
-    return nearestPoint(points, clientX - box.left + PAD.l, clientY - box.top + PAD.t)
+    const x = clientX - box.left + PAD.l
+    const y = clientY - box.top + PAD.t
+
+    const mark = nearestPoint(points, x, y)
+    if (mark) return { mark, cell: null }
+
+    for (const cell of cells) {
+      if (x >= cell.px && x <= cell.px + cell.w && y >= cell.py && y <= cell.py + cell.h) {
+        return { mark: null, cell }
+      }
+    }
+    return { mark: null, cell: null }
   }
 
   const handleMove = (event: React.MouseEvent<SVGRectElement>) => {
@@ -173,15 +238,16 @@ export function ToneGrid({
     if (rafRef.current !== null) return
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = null
-      onHoverChange(hitAt(clientX, clientY), clientX, clientY)
+      const hit = hitAt(clientX, clientY)
+      onHoverChange(hit.mark, clientX, clientY, hit.cell)
     })
   }
 
   const handleClick = (event: React.MouseEvent<SVGRectElement>) => {
-    if (!onSelect) return
-    // Same hitAt as hover, so the highlighted mark is always the one you get.
+    // Same hitAt as hover, so what is highlighted is always what you get.
     const hit = hitAt(event.clientX, event.clientY)
-    if (hit) onSelect(hit)
+    if (hit.mark) onSelect?.(hit.mark)
+    else if (hit.cell) onDrillCell?.(hit.cell)
   }
 
   React.useEffect(() => {
@@ -217,10 +283,13 @@ export function ToneGrid({
               fill="currentColor"
               opacity={row.lowConfidence ? 0.42 : 0.7}
               fontSize="10.5"
+              style={onSelectRow ? { cursor: 'pointer' } : undefined}
+              onClick={onSelectRow ? () => onSelectRow(row.key) : undefined}
             >
               {row.label.length > 20 ? `${row.label.slice(0, 19)}…` : row.label}
               {row.lowConfidence ? ' *' : ''}
             </text>
+            {onSelectRow && <title>{`Show only ${row.label}`}</title>}
           </g>
         )
       })}
@@ -262,18 +331,25 @@ export function ToneGrid({
       </text>
 
       {/* Density cells for crowded rows */}
-      {cells.map((cell, i) => (
-        <rect
-          key={`${cell.rowKey}-${i}`}
-          x={cell.px}
-          y={cell.py}
-          width={cell.w}
-          height={cell.h}
-          fill={cell.color}
-          opacity={cell.opacity}
-          rx={1}
-        />
-      ))}
+      {cells.map((cell) => {
+        const key = toneGridCellKey(cell)
+        const isHovered = key === hoveredCellKey
+        return (
+          <rect
+            key={key}
+            x={cell.px}
+            y={cell.py}
+            width={cell.w}
+            height={cell.h}
+            fill={cell.color}
+            // Lift the hovered cell so it reads as a target rather than a texture.
+            opacity={isHovered ? Math.min(1, cell.opacity + 0.35) : cell.opacity}
+            stroke={isHovered ? 'currentColor' : 'none'}
+            strokeWidth={isHovered ? 1 : 0}
+            rx={1}
+          />
+        )
+      })}
 
       {/* Individual marks */}
       {points.map((point) => {

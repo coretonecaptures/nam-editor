@@ -133,3 +133,47 @@ describe('ToneMapView', () => {
     expect(html).toContain('<rect')
   })
 })
+
+describe('ToneMapView density interactivity', () => {
+  /** A row dense enough to render as heat cells rather than dots. */
+  const denseLibrary = () =>
+    Array(400)
+      .fill(null)
+      .map((_, i) =>
+        capture({
+          gear_make: 'MARSHALL',
+          gear_model: 'JCM800',
+          tone_type: 'overdrive',
+          gain: 0.3 + (i % 60) / 100,
+          modeled_by: 'SLAMMIN MOFO'
+        })
+      )
+
+  // Before this, a dense row was completely inert: hit-testing only searched individual dots, so
+  // there was nothing to hover, nothing to click, and no way to zoom in.
+  it('tells the user heat bands are clickable', () => {
+    const html = render(denseLibrary())
+    expect(html).toMatch(/click a heat band/i)
+    expect(html).toMatch(/zoom in/i)
+  })
+
+  it('still renders heat cells for a dense row', () => {
+    const html = render(denseLibrary())
+    expect(html).toContain('<rect')
+    expect(html).toContain('MARSHALL')
+  })
+
+  it('renders amp names as clickable zoom targets', () => {
+    const html = render(denseLibrary())
+    // Row labels carry a title advertising the isolate action.
+    expect(html).toMatch(/Show only/i)
+  })
+
+  it('does not crash when every capture shares one saturation value', () => {
+    // All marks land in one bin, so the cell range is zero-width — the axis must survive it.
+    const files = Array(300)
+      .fill(null)
+      .map(() => capture({ gear_make: 'MARSHALL', tone_type: 'overdrive', gain: 0.7 }))
+    expect(() => render(files)).not.toThrow()
+  })
+})
