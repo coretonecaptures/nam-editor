@@ -589,7 +589,7 @@ export function ToneStore({
       const ok = window.confirm(
         `This Tone3000 pack has ${toDownload.length} files.\n\n` +
         'Due to Tone3000 API and download limitations, large packs download in the background and can take a while. ' +
-        'Find Tones browsing will stay locked until the queue finishes or you cancel it.\n\n' +
+        'Browsing Tone3000 will stay locked until the queue finishes or you cancel it.\n\n' +
         'Do you want to start this background download?'
       )
       if (!ok) return
@@ -660,7 +660,7 @@ export function ToneStore({
             <svg className="w-4 h-4 text-violet-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
-            <h2 className="text-base font-semibold text-gray-900 dark:text-white">Find New Tones</h2>
+            <h2 className="text-base font-semibold text-gray-900 dark:text-white">Tone3000</h2>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
@@ -669,8 +669,8 @@ export function ToneStore({
         <div className="max-w-xs">
           <p className="text-sm text-gray-600 dark:text-gray-400 mb-5">
             Browse and download captures from the{' '}
-            <button onClick={() => window.api.openExternal('https://tone3000.com')} className="text-violet-500 hover:underline">tone3000</button>
-            {' '}community. Sign in with your free tone3000 account to get started.
+            <button onClick={() => window.api.openExternal('https://tone3000.com')} className="text-violet-500 hover:underline">Tone3000</button>
+            {' '}community. Sign in with your free Tone3000 account to get started.
           </p>
           {connectError && <p className="text-xs text-red-500 mb-3">{connectError}</p>}
           <button onClick={handleConnect} disabled={connecting}
@@ -932,7 +932,7 @@ export function ToneStore({
         <svg className="w-3.5 h-3.5 text-violet-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
         </svg>
-        <span className="text-sm font-semibold text-gray-900 dark:text-white flex-1">Find New Tones</span>
+        <span className="text-sm font-semibold text-gray-900 dark:text-white flex-1">Browse Tone3000</span>
         {username && <span className="text-xs text-gray-500 dark:text-gray-400">@{username}</span>}
         <button onClick={handleDisconnect} disabled={queueLocked} className="text-xs text-gray-400 hover:text-red-400 transition-colors ml-2 disabled:opacity-40 disabled:cursor-not-allowed">Disconnect</button>
         <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors ml-1">
@@ -1058,7 +1058,7 @@ export function ToneStore({
                   Tone3000 background download queue in progress
                 </p>
                 <p className="text-xs text-amber-500/90 dark:text-amber-300/90">
-                  Due to Tone3000 API and download limitations, Find Tones browsing is locked until this queue finishes or you cancel it.
+                  Due to Tone3000 API and download limitations, browsing Tone3000 is locked until this queue finishes or you cancel it.
                 </p>
               </div>
               <button
