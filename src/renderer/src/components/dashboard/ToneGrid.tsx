@@ -133,6 +133,10 @@ export function ToneGrid({
     const byRow = new Map<string, ToneGridMark[]>()
     for (const mark of marks) {
       if (!rowY.has(mark.rowKey)) continue
+      // Only what's inside the current view. Zooming narrows xDomain, so this is what lets a
+      // crowded row thin out as you go in — and it stops off-screen marks being drawn outside
+      // the plot rect.
+      if (mark.x < xDomain[0] || mark.x > xDomain[1]) continue
       const list = byRow.get(mark.rowKey)
       if (list) list.push(mark)
       else byRow.set(mark.rowKey, [mark])
@@ -144,6 +148,8 @@ export function ToneGrid({
     for (const [rowKey, rowMarks] of byRow) {
       const cy = rowY.get(rowKey)!
 
+      // Threshold is on VISIBLE marks, not the row's total. Testing the total meant a dense row
+      // stayed heat no matter how far you zoomed in, which made zoom pointless.
       if (rowMarks.length <= densityThreshold) {
         for (const mark of rowMarks) pts.push({ ...mark, px: xScale(mark.x), py: cy })
         continue
@@ -198,7 +204,7 @@ export function ToneGrid({
       }
     }
     return { points: pts, cells: dense }
-  }, [marks, rowY, xScale, plotW, densityThreshold, densityBins, rowHeight])
+  }, [marks, rowY, xScale, plotW, densityThreshold, densityBins, rowHeight, xDomain])
 
   const overlayRef = React.useRef<SVGRectElement | null>(null)
   const rafRef = React.useRef<number | null>(null)

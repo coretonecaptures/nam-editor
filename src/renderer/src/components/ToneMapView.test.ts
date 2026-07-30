@@ -177,3 +177,34 @@ describe('ToneMapView density interactivity', () => {
     expect(() => render(files)).not.toThrow()
   })
 })
+
+describe('ToneMapView zoom', () => {
+  const denseLibrary = () =>
+    Array(400)
+      .fill(null)
+      .map((_, i) =>
+        capture({
+          gear_make: 'MARSHALL',
+          tone_type: 'overdrive',
+          gain: 0.3 + (i % 60) / 100
+        })
+      )
+
+  it('advertises scroll-to-zoom and drag-to-pan', () => {
+    const html = render(denseLibrary())
+    expect(html).toMatch(/scroll to zoom/i)
+    expect(html).toMatch(/drag to pan/i)
+  })
+
+  // The scrollbar and Fit button only exist while zoomed; at full extent they would be inert
+  // furniture.
+  it('hides the zoom scrollbar until zoomed', () => {
+    const html = render(denseLibrary())
+    expect(html).not.toMatch(/>Fit</)
+  })
+
+  it('starts at the full range with no zoom breadcrumb', () => {
+    const html = render(denseLibrary())
+    expect(html).not.toMatch(/zoomed \d/)
+  })
+})
