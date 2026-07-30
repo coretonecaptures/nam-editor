@@ -190,7 +190,7 @@ function TapeLabel({ children }: { children: React.ReactNode }) {
   return (
     <span
       className="text-gray-400 dark:text-gray-500 uppercase"
-      style={{ font: "600 10px 'Oswald', sans-serif", letterSpacing: '.22em' }}
+      style={{ font: "600 9.5px 'IBM Plex Sans', sans-serif", letterSpacing: '.24em' }}
     >
       {children}
     </span>
@@ -280,7 +280,7 @@ function TapeCap({
       >
         {children}
       </button>
-      <span style={{ font: "600 8px 'Oswald', sans-serif", letterSpacing: '.14em', color: labelColor }}>
+      <span style={{ font: "600 7.5px 'IBM Plex Sans', sans-serif", letterSpacing: '.16em', color: labelColor }}>
         {label}
       </span>
     </div>
@@ -597,10 +597,16 @@ export function PlayerPanel({
             ? (elapsed % buffer.duration) / buffer.duration
             : Math.min(1, elapsed / buffer.duration)
         )
+        // Peak with a decay, not RMS. A normalized guitar signal has RMS ~0.1-0.25 against a
+        // peak near 0.9, so an RMS-driven bar sits at a fifth of its width at full volume and
+        // reads as "no output". The decay is what stops peak metering flickering.
         analyser.getFloatTimeDomainData(data)
-        let sum = 0
-        for (let i = 0; i < data.length; i++) sum += data[i] * data[i]
-        setOutputMeter(Math.sqrt(sum / data.length))
+        let peak = 0
+        for (let i = 0; i < data.length; i++) {
+          const v = Math.abs(data[i])
+          if (v > peak) peak = v
+        }
+        setOutputMeter((previous) => (peak >= previous ? peak : previous * 0.82 + peak * 0.18))
         rafRef.current = requestAnimationFrame(tick)
       }
       rafRef.current = requestAnimationFrame(tick)
@@ -857,7 +863,9 @@ export function PlayerPanel({
   const irClips = useMemo(() => irCategories.flatMap((c) => c.files), [irCategories])
 
   const outputDb = outputMeter > 0 ? `${(20 * Math.log10(outputMeter)).toFixed(1)} dB` : '—'
-  const outputPct = Math.min(100, outputMeter * 160)
+  // 160% headroom was tuned for an RMS reading; with peak metering the bar is already near full
+  // scale at a normalized peak, so it maps close to 1:1 with a little headroom for the top LEDs.
+  const outputPct = Math.min(100, outputMeter * 105)
   const inputDb = liveInputMeter > 0 ? `${(20 * Math.log10(liveInputMeter)).toFixed(1)} dB` : '—'
 
   const coverSrc = coverImagePath ? toFileUrl(coverImagePath) : ampPlaceholder
@@ -872,7 +880,7 @@ export function PlayerPanel({
       <div className="flex items-center gap-2.5 px-4 py-3 border-b border-gray-200 dark:border-[var(--border-soft)] flex-shrink-0">
         <div className="flex-1 min-w-0">
           <div
-            className={`uppercase mb-0.5 ${liveMode ? 'text-amber-500 dark:text-amber-400' : 'text-teal-500 dark:text-teal-400'}`}
+            className={`uppercase mb-0.5 ${liveMode ? 'text-amber-500 dark:text-amber-400' : 'text-[var(--accent)] dark:text-[var(--accent)]'}`}
             style={{ font: "700 10.5px 'IBM Plex Sans', sans-serif", letterSpacing: '.1em' }}
           >
             {liveMode ? 'Live Input' : 'Tone Preview'}
@@ -1008,7 +1016,7 @@ export function PlayerPanel({
               <Meter label="Input (dry)" hint="set gain before arming" value={liveInputMeter} db={inputDb} />
               <Meter label="Output" value={liveMeter} db={liveMeter > 0 ? `${(20 * Math.log10(liveMeter)).toFixed(1)} dB` : '—'} />
               <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={liveBypass} onChange={(e) => setLiveBypass(e.target.checked)} className="w-3.5 h-3.5 rounded accent-teal-500" />
+                <input type="checkbox" checked={liveBypass} onChange={(e) => setLiveBypass(e.target.checked)} className="w-3.5 h-3.5 rounded accent-[var(--accent)]" />
                 <span className="text-xs text-gray-600 dark:text-gray-300">Bypass model (hear the dry input)</span>
               </label>
             </div>
@@ -1020,7 +1028,7 @@ export function PlayerPanel({
                 <select
                   value={inputDeviceId ?? ''}
                   onChange={(e) => setInputDeviceId(e.target.value || null)}
-                  className="mt-1.5 w-full h-[34px] px-3 rounded-[9px] text-xs bg-gray-50 dark:bg-[var(--field)] border border-gray-200 dark:border-[var(--field-border)] text-gray-700 dark:text-gray-200 focus:outline-none focus:border-teal-500"
+                  className="mt-1.5 w-full h-[34px] px-3 rounded-[9px] text-xs bg-gray-50 dark:bg-[var(--field)] border border-gray-200 dark:border-[var(--field-border)] text-gray-700 dark:text-gray-200 focus:outline-none focus:border-[var(--accent)]"
                 >
                   <option value="">System default</option>
                   {inputDevices.map((d) => (
@@ -1033,7 +1041,7 @@ export function PlayerPanel({
                   <TapeLabel>Input Gain</TapeLabel>
                   <span className="font-mono text-[10px] text-gray-400 dark:text-gray-500">{liveInputGainDb > 0 ? '+' : ''}{liveInputGainDb.toFixed(1)} dB</span>
                 </div>
-                <input type="range" min={-24} max={24} step={0.5} value={liveInputGainDb} onChange={(e) => setLiveInputGainDb(Number(e.target.value))} className="w-full accent-teal-500" />
+                <input type="range" min={-24} max={24} step={0.5} value={liveInputGainDb} onChange={(e) => setLiveInputGainDb(Number(e.target.value))} className="w-full accent-[var(--accent)]" />
                 <p className="text-[10.5px] text-gray-400 dark:text-gray-600 mt-1.5 leading-relaxed">
                   How hard the model is driven — the gain that matters on a high-gain capture, not the output level.
                 </p>
@@ -1055,7 +1063,7 @@ export function PlayerPanel({
                 ratio silently becomes ~4:1 — so object-cover crops far more of the amp the wider
                 you drag the panel. Capping width at 3 x the max height keeps the crop identical at
                 every panel size, and the letterbox fills with the surrounding surface. */}
-            <div className="bg-gray-100 dark:bg-[#0b0e12] flex justify-center">
+            <div className="bg-gray-100 dark:bg-[var(--field)] flex justify-center">
               <div className="w-full" style={{ aspectRatio: '3 / 1', maxWidth: 170 * 3 }}>
                 <img
                   src={coverSrc}
@@ -1097,16 +1105,16 @@ export function PlayerPanel({
               </div>
               <div
                 className="rounded-xl p-3.5"
-                style={{ background: 'linear-gradient(180deg,#202730,#161b22)', border: '1px solid var(--field-border)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.05), inset 0 -6px 14px rgba(0,0,0,.35)' }}
+                style={{ background: 'linear-gradient(180deg, var(--raised), var(--panel-2))', border: '1px solid var(--field-border)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.05), inset 0 -6px 14px rgba(0,0,0,.35)' }}
               >
                 {/* counter + scrub */}
                 <div className="flex items-center gap-3 mb-3.5">
-                  <div className="font-mono" style={{ background: '#07100e', color: 'var(--accent)', border: '1px solid #123', borderRadius: 5, padding: '4px 8px', fontSize: 12, letterSpacing: '.05em', boxShadow: 'inset 0 0 8px rgba(45,212,191,.25)' }}>
+                  <div className="font-mono" style={{ background: 'var(--field)', color: 'var(--accent)', border: '1px solid var(--field-border)', borderRadius: 5, padding: '4px 8px', fontSize: 12, letterSpacing: '.05em', boxShadow: 'inset 0 0 8px color-mix(in srgb, var(--accent) 30%, transparent)' }}>
                     {formatTime((bufferRef.current?.duration ?? 0) * progress)}
                   </div>
                   <div
                     className="flex-1 relative cursor-pointer"
-                    style={{ height: 8, borderRadius: 5, background: '#0b0f13', boxShadow: 'inset 0 1px 3px rgba(0,0,0,.7)' }}
+                    style={{ height: 8, borderRadius: 5, background: 'var(--field)', boxShadow: 'inset 0 1px 3px rgba(0,0,0,.7)' }}
                     onClick={(e) => {
                       const r = e.currentTarget.getBoundingClientRect()
                       seekTo((e.clientX - r.left) / r.width)
@@ -1142,10 +1150,10 @@ export function PlayerPanel({
                 {/* output meter */}
                 <div className="mt-3.5">
                   <div className="flex items-center justify-between mb-1">
-                    <span style={{ font: "600 8px 'Oswald', sans-serif", letterSpacing: '.14em', color: 'var(--text-3)' }}>OUTPUT</span>
+                    <span style={{ font: "600 7.5px 'IBM Plex Sans', sans-serif", letterSpacing: '.16em', color: 'var(--text-3)' }}>OUTPUT</span>
                     <span className="font-mono text-[9.5px] text-gray-400 dark:text-gray-500">{outputDb}</span>
                   </div>
-                  <div style={{ height: 9, borderRadius: 5, background: '#0b0f13', boxShadow: 'inset 0 1px 3px rgba(0,0,0,.7)', overflow: 'hidden' }}>
+                  <div style={{ height: 9, borderRadius: 5, background: 'var(--field)', boxShadow: 'inset 0 1px 3px rgba(0,0,0,.7)', overflow: 'hidden' }}>
                     <div style={{ height: '100%', width: `${outputPct}%`, background: 'linear-gradient(90deg,#17a86f 0%,#3ddc9a 55%,#f0b84a 80%,#e2483a 100%)', transition: 'width .06s linear' }} />
                   </div>
                 </div>
@@ -1167,7 +1175,7 @@ export function PlayerPanel({
                 <div className="flex items-center gap-2">
                   {needsCabIr && !irEnabled && <span className="text-[10px] text-amber-500">recommended</span>}
                   {!needsCabIr && irEnabled && <span className="text-[10px] text-amber-500">already has a cab</span>}
-                  <span className={`text-[10px] font-semibold ${irEnabled ? 'text-teal-400' : 'text-gray-500'}`}>{irEnabled ? 'ON' : 'OFF'}</span>
+                  <span className={`text-[10px] font-semibold ${irEnabled ? 'text-[var(--accent)]' : 'text-gray-500'}`}>{irEnabled ? 'ON' : 'OFF'}</span>
                   <button
                     role="switch"
                     aria-checked={irEnabled}
@@ -1230,7 +1238,7 @@ export function PlayerPanel({
                           onClick={() => handleSelectCategory(category)}
                           disabled={busy || !clipForCategory(category)}
                           className={`flex-none h-7 px-3.5 rounded-full text-[11.5px] whitespace-nowrap transition-colors disabled:opacity-50 ${
-                            active ? 'font-semibold text-[#06201d] bg-teal-400' : 'text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-[var(--field)] border border-gray-200 dark:border-[var(--border)] hover:bg-gray-200 dark:hover:bg-[var(--hover)]'
+                            active ? 'font-semibold text-[#06201d] bg-[var(--accent)]' : 'text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-[var(--field)] border border-gray-200 dark:border-[var(--border)] hover:bg-gray-200 dark:hover:bg-[var(--hover)]'
                           }`}
                         >
                           {category.name}
@@ -1256,13 +1264,13 @@ export function PlayerPanel({
                           onClick={() => handleSelectClip(activeCategory, clip.path)}
                           disabled={busy}
                           className={`w-full flex items-center gap-2.5 h-[38px] px-3 text-left transition-colors disabled:opacity-50 ${i > 0 ? 'border-t border-gray-200 dark:border-[#1a2027]' : ''} ${
-                            selected ? 'bg-teal-500/10' : 'hover:bg-gray-100 dark:hover:bg-[#151b22]'
+                            selected ? 'bg-[var(--active)]' : 'hover:bg-gray-100 dark:hover:bg-[#151b22]'
                           }`}
                           style={selected ? { boxShadow: 'inset 3px 0 0 var(--accent)' } : undefined}
                         >
                           <svg viewBox="0 0 24 24" width="14" height="14" fill={selected ? 'var(--accent)' : 'currentColor'} className={selected ? '' : 'text-gray-400 dark:text-gray-500'}><path d="M8 5.14v14l11-7-11-7z" /></svg>
                           <span className={`flex-1 text-[12.5px] truncate ${selected ? 'text-gray-900 dark:text-gray-100' : 'text-gray-600 dark:text-gray-300'}`}>{clip.name.replace(/\.wav$/i, '')}</span>
-                          {selected && isPlaying && <span className="text-[9px] font-mono text-teal-400">▶ playing</span>}
+                          {selected && isPlaying && <span className="text-[9px] font-mono text-[var(--accent)]">▶ playing</span>}
                           {selected && (
                             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="var(--accent)" strokeWidth={2.2}><path d="M5 12l5 5 9-11" strokeLinecap="round" strokeLinejoin="round" /></svg>
                           )}
