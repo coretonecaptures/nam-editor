@@ -1,5 +1,50 @@
 # TODO
 
+## [HIGH PRIORITY] Settings: dedicated "Playback" section with per-type DI folders
+
+Player settings are currently squeezed into Settings → Library alongside unrelated options
+(`diPreviewLibraryPath`, `irLibraryPath`, `irMix`). They deserve their own **Playback** section,
+and the DI library needs to stop depending on the user having pre-organized one folder tree.
+
+**Today:** one `diPreviewLibraryPath`, and categories are inferred from its immediate subfolder
+names (`Clean/`, `Break Up/`, ...). That works only if the user restructures their existing DI
+collection to match, which is a real barrier — most people already have DIs scattered across
+folders they don't want to move.
+
+**Wanted:** pick a folder *per type*, so the app does the organizing instead of the filesystem:
+
+| Type | Folder |
+|---|---|
+| Clean | `<browse>` |
+| Break Up | `<browse>` |
+| Medium Gain | `<browse>` |
+| High Gain | `<browse>` |
+| Lead | `<browse>` |
+| Heavy | `<browse>` |
+
+Then the player's pill row is built from configured types rather than discovered subfolders, and
+the per-type dropdown lists the wavs in that type's folder.
+
+Design decisions still open:
+- **Shape of the setting.** A `Record<categoryName, folderPath>` is the obvious model, but should
+  the type list itself be user-editable (add "Acoustic", "Bass", rename "Heavy")? Leaning yes —
+  hardcoding six categories will be wrong for someone. `DI_CATEGORY_ORDER` in
+  `utils/playerAudio.ts` is the current canonical list and would become the *default* set.
+- **Coexistence with the current single-folder mode.** Simplest is to keep both: if per-type
+  folders are configured they win; otherwise fall back to scanning `diPreviewLibraryPath` for
+  subfolders (which already works and shouldn't break for anyone using it).
+- **Same question for IRs.** `irLibraryPath` has the identical subfolder-as-category convention,
+  so per-type IR folders (by cab size? by mic?) may deserve the same treatment — or may not,
+  since IR packs usually *are* already organized in folders.
+- **Ordering** when types are user-defined: explicit drag order, or keep matching against the
+  canonical gain progression and append unknowns (what `sortDiCategories` does now).
+
+Also worth moving into the new Playback section while it exists: `namStandalonePath` arguably
+belongs there rather than under Library, and the preview length (currently the hardcoded
+`MAX_PREVIEW_SECONDS = 12` in `PlayerPanel.tsx`) could become a setting.
+
+---
+
 ## DONE: Player cabinet IR stage
 
 **Implemented.** Captures whose `gear_type` has no cabinet (`amp`, `preamp`, `pedal_amp`,

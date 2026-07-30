@@ -7,6 +7,7 @@ import {
   base64ToArrayBuffer,
   captureNeedsCabIr,
   findLoudestWindowStart,
+  sortDiCategories,
   normalizeRendered,
   readModelSampleRate
 } from '../utils/playerAudio'
@@ -29,16 +30,54 @@ const MAX_PREVIEW_SECONDS = 12
 type PlayerStatus = 'idle' | 'loading-di' | 'rendering' | 'ready' | 'error'
 
 /**
- * Last DI clip the user auditioned through, remembered for the session.
+ * Which IR the user last auditioned, remembered for the session.
  *
  * Module-level rather than a ref because App mounts PlayerPanel with `key={filePath}`, so the
- * component fully remounts on every capture change. Without this, picking a DI and then
- * clicking a different capture would drop you back to "no clip selected" every time.
+ * component fully remounts on every capture change. Without this, picking an IR and then
+ * clicking a different capture would reset the choice every time. (DI choices are persisted
+ * per category in localStorage instead — see DI_PREFS_KEY.)
  */
-let lastDiPath: string | null = null
-
-/** Same rationale as lastDiPath: survives the per-capture remount. */
 let lastIrPath: string | null = null
+
+/**
+ * Which clip each DI category last used, and which category was last active.
+ *
+ * Persisted to localStorage rather than kept in module state so the choice survives app
+ * restarts — "remember my Clean sample" is only useful if it's actually remembered. Keyed by
+ * category name, so reorganizing the library degrades gracefully (an unknown key is just
+ * ignored and the first clip is used).
+ */
+const DI_PREFS_KEY = 'nam-player-di-prefs'
+
+interface DiPrefs {
+  /** category name -> chosen clip path */
+  byCategory: Record<string, string>
+  activeCategory: string | null
+}
+
+function loadDiPrefs(): DiPrefs {
+  try {
+    const raw = localStorage.getItem(DI_PREFS_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<DiPrefs>
+      return {
+        byCategory: parsed.byCategory ?? {},
+        activeCategory: parsed.activeCategory ?? null
+      }
+    }
+  } catch {
+    // Corrupt or unavailable storage shouldn't stop the player from working.
+  }
+  return { byCategory: {}, activeCategory: null }
+}
+
+function saveDiPrefs(prefs: DiPrefs): void {
+  try {
+    localStorage.setItem(DI_PREFS_KEY, JSON.stringify(prefs))
+  } catch {
+    // Non-fatal.
+  }
+}
 
 function formatError(error: unknown): string {
   if (error instanceof Error) return error.message
@@ -225,8 +264,7 @@ export function PlayerPanel({
   const [progress, setProgress] = useState(0)
 
   const [summaryColumns, setSummaryColumns] = useState(2)
-  const [activeCategory, setActiveCategory] = useState<string | null>(null)
-  const [clipFilter, setClipFilter] = useState('')
+  const [diPrefs, setDiPrefs] = useState<DiPrefs>(loadDiPrefs)
   const panelRef = useRef<HTMLDivElement | null>(null)
 
   const [irCategories, setIrCategories] = useState<DiCategory[]>([])
@@ -434,17 +472,31 @@ export function PlayerPanel({
     void (async () => {
       const result = await window.api.scanWavLibrary(diLibraryPath)
       if (cancelled) return
-      setCategories(result.categories)
+
+      // Ordered cleanest -> heaviest so the pill row reads as a gain progression.
+      const ordered = sortDiCategories(result.categories)
+      setCategories(ordered)
       setLibraryError(
         result.error ??
-          (result.categories.length === 0 ? 'No .wav files found in the DI library folder.' : '')
+          (ordered.length === 0 ? 'No .wav files found in the DI library folder.' : '')
       )
+      if (ordered.length === 0) return
 
-      const allClips = result.categories.flatMap((c) => c.files)
-      if (allClips.length === 0) return
-      // Prefer the clip auditioned last (kept across captures), else the first available.
-      const remembered = allClips.find((f) => f.path === lastDiPath)
-      setDiPath(remembered?.path ?? allClips[0].path)
+      // Restore the last active category if it still exists, else start at the cleanest.
+      const prefs = loadDiPrefs()
+      const activeCategory =
+        (prefs.activeCategory && ordered.some((c) => c.name === prefs.activeCategory)
+          ? prefs.activeCategory
+          : null) ?? ordered[0].name
+
+      const category = ordered.find((c) => c.name === activeCategory) ?? ordered[0]
+      // Per-category remembered clip, falling back to that category's first.
+      const rememberedPath = prefs.byCategory[category.name]
+      const clip = category.files.find((f) => f.path === rememberedPath) ?? category.files[0]
+      if (!clip) return
+
+      setDiPrefs({ ...prefs, activeCategory: category.name })
+      setDiPath(clip.path)
     })()
     return () => { cancelled = true }
   }, [diLibraryPath])
@@ -452,7 +504,6 @@ export function PlayerPanel({
   // Render as soon as we have a DI to work with.
   useEffect(() => {
     if (diPath) {
-      lastDiPath = diPath
       void renderPreview(diPath)
     } else {
       setStatus('idle')
@@ -496,21 +547,43 @@ export function PlayerPanel({
   const busy = status === 'loading-di' || status === 'rendering'
   const hasLibrary = categories.length > 0
 
-  // Flatten once, tagging each clip with its category so the "All" view can label them.
-  const allClips = useMemo(
-    () => categories.flatMap((c) => c.files.map((f) => ({ ...f, category: c.name }))),
-    [categories]
+  /** The clip a given category should use: remembered choice, else its first. */
+  const clipForCategory = useCallback(
+    (category: DiCategory): string | null => {
+      const remembered = diPrefs.byCategory[category.name]
+      const match = category.files.find((f) => f.path === remembered)
+      return (match ?? category.files[0])?.path ?? null
+    },
+    [diPrefs.byCategory]
   )
-  const totalClipCount = allClips.length
 
-  const visibleClips = useMemo(() => {
-    const needle = clipFilter.trim().toLowerCase()
-    return allClips.filter((clip) => {
-      if (activeCategory !== null && clip.category !== activeCategory) return false
-      if (needle && !clip.name.toLowerCase().includes(needle)) return false
-      return true
-    })
-  }, [allClips, activeCategory, clipFilter])
+  /** Click a pill: make that category active and play its remembered clip. */
+  const handleSelectCategory = useCallback(
+    (category: DiCategory) => {
+      const path = clipForCategory(category)
+      if (!path) return
+      const next: DiPrefs = { ...diPrefs, activeCategory: category.name }
+      setDiPrefs(next)
+      saveDiPrefs(next)
+      setDiPath(path)
+    },
+    [clipForCategory, diPrefs]
+  )
+
+  /** Change which clip a category uses. Re-renders immediately if it's the active one. */
+  const handleSelectClip = useCallback(
+    (category: DiCategory, path: string) => {
+      const next: DiPrefs = {
+        ...diPrefs,
+        byCategory: { ...diPrefs.byCategory, [category.name]: path },
+        activeCategory: category.name
+      }
+      setDiPrefs(next)
+      saveDiPrefs(next)
+      setDiPath(path)
+    },
+    [diPrefs]
+  )
 
   // Top-line metadata, mirroring the fields the metadata editor leads with. Only rows that
   // actually have a value are shown, so a sparsely-tagged capture doesn't render a wall of "—".
@@ -745,92 +818,61 @@ export function PlayerPanel({
           </>
         )}
 
-        {/* DI clip picker. Scales to a large library: filter by category, narrow by name, and
-            the list scrolls — instead of rendering every clip in the library as a button. */}
+        {/* DI clip picker: one pill per category (cleanest -> heaviest), each with a dropdown
+            for which sample that category uses. Clicking a pill plays that category's remembered
+            clip, so you can click straight down the row to hear a capture at rising gain. */}
         {hasLibrary && (
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
                 Play Through
               </span>
-              <span className="text-[10px] text-gray-400 dark:text-gray-600">
-                {totalClipCount} clip{totalClipCount === 1 ? '' : 's'}
-              </span>
             </div>
 
-            {/* Category tabs — only when there's more than one to choose between. */}
-            {categories.length > 1 && (
-              <div className="flex flex-wrap gap-1">
-                {['All', ...categories.map((c) => c.name)].map((name) => (
-                  <button
-                    key={name}
-                    onClick={() => setActiveCategory(name === 'All' ? null : name)}
-                    className={`h-6 px-2 rounded text-[11px] font-medium transition-colors ${
-                      (name === 'All' ? null : name) === activeCategory
-                        ? 'bg-teal-500 text-white'
-                        : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
-                    }`}
-                  >
-                    {name}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Name filter — only worth the space once the library is big enough to scan. */}
-            {totalClipCount > 8 && (
-              <input
-                type="text"
-                value={clipFilter}
-                onChange={(e) => setClipFilter(e.target.value)}
-                placeholder="Filter clips…"
-                className="w-full h-7 px-2 rounded-md text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-200 placeholder:text-gray-400 focus:outline-none focus:border-teal-500"
-              />
-            )}
-
-            <div className="max-h-52 overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-800 divide-y divide-gray-100 dark:divide-gray-800/60">
-              {visibleClips.length === 0 ? (
-                <p className="px-2.5 py-3 text-[11px] text-gray-400">No clips match that filter.</p>
-              ) : (
-                visibleClips.map((clip) => {
-                  const selected = clip.path === diPath
-                  return (
+            <div className="space-y-1.5">
+              {categories.map((category) => {
+                const categoryClip = clipForCategory(category)
+                const isActive = category.name === diPrefs.activeCategory
+                return (
+                  <div key={category.name} className="flex items-center gap-2">
                     <button
-                      key={clip.path}
-                      onClick={() => setDiPath(clip.path)}
-                      disabled={busy}
-                      title={clip.path}
-                      className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-left transition-colors disabled:opacity-50 ${
-                        selected
-                          ? 'bg-teal-500/10 dark:bg-teal-500/15'
-                          : 'hover:bg-gray-50 dark:hover:bg-gray-800/60'
+                      onClick={() => handleSelectCategory(category)}
+                      disabled={busy || !categoryClip}
+                      title={`Play through ${category.name}`}
+                      className={`h-7 px-3 rounded-full text-[11px] font-medium whitespace-nowrap transition-colors disabled:opacity-50 flex-shrink-0 ${
+                        isActive
+                          ? 'bg-teal-500 text-white'
+                          : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
                       }`}
                     >
-                      <svg
-                        viewBox="0 0 24 24"
-                        className={`w-3 h-3 flex-shrink-0 ${selected ? 'text-teal-500' : 'text-gray-300 dark:text-gray-600'}`}
-                        fill="currentColor"
-                      >
-                        <path d="M8 5.14v14l11-7-11-7z" />
-                      </svg>
-                      <span
-                        className={`flex-1 min-w-0 truncate text-xs ${
-                          selected
-                            ? 'text-teal-700 dark:text-teal-300 font-medium'
-                            : 'text-gray-600 dark:text-gray-300'
-                        }`}
-                      >
-                        {clip.name.replace(/\.wav$/i, '')}
-                      </span>
-                      {activeCategory === null && categories.length > 1 && (
-                        <span className="text-[10px] text-gray-400 dark:text-gray-600 flex-shrink-0">
-                          {clip.category}
-                        </span>
-                      )}
+                      {category.name}
                     </button>
-                  )
-                })
-              )}
+
+                    {/* Only worth a dropdown when there's actually a choice to make. */}
+                    {category.files.length > 1 ? (
+                      <select
+                        value={categoryClip ?? ''}
+                        onChange={(e) => handleSelectClip(category, e.target.value)}
+                        disabled={busy}
+                        className="flex-1 min-w-0 h-7 px-2 rounded-md text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:border-teal-500 disabled:opacity-50"
+                      >
+                        {category.files.map((clip) => (
+                          <option key={clip.path} value={clip.path}>
+                            {clip.name.replace(/\.wav$/i, '')}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span
+                        className="flex-1 min-w-0 truncate text-xs text-gray-400 dark:text-gray-500"
+                        title={category.files[0]?.name}
+                      >
+                        {category.files[0]?.name.replace(/\.wav$/i, '') ?? '—'}
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
             </div>
 
             {diPath && (

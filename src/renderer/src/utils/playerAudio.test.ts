@@ -4,6 +4,7 @@ import {
   PEAK_CEILING,
   PEAK_FALLBACK_TARGET,
   TARGET_LOUDNESS_DB,
+  DI_CATEGORY_ORDER,
   GEAR_TYPES_WITH_CAB,
   applyDcBlocker,
   captureNeedsCabIr,
@@ -13,6 +14,7 @@ import {
   normalizeRendered,
   peakOf,
   readModelSampleRate,
+  sortDiCategories,
 } from './playerAudio'
 
 /** Build a buffer whose peak is exactly `peak`. */
@@ -303,5 +305,55 @@ describe('captureNeedsCabIr', () => {
     for (const gearType of GEAR_TYPES_WITH_CAB) {
       expect(captureNeedsCabIr(gearType)).toBe(false)
     }
+  })
+})
+
+describe('sortDiCategories', () => {
+  const names = (cats: Array<{ name: string }>) => cats.map((c) => c.name)
+
+  it('orders recognized categories cleanest to heaviest, not alphabetically', () => {
+    const input = [
+      { name: 'Heavy' },
+      { name: 'Clean' },
+      { name: 'Lead' },
+      { name: 'Medium Gain' },
+      { name: 'Break Up' },
+      { name: 'High Gain' }
+    ]
+    expect(names(sortDiCategories(input))).toEqual([
+      'Clean',
+      'Break Up',
+      'Medium Gain',
+      'High Gain',
+      'Lead',
+      'Heavy'
+    ])
+  })
+
+  it('matches folder names regardless of case, spaces, hyphens or underscores', () => {
+    // Real folders won't be named exactly as the canonical list.
+    const input = [{ name: 'HIGH_GAIN' }, { name: 'break-up' }, { name: 'clean' }]
+    expect(names(sortDiCategories(input))).toEqual(['clean', 'break-up', 'HIGH_GAIN'])
+  })
+
+  it('keeps unrecognized categories, sorted after the known ones', () => {
+    const input = [{ name: 'Zebra' }, { name: 'High Gain' }, { name: 'Acoustic' }, { name: 'Clean' }]
+    expect(names(sortDiCategories(input))).toEqual(['Clean', 'High Gain', 'Acoustic', 'Zebra'])
+  })
+
+  it('handles only-unknown and empty inputs', () => {
+    expect(names(sortDiCategories([{ name: 'B' }, { name: 'A' }]))).toEqual(['A', 'B'])
+    expect(sortDiCategories([])).toEqual([])
+  })
+
+  it('does not mutate its input', () => {
+    const input = [{ name: 'Heavy' }, { name: 'Clean' }]
+    sortDiCategories(input)
+    expect(names(input)).toEqual(['Heavy', 'Clean'])
+  })
+
+  it('covers every canonical category name', () => {
+    const shuffled = [...DI_CATEGORY_ORDER].reverse().map((name) => ({ name }))
+    expect(names(sortDiCategories(shuffled))).toEqual([...DI_CATEGORY_ORDER])
   })
 })

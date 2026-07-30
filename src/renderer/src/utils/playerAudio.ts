@@ -110,6 +110,47 @@ export function applyDcBlocker(samples: Float32Array, sampleRate: number): void 
   }
 }
 
+/**
+ * Canonical DI category order, cleanest to most saturated.
+ *
+ * Categories come from the user's own subfolder names, so this is a display *ordering* hint, not
+ * a whitelist — anything unrecognized still shows, sorted after these. Ordering by gain rather
+ * than alphabetically means the row reads as a progression you can click down through.
+ */
+export const DI_CATEGORY_ORDER = [
+  'Clean',
+  'Break Up',
+  'Medium Gain',
+  'High Gain',
+  'Lead',
+  'Heavy'
+] as const
+
+/** Normalize a folder name for order matching: case, spaces, hyphens and underscores all vary. */
+function normalizeCategory(name: string): string {
+  return name.toLowerCase().replace(/[\s\-_]+/g, '')
+}
+
+/**
+ * Sort DI category names into the canonical gain progression.
+ *
+ * Recognized names come first in DI_CATEGORY_ORDER order; everything else follows alphabetically
+ * so an unexpected folder is still reachable rather than hidden.
+ */
+export function sortDiCategories<T extends { name: string }>(categories: T[]): T[] {
+  const rank = new Map<string, number>()
+  DI_CATEGORY_ORDER.forEach((name, index) => rank.set(normalizeCategory(name), index))
+
+  return [...categories].sort((a, b) => {
+    const rankA = rank.get(normalizeCategory(a.name))
+    const rankB = rank.get(normalizeCategory(b.name))
+    if (rankA !== undefined && rankB !== undefined) return rankA - rankB
+    if (rankA !== undefined) return -1
+    if (rankB !== undefined) return 1
+    return a.name.localeCompare(b.name)
+  })
+}
+
 /** Gear types whose capture already includes a cabinet, so applying an IR would double it up. */
 export const GEAR_TYPES_WITH_CAB = new Set(['amp_cab', 'amp_pedal_cab'])
 
