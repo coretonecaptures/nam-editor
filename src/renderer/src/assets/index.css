@@ -1,5 +1,5 @@
 /* ============================================================
-   IBM Plex fonts — vendored via @fontsource
+   Fonts — vendored via @fontsource
    @import must precede all other statements
    ============================================================ */
 @import '@fontsource/ibm-plex-sans/400.css';
@@ -8,6 +8,11 @@
 @import '@fontsource/ibm-plex-sans/700.css';
 @import '@fontsource/ibm-plex-mono/400.css';
 @import '@fontsource/ibm-plex-mono/500.css';
+/* Player only: Oswald engraves the tape-transport labels, Barlow Semi Condensed is the
+   RECORDING sign. Single weights each — they are used for a handful of labels, so pulling the
+   full families would be dead weight in the bundle. */
+@import '@fontsource/oswald/600.css';
+@import '@fontsource/barlow-semi-condensed/700.css';
 
 @tailwind base;
 @tailwind components;

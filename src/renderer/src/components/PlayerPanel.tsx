@@ -4,6 +4,7 @@ import { NamFile } from '../types/nam'
 import { detectPreset } from '../utils/detectPreset'
 import { getCaptureBestEsr, getEsrTone } from '../utils/esr'
 import { LiveEngine, listAudioInputs, type LiveDeviceInfo } from '../utils/liveEngine'
+import { readPitch, type PitchReading } from '../utils/tuner'
 import {
   applyDcBlocker,
   base64ToArrayBuffer,
@@ -16,43 +17,27 @@ import {
 import type { NamRenderRequest, NamRenderResponse } from '../workers/namRender.worker'
 
 /**
- * In-app tone preview player.
+ * In-app tone preview player — REDESIGNED (tape transport + rebuilt DI picker + tuner).
  *
  * Renders a reference DI clip through the capture's model offline (in a Worker), then plays the
- * result back. It deliberately does NOT do real-time processing: that requires an AudioWorklet
- * fed from a threaded WASM build, whose SharedArrayBuffer can't be transferred into the worklet
- * unless the page is cross-origin isolated — unachievable in Electron. See
- * docs/player-investigation.md and native/nam-wasm/README.md for the full history.
+ * result back. It deliberately does NOT do real-time processing for the offline preview; Live
+ * mode uses the AudioWorklet path in LiveEngine. See docs/player-investigation.md.
+ *
+ * The audio LOGIC below is the original, extended with: an output AnalyserNode for the playback
+ * meter, seek/restart via AudioBufferSourceNode offset playback, and (Live) an input meter +
+ * tuner. The render tree is fully new — the running order is picture -> metadata -> transport ->
+ * Cab IR -> DI source.
  */
 
-// Cap how much audio we render. At worst measured throughput (~7x realtime for A1 Standard),
-// 12s of audio is ~1.7s of compute — long enough to judge a tone, short enough to feel snappy.
 const MAX_PREVIEW_SECONDS = 12
 
 type PlayerStatus = 'idle' | 'loading-di' | 'rendering' | 'ready' | 'error'
 
-/**
- * Which IR the user last auditioned, remembered for the session.
- *
- * Module-level rather than a ref because App mounts PlayerPanel with `key={filePath}`, so the
- * component fully remounts on every capture change. Without this, picking an IR and then
- * clicking a different capture would reset the choice every time. (DI choices are persisted
- * per category in localStorage instead — see DI_PREFS_KEY.)
- */
 let lastIrPath: string | null = null
 
-/**
- * Which clip each DI category last used, and which category was last active.
- *
- * Persisted to localStorage rather than kept in module state so the choice survives app
- * restarts — "remember my Clean sample" is only useful if it's actually remembered. Keyed by
- * category name, so reorganizing the library degrades gracefully (an unknown key is just
- * ignored and the first clip is used).
- */
 const DI_PREFS_KEY = 'nam-player-di-prefs'
 
 interface DiPrefs {
-  /** category name -> chosen clip path */
   byCategory: Record<string, string>
   activeCategory: string | null
 }
@@ -62,10 +47,7 @@ function loadDiPrefs(): DiPrefs {
     const raw = localStorage.getItem(DI_PREFS_KEY)
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<DiPrefs>
-      return {
-        byCategory: parsed.byCategory ?? {},
-        activeCategory: parsed.activeCategory ?? null
-      }
+      return { byCategory: parsed.byCategory ?? {}, activeCategory: parsed.activeCategory ?? null }
     }
   } catch {
     // Corrupt or unavailable storage shouldn't stop the player from working.
@@ -81,10 +63,6 @@ function saveDiPrefs(prefs: DiPrefs): void {
   }
 }
 
-/**
- * Loop-playback preference. Persisted for the same reason the DI choices are: someone comparing
- * captures wants the clip to keep cycling, and having to re-enable it every session is friction.
- */
 const LOOP_PREF_KEY = 'nam-player-loop'
 
 function loadLoopPref(): boolean {
@@ -100,13 +78,6 @@ function formatError(error: unknown): string {
   return String(error)
 }
 
-/**
- * Resample mono audio to `targetRate` using an OfflineAudioContext.
- *
- * Web Audio's own resampler is better than anything worth hand-rolling here, and this runs on a
- * short window so the extra render pass is cheap. Returns the input untouched when the rates
- * already match.
- */
 async function resampleTo(
   samples: Float32Array,
   sourceRate: number,
@@ -118,33 +89,18 @@ async function resampleTo(
 
   const targetLength = Math.max(1, Math.round((samples.length * targetRate) / sourceRate))
   const offline = new OfflineAudioContext(1, targetLength, targetRate)
-
   const sourceBuffer = offline.createBuffer(1, samples.length, sourceRate)
   sourceBuffer.copyToChannel(copy, 0)
-
   const node = offline.createBufferSource()
   node.buffer = sourceBuffer
   node.connect(offline.destination)
   node.start()
-
   const resampled = await offline.startRendering()
   const out = new Float32Array(resampled.length)
   resampled.copyFromChannel(out, 0)
   return out
 }
 
-/**
- * Convolve `samples` with a cabinet impulse response, blended wet/dry.
- *
- * Mirrors upstream's parallel-path topology (source -> convolver -> wetGain -> out, alongside
- * source -> dryGain -> out with dryGain = 1 - mix) rather than an in-line convolver, so cab
- * amount is blendable. Runs in an OfflineAudioContext and bakes the result into the cached
- * preview buffer, which suits render-then-play: no live node graph to rebuild on every play.
- *
- * `normalize: false` on the ConvolverNode is deliberate — Web Audio's default normalization
- * rescales by the IR's energy, which changes the perceived level between different cabs. We do
- * our own loudness normalization afterwards and want the IR's real relative gain preserved.
- */
 async function applyCabinetIr(
   samples: Float32Array,
   sampleRate: number,
@@ -160,18 +116,12 @@ async function applyCabinetIr(
     return passthrough
   }
 
-  // Convolution tail: allow the IR's length so the cab's decay isn't cut off.
   const offline = new OfflineAudioContext(1, samples.length + irSamples.length, sampleRate)
-
   const dryBuffer = offline.createBuffer(1, samples.length, sampleRate)
   dryBuffer.copyToChannel(samples as Float32Array<ArrayBuffer>, 0)
   const source = offline.createBufferSource()
   source.buffer = dryBuffer
 
-  // The IR must be at the graph's rate; OfflineAudioContext won't resample a ConvolverNode
-  // buffer for us the way decodeAudioData would.
-  // resampleTo always returns a fresh ArrayBuffer-backed array, and it short-circuits when the
-  // rates already match, so it doubles as the copy needed for copyToChannel's typing.
   const irAtGraphRate = await resampleTo(irSamples, irSampleRate, sampleRate)
   const irBuffer = offline.createBuffer(1, irAtGraphRate.length, sampleRate)
   irBuffer.copyToChannel(irAtGraphRate, 0)
@@ -188,7 +138,6 @@ async function applyCabinetIr(
   source.connect(convolver)
   convolver.connect(wetGain)
   wetGain.connect(offline.destination)
-
   source.connect(dryGain)
   dryGain.connect(offline.destination)
 
@@ -206,22 +155,12 @@ interface DiCategory {
 
 interface PlayerPanelProps {
   file: NamFile
-  /**
-   * Folder of musical guitar DI clips, organized into category subfolders.
-   *
-   * Deliberately NOT the training Input DI: that's NAM's calibration/reamp signal (sine sweeps
-   * and noise bursts), which is correct for training and sounds like static as a preview.
-   */
   diLibraryPath?: string | null
-  /** Folder of cabinet IR wavs, same subfolder-as-category convention as the DI library. */
   irLibraryPath?: string | null
-  /** Cabinet wet/dry mix 0..1. */
   irMix?: number
-  /** Amp cover photo (`ampcover.*`), resolved by App the same way the metadata editor does. */
   coverImagePath?: string | null
 }
 
-/** Matches the metadata editor's local-file:// scheme for serving images off disk. */
 function toFileUrl(p: string): string {
   return p.startsWith('/') ? `local-file://${p}` : `local-file:///${p}`
 }
@@ -246,17 +185,103 @@ const GEAR_LABELS: Record<string, string> = {
   studio: 'Studio'
 }
 
-function SummaryRow({ label, value, tone }: { label: string; value: string; tone?: string }) {
+/** ── Engraved tape-machine section label. */
+function TapeLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex items-baseline gap-2 min-w-0">
-      <span className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500 w-[4.5rem] flex-shrink-0">
-        {label}
-      </span>
-      <span
-        className={`text-xs truncate ${tone ?? 'text-gray-700 dark:text-gray-200'}`}
-        title={value}
+    <span
+      className="text-gray-400 dark:text-gray-500 uppercase"
+      style={{ font: "600 10px 'Oswald', sans-serif", letterSpacing: '.22em' }}
+    >
+      {children}
+    </span>
+  )
+}
+
+/** ── One metadata cell (label above value). */
+function MetaCell({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <div className="min-w-0">
+      <div
+        className="uppercase text-gray-400 dark:text-gray-500"
+        style={{ font: "700 9.5px 'IBM Plex Sans', sans-serif", letterSpacing: '.11em' }}
       >
+        {label}
+      </div>
+      <div className={`text-xs truncate mt-0.5 ${tone ?? 'text-gray-700 dark:text-gray-200'}`} title={value}>
         {value}
+      </div>
+    </div>
+  )
+}
+
+/** ── A physical tape-transport cap. */
+function TapeCap({
+  label,
+  wide,
+  variant,
+  active,
+  onClick,
+  disabled,
+  children,
+  title
+}: {
+  label: string
+  wide?: boolean
+  variant: 'neutral' | 'play' | 'stop' | 'loop'
+  active?: boolean
+  onClick?: () => void
+  disabled?: boolean
+  children: React.ReactNode
+  title?: string
+}) {
+  const faces: Record<string, React.CSSProperties> = {
+    neutral: {
+      background: 'linear-gradient(180deg,#2b333d,#1a1f27)',
+      border: '1px solid #39424e',
+      boxShadow: '0 3px 0 #0d1116, inset 0 1px 0 rgba(255,255,255,.08)',
+      color: '#c3cad3'
+    },
+    play: {
+      background: 'linear-gradient(180deg,#3ddc9a,#17a86f)',
+      border: '1px solid #0f8a5a',
+      boxShadow: `0 3px 0 #0a5c3c, inset 0 1px 0 rgba(255,255,255,.4)${active ? ', 0 0 0 3px rgba(45,212,191,.35)' : ''}`,
+      color: '#053725'
+    },
+    stop: {
+      background: 'linear-gradient(180deg,#3a424c,#232a32)',
+      border: '1px solid #454e59',
+      boxShadow: '0 3px 0 #12161a, inset 0 1px 0 rgba(255,255,255,.08)',
+      color: '#e26d63'
+    },
+    loop: active
+      ? {
+          background: 'linear-gradient(180deg,#f0b84a,#d1922a)',
+          border: '1px solid #b47c1f',
+          boxShadow: '0 3px 0 #7c520f, inset 0 1px 0 rgba(255,255,255,.45)',
+          color: '#4a3208'
+        }
+      : {
+          background: 'linear-gradient(180deg,#2b333d,#1a1f27)',
+          border: '1px solid #39424e',
+          boxShadow: '0 3px 0 #0d1116, inset 0 1px 0 rgba(255,255,255,.08)',
+          color: '#8a929b'
+        }
+  }
+  const labelColor =
+    variant === 'play' ? '#7fd7ad' : variant === 'loop' && active ? '#d8a94a' : '#6b7480'
+  return (
+    <div className="flex flex-col items-center gap-1.5">
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        title={title}
+        className="flex items-center justify-center transition-transform active:translate-y-[2px] active:shadow-none disabled:opacity-40 disabled:cursor-not-allowed"
+        style={{ width: wide ? 64 : 52, height: 38, borderRadius: 7, cursor: 'pointer', ...faces[variant] }}
+      >
+        {children}
+      </button>
+      <span style={{ font: "600 8px 'Oswald', sans-serif", letterSpacing: '.14em', color: labelColor }}>
+        {label}
       </span>
     </div>
   )
@@ -278,10 +303,14 @@ export function PlayerPanel({
   const [renderMs, setRenderMs] = useState<number | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [progress, setProgress] = useState(0)
+  const [outputMeter, setOutputMeter] = useState(0)
   const [loopEnabled, setLoopEnabled] = useState(loadLoopPref)
 
-  // Live mode: guitar in through the model in real time, as opposed to the offline
-  // render-then-play preview. Separate state because the two use entirely different audio paths.
+  // Metadata columns follow the PANEL's measured width, not the viewport: the right panel is
+  // user-resizable, so a viewport media query would be wrong at exactly the widths that matter.
+  const [summaryColumns, setSummaryColumns] = useState(2)
+  const panelRef = useRef<HTMLDivElement | null>(null)
+
   const [liveMode, setLiveMode] = useState(false)
   const [liveRunning, setLiveRunning] = useState(false)
   const [liveError, setLiveError] = useState('')
@@ -292,34 +321,42 @@ export function PlayerPanel({
   const [liveBypass, setLiveBypass] = useState(false)
   const [liveLatencyMs, setLiveLatencyMs] = useState<number | null>(null)
   const [liveMeter, setLiveMeter] = useState(0)
+  const [liveInputMeter, setLiveInputMeter] = useState(0)
+  const [liveTuner, setLiveTuner] = useState<PitchReading | null>(null)
   const liveEngineRef = useRef<LiveEngine | null>(null)
   const liveMeterRafRef = useRef<number | null>(null)
 
-  const [summaryColumns, setSummaryColumns] = useState(2)
   const [diPrefs, setDiPrefs] = useState<DiPrefs>(loadDiPrefs)
-  const panelRef = useRef<HTMLDivElement | null>(null)
 
   const [irCategories, setIrCategories] = useState<DiCategory[]>([])
   const [irPath, setIrPath] = useState<string | null>(null)
-  // Auto-enabled for captures without a cab; user can force either way.
   const [irEnabled, setIrEnabled] = useState(() => captureNeedsCabIr(file.metadata.gear_type))
-  // Set once the user toggles the IR themselves, so we stop auto-following gear_type and don't
-  // undo their choice as they click between captures.
   const irManuallySetRef = useRef(false)
 
-  // Guards against a slow render for a previous capture landing after a newer one. The panel no
-  // longer remounts per capture (see App), so nothing else discards in-flight work.
   const renderGenerationRef = useRef(0)
 
   const audioCtxRef = useRef<AudioContext | null>(null)
   const bufferRef = useRef<AudioBuffer | null>(null)
   const sourceRef = useRef<AudioBufferSourceNode | null>(null)
+  const analyserRef = useRef<AnalyserNode | null>(null)
   const workerRef = useRef<Worker | null>(null)
   const startedAtRef = useRef(0)
   const rafRef = useRef<number | null>(null)
 
   const m = file.metadata
   const captureLabel = m.name || file.fileName
+
+  useEffect(() => {
+    const element = panelRef.current
+    if (!element || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0
+      // ~210px per column to fit a label plus a readable value without truncating everything.
+      setSummaryColumns(width >= 640 ? 3 : width >= 420 ? 2 : 1)
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
 
   const getAudioContext = useCallback(() => {
     if (audioCtxRef.current === null || audioCtxRef.current.state === 'closed') {
@@ -334,7 +371,7 @@ export function PlayerPanel({
         sourceRef.current.onended = null
         sourceRef.current.stop()
       } catch {
-        // Already stopped — nothing to do.
+        // Already stopped.
       }
       sourceRef.current = null
     }
@@ -344,22 +381,9 @@ export function PlayerPanel({
     }
     setIsPlaying(false)
     setProgress(0)
+    setOutputMeter(0)
   }, [])
 
-  // Track the panel's own width so the summary can reflow. Each column needs roughly 210px to
-  // fit a label plus a readable value without truncating everything.
-  useEffect(() => {
-    const element = panelRef.current
-    if (!element || typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width ?? 0
-      setSummaryColumns(width >= 640 ? 3 : width >= 420 ? 2 : 1)
-    })
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [])
-
-  // Tear everything down on unmount so a closed panel can't keep audio or a worker alive.
   useEffect(() => {
     return () => {
       stopPlayback()
@@ -382,12 +406,10 @@ export function PlayerPanel({
       setStatus('loading-di')
 
       try {
-        // 1. Read the reference DI and the model, both through main-process IPC.
         const [diResult, modelResult] = await Promise.all([
           window.api.readFileBinary(sourceDiPath),
           window.api.readFileBinary(file.filePath)
         ])
-
         if (diResult.error || !diResult.data) {
           throw new Error(`Could not read the reference DI: ${diResult.error ?? 'no data'}`)
         }
@@ -397,16 +419,12 @@ export function PlayerPanel({
 
         const modelJson = new TextDecoder().decode(base64ToArrayBuffer(modelResult.data))
 
-        // 2. Decode the DI. NAM models are mono, so we take the first channel.
         const ctx = getAudioContext()
         const decoded = await ctx.decodeAudioData(base64ToArrayBuffer(diResult.data))
         const diSampleRate = decoded.sampleRate
         const wholeChannel = new Float32Array(decoded.length)
         decoded.copyFromChannel(wholeChannel, 0, 0)
 
-        // 3. Pick the most energetic window rather than the first N seconds. DI tracks commonly
-        // open with silence or a quiet count-in, and rendering that reads as "quiet, and the amp
-        // has no gain" rather than "you rendered a silent intro".
         const windowSamples = Math.min(
           wholeChannel.length,
           Math.floor(MAX_PREVIEW_SECONDS * diSampleRate)
@@ -414,33 +432,23 @@ export function PlayerPanel({
         const windowStart = findLoudestWindowStart(wholeChannel, windowSamples)
         const diWindow = wholeChannel.subarray(windowStart, windowStart + windowSamples)
 
-        // 4. Resample to the rate the model was trained at. A model's receptive field and
-        // filters are fixed at its training rate, so feeding 44.1k audio to a 48k model shifts
-        // its entire frequency response — it sounds wrong, not just slightly off.
         const modelSampleRate = readModelSampleRate(modelJson)
         const input = await resampleTo(diWindow, diSampleRate, modelSampleRate)
 
-        // 5. Render through the model off the UI thread.
         setStatus('rendering')
         const rendered = await new Promise<NamRenderResponse>((resolve, reject) => {
           workerRef.current?.terminate()
-          const worker = new Worker(
-            new URL('../workers/namRender.worker.ts', import.meta.url),
-            { type: 'module' }
-          )
+          const worker = new Worker(new URL('../workers/namRender.worker.ts', import.meta.url), {
+            type: 'module'
+          })
           workerRef.current = worker
           worker.onmessage = (event: MessageEvent<NamRenderResponse>) => resolve(event.data)
           worker.onerror = (event) => reject(new Error(event.message || 'Render worker crashed'))
-
           const request: NamRenderRequest = { modelJson, input, sampleRate: modelSampleRate }
           worker.postMessage(request, [input.buffer])
         })
-
         if (!rendered.ok) throw new Error(rendered.error)
 
-        // 6. Cabinet IR, if this capture needs one (or the user forced it on). Must come
-        // BEFORE normalization: IRs vary wildly in gain, so normalizing first would leave
-        // playback level jumping around as you switch cabs.
         let processed: Float32Array = rendered.output
         let usedIrPath: string | null = null
         if (irEnabled && irPath) {
@@ -451,29 +459,16 @@ export function PlayerPanel({
           const irDecoded = await ctx.decodeAudioData(base64ToArrayBuffer(irResult.data))
           const irMono = new Float32Array(irDecoded.length)
           irDecoded.copyFromChannel(irMono, 0, 0)
-          processed = await applyCabinetIr(
-            processed,
-            modelSampleRate,
-            irMono,
-            irDecoded.sampleRate,
-            irMix
-          )
+          processed = await applyCabinetIr(processed, modelSampleRate, irMono, irDecoded.sampleRate, irMix)
           usedIrPath = irPath
         }
 
-        // 7. DC-block, then normalize — same output stage order as the real plugin. Blocking
-        // after normalizing would leave the offset scaled into the signal.
         applyDcBlocker(processed, modelSampleRate)
-        // Loudness metadata describes the model's own output, so it no longer characterises the
-        // signal once a cab has been convolved in. Fall back to peak normalization in that case.
         const normalized = normalizeRendered(processed, usedIrPath ? null : rendered.loudnessDb)
 
-        // Buffer carries the model's rate; Web Audio resamples to the device on playback.
         const audioBuffer = ctx.createBuffer(1, normalized.length, modelSampleRate)
         audioBuffer.copyToChannel(normalized, 0)
 
-        // A newer capture started rendering while this one was in flight — drop the result
-        // rather than publishing audio for the wrong capture.
         if (isStale()) return
 
         bufferRef.current = audioBuffer
@@ -488,7 +483,6 @@ export function PlayerPanel({
     [file.filePath, getAudioContext, stopPlayback, irEnabled, irPath, irMix]
   )
 
-  // Scan the IR library and auto-select a cab, mirroring the DI library flow.
   useEffect(() => {
     let cancelled = false
     if (!irLibraryPath) {
@@ -504,11 +498,11 @@ export function PlayerPanel({
       const remembered = allIrs.find((f) => f.path === lastIrPath)
       setIrPath(remembered?.path ?? allIrs[0].path)
     })()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [irLibraryPath])
 
-  // Scan the DI library, then auto-select a clip so the preview renders immediately. Requiring
-  // a click first made the panel look broken on open.
   useEffect(() => {
     let cancelled = false
     if (!diLibraryPath) {
@@ -519,93 +513,139 @@ export function PlayerPanel({
     void (async () => {
       const result = await window.api.scanWavLibrary(diLibraryPath)
       if (cancelled) return
-
-      // Ordered cleanest -> heaviest so the pill row reads as a gain progression.
       const ordered = sortDiCategories(result.categories)
       setCategories(ordered)
       setLibraryError(
-        result.error ??
-          (ordered.length === 0 ? 'No .wav files found in the DI library folder.' : '')
+        result.error ?? (ordered.length === 0 ? 'No .wav files found in the DI library folder.' : '')
       )
       if (ordered.length === 0) return
 
-      // Restore the last active category if it still exists, else start at the cleanest.
       const prefs = loadDiPrefs()
       const activeCategory =
         (prefs.activeCategory && ordered.some((c) => c.name === prefs.activeCategory)
           ? prefs.activeCategory
           : null) ?? ordered[0].name
-
       const category = ordered.find((c) => c.name === activeCategory) ?? ordered[0]
-      // Per-category remembered clip, falling back to that category's first.
       const rememberedPath = prefs.byCategory[category.name]
       const clip = category.files.find((f) => f.path === rememberedPath) ?? category.files[0]
       if (!clip) return
-
       setDiPrefs({ ...prefs, activeCategory: category.name })
       setDiPath(clip.path)
     })()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [diLibraryPath])
 
-  // Follow the capture's gear_type as you click between captures — but never override a manual
-  // toggle. Without this the IR would keep whatever the first capture needed, since the panel no
-  // longer remounts (so the useState initializer above only runs once).
   useEffect(() => {
     if (irManuallySetRef.current) return
     setIrEnabled(captureNeedsCabIr(file.metadata.gear_type))
   }, [file.metadata.gear_type])
 
-  // Render as soon as we have a DI to work with.
   useEffect(() => {
-    if (diPath) {
-      void renderPreview(diPath)
-    } else {
-      setStatus('idle')
-    }
+    if (diPath) void renderPreview(diPath)
+    else setStatus('idle')
   }, [diPath, renderPreview])
+
+  /**
+   * Start (or restart) playback from `offsetSec`, routing through an AnalyserNode so the output
+   * meter reflects what reaches the speakers. Replaces the original play-from-zero-only path;
+   * offset playback is what makes the scrub bar and Restart work.
+   */
+  const startPlaybackAt = useCallback(
+    (offsetSec: number) => {
+      const buffer = bufferRef.current
+      if (!buffer) return
+      const ctx = getAudioContext()
+      void ctx.resume()
+
+      if (sourceRef.current) {
+        try {
+          sourceRef.current.onended = null
+          sourceRef.current.stop()
+        } catch {
+          // Already stopped.
+        }
+        sourceRef.current = null
+      }
+
+      if (!analyserRef.current) {
+        const a = ctx.createAnalyser()
+        a.fftSize = 1024
+        analyserRef.current = a
+      }
+      const analyser = analyserRef.current
+
+      const source = ctx.createBufferSource()
+      source.buffer = buffer
+      source.loop = loopEnabled
+      source.connect(analyser)
+      analyser.connect(ctx.destination)
+      source.onended = () => stopPlayback()
+
+      const clamped = Math.max(0, Math.min(offsetSec, buffer.duration - 0.01))
+      source.start(0, clamped)
+      sourceRef.current = source
+      startedAtRef.current = ctx.currentTime - clamped
+      setIsPlaying(true)
+
+      const data = new Float32Array(analyser.fftSize)
+      const tick = () => {
+        const elapsed = ctx.currentTime - startedAtRef.current
+        setProgress(
+          source.loop
+            ? (elapsed % buffer.duration) / buffer.duration
+            : Math.min(1, elapsed / buffer.duration)
+        )
+        analyser.getFloatTimeDomainData(data)
+        let sum = 0
+        for (let i = 0; i < data.length; i++) sum += data[i] * data[i]
+        setOutputMeter(Math.sqrt(sum / data.length))
+        rafRef.current = requestAnimationFrame(tick)
+      }
+      rafRef.current = requestAnimationFrame(tick)
+    },
+    [getAudioContext, stopPlayback, loopEnabled]
+  )
 
   const handlePlayStop = useCallback(() => {
     if (isPlaying) {
       stopPlayback()
       return
     }
-    const buffer = bufferRef.current
-    if (!buffer) return
+    startPlaybackAt(progress * (bufferRef.current?.duration ?? 0))
+  }, [isPlaying, stopPlayback, startPlaybackAt, progress])
 
-    const ctx = getAudioContext()
-    void ctx.resume()
+  const restart = useCallback(() => {
+    startPlaybackAt(0)
+  }, [startPlaybackAt])
 
-    const source = ctx.createBufferSource()
-    source.buffer = buffer
-    source.loop = loopEnabled
-    source.connect(ctx.destination)
-    // Never fires while looping, which is fine — Stop is then the only way out, by design.
-    source.onended = () => stopPlayback()
-    source.start()
+  const seekTo = useCallback(
+    (fraction: number) => {
+      const buffer = bufferRef.current
+      if (!buffer) return
+      const clamped = Math.max(0, Math.min(1, fraction))
+      if (isPlaying) startPlaybackAt(clamped * buffer.duration)
+      else setProgress(clamped)
+    },
+    [isPlaying, startPlaybackAt]
+  )
 
-    sourceRef.current = source
-    startedAtRef.current = ctx.currentTime
-    setIsPlaying(true)
-
-    const tick = () => {
-      const elapsed = ctx.currentTime - startedAtRef.current
-      // Wrap the bar on each pass instead of pinning it at 100% forever.
-      setProgress(
-        source.loop
-          ? (elapsed % buffer.duration) / buffer.duration
-          : Math.min(1, elapsed / buffer.duration)
-      )
-      rafRef.current = requestAnimationFrame(tick)
-    }
-    rafRef.current = requestAnimationFrame(tick)
-  }, [isPlaying, getAudioContext, stopPlayback, loopEnabled])
-
-  // Apply a loop toggle to audio that's already playing — `loop` is live-settable on an active
-  // AudioBufferSourceNode, so this takes effect without restarting playback.
   useEffect(() => {
     if (sourceRef.current) sourceRef.current.loop = loopEnabled
   }, [loopEnabled])
+
+  const toggleLoop = useCallback(() => {
+    setLoopEnabled((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem(LOOP_PREF_KEY, next ? '1' : '0')
+      } catch {
+        // Non-fatal.
+      }
+      return next
+    })
+  }, [])
 
   const stopLive = useCallback(async () => {
     if (liveMeterRafRef.current !== null) {
@@ -616,6 +656,8 @@ export function PlayerPanel({
     liveEngineRef.current = null
     setLiveRunning(false)
     setLiveMeter(0)
+    setLiveInputMeter(0)
+    setLiveTuner(null)
     setLiveLatencyMs(null)
   }, [])
 
@@ -631,8 +673,6 @@ export function PlayerPanel({
       }
       const modelJson = new TextDecoder().decode(base64ToArrayBuffer(modelResult.data))
 
-      // Decode the IR here rather than in the engine: this component already owns which IR is
-      // selected, and an AudioContext is needed to decode.
       let ir: { samples: Float32Array; sampleRate: number } | null = null
       if (irEnabled && irPath) {
         const irResult = await window.api.readFileBinary(irPath)
@@ -659,8 +699,21 @@ export function PlayerPanel({
       setLiveRunning(true)
       setLiveLatencyMs(engine.latencyMs)
 
+      // Tuner + input meter read the raw (dry) input tap. Requires the LiveEngine patch documented
+      // in the handoff README (input AnalyserNode + readInputPeak/getInputTimeDomain). Guarded so
+      // the panel still runs against an un-patched engine (tuner just stays idle).
+      const eng = engine as unknown as {
+        readInputPeak?: () => number
+        getInputTimeDomain?: (out: Float32Array) => void
+      }
+      const inBuf = new Float32Array(2048)
       const tick = () => {
         setLiveMeter(engine.readOutputPeak())
+        if (eng.readInputPeak) setLiveInputMeter(eng.readInputPeak())
+        if (eng.getInputTimeDomain) {
+          eng.getInputTimeDomain(inBuf)
+          setLiveTuner(readPitch(inBuf, engine.sampleRate ?? 48000))
+        }
         liveMeterRafRef.current = requestAnimationFrame(tick)
       }
       liveMeterRafRef.current = requestAnimationFrame(tick)
@@ -670,20 +723,8 @@ export function PlayerPanel({
     } finally {
       setLiveStarting(false)
     }
-  }, [
-    file.filePath,
-    inputDeviceId,
-    irEnabled,
-    irPath,
-    irMix,
-    liveInputGainDb,
-    liveBypass,
-    getAudioContext,
-    stopLive
-  ])
+  }, [file.filePath, inputDeviceId, irEnabled, irPath, irMix, liveInputGainDb, liveBypass, getAudioContext, stopLive])
 
-  // Enumerate inputs when live mode opens. Deferred until then so the app never touches the
-  // microphone permission unless the user actually asks for live input.
   useEffect(() => {
     if (!liveMode) return
     let cancelled = false
@@ -695,19 +736,21 @@ export function PlayerPanel({
         if (!cancelled) setLiveError(formatError(error))
       }
     })()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [liveMode])
 
-  // Leaving live mode, or unmounting, must release the input device.
   useEffect(() => {
     if (!liveMode) void stopLive()
   }, [liveMode, stopLive])
 
   useEffect(() => {
-    return () => { void liveEngineRef.current?.stop() }
+    return () => {
+      void liveEngineRef.current?.stop()
+    }
   }, [])
 
-  // Live tweaks that don't need the graph rebuilt.
   useEffect(() => {
     liveEngineRef.current?.setBypass(liveBypass)
   }, [liveBypass])
@@ -720,11 +763,8 @@ export function PlayerPanel({
     liveEngineRef.current?.setIrMix(irMix)
   }, [irMix])
 
-  // Switching captures while live should swap the model, not silently keep the old tone.
   useEffect(() => {
     if (liveRunning) void startLive()
-    // Only the capture identity should retrigger this; startLive changes identity on every
-    // gain/bypass tweak, and restarting the graph for those would click.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file.filePath])
 
@@ -736,7 +776,6 @@ export function PlayerPanel({
   const busy = status === 'loading-di' || status === 'rendering'
   const hasLibrary = categories.length > 0
 
-  /** The clip a given category should use: remembered choice, else its first. */
   const clipForCategory = useCallback(
     (category: DiCategory): string | null => {
       const remembered = diPrefs.byCategory[category.name]
@@ -746,7 +785,6 @@ export function PlayerPanel({
     [diPrefs.byCategory]
   )
 
-  /** Click a pill: make that category active and play its remembered clip. */
   const handleSelectCategory = useCallback(
     (category: DiCategory) => {
       const path = clipForCategory(category)
@@ -759,7 +797,6 @@ export function PlayerPanel({
     [clipForCategory, diPrefs]
   )
 
-  /** Change which clip a category uses. Re-renders immediately if it's the active one. */
   const handleSelectClip = useCallback(
     (category: DiCategory, path: string) => {
       const next: DiPrefs = {
@@ -774,8 +811,12 @@ export function PlayerPanel({
     [diPrefs]
   )
 
-  // Top-line metadata, mirroring the fields the metadata editor leads with. Only rows that
-  // actually have a value are shown, so a sparsely-tagged capture doesn't render a wall of "—".
+  const activeCategory = useMemo(
+    () => categories.find((c) => c.name === diPrefs.activeCategory) ?? categories[0] ?? null,
+    [categories, diPrefs.activeCategory]
+  )
+  const activeClipPath = activeCategory ? clipForCategory(activeCategory) : null
+
   const summaryRows = useMemo(() => {
     const rows: Array<{ label: string; value: string; tone?: string }> = []
     const gear = [m.gear_make, m.gear_model].filter(Boolean).join(' ')
@@ -783,12 +824,9 @@ export function PlayerPanel({
     if (m.gear_type) rows.push({ label: 'Type', value: GEAR_LABELS[m.gear_type] ?? m.gear_type })
     if (m.tone_type) rows.push({ label: 'Tone', value: TONE_LABELS[m.tone_type] ?? m.tone_type })
 
-    // Preset (A2 / Standard / Lite / ...) is fingerprinted from the model config, not metadata.
     const preset = detectPreset(file.config)
     if (preset) rows.push({ label: 'Preset', value: preset })
 
-    // ESR: reuse the shared helper so the player agrees with the grid on which ESR to show
-    // for A2 captures (full vs aggregate), and colour it with the same thresholds.
     const esr = getCaptureBestEsr({
       ...(m as Record<string, unknown>),
       architecture: file.architecture,
@@ -809,9 +847,7 @@ export function PlayerPanel({
 
     if (m.nl_amp_channel) rows.push({ label: 'Channel', value: String(m.nl_amp_channel) })
     if (m.nl_cabinet) rows.push({ label: 'Cabinet', value: String(m.nl_cabinet) })
-    if (m.nl_mics) rows.push({ label: 'Mics', value: String(m.nl_mics) })
     if (m.nl_amp_settings) rows.push({ label: 'Settings', value: String(m.nl_amp_settings) })
-    if (m.nl_amp_switches) rows.push({ label: 'Switches', value: String(m.nl_amp_switches) })
     if (m.nl_boost_pedal) rows.push({ label: 'Boost', value: String(m.nl_boost_pedal) })
     if (m.modeled_by) rows.push({ label: 'Modeled by', value: String(m.modeled_by) })
     return rows
@@ -820,12 +856,25 @@ export function PlayerPanel({
   const needsCabIr = captureNeedsCabIr(m.gear_type)
   const irClips = useMemo(() => irCategories.flatMap((c) => c.files), [irCategories])
 
+  const outputDb = outputMeter > 0 ? `${(20 * Math.log10(outputMeter)).toFixed(1)} dB` : '—'
+  const outputPct = Math.min(100, outputMeter * 160)
+  const inputDb = liveInputMeter > 0 ? `${(20 * Math.log10(liveInputMeter)).toFixed(1)} dB` : '—'
+
+  const coverSrc = coverImagePath ? toFileUrl(coverImagePath) : ampPlaceholder
+  const onCoverError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget
+    if (img.src !== ampPlaceholder) img.src = ampPlaceholder
+  }
+
   return (
-    <div ref={panelRef} className="flex flex-col h-full bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 select-none">
-      {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
+    <div ref={panelRef} className="flex flex-col h-full bg-white dark:bg-[#12161b] text-gray-900 dark:text-gray-100 select-none">
+      {/* ── Header */}
+      <div className="flex items-center gap-2.5 px-4 py-3 border-b border-gray-200 dark:border-[#1f252d] flex-shrink-0">
         <div className="flex-1 min-w-0">
-          <div className="text-xs font-medium text-teal-500 dark:text-teal-400 uppercase tracking-wide mb-0.5">
+          <div
+            className={`uppercase mb-0.5 ${liveMode ? 'text-amber-500 dark:text-amber-400' : 'text-teal-500 dark:text-teal-400'}`}
+            style={{ font: "700 10.5px 'IBM Plex Sans', sans-serif", letterSpacing: '.1em' }}
+          >
             {liveMode ? 'Live Input' : 'Tone Preview'}
           </div>
           <div className="text-sm font-semibold truncate">{captureLabel}</div>
@@ -835,23 +884,16 @@ export function PlayerPanel({
             </div>
           )}
         </div>
-        {/* Preview / Live mode switch. Two genuinely different audio paths: offline
-            render-then-play vs. real-time input through the model. */}
-        <div className="flex-shrink-0 flex rounded-lg bg-gray-100 dark:bg-gray-800 p-0.5">
+        <div className="flex-shrink-0 flex rounded-[9px] bg-gray-100 dark:bg-[#0e1217] border border-gray-200 dark:border-[#242b34] p-0.5">
           {([false, true] as const).map((mode) => (
             <button
               key={String(mode)}
               onClick={() => setLiveMode(mode)}
               className={`h-6 px-2.5 rounded-md text-[11px] font-medium transition-colors ${
                 liveMode === mode
-                  ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
+                  ? 'bg-white dark:bg-[#232c36] text-gray-900 dark:text-gray-100 shadow-sm'
                   : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
               }`}
-              title={
-                mode
-                  ? 'Play your guitar through this capture in real time'
-                  : 'Render a DI clip through this capture and play it back'
-              }
             >
               {mode ? 'Live' : 'Preview'}
             </button>
@@ -859,351 +901,272 @@ export function PlayerPanel({
         </div>
         <button
           onClick={onClose}
-          className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+          className="flex-shrink-0 w-[26px] h-[26px] flex items-center justify-center rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-[#1d242d] transition-colors"
           title="Close player"
         >
-          <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2}>
+          <svg viewBox="0 0 24 24" className="w-[15px] h-[15px]" fill="none" stroke="currentColor" strokeWidth={2}>
             <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
           </svg>
         </button>
       </div>
 
-      {/* Body */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
-        {/* ─── Live input ─────────────────────────────────────────────────────────── */}
-        {liveMode && (
+      {/* ── Body */}
+      <div className="flex-1 overflow-y-auto">
+        {liveMode ? (
+          /* ══════════ LIVE MODE — recording lightbox + tuner + meters ══════════ */
           <>
-            <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-900">
-              <div className="aspect-[3/1] w-full">
-                <img
-                  src={coverImagePath ? toFileUrl(coverImagePath) : ampPlaceholder}
-                  alt={coverImagePath ? 'Amp cover' : 'No amp cover photo for this folder'}
-                  className="w-full h-full object-cover"
-                  loading="lazy"
-                  onError={(e) => {
-                    const img = e.currentTarget
-                    if (img.src !== ampPlaceholder) img.src = ampPlaceholder
-                  }}
-                />
-              </div>
-            </div>
-
-            {summaryRows.length > 0 && (
-              <div
-                className="rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 px-3 py-2.5 grid gap-x-5 gap-y-1.5"
-                style={{ gridTemplateColumns: `repeat(${summaryColumns}, minmax(0, 1fr))` }}
-              >
-                {summaryRows.map((row) => (
-                  <SummaryRow key={row.label} label={row.label} value={row.value} tone={row.tone} />
-                ))}
-              </div>
-            )}
-
-            {liveError && (
-              <div className="rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-3">
-                <p className="text-xs font-medium text-red-700 dark:text-red-400 mb-0.5">
-                  Live input failed
-                </p>
-                <p className="text-[11px] text-red-600 dark:text-red-500 font-mono break-all">
-                  {liveError}
-                </p>
-              </div>
-            )}
-
-            {/* Arm / disarm */}
-            <div className="flex items-center justify-center">
+            {/* Illuminated RECORDING sign doubles as the arm control. */}
+            <div
+              className="px-4 py-[18px] flex justify-center border-b border-gray-200 dark:border-[#1f252d]"
+              style={{ background: 'radial-gradient(120% 90% at 50% 40%, #1a130c, #0b0e12)' }}
+            >
               <button
                 onClick={() => (liveRunning ? void stopLive() : void startLive())}
                 disabled={liveStarting}
-                className={`w-16 h-16 rounded-full flex items-center justify-center shadow-lg transition-all disabled:opacity-60 ${
-                  liveRunning
-                    ? 'bg-red-500 hover:bg-red-600 text-white'
-                    : 'bg-teal-500 hover:bg-teal-600 text-white'
-                }`}
                 title={liveRunning ? 'Stop live input' : 'Start live input'}
+                className="w-full rounded-[9px] p-[9px] disabled:opacity-70 transition-transform active:scale-[.99]"
+                style={{ background: 'linear-gradient(180deg,#4a3320,#2c1d10)', boxShadow: '0 10px 26px rgba(0,0,0,.6)', cursor: 'pointer', border: 'none' }}
               >
-                {liveStarting ? (
-                  <svg className="w-6 h-6 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-                  </svg>
-                ) : liveRunning ? (
-                  <svg viewBox="0 0 24 24" className="w-7 h-7" fill="currentColor">
-                    <rect x="6" y="6" width="12" height="12" rx="1" />
-                  </svg>
-                ) : (
-                  // Microphone/input glyph — this is arming an input, not playing a file.
-                  <svg viewBox="0 0 24 24" className="w-7 h-7" fill="none" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v10m0 0a3 3 0 003-3V6a3 3 0 00-6 0v4a3 3 0 003 3z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 11a7 7 0 0014 0M12 18v3" />
-                  </svg>
-                )}
+                <div
+                  className="rounded-[5px] py-5 px-3.5 text-center"
+                  style={{
+                    background: liveRunning
+                      ? 'linear-gradient(180deg,#fbefc7,#f2db9a)'
+                      : 'linear-gradient(180deg,#4a4436,#3a3428)',
+                    boxShadow: liveRunning
+                      ? '0 0 44px 8px rgba(255,72,48,.45), inset 0 0 34px rgba(255,185,125,.45)'
+                      : 'inset 0 0 20px rgba(0,0,0,.4)',
+                    transition: 'background .25s, box-shadow .25s'
+                  }}
+                >
+                  <div
+                    style={{
+                      font: "700 34px/0.92 'Barlow Semi Condensed', sans-serif",
+                      letterSpacing: '-.01em',
+                      textTransform: 'uppercase',
+                      color: liveRunning ? '#d8352a' : '#6b5a3e'
+                    }}
+                  >
+                    Recording
+                  </div>
+                  <div className="mx-auto my-1.5" style={{ height: 2, width: '60%', background: liveRunning ? '#d8352a' : '#6b5a3e' }} />
+                  <div style={{ font: "700 13px 'Barlow Semi Condensed', sans-serif", letterSpacing: '.12em', textTransform: 'uppercase', color: liveRunning ? '#4a3a1e' : '#5a4f3a' }}>
+                    {liveStarting ? 'Starting…' : 'Studio in Use'}
+                  </div>
+                </div>
               </button>
             </div>
-
-            {/* Output meter */}
-            <div className="space-y-1">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
-                  Output
-                </span>
-                <span className="font-mono tabular-nums text-[10px] text-gray-400 dark:text-gray-500">
-                  {liveMeter > 0 ? `${(20 * Math.log10(liveMeter)).toFixed(1)} dB` : '—'}
-                </span>
-              </div>
-              <div className="h-2 bg-gray-200 dark:bg-gray-800 rounded-full overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-none ${
-                    liveMeter > 0.89 ? 'bg-red-500' : liveMeter > 0.5 ? 'bg-amber-400' : 'bg-teal-400'
-                  }`}
-                  style={{ width: `${Math.min(100, liveMeter * 100)}%` }}
-                />
-              </div>
-            </div>
-
-            {/* Input device */}
-            <div className="space-y-1.5">
-              <span className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
-                Input Device
+            <div className="px-4 py-[11px] text-center border-b border-gray-200 dark:border-[#1f252d]">
+              <span className="text-[11.5px] text-gray-500 dark:text-gray-400">
+                {liveRunning ? 'Monitoring live — tap the sign to stop' : 'Tap the sign to play guitar through this capture'}
               </span>
-              <select
-                value={inputDeviceId ?? ''}
-                onChange={(e) => setInputDeviceId(e.target.value || null)}
-                className="w-full h-7 px-2 rounded-md text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:border-teal-500"
-              >
-                <option value="">System default</option>
-                {inputDevices.map((device) => (
-                  <option key={device.deviceId} value={device.deviceId}>
-                    {device.label}
-                  </option>
-                ))}
-              </select>
-              <p className="text-[11px] text-gray-400 dark:text-gray-600 leading-relaxed">
-                Changing the device takes effect next time you start live input.
-              </p>
             </div>
 
-            {/* Input gain */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
-                  Input Gain
-                </span>
-                <span className="font-mono tabular-nums text-[10px] text-gray-400 dark:text-gray-500">
-                  {liveInputGainDb > 0 ? '+' : ''}{liveInputGainDb.toFixed(1)} dB
-                </span>
+            {liveError && (
+              <div className="mx-4 my-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-3">
+                <p className="text-xs font-medium text-red-700 dark:text-red-400 mb-0.5">Live input failed</p>
+                <p className="text-[11px] text-red-600 dark:text-red-500 font-mono break-all">{liveError}</p>
               </div>
-              <input
-                type="range"
-                min={-24}
-                max={24}
-                step={0.5}
-                value={liveInputGainDb}
-                onChange={(e) => setLiveInputGainDb(Number(e.target.value))}
-                className="w-full accent-teal-500"
-              />
-              <p className="text-[11px] text-gray-400 dark:text-gray-600 leading-relaxed">
-                How hard the model is driven — this is the gain control that matters on a
-                high-gain capture, not the output level.
-              </p>
-            </div>
-
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={liveBypass}
-                onChange={(e) => setLiveBypass(e.target.checked)}
-                className="w-3.5 h-3.5 rounded accent-teal-500"
-              />
-              <span className="text-xs text-gray-600 dark:text-gray-300">
-                Bypass model (hear the dry input)
-              </span>
-            </label>
-
-            {liveLatencyMs !== null && (
-              <p className="text-[11px] text-gray-400 dark:text-gray-600 leading-relaxed">
-                Round-trip latency ≈ {liveLatencyMs.toFixed(0)}ms
-                {liveEngineRef.current?.sampleRate
-                  ? ` · ${liveEngineRef.current.sampleRate} Hz`
-                  : ''}
-                . Chromium can&apos;t use ASIO, so this is the driver floor regardless of your
-                interface — fine for auditioning, not for tracking. Use headphones to avoid
-                feedback.
-              </p>
             )}
-          </>
-        )}
 
-        {/* ─── Offline preview ────────────────────────────────────────────────────── */}
-        {/* No library configured, or it's empty/unreadable. */}
-        {!liveMode && !hasLibrary && (
-          <div className="rounded-lg bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-800 p-4">
-            <p className="text-sm text-gray-600 dark:text-gray-300 mb-1">No DI clips available</p>
-            <p className="text-xs text-gray-500">
-              {libraryError ||
-                'Set a DI Clip Library folder in Settings → Library to preview captures.'}
-            </p>
-            <p className="text-[11px] text-gray-400 dark:text-gray-600 mt-2 leading-relaxed">
-              Put guitar DI recordings in subfolders — e.g. <span className="font-mono">Clean/</span>,{' '}
-              <span className="font-mono">Medium Gain/</span>, <span className="font-mono">High Gain/</span>{' '}
-              — and each subfolder becomes a category here.
-            </p>
-          </div>
-        )}
-
-          {!liveMode && (<>
-          {/* Amp cover photo — same image and source the metadata editor shows, falling back to
-              a bundled placeholder so the panel's layout doesn't jump between captures that have
-              a folder cover and ones that don't. */}
-          <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-900">
-            <div className="aspect-[3/1] w-full">
-              <img
-                src={coverImagePath ? toFileUrl(coverImagePath) : ampPlaceholder}
-                alt={coverImagePath ? 'Amp cover' : 'No amp cover photo for this folder'}
-                className="w-full h-full object-cover"
-                loading="lazy"
-                // A cover can go missing after the path resolves (renamed/deleted on disk).
-                // Swap to the placeholder rather than showing a broken-image icon.
-                onError={(e) => {
-                  const img = e.currentTarget
-                  if (img.src !== ampPlaceholder) img.src = ampPlaceholder
-                }}
-              />
+            {/* Tuner */}
+            <div className="px-4 py-3.5 border-b border-gray-200 dark:border-[#1f252d]">
+              <div className="flex items-center justify-between mb-2.5">
+                <TapeLabel>Tuner</TapeLabel>
+                <span className={`font-mono text-[10px] ${liveTuner?.inTune ? 'text-emerald-500 dark:text-emerald-400' : 'text-gray-400 dark:text-gray-500'}`}>
+                  {liveTuner?.note ? (liveTuner.inTune ? 'in tune' : liveTuner.cents > 0 ? 'sharp' : 'flat') : '—'}
+                </span>
+              </div>
+              <div className="flex items-center gap-3.5">
+                <div className="font-semibold leading-none text-gray-900 dark:text-gray-100" style={{ fontSize: 34, minWidth: 48 }}>
+                  {liveTuner?.note ?? '—'}
+                  {liveTuner?.octave != null && <span className="text-gray-500 dark:text-gray-400 align-super" style={{ fontSize: 14 }}>{liveTuner.octave}</span>}
+                </div>
+                <div className="flex-1">
+                  <div className="relative h-[26px]">
+                    <div className="absolute left-0 right-0 top-1/2 h-0.5 bg-gray-200 dark:bg-[#242b34]" />
+                    <div className="absolute left-1/2 top-0.5 bottom-0.5 w-0.5 -ml-px bg-emerald-400" />
+                    <div
+                      className="absolute top-1/2 w-3.5 h-3.5 -mt-[7px] -ml-[7px] rounded-full"
+                      style={{
+                        left: `${50 + Math.max(-50, Math.min(50, liveTuner?.cents ?? 0))}%`,
+                        background: liveTuner?.inTune ? '#34d399' : '#f0b84a',
+                        boxShadow: `0 0 10px ${liveTuner?.inTune ? 'rgba(52,211,153,.6)' : 'rgba(240,184,74,.5)'}`,
+                        transition: 'left .09s linear'
+                      }}
+                    />
+                  </div>
+                  <div className="font-mono text-center text-[9.5px] text-gray-400 dark:text-gray-500 mt-0.5">
+                    {liveTuner?.note ? `${liveTuner.cents > 0 ? '+' : ''}${liveTuner.cents} cents` : 'play a note'}
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
 
-          {/* Top metadata summary. Columns follow the PANEL's measured width, not the
-              viewport — the right panel is user-resizable, so viewport breakpoints would be
-              wrong at exactly the widths that matter. 1 col when narrow, up to 3 when wide. */}
-          {summaryRows.length > 0 && (
-            <div
-              className="rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 px-3 py-2.5 grid gap-x-5 gap-y-1.5"
+            {/* Meters + bypass */}
+            <div className="px-4 py-3.5 flex flex-col gap-3 border-b border-gray-200 dark:border-[#1f252d]">
+              <Meter label="Input (dry)" hint="set gain before arming" value={liveInputMeter} db={inputDb} />
+              <Meter label="Output" value={liveMeter} db={liveMeter > 0 ? `${(20 * Math.log10(liveMeter)).toFixed(1)} dB` : '—'} />
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={liveBypass} onChange={(e) => setLiveBypass(e.target.checked)} className="w-3.5 h-3.5 rounded accent-teal-500" />
+                <span className="text-xs text-gray-600 dark:text-gray-300">Bypass model (hear the dry input)</span>
+              </label>
+            </div>
+
+            {/* Device + gain — moved to the bottom */}
+            <div className="px-4 py-3.5 flex flex-col gap-3.5">
+              <div>
+                <TapeLabel>Input Device</TapeLabel>
+                <select
+                  value={inputDeviceId ?? ''}
+                  onChange={(e) => setInputDeviceId(e.target.value || null)}
+                  className="mt-1.5 w-full h-[34px] px-3 rounded-[9px] text-xs bg-gray-50 dark:bg-[#0e1217] border border-gray-200 dark:border-[#2a323d] text-gray-700 dark:text-gray-200 focus:outline-none focus:border-teal-500"
+                >
+                  <option value="">System default</option>
+                  {inputDevices.map((d) => (
+                    <option key={d.deviceId} value={d.deviceId}>{d.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <TapeLabel>Input Gain</TapeLabel>
+                  <span className="font-mono text-[10px] text-gray-400 dark:text-gray-500">{liveInputGainDb > 0 ? '+' : ''}{liveInputGainDb.toFixed(1)} dB</span>
+                </div>
+                <input type="range" min={-24} max={24} step={0.5} value={liveInputGainDb} onChange={(e) => setLiveInputGainDb(Number(e.target.value))} className="w-full accent-teal-500" />
+                <p className="text-[10.5px] text-gray-400 dark:text-gray-600 mt-1.5 leading-relaxed">
+                  How hard the model is driven — the gain that matters on a high-gain capture, not the output level.
+                </p>
+              </div>
+              {liveLatencyMs !== null && (
+                <p className="text-[10.5px] text-gray-400 dark:text-gray-600 leading-relaxed">
+                  Round-trip latency ≈ {liveLatencyMs.toFixed(0)}ms
+                  {liveEngineRef.current?.sampleRate ? ` · ${liveEngineRef.current.sampleRate} Hz` : ''}. Use headphones to avoid feedback.
+                </p>
+              )}
+            </div>
+          </>
+        ) : (
+          /* ══════════ PREVIEW MODE — picture → metadata → transport → Cab IR → DI ══════════ */
+          <>
+            {/* Picture */}
+            <div className="bg-gray-100 dark:bg-[#0b0e12]" style={{ aspectRatio: '3 / 1', maxHeight: 170 }}>
+              <img src={coverSrc} alt={coverImagePath ? 'Amp cover' : 'No amp cover'} className="w-full h-full object-cover block" loading="lazy" onError={onCoverError} />
+            </div>
+
+            {/* Metadata */}
+            {summaryRows.length > 0 && (
+              <div
+              className="grid gap-x-5 gap-y-2.5 px-4 py-3.5 border-b border-gray-200 dark:border-[#1f252d]"
               style={{ gridTemplateColumns: `repeat(${summaryColumns}, minmax(0, 1fr))` }}
             >
-              {summaryRows.map((row) => (
-                <SummaryRow key={row.label} label={row.label} value={row.value} tone={row.tone} />
-              ))}
-            </div>
-          )}
-          </>)}
+                {summaryRows.map((row) => (
+                  <MetaCell key={row.label} label={row.label} value={row.value} tone={row.tone} />
+                ))}
+              </div>
+            )}
 
-        {/* Compact inline spinner: the cover, summary and DI pills all stay on screen while a
-            new capture renders, so this no longer needs to stand in for a blank panel. */}
-        {!liveMode && busy && (
-          <div className="flex items-center justify-center gap-2 py-2 text-gray-400">
-            <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-            </svg>
-            <span className="text-xs">
-              {status === 'loading-di' ? 'Loading reference DI…' : 'Rendering tone…'}
-            </span>
-          </div>
-        )}
+            {/* No library / error states */}
+            {!hasLibrary && (
+              <div className="m-4 rounded-lg bg-gray-50 dark:bg-[#0e1217] border border-gray-200 dark:border-[#242b34] p-4">
+                <p className="text-sm text-gray-600 dark:text-gray-300 mb-1">No DI clips available</p>
+                <p className="text-xs text-gray-500">{libraryError || 'Set a DI Clip Library folder in Settings → Library to preview captures.'}</p>
+              </div>
+            )}
 
-        {!liveMode && status === 'error' && (
-          <div className="rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-4">
-            <p className="text-sm font-medium text-red-700 dark:text-red-400 mb-1">Preview failed</p>
-            <p className="text-xs text-red-600 dark:text-red-500 font-mono break-all">{errorMsg}</p>
-            <button
-              onClick={() => diPath && void renderPreview(diPath)}
-              className="mt-3 h-7 px-3 rounded-md text-xs font-medium border border-red-300 dark:border-red-700 text-red-700 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors"
-            >
-              Retry
-            </button>
-          </div>
-        )}
-
-        {!liveMode && status === 'ready' && (
-          <>
-            {/* Play / Stop, with Loop alongside. Loop is offset so the play button stays
-                optically centred in the panel rather than shifting to make room. */}
-            <div className="relative flex items-center justify-center">
-              <button
-                onClick={handlePlayStop}
-                className={`w-16 h-16 rounded-full flex items-center justify-center shadow-lg transition-all ${
-                  isPlaying
-                    ? 'bg-red-500 hover:bg-red-600 text-white'
-                    : 'bg-teal-500 hover:bg-teal-600 text-white'
-                }`}
-                title={isPlaying ? 'Stop' : 'Play preview'}
-              >
-                {isPlaying ? (
-                  <svg viewBox="0 0 24 24" className="w-7 h-7" fill="currentColor">
-                    <rect x="6" y="6" width="12" height="12" rx="1" />
-                  </svg>
-                ) : (
-                  <svg viewBox="0 0 24 24" className="w-7 h-7" fill="currentColor">
-                    <path d="M8 5.14v14l11-7-11-7z" />
-                  </svg>
-                )}
-              </button>
-
-              <button
-                onClick={() => {
-                  const next = !loopEnabled
-                  setLoopEnabled(next)
-                  try {
-                    localStorage.setItem(LOOP_PREF_KEY, next ? '1' : '0')
-                  } catch {
-                    // Non-fatal — the toggle still works for this session.
-                  }
-                }}
-                aria-pressed={loopEnabled}
-                title={loopEnabled ? 'Looping — click to play once' : 'Play once — click to loop'}
-                className={`absolute left-1/2 ml-12 w-9 h-9 rounded-full flex items-center justify-center transition-colors ${
-                  loopEnabled
-                    ? 'bg-teal-500 text-white shadow'
-                    : 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'
-                }`}
-              >
-                <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 1l4 4-4 4" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 11V9a4 4 0 014-4h14" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M7 23l-4-4 4-4" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 13v2a4 4 0 01-4 4H3" />
-                </svg>
-              </button>
-            </div>
-
-            {/* Progress */}
-            <div className="h-1.5 bg-gray-200 dark:bg-gray-800 rounded-full overflow-hidden">
+            {/* ── TRANSPORT (tape faceplate) */}
+            <div className="px-4 pt-3.5 pb-4 border-b border-gray-200 dark:border-[#1f252d]">
+              <div className="flex items-center justify-between mb-3">
+                <TapeLabel>Transport</TapeLabel>
+                <span className="font-mono text-[10px] text-gray-400 dark:text-gray-500">
+                  {formatTime((bufferRef.current?.duration ?? 0) * progress)} / {formatTime(bufferRef.current?.duration ?? MAX_PREVIEW_SECONDS)}
+                </span>
+              </div>
               <div
-                className="h-full bg-teal-400 rounded-full"
-                style={{ width: `${progress * 100}%`, transition: isPlaying ? 'none' : 'width 150ms' }}
-              />
-            </div>
-
-            {/* Cabinet IR */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={irEnabled}
-                    onChange={(e) => {
-                      irManuallySetRef.current = true
-                      setIrEnabled(e.target.checked)
+                className="rounded-xl p-3.5"
+                style={{ background: 'linear-gradient(180deg,#202730,#161b22)', border: '1px solid #2a323d', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.05), inset 0 -6px 14px rgba(0,0,0,.35)' }}
+              >
+                {/* counter + scrub */}
+                <div className="flex items-center gap-3 mb-3.5">
+                  <div className="font-mono" style={{ background: '#07100e', color: '#2dd4bf', border: '1px solid #123', borderRadius: 5, padding: '4px 8px', fontSize: 12, letterSpacing: '.05em', boxShadow: 'inset 0 0 8px rgba(45,212,191,.25)' }}>
+                    {formatTime((bufferRef.current?.duration ?? 0) * progress)}
+                  </div>
+                  <div
+                    className="flex-1 relative cursor-pointer"
+                    style={{ height: 8, borderRadius: 5, background: '#0b0f13', boxShadow: 'inset 0 1px 3px rgba(0,0,0,.7)' }}
+                    onClick={(e) => {
+                      const r = e.currentTarget.getBoundingClientRect()
+                      seekTo((e.clientX - r.left) / r.width)
                     }}
-                    disabled={busy || irClips.length === 0}
-                    className="w-3.5 h-3.5 rounded accent-teal-500"
-                  />
-                  <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                    Cabinet IR
-                  </span>
-                </label>
-                {needsCabIr && !irEnabled && (
-                  <span className="text-[10px] text-amber-600 dark:text-amber-500">
-                    recommended for {GEAR_LABELS[m.gear_type as string] ?? m.gear_type}
-                  </span>
-                )}
-                {!needsCabIr && irEnabled && (
-                  <span className="text-[10px] text-amber-600 dark:text-amber-500">
-                    capture already has a cab
-                  </span>
-                )}
+                  >
+                    <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: `${progress * 100}%`, background: 'linear-gradient(90deg,#0d9488,#2dd4bf)', borderRadius: 5 }} />
+                    <div style={{ position: 'absolute', left: `${progress * 100}%`, top: '50%', width: 16, height: 22, margin: '-11px 0 0 -8px', borderRadius: 4, background: 'linear-gradient(180deg,#e9edf2,#aab2bd)', boxShadow: '0 2px 5px rgba(0,0,0,.6), inset 0 1px 0 #fff', border: '1px solid #7d8590' }} />
+                  </div>
+                </div>
+
+                {/* caps */}
+                <div className="flex gap-2.5 justify-center">
+                  <TapeCap label="RESTART" variant="neutral" onClick={restart} disabled={status !== 'ready'} title="Restart from the top">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round"><path d="M11 19l-7-7 7-7" /><path d="M20 19l-7-7 7-7" /></svg>
+                  </TapeCap>
+                  <TapeCap label="PLAY" wide variant="play" active={isPlaying} onClick={handlePlayStop} disabled={status !== 'ready'} title={isPlaying ? 'Pause' : 'Play'}>
+                    {busy ? (
+                      <svg className="w-[18px] h-[18px] animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" /></svg>
+                    ) : isPlaying ? (
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1" /><rect x="14" y="5" width="4" height="14" rx="1" /></svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" width="19" height="19" fill="currentColor"><path d="M8 5.14v14l11-7-11-7z" /></svg>
+                    )}
+                  </TapeCap>
+                  <TapeCap label="STOP" variant="stop" onClick={stopPlayback} disabled={!isPlaying} title="Stop">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5" /></svg>
+                  </TapeCap>
+                  <TapeCap label="LOOP" variant="loop" active={loopEnabled} onClick={toggleLoop} title={loopEnabled ? 'Looping — click for once' : 'Play once — click to loop'}>
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round"><path d="M17 2l4 4-4 4" /><path d="M3 11V9a4 4 0 014-4h14" /><path d="M7 22l-4-4 4-4" /><path d="M21 13v2a4 4 0 01-4 4H3" /></svg>
+                  </TapeCap>
+                </div>
+
+                {/* output meter */}
+                <div className="mt-3.5">
+                  <div className="flex items-center justify-between mb-1">
+                    <span style={{ font: "600 8px 'Oswald', sans-serif", letterSpacing: '.14em', color: '#6b7480' }}>OUTPUT</span>
+                    <span className="font-mono text-[9.5px] text-gray-400 dark:text-gray-500">{outputDb}</span>
+                  </div>
+                  <div style={{ height: 9, borderRadius: 5, background: '#0b0f13', boxShadow: 'inset 0 1px 3px rgba(0,0,0,.7)', overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${outputPct}%`, background: 'linear-gradient(90deg,#17a86f 0%,#3ddc9a 55%,#f0b84a 80%,#e2483a 100%)', transition: 'width .06s linear' }} />
+                  </div>
+                </div>
               </div>
 
+              {status === 'error' && (
+                <div className="mt-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-3">
+                  <p className="text-xs font-medium text-red-700 dark:text-red-400 mb-1">Preview failed</p>
+                  <p className="text-[11px] text-red-600 dark:text-red-500 font-mono break-all">{errorMsg}</p>
+                  <button onClick={() => diPath && void renderPreview(diPath)} className="mt-2 h-7 px-3 rounded-md text-xs font-medium border border-red-300 dark:border-red-700 text-red-700 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40">Retry</button>
+                </div>
+              )}
+            </div>
+
+            {/* ── CAB IR */}
+            <div className="px-4 py-3.5 border-b border-gray-200 dark:border-[#1f252d]">
+              <div className="flex items-center justify-between mb-2.5">
+                <TapeLabel>Cab IR</TapeLabel>
+                <div className="flex items-center gap-2">
+                  {needsCabIr && !irEnabled && <span className="text-[10px] text-amber-500">recommended</span>}
+                  {!needsCabIr && irEnabled && <span className="text-[10px] text-amber-500">already has a cab</span>}
+                  <span className={`text-[10px] font-semibold ${irEnabled ? 'text-teal-400' : 'text-gray-500'}`}>{irEnabled ? 'ON' : 'OFF'}</span>
+                  <button
+                    role="switch"
+                    aria-checked={irEnabled}
+                    onClick={() => { irManuallySetRef.current = true; setIrEnabled((v) => !v) }}
+                    disabled={busy || irClips.length === 0}
+                    className="relative disabled:opacity-40"
+                    style={{ width: 34, height: 19, borderRadius: 10, background: irEnabled ? 'rgba(45,212,191,.3)' : '#0e1217', border: `1px solid ${irEnabled ? 'rgba(45,212,191,.5)' : '#2a323d'}`, cursor: 'pointer' }}
+                  >
+                    <span style={{ position: 'absolute', top: 1.5, left: irEnabled ? 16.5 : 1.5, width: 14, height: 14, borderRadius: '50%', background: irEnabled ? '#2dd4bf' : '#6b7480', transition: 'left .15s' }} />
+                  </button>
+                </div>
+              </div>
               {irClips.length === 0 ? (
                 <p className="text-[11px] text-gray-400 dark:text-gray-600 leading-relaxed">
                   {needsCabIr
@@ -1212,95 +1175,124 @@ export function PlayerPanel({
                 </p>
               ) : (
                 irEnabled && (
-                  <select
-                    value={irPath ?? ''}
-                    onChange={(e) => setIrPath(e.target.value || null)}
-                    disabled={busy}
-                    className="w-full h-7 px-2 rounded-md text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:border-teal-500 disabled:opacity-50"
-                  >
-                    {irCategories.map((category) => (
-                      <optgroup key={category.name} label={category.name}>
-                        {category.files.map((ir) => (
-                          <option key={ir.path} value={ir.path}>
-                            {ir.name.replace(/\.wav$/i, '')}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
+                  <div className="flex items-center gap-2.5 h-9 px-3 rounded-[9px] bg-gray-50 dark:bg-[#0e1217] border border-gray-200 dark:border-[#2a323d]">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#6b7480" strokeWidth={1.8}><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="12" r="3.2" /><circle cx="16.5" cy="12" r="1.6" /></svg>
+                    <select
+                      value={irPath ?? ''}
+                      onChange={(e) => { setIrPath(e.target.value || null); lastIrPath = e.target.value || null }}
+                      disabled={busy}
+                      className="flex-1 min-w-0 bg-transparent text-xs text-gray-800 dark:text-gray-100 focus:outline-none"
+                    >
+                      {irCategories.map((category) => (
+                        <optgroup key={category.name} label={category.name}>
+                          {category.files.map((ir) => (
+                            <option key={ir.path} value={ir.path}>{ir.name.replace(/\.wav$/i, '')}</option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                  </div>
                 )
               )}
             </div>
-          </>
-        )}
 
-        {/* DI clip picker: one pill per category (cleanest -> heaviest), each with a dropdown
-            for which sample that category uses. Clicking a pill plays that category's remembered
-            clip, so you can click straight down the row to hear a capture at rising gain. */}
-        {!liveMode && hasLibrary && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                Play Through
-              </span>
-            </div>
+            {/* ── DI SOURCE */}
+            {hasLibrary && (
+              <div className="px-4 py-3.5">
+                <div className="flex items-center justify-between mb-2.5">
+                  <TapeLabel>DI Source</TapeLabel>
+                  <span className="text-[10px] text-gray-400 dark:text-gray-500">
+                    {categories.length} folder{categories.length === 1 ? '' : 's'}{categories.length > 4 ? ' · scroll ↔' : ''}
+                  </span>
+                </div>
 
-            <div className="space-y-1.5">
-              {categories.map((category) => {
-                const categoryClip = clipForCategory(category)
-                const isActive = category.name === diPrefs.activeCategory
-                return (
-                  <div key={category.name} className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleSelectCategory(category)}
-                      disabled={busy || !categoryClip}
-                      title={`Play through ${category.name}`}
-                      className={`h-7 px-3 rounded-full text-[11px] font-medium whitespace-nowrap transition-colors disabled:opacity-50 flex-shrink-0 ${
-                        isActive
-                          ? 'bg-teal-500 text-white'
-                          : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
-                      }`}
-                    >
-                      {category.name}
-                    </button>
-
-                    {/* Only worth a dropdown when there's actually a choice to make. */}
-                    {category.files.length > 1 ? (
-                      <select
-                        value={categoryClip ?? ''}
-                        onChange={(e) => handleSelectClip(category, e.target.value)}
-                        disabled={busy}
-                        className="flex-1 min-w-0 h-7 px-2 rounded-md text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:border-teal-500 disabled:opacity-50"
-                      >
-                        {category.files.map((clip) => (
-                          <option key={clip.path} value={clip.path}>
-                            {clip.name.replace(/\.wav$/i, '')}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span
-                        className="flex-1 min-w-0 truncate text-xs text-gray-400 dark:text-gray-500"
-                        title={category.files[0]?.name}
-                      >
-                        {category.files[0]?.name.replace(/\.wav$/i, '') ?? '—'}
-                      </span>
-                    )}
+                {/* Category pills — horizontal scroll, unbounded folder count */}
+                <div className="relative mb-3">
+                  <div className="flex gap-1.5 overflow-x-auto pb-1" style={{ scrollbarWidth: 'thin' }}>
+                    {categories.map((category) => {
+                      const active = category.name === diPrefs.activeCategory
+                      return (
+                        <button
+                          key={category.name}
+                          onClick={() => handleSelectCategory(category)}
+                          disabled={busy || !clipForCategory(category)}
+                          className={`flex-none h-7 px-3.5 rounded-full text-[11.5px] whitespace-nowrap transition-colors disabled:opacity-50 ${
+                            active ? 'font-semibold text-[#06201d] bg-teal-400' : 'text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-[#0e1217] border border-gray-200 dark:border-[#242b34] hover:bg-gray-200 dark:hover:bg-[#1d242d]'
+                          }`}
+                        >
+                          {category.name}
+                        </button>
+                      )
+                    })}
                   </div>
-                )
-              })}
-            </div>
+                  {categories.length > 4 && (
+                    <div className="absolute right-0 top-0 bottom-1.5 w-9 flex items-center justify-end pointer-events-none" style={{ background: 'linear-gradient(90deg,transparent,#12161b)' }}>
+                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#8791a0" strokeWidth={2}><path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                    </div>
+                  )}
+                </div>
 
-            {diPath && (
-              <p className="text-[11px] text-gray-400">
-                Loudest {MAX_PREVIEW_SECONDS}s of{' '}
-                <span className="font-mono">{diLabel}</span> rendered through this capture
-                {renderMs !== null ? ` · took ${(renderMs / 1000).toFixed(1)}s` : ''}
-              </p>
+                {/* Clip list for the active category */}
+                {activeCategory && (
+                  <div className="rounded-[10px] overflow-hidden border border-gray-200 dark:border-[#242b34] bg-gray-50 dark:bg-[#0e1217] max-h-[190px] overflow-y-auto">
+                    {activeCategory.files.map((clip, i) => {
+                      const selected = clip.path === activeClipPath
+                      return (
+                        <button
+                          key={clip.path}
+                          onClick={() => handleSelectClip(activeCategory, clip.path)}
+                          disabled={busy}
+                          className={`w-full flex items-center gap-2.5 h-[38px] px-3 text-left transition-colors disabled:opacity-50 ${i > 0 ? 'border-t border-gray-200 dark:border-[#1a2027]' : ''} ${
+                            selected ? 'bg-teal-500/10' : 'hover:bg-gray-100 dark:hover:bg-[#151b22]'
+                          }`}
+                          style={selected ? { boxShadow: 'inset 3px 0 0 #2dd4bf' } : undefined}
+                        >
+                          <svg viewBox="0 0 24 24" width="14" height="14" fill={selected ? '#2dd4bf' : 'currentColor'} className={selected ? '' : 'text-gray-400 dark:text-gray-500'}><path d="M8 5.14v14l11-7-11-7z" /></svg>
+                          <span className={`flex-1 text-[12.5px] truncate ${selected ? 'text-gray-900 dark:text-gray-100' : 'text-gray-600 dark:text-gray-300'}`}>{clip.name.replace(/\.wav$/i, '')}</span>
+                          {selected && isPlaying && <span className="text-[9px] font-mono text-teal-400">▶ playing</span>}
+                          {selected && (
+                            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#2dd4bf" strokeWidth={2.2}><path d="M5 12l5 5 9-11" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {diPath && (
+                  <p className="text-[10.5px] text-gray-400 dark:text-gray-500 mt-2.5">
+                    Loudest {MAX_PREVIEW_SECONDS}s of <span className="font-mono text-gray-500 dark:text-gray-400">{diLabel}</span> rendered through this capture
+                    {renderMs !== null ? ` · took ${(renderMs / 1000).toFixed(1)}s` : ''}
+                  </p>
+                )}
+              </div>
             )}
-          </div>
+          </>
         )}
       </div>
     </div>
   )
+}
+
+/** ── Slim horizontal level meter (Live mode). */
+function Meter({ label, hint, value, db }: { label: string; hint?: string; value: number; db: string }) {
+  const pct = Math.min(100, value * 160)
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <TapeLabel>{label}</TapeLabel>
+        <span className="font-mono text-[10px] text-gray-400 dark:text-gray-500">{hint ? `${hint} · ${db}` : db}</span>
+      </div>
+      <div style={{ height: 7, borderRadius: 4, background: '#0e1217', border: '1px solid #242b34', overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg,#2dd4bf 0%,#2dd4bf 62%,#fbbf24 82%,#f87171 100%)', transition: 'width .06s linear' }} />
+      </div>
+    </div>
+  )
+}
+
+function formatTime(sec: number): string {
+  if (!isFinite(sec) || sec < 0) sec = 0
+  const m = Math.floor(sec / 60)
+  const s = Math.floor(sec % 60)
+  return `${m}:${s.toString().padStart(2, '0')}`
 }

@@ -77,6 +77,19 @@ export class LiveEngine {
   private outputGain: GainNode | null = null
   private analyser: AnalyserNode | null = null
   private meterBuffer: Float32Array<ArrayBuffer> = new Float32Array(1024)
+
+  /**
+   * Tap on the RAW input, before the model.
+   *
+   * The output analyser can't serve the tuner or a dry-input meter: by then the signal has been
+   * through a high-gain amp model that adds harmonics and compresses, so pitch detection would be
+   * reading the distortion rather than the string, and the meter would show model output rather
+   * than how hard you're driving it — which is the thing you actually set input gain by.
+   *
+   * This is a pure observer: connecting a node to an analyser does not alter the signal path.
+   */
+  private inputAnalyser: AnalyserNode | null = null
+  private inputBuffer: Float32Array<ArrayBuffer> = new Float32Array(2048)
   /** Gain compensating the active IR's own level; see where it is computed in start(). */
   private irMakeup = 1
 
@@ -186,6 +199,11 @@ export class LiveEngine {
       this.source = ctx.createMediaStreamSource(this.stream)
       this.source.connect(this.worklet)
 
+      // Pre-model tap for the tuner and the dry-input meter.
+      this.inputAnalyser = ctx.createAnalyser()
+      this.inputAnalyser.fftSize = 2048
+      this.source.connect(this.inputAnalyser)
+
       const mix = Math.max(0, Math.min(1, options.irMix ?? 1))
       if (options.ir && options.ir.samples.length > 0 && mix > 0) {
         // Parallel wet/dry so cab amount stays blendable, matching the offline path.
@@ -260,6 +278,36 @@ export class LiveEngine {
     return peak
   }
 
+  /** Peak of the raw input, 0..1 — what to set input gain by, before the model colours it. */
+  readInputPeak(): number {
+    if (!this.inputAnalyser) return 0
+    if (this.inputBuffer.length !== this.inputAnalyser.fftSize) {
+      this.inputBuffer = new Float32Array(this.inputAnalyser.fftSize)
+    }
+    this.inputAnalyser.getFloatTimeDomainData(this.inputBuffer)
+    let peak = 0
+    for (let i = 0; i < this.inputBuffer.length; i++) {
+      const v = Math.abs(this.inputBuffer[i])
+      if (v > peak) peak = v
+    }
+    return peak
+  }
+
+  /**
+   * Fill `out` with raw input samples for pitch detection.
+   *
+   * Caller owns the buffer so the tuner can reuse one array per frame rather than allocating in a
+   * requestAnimationFrame loop.
+   */
+  getInputTimeDomain(out: Float32Array): void {
+    this.inputAnalyser?.getFloatTimeDomainData(out as Float32Array<ArrayBuffer>)
+  }
+
+  /** True once the input tap exists, so callers can tell "no signal" from "not connected". */
+  get hasInputTap(): boolean {
+    return this.inputAnalyser !== null
+  }
+
   setBypass(bypass: boolean): void {
     this.worklet?.port.postMessage({ type: 'setBypass', bypass })
   }
@@ -295,7 +343,8 @@ export class LiveEngine {
       this.wetGain,
       this.dryGain,
       this.outputGain,
-      this.analyser
+      this.analyser,
+      this.inputAnalyser
     ]) {
       try {
         node?.disconnect()
@@ -310,6 +359,7 @@ export class LiveEngine {
     this.dryGain = null
     this.outputGain = null
     this.analyser = null
+    this.inputAnalyser = null
     this.irMakeup = 1
 
     if (this.ctx) {
