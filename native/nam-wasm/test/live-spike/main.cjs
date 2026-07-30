@@ -35,13 +35,24 @@ const server = http.createServer((req, res) => {
   const url = req.url.split('?')[0]
 
   if (url === '/' || url === '/index.html') {
+    // SPIKE_PAGE=chain.html runs the full-chain test (worklet + cabinet IR) instead.
     res.writeHead(200, { 'Content-Type': 'text/html' })
-    res.end(fs.readFileSync(path.join(__dirname, 'index.html')))
+    res.end(fs.readFileSync(path.join(__dirname, process.env.SPIKE_PAGE || 'index.html')))
     return
   }
   if (url === '/model.nam') {
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(fs.readFileSync(NAM_PATH))
+    return
+  }
+  if (url === '/ir.wav') {
+    if (!process.env.SPIKE_IR_PATH) {
+      res.writeHead(404)
+      res.end('SPIKE_IR_PATH not set')
+      return
+    }
+    res.writeHead(200, { 'Content-Type': 'audio/wav' })
+    res.end(fs.readFileSync(process.env.SPIKE_IR_PATH))
     return
   }
 

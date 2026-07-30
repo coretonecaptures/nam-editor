@@ -70,8 +70,33 @@ and transferred as bytes, which is better regardless: no string work in the audi
 7.4–7.8x realtime · ~13% CPU · worst block 0.88–1.44ms vs 2.67ms budget
 ```
 
+## Full-chain test
+
+`SPIKE_PAGE=chain.html` runs the complete live graph — worklet **plus** cabinet IR with wet/dry
+mix — as `LiveEngine` builds it, still driven by an oscillator so it needs no audio device:
+
+```bash
+SPIKE_PAGE=chain.html \
+SPIKE_PUBLIC_DIR="<repo>/src/renderer/public" \
+SPIKE_NAM_PATH="<capture>.nam" \
+SPIKE_IR_PATH="<cab>.wav" \
+node_modules/electron/dist/electron.exe native/nam-wasm/test/live-spike/main.cjs
+```
+
+It found a real bug worth recording: with `normalize=false` on the ConvolverNode, enabling a cab
+took the peak from **0.252 to 2.060** — ~8x louder and clipping. The offline path gets away with
+`normalize=false` because a loudness normalization runs *after* the IR; the live path has no such
+stage. `LiveEngine` now applies makeup gain of `1 / ‖IR‖₂`, which brings that same case to 0.873.
+
+It also asserts the IR *changes* the response rather than that it rolls off highs: direction is
+model-dependent, and a capture that already contains a cab (`*_CAB.nam`) has almost no 6kHz left
+to remove, so cab-on-cab legitimately measures highs going **up**. The rolloff itself is verified
+separately against a broadband source.
+
 ## Not yet proven
 
-This validates the **DSP path only**. Live guitar input (`getUserMedia`, device selection,
-permissions) and end-to-end latency are Phase 3. Expect 20–50ms round trip — Chromium can't use
-ASIO on Windows, so the WASAPI path is the ceiling regardless of interface.
+Everything here drives the graph from an oscillator. **Live guitar input is unverified** —
+`getUserMedia`, device selection, OS permission prompts and real end-to-end latency all need a
+human with an interface plugged in. Expect 20–50ms round trip: Chromium can't use ASIO on
+Windows, so the WASAPI path is the ceiling regardless of interface. Use headphones; monitoring
+through speakers risks feedback.

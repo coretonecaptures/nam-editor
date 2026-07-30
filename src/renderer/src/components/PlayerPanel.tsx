@@ -3,6 +3,7 @@ import ampPlaceholder from '../assets/images/amp_placeholder.png'
 import { NamFile } from '../types/nam'
 import { detectPreset } from '../utils/detectPreset'
 import { getCaptureBestEsr, getEsrTone } from '../utils/esr'
+import { LiveEngine, listAudioInputs, type LiveDeviceInfo } from '../utils/liveEngine'
 import {
   applyDcBlocker,
   base64ToArrayBuffer,
@@ -278,6 +279,21 @@ export function PlayerPanel({
   const [isPlaying, setIsPlaying] = useState(false)
   const [progress, setProgress] = useState(0)
   const [loopEnabled, setLoopEnabled] = useState(loadLoopPref)
+
+  // Live mode: guitar in through the model in real time, as opposed to the offline
+  // render-then-play preview. Separate state because the two use entirely different audio paths.
+  const [liveMode, setLiveMode] = useState(false)
+  const [liveRunning, setLiveRunning] = useState(false)
+  const [liveError, setLiveError] = useState('')
+  const [liveStarting, setLiveStarting] = useState(false)
+  const [inputDevices, setInputDevices] = useState<LiveDeviceInfo[]>([])
+  const [inputDeviceId, setInputDeviceId] = useState<string | null>(null)
+  const [liveInputGainDb, setLiveInputGainDb] = useState(0)
+  const [liveBypass, setLiveBypass] = useState(false)
+  const [liveLatencyMs, setLiveLatencyMs] = useState<number | null>(null)
+  const [liveMeter, setLiveMeter] = useState(0)
+  const liveEngineRef = useRef<LiveEngine | null>(null)
+  const liveMeterRafRef = useRef<number | null>(null)
 
   const [summaryColumns, setSummaryColumns] = useState(2)
   const [diPrefs, setDiPrefs] = useState<DiPrefs>(loadDiPrefs)
@@ -591,6 +607,127 @@ export function PlayerPanel({
     if (sourceRef.current) sourceRef.current.loop = loopEnabled
   }, [loopEnabled])
 
+  const stopLive = useCallback(async () => {
+    if (liveMeterRafRef.current !== null) {
+      cancelAnimationFrame(liveMeterRafRef.current)
+      liveMeterRafRef.current = null
+    }
+    await liveEngineRef.current?.stop()
+    liveEngineRef.current = null
+    setLiveRunning(false)
+    setLiveMeter(0)
+    setLiveLatencyMs(null)
+  }, [])
+
+  const startLive = useCallback(async () => {
+    setLiveError('')
+    setLiveStarting(true)
+    try {
+      await stopLive()
+
+      const modelResult = await window.api.readFileBinary(file.filePath)
+      if (modelResult.error || !modelResult.data) {
+        throw new Error(`Could not read the capture: ${modelResult.error ?? 'no data'}`)
+      }
+      const modelJson = new TextDecoder().decode(base64ToArrayBuffer(modelResult.data))
+
+      // Decode the IR here rather than in the engine: this component already owns which IR is
+      // selected, and an AudioContext is needed to decode.
+      let ir: { samples: Float32Array; sampleRate: number } | null = null
+      if (irEnabled && irPath) {
+        const irResult = await window.api.readFileBinary(irPath)
+        if (irResult.error || !irResult.data) {
+          throw new Error(`Could not read the cabinet IR: ${irResult.error ?? 'no data'}`)
+        }
+        const decoded = await getAudioContext().decodeAudioData(base64ToArrayBuffer(irResult.data))
+        const mono = new Float32Array(decoded.length)
+        decoded.copyFromChannel(mono, 0, 0)
+        ir = { samples: mono, sampleRate: decoded.sampleRate }
+      }
+
+      const engine = new LiveEngine((message) => setLiveError(message))
+      liveEngineRef.current = engine
+      await engine.start({
+        deviceId: inputDeviceId,
+        modelJson,
+        ir,
+        irMix,
+        inputGain: Math.pow(10, liveInputGainDb * 0.05)
+      })
+      engine.setBypass(liveBypass)
+
+      setLiveRunning(true)
+      setLiveLatencyMs(engine.latencyMs)
+
+      const tick = () => {
+        setLiveMeter(engine.readOutputPeak())
+        liveMeterRafRef.current = requestAnimationFrame(tick)
+      }
+      liveMeterRafRef.current = requestAnimationFrame(tick)
+    } catch (error) {
+      await stopLive()
+      setLiveError(formatError(error))
+    } finally {
+      setLiveStarting(false)
+    }
+  }, [
+    file.filePath,
+    inputDeviceId,
+    irEnabled,
+    irPath,
+    irMix,
+    liveInputGainDb,
+    liveBypass,
+    getAudioContext,
+    stopLive
+  ])
+
+  // Enumerate inputs when live mode opens. Deferred until then so the app never touches the
+  // microphone permission unless the user actually asks for live input.
+  useEffect(() => {
+    if (!liveMode) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const devices = await listAudioInputs()
+        if (!cancelled) setInputDevices(devices)
+      } catch (error) {
+        if (!cancelled) setLiveError(formatError(error))
+      }
+    })()
+    return () => { cancelled = true }
+  }, [liveMode])
+
+  // Leaving live mode, or unmounting, must release the input device.
+  useEffect(() => {
+    if (!liveMode) void stopLive()
+  }, [liveMode, stopLive])
+
+  useEffect(() => {
+    return () => { void liveEngineRef.current?.stop() }
+  }, [])
+
+  // Live tweaks that don't need the graph rebuilt.
+  useEffect(() => {
+    liveEngineRef.current?.setBypass(liveBypass)
+  }, [liveBypass])
+
+  useEffect(() => {
+    liveEngineRef.current?.setGains(Math.pow(10, liveInputGainDb * 0.05), 1)
+  }, [liveInputGainDb])
+
+  useEffect(() => {
+    liveEngineRef.current?.setIrMix(irMix)
+  }, [irMix])
+
+  // Switching captures while live should swap the model, not silently keep the old tone.
+  useEffect(() => {
+    if (liveRunning) void startLive()
+    // Only the capture identity should retrigger this; startLive changes identity on every
+    // gain/bypass tweak, and restarting the graph for those would click.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [file.filePath])
+
   const diLabel = useMemo(() => {
     if (!diPath) return null
     return diPath.replace(/\\/g, '/').split('/').pop() ?? diPath
@@ -689,7 +826,7 @@ export function PlayerPanel({
       <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
         <div className="flex-1 min-w-0">
           <div className="text-xs font-medium text-teal-500 dark:text-teal-400 uppercase tracking-wide mb-0.5">
-            Tone Preview
+            {liveMode ? 'Live Input' : 'Tone Preview'}
           </div>
           <div className="text-sm font-semibold truncate">{captureLabel}</div>
           {(m.gear_make || m.gear_model) && (
@@ -697,6 +834,28 @@ export function PlayerPanel({
               {[m.gear_make, m.gear_model].filter(Boolean).join(' ')}
             </div>
           )}
+        </div>
+        {/* Preview / Live mode switch. Two genuinely different audio paths: offline
+            render-then-play vs. real-time input through the model. */}
+        <div className="flex-shrink-0 flex rounded-lg bg-gray-100 dark:bg-gray-800 p-0.5">
+          {([false, true] as const).map((mode) => (
+            <button
+              key={String(mode)}
+              onClick={() => setLiveMode(mode)}
+              className={`h-6 px-2.5 rounded-md text-[11px] font-medium transition-colors ${
+                liveMode === mode
+                  ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+              }`}
+              title={
+                mode
+                  ? 'Play your guitar through this capture in real time'
+                  : 'Render a DI clip through this capture and play it back'
+              }
+            >
+              {mode ? 'Live' : 'Preview'}
+            </button>
+          ))}
         </div>
         <button
           onClick={onClose}
@@ -711,8 +870,173 @@ export function PlayerPanel({
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
+        {/* ─── Live input ─────────────────────────────────────────────────────────── */}
+        {liveMode && (
+          <>
+            <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-900">
+              <div className="aspect-[3/1] w-full">
+                <img
+                  src={coverImagePath ? toFileUrl(coverImagePath) : ampPlaceholder}
+                  alt={coverImagePath ? 'Amp cover' : 'No amp cover photo for this folder'}
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                  onError={(e) => {
+                    const img = e.currentTarget
+                    if (img.src !== ampPlaceholder) img.src = ampPlaceholder
+                  }}
+                />
+              </div>
+            </div>
+
+            {summaryRows.length > 0 && (
+              <div
+                className="rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 px-3 py-2.5 grid gap-x-5 gap-y-1.5"
+                style={{ gridTemplateColumns: `repeat(${summaryColumns}, minmax(0, 1fr))` }}
+              >
+                {summaryRows.map((row) => (
+                  <SummaryRow key={row.label} label={row.label} value={row.value} tone={row.tone} />
+                ))}
+              </div>
+            )}
+
+            {liveError && (
+              <div className="rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-3">
+                <p className="text-xs font-medium text-red-700 dark:text-red-400 mb-0.5">
+                  Live input failed
+                </p>
+                <p className="text-[11px] text-red-600 dark:text-red-500 font-mono break-all">
+                  {liveError}
+                </p>
+              </div>
+            )}
+
+            {/* Arm / disarm */}
+            <div className="flex items-center justify-center">
+              <button
+                onClick={() => (liveRunning ? void stopLive() : void startLive())}
+                disabled={liveStarting}
+                className={`w-16 h-16 rounded-full flex items-center justify-center shadow-lg transition-all disabled:opacity-60 ${
+                  liveRunning
+                    ? 'bg-red-500 hover:bg-red-600 text-white'
+                    : 'bg-teal-500 hover:bg-teal-600 text-white'
+                }`}
+                title={liveRunning ? 'Stop live input' : 'Start live input'}
+              >
+                {liveStarting ? (
+                  <svg className="w-6 h-6 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                  </svg>
+                ) : liveRunning ? (
+                  <svg viewBox="0 0 24 24" className="w-7 h-7" fill="currentColor">
+                    <rect x="6" y="6" width="12" height="12" rx="1" />
+                  </svg>
+                ) : (
+                  // Microphone/input glyph — this is arming an input, not playing a file.
+                  <svg viewBox="0 0 24 24" className="w-7 h-7" fill="none" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v10m0 0a3 3 0 003-3V6a3 3 0 00-6 0v4a3 3 0 003 3z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 11a7 7 0 0014 0M12 18v3" />
+                  </svg>
+                )}
+              </button>
+            </div>
+
+            {/* Output meter */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                  Output
+                </span>
+                <span className="font-mono tabular-nums text-[10px] text-gray-400 dark:text-gray-500">
+                  {liveMeter > 0 ? `${(20 * Math.log10(liveMeter)).toFixed(1)} dB` : '—'}
+                </span>
+              </div>
+              <div className="h-2 bg-gray-200 dark:bg-gray-800 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-none ${
+                    liveMeter > 0.89 ? 'bg-red-500' : liveMeter > 0.5 ? 'bg-amber-400' : 'bg-teal-400'
+                  }`}
+                  style={{ width: `${Math.min(100, liveMeter * 100)}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Input device */}
+            <div className="space-y-1.5">
+              <span className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                Input Device
+              </span>
+              <select
+                value={inputDeviceId ?? ''}
+                onChange={(e) => setInputDeviceId(e.target.value || null)}
+                className="w-full h-7 px-2 rounded-md text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:border-teal-500"
+              >
+                <option value="">System default</option>
+                {inputDevices.map((device) => (
+                  <option key={device.deviceId} value={device.deviceId}>
+                    {device.label}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[11px] text-gray-400 dark:text-gray-600 leading-relaxed">
+                Changing the device takes effect next time you start live input.
+              </p>
+            </div>
+
+            {/* Input gain */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                  Input Gain
+                </span>
+                <span className="font-mono tabular-nums text-[10px] text-gray-400 dark:text-gray-500">
+                  {liveInputGainDb > 0 ? '+' : ''}{liveInputGainDb.toFixed(1)} dB
+                </span>
+              </div>
+              <input
+                type="range"
+                min={-24}
+                max={24}
+                step={0.5}
+                value={liveInputGainDb}
+                onChange={(e) => setLiveInputGainDb(Number(e.target.value))}
+                className="w-full accent-teal-500"
+              />
+              <p className="text-[11px] text-gray-400 dark:text-gray-600 leading-relaxed">
+                How hard the model is driven — this is the gain control that matters on a
+                high-gain capture, not the output level.
+              </p>
+            </div>
+
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={liveBypass}
+                onChange={(e) => setLiveBypass(e.target.checked)}
+                className="w-3.5 h-3.5 rounded accent-teal-500"
+              />
+              <span className="text-xs text-gray-600 dark:text-gray-300">
+                Bypass model (hear the dry input)
+              </span>
+            </label>
+
+            {liveLatencyMs !== null && (
+              <p className="text-[11px] text-gray-400 dark:text-gray-600 leading-relaxed">
+                Round-trip latency ≈ {liveLatencyMs.toFixed(0)}ms
+                {liveEngineRef.current?.sampleRate
+                  ? ` · ${liveEngineRef.current.sampleRate} Hz`
+                  : ''}
+                . Chromium can&apos;t use ASIO, so this is the driver floor regardless of your
+                interface — fine for auditioning, not for tracking. Use headphones to avoid
+                feedback.
+              </p>
+            )}
+          </>
+        )}
+
+        {/* ─── Offline preview ────────────────────────────────────────────────────── */}
         {/* No library configured, or it's empty/unreadable. */}
-        {!hasLibrary && (
+        {!liveMode && !hasLibrary && (
           <div className="rounded-lg bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-800 p-4">
             <p className="text-sm text-gray-600 dark:text-gray-300 mb-1">No DI clips available</p>
             <p className="text-xs text-gray-500">
@@ -727,6 +1051,7 @@ export function PlayerPanel({
           </div>
         )}
 
+          {!liveMode && (<>
           {/* Amp cover photo — same image and source the metadata editor shows, falling back to
               a bundled placeholder so the panel's layout doesn't jump between captures that have
               a folder cover and ones that don't. */}
@@ -760,10 +1085,11 @@ export function PlayerPanel({
               ))}
             </div>
           )}
+          </>)}
 
         {/* Compact inline spinner: the cover, summary and DI pills all stay on screen while a
             new capture renders, so this no longer needs to stand in for a blank panel. */}
-        {busy && (
+        {!liveMode && busy && (
           <div className="flex items-center justify-center gap-2 py-2 text-gray-400">
             <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
@@ -775,7 +1101,7 @@ export function PlayerPanel({
           </div>
         )}
 
-        {status === 'error' && (
+        {!liveMode && status === 'error' && (
           <div className="rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-4">
             <p className="text-sm font-medium text-red-700 dark:text-red-400 mb-1">Preview failed</p>
             <p className="text-xs text-red-600 dark:text-red-500 font-mono break-all">{errorMsg}</p>
@@ -788,7 +1114,7 @@ export function PlayerPanel({
           </div>
         )}
 
-        {status === 'ready' && (
+        {!liveMode && status === 'ready' && (
           <>
             {/* Play / Stop, with Loop alongside. Loop is offset so the play button stays
                 optically centred in the panel rather than shifting to make room. */}
@@ -911,7 +1237,7 @@ export function PlayerPanel({
         {/* DI clip picker: one pill per category (cleanest -> heaviest), each with a dropdown
             for which sample that category uses. Clicking a pill plays that category's remembered
             clip, so you can click straight down the row to hear a capture at rising gain. */}
-        {hasLibrary && (
+        {!liveMode && hasLibrary && (
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">

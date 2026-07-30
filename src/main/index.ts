@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net, Menu, safeStorage } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net, Menu, safeStorage, session } from 'electron'
 import { join, dirname, basename, extname, normalize as normalizePath, resolve, sep } from 'path'
 import fs from 'fs'
 import os from 'os'
@@ -6060,6 +6060,27 @@ app.whenReady().then(async () => {
   // docs/player-investigation.md), and `Cross-Origin-Embedder-Policy: require-corp` risks
   // blocking legitimately-loaded sub-resources (local-file:// images, Tone3000 assets).
   // The offline-render player replacing it does not use SharedArrayBuffer at all.
+
+  // Audio input permission for the live player.
+  //
+  // Electron denies getUserMedia by default with no prompt and no useful error, so without this
+  // the live player just fails. Only 'audio'/'media' is granted, and only to our own renderer —
+  // everything else keeps the default deny.
+  //
+  // Note this covers Chromium's permission layer only. On macOS the OS also gates microphone
+  // access separately (Info.plist NSMicrophoneUsageDescription + a system prompt), which
+  // electron-builder config has to declare.
+  const LIVE_AUDIO_PERMISSIONS = new Set(['media', 'audioCapture'])
+
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    callback(LIVE_AUDIO_PERMISSIONS.has(permission))
+  })
+
+  // enumerateDevices()/getUserMedia also consult the synchronous check handler; without it the
+  // device list comes back with empty labels even once permission is granted.
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission) =>
+    LIVE_AUDIO_PERMISSIONS.has(permission)
+  )
 
   // Serve local filesystem files under local-file:// scheme
   protocol.handle('local-file', (req) => {
