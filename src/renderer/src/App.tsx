@@ -696,6 +696,8 @@ export default function App() {
   const [activeFolderDeliverySummary, setActiveFolderDeliverySummary] = useState<DeliveryMatrixSummary | null>(null)
   const [dashboardChecklistEntries, setDashboardChecklistEntries] = useState<DashboardChecklistEntry[]>([])
   const [metadataCoverPath, setMetadataCoverPath] = useState<string | null>(null)
+  // Folder the current cover was resolved for, so switching captures within it can skip the scan.
+  const lastCoverFolderRef = useRef<string | null>(null)
   const [showDuplicates, setShowDuplicates] = useState(false)
   const [duplicatesScopeFolder, setDuplicatesScopeFolder] = useState<string | null>(null)
   const [metadataClipboard, setMetadataClipboard] = useState<{ sourceName: string; metadata: Partial<NamFile['metadata']> } | null>(null)
@@ -4427,11 +4429,19 @@ INSTRUCTIONS:
     // not just when the selection actually changed.
     if (selectedSingleFilePath == null) {
       setMetadataCoverPath(null)
+      lastCoverFolderRef.current = null
       return
     }
     let cancelled = false
     const normalized = selectedSingleFilePath.replace(/\\/g, '/')
     const fileFolder = normalized.split('/').slice(0, -1).join('/')
+
+    // The cover is a property of the FOLDER (ampcover.* found by walking up from the file), so
+    // moving between captures in the same folder always resolves to the same image. Re-scanning
+    // would churn the path and make the player's cover visibly blank and reload for nothing.
+    if (fileFolder === lastCoverFolderRef.current) return
+
+    lastCoverFolderRef.current = fileFolder
     const normalizedRoot = librarian.rootFolder.replace(/\\/g, '/')
     const candidates: string[] = []
     let current: string | null = fileFolder
@@ -4986,8 +4996,10 @@ INSTRUCTIONS:
             // Deliberately placed AFTER settings/tone store/training/companion inbox: opening
             // any of those should replace the player, not be blocked by it. But it still wins
             // over the dashboard and metadata editor, so it survives clicking between captures.
+            // Deliberately NOT keyed by filePath. Remounting per capture blanked the cover,
+            // summary, DI pills and IR choice on every click and forced a fresh library scan;
+            // the panel handles file changes internally instead.
             <PlayerPanel
-              key={playerFile.filePath}
               file={playerFile}
               diLibraryPath={settings.diPreviewLibraryPath || null}
               irLibraryPath={settings.irLibraryPath || null}

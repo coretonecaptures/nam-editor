@@ -271,6 +271,13 @@ export function PlayerPanel({
   const [irPath, setIrPath] = useState<string | null>(null)
   // Auto-enabled for captures without a cab; user can force either way.
   const [irEnabled, setIrEnabled] = useState(() => captureNeedsCabIr(file.metadata.gear_type))
+  // Set once the user toggles the IR themselves, so we stop auto-following gear_type and don't
+  // undo their choice as they click between captures.
+  const irManuallySetRef = useRef(false)
+
+  // Guards against a slow render for a previous capture landing after a newer one. The panel no
+  // longer remounts per capture (see App), so nothing else discards in-flight work.
+  const renderGenerationRef = useRef(0)
 
   const audioCtxRef = useRef<AudioContext | null>(null)
   const bufferRef = useRef<AudioBuffer | null>(null)
@@ -333,6 +340,9 @@ export function PlayerPanel({
 
   const renderPreview = useCallback(
     async (sourceDiPath: string) => {
+      const generation = ++renderGenerationRef.current
+      const isStale = () => renderGenerationRef.current !== generation
+
       stopPlayback()
       bufferRef.current = null
       setErrorMsg('')
@@ -430,10 +440,15 @@ export function PlayerPanel({
         const audioBuffer = ctx.createBuffer(1, normalized.length, modelSampleRate)
         audioBuffer.copyToChannel(normalized, 0)
 
+        // A newer capture started rendering while this one was in flight — drop the result
+        // rather than publishing audio for the wrong capture.
+        if (isStale()) return
+
         bufferRef.current = audioBuffer
         setRenderMs(rendered.renderMs)
         setStatus('ready')
       } catch (error) {
+        if (isStale()) return
         setErrorMsg(formatError(error))
         setStatus('error')
       }
@@ -500,6 +515,14 @@ export function PlayerPanel({
     })()
     return () => { cancelled = true }
   }, [diLibraryPath])
+
+  // Follow the capture's gear_type as you click between captures — but never override a manual
+  // toggle. Without this the IR would keep whatever the first capture needed, since the panel no
+  // longer remounts (so the useState initializer above only runs once).
+  useEffect(() => {
+    if (irManuallySetRef.current) return
+    setIrEnabled(captureNeedsCabIr(file.metadata.gear_type))
+  }, [file.metadata.gear_type])
 
   // Render as soon as we have a DI to work with.
   useEffect(() => {
@@ -675,13 +698,43 @@ export function PlayerPanel({
           </div>
         )}
 
+          {/* Amp cover photo — same image and source the metadata editor shows. */}
+          {coverImagePath && (
+            <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-900">
+              <div className="aspect-[3/1] w-full">
+                <img
+                  src={toFileUrl(coverImagePath)}
+                  alt="Amp cover"
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Top metadata summary. Columns follow the PANEL's measured width, not the
+              viewport — the right panel is user-resizable, so viewport breakpoints would be
+              wrong at exactly the widths that matter. 1 col when narrow, up to 3 when wide. */}
+          {summaryRows.length > 0 && (
+            <div
+              className="rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 px-3 py-2.5 grid gap-x-5 gap-y-1.5"
+              style={{ gridTemplateColumns: `repeat(${summaryColumns}, minmax(0, 1fr))` }}
+            >
+              {summaryRows.map((row) => (
+                <SummaryRow key={row.label} label={row.label} value={row.value} tone={row.tone} />
+              ))}
+            </div>
+          )}
+
+        {/* Compact inline spinner: the cover, summary and DI pills all stay on screen while a
+            new capture renders, so this no longer needs to stand in for a blank panel. */}
         {busy && (
-          <div className="flex flex-col items-center justify-center py-10 gap-3 text-gray-400">
-            <svg className="w-8 h-8 animate-spin" fill="none" viewBox="0 0 24 24">
+          <div className="flex items-center justify-center gap-2 py-2 text-gray-400">
+            <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
             </svg>
-            <span className="text-sm">
+            <span className="text-xs">
               {status === 'loading-di' ? 'Loading reference DI…' : 'Rendering tone…'}
             </span>
           </div>
@@ -702,34 +755,6 @@ export function PlayerPanel({
 
         {status === 'ready' && (
           <>
-            {/* Amp cover photo — same image and source the metadata editor shows. */}
-            {coverImagePath && (
-              <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-900">
-                <div className="aspect-[3/1] w-full">
-                  <img
-                    src={toFileUrl(coverImagePath)}
-                    alt="Amp cover"
-                    className="w-full h-full object-cover"
-                    loading="lazy"
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Top metadata summary. Columns follow the PANEL's measured width, not the
-                viewport — the right panel is user-resizable, so viewport breakpoints would be
-                wrong at exactly the widths that matter. 1 col when narrow, up to 3 when wide. */}
-            {summaryRows.length > 0 && (
-              <div
-                className="rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 px-3 py-2.5 grid gap-x-5 gap-y-1.5"
-                style={{ gridTemplateColumns: `repeat(${summaryColumns}, minmax(0, 1fr))` }}
-              >
-                {summaryRows.map((row) => (
-                  <SummaryRow key={row.label} label={row.label} value={row.value} tone={row.tone} />
-                ))}
-              </div>
-            )}
-
             {/* Play / Stop */}
             <div className="flex items-center justify-center">
               <button
@@ -768,7 +793,10 @@ export function PlayerPanel({
                   <input
                     type="checkbox"
                     checked={irEnabled}
-                    onChange={(e) => setIrEnabled(e.target.checked)}
+                    onChange={(e) => {
+                      irManuallySetRef.current = true
+                      setIrEnabled(e.target.checked)
+                    }}
                     disabled={busy || irClips.length === 0}
                     className="w-3.5 h-3.5 rounded accent-teal-500"
                   />
