@@ -247,6 +247,17 @@ export function hexToRgb(hex: string): [number, number, number] {
   return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
 }
 
+// Scale/hit-testing helpers live in ./scales (pure, no JSX) so they are unit-testable without a
+// JSX transform. Re-exported here because existing call sites import them from Charts.
+export {
+  paddedDomain,
+  makeScale,
+  niceTicks,
+  nearestPoint,
+  gainRamp,
+  type PlottedPoint
+} from './scales'
+
 /* EsrCurve &mdash; ESR-vs-epoch, log scale, descending. Optional target line. */
 export function EsrCurve({
   data, color = 'var(--nm-accent,#6366f1)', width = 640, height = 240, target = null,
