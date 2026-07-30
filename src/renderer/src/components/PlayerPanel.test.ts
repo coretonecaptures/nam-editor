@@ -57,8 +57,12 @@ describe('PlayerPanel (redesign)', () => {
   it('renders the tape transport section', () => {
     const html = render(capture())
     expect(html).toMatch(/TRANSPORT|Transport/i)
-    // Engraved labels are Oswald; the fonts are vendored via @fontsource.
-    expect(html).toContain('Oswald')
+    // Engraved labels use the app's own IBM Plex with wide tracking, NOT a novelty face —
+    // Oswald was dropped because it appeared nowhere else in the app and read as foreign.
+    expect(html).toContain('IBM Plex Sans')
+    expect(html).not.toContain('Oswald')
+    // Barlow is still allowed, but only on the Live RECORDING sign (not rendered in Preview).
+    expect(html).not.toContain('Barlow')
   })
 
   it('renders metadata rows only for fields that have values', () => {
