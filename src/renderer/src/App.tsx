@@ -32,6 +32,7 @@ import { FolderSuggestRulesModal } from './components/FolderSuggestRulesModal'
 import { BundleEditor } from './components/BundleEditor'
 import { NamDashboard } from './components/NamDashboard'
 import { FolderCardView } from './components/FolderCardView'
+import { ToneMapView } from './components/ToneMapView'
 import { SessionHistoryPanel } from './components/SessionHistoryPanel'
 import { LibraryCleanupModal, type LibraryCleanupFolderEntry, type LibraryCleanupLayout, type LibraryCleanupPreviewRow } from './components/LibraryCleanupModal'
 import { HelpModal, type HelpModalTab } from './components/HelpModal'
@@ -665,6 +666,11 @@ export default function App() {
   const [libraryFilter, setLibraryFilter] = useState<Set<string> | null>(null)
   const [cardView, setCardView] = useState(false)
   const [cardViewInitialPath, setCardViewInitialPath] = useState<string | null>(null)
+  // Tone Map is a full-window sibling of the 3-panel layout, like cardView. It has to be
+  // full-window rather than a right-panel branch: `playerFile` is checked BEFORE `showDashboard`
+  // in the panel chain below, so in the right panel the first click-to-play would replace the map
+  // with the player and break the whole browse-then-hear loop.
+  const [toneMapView, setToneMapView] = useState(false)
   const [overviewMaximized, setOverviewMaximized] = useState(false)
   const [toneStoreDefaultDir, setToneStoreDefaultDir] = useState<string | null>(null)
   const [cardRescanSignal, setCardRescanSignal] = useState(0)
@@ -1841,6 +1847,7 @@ export default function App() {
   const loadFolderByPath = useCallback(async (folder: string) => {
     const gen = ++loadGenRef.current
     setCardView(false)
+    setToneMapView(false)
     setStatus({ message: 'Scanning folder... (large or network folders may take a minute)', type: 'info' })
     setFolderChanged(false)
     // Stop watcher during reload so the scan itself doesn't re-trigger the banner
@@ -1905,6 +1912,7 @@ export default function App() {
       setShowTrainingWorkspace(false)
       setBatchFolder(null)
       setCardView(false)
+      setToneMapView(false)
       showTransientStatus({ message: `Opened ${folderDisplayName(folderPath)} in the library.`, type: 'info' })
       return
     }
@@ -1967,6 +1975,7 @@ export default function App() {
     setShowSettings(false)
     setLibrarian(EMPTY_LIBRARIAN)
     setCardView(false)
+    setToneMapView(false)
     setStatus({ message: 'Open .nam files or a folder to get started', type: 'info' })
     // Don't reopen on next launch ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â user explicitly closed
     setSettings((prev) => {
@@ -4278,6 +4287,7 @@ INSTRUCTIONS:
     setShowToneStore(false)
     setBatchFolder(null)
     setCardView(false)
+    setToneMapView(false)
     setTrainingWorkspaceMode(mode)
     skipNextTrainingWorkspaceSelectionCloseRef.current = true
     setShowTrainingWorkspace(true)
@@ -4487,6 +4497,14 @@ INSTRUCTIONS:
   const autoFilledCount = files.filter((f) => f.autoFilledFields.length > 0).length
   const unnamedCount = files.filter((f) => !f.metadata.name).length
   const hasTree = librarian.folderTree !== null
+
+  // Named so the two layout guards below read clearly and can't drift apart. Both full-window
+  // views (card grid, tone map) hide the 3-panel layout; each keeps ONE right-panel companion
+  // beside it — ToneStore for the card grid, the player for the tone map — reusing the same
+  // narrowed-width trick rather than inventing a second layout mode.
+  const threePanelHidden = cardView || toneMapView
+  const rightPanelSideBySide =
+    (cardView && showToneStorePanel) || (toneMapView && playerFile !== null)
   const dirtyPaths = new Set(files.filter((f) => f.isDirty).map((f) => f.filePath.replace(/\\/g, '/')))
   const folderWatchSourceByDest = Object.fromEntries(
     settings.folderWatchRules
@@ -4541,6 +4559,7 @@ INSTRUCTIONS:
           setShowToneStore(false)
           setShowTrainingWorkspace(false)
           setCardView(false)
+          setToneMapView(false)
           if (gridMaximized) setGridSlideOpen(true)
         }}
         unnamedCount={unnamedCount}
@@ -4571,6 +4590,7 @@ INSTRUCTIONS:
           setShowTrainingWorkspace(false)
           setBatchFolder(null)
           setCardView(false)
+          setToneMapView(false)
         }}
         historyOpen={historyOpen}
         onHistoryToggle={() => {
@@ -4582,6 +4602,7 @@ INSTRUCTIONS:
           setShowTrainingWorkspace(false)
           setBatchFolder(null)
           setCardView(false)
+          setToneMapView(false)
         }}
         companionInboxOpen={companionInboxOpen}
         companionInboxCount={companionInboxItems.filter((item) => item.status === 'new').length}
@@ -4595,6 +4616,7 @@ INSTRUCTIONS:
           setShowTrainingWorkspace(false)
           setBatchFolder(null)
           setCardView(false)
+          setToneMapView(false)
           if (nextOpen) void loadCompanionInbox()
         } : undefined}
         toneStoreActive={showToneStorePanel}
@@ -4608,16 +4630,35 @@ INSTRUCTIONS:
           setShowTrainingWorkspace(false)
           setBatchFolder(null)
           setCardView(false)
+          setToneMapView(false)
         }}
         helpOpen={helpView !== null}
         onOpenHelp={() => setHelpView('workflows')}
         onOpenFeatureHelp={() => setHelpView('features')}
         onOpenAbout={() => setHelpView('about')}
-        homeViewActive={!cardView && !showTrainingWorkspace}
-        onGoHomeView={() => { setCardView(false); setShowTrainingWorkspace(false) }}
+        homeViewActive={!cardView && !toneMapView && !showTrainingWorkspace}
+        onGoHomeView={() => { setCardView(false); setToneMapView(false); setShowTrainingWorkspace(false) }}
         cardViewActive={cardView}
         cardViewEnabled={!!librarian.rootFolder && !!(librarian.folderTree?.children?.length)}
-        onToggleCardView={() => { setCardViewInitialPath(null); setCardView((v) => !v) }}
+        onToggleCardView={() => { setCardViewInitialPath(null); setToneMapView(false); setCardView((v) => !v) }}
+        toneMapActive={toneMapView}
+        toneMapEnabled={files.length > 0}
+        onToggleToneMap={() => {
+          const opening = !toneMapView
+          setToneMapView(opening)
+          if (opening) {
+            // Clear every sibling that owns the window or the right panel, so the map isn't
+            // rendered underneath one of them.
+            setCardView(false)
+            setShowSettings(false)
+            setShowDashboard(false)
+            setShowToneStore(false)
+            setShowTrainingWorkspace(false)
+            setHistoryOpen(false)
+            setCompanionInboxOpen(false)
+            setBatchFolder(null)
+          }
+        }}
       />
 
       {/* Content area: card view (left) + 3-panel / ToneStore (right) */}
@@ -4634,6 +4675,7 @@ INSTRUCTIONS:
             hidePreviewPanel={showToneStorePanel}
             onOpenFolder={(path) => {
               setCardView(false)
+              setToneMapView(false)
               setCardViewInitialPath(null)
               setLibrarian((prev) => ({ ...prev, selectedFolders: [path] }))
             }}
@@ -4653,8 +4695,29 @@ INSTRUCTIONS:
           />
         )}
 
-      {/* Drag handle between card grid and ToneStore panel */}
-      {cardView && showToneStorePanel && (
+        {toneMapView && (
+          <ToneMapView
+            files={files}
+            scopedFiles={visibleFiles}
+            scopeLabel={
+              librarian.selectedFolders.length === 1
+                ? (librarian.selectedFolders[0].split('/').pop() ?? null)
+                : null
+            }
+            nowPlaying={playerFile}
+            // Same pair FileList's play button uses. Setting the selection is mandatory, not
+            // incidental: metadataCoverPath derives from the single selection, so a click that
+            // only set playerFile would open the player with no cover art.
+            onPlay={(file) => {
+              setPlayerFile(file)
+              setSelectedIds(new Set([file.filePath]))
+            }}
+            onClose={() => setToneMapView(false)}
+          />
+        )}
+
+      {/* Drag handle between a full-window view and its right-panel companion */}
+      {rightPanelSideBySide && (
         <div
           className="w-1 cursor-col-resize shrink-0 bg-gray-200 dark:bg-gray-800 hover:bg-teal-500/60 active:bg-teal-500 transition-colors"
           onMouseDown={(e) => {
@@ -4675,14 +4738,14 @@ INSTRUCTIONS:
 
       {/* 3-panel layout Ã¢â‚¬â€ hidden in card view unless ToneStore is open (then right-panel only) */}
       <div className="flex flex-1 overflow-hidden relative" style={
-        cardView && showToneStorePanel ? { width: toneStorePanelWidth, flexBasis: toneStorePanelWidth, flexShrink: 0, flexGrow: 0 }
-        : cardView ? { display: 'none' }
+        rightPanelSideBySide ? { width: toneStorePanelWidth, flexBasis: toneStorePanelWidth, flexShrink: 0, flexGrow: 0 }
+        : threePanelHidden ? { display: 'none' }
         : undefined
       }>
         {/* Folder tree Ã¢â‚¬â€ only shown when a folder is open */}
-        {hasTree && !(cardView && showToneStorePanel) && (
+        {hasTree && !rightPanelSideBySide && (
           <>
-            <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: (treeCollapsed || gridMaximized || showTrainingWorkspace || (cardView && showToneStorePanel)) ? 0 : treeWidth, overflow: 'hidden' }}>
+            <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: (treeCollapsed || gridMaximized || showTrainingWorkspace || rightPanelSideBySide) ? 0 : treeWidth, overflow: 'hidden' }}>
               <FolderTree
                 tree={librarian.folderTree!}
                 files={files}
@@ -4812,7 +4875,7 @@ INSTRUCTIONS:
         )}
 
         {/* File list ÃƒÆ&rsquo;Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â only shown when files are loaded */}
-        {files.length > 0 && !(cardView && showToneStorePanel) && <>
+        {files.length > 0 && !rightPanelSideBySide && <>
           <div className={gridMaximized ? 'flex-1 flex flex-col overflow-hidden' : 'flex-shrink-0 flex flex-col overflow-hidden'} style={gridMaximized ? undefined : { width: (overviewMaximized || showTrainingWorkspace) ? 0 : (listCollapsed ? 0 : listWidth), overflow: 'hidden' }}>
             <FileList
               files={visibleFiles}

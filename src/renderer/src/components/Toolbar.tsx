@@ -46,6 +46,9 @@ interface ToolbarProps {
   cardViewEnabled?: boolean
   onToggleCardView?: () => void
   homeViewActive?: boolean
+  toneMapActive?: boolean
+  toneMapEnabled?: boolean
+  onToggleToneMap?: () => void
   onGoHomeView?: () => void
 }
 
@@ -95,6 +98,9 @@ export function Toolbar({
   cardViewEnabled = false,
   onToggleCardView,
   homeViewActive = false,
+  toneMapActive = false,
+  toneMapEnabled = false,
+  onToggleToneMap,
   onGoHomeView,
 }: ToolbarProps) {
   const [showFileMenu, setShowFileMenu] = useState(false)
@@ -407,6 +413,31 @@ export function Toolbar({
             <rect x="9" y="1" width="6" height="6" rx="1" />
             <rect x="1" y="9" width="6" height="6" rx="1" />
             <rect x="9" y="9" width="6" height="6" rx="1" />
+          </svg>
+        </button>
+      )}
+
+      {onToggleToneMap && (
+        <button
+          onClick={toneMapEnabled ? onToggleToneMap : undefined}
+          title={
+            toneMapEnabled
+              ? 'Tone Map — browse every capture by amp and measured saturation'
+              : 'Load a library to use the Tone Map'
+          }
+          disabled={!toneMapEnabled}
+          className={`tb-menu-btn relative ${!toneMapEnabled ? 'opacity-40 cursor-not-allowed' : ''} ${toneMapActive ? 'active' : ''}`}
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        >
+          {/* Scattered marks rising left-to-right — the map's clean-to-heavy reading. */}
+          <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
+            <circle cx="2.5" cy="12.5" r="1.4" />
+            <circle cx="6" cy="9.5" r="1.4" />
+            <circle cx="6.5" cy="13" r="1.1" opacity="0.6" />
+            <circle cx="9.5" cy="6" r="1.4" />
+            <circle cx="10" cy="10" r="1.1" opacity="0.6" />
+            <circle cx="13.5" cy="3" r="1.4" />
+            <circle cx="13" cy="7" r="1.1" opacity="0.6" />
           </svg>
         </button>
       )}
