@@ -268,7 +268,7 @@ function TapeCap({
         }
   }
   const labelColor =
-    variant === 'play' ? '#7fd7ad' : variant === 'loop' && active ? '#d8a94a' : '#6b7480'
+    variant === 'play' ? '#7fd7ad' : variant === 'loop' && active ? '#d8a94a' : 'var(--text-3)'
   return (
     <div className="flex flex-col items-center gap-1.5">
       <button
@@ -867,9 +867,9 @@ export function PlayerPanel({
   }
 
   return (
-    <div ref={panelRef} className="flex flex-col h-full bg-white dark:bg-[#12161b] text-gray-900 dark:text-gray-100 select-none">
+    <div ref={panelRef} className="flex flex-col h-full bg-white dark:bg-[var(--panel)] text-gray-900 dark:text-gray-100 select-none">
       {/* ── Header */}
-      <div className="flex items-center gap-2.5 px-4 py-3 border-b border-gray-200 dark:border-[#1f252d] flex-shrink-0">
+      <div className="flex items-center gap-2.5 px-4 py-3 border-b border-gray-200 dark:border-[var(--border-soft)] flex-shrink-0">
         <div className="flex-1 min-w-0">
           <div
             className={`uppercase mb-0.5 ${liveMode ? 'text-amber-500 dark:text-amber-400' : 'text-teal-500 dark:text-teal-400'}`}
@@ -884,7 +884,7 @@ export function PlayerPanel({
             </div>
           )}
         </div>
-        <div className="flex-shrink-0 flex rounded-[9px] bg-gray-100 dark:bg-[#0e1217] border border-gray-200 dark:border-[#242b34] p-0.5">
+        <div className="flex-shrink-0 flex rounded-[9px] bg-gray-100 dark:bg-[var(--field)] border border-gray-200 dark:border-[var(--border)] p-0.5">
           {([false, true] as const).map((mode) => (
             <button
               key={String(mode)}
@@ -901,7 +901,7 @@ export function PlayerPanel({
         </div>
         <button
           onClick={onClose}
-          className="flex-shrink-0 w-[26px] h-[26px] flex items-center justify-center rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-[#1d242d] transition-colors"
+          className="flex-shrink-0 w-[26px] h-[26px] flex items-center justify-center rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-[var(--hover)] transition-colors"
           title="Close player"
         >
           <svg viewBox="0 0 24 24" className="w-[15px] h-[15px]" fill="none" stroke="currentColor" strokeWidth={2}>
@@ -917,7 +917,7 @@ export function PlayerPanel({
           <>
             {/* Illuminated RECORDING sign doubles as the arm control. */}
             <div
-              className="px-4 py-[18px] flex justify-center border-b border-gray-200 dark:border-[#1f252d]"
+              className="px-4 py-[18px] flex justify-center border-b border-gray-200 dark:border-[var(--border-soft)]"
               style={{ background: 'radial-gradient(120% 90% at 50% 40%, #1a130c, #0b0e12)' }}
             >
               <button
@@ -956,7 +956,7 @@ export function PlayerPanel({
                 </div>
               </button>
             </div>
-            <div className="px-4 py-[11px] text-center border-b border-gray-200 dark:border-[#1f252d]">
+            <div className="px-4 py-[11px] text-center border-b border-gray-200 dark:border-[var(--border-soft)]">
               <span className="text-[11.5px] text-gray-500 dark:text-gray-400">
                 {liveRunning ? 'Monitoring live — tap the sign to stop' : 'Tap the sign to play guitar through this capture'}
               </span>
@@ -970,7 +970,7 @@ export function PlayerPanel({
             )}
 
             {/* Tuner */}
-            <div className="px-4 py-3.5 border-b border-gray-200 dark:border-[#1f252d]">
+            <div className="px-4 py-3.5 border-b border-gray-200 dark:border-[var(--border-soft)]">
               <div className="flex items-center justify-between mb-2.5">
                 <TapeLabel>Tuner</TapeLabel>
                 <span className={`font-mono text-[10px] ${liveTuner?.inTune ? 'text-emerald-500 dark:text-emerald-400' : 'text-gray-400 dark:text-gray-500'}`}>
@@ -984,7 +984,7 @@ export function PlayerPanel({
                 </div>
                 <div className="flex-1">
                   <div className="relative h-[26px]">
-                    <div className="absolute left-0 right-0 top-1/2 h-0.5 bg-gray-200 dark:bg-[#242b34]" />
+                    <div className="absolute left-0 right-0 top-1/2 h-0.5 bg-gray-200 dark:bg-[var(--border)]" />
                     <div className="absolute left-1/2 top-0.5 bottom-0.5 w-0.5 -ml-px bg-emerald-400" />
                     <div
                       className="absolute top-1/2 w-3.5 h-3.5 -mt-[7px] -ml-[7px] rounded-full"
@@ -1004,7 +1004,7 @@ export function PlayerPanel({
             </div>
 
             {/* Meters + bypass */}
-            <div className="px-4 py-3.5 flex flex-col gap-3 border-b border-gray-200 dark:border-[#1f252d]">
+            <div className="px-4 py-3.5 flex flex-col gap-3 border-b border-gray-200 dark:border-[var(--border-soft)]">
               <Meter label="Input (dry)" hint="set gain before arming" value={liveInputMeter} db={inputDb} />
               <Meter label="Output" value={liveMeter} db={liveMeter > 0 ? `${(20 * Math.log10(liveMeter)).toFixed(1)} dB` : '—'} />
               <label className="flex items-center gap-2 cursor-pointer">
@@ -1020,7 +1020,7 @@ export function PlayerPanel({
                 <select
                   value={inputDeviceId ?? ''}
                   onChange={(e) => setInputDeviceId(e.target.value || null)}
-                  className="mt-1.5 w-full h-[34px] px-3 rounded-[9px] text-xs bg-gray-50 dark:bg-[#0e1217] border border-gray-200 dark:border-[#2a323d] text-gray-700 dark:text-gray-200 focus:outline-none focus:border-teal-500"
+                  className="mt-1.5 w-full h-[34px] px-3 rounded-[9px] text-xs bg-gray-50 dark:bg-[var(--field)] border border-gray-200 dark:border-[var(--field-border)] text-gray-700 dark:text-gray-200 focus:outline-none focus:border-teal-500"
                 >
                   <option value="">System default</option>
                   {inputDevices.map((d) => (
@@ -1050,14 +1050,27 @@ export function PlayerPanel({
           /* ══════════ PREVIEW MODE — picture → metadata → transport → Cab IR → DI ══════════ */
           <>
             {/* Picture */}
-            <div className="bg-gray-100 dark:bg-[#0b0e12]" style={{ aspectRatio: '3 / 1', maxHeight: 170 }}>
-              <img src={coverSrc} alt={coverImagePath ? 'Amp cover' : 'No amp cover'} className="w-full h-full object-cover block" loading="lazy" onError={onCoverError} />
+            {/* Constrain WIDTH, not height. `aspectRatio: 3/1` plus `maxHeight` fight each other
+                on a wide panel: at 700px the box wants 233px tall, gets clamped to 170, and the
+                ratio silently becomes ~4:1 — so object-cover crops far more of the amp the wider
+                you drag the panel. Capping width at 3 x the max height keeps the crop identical at
+                every panel size, and the letterbox fills with the surrounding surface. */}
+            <div className="bg-gray-100 dark:bg-[#0b0e12] flex justify-center">
+              <div className="w-full" style={{ aspectRatio: '3 / 1', maxWidth: 170 * 3 }}>
+                <img
+                  src={coverSrc}
+                  alt={coverImagePath ? 'Amp cover' : 'No amp cover'}
+                  className="w-full h-full object-cover block"
+                  loading="lazy"
+                  onError={onCoverError}
+                />
+              </div>
             </div>
 
             {/* Metadata */}
             {summaryRows.length > 0 && (
               <div
-              className="grid gap-x-5 gap-y-2.5 px-4 py-3.5 border-b border-gray-200 dark:border-[#1f252d]"
+              className="grid gap-x-5 gap-y-2.5 px-4 py-3.5 border-b border-gray-200 dark:border-[var(--border-soft)]"
               style={{ gridTemplateColumns: `repeat(${summaryColumns}, minmax(0, 1fr))` }}
             >
                 {summaryRows.map((row) => (
@@ -1068,14 +1081,14 @@ export function PlayerPanel({
 
             {/* No library / error states */}
             {!hasLibrary && (
-              <div className="m-4 rounded-lg bg-gray-50 dark:bg-[#0e1217] border border-gray-200 dark:border-[#242b34] p-4">
+              <div className="m-4 rounded-lg bg-gray-50 dark:bg-[var(--field)] border border-gray-200 dark:border-[var(--border)] p-4">
                 <p className="text-sm text-gray-600 dark:text-gray-300 mb-1">No DI clips available</p>
                 <p className="text-xs text-gray-500">{libraryError || 'Set a DI Clip Library folder in Settings → Library to preview captures.'}</p>
               </div>
             )}
 
             {/* ── TRANSPORT (tape faceplate) */}
-            <div className="px-4 pt-3.5 pb-4 border-b border-gray-200 dark:border-[#1f252d]">
+            <div className="px-4 pt-3.5 pb-4 border-b border-gray-200 dark:border-[var(--border-soft)]">
               <div className="flex items-center justify-between mb-3">
                 <TapeLabel>Transport</TapeLabel>
                 <span className="font-mono text-[10px] text-gray-400 dark:text-gray-500">
@@ -1084,11 +1097,11 @@ export function PlayerPanel({
               </div>
               <div
                 className="rounded-xl p-3.5"
-                style={{ background: 'linear-gradient(180deg,#202730,#161b22)', border: '1px solid #2a323d', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.05), inset 0 -6px 14px rgba(0,0,0,.35)' }}
+                style={{ background: 'linear-gradient(180deg,#202730,#161b22)', border: '1px solid var(--field-border)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.05), inset 0 -6px 14px rgba(0,0,0,.35)' }}
               >
                 {/* counter + scrub */}
                 <div className="flex items-center gap-3 mb-3.5">
-                  <div className="font-mono" style={{ background: '#07100e', color: '#2dd4bf', border: '1px solid #123', borderRadius: 5, padding: '4px 8px', fontSize: 12, letterSpacing: '.05em', boxShadow: 'inset 0 0 8px rgba(45,212,191,.25)' }}>
+                  <div className="font-mono" style={{ background: '#07100e', color: 'var(--accent)', border: '1px solid #123', borderRadius: 5, padding: '4px 8px', fontSize: 12, letterSpacing: '.05em', boxShadow: 'inset 0 0 8px rgba(45,212,191,.25)' }}>
                     {formatTime((bufferRef.current?.duration ?? 0) * progress)}
                   </div>
                   <div
@@ -1099,7 +1112,7 @@ export function PlayerPanel({
                       seekTo((e.clientX - r.left) / r.width)
                     }}
                   >
-                    <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: `${progress * 100}%`, background: 'linear-gradient(90deg,#0d9488,#2dd4bf)', borderRadius: 5 }} />
+                    <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: `${progress * 100}%`, background: 'linear-gradient(90deg,var(--accent),var(--accent))', borderRadius: 5 }} />
                     <div style={{ position: 'absolute', left: `${progress * 100}%`, top: '50%', width: 16, height: 22, margin: '-11px 0 0 -8px', borderRadius: 4, background: 'linear-gradient(180deg,#e9edf2,#aab2bd)', boxShadow: '0 2px 5px rgba(0,0,0,.6), inset 0 1px 0 #fff', border: '1px solid #7d8590' }} />
                   </div>
                 </div>
@@ -1129,7 +1142,7 @@ export function PlayerPanel({
                 {/* output meter */}
                 <div className="mt-3.5">
                   <div className="flex items-center justify-between mb-1">
-                    <span style={{ font: "600 8px 'Oswald', sans-serif", letterSpacing: '.14em', color: '#6b7480' }}>OUTPUT</span>
+                    <span style={{ font: "600 8px 'Oswald', sans-serif", letterSpacing: '.14em', color: 'var(--text-3)' }}>OUTPUT</span>
                     <span className="font-mono text-[9.5px] text-gray-400 dark:text-gray-500">{outputDb}</span>
                   </div>
                   <div style={{ height: 9, borderRadius: 5, background: '#0b0f13', boxShadow: 'inset 0 1px 3px rgba(0,0,0,.7)', overflow: 'hidden' }}>
@@ -1148,7 +1161,7 @@ export function PlayerPanel({
             </div>
 
             {/* ── CAB IR */}
-            <div className="px-4 py-3.5 border-b border-gray-200 dark:border-[#1f252d]">
+            <div className="px-4 py-3.5 border-b border-gray-200 dark:border-[var(--border-soft)]">
               <div className="flex items-center justify-between mb-2.5">
                 <TapeLabel>Cab IR</TapeLabel>
                 <div className="flex items-center gap-2">
@@ -1161,9 +1174,9 @@ export function PlayerPanel({
                     onClick={() => { irManuallySetRef.current = true; setIrEnabled((v) => !v) }}
                     disabled={busy || irClips.length === 0}
                     className="relative disabled:opacity-40"
-                    style={{ width: 34, height: 19, borderRadius: 10, background: irEnabled ? 'rgba(45,212,191,.3)' : '#0e1217', border: `1px solid ${irEnabled ? 'rgba(45,212,191,.5)' : '#2a323d'}`, cursor: 'pointer' }}
+                    style={{ width: 34, height: 19, borderRadius: 10, background: irEnabled ? 'rgba(45,212,191,.3)' : 'var(--field)', border: `1px solid ${irEnabled ? 'rgba(45,212,191,.5)' : 'var(--field-border)'}`, cursor: 'pointer' }}
                   >
-                    <span style={{ position: 'absolute', top: 1.5, left: irEnabled ? 16.5 : 1.5, width: 14, height: 14, borderRadius: '50%', background: irEnabled ? '#2dd4bf' : '#6b7480', transition: 'left .15s' }} />
+                    <span style={{ position: 'absolute', top: 1.5, left: irEnabled ? 16.5 : 1.5, width: 14, height: 14, borderRadius: '50%', background: irEnabled ? 'var(--accent)' : 'var(--text-3)', transition: 'left .15s' }} />
                   </button>
                 </div>
               </div>
@@ -1175,8 +1188,8 @@ export function PlayerPanel({
                 </p>
               ) : (
                 irEnabled && (
-                  <div className="flex items-center gap-2.5 h-9 px-3 rounded-[9px] bg-gray-50 dark:bg-[#0e1217] border border-gray-200 dark:border-[#2a323d]">
-                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#6b7480" strokeWidth={1.8}><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="12" r="3.2" /><circle cx="16.5" cy="12" r="1.6" /></svg>
+                  <div className="flex items-center gap-2.5 h-9 px-3 rounded-[9px] bg-gray-50 dark:bg-[var(--field)] border border-gray-200 dark:border-[var(--field-border)]">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="var(--text-3)" strokeWidth={1.8}><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="12" r="3.2" /><circle cx="16.5" cy="12" r="1.6" /></svg>
                     <select
                       value={irPath ?? ''}
                       onChange={(e) => { setIrPath(e.target.value || null); lastIrPath = e.target.value || null }}
@@ -1217,7 +1230,7 @@ export function PlayerPanel({
                           onClick={() => handleSelectCategory(category)}
                           disabled={busy || !clipForCategory(category)}
                           className={`flex-none h-7 px-3.5 rounded-full text-[11.5px] whitespace-nowrap transition-colors disabled:opacity-50 ${
-                            active ? 'font-semibold text-[#06201d] bg-teal-400' : 'text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-[#0e1217] border border-gray-200 dark:border-[#242b34] hover:bg-gray-200 dark:hover:bg-[#1d242d]'
+                            active ? 'font-semibold text-[#06201d] bg-teal-400' : 'text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-[var(--field)] border border-gray-200 dark:border-[var(--border)] hover:bg-gray-200 dark:hover:bg-[var(--hover)]'
                           }`}
                         >
                           {category.name}
@@ -1226,15 +1239,15 @@ export function PlayerPanel({
                     })}
                   </div>
                   {categories.length > 4 && (
-                    <div className="absolute right-0 top-0 bottom-1.5 w-9 flex items-center justify-end pointer-events-none" style={{ background: 'linear-gradient(90deg,transparent,#12161b)' }}>
-                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#8791a0" strokeWidth={2}><path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                    <div className="absolute right-0 top-0 bottom-1.5 w-9 flex items-center justify-end pointer-events-none" style={{ background: 'linear-gradient(90deg,transparent,var(--panel))' }}>
+                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="var(--text-2)" strokeWidth={2}><path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" /></svg>
                     </div>
                   )}
                 </div>
 
                 {/* Clip list for the active category */}
                 {activeCategory && (
-                  <div className="rounded-[10px] overflow-hidden border border-gray-200 dark:border-[#242b34] bg-gray-50 dark:bg-[#0e1217] max-h-[190px] overflow-y-auto">
+                  <div className="rounded-[10px] overflow-hidden border border-gray-200 dark:border-[var(--border)] bg-gray-50 dark:bg-[var(--field)] max-h-[190px] overflow-y-auto">
                     {activeCategory.files.map((clip, i) => {
                       const selected = clip.path === activeClipPath
                       return (
@@ -1245,13 +1258,13 @@ export function PlayerPanel({
                           className={`w-full flex items-center gap-2.5 h-[38px] px-3 text-left transition-colors disabled:opacity-50 ${i > 0 ? 'border-t border-gray-200 dark:border-[#1a2027]' : ''} ${
                             selected ? 'bg-teal-500/10' : 'hover:bg-gray-100 dark:hover:bg-[#151b22]'
                           }`}
-                          style={selected ? { boxShadow: 'inset 3px 0 0 #2dd4bf' } : undefined}
+                          style={selected ? { boxShadow: 'inset 3px 0 0 var(--accent)' } : undefined}
                         >
-                          <svg viewBox="0 0 24 24" width="14" height="14" fill={selected ? '#2dd4bf' : 'currentColor'} className={selected ? '' : 'text-gray-400 dark:text-gray-500'}><path d="M8 5.14v14l11-7-11-7z" /></svg>
+                          <svg viewBox="0 0 24 24" width="14" height="14" fill={selected ? 'var(--accent)' : 'currentColor'} className={selected ? '' : 'text-gray-400 dark:text-gray-500'}><path d="M8 5.14v14l11-7-11-7z" /></svg>
                           <span className={`flex-1 text-[12.5px] truncate ${selected ? 'text-gray-900 dark:text-gray-100' : 'text-gray-600 dark:text-gray-300'}`}>{clip.name.replace(/\.wav$/i, '')}</span>
                           {selected && isPlaying && <span className="text-[9px] font-mono text-teal-400">▶ playing</span>}
                           {selected && (
-                            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#2dd4bf" strokeWidth={2.2}><path d="M5 12l5 5 9-11" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="var(--accent)" strokeWidth={2.2}><path d="M5 12l5 5 9-11" strokeLinecap="round" strokeLinejoin="round" /></svg>
                           )}
                         </button>
                       )
@@ -1283,8 +1296,8 @@ function Meter({ label, hint, value, db }: { label: string; hint?: string; value
         <TapeLabel>{label}</TapeLabel>
         <span className="font-mono text-[10px] text-gray-400 dark:text-gray-500">{hint ? `${hint} · ${db}` : db}</span>
       </div>
-      <div style={{ height: 7, borderRadius: 4, background: '#0e1217', border: '1px solid #242b34', overflow: 'hidden' }}>
-        <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg,#2dd4bf 0%,#2dd4bf 62%,#fbbf24 82%,#f87171 100%)', transition: 'width .06s linear' }} />
+      <div style={{ height: 7, borderRadius: 4, background: 'var(--field)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg,var(--accent) 0%,var(--accent) 62%,#fbbf24 82%,#f87171 100%)', transition: 'width .06s linear' }} />
       </div>
     </div>
   )
