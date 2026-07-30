@@ -6461,6 +6461,24 @@ app.whenReady().then(async () => {
   // IPC: Return the path to the parse error log file
   ipcMain.handle('log:getErrorLogPath', () => errorLogPath)
 
+  // IPC: Renderer-side diagnostic log. The preload has exposed appendRendererLog /
+  // getRendererLogPath for a while but the main-process handlers were lost in a merge, so both
+  // calls were rejecting. Needed to get diagnostics out of contexts with no reachable console —
+  // notably AudioWorkletGlobalScope, where the live player's DSP runs.
+  const getRendererLogPath = () => join(app.getPath('userData'), 'renderer.log')
+
+  ipcMain.handle('log:getRendererLogPath', () => getRendererLogPath())
+
+  ipcMain.handle('log:appendRendererLog', async (_event, line: string) => {
+    try {
+      const stamped = `[${new Date().toISOString()}] ${line}\n`
+      await fs.promises.appendFile(getRendererLogPath(), stamped, 'utf-8')
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  })
+
   // IPC: Write updated metadata back to file (preserves weights and all non-editable fields)
   // Only updates the fields the editor explicitly manages â€” never injects new keys.
   // Uses surgical text replacement so only the changed value bytes are modified;

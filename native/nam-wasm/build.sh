@@ -84,6 +84,31 @@ echo "==> Building browser/worker module..."
   "${INCLUDES[@]}" "${COMPILE_FLAGS[@]}" "${LINK_FLAGS[@]}" \
   -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createNamModule -sENVIRONMENT=web,worker
 
+# Worklet build: same sources, different constraints.
+#
+#   -fwasm-exceptions      lowers C++ exceptions into the wasm itself instead of JS trampolines,
+#                          cutting imports from 59 to 9. That's what makes it viable to
+#                          instantiate in AudioWorkletGlobalScope, which can't run Emscripten's
+#                          glue (no import/importScripts/fetch/DOM there).
+#   -sALLOW_MEMORY_GROWTH=0  growing the heap mid-callback is not real-time safe, and a fixed
+#                          heap also means the Float32Array heap views can never be detached.
+#
+# Still no -pthread / -sAUDIO_WORKLET / -sWASM_WORKERS: those would make memory a
+# SharedArrayBuffer and reintroduce the crossOriginIsolated requirement we can't satisfy.
+echo "==> Building AudioWorklet module..."
+"${EMCC}" "${SOURCES[@]}" -o build/nam-worklet.js \
+  "${INCLUDES[@]}" \
+  -std=c++17 -O3 -msimd128 \
+  -DNAM_SAMPLE_FLOAT -DEIGEN_STACK_ALLOCATION_LIMIT=0 -DNAM_USE_INLINE_GEMM \
+  -fwasm-exceptions \
+  -sINITIAL_MEMORY=64MB -sALLOW_MEMORY_GROWTH=0 -sSTACK_SIZE=8MB \
+  -sMODULARIZE=1 -sENVIRONMENT=web \
+  "-sEXPORTED_FUNCTIONS=_namLoadModel,_namProcessBuffer,_namFreeModel,_namResetModel,_namGetLoudness,_namHasLoudness,_namSetSlimmableSize,_namGetLastError,_malloc,_free"
+
+# -O3 minifies the wasm boundary to single letters and keeps the mapping only in the glue we
+# can't use, so extract it for the worklet's hand-written shim.
+node tools/gen-worklet-manifest.cjs build/nam-worklet.js build/nam-worklet.manifest.json
+
 # A Node-targeted build of the same sources, used by test.cjs to verify inference actually runs.
 if [ "${1:-}" = "--with-test-build" ]; then
   echo "==> Building Node test module..."
@@ -97,8 +122,13 @@ OUT_DIR="${SCRIPT_DIR}/../../src/renderer/public"
 mkdir -p "${OUT_DIR}"
 cp build/nam-offline.js "${OUT_DIR}/nam-offline.js"
 cp build/nam-offline.wasm "${OUT_DIR}/nam-offline.wasm"
+# The worklet needs only the wasm + manifest; its glue is intentionally unused (see above).
+cp build/nam-worklet.wasm "${OUT_DIR}/nam-worklet.wasm"
+cp build/nam-worklet.manifest.json "${OUT_DIR}/nam-worklet.manifest.json"
 
 echo ""
 echo "Done. Wrote:"
 echo "  ${OUT_DIR}/nam-offline.js   ($(du -h "${OUT_DIR}/nam-offline.js" | cut -f1))"
 echo "  ${OUT_DIR}/nam-offline.wasm ($(du -h "${OUT_DIR}/nam-offline.wasm" | cut -f1))"
+echo "  ${OUT_DIR}/nam-worklet.wasm ($(du -h "${OUT_DIR}/nam-worklet.wasm" | cut -f1))"
+echo "  ${OUT_DIR}/nam-worklet.manifest.json"

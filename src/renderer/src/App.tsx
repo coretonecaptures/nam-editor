@@ -742,6 +742,31 @@ export default function App() {
   const suppressStartupAutoSelectRef = useRef(settings.showDashboardOnLaunch)
   const showDashboardRef = useRef(showDashboard)
   useEffect(() => { showDashboardRef.current = showDashboard }, [showDashboard])
+
+  // TEMPORARY (Phase 1 live-player spike). Exposes window.__runLiveSpike(namFilePath) for manual
+  // devtools runs, and auto-runs at startup when VITE_LIVE_SPIKE_NAM points at a .nam so the
+  // feasibility test can be driven headlessly. Results land in userData/renderer.log.
+  // Remove once the live player is wired up for real.
+  useEffect(() => {
+    const runSpike = async (namPath: string) => {
+      const { runLiveWorkletSpike } = await import('./utils/liveWorkletSpike')
+      const read = await window.api.readFileBinary(namPath)
+      if (read.error || !read.data) {
+        const error = read.error ?? 'could not read .nam'
+        void window.api.appendRendererLog(`[LiveSpike] FAIL — ${error}`)
+        return { ok: false, error }
+      }
+      const bytes = Uint8Array.from(atob(read.data), (c) => c.charCodeAt(0))
+      const result = await runLiveWorkletSpike(new TextDecoder().decode(bytes))
+      console.log('[LiveSpike]', result)
+      void window.api.appendRendererLog(`[LiveSpike] RESULT ${JSON.stringify(result)}`)
+      return result
+    }
+    ;(window as unknown as Record<string, unknown>).__runLiveSpike = runSpike
+
+    const autoPath = import.meta.env.VITE_LIVE_SPIKE_NAM as string | undefined
+    if (autoPath) void runSpike(autoPath)
+  }, [])
   const [historyOpen, setHistoryOpen] = useState(false)
   const [companionInboxOpen, setCompanionInboxOpen] = useState(false)
   const [companionInboxItems, setCompanionInboxItems] = useState<CompanionInboxItem[]>([])

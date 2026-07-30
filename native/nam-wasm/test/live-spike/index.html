@@ -1,0 +1,115 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>NAM live worklet spike</title>
+<body>
+<script>
+// Mirrors src/renderer/src/utils/liveWorkletSpike.ts, inlined so this harness needs no bundler.
+// Loads the SAME public/nam-worklet.js and nam-worklet.wasm the app ships.
+const log = (m) => console.log('[LiveSpike] ' + m)
+
+async function run() {
+  const result = {
+    ok: false,
+    instantiated: false,
+    modelLoaded: false,
+    outputPeak: 0,
+    crossOriginIsolated: !!self.crossOriginIsolated,
+    memoryKind: null
+  }
+  try {
+    log('crossOriginIsolated=' + result.crossOriginIsolated +
+        '  SharedArrayBuffer global=' + (typeof SharedArrayBuffer !== 'undefined'))
+
+    const [wasmRes, manRes, namRes] = await Promise.all([
+      fetch('/nam-worklet.wasm'),
+      fetch('/nam-worklet.manifest.json'),
+      fetch('/model.nam')
+    ])
+    if (!wasmRes.ok) throw new Error('wasm fetch ' + wasmRes.status)
+    if (!manRes.ok) throw new Error('manifest fetch ' + manRes.status)
+    if (!namRes.ok) throw new Error('model fetch ' + namRes.status)
+
+    const wasmBytes = await wasmRes.arrayBuffer()
+    const manifest = await manRes.json()
+    const modelBytes = new Uint8Array(await namRes.arrayBuffer())
+    log('fetched wasm ' + (wasmBytes.byteLength / 1024).toFixed(0) + 'KB, model ' +
+        (modelBytes.length / 1024).toFixed(0) + 'KB')
+
+    const wasmModule = await WebAssembly.compile(wasmBytes)
+    log('compiled WebAssembly.Module')
+
+    const sampleRate = 48000
+    const ctx = new OfflineAudioContext(1, sampleRate, sampleRate)
+    await ctx.audioWorklet.addModule('/nam-worklet.js')
+    log('audioWorklet.addModule OK')
+
+    // The exact call that threw DataCloneError in the original SharedArrayBuffer attempt.
+    const node = new AudioWorkletNode(ctx, 'nam-processor', {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+      processorOptions: { wasmModule, manifest }
+    })
+    log('AudioWorkletNode constructed — no DataCloneError')
+
+    let workletError = null
+    const settled = new Promise((resolve) => {
+      node.port.onmessage = (e) => {
+        const d = e.data
+        if (d.type === 'instantiated') {
+          result.instantiated = true
+          log('worklet: wasm instantiated inside AudioWorkletGlobalScope')
+        } else if (d.type === 'memory') {
+          result.memoryKind = d.kind
+          log('worklet: wasm memory backing = ' + d.kind)
+        } else if (d.type === 'modelLoaded') {
+          result.modelLoaded = true
+          log('worklet: model loaded, loudness=' + d.loudnessDb + ' sr=' + d.sampleRate)
+          resolve()
+        } else if (d.type === 'error') {
+          workletError = d.stage + ': ' + d.error
+          log('worklet ERROR ' + workletError)
+          resolve()
+        }
+      }
+    })
+
+    node.port.postMessage({ type: 'loadModel', modelBytes })
+    await Promise.race([settled, new Promise((r) => setTimeout(r, 15000))])
+
+    if (workletError) throw new Error(workletError)
+    if (!result.instantiated) throw new Error('worklet never reported instantiation')
+    if (!result.modelLoaded) throw new Error('worklet never reported a loaded model')
+
+    const osc = ctx.createOscillator()
+    osc.frequency.value = 220
+    const g = ctx.createGain()
+    g.gain.value = 0.3
+    osc.connect(g); g.connect(node); node.connect(ctx.destination)
+    osc.start()
+
+    const rendered = await ctx.startRendering()
+    const ch = rendered.getChannelData(0)
+    let peak = 0, nonFinite = 0
+    for (let i = 0; i < ch.length; i++) {
+      const v = ch[i]
+      if (!Number.isFinite(v)) { nonFinite++; continue }
+      const a = Math.abs(v); if (a > peak) peak = a
+    }
+    result.outputPeak = peak
+    log('rendered ' + ch.length + ' frames, peak ' + peak.toFixed(6) + ', nonFinite ' + nonFinite)
+
+    if (nonFinite) throw new Error(nonFinite + ' non-finite samples')
+    if (peak === 0) throw new Error('silence — inference did not run')
+
+    result.ok = true
+    log('PASS — NAM inference ran on the audio thread in Electron')
+  } catch (err) {
+    result.error = (err && err.message) || String(err)
+    log('FAIL — ' + result.error)
+  }
+  console.log('SPIKE_DONE ' + JSON.stringify(result))
+}
+run()
+</script>
+</body>
