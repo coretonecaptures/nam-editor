@@ -79,6 +79,20 @@ function saveDiPrefs(prefs: DiPrefs): void {
   }
 }
 
+/**
+ * Loop-playback preference. Persisted for the same reason the DI choices are: someone comparing
+ * captures wants the clip to keep cycling, and having to re-enable it every session is friction.
+ */
+const LOOP_PREF_KEY = 'nam-player-loop'
+
+function loadLoopPref(): boolean {
+  try {
+    return localStorage.getItem(LOOP_PREF_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
 function formatError(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
@@ -262,6 +276,7 @@ export function PlayerPanel({
   const [renderMs, setRenderMs] = useState<number | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [progress, setProgress] = useState(0)
+  const [loopEnabled, setLoopEnabled] = useState(loadLoopPref)
 
   const [summaryColumns, setSummaryColumns] = useState(2)
   const [diPrefs, setDiPrefs] = useState<DiPrefs>(loadDiPrefs)
@@ -546,7 +561,9 @@ export function PlayerPanel({
 
     const source = ctx.createBufferSource()
     source.buffer = buffer
+    source.loop = loopEnabled
     source.connect(ctx.destination)
+    // Never fires while looping, which is fine — Stop is then the only way out, by design.
     source.onended = () => stopPlayback()
     source.start()
 
@@ -556,11 +573,22 @@ export function PlayerPanel({
 
     const tick = () => {
       const elapsed = ctx.currentTime - startedAtRef.current
-      setProgress(Math.min(1, elapsed / buffer.duration))
+      // Wrap the bar on each pass instead of pinning it at 100% forever.
+      setProgress(
+        source.loop
+          ? (elapsed % buffer.duration) / buffer.duration
+          : Math.min(1, elapsed / buffer.duration)
+      )
       rafRef.current = requestAnimationFrame(tick)
     }
     rafRef.current = requestAnimationFrame(tick)
-  }, [isPlaying, getAudioContext, stopPlayback])
+  }, [isPlaying, getAudioContext, stopPlayback, loopEnabled])
+
+  // Apply a loop toggle to audio that's already playing — `loop` is live-settable on an active
+  // AudioBufferSourceNode, so this takes effect without restarting playback.
+  useEffect(() => {
+    if (sourceRef.current) sourceRef.current.loop = loopEnabled
+  }, [loopEnabled])
 
   const diLabel = useMemo(() => {
     if (!diPath) return null
@@ -755,8 +783,9 @@ export function PlayerPanel({
 
         {status === 'ready' && (
           <>
-            {/* Play / Stop */}
-            <div className="flex items-center justify-center">
+            {/* Play / Stop, with Loop alongside. Loop is offset so the play button stays
+                optically centred in the panel rather than shifting to make room. */}
+            <div className="relative flex items-center justify-center">
               <button
                 onClick={handlePlayStop}
                 className={`w-16 h-16 rounded-full flex items-center justify-center shadow-lg transition-all ${
@@ -775,6 +804,32 @@ export function PlayerPanel({
                     <path d="M8 5.14v14l11-7-11-7z" />
                   </svg>
                 )}
+              </button>
+
+              <button
+                onClick={() => {
+                  const next = !loopEnabled
+                  setLoopEnabled(next)
+                  try {
+                    localStorage.setItem(LOOP_PREF_KEY, next ? '1' : '0')
+                  } catch {
+                    // Non-fatal — the toggle still works for this session.
+                  }
+                }}
+                aria-pressed={loopEnabled}
+                title={loopEnabled ? 'Looping — click to play once' : 'Play once — click to loop'}
+                className={`absolute left-1/2 ml-12 w-9 h-9 rounded-full flex items-center justify-center transition-colors ${
+                  loopEnabled
+                    ? 'bg-teal-500 text-white shadow'
+                    : 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'
+                }`}
+              >
+                <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 1l4 4-4 4" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 11V9a4 4 0 014-4h14" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M7 23l-4-4 4-4" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 13v2a4 4 0 01-4 4H3" />
+                </svg>
               </button>
             </div>
 
