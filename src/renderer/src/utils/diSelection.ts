@@ -62,3 +62,37 @@ export function resolveActiveDiClip(
   const active = categories.find((c) => c.name === prefs.activeCategory) ?? categories[0]
   return clipForCategory(active, prefs)
 }
+
+/**
+ * Chosen cabinet IR, shared the same way the DI clip is.
+ *
+ * The player used a module-level variable, which meant the choice was lost on reload and was
+ * invisible to anything outside that file. Auditioning has to apply the *same* IR the player
+ * would, or an amp-only capture sounds like two different amps depending on where you played it.
+ */
+const IR_PATH_KEY = 'nam-player-ir-path'
+
+export function loadIrPath(): string | null {
+  try {
+    return localStorage.getItem(IR_PATH_KEY)
+  } catch {
+    return null
+  }
+}
+
+export function saveIrPath(path: string | null): void {
+  try {
+    if (path) localStorage.setItem(IR_PATH_KEY, path)
+    else localStorage.removeItem(IR_PATH_KEY)
+  } catch {
+    // Non-fatal.
+  }
+}
+
+/** The remembered IR if it still exists, else the first available. */
+export function resolveActiveIr(categories: DiCategoryLike[]): string | null {
+  const all = categories.flatMap((c) => c.files)
+  if (all.length === 0) return null
+  const remembered = loadIrPath()
+  return all.find((f) => f.path === remembered)?.path ?? all[0].path
+}

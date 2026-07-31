@@ -32,6 +32,8 @@ import {
   readModelSampleRate,
   resumeOffsetSec
 } from '../utils/playerAudio'
+import { loadIrPath, saveIrPath } from '../utils/diSelection'
+import { applyCabinetIr, resampleTo } from '../utils/audioGraph'
 import type { NamRenderRequest, NamRenderResponse } from '../workers/namRender.worker'
 
 /**
@@ -103,76 +105,6 @@ function loadLoopPref(): boolean {
 function formatError(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
-}
-
-async function resampleTo(
-  samples: Float32Array,
-  sourceRate: number,
-  targetRate: number
-): Promise<Float32Array<ArrayBuffer>> {
-  const copy = new Float32Array(samples.length)
-  copy.set(samples)
-  if (sourceRate === targetRate || samples.length === 0) return copy
-
-  const targetLength = Math.max(1, Math.round((samples.length * targetRate) / sourceRate))
-  const offline = new OfflineAudioContext(1, targetLength, targetRate)
-  const sourceBuffer = offline.createBuffer(1, samples.length, sourceRate)
-  sourceBuffer.copyToChannel(copy, 0)
-  const node = offline.createBufferSource()
-  node.buffer = sourceBuffer
-  node.connect(offline.destination)
-  node.start()
-  const resampled = await offline.startRendering()
-  const out = new Float32Array(resampled.length)
-  resampled.copyFromChannel(out, 0)
-  return out
-}
-
-async function applyCabinetIr(
-  samples: Float32Array,
-  sampleRate: number,
-  irSamples: Float32Array,
-  irSampleRate: number,
-  mix: number
-): Promise<Float32Array<ArrayBuffer>> {
-  const wet = Math.max(0, Math.min(1, mix))
-  const dry = 1 - wet
-  if (samples.length === 0 || irSamples.length === 0 || wet === 0) {
-    const passthrough = new Float32Array(samples.length)
-    passthrough.set(samples)
-    return passthrough
-  }
-
-  const offline = new OfflineAudioContext(1, samples.length + irSamples.length, sampleRate)
-  const dryBuffer = offline.createBuffer(1, samples.length, sampleRate)
-  dryBuffer.copyToChannel(samples as Float32Array<ArrayBuffer>, 0)
-  const source = offline.createBufferSource()
-  source.buffer = dryBuffer
-
-  const irAtGraphRate = await resampleTo(irSamples, irSampleRate, sampleRate)
-  const irBuffer = offline.createBuffer(1, irAtGraphRate.length, sampleRate)
-  irBuffer.copyToChannel(irAtGraphRate, 0)
-
-  const convolver = offline.createConvolver()
-  convolver.normalize = false
-  convolver.buffer = irBuffer
-
-  const wetGain = offline.createGain()
-  wetGain.gain.value = wet
-  const dryGain = offline.createGain()
-  dryGain.gain.value = dry
-
-  source.connect(convolver)
-  convolver.connect(wetGain)
-  wetGain.connect(offline.destination)
-  source.connect(dryGain)
-  dryGain.connect(offline.destination)
-
-  source.start()
-  const rendered = await offline.startRendering()
-  const out = new Float32Array(rendered.length)
-  rendered.copyFromChannel(out, 0)
-  return out
 }
 
 interface DiCategory {
@@ -546,7 +478,8 @@ export function PlayerPanel({
       setIrCategories(result.categories)
       const allIrs = result.categories.flatMap((c) => c.files)
       if (allIrs.length === 0) return
-      const remembered = allIrs.find((f) => f.path === lastIrPath)
+      // Persisted and shared, so the Tone Map's auditioning applies the same cab.
+      const remembered = allIrs.find((f) => f.path === (lastIrPath ?? loadIrPath()))
       setIrPath(remembered?.path ?? allIrs[0].path)
     })()
     return () => {
@@ -1279,7 +1212,7 @@ export function PlayerPanel({
                     <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="var(--text-3)" strokeWidth={1.8}><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="12" r="3.2" /><circle cx="16.5" cy="12" r="1.6" /></svg>
                     <select
                       value={irPath ?? ''}
-                      onChange={(e) => { setIrPath(e.target.value || null); lastIrPath = e.target.value || null }}
+                      onChange={(e) => { const next = e.target.value || null; setIrPath(next); lastIrPath = next; saveIrPath(next) }}
                       disabled={busy}
                       className="flex-1 min-w-0 bg-transparent text-xs text-gray-800 dark:text-gray-100 focus:outline-none"
                     >

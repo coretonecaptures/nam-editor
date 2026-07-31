@@ -22,10 +22,12 @@ import type { NamFile } from '../types/nam'
 import {
   applyDcBlocker,
   base64ToArrayBuffer,
+  captureNeedsCabIr,
   findLoudestWindowStart,
   normalizeRendered,
   readModelSampleRate
 } from '../utils/playerAudio'
+import { applyCabinetIr } from '../utils/audioGraph'
 import { ScanRenderPool } from '../utils/scanRenderPool'
 import type { NamRenderRequest } from '../workers/namRender.worker'
 
@@ -50,7 +52,14 @@ export interface AuditionApi {
   error: string
 }
 
-export function useAudition(diPath: string | null): AuditionApi {
+export interface AuditionOptions {
+  /** Cabinet IR applied to captures that have no cab of their own. */
+  irPath?: string | null
+  irMix?: number
+}
+
+export function useAudition(diPath: string | null, options: AuditionOptions = {}): AuditionApi {
+  const { irPath = null, irMix = 1 } = options
   const [playingPath, setPlayingPath] = useState<string | null>(null)
   const [ready, setReady] = useState<Set<string>>(new Set())
   const [diReady, setDiReady] = useState(false)
@@ -63,6 +72,7 @@ export function useAudition(diPath: string | null): AuditionApi {
   const inFlightRef = useRef(new Set<string>())
   const diByRateRef = useRef(new Map<number, Float32Array<ArrayBuffer>>())
   const rawDiRef = useRef<{ samples: Float32Array<ArrayBuffer>; rate: number } | null>(null)
+  const irRef = useRef<{ samples: Float32Array; rate: number } | null>(null)
   /** Bumped on every play/stop; a render that finishes after a newer request is discarded. */
   const generationRef = useRef(0)
 
@@ -120,6 +130,32 @@ export function useAudition(diPath: string | null): AuditionApi {
     }
   }, [diPath, getCtx])
 
+  // Decode the IR once too. Without it, amp-only captures audition as raw power-amp signal -
+  // harsh and fizzy - because the speaker doing the heavy filtering in a real rig isn't modelled.
+  useEffect(() => {
+    let cancelled = false
+    irRef.current = null
+    cacheRef.current.clear()
+    setReady(new Set())
+    if (!irPath) return
+    void (async () => {
+      try {
+        const res = await window.api.readFileBinary(irPath)
+        if (cancelled || res.error || !res.data) return
+        const decoded = await getCtx().decodeAudioData(base64ToArrayBuffer(res.data))
+        if (cancelled) return
+        const mono = new Float32Array(decoded.length)
+        decoded.copyFromChannel(mono, 0, 0)
+        irRef.current = { samples: mono, rate: decoded.sampleRate }
+      } catch {
+        // An unreadable IR shouldn't stop captures being auditioned dry.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [irPath, getCtx])
+
   const inputForRate = useCallback(async (rate: number): Promise<Float32Array<ArrayBuffer>> => {
     const cached = diByRateRef.current.get(rate)
     if (cached) return cached
@@ -167,9 +203,21 @@ export function useAudition(diPath: string | null): AuditionApi {
         }
         const result = await getPool().render(request)
         if (!result.ok) throw new Error(result.error)
-        const processed = result.output
+
+        // Same rule the player uses: a capture that already contains a cab must NOT get another,
+        // or you hear two speakers in series.
+        let processed: Float32Array = result.output
+        let usedIr = false
+        const ir = irRef.current
+        if (ir && captureNeedsCabIr(file.metadata.gear_type)) {
+          processed = await applyCabinetIr(processed, rate, ir.samples, ir.rate, irMix)
+          usedIr = true
+        }
+
         applyDcBlocker(processed, rate)
-        const normalized = normalizeRendered(processed, result.loudnessDb)
+        // The model's own loudness figure describes the dry signal, so it no longer applies once
+        // a cab has been convolved in - fall back to peak normalisation, as the player does.
+        const normalized = normalizeRendered(processed, usedIr ? null : result.loudnessDb)
         const buffer = getCtx().createBuffer(1, normalized.length, rate)
         buffer.copyToChannel(normalized, 0)
 
@@ -193,7 +241,7 @@ export function useAudition(diPath: string | null): AuditionApi {
         inFlightRef.current.delete(key)
       }
     },
-    [getCtx, getPool, inputForRate]
+    [getCtx, getPool, inputForRate, irMix]
   )
 
   const stopSource = useCallback(() => {

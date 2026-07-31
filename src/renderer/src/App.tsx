@@ -4706,6 +4706,8 @@ INSTRUCTIONS:
             }
             nowPlaying={playerFile}
             diLibraryPath={settings.diPreviewLibraryPath || null}
+            irLibraryPath={settings.irLibraryPath || null}
+            irMix={settings.irMix}
             // Same pair FileList's play button uses. Setting the selection is mandatory, not
             // incidental: metadataCoverPath derives from the single selection, so a click that
             // only set playerFile would open the player with no cover art.

@@ -30,7 +30,7 @@ import {
 import { paddedDomain } from './dashboard/scales'
 import { ScanList } from './ScanList'
 import { useAudition } from '../hooks/useAudition'
-import { resolveActiveDiClip } from '../utils/diSelection'
+import { resolveActiveDiClip, resolveActiveIr } from '../utils/diSelection'
 
 const TONE_COLORS: Record<string, string> = {
   clean: '#38bdf8',
@@ -225,6 +225,9 @@ export interface ToneMapViewProps {
   nowPlaying?: NamFile | null
   /** DI library root — auditioning needs a clip to play captures through. */
   diLibraryPath?: string | null
+  /** IR library root + mix, so auditions apply the same cab the player would. */
+  irLibraryPath?: string | null
+  irMix?: number
   onClose?: () => void
 }
 
@@ -235,6 +238,8 @@ export function ToneMapView({
   onPlay,
   nowPlaying = null,
   diLibraryPath = null,
+  irLibraryPath = null,
+  irMix = 1,
   onClose
 }: ToneMapViewProps) {
   const [scope, setScope] = useState<'library' | 'folder'>('library')
@@ -272,7 +277,8 @@ export function ToneMapView({
   const [dotAction, setDotAction] = useState<'open' | 'click' | 'hover'>('open')
   const [latched, setLatched] = useState(false)
   const [diPath, setDiPath] = useState<string | null>(null)
-  const audition = useAudition(diPath)
+  const [irPath, setIrPath] = useState<string | null>(null)
+  const audition = useAudition(diPath, { irPath, irMix })
 
   const plotRef = useRef<HTMLDivElement | null>(null)
   const [plotWidth, setPlotWidth] = useState(900)
@@ -281,15 +287,29 @@ export function ToneMapView({
   /** Non-null once the user drags the grip, which stops rows following the window. */
   const [rowHeightOverride, setRowHeightOverride] = useState<number | null>(null)
 
-  useEffect(() => {
-    const element = plotRef.current
-    if (!element || typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver((entries) => {
-      setPlotWidth(Math.max(360, entries[0]?.contentRect.width ?? 900))
-    })
-    observer.observe(element)
-    return () => observer.disconnect()
+  /**
+   * Callback ref, not a plain one: the plot unmounts when you switch to the list view, so a
+   * `[]`-deps effect would keep observing the OLD detached node when you switch back. A detached
+   * element measures 0, which clamped to the 360px floor and squashed the plot into a strip.
+   */
+  const [plotEl, setPlotEl] = useState<HTMLDivElement | null>(null)
+  const attachPlot = useCallback((node: HTMLDivElement | null) => {
+    plotRef.current = node
+    setPlotEl(node)
   }, [])
+
+  useEffect(() => {
+    if (!plotEl || typeof ResizeObserver === 'undefined') return
+    const measure = (): void => {
+      const width = plotEl.getBoundingClientRect().width
+      // Ignore zero-width reports (hidden or mid-layout) rather than clamping them to the floor.
+      if (width > 0) setPlotWidth(Math.max(360, width))
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(plotEl)
+    return () => observer.disconnect()
+  }, [plotEl])
 
 
   const baseFiles = scope === 'library' ? files : scopedFiles
@@ -581,6 +601,24 @@ export function ToneMapView({
       cancelled = true
     }
   }, [diLibraryPath])
+
+  // Same cab the player would apply. useAudition only uses it for captures that lack a cab of
+  // their own, so this is safe to resolve unconditionally.
+  useEffect(() => {
+    let cancelled = false
+    if (!irLibraryPath) {
+      setIrPath(null)
+      return
+    }
+    void (async () => {
+      const result = await window.api.scanWavLibrary(irLibraryPath)
+      if (cancelled) return
+      setIrPath(resolveActiveIr(result.categories))
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [irLibraryPath])
 
   /** Plot geometry must match ToneGrid's own padding for cursor->value maths to line up. */
   const PLOT_PAD_L = 132
@@ -994,7 +1032,7 @@ export function ToneMapView({
             </div>
           ) : (
             <div
-              ref={plotRef}
+              ref={attachPlot}
               onWheel={handleWheel}
               onMouseDown={handlePanStart}
               onMouseMove={handlePanMove}
