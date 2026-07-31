@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest'
 import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
 import type { NamFile } from '../types/nam'
-import { ToneMapView } from './ToneMapView'
+import { ToneMapView, autoRowHeightFor } from './ToneMapView'
 
 let counter = 0
 function capture(meta: Partial<NamFile['metadata']>): NamFile {
@@ -206,5 +206,54 @@ describe('ToneMapView zoom', () => {
   it('starts at the full range with no zoom breadcrumb', () => {
     const html = render(denseLibrary())
     expect(html).not.toMatch(/zoomed \d/)
+  })
+})
+
+/**
+ * Vertical sizing policy. The map fills half the free space so a small library doesn't read as
+ * "the whole app is one chart" — and past a certain row count it stops shrinking and grows
+ * instead, which is what "unless there are a lot of amps" means in practice.
+ */
+describe('autoRowHeightFor', () => {
+  const TALL = 900
+  const MIN = 26
+  const MAX = 96
+
+  it('stretches rows well past the minimum when there are few amps', () => {
+    expect(autoRowHeightFor(4, TALL)).toBeGreaterThan(MIN)
+  })
+
+  it('uses about half the free space, not all of it', () => {
+    const rows = 6
+    const used = autoRowHeightFor(rows, TALL) * rows
+    expect(used).toBeLessThanOrEqual(TALL * 0.5)
+    // ...and is actually using that space rather than defaulting small.
+    expect(used).toBeGreaterThan(TALL * 0.3)
+  })
+
+  it('stops shrinking once there are a lot of amps, so the plot grows and scrolls', () => {
+    // 40 rows cannot fit in half the window at the minimum height; height must clamp, not shrink.
+    expect(autoRowHeightFor(40, TALL)).toBe(MIN)
+    expect(autoRowHeightFor(200, TALL)).toBe(MIN)
+  })
+
+  it('never exceeds the maximum, however few amps or however tall the window', () => {
+    expect(autoRowHeightFor(1, 20000)).toBe(MAX)
+    expect(autoRowHeightFor(2, TALL)).toBeLessThanOrEqual(MAX)
+  })
+
+  it('falls back to the default before the window has been measured', () => {
+    expect(autoRowHeightFor(5, 0)).toBe(MIN)
+    expect(autoRowHeightFor(0, TALL)).toBe(MIN)
+    expect(autoRowHeightFor(-1, TALL)).toBe(MIN)
+  })
+
+  it('is monotonic: more amps never means taller rows', () => {
+    let previous = Infinity
+    for (const rows of [1, 2, 4, 8, 16, 32, 64]) {
+      const height = autoRowHeightFor(rows, TALL)
+      expect(height).toBeLessThanOrEqual(previous)
+      previous = height
+    }
   })
 })

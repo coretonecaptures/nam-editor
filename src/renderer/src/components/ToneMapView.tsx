@@ -57,6 +57,22 @@ const TONE_ORDER = ['clean', 'crunch', 'overdrive', 'distortion', 'hi_gain', 'fu
 const PLOT_BOTTOM_GUTTER = 104
 /** Past this, rows are mostly empty space again and the dots stop growing with them. */
 const MAX_ROW_HEIGHT = 96
+/** Share of the free vertical space the map takes by default; drag the grip for more. */
+const DEFAULT_HEIGHT_FRACTION = 0.5
+
+/**
+ * Row height that fills half the free vertical space, bounded both ways.
+ *
+ * Half rather than all of it: filling the window made a six-amp library look like the whole app
+ * was one chart, with nothing left on screen below. The lower clamp is what makes "unless there
+ * are a lot of amps" fall out on its own — once there are enough rows that half the space can't
+ * give each 26px, the height stops shrinking and the plot grows past half and scrolls instead.
+ */
+export function autoRowHeightFor(rowCount: number, availableHeight: number): number {
+  if (rowCount <= 0 || availableHeight <= 0) return TONE_GRID_ROW_HEIGHT
+  const usable = availableHeight * DEFAULT_HEIGHT_FRACTION - TONE_GRID_CHROME_HEIGHT
+  return Math.min(Math.max(usable / rowCount, TONE_GRID_ROW_HEIGHT), MAX_ROW_HEIGHT)
+}
 
 function toneColor(tone: string | null | undefined): string {
   if (!tone) return UNTYPED_COLOR
@@ -597,19 +613,12 @@ export function ToneMapView({
     // width change, or the zoom breadcrumb appearing.
   }, [rows.length, plotWidth, zoom])
 
-  /**
-   * Row height auto-fills the window, with a manual override.
-   *
-   * A library with only a handful of amps left most of the window empty at the fixed 26px row
-   * height. Rows now stretch to use whatever vertical space is actually free, and the dots grow
-   * with them (see `toneGridDotRadius`) so a taller row isn't just the same specks further
-   * apart. Dragging the grip sets an explicit height; "Fit" returns to following the window.
-   */
-  const autoRowHeight = useMemo(() => {
-    if (rows.length === 0 || availableHeight <= 0) return TONE_GRID_ROW_HEIGHT
-    const perRow = (availableHeight - TONE_GRID_CHROME_HEIGHT) / rows.length
-    return Math.min(Math.max(perRow, TONE_GRID_ROW_HEIGHT), MAX_ROW_HEIGHT)
-  }, [rows.length, availableHeight])
+  // Rows follow the window (see autoRowHeightFor) until the grip pins an explicit height. The
+  // dots grow with them via toneGridDotRadius, so a taller row isn't the same specks spread out.
+  const autoRowHeight = useMemo(
+    () => autoRowHeightFor(rows.length, availableHeight),
+    [rows.length, availableHeight]
+  )
 
   const rowHeight = rowHeightOverride ?? autoRowHeight
   const gridHeight = toneGridHeight(rows.length, rowHeight)
