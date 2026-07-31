@@ -282,6 +282,14 @@ export function ToneMapView({
   const [toneKeys, setToneKeys] = useState<Set<string>>(new Set())
   const [gearKeys, setGearKeys] = useState<Set<string>>(new Set())
   const [showUntagged, setShowUntagged] = useState(true)
+  /**
+   * Captures with no `tone_type` at all.
+   *
+   * Defaults to shown, like the untagged-amps toggle: ~15% of a real library has no tone type, and
+   * silently dropping that many would misrepresent the library. The header count reflects the
+   * choice either way, so hiding them is never invisible.
+   */
+  const [showUntaggedTone, setShowUntaggedTone] = useState(true)
   /** When set, rows become that amp's models instead of makes — one level of zoom in. */
   const [expandedMake, setExpandedMake] = useState<string | null>(null)
   const [hover, setHover] = useState<{ mark: ToneGridMark; x: number; y: number } | null>(null)
@@ -399,6 +407,8 @@ export function ToneMapView({
         if (creatorKey === null || !creatorKeys.has(creatorKey)) return false
       }
 
+      if (!showUntaggedTone && !f.metadata.tone_type) return false
+
       if (toneKeys.size > 0) {
         const tone = f.metadata.tone_type ?? 'other'
         if (!toneKeys.has(tone)) return false
@@ -410,7 +420,7 @@ export function ToneMapView({
 
       return true
     })
-  }, [positionable, makeKeys, creatorKeys, toneKeys, gearKeys, showUntagged])
+  }, [positionable, makeKeys, creatorKeys, toneKeys, gearKeys, showUntagged, showUntaggedTone])
 
   /**
    * Rows are makes, or one amp's models when drilled in.
@@ -550,6 +560,12 @@ export function ToneMapView({
     }))
   }, [positionable])
 
+  /** How many captures the tone-type toggle governs, so the checkbox states its own cost. */
+  const untaggedToneCount = useMemo(
+    () => positionable.reduce((n, f) => n + (f.metadata.tone_type ? 0 : 1), 0),
+    [positionable]
+  )
+
   const gearOptions = useMemo(() => {
     const counts = new Map<string, number>()
     for (const f of positionable) {
@@ -610,6 +626,7 @@ export function ToneMapView({
     setGearKeys(new Set())
     setExpandedMake(null)
     setShowUntagged(true)
+    setShowUntaggedTone(true)
     setZoom(null)
   }
 
@@ -1132,6 +1149,20 @@ export function ToneMapView({
             />
             <span className="text-[11px] text-gray-600 dark:text-gray-300">
               Show untagged amps
+            </span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={showUntaggedTone}
+              onChange={(e) => setShowUntaggedTone(e.target.checked)}
+              className="w-3 h-3 rounded accent-teal-500"
+            />
+            <span className="text-[11px] text-gray-600 dark:text-gray-300">
+              Show captures with no tone type
+              {untaggedToneCount > 0 && (
+                <span className="text-gray-400 dark:text-gray-500"> ({untaggedToneCount.toLocaleString()})</span>
+              )}
             </span>
           </label>
         </div>

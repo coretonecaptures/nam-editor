@@ -160,6 +160,11 @@ choose the same captures either way.
 **Facets** — multi-select filters for amp, creator, tone type and **gear type**, plus a breadcrumb
 of what is currently narrowed.
 
+**Untagged captures** — two checkboxes control whether captures with no amp, and captures with no
+tone type, appear at all. Both default to shown: a real library can have a third of its captures
+untagged in one field or another, and hiding that much by default would misrepresent what you own.
+The header count always reflects the choice.
+
 > **Gear type is not just tidiness.** A capture of an amp on its own is raw power-amp signal and
 > needs a cabinet IR to sound like anything; one that already contains a cab must not get another.
 > Auditioning a mixed set therefore means half get a cab and half do not, and they are not
