@@ -203,10 +203,29 @@ catches you.
 smooth, meaningful sweep. Better orderings (see Tone Radio below) can replace the comparator later
 without touching the UI — keep ordering behind a single function so that swap stays cheap.
 
-**The real engineering constraint:** each capture must be rendered through the WASM model before it
-can be heard (~133 ms measured). That is invisible for click-to-play but *not* for a continuous
-sweep, so scan needs a prefetch queue rendering the next N captures ahead of the playhead. Getting
-that right is most of the work — budget for it rather than discovering it late.
+**The real engineering constraint — MEASURED.** Each capture must be rendered through the WASM model
+before it can be heard, and render time is dominated by clip length (~60 ms fixed model load/reset,
+then ~120 ms per audio-second):
+
+| scan clip | render per capture |
+|---|---|
+| 0.5 s | 117 ms |
+| 1 s | 176 ms |
+| 3 s | 406 ms |
+| 6 s | 727 ms |
+| **12 s (today's `MAX_PREVIEW_SECONDS`)** | **1518 ms** |
+
+So scanning must **not** reuse the 12 s preview — 1.5 s of silence before every capture makes a
+sweep unusable. Use a short dedicated scan clip (~3 s) and a prefetch pool rendering ahead of the
+playhead; at 406 ms across 4 workers that is one capture ready every ~100 ms, comfortably faster
+than anyone sweeps. Prefetch is most of the work here — budget for it rather than discovering it
+late.
+
+**Descriptors are scope-lazy, never library-wide.** 38k captures would be ~1.6 h across 4 workers;
+the ~100–500 captures in the scope you are about to sweep are 30–80 s. Sweeping starts immediately
+on metadata ordering and re-sorts as descriptors land, so the wait is never blocking. Cache per
+capture by path + mtime + size + probeVersion, so it is one-time per capture and new downloads scan
+incrementally.
 
 **Open questions:**
 - Fixed dwell time per capture, or hold-to-listen / release-to-advance?
@@ -293,12 +312,22 @@ this one".
 **Reframe: the descriptor fails as a similarity metric but succeeds as an ordering.** Use it to sort
 a scan sweep, not to claim two captures sound alike.
 
-**Library metadata reality (re-measured; supersedes the older figures above):** 3,853 captures, 100%
-have `gain`. Only **13 distinct `gear_make`**, 937 (24%) with none at all. `modeled_by` is
-effectively a single value — 3,724 "Core Tone Captures" — so **the creator facet is dead for this
-library** until third-party captures are imported. `tone_type` is now well spread and is the *best*
-metadata facet available: crunch 1236, overdrive 645, clean 391, hi_gain 313, fuzz 57, distortion 20,
-none 1191. ("Dr Z" 242 vs "Doctor Z" 40 confirms `gearMake.ts` normalization earns its keep.)
+**Library metadata reality — CORRECTED.** A first pass scanned only `Y:/_RELEASES` (3,853 captures,
+own releases) and concluded the creator facet was dead. That was an artifact of the folder chosen.
+Across the real collection (`Y:` plus `F:/NAM Captures Paid and Tone3000`) there are **38,263
+captures**, and:
+- **26 distinct `modeled_by`** — the creator facet is very much alive. It is also the strongest case
+  for normalization anywhere in the app: SLAMMIN MOFO appears as **four** spellings totalling ~5,840
+  (`SLAMMIN MOFO` 3863, `slamminmofo` 1425, `Slammin Mofo` 184, plus `MADE BY KDM TRAINED BY SLAMMIN
+  MOFO` 368). Others: Core Tone Captures 18,372, ML Soundlab 904, stjepanherceg 520, 2dor 320.
+- **71 distinct `gear_make`**, 15,251 (40%) with none at all, `tz-make` placeholder 1,947, and
+  `MARSHALL` 1590 vs `Marshall` 182 again splitting on case.
+- Gain stays useless regardless of folder — the distribution above holds.
+
+**Scale changes the descriptor economics completely.** 38,263 x 618 ms = **6.6 hours
+single-threaded, ~1.6 hours across 4 workers**. That is far too much to ask of every user as a
+blocking step, and every user builds their own collection so it cannot be precomputed and shipped.
+**Descriptors must therefore be scope-lazy, not library-wide** — see the Scan mode entry.
 
 ---
 
