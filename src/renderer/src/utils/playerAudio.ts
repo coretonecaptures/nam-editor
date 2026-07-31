@@ -169,6 +169,21 @@ export function captureNeedsCabIr(gearType: string | null | undefined): boolean 
   return !GEAR_TYPES_WITH_CAB.has(gearType)
 }
 
+/**
+ * Where pressing Play should resume from, in seconds.
+ *
+ * A clip that has run to the end leaves progress at 1. Resuming from there starts a sliver at
+ * the tail that ends immediately — playback that looks like Play did nothing at all. Treating a
+ * finished clip as a restart is what every transport does, so Play always audibly starts.
+ */
+export const PLAY_RESTART_THRESHOLD = 0.999
+
+export function resumeOffsetSec(progress: number, durationSec: number): number {
+  if (!Number.isFinite(progress) || !Number.isFinite(durationSec) || durationSec <= 0) return 0
+  if (progress >= PLAY_RESTART_THRESHOLD) return 0
+  return Math.max(0, progress) * durationSec
+}
+
 /** Decode a base64 payload (as returned by the readFileBinary IPC) into an ArrayBuffer. */
 export function base64ToArrayBuffer(base64: string): ArrayBuffer {
   const binary = atob(base64)

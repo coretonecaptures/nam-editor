@@ -1,5 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ampPlaceholder from '../assets/images/amp_placeholder.png'
+import restartUnlit from '../assets/transport/restart-unlit.png'
+import restartLit from '../assets/transport/restart-lit.png'
+import playUnlit from '../assets/transport/play-unlit.png'
+import playLit from '../assets/transport/play-lit.png'
+import stopUnlit from '../assets/transport/stop-unlit.png'
+import stopLit from '../assets/transport/stop-lit.png'
+import loopUnlit from '../assets/transport/loop-unlit.png'
+import loopLit from '../assets/transport/loop-lit.png'
+import restartBarUnlit from '../assets/transport/restart-bar-unlit.png'
+import restartBarLit from '../assets/transport/restart-bar-lit.png'
+import playBarUnlit from '../assets/transport/play-bar-unlit.png'
+import playBarLit from '../assets/transport/play-bar-lit.png'
+import stopBarUnlit from '../assets/transport/stop-bar-unlit.png'
+import stopBarLit from '../assets/transport/stop-bar-lit.png'
+import loopBarUnlit from '../assets/transport/loop-bar-unlit.png'
+import loopBarLit from '../assets/transport/loop-bar-lit.png'
+import transportPanelBg from '../assets/transport/panel-bg.jpg'
 import { NamFile } from '../types/nam'
 import { detectPreset } from '../utils/detectPreset'
 import { getCaptureBestEsr, getEsrTone } from '../utils/esr'
@@ -12,7 +29,8 @@ import {
   findLoudestWindowStart,
   sortDiCategories,
   normalizeRendered,
-  readModelSampleRate
+  readModelSampleRate,
+  resumeOffsetSec
 } from '../utils/playerAudio'
 import type { NamRenderRequest, NamRenderResponse } from '../workers/namRender.worker'
 
@@ -215,74 +233,96 @@ function MetaCell({ label, value, tone }: { label: string; value: string; tone?:
 }
 
 /** ── A physical tape-transport cap. */
+// variant -> [unlit image, lit image], cut from the photographed panel reference
+// (src/assets/transport/*.png). RESTART has no on/off state today; it always renders unlit.
+const TAPE_CAP_FACES: Record<'neutral' | 'play' | 'stop' | 'loop', [string, string]> = {
+  neutral: [restartUnlit, restartLit],
+  play: [playUnlit, playLit],
+  stop: [stopUnlit, stopLit],
+  loop: [loopUnlit, loopLit]
+}
+const TAPE_CAP_BARS: Record<'neutral' | 'play' | 'stop' | 'loop', [string, string]> = {
+  neutral: [restartBarUnlit, restartBarLit],
+  play: [playBarUnlit, playBarLit],
+  stop: [stopBarUnlit, stopBarLit],
+  loop: [loopBarUnlit, loopBarLit]
+}
+const TAPE_CAP_SIZE = 78
+const TAPE_CAP_FLASH_MS = 180
+
 function TapeCap({
   label,
-  wide,
   variant,
   active,
+  momentary,
   onClick,
   disabled,
-  children,
   title
 }: {
   label: string
-  wide?: boolean
   variant: 'neutral' | 'play' | 'stop' | 'loop'
+  /** Persistent on/off state (PLAY while playing, LOOP while looping). Ignored when `momentary`. */
   active?: boolean
+  /** RESTART/STOP: no persistent state — light briefly on click instead of tracking `active`. */
+  momentary?: boolean
   onClick?: () => void
   disabled?: boolean
-  children: React.ReactNode
   title?: string
 }) {
-  const faces: Record<string, React.CSSProperties> = {
-    neutral: {
-      background: 'linear-gradient(180deg,#2b333d,#1a1f27)',
-      border: '1px solid #39424e',
-      boxShadow: '0 3px 0 #0d1116, inset 0 1px 0 rgba(255,255,255,.08)',
-      color: '#c3cad3'
-    },
-    play: {
-      background: 'linear-gradient(180deg,#3ddc9a,#17a86f)',
-      border: '1px solid #0f8a5a',
-      boxShadow: `0 3px 0 #0a5c3c, inset 0 1px 0 rgba(255,255,255,.4)${active ? ', 0 0 0 3px rgba(45,212,191,.35)' : ''}`,
-      color: '#053725'
-    },
-    stop: {
-      background: 'linear-gradient(180deg,#3a424c,#232a32)',
-      border: '1px solid #454e59',
-      boxShadow: '0 3px 0 #12161a, inset 0 1px 0 rgba(255,255,255,.08)',
-      color: '#e26d63'
-    },
-    loop: active
-      ? {
-          background: 'linear-gradient(180deg,#f0b84a,#d1922a)',
-          border: '1px solid #b47c1f',
-          boxShadow: '0 3px 0 #7c520f, inset 0 1px 0 rgba(255,255,255,.45)',
-          color: '#4a3208'
-        }
-      : {
-          background: 'linear-gradient(180deg,#2b333d,#1a1f27)',
-          border: '1px solid #39424e',
-          boxShadow: '0 3px 0 #0d1116, inset 0 1px 0 rgba(255,255,255,.08)',
-          color: '#8a929b'
-        }
+  const [flash, setFlash] = useState(false)
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => {
+    if (flashTimer.current) clearTimeout(flashTimer.current)
+  }, [])
+
+  const lit = momentary ? flash : Boolean(active)
+  const [faceUnlit, faceLit] = TAPE_CAP_FACES[variant]
+  const [barUnlit, barLit] = TAPE_CAP_BARS[variant]
+
+  const handleClick = (): void => {
+    onClick?.()
+    if (!momentary) return
+    setFlash(true)
+    if (flashTimer.current) clearTimeout(flashTimer.current)
+    flashTimer.current = setTimeout(() => setFlash(false), TAPE_CAP_FLASH_MS)
   }
-  const labelColor =
-    variant === 'play' ? '#7fd7ad' : variant === 'loop' && active ? '#d8a94a' : 'var(--text-3)'
+
   return (
-    <div className="flex flex-col items-center gap-1.5">
-      <button
-        onClick={onClick}
-        disabled={disabled}
-        title={title}
-        className="flex items-center justify-center transition-transform active:translate-y-[2px] active:shadow-none disabled:opacity-40 disabled:cursor-not-allowed"
-        style={{ width: wide ? 64 : 52, height: 38, borderRadius: 7, cursor: 'pointer', ...faces[variant] }}
+    <div className="flex flex-col items-center gap-1">
+      <span
+        style={{
+          font: "600 8.5px 'IBM Plex Sans', sans-serif",
+          letterSpacing: '.16em',
+          color: '#e5e5e2',
+          background: '#161615',
+          borderRadius: 4,
+          padding: '3px 8px'
+        }}
       >
-        {children}
-      </button>
-      <span style={{ font: "600 7.5px 'IBM Plex Sans', sans-serif", letterSpacing: '.16em', color: labelColor }}>
         {label}
       </span>
+      <button
+        onClick={handleClick}
+        disabled={disabled}
+        title={title}
+        // Only a gentle dim when disabled: the unlit artwork already reads as "off", so the old
+        // 40% wash made an idle-but-usable button look broken.
+        className="transition-[transform] active:translate-y-[1px] disabled:opacity-70 disabled:cursor-not-allowed"
+        style={{
+          width: TAPE_CAP_SIZE,
+          height: TAPE_CAP_SIZE,
+          border: 'none',
+          background: `url(${lit ? faceLit : faceUnlit}) center / contain no-repeat`,
+          cursor: 'pointer'
+        }}
+      />
+      <div
+        style={{
+          width: TAPE_CAP_SIZE * 0.62,
+          height: TAPE_CAP_SIZE * 0.16,
+          background: `url(${lit ? barLit : barUnlit}) center / contain no-repeat`
+        }}
+      />
     </div>
   )
 }
@@ -614,13 +654,16 @@ export function PlayerPanel({
     [getAudioContext, stopPlayback, loopEnabled]
   )
 
-  const handlePlayStop = useCallback(() => {
-    if (isPlaying) {
-      stopPlayback()
-      return
-    }
-    startPlaybackAt(progress * (bufferRef.current?.duration ?? 0))
-  }, [isPlaying, stopPlayback, startPlaybackAt, progress])
+  /**
+   * Play is not a toggle — Stop is the only thing that ends playback.
+   *
+   * It used to stop when pressed mid-play, which made the two buttons feel wired together:
+   * Play sometimes acted as Stop, and Stop sometimes looked redundant.
+   */
+  const handlePlay = useCallback(() => {
+    if (isPlaying) return
+    startPlaybackAt(resumeOffsetSec(progress, bufferRef.current?.duration ?? 0))
+  }, [isPlaying, startPlaybackAt, progress])
 
   const restart = useCallback(() => {
     startPlaybackAt(0)
@@ -1058,13 +1101,15 @@ export function PlayerPanel({
           /* ══════════ PREVIEW MODE — picture → metadata → transport → Cab IR → DI ══════════ */
           <>
             {/* Picture */}
-            {/* Constrain WIDTH, not height. `aspectRatio: 3/1` plus `maxHeight` fight each other
-                on a wide panel: at 700px the box wants 233px tall, gets clamped to 170, and the
-                ratio silently becomes ~4:1 — so object-cover crops far more of the amp the wider
-                you drag the panel. Capping width at 3 x the max height keeps the crop identical at
-                every panel size, and the letterbox fills with the surrounding surface. */}
+            {/* Constrain WIDTH, not height. `aspectRatio` plus `maxHeight` fight each other on a
+                wide panel: the box wants to be taller, gets clamped, and the ratio silently
+                drifts — so object-cover crops far more of the amp the wider you drag the panel.
+                Capping width at (ratio x max height) keeps the crop identical at every panel
+                size, and the letterbox fills with the surrounding surface.
+                The ratio itself is what sets how big the amp reads: at a given panel width the
+                height is width/ratio, so 2.2:1 shows it ~36% taller than the old 3:1 did. */}
             <div className="bg-gray-100 dark:bg-[var(--field)] flex justify-center">
-              <div className="w-full" style={{ aspectRatio: '3 / 1', maxWidth: 170 * 3 }}>
+              <div className="w-full" style={{ aspectRatio: '2.2 / 1', maxWidth: 232 * 2.2 }}>
                 <img
                   src={coverSrc}
                   alt={coverImagePath ? 'Amp cover' : 'No amp cover'}
@@ -1105,7 +1150,13 @@ export function PlayerPanel({
               </div>
               <div
                 className="rounded-xl p-3.5"
-                style={{ background: 'linear-gradient(180deg, var(--raised), var(--panel-2))', border: '1px solid var(--field-border)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.05), inset 0 -6px 14px rgba(0,0,0,.35)' }}
+                style={{
+                  backgroundImage: `url(${transportPanelBg})`,
+                  backgroundSize: 'cover',
+                  backgroundPosition: 'center',
+                  border: '1px solid #3a3a3d',
+                  boxShadow: 'inset 0 1px 0 rgba(255,255,255,.08), inset 0 -8px 18px rgba(0,0,0,.45)'
+                }}
               >
                 {/* counter + scrub */}
                 <div className="flex items-center gap-3 mb-3.5">
@@ -1126,25 +1177,41 @@ export function PlayerPanel({
                 </div>
 
                 {/* caps */}
-                <div className="flex gap-2.5 justify-center">
-                  <TapeCap label="RESTART" variant="neutral" onClick={restart} disabled={status !== 'ready'} title="Restart from the top">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round"><path d="M11 19l-7-7 7-7" /><path d="M20 19l-7-7 7-7" /></svg>
-                  </TapeCap>
-                  <TapeCap label="PLAY" wide variant="play" active={isPlaying} onClick={handlePlayStop} disabled={status !== 'ready'} title={isPlaying ? 'Pause' : 'Play'}>
-                    {busy ? (
-                      <svg className="w-[18px] h-[18px] animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" /></svg>
-                    ) : isPlaying ? (
-                      <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1" /><rect x="14" y="5" width="4" height="14" rx="1" /></svg>
-                    ) : (
-                      <svg viewBox="0 0 24 24" width="19" height="19" fill="currentColor"><path d="M8 5.14v14l11-7-11-7z" /></svg>
-                    )}
-                  </TapeCap>
-                  <TapeCap label="STOP" variant="stop" onClick={stopPlayback} disabled={!isPlaying} title="Stop">
-                    <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5" /></svg>
-                  </TapeCap>
-                  <TapeCap label="LOOP" variant="loop" active={loopEnabled} onClick={toggleLoop} title={loopEnabled ? 'Looping — click for once' : 'Play once — click to loop'}>
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round"><path d="M17 2l4 4-4 4" /><path d="M3 11V9a4 4 0 014-4h14" /><path d="M7 22l-4-4 4-4" /><path d="M21 13v2a4 4 0 01-4 4H3" /></svg>
-                  </TapeCap>
+                <div className="flex gap-2 justify-center">
+                  <TapeCap
+                    label="RESTART"
+                    variant="neutral"
+                    momentary
+                    onClick={restart}
+                    disabled={status !== 'ready'}
+                    title="Restart from the top"
+                  />
+                  <TapeCap
+                    label="PLAY"
+                    variant="play"
+                    active={isPlaying}
+                    onClick={handlePlay}
+                    disabled={status !== 'ready' || isPlaying}
+                    title={isPlaying ? 'Playing — press Stop to end' : 'Play'}
+                  />
+                  <TapeCap
+                    label="STOP"
+                    variant="stop"
+                    momentary
+                    onClick={stopPlayback}
+                    // Enabled whenever a clip is loaded, not only mid-play. Gating on isPlaying
+                    // left Stop looking greyed-out for most of the panel's life; pressing it
+                    // while already stopped is a harmless no-op.
+                    disabled={status !== 'ready'}
+                    title="Stop"
+                  />
+                  <TapeCap
+                    label="LOOP"
+                    variant="loop"
+                    active={loopEnabled}
+                    onClick={toggleLoop}
+                    title={loopEnabled ? 'Looping — click for once' : 'Play once — click to loop'}
+                  />
                 </div>
 
                 {/* output meter */}
@@ -1237,7 +1304,7 @@ export function PlayerPanel({
                           key={category.name}
                           onClick={() => handleSelectCategory(category)}
                           disabled={busy || !clipForCategory(category)}
-                          className={`flex-none h-7 px-3.5 rounded-full text-[11.5px] whitespace-nowrap transition-colors disabled:opacity-50 ${
+                          className={`flex-none h-9 px-4 rounded-full text-[13px] whitespace-nowrap transition-colors disabled:opacity-50 ${
                             active ? 'font-semibold text-[#06201d] bg-[var(--accent)]' : 'text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-[var(--field)] border border-gray-200 dark:border-[var(--border)] hover:bg-gray-200 dark:hover:bg-[var(--hover)]'
                           }`}
                         >
@@ -1263,13 +1330,13 @@ export function PlayerPanel({
                           key={clip.path}
                           onClick={() => handleSelectClip(activeCategory, clip.path)}
                           disabled={busy}
-                          className={`w-full flex items-center gap-2.5 h-[38px] px-3 text-left transition-colors disabled:opacity-50 ${i > 0 ? 'border-t border-gray-200 dark:border-[#1a2027]' : ''} ${
+                          className={`w-full flex items-center gap-2.5 h-[42px] px-3 text-left transition-colors disabled:opacity-50 ${i > 0 ? 'border-t border-gray-200 dark:border-[#1a2027]' : ''} ${
                             selected ? 'bg-[var(--active)]' : 'hover:bg-gray-100 dark:hover:bg-[#151b22]'
                           }`}
                           style={selected ? { boxShadow: 'inset 3px 0 0 var(--accent)' } : undefined}
                         >
                           <svg viewBox="0 0 24 24" width="14" height="14" fill={selected ? 'var(--accent)' : 'currentColor'} className={selected ? '' : 'text-gray-400 dark:text-gray-500'}><path d="M8 5.14v14l11-7-11-7z" /></svg>
-                          <span className={`flex-1 text-[12.5px] truncate ${selected ? 'text-gray-900 dark:text-gray-100' : 'text-gray-600 dark:text-gray-300'}`}>{clip.name.replace(/\.wav$/i, '')}</span>
+                          <span className={`flex-1 text-[13px] truncate ${selected ? 'text-gray-900 dark:text-gray-100' : 'text-gray-600 dark:text-gray-300'}`}>{clip.name.replace(/\.wav$/i, '')}</span>
                           {selected && isPlaying && <span className="text-[9px] font-mono text-[var(--accent)]">▶ playing</span>}
                           {selected && (
                             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="var(--accent)" strokeWidth={2.2}><path d="M5 12l5 5 9-11" strokeLinecap="round" strokeLinejoin="round" /></svg>

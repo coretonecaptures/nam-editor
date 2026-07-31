@@ -10,6 +10,8 @@ import {
   captureNeedsCabIr,
   base64ToArrayBuffer,
   computePlaybackGain,
+  resumeOffsetSec,
+  PLAY_RESTART_THRESHOLD,
   findLoudestWindowStart,
   normalizeRendered,
   peakOf,
@@ -355,5 +357,35 @@ describe('sortDiCategories', () => {
   it('covers every canonical category name', () => {
     const shuffled = [...DI_CATEGORY_ORDER].reverse().map((name) => ({ name }))
     expect(names(sortDiCategories(shuffled))).toEqual([...DI_CATEGORY_ORDER])
+  })
+})
+
+describe('resumeOffsetSec', () => {
+  it('resumes from wherever the scrub bar is', () => {
+    expect(resumeOffsetSec(0.5, 10)).toBeCloseTo(5)
+    expect(resumeOffsetSec(0.25, 8)).toBeCloseTo(2)
+  })
+
+  it('starts from the top when the clip already ran out', () => {
+    // The reported bug: Play at the end started a sliver at the tail that ended instantly, so
+    // pressing Play looked like it did nothing at all.
+    expect(resumeOffsetSec(1, 10)).toBe(0)
+    expect(resumeOffsetSec(PLAY_RESTART_THRESHOLD, 10)).toBe(0)
+    expect(resumeOffsetSec(0.99999, 10)).toBe(0)
+  })
+
+  it('still resumes normally just below the restart threshold', () => {
+    expect(resumeOffsetSec(0.99, 10)).toBeCloseTo(9.9)
+  })
+
+  it('never returns a negative or non-finite offset', () => {
+    expect(resumeOffsetSec(-0.2, 10)).toBe(0)
+    expect(resumeOffsetSec(NaN, 10)).toBe(0)
+    expect(resumeOffsetSec(0.5, NaN)).toBe(0)
+  })
+
+  it('returns 0 when no clip is loaded, so Play cannot seek into nothing', () => {
+    expect(resumeOffsetSec(0.5, 0)).toBe(0)
+    expect(resumeOffsetSec(0.5, -1)).toBe(0)
   })
 })
