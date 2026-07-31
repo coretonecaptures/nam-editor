@@ -1,0 +1,91 @@
+# On-demand installers for whatever branch you pick, WITHOUT cutting a release.
+#
+# release.yml is the release pipeline: it fires on a v* tag and its first job publishes a public
+# GitHub Release. That's wrong for trying a feature branch out, and macOS builds can't be done
+# from a Windows machine at all - the DMG needs hdiutil and codesign, both macOS-only.
+#
+# This one is manual (Actions tab -> Test Build -> Run workflow), takes any branch, and uploads
+# the installers as workflow artifacts. Nothing is published and no tag is created.
+name: Test Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Which installer to build
+        type: choice
+        default: mac
+        options: [mac, windows, linux, all]
+
+jobs:
+  mac:
+    if: inputs.platform == 'mac' || inputs.platform == 'all'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run build
+
+      # Same three-step dance as release.yml: electron-builder can't sign and package in one go
+      # here, so package unpacked, ad-hoc sign, then wrap the signed app in the DMG. Without the
+      # ad-hoc signature an unsigned universal build is killed on launch on Apple Silicon.
+      - name: Package universal app (unpacked)
+        run: npx electron-builder --mac dir --universal --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Ad-hoc sign
+        run: |
+          APP=$(find release -name "NAM Lab.app" -maxdepth 3 | head -1)
+          echo "Signing: $APP"
+          codesign --deep --force --sign - "$APP"
+          codesign --verify --deep --strict "$APP" && echo "Signature OK"
+
+      - name: Create DMG
+        run: npx electron-builder --mac dmg --universal --publish never --prepackaged "release/mac-universal"
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nam-lab-mac-${{ github.ref_name }}
+          path: release/**/*.dmg
+          retention-days: 14
+          if-no-files-found: error
+
+  windows:
+    if: inputs.platform == 'windows' || inputs.platform == 'all'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run package:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nam-lab-windows-${{ github.ref_name }}
+          path: release/*.exe
+          retention-days: 14
+          if-no-files-found: error
+
+  linux:
+    if: inputs.platform == 'linux' || inputs.platform == 'all'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run package:linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nam-lab-linux-${{ github.ref_name }}
+          path: release/*.AppImage
+          retention-days: 14
+          if-no-files-found: error
