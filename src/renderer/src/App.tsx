@@ -5068,6 +5068,13 @@ INSTRUCTIONS:
               irLibraryPath={settings.irLibraryPath || null}
               irMix={settings.irMix}
               coverImagePath={metadataCoverPath}
+              libraryFiles={files}
+              onOpenInPlayer={(picked) => {
+                // Mirror the Tone Map's click-to-play wiring: selection must be set too, since
+                // metadataCoverPath derives from the selected file, not from playerFile.
+                setPlayerFile(picked)
+                setSelectedIds(new Set([picked.filePath]))
+              }}
               onClose={() => setPlayerFile(null)}
             />
           ) : showDashboard ? (

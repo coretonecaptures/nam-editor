@@ -33,6 +33,7 @@ import {
   resumeOffsetSec
 } from '../utils/playerAudio'
 import type { NamRenderRequest, NamRenderResponse } from '../workers/namRender.worker'
+import { ScanMode } from './ScanMode'
 
 /**
  * In-app tone preview player — REDESIGNED (tape transport + rebuilt DI picker + tuner).
@@ -50,6 +51,14 @@ import type { NamRenderRequest, NamRenderResponse } from '../workers/namRender.w
 const MAX_PREVIEW_SECONDS = 12
 
 type PlayerStatus = 'idle' | 'loading-di' | 'rendering' | 'ready' | 'error'
+
+export type PlayerMode = 'preview' | 'live' | 'scan'
+
+const PLAYER_MODES: { id: PlayerMode; label: string; hint: string }[] = [
+  { id: 'preview', label: 'Preview', hint: 'Render this capture and play it back' },
+  { id: 'live', label: 'Live', hint: 'Play through this capture in real time' },
+  { id: 'scan', label: 'Scan', hint: 'Audition many captures by ear to find one' }
+]
 
 let lastIrPath: string | null = null
 
@@ -177,6 +186,10 @@ interface PlayerPanelProps {
   irLibraryPath?: string | null
   irMix?: number
   coverImagePath?: string | null
+  /** Every loaded capture — Scan mode narrows from these. Empty disables Scan. */
+  libraryFiles?: NamFile[]
+  /** Latch a scanned capture into Preview so it can be scrubbed, looped and kept. */
+  onOpenInPlayer?: (file: NamFile) => void
 }
 
 function toFileUrl(p: string): string {
@@ -333,7 +346,9 @@ export function PlayerPanel({
   diLibraryPath,
   irLibraryPath,
   irMix = 1,
-  coverImagePath
+  coverImagePath,
+  libraryFiles = [],
+  onOpenInPlayer
 }: PlayerPanelProps & { onClose: () => void }) {
   const [status, setStatus] = useState<PlayerStatus>('idle')
   const [errorMsg, setErrorMsg] = useState('')
@@ -351,7 +366,9 @@ export function PlayerPanel({
   const [summaryColumns, setSummaryColumns] = useState(2)
   const panelRef = useRef<HTMLDivElement | null>(null)
 
-  const [liveMode, setLiveMode] = useState(false)
+  const [mode, setMode] = useState<PlayerMode>('preview')
+  // Derived, so every existing Live branch keeps working unchanged now that there are three modes.
+  const liveMode = mode === 'live'
   const [liveRunning, setLiveRunning] = useState(false)
   const [liveError, setLiveError] = useState('')
   const [liveStarting, setLiveStarting] = useState(false)
@@ -926,7 +943,7 @@ export function PlayerPanel({
             className={`uppercase mb-0.5 ${liveMode ? 'text-amber-500 dark:text-amber-400' : 'text-[var(--accent)] dark:text-[var(--accent)]'}`}
             style={{ font: "700 10.5px 'IBM Plex Sans', sans-serif", letterSpacing: '.1em' }}
           >
-            {liveMode ? 'Live Input' : 'Tone Preview'}
+            {liveMode ? 'Live Input' : mode === 'scan' ? 'Scan' : 'Tone Preview'}
           </div>
           <div className="text-sm font-semibold truncate">{captureLabel}</div>
           {(m.gear_make || m.gear_model) && (
@@ -936,17 +953,23 @@ export function PlayerPanel({
           )}
         </div>
         <div className="flex-shrink-0 flex rounded-[9px] bg-gray-100 dark:bg-[var(--field)] border border-gray-200 dark:border-[var(--border)] p-0.5">
-          {([false, true] as const).map((mode) => (
+          {PLAYER_MODES.map((m) => (
             <button
-              key={String(mode)}
-              onClick={() => setLiveMode(mode)}
-              className={`h-6 px-2.5 rounded-md text-[11px] font-medium transition-colors ${
-                liveMode === mode
+              key={m.id}
+              onClick={() => setMode(m.id)}
+              disabled={m.id === 'scan' && libraryFiles.length === 0}
+              title={
+                m.id === 'scan' && libraryFiles.length === 0
+                  ? 'Load a folder to scan through its captures'
+                  : m.hint
+              }
+              className={`h-6 px-2.5 rounded-md text-[11px] font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                mode === m.id
                   ? 'bg-white dark:bg-[#232c36] text-gray-900 dark:text-gray-100 shadow-sm'
                   : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
               }`}
             >
-              {mode ? 'Live' : 'Preview'}
+              {m.label}
             </button>
           ))}
         </div>
@@ -962,6 +985,17 @@ export function PlayerPanel({
       </div>
 
       {/* ── Body */}
+      {mode === 'scan' ? (
+        <ScanMode
+          libraryFiles={libraryFiles}
+          diPath={diPath}
+          nowPlayingPath={file.filePath}
+          onOpenInPlayer={(picked) => {
+            onOpenInPlayer?.(picked)
+            setMode('preview')
+          }}
+        />
+      ) : (
       <div className="flex-1 overflow-y-auto">
         {liveMode ? (
           /* ══════════ LIVE MODE — recording lightbox + tuner + meters ══════════ */
@@ -1358,6 +1392,7 @@ export function PlayerPanel({
           </>
         )}
       </div>
+      )}
     </div>
   )
 }
