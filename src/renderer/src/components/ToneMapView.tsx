@@ -352,7 +352,7 @@ export function ToneMapView({
   // "This folder" is only meaningful when the browsed view really is a subset. With no folder
   // selected it named nothing and picked the same captures as "Whole library".
   const canScopeToFolder = scopedFiles.length > 0 && scopedFiles.length < files.length
-  /** Any mode where captures actually make sound, and the DI/cab therefore matter. */
+  /** Any mode where captures actually make sound. */
   const listening = view === 'list' || dotAction !== 'open'
 
 
@@ -581,8 +581,18 @@ export function ToneMapView({
    */
   const cabSplit = useMemo(() => {
     let needs = 0
-    for (const f of filtered) if (captureNeedsCabIr(f.metadata.gear_type)) needs++
-    return { needs, has: filtered.length - needs, total: filtered.length }
+    const needsKeys = new Set<string>()
+    const hasKeys = new Set<string>()
+    for (const f of filtered) {
+      const key = f.metadata.gear_type ?? GEAR_UNTAGGED
+      if (captureNeedsCabIr(f.metadata.gear_type)) {
+        needs++
+        needsKeys.add(key)
+      } else {
+        hasKeys.add(key)
+      }
+    }
+    return { needs, has: filtered.length - needs, total: filtered.length, needsKeys, hasKeys }
   }, [filtered])
 
   const toggleIn = (setter: React.Dispatch<React.SetStateAction<Set<string>>>) => (key: string) =>
@@ -1130,10 +1140,16 @@ export function ToneMapView({
           {/* What you are actually hearing through. Shown whenever a listening mode is on: the
               DI and cab are shared with the player, but "shared" must not mean "invisible" —
               otherwise captures are auditioned through settings you cannot see or change here. */}
-          {listening && (
-            <div className="flex items-center gap-3 px-4 pt-3 text-[11px] flex-wrap">
+          {/* Always shown, not only while listening: it is also how you find out what a listening
+              mode WILL use, and the cab warning is the main way the gear-type mismatch surfaces. */}
+          {(diCategories.length > 0 || irCategories.length > 0) && (
+            <div
+              className={`flex items-center gap-3 px-4 pt-3 text-[11px] flex-wrap ${
+                listening ? '' : 'opacity-70'
+              }`}
+            >
               <span className="text-[9px] font-semibold uppercase tracking-[.14em] text-gray-400 dark:text-gray-500">
-                Listening through
+                {listening ? 'Listening through' : 'Will listen through'}
               </span>
 
               <label className="flex items-center gap-1.5">
@@ -1194,6 +1210,29 @@ export function ToneMapView({
                   ))}
                 </select>
               </label>
+
+              {/* A mixed scope is not comparable by ear: the cab is applied to one half and
+                  skipped for the other. Offer the split as one click rather than leaving the user
+                  to find the Gear type facet and work out which values mean what. */}
+              {cabSplit.needs > 0 && cabSplit.has > 0 && (
+                <span className="flex items-center gap-1.5 text-[10px] text-amber-600 dark:text-amber-500">
+                  mixed gear — not comparable:
+                  <button
+                    onClick={() => setGearKeys(new Set(cabSplit.needsKeys))}
+                    className="h-5 px-1.5 rounded border border-amber-500/40 hover:bg-amber-500/10"
+                    title="Only captures that need a cabinet IR"
+                  >
+                    amp only ({cabSplit.needs.toLocaleString()})
+                  </button>
+                  <button
+                    onClick={() => setGearKeys(new Set(cabSplit.hasKeys))}
+                    className="h-5 px-1.5 rounded border border-amber-500/40 hover:bg-amber-500/10"
+                    title="Only captures that already include a cabinet"
+                  >
+                    with cab ({cabSplit.has.toLocaleString()})
+                  </button>
+                </span>
+              )}
 
               {/* Which way round the cab applies for THIS scope, so the picker never looks broken. */}
               {cabSplit.total > 0 && (

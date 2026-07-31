@@ -81,6 +81,14 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
   const diByRateRef = useRef(new Map<number, Float32Array<ArrayBuffer>>())
   const rawDiRef = useRef<{ samples: Float32Array<ArrayBuffer>; rate: number } | null>(null)
   const irRef = useRef<{ samples: Float32Array; rate: number } | null>(null)
+  /**
+   * The in-progress IR decode.
+   *
+   * Renders must wait for it. Without this, anything rendered between choosing an IR and the file
+   * finishing decoding was rendered DRY and then cached — so the first captures you auditioned
+   * kept sounding un-cabbed even after the IR had loaded, which reads as "the IR isn't working".
+   */
+  const irLoadRef = useRef<Promise<void> | null>(null)
   /** Bumped on every play/stop; a render that finishes after a newer request is discarded. */
   const generationRef = useRef(0)
 
@@ -143,10 +151,14 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
   useEffect(() => {
     let cancelled = false
     irRef.current = null
+    // Everything cached was rendered through the previous cab (or none), so it is all stale.
     cacheRef.current.clear()
     setReady(new Set())
-    if (!irPath) return
-    void (async () => {
+    if (!irPath) {
+      irLoadRef.current = null
+      return
+    }
+    const load = (async () => {
       try {
         const res = await window.api.readFileBinary(irPath)
         if (cancelled || res.error || !res.data) return
@@ -159,6 +171,7 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
         // An unreadable IR shouldn't stop captures being auditioned dry.
       }
     })()
+    irLoadRef.current = load
     return () => {
       cancelled = true
     }
@@ -204,6 +217,8 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
         if (modelRes.error || !modelRes.data) throw new Error(modelRes.error ?? 'no data')
         const modelJson = new TextDecoder().decode(base64ToArrayBuffer(modelRes.data))
         const rate = readModelSampleRate(modelJson)
+        // Wait for the cab, or this render would be cached dry and keep sounding that way.
+        if (irLoadRef.current) await irLoadRef.current
         const shared = await inputForRate(rate)
         // The worker transfers the input buffer, so each job needs its own copy.
         const request: NamRenderRequest = {
