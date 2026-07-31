@@ -153,6 +153,10 @@ move along the range. **Fit** returns to the full width.
 > Zooming is a *view*, not a filter: rows, counts and facet selections do not change as you zoom, so
 > zooming in and back out always returns you to the same picture.
 
+**Scope** — a **Whole library / current view** toggle appears only when what you are browsing is
+actually narrower than the whole library; with nothing narrower selected it would name nothing and
+choose the same captures either way.
+
 **Facets** — multi-select filters for amp, creator and tone type, plus a breadcrumb of what is
 currently narrowed. Selecting several amps at once is how you make a "family"; there is no fixed
 family list to maintain, so it stays correct as your library grows.
@@ -184,13 +188,23 @@ Hover is the most immediate, and also the most likely to hesitate: on a map the 
 anywhere, so NAM Lab can only guess what to render next from where you are. The list can predict
 much better, because a sweep runs in one direction.
 
-Both listening modes need a **DI clip** — the same one the player uses, so the two never disagree
-about what a capture sounds like. If none is set, the two listening modes are disabled; pick one
-under **DI Source** in the player.
+### Listening through
 
-Every capture is auditioned through the **same** short window from that clip, which is what makes
-them comparable. A small readiness dot in the list shows what has been rendered already; NAM Lab
-renders ahead of wherever your attention is, several at a time.
+Whenever a listening mode is active, a **Listening through** row appears above the plot showing
+exactly what you are hearing, with both parts changeable there:
+
+- **DI** — the clip every capture is auditioned through. The same short window is used for all of
+  them, which is what makes them comparable.
+- **Cab IR** — applied *only* to captures that do not already contain a cab, so you never hear two
+  speakers in series. A capture of an amp on its own is raw power-amp signal and sounds harsh
+  without one.
+
+Both are **shared with the player**, so a change in either place applies to both and a capture
+never sounds different depending on where you played it. Set them from whichever is in front of
+you. If no DI library is configured the listening modes are unavailable.
+
+A small readiness dot in the list shows what has been rendered already; NAM Lab renders ahead of
+wherever your attention is, several at a time.
 
 **Height** — rows grow to fill about half the window, so a library with only a few amps does not
 leave the screen mostly empty, and the dots grow with the rows. Drag the grip beneath the plot to

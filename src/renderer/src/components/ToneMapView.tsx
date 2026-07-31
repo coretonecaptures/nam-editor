@@ -30,7 +30,14 @@ import {
 import { paddedDomain } from './dashboard/scales'
 import { ScanList } from './ScanList'
 import { useAudition } from '../hooks/useAudition'
-import { resolveActiveDiClip, resolveActiveIr } from '../utils/diSelection'
+import {
+  loadDiPrefs,
+  resolveActiveDiClip,
+  resolveActiveIr,
+  saveDiPrefs,
+  saveIrPath,
+  type DiCategoryLike
+} from '../utils/diSelection'
 
 const TONE_COLORS: Record<string, string> = {
   clean: '#38bdf8',
@@ -278,6 +285,8 @@ export function ToneMapView({
   const [latched, setLatched] = useState(false)
   const [diPath, setDiPath] = useState<string | null>(null)
   const [irPath, setIrPath] = useState<string | null>(null)
+  const [diCategories, setDiCategories] = useState<DiCategoryLike[]>([])
+  const [irCategories, setIrCategories] = useState<DiCategoryLike[]>([])
   const audition = useAudition(diPath, { irPath, irMix })
 
   const plotRef = useRef<HTMLDivElement | null>(null)
@@ -312,7 +321,12 @@ export function ToneMapView({
   }, [plotEl])
 
 
-  const baseFiles = scope === 'library' ? files : scopedFiles
+  // "This folder" is only meaningful when the browsed view really is a subset. With no folder
+  // selected it named nothing and picked the same captures as "Whole library".
+  const canScopeToFolder = scopedFiles.length > 0 && scopedFiles.length < files.length
+  /** Any mode where captures actually make sound, and the DI/cab therefore matter. */
+  const listening = view === 'list' || dotAction !== 'open'
+  const baseFiles = scope === 'library' || !canScopeToFolder ? files : scopedFiles
 
   /** Captures that report a measured gain — the only ones the map can position. */
   const positionable = useMemo(
@@ -595,6 +609,7 @@ export function ToneMapView({
     void (async () => {
       const result = await window.api.scanWavLibrary(diLibraryPath)
       if (cancelled) return
+      setDiCategories(result.categories)
       setDiPath(resolveActiveDiClip(result.categories))
     })()
     return () => {
@@ -613,6 +628,7 @@ export function ToneMapView({
     void (async () => {
       const result = await window.api.scanWavLibrary(irLibraryPath)
       if (cancelled) return
+      setIrCategories(result.categories)
       setIrPath(resolveActiveIr(result.categories))
     })()
     return () => {
@@ -827,27 +843,32 @@ export function ToneMapView({
           </button>
         )}
 
-        <div className="flex rounded-lg bg-gray-100 dark:bg-gray-800 p-0.5 flex-shrink-0">
-          {(['library', 'folder'] as const).map((value) => (
-            <button
-              key={value}
-              onClick={() => setScope(value)}
-              disabled={value === 'folder' && scopedFiles.length === 0}
-              className={`h-6 px-2.5 rounded-md text-[11px] font-medium transition-colors disabled:opacity-40 ${
-                scope === value
-                  ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-              }`}
-              title={
-                value === 'library'
-                  ? 'Every capture in the library'
-                  : `Only the folder you are browsing${scopeLabel ? `: ${scopeLabel}` : ''}`
-              }
-            >
-              {value === 'library' ? 'Whole library' : 'This folder'}
-            </button>
-          ))}
-        </div>
+        {/* Only worth offering when the current view is actually narrower than the library —
+            otherwise "This folder" named nothing and selected the same captures. */}
+        {canScopeToFolder && (
+          <div className="flex rounded-lg bg-gray-100 dark:bg-gray-800 p-0.5 flex-shrink-0">
+            {(['library', 'folder'] as const).map((value) => (
+              <button
+                key={value}
+                onClick={() => setScope(value)}
+                className={`h-6 px-2.5 rounded-md text-[11px] font-medium transition-colors ${
+                  scope === value
+                    ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
+                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                }`}
+                title={
+                  value === 'library'
+                    ? `Every capture in the library (${files.length.toLocaleString()})`
+                    : `Only what you are browsing (${scopedFiles.length.toLocaleString()})`
+                }
+              >
+                {value === 'library'
+                  ? 'Whole library'
+                  : (scopeLabel ?? `Current view (${scopedFiles.length.toLocaleString()})`)}
+              </button>
+            ))}
+          </div>
+        )}
 
         {hasNarrowing && (
           <button
@@ -1013,7 +1034,85 @@ export function ToneMapView({
           </label>
         </div>
 
-        <div className="flex-1 min-w-0 overflow-auto p-4">
+        <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+          {/* What you are actually hearing through. Shown whenever a listening mode is on: the
+              DI and cab are shared with the player, but "shared" must not mean "invisible" —
+              otherwise captures are auditioned through settings you cannot see or change here. */}
+          {listening && (
+            <div className="flex items-center gap-3 px-4 pt-3 text-[11px] flex-wrap">
+              <span className="text-[9px] font-semibold uppercase tracking-[.14em] text-gray-400 dark:text-gray-500">
+                Listening through
+              </span>
+
+              <label className="flex items-center gap-1.5">
+                <span className="text-gray-500 dark:text-gray-400">DI</span>
+                <select
+                  value={diPath ?? ''}
+                  onChange={(e) => {
+                    const path = e.target.value || null
+                    setDiPath(path)
+                    const owner = diCategories.find((c) => c.files.some((f) => f.path === path))
+                    if (owner && path) {
+                      const prefs = loadDiPrefs()
+                      saveDiPrefs({
+                        byCategory: { ...prefs.byCategory, [owner.name]: path },
+                        activeCategory: owner.name
+                      })
+                    }
+                  }}
+                  disabled={diCategories.length === 0}
+                  className="h-6 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 px-1.5 max-w-[190px] disabled:opacity-40"
+                  title="The clip every capture is auditioned through. Shared with the player."
+                >
+                  {diCategories.length === 0 && <option value="">No DI library set</option>}
+                  {diCategories.map((c) => (
+                    <optgroup key={c.name} label={c.name}>
+                      {c.files.map((f) => (
+                        <option key={f.path} value={f.path}>
+                          {f.name.replace(/\.wav$/i, '')}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </label>
+
+              <label className="flex items-center gap-1.5">
+                <span className="text-gray-500 dark:text-gray-400">Cab IR</span>
+                <select
+                  value={irPath ?? ''}
+                  onChange={(e) => {
+                    const path = e.target.value || null
+                    setIrPath(path)
+                    saveIrPath(path)
+                  }}
+                  disabled={irCategories.length === 0}
+                  className="h-6 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 px-1.5 max-w-[190px] disabled:opacity-40"
+                  title="Applied only to captures that do not already include a cab."
+                >
+                  <option value="">None (dry)</option>
+                  {irCategories.map((c) => (
+                    <optgroup key={c.name} label={c.name}>
+                      {c.files.map((f) => (
+                        <option key={f.path} value={f.path}>
+                          {f.name.replace(/\.wav$/i, '')}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </label>
+
+              <span className="text-[10px] text-gray-400 dark:text-gray-500">
+                cab applied only to captures without one · same settings as the player
+              </span>
+              {audition.error && (
+                <span className="text-[10px] text-red-500">{audition.error}</span>
+              )}
+            </div>
+          )}
+
+          <div className="flex-1 min-h-0 overflow-auto p-4">
           {view === 'list' ? (
             <ScanList
               files={filtered}
@@ -1078,6 +1177,8 @@ export function ToneMapView({
               />
             </div>
           )}
+
+          </div>
 
           {/* Row-height grip. Rows follow the window by default; dragging pins a height, and the
               reset only appears once pinned so there's nothing to explain until it applies. */}
