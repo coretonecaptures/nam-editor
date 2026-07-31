@@ -134,10 +134,16 @@ needs `emcc` installed and confirmed first.
 
 ---
 
-## [HIGH PRIORITY] Report / brainstorm: "Tone Map" — organic clickable tone-browsing dashboard(s)
+## DONE (branch `feature/player`): "Tone Map" — organic clickable tone-browsing dashboard(s)
 
-**Not scoped for implementation yet — needs the visualization design flushed out further before
-building anything.** Capturing the idea while it's fresh.
+**Built.** Full-window view: amp rows ordered cleanest→heaviest by *measured* mean gain, continuous
+saturation X axis, tone-type colour, multi-select facets (amp / creator / tone type), hover-to-name,
+click-to-play through the in-app player, heat cells for dense rows, real axis zoom with pan +
+scrollbar, and rows that auto-size to half the window with a drag grip. The brainstorm below is kept
+for the design rationale; **the successor ideas are the "Scan mode" and "Tone Radio" entries that
+follow it.**
+
+Original brainstorm follows.
 
 **Immediate, concrete first step (separate, smaller item — see the folder-dashboard gain strip
 entry below):** two simple 1D gradient/heat strips on the folder dashboard — one for gain level
@@ -175,6 +181,111 @@ similar-sounding captures, clustered rather than just linearly sorted. The user 
 
 Do not start building the big map until these are actually answered; the gain/tone-type strips
 below are the right-sized next step.
+
+---
+
+## [HIGH PRIORITY] Scan mode — audition a scoped set by ear, in order
+
+**Next thing to build.** The Tone Map's weakness is that every facet it offers is a *name*, and you
+cannot name a tone you have not heard. Scan mode makes the ear the filter: pick a scope, then sweep
+through it hearing each capture crossfade into the next, radio-tuning style. Stop when something
+catches you.
+
+**Scope first, then scan** — the drill-down is the point, not a later refinement:
+- this creator only (`modeled_by`, normalized via `utils/gearMake.ts`)
+- this amp only (`gear_make` + optional `gear_model`)
+- **this amp family**, and **several families at once** — see the amp-family taxonomy entry below
+- the current folder-tree scope, or library-wide
+- compose with the Tone Map's existing facet state so scanning "what I'm looking at" is one click
+
+**Scan order matters more than similarity does.** v1 orders the scoped set by measured
+`metadata.gain` (clean → saturated), which needs *no new measurement at all* and is already a
+smooth, meaningful sweep. Better orderings (see Tone Radio below) can replace the comparator later
+without touching the UI — keep ordering behind a single function so that swap stays cheap.
+
+**The real engineering constraint:** each capture must be rendered through the WASM model before it
+can be heard (~133 ms measured). That is invisible for click-to-play but *not* for a continuous
+sweep, so scan needs a prefetch queue rendering the next N captures ahead of the playhead. Getting
+that right is most of the work — budget for it rather than discovering it late.
+
+**Open questions:**
+- Fixed dwell time per capture, or hold-to-listen / release-to-advance?
+- Same DI clip for every capture in a sweep (fair comparison, and the render cache stays warm) —
+  confirm, but almost certainly yes.
+- Crossfade length: long enough to be pleasant, short enough that 50 captures is not 5 minutes.
+- Does a "keep" action collect favourites into a shortlist as you sweep?
+
+---
+
+## [MEDIUM] Amp family taxonomy — group makes into families for scoping
+
+Needed by Scan mode's drill-down and useful to the Tone Map's facets. Curated `gear_make` → family
+mapping (British / American clean / American high-gain / boutique / fuzz / bass / …), covering the
+~54 distinct makes in the library. Curated rather than measured because it is instantly explainable
+and reliable, where a clustered grouping would be neither.
+
+Must handle the dirty reality already documented above: case-split spellings, and the 656
+`tz-make` placeholder captures that belong to no make at all. Families are a *grouping over* the
+normalized keys from `utils/gearMake.ts`, not a replacement for it. Multi-select, since "Marshall
+and everything Marshall-derived" (Friedman, Splawn, Bogner …) is exactly the query worth having.
+
+---
+
+## [MEDIUM] Tone Radio — browse by ear-adjacency instead of by name
+
+Successor to the Tone Map, and the eventual source of a better Scan ordering. One capture plays;
+8–12 nearest neighbours by *measured timbral distance* sit around it, closer ring = more similar.
+Click one → it plays and becomes the new centre, neighbours recompute. Two dials bias the
+neighbourhood rather than filter it: darker ⟷ brighter, cleaner ⟷ dirtier. The "filter" is a
+heading, not a checkbox.
+
+**The reason it is worth doing at all:** similarity never looks at `gear_make`, so the 656 untagged
+captures become exactly as findable as a tagged Marshall. No name-based facet can reach them.
+
+**Do not trust the descriptor before testing it — see the validation entry below.** A single
+fixed-amplitude sweep response captures static EQ and saturation but *not* harmonic order and *not*
+dynamic feel, which is a large part of what separates two amps by ear. Expect to need the richer
+feature set (harmonic even/odd ratio, multi-level compression index) described there.
+
+Also worth keeping in mind: neighbour-browsing can trap you in a pocket where everything sounds the
+same, so a deliberate "further afield" / temperature control is part of the feature, not a polish
+item.
+
+**Deferred sibling:** the "molecules" free-floating scatter (user: *"like molecules"*) is the same
+data in a second view mode — positions from the same descriptors, same hit-testing and
+click-to-play, only the layout and mark rendering differ.
+
+---
+
+## [HIGH PRIORITY] Validate timbral descriptors before building anything on them
+
+**Gate for Tone Radio and for any similarity-based Scan ordering.** The earlier probe measured
+spectral centroid across 14 real captures at 349–608 Hz and, importantly, *independent of gain*
+(five captures at gain ≈0.43 sat at ≈530 Hz while five at ≈0.44 sat at ≈370 Hz) — so it is a
+genuinely orthogonal axis, ~133 ms/capture, ~1.5 min for the library across 4 workers, cached.
+
+**But a single fixed-amplitude sweep is probably not enough**, and this should be proven or
+disproven cheaply before any UI depends on it. What it misses:
+- **Harmonic order** — even (2nd/4th) vs odd (3rd/5th) is much of "warm/tubey" vs "harsh/fizzy",
+  and a sweep's centroid confounds harmonic generation with EQ rather than separating them.
+- **Dynamic response** — how the tone changes with input level is arguably *the* thing that
+  separates captures, and a fixed-amplitude probe cannot see it at all.
+
+Richer feature set to measure instead (all cheap, all from the same render path):
+- spectral tilt / centroid at **two or three drive levels**, not one
+- **even/odd harmonic ratio** from a pure sine via Goertzel (the "character" axis)
+- **compression index**: how much output level compresses as input rises (the "feel" axis)
+- measured `metadata.gain`, free, already present
+
+**The falsifiable test, and it must come first:** captures of the *same amp by the same creator*
+should land close together, and captures of clearly different amps should not. If same-amp captures
+do not cluster, the descriptor is not capturing amp identity and we need to know that *before*
+building a browser on top of it. Cheap to run, and it settles the question by measurement instead of
+argument.
+
+Also measure before committing: base64 IPC for 2,577 models may dominate the 133 ms of DSP, in which
+case the render path moves to the main process. Do not pre-build that — measure on ~50 real captures
+first.
 
 ---
 
