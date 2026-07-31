@@ -257,6 +257,51 @@ click-to-play, only the layout and mark rendering differ.
 
 ---
 
+## MEASURED (2026-07-31): descriptor prescan results — Tone Radio is NOT supported by the evidence
+
+Ran the falsifiable test on the real library (3,853 captures, 140 sampled at 14 each across the 10
+makes with enough captures). One combined probe per capture — 220 Hz sine for harmonic structure,
+plus log sweeps at three drive levels for spectral tilt and compression — rendered through the
+bundled WASM core in Node. 140/140 rendered, 0 failures, 618 ms/capture (~40 min library-wide
+single-threaded, ~10 min across 4 workers, cached).
+
+**Verdict: do not build Tone Radio.** Nearest-neighbour same-make accuracy was **23.6% against 9.4%
+chance** — real signal at 2.5x lift, but far too weak to navigate by. Same-make captures sit only
+**1.13x** closer to each other than to other makes. Per-make recall is wildly uneven: Two Rock and
+Victory 50%, but **Friedman 0/14** — not one Friedman's nearest neighbour was another Friedman.
+Clicking a capture and being offered "similar" amps would be wrong three times in four.
+
+**Caveat worth keeping:** "same make" may itself be a poor ground truth, since one amp's clean and
+lead channels genuinely sound different. A low score partly indicts the label, not only the
+descriptor. But it does settle the product question — similarity cannot be *sold* as "amps like
+this one".
+
+**What the run did prove, and it is useful:**
+- **`metadata.gain` is nearly useless as an axis.** Measured across all 3,853: median 0.797, and
+  **79.2% fall inside 0.55–0.85** — a 30% slice of the axis holding four fifths of the library.
+  Only 10 captures (0.3%) are below 0.40. On identity it scores 12.1%, barely over 9.4% chance.
+  Adding it to the timbre features made them *worse* (25.7% timbre-only vs 23.6% with gain).
+  This is why the Tone Map's X axis looks bunched — the axis is real but the data is not spread
+  along it.
+- **Compression (how much output level fails to track input level) is the single best feature at
+  20%** — and it is exactly what a fixed-amplitude probe cannot see. Multi-level probing earns its
+  cost; single-level probing would have missed the most informative dimension.
+- **Spectral centroid has genuinely wide spread**: 372–1083 Hz, sd 159. It fails at *identity* but
+  it is a real, continuous, well-distributed perceptual quantity — i.e. a good **sort key**, which
+  is what Scan mode actually needs. Brightness ordering beats gain ordering on spread alone.
+
+**Reframe: the descriptor fails as a similarity metric but succeeds as an ordering.** Use it to sort
+a scan sweep, not to claim two captures sound alike.
+
+**Library metadata reality (re-measured; supersedes the older figures above):** 3,853 captures, 100%
+have `gain`. Only **13 distinct `gear_make`**, 937 (24%) with none at all. `modeled_by` is
+effectively a single value — 3,724 "Core Tone Captures" — so **the creator facet is dead for this
+library** until third-party captures are imported. `tone_type` is now well spread and is the *best*
+metadata facet available: crunch 1236, overdrive 645, clean 391, hi_gain 313, fuzz 57, distortion 20,
+none 1191. ("Dr Z" 242 vs "Doctor Z" 40 confirms `gearMake.ts` normalization earns its keep.)
+
+---
+
 ## [HIGH PRIORITY] Validate timbral descriptors before building anything on them
 
 **Gate for Tone Radio and for any similarity-based Scan ordering.** The earlier probe measured
