@@ -222,10 +222,38 @@ than anyone sweeps. Prefetch is most of the work here — budget for it rather t
 late.
 
 **Descriptors are scope-lazy, never library-wide.** 38k captures would be ~1.6 h across 4 workers;
-the ~100–500 captures in the scope you are about to sweep are 30–80 s. Sweeping starts immediately
-on metadata ordering and re-sorts as descriptors land, so the wait is never blocking. Cache per
-capture by path + mtime + size + probeVersion, so it is one-time per capture and new downloads scan
-incrementally.
+the ~100–500 captures in the scope you are about to sweep are far less. Sweeping starts immediately
+on metadata ordering and re-sorts as descriptors land, so the wait is never blocking.
+
+**Incremental, and cheaper than the prescan.** Cache per capture keyed by path + mtime + size +
+probeVersion, so adding or editing captures rescans only what changed — never the whole scope again.
+The prescan's 618 ms probe was sized to *test identity* (sine + three sweep levels); ordering only
+needs the sweeps, so the shipped probe is smaller:
+
+| probe | per capture | 3,853-capture folder, 4 workers |
+|---|---|---|
+| 1 sweep — brightness only | ~176 ms | **~2.8 min** |
+| 2 sweeps — brightness + drive-dependent tilt | ~300 ms | ~4.8 min |
+
+Show the estimate before starting (count x measured ms / workers) and let the user cancel; the cost
+scales with scope, and a narrow scope like "these two amps from this maker" is seconds.
+
+**Changing the audition DI does NOT invalidate the scan.** Worth stating because it is the obvious
+worry: the descriptor probe is a *synthetic sweep*, not the user's DI, so it characterises the model
+itself and is independent of whatever clip you later audition with. The DI only affects what you
+hear during a sweep, and is rendered on demand.
+
+The real nuance is drive level, not clip choice. Model response is level-dependent — measured `tilt`
+spanned **-300 to +217 Hz**, so some captures genuinely reorder between gentle and hard playing.
+That is handled by storing centroid at more than one drive level in the *same* scan, so sorting by
+"clean playing" vs "driven" is free and still needs only one pass. No per-DI rescan, ever.
+
+**Metadata cleanup is the user's job, not the scanner's.** Split spellings (SLAMMIN MOFO x4,
+`MARSHALL`/`Marshall`) are exactly what the app's batch editor exists for. `gearMake.ts` grouping
+still helps the picker read sensibly, but scan mode should not try to be clever about it.
+
+**This is ordinary app code.** The scan runs locally in worker threads on the user's own machine —
+no network, no service, nothing external. Every user scans their own library.
 
 **Open questions:**
 - Fixed dwell time per capture, or hold-to-listen / release-to-advance?
