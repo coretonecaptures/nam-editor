@@ -66,8 +66,13 @@ const TONE_ORDER = ['clean', 'crunch', 'overdrive', 'distortion', 'hi_gain', 'fu
 
 /** Room left below the plot for the zoom scrollbar, the hint line and the page's own padding. */
 const PLOT_BOTTOM_GUTTER = 104
-/** Past this, rows are mostly empty space again and the dots stop growing with them. */
-const MAX_ROW_HEIGHT = 96
+/**
+ * Upper bound on a dragged row height.
+ *
+ * Generous enough that a library with only a few amps can still be dragged to fill the window —
+ * the dots stop growing at their own cap, so beyond this a row is mostly empty space.
+ */
+export const MAX_ROW_HEIGHT = 220
 /** Share of the free vertical space the map takes by default; drag the grip for more. */
 const DEFAULT_HEIGHT_FRACTION = 0.5
 /** How long the cursor must rest on a dot before it is rendered or played. */
@@ -1288,8 +1293,6 @@ export function ToneMapView({
             </div>
           )}
 
-          </div>
-
           {/* Row-height grip. Rows follow the window by default; dragging pins a height, and the
               reset only appears once pinned so there's nothing to explain until it applies. */}
           {rows.length > 0 && (
@@ -1381,6 +1384,7 @@ export function ToneMapView({
               rows marked * have under 3 measured captures · click a heat band to zoom into it,
               scroll to zoom anywhere, drag to pan
             </span>
+          </div>
           </div>
         </div>
       </div>

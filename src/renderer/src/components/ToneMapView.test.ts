@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest'
 import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
 import type { NamFile } from '../types/nam'
-import { ToneMapView, autoRowHeightFor } from './ToneMapView'
+import { MAX_ROW_HEIGHT, ToneMapView, autoRowHeightFor } from './ToneMapView'
 
 let counter = 0
 function capture(meta: Partial<NamFile['metadata']>): NamFile {
@@ -217,7 +217,9 @@ describe('ToneMapView zoom', () => {
 describe('autoRowHeightFor', () => {
   const TALL = 900
   const MIN = 26
-  const MAX = 96
+  // Read the real cap rather than restating it, so raising the constant can't silently
+  // invalidate the invariant this asserts.
+  const MAX = MAX_ROW_HEIGHT
 
   it('stretches rows well past the minimum when there are few amps', () => {
     expect(autoRowHeightFor(4, TALL)).toBeGreaterThan(MIN)
