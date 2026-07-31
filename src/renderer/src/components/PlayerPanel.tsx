@@ -189,6 +189,18 @@ const TAPE_CAP_BARS: Record<'neutral' | 'play' | 'stop' | 'loop', [string, strin
   loop: [loopBarUnlit, loopBarLit]
 }
 const TAPE_CAP_SIZE = 78
+const TAPE_CAP_GAP = 8
+
+/**
+ * Narrowest the player panel may be dragged.
+ *
+ * Derived from the transport rather than picked by eye, so resizing the caps cannot silently
+ * reintroduce the overflow: four caps plus their gaps, the faceplate's own padding (p-3.5), the
+ * section padding (px-4), and a margin so they sit comfortably inside the metal rather than
+ * touching its edges.
+ */
+export const PLAYER_MIN_WIDTH =
+  TAPE_CAP_SIZE * 4 + TAPE_CAP_GAP * 3 + 14 * 2 + 16 * 2 + 24
 const TAPE_CAP_FLASH_MS = 180
 
 function TapeCap({

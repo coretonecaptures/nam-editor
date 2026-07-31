@@ -25,7 +25,7 @@ import { FolderReadmePanel } from './components/FolderReadmePanel'
 import { WavCoverageTab } from './components/WavCoverageTab'
 import { PackInfoEditor, type DeliveryMatrixData, type PackInfo, type PackChecklistItem } from './components/PackInfoEditor'
 import { PackTargetsEditor } from './components/PackTargetsEditor'
-import { PlayerPanel } from './components/PlayerPanel'
+import { PLAYER_MIN_WIDTH, PlayerPanel } from './components/PlayerPanel'
 import { TrainingPanel } from './components/TrainingPanel'
 import { TrainingSetupGuide } from './components/TrainingSetupGuide'
 import { FolderSuggestRulesModal } from './components/FolderSuggestRulesModal'
@@ -684,7 +684,8 @@ export default function App() {
   const [listViewMode, setListViewMode] = useState<'list' | 'grid'>(initialSettings.defaultView ?? 'list')
   const [listWidth, setListWidth] = useState(() => {
     const raw = (initialSettings.defaultView ?? 'list') === 'grid' ? initialLayout.listWidthGrid : initialLayout.listWidthList
-    const maxList = window.innerWidth - initialLayout.treeWidth - 300
+    // A layout saved before the minimum existed can be too wide for it, so clamp on load too.
+    const maxList = window.innerWidth - initialLayout.treeWidth - PLAYER_MIN_WIDTH
     return Math.min(raw, Math.max(140, maxList))
   })
   const loadGenRef = useRef(0)  // increments on every new folder load; stale scans discard results
@@ -1622,11 +1623,15 @@ export default function App() {
     const onMove = (ev: MouseEvent) => {
       if (!draggingRef.current) return
       const delta = ev.clientX - draggingRef.current.startX
+      // Both handles have to respect the right panel's minimum: widening the tree squeezes it
+      // just as surely as widening the list does, and the transport buttons overflowed the
+      // faceplate once it went under ~360px.
       if (draggingRef.current.panel === 'tree') {
-        const next = Math.max(140, draggingRef.current.startWidth + delta)
+        const maxTree = Math.max(140, window.innerWidth - listWidth - PLAYER_MIN_WIDTH)
+        const next = Math.min(Math.max(140, draggingRef.current.startWidth + delta), maxTree)
         setTreeWidth(next); latestTree = next
       } else {
-        const maxList = window.innerWidth - treeWidth - 300
+        const maxList = Math.max(140, window.innerWidth - treeWidth - PLAYER_MIN_WIDTH)
         const next = Math.min(Math.max(140, draggingRef.current.startWidth + delta), maxList)
         setListWidth(next); latestList = next
       }
@@ -5007,7 +5012,9 @@ INSTRUCTIONS:
         </>}
 
         {/* Main content */}
-        <div ref={mainContentRef} tabIndex={-1} className={`flex-1 overflow-hidden flex flex-col focus:outline-none${gridMaximized && !cardView ? ' hidden' : ''}`} style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        {/* minWidth as well as the drag clamps: a window resize can squeeze this panel without any
+            handle being touched, and the transport buttons overflow the faceplate below it. */}
+        <div ref={mainContentRef} tabIndex={-1} className={`flex-1 overflow-hidden flex flex-col focus:outline-none${gridMaximized && !cardView ? ' hidden' : ''}`} style={{ WebkitAppRegion: 'no-drag', minWidth: playerFile !== null ? PLAYER_MIN_WIDTH : undefined } as React.CSSProperties}>
           {toneStoreMounted && (
             <div
               className={showToneStorePanel ? 'flex-1 min-h-0 flex flex-col' : 'absolute inset-0 opacity-0 pointer-events-none -z-10'}

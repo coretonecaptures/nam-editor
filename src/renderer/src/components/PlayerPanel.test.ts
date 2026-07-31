@@ -9,7 +9,7 @@ import { describe, it, expect } from 'vitest'
 import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
 import type { NamFile } from '../types/nam'
-import { PlayerPanel } from './PlayerPanel'
+import { PLAYER_MIN_WIDTH, PlayerPanel } from './PlayerPanel'
 
 let counter = 0
 function capture(meta: Partial<NamFile['metadata']> = {}, config: unknown = {}): NamFile {
@@ -120,5 +120,26 @@ describe('PlayerPanel (redesign)', () => {
     // is the documented bug this guards against.
     const file = capture({ name: 'A2 cap' }, { submodels: [{}, {}] })
     expect(() => render(file)).not.toThrow()
+  })
+})
+
+describe('PLAYER_MIN_WIDTH', () => {
+  // The transport buttons used to overflow the metal faceplate once the panel was dragged
+  // narrow, because the layout reserved 300px while the caps needed ~360.
+  const CAP_SIZE = 78
+  const CAP_GAP = 8
+  const capsRow = CAP_SIZE * 4 + CAP_GAP * 3
+
+  it('leaves the four caps comfortably inside the faceplate', () => {
+    // Caps plus the faceplate's own padding and the section padding, with room to spare.
+    expect(PLAYER_MIN_WIDTH).toBeGreaterThan(capsRow + 14 * 2 + 16 * 2)
+  })
+
+  it('is wider than the 300px the layout used to reserve', () => {
+    expect(PLAYER_MIN_WIDTH).toBeGreaterThan(300)
+  })
+
+  it('stays a sane panel width rather than dominating the window', () => {
+    expect(PLAYER_MIN_WIDTH).toBeLessThan(600)
   })
 })
