@@ -77,6 +77,133 @@ Grid view includes:
 
 ---
 
+## Tone Player
+
+Hear a capture without leaving NAM Lab and without loading a plugin host. Open it from the play
+button on a selected capture; it takes over the right-hand panel.
+
+The player has three modes, chosen from the toggle in its header: **Preview**, **Live**, and
+**Scan**.
+
+Nothing here is real-time except Live. Preview and Scan render the capture *offline* first — the
+model is run over an audio clip in a background worker, and you play the result. That is why a
+capture takes a moment to become ready, and why playback is then completely smooth regardless of
+how heavy the model is.
+
+### Preview — listen to one capture
+
+Renders a reference DI clip through the selected capture and plays it back.
+
+- **Transport** — Restart, Play, Stop, Loop, styled as a physical tape transport. Play is not a
+  toggle: pressing it while already playing does nothing, and Stop is what ends playback. Restart
+  and Stop light briefly when pressed; Play and Loop stay lit while they are active.
+- **Scrub bar** — click anywhere to seek. Playing from the very end restarts from the top rather
+  than firing a silent fragment of the tail.
+- **Output meter** — a real level meter fed by an `AnalyserNode` on the output, showing peaks with
+  a decay rather than an average, so a normalized signal reads near full scale as it should.
+- **DI Source** — pick which clip captures are auditioned through. Folders appear as pills, clips
+  as a list. Your choice is remembered per folder.
+- **Cabinet IR** — captures of an amp *without* a cab are raw power-amp signal and sound harsh on
+  their own, because a real rig's speaker is doing heavy filtering the model does not contain. The
+  IR stage is enabled automatically for those and left off for captures that already include a cab,
+  so you never hear two speakers in series. You can always override it.
+- **Metadata summary** — name, gear, tone type, creator, ESR and so on, in a grid that reflows to
+  1, 2 or 3 columns as you resize the panel.
+
+### Live — play through a capture in real time
+
+Runs your guitar through the model live using an `AudioWorklet`, so you can play rather than listen.
+
+- **RECORDING sign** — the arm control. Click it to start and stop live input.
+- **Input device and gain** — pick the interface input and trim the level going into the model.
+- **Tuner** — an autocorrelation pitch detector reading the raw signal *before* the model, so
+  distortion and compression cannot confuse it. Shows note, octave and cents.
+- **Input and output meters** — input is tapped pre-model, output post-model, so you can see
+  whether you are driving the capture too hard.
+- **Bypass** — compare against the dry signal.
+- **Round-trip latency** is reported once running. Use headphones; monitoring through speakers with
+  a live mic'd or acoustic source will feed back.
+
+### Scan — find a capture by ear
+
+Scan exists because every other way of finding a capture depends on a **name**, and you cannot name
+a tone you have not heard yet. Instead you narrow to a set and sweep through it, listening.
+
+**Scope** — three rows of chips: **Maker** (`modeled_by`), **Amp** (`gear_make`) and **Tone**
+(`tone_type`). Chips within a row combine with OR; different rows combine with AND. So "Marshall or
+Mesa, by this maker, crunch only" is three clicks.
+
+> Selecting several amps at once *is* how you make a "family". There is no fixed family list to
+> maintain, so it stays correct as your library grows.
+
+Split spellings are merged, so selecting **Marshall** finds captures tagged `MARSHALL` and
+`Marshall` alike, and the chip count is the real total. Captures whose make is missing or a
+placeholder are grouped under **Untagged**, which sorts last however many there are.
+
+**Listening**
+
+- **Press and hold** a row to hear it. Release to stop.
+- **Latched** — flip the Hold button to Latched and a capture keeps playing after you let go, so you
+  can move around, read its metadata, or line up the next one.
+- **Double-click** a row to open that capture in Preview, where you can scrub and loop it.
+- The clip **loops** while you listen, so a held audition never falls silent.
+
+**Order** — the sweep runs from cleanest to most aggressive by tone type, then by measured gain
+inside each group, so it travels somewhere instead of jumping about. Captures with no tone type
+sweep last rather than being hidden.
+
+> **Why not just sort by gain?** Measured across a real 3,853-capture library, `metadata.gain` has a
+> median of 0.797 and **79% of captures fall inside 0.55–0.85**. Sorting several hundred captures by
+> a value that flat means neighbours differ by around 0.0001 — the order would be arbitrary and the
+> sweep would sound random.
+
+**Readiness dot** — the small dot on each row shows whether that capture has been rendered yet.
+NAM Lab renders *ahead* of wherever your pointer is, several at a time, so by the time you press a
+row it is usually already done. The header shows how many are ready and roughly how long a full
+sweep of the current scope would take to render.
+
+Narrower scopes are much faster, because the cost scales with how many captures you selected. Every
+capture in a sweep is rendered through the *same* short clip from your DI selection, which is what
+makes them comparable at all.
+
+---
+
+## Tone Map
+
+A full-window picture of the whole library, for browsing rather than searching. Open it from the
+Tone Map button in the toolbar.
+
+**Layout** — each row is an amp, ordered cleanest at the bottom to heaviest at the top. The
+horizontal axis is measured saturation. Every dot is a real capture: nothing is averaged or
+invented, so anything you see is a file you own.
+
+> Row order is **measured**, not guessed. An amp's position comes from the mean measured gain of
+> its own captures, so it updates itself as your library changes. Rows marked `*` have fewer than
+> three measured captures, which is too few for the average to mean much.
+
+**Reading it**
+
+- **Hover** a dot to name that capture. Hovering never plays anything.
+- **Click** a dot to play it — the player opens on that capture.
+- **Click a row label** to isolate that amp.
+- Dense rows collapse into **heat bands** instead of unreadable overlapping dots. Bands are
+  clickable: clicking one zooms into it until the individual captures separate.
+
+**Zoom** — scroll to zoom about the cursor, drag to pan, and use the scrollbar under the plot to
+move along the range. **Fit** returns to the full width.
+
+> Zooming is a *view*, not a filter: rows, counts and facet selections do not change as you zoom, so
+> zooming in and back out always returns you to the same picture.
+
+**Facets** — multi-select filters for amp, creator and tone type, plus a breadcrumb of what is
+currently narrowed.
+
+**Height** — rows grow to fill about half the window, so a library with only a few amps does not
+leave the screen mostly empty, and the dots grow with the rows. Drag the grip beneath the plot to
+make it taller; **auto height** puts it back.
+
+---
+
 ## Metadata Editing
 
 NAM Lab edits metadata inside the `.nam` file without touching model weights.
