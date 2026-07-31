@@ -9,7 +9,15 @@
 import { describe, it, expect } from 'vitest'
 import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
-import { ToneGrid, toneGridHeight, type ToneGridMark, type ToneGridRow } from './ToneGrid'
+import {
+  TONE_GRID_CHROME_HEIGHT,
+  TONE_GRID_ROW_HEIGHT,
+  ToneGrid,
+  toneGridDotRadius,
+  toneGridHeight,
+  type ToneGridMark,
+  type ToneGridRow
+} from './ToneGrid'
 
 const ROWS: ToneGridRow[] = [{ key: 'marshall', label: 'MARSHALL' }]
 
@@ -94,5 +102,67 @@ describe('ToneGrid density', () => {
 
   it('handles a degenerate domain without dividing by zero', () => {
     expect(() => render(marks(10), [0.5, 0.5])).not.toThrow()
+  })
+})
+
+/**
+ * Vertical scaling. A library with few amps left most of the window empty at the fixed row
+ * height, so rows stretch to fill it — and the dots have to grow with them, or a taller row is
+ * just the same specks spread further apart, which is the emptiness it was meant to fix.
+ */
+describe('ToneGrid vertical scaling', () => {
+  function renderAt(rowHeight: number, markCount = 10): string {
+    return renderToString(
+      createElement(ToneGrid, {
+        rows: ROWS,
+        marks: marks(markCount),
+        xDomain: [0.1, 1.0] as [number, number],
+        xLabel: 'saturation',
+        width: 800,
+        height: toneGridHeight(ROWS.length, rowHeight),
+        rowHeight
+      })
+    )
+  }
+
+  /** Every circle radius in the markup, in document order. */
+  const radii = (html: string): number[] =>
+    Array.from(html.matchAll(/<circle[^>]*\sr="([\d.]+)"/g)).map((m) => Number(m[1]))
+
+  it('grows the dot radius as rows get taller', () => {
+    expect(toneGridDotRadius(52)).toBeGreaterThan(toneGridDotRadius(TONE_GRID_ROW_HEIGHT))
+  })
+
+  it('never shrinks dots below the default row height, however cramped', () => {
+    expect(toneGridDotRadius(4)).toBe(toneGridDotRadius(TONE_GRID_ROW_HEIGHT))
+    expect(toneGridDotRadius(TONE_GRID_ROW_HEIGHT)).toBeCloseTo(3, 5)
+  })
+
+  it('caps the radius so a very tall row is not overlapping blobs', () => {
+    expect(toneGridDotRadius(400)).toBe(toneGridDotRadius(1000))
+    expect(toneGridDotRadius(400)).toBeLessThanOrEqual(8)
+  })
+
+  it('actually draws bigger circles at a taller row height', () => {
+    // The regression this guards: rowHeight was a prop, but the radius was hardcoded, so taller
+    // rows changed the spacing and nothing else.
+    const small = radii(renderAt(TONE_GRID_ROW_HEIGHT))
+    const large = radii(renderAt(80))
+    expect(small).toHaveLength(10)
+    expect(large).toHaveLength(10)
+    expect(Math.max(...large)).toBeGreaterThan(Math.max(...small))
+  })
+
+  it('reserves the same chrome regardless of row height', () => {
+    // toneGridHeight is what the view uses to work out how many rows fit, so the fixed part has
+    // to stay fixed or the auto-fit maths drifts.
+    const oneRow = toneGridHeight(1, 40)
+    const twoRows = toneGridHeight(2, 40)
+    expect(twoRows - oneRow).toBe(40)
+    expect(oneRow - 40).toBe(TONE_GRID_CHROME_HEIGHT)
+  })
+
+  it('keeps every mark on the plot when rows are tall', () => {
+    expect(radii(renderAt(96, 20))).toHaveLength(20)
   })
 })

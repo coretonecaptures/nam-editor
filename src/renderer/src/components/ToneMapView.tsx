@@ -19,6 +19,7 @@ import type { NamFile } from '../types/nam'
 import { rankAmpsByHeaviness, rankModelsByHeaviness, type AmpRow } from '../utils/ampHeaviness'
 import { UNTAGGED_KEY, groupByCreator, isJunkMake, normalizeMakeKey } from '../utils/gearMake'
 import {
+  TONE_GRID_CHROME_HEIGHT,
   TONE_GRID_ROW_HEIGHT,
   ToneGrid,
   toneGridCellKey,
@@ -51,6 +52,11 @@ const TONE_LABELS: Record<string, string> = {
 
 /** Tone types ordered by drive, matching the saturation reading of the X axis. */
 const TONE_ORDER = ['clean', 'crunch', 'overdrive', 'distortion', 'hi_gain', 'fuzz', 'other']
+
+/** Room left below the plot for the zoom scrollbar, the hint line and the page's own padding. */
+const PLOT_BOTTOM_GUTTER = 104
+/** Past this, rows are mostly empty space again and the dots stop growing with them. */
+const MAX_ROW_HEIGHT = 96
 
 function toneColor(tone: string | null | undefined): string {
   if (!tone) return UNTYPED_COLOR
@@ -233,6 +239,10 @@ export function ToneMapView({
 
   const plotRef = useRef<HTMLDivElement | null>(null)
   const [plotWidth, setPlotWidth] = useState(900)
+  /** Vertical space between the top of the plot and the bottom of the window. */
+  const [availableHeight, setAvailableHeight] = useState(0)
+  /** Non-null once the user drags the grip, which stops rows following the window. */
+  const [rowHeightOverride, setRowHeightOverride] = useState<number | null>(null)
 
   useEffect(() => {
     const element = plotRef.current
@@ -243,6 +253,7 @@ export function ToneMapView({
     observer.observe(element)
     return () => observer.disconnect()
   }, [])
+
 
   const baseFiles = scope === 'library' ? files : scopedFiles
 
@@ -570,7 +581,74 @@ export function ToneMapView({
     dragRef.current = null
   }, [])
 
-  const gridHeight = toneGridHeight(rows.length, TONE_GRID_ROW_HEIGHT)
+  // Measured from the plot's own top, so it stays correct however tall the header, facet rail and
+  // breadcrumbs happen to be. The plot growing doesn't move its own top, so this can't feed back.
+  useEffect(() => {
+    const measure = (): void => {
+      const element = plotRef.current
+      if (!element) return
+      const top = element.getBoundingClientRect().top
+      setAvailableHeight(Math.max(0, window.innerHeight - top - PLOT_BOTTOM_GUTTER))
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+    // Re-measure whenever chrome above the plot could have reflowed: a different row count, a
+    // width change, or the zoom breadcrumb appearing.
+  }, [rows.length, plotWidth, zoom])
+
+  /**
+   * Row height auto-fills the window, with a manual override.
+   *
+   * A library with only a handful of amps left most of the window empty at the fixed 26px row
+   * height. Rows now stretch to use whatever vertical space is actually free, and the dots grow
+   * with them (see `toneGridDotRadius`) so a taller row isn't just the same specks further
+   * apart. Dragging the grip sets an explicit height; "Fit" returns to following the window.
+   */
+  const autoRowHeight = useMemo(() => {
+    if (rows.length === 0 || availableHeight <= 0) return TONE_GRID_ROW_HEIGHT
+    const perRow = (availableHeight - TONE_GRID_CHROME_HEIGHT) / rows.length
+    return Math.min(Math.max(perRow, TONE_GRID_ROW_HEIGHT), MAX_ROW_HEIGHT)
+  }, [rows.length, availableHeight])
+
+  const rowHeight = rowHeightOverride ?? autoRowHeight
+  const gridHeight = toneGridHeight(rows.length, rowHeight)
+
+  // Drag the grip to set row height explicitly. Listeners go on the window so the drag survives
+  // the cursor leaving the narrow grip, which is otherwise very easy to do.
+  const resizeRef = useRef<{ startY: number; startRowHeight: number } | null>(null)
+  const [resizing, setResizing] = useState(false)
+
+  const handleResizeStart = useCallback(
+    (event: React.MouseEvent) => {
+      event.preventDefault()
+      resizeRef.current = { startY: event.clientY, startRowHeight: rowHeight }
+      setResizing(true)
+    },
+    [rowHeight]
+  )
+
+  useEffect(() => {
+    if (!resizing) return
+    const onMove = (event: MouseEvent): void => {
+      const drag = resizeRef.current
+      if (!drag || rows.length === 0) return
+      // Dragging down by N pixels should make the whole plot N pixels taller, so the grip tracks
+      // the cursor rather than running away from it as the row count changes.
+      const next = drag.startRowHeight + (event.clientY - drag.startY) / rows.length
+      setRowHeightOverride(Math.min(Math.max(next, TONE_GRID_ROW_HEIGHT), MAX_ROW_HEIGHT))
+    }
+    const onUp = (): void => {
+      resizeRef.current = null
+      setResizing(false)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [resizing, rows.length])
 
   return (
     <div className="flex-1 min-w-0 flex flex-col h-full bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 overflow-hidden">
@@ -823,7 +901,33 @@ export function ToneMapView({
                 onSelect={handleSelect}
                 onDrillCell={handleDrillCell}
                 onSelectRow={handleSelectRow}
+                rowHeight={rowHeight}
               />
+            </div>
+          )}
+
+          {/* Row-height grip. Rows follow the window by default; dragging pins a height, and the
+              reset only appears once pinned so there's nothing to explain until it applies. */}
+          {rows.length > 0 && (
+            <div className="mt-1 flex items-center justify-center gap-2">
+              <div
+                onMouseDown={handleResizeStart}
+                title="Drag to change row height"
+                className={`h-3 w-28 flex items-center justify-center rounded cursor-ns-resize transition-colors ${
+                  resizing ? 'bg-gray-200 dark:bg-gray-700' : 'hover:bg-gray-100 dark:hover:bg-gray-800'
+                }`}
+              >
+                <div className="w-10 h-[3px] rounded-full bg-gray-300 dark:bg-gray-600" />
+              </div>
+              {rowHeightOverride !== null && (
+                <button
+                  onClick={() => setRowHeightOverride(null)}
+                  className="text-[10px] text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-100"
+                  title="Go back to filling the window automatically"
+                >
+                  auto height
+                </button>
+              )}
             </div>
           )}
 

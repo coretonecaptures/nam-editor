@@ -64,9 +64,24 @@ export function toneGridCellKey(cell: ToneGridCell): string {
 export const TONE_GRID_ROW_HEIGHT = 26
 const PAD = { t: 10, r: 16, b: 30, l: 132 }
 
+/** Vertical space the axis and padding take, independent of how many rows there are. */
+export const TONE_GRID_CHROME_HEIGHT = PAD.t + PAD.b
+
 /** Height needed to show `rowCount` rows without scrolling. */
 export function toneGridHeight(rowCount: number, rowHeight = TONE_GRID_ROW_HEIGHT): number {
   return PAD.t + Math.max(1, rowCount) * rowHeight + PAD.b
+}
+
+/**
+ * Dot radius for a given row height.
+ *
+ * Taller rows have to grow their dots too — a library with six amps stretched down the window
+ * would otherwise be the same handful of tiny specks floating in much more space, which is the
+ * emptiness the taller rows were meant to fix. Capped so a very tall row doesn't turn the plot
+ * into overlapping blobs.
+ */
+export function toneGridDotRadius(rowHeight = TONE_GRID_ROW_HEIGHT): number {
+  return Math.min(Math.max(rowHeight * 0.115, 3), 8)
 }
 
 export function ToneGrid({
@@ -114,6 +129,10 @@ export function ToneGrid({
 }) {
   const plotW = Math.max(10, width - PAD.l - PAD.r)
   const plotH = Math.max(10, height - PAD.t - PAD.b)
+  const dotRadius = toneGridDotRadius(rowHeight)
+  // Row labels grow with their rows, but far more slowly than the dots — past ~13px they start
+  // colliding with the fixed label gutter.
+  const labelFontSize = Math.min(Math.max(rowHeight * 0.4, 10.5), 13)
 
   // Heaviest at top: reverse the cleanest-first ordering for display only.
   const displayRows = React.useMemo(() => [...rows].reverse(), [rows])
@@ -227,7 +246,10 @@ export function ToneGrid({
     const x = clientX - box.left + PAD.l
     const y = clientY - box.top + PAD.t
 
-    const mark = nearestPoint(points, x, y)
+    // Keep the grab area generous relative to the dots as they grow with taller rows. Widening
+    // it can't cost precision — nearestPoint still returns the closest mark, so a larger radius
+    // only means you may be further away before nothing is hit at all.
+    const mark = nearestPoint(points, x, y, Math.max(14, dotRadius * 2.5))
     if (mark) return { mark, cell: null }
 
     for (const cell of cells) {
@@ -288,7 +310,7 @@ export function ToneGrid({
               dominantBaseline="middle"
               fill="currentColor"
               opacity={row.lowConfidence ? 0.42 : 0.7}
-              fontSize="10.5"
+              fontSize={labelFontSize}
               style={onSelectRow ? { cursor: 'pointer' } : undefined}
               onClick={onSelectRow ? () => onSelectRow(row.key) : undefined}
             >
@@ -366,7 +388,7 @@ export function ToneGrid({
             key={point.id}
             cx={point.px}
             cy={point.py}
-            r={isSelected ? 5.5 : isHovered ? 4.5 : 3}
+            r={dotRadius * (isSelected ? 1.85 : isHovered ? 1.5 : 1)}
             fill={point.color}
             fillOpacity={isSelected || isHovered ? 1 : 0.6}
             stroke={isSelected ? 'currentColor' : 'none'}
