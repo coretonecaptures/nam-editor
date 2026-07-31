@@ -658,6 +658,22 @@ export function ToneMapView({
   const drillMake = makeLabelOf(nowPlayingMakeKey)
   const drillCreator = creatorLabelOf(nowPlayingCreatorKey)
 
+  /**
+   * Hand a capture to the full player and get out of the way.
+   *
+   * The short audition clip must stop: it loops, so it would otherwise keep running underneath
+   * the player's own longer clip, and you would hear both at once. A hover that has been queued
+   * but not yet fired has to be cancelled too, or it starts a moment after the player opens.
+   */
+  const openInPlayer = useCallback(
+    (file: NamFile) => {
+      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current)
+      audition.stop()
+      onPlay(file)
+    },
+    [audition, onPlay]
+  )
+
   const handleSelect = useCallback(
     (mark: ToneGridMark) => {
       const file = byPath.get(mark.id)
@@ -665,9 +681,9 @@ export function ToneMapView({
       // In 'hover' mode the capture is already sounding, so a click promotes it to the full
       // player - otherwise clicking what you can already hear would appear to do nothing.
       if (dotAction === 'click') audition.play(file)
-      else onPlay(file)
+      else openInPlayer(file)
     },
-    [byPath, onPlay, dotAction, audition]
+    [byPath, openInPlayer, dotAction, audition]
   )
 
   /**
@@ -682,7 +698,9 @@ export function ToneMapView({
       if (cell.ids.length === 1) {
         const only = byPath.get(cell.ids[0])
         if (only) {
-          onPlay(only)
+          // Same route as clicking a dot, so the looping audition is stopped here too.
+          if (dotAction === 'click') audition.play(only)
+          else openInPlayer(only)
           return
         }
       }
@@ -696,7 +714,7 @@ export function ToneMapView({
       setZoom(clampWindow(cell.xMin - pad, cell.xMax + pad))
       setHoverCell(null)
     },
-    [byPath, onPlay, clampWindow]
+    [byPath, openInPlayer, dotAction, audition, clampWindow]
   )
 
   /** Clicking a row label isolates that amp — the coarse version of the same zoom. */
@@ -1300,7 +1318,7 @@ export function ToneMapView({
               files={filtered}
               audition={audition}
               latched={latched}
-              onOpenInPlayer={onPlay}
+              onOpenInPlayer={openInPlayer}
               nowPlayingPath={nowPlaying?.filePath ?? null}
             />
           ) : rows.length === 0 ? (
