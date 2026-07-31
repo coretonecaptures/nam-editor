@@ -4705,6 +4705,7 @@ INSTRUCTIONS:
                 : null
             }
             nowPlaying={playerFile}
+            diLibraryPath={settings.diPreviewLibraryPath || null}
             // Same pair FileList's play button uses. Setting the selection is mandatory, not
             // incidental: metadataCoverPath derives from the single selection, so a click that
             // only set playerFile would open the player with no cover art.
@@ -5068,13 +5069,6 @@ INSTRUCTIONS:
               irLibraryPath={settings.irLibraryPath || null}
               irMix={settings.irMix}
               coverImagePath={metadataCoverPath}
-              libraryFiles={files}
-              onOpenInPlayer={(picked) => {
-                // Mirror the Tone Map's click-to-play wiring: selection must be set too, since
-                // metadataCoverPath derives from the selected file, not from playerFile.
-                setPlayerFile(picked)
-                setSelectedIds(new Set([picked.filePath]))
-              }}
               onClose={() => setPlayerFile(null)}
             />
           ) : showDashboard ? (

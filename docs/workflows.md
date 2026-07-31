@@ -339,29 +339,27 @@ Downloading from Tone3000 inside card view:
 Use this when you know the *sound* you want but not which file it is — the case every name-based
 filter is useless for.
 
-1. Select any capture and open the **player**
-2. Switch to **Scan**
-3. Narrow the **Scope**:
-   - **Maker** — one or more creators
-   - **Amp** — one or more makes. Picking several at once is how you make a "family", e.g. Marshall
-     plus everything Marshall-derived
-   - **Tone** — clean, crunch, hi-gain and so on
-4. **Press and hold** a row to hear it; release to stop
-5. Flip **Hold** to **Latched** if you would rather it keep playing while you move around
-6. **Double-click** the one you want to open it in Preview, where you can scrub and loop it
+1. Make sure a **DI clip** is chosen in the player (**DI Source**) — auditioning needs one
+2. Open the **Tone Map** from the toolbar
+3. Narrow with the facets: one or more **amps**, **creators**, **tone types**. Picking several amps
+   at once is how you make a "family", e.g. Marshall plus everything Marshall-derived
+4. Then either:
+   - switch to **List** and press-and-hold rows to sweep them in order, cleanest first, or
+   - stay on **Map** and set the dot action to **Hover to hear** to sweep the plot itself
+5. Flip **Hold** to **Latched** in the list if you would rather a capture keep playing while you
+   move around
+6. **Double-click** (list) or click in **Open** mode (map) to open the one you want in the player
 
 Notes:
 
 - Keep the scope reasonably tight. Every capture has to be rendered before it can be heard, so the
   wait scales with how many you selected — "these two amps by this maker" is seconds, a whole
-  library is not.
-- The dot on each row shows what is rendered already. NAM Lab renders ahead of your pointer, so
-  pressing a row is usually instant.
-- Everything in a sweep is auditioned through the **same** clip from your DI selection, so the
-  captures are actually comparable. Pick a DI that suits what you are hunting for — a clean part if
-  you are after clean amps, a heavy riff if you are after high gain.
-- The sweep runs cleanest to most aggressive, so if the first few sound too clean, skip further down
-  rather than restarting.
+  library is not. The list header shows a rough estimate for the current scope.
+- Everything is auditioned through the **same** clip, so the captures are actually comparable. Pick
+  a DI that suits what you are hunting for — a clean part if you are after clean amps, a heavy riff
+  if you are after high gain.
+- Hover-to-hear on the map may hesitate on captures that have not been rendered yet, because the
+  cursor can move anywhere. The list predicts better, since a sweep runs one way.
 
 ---
 

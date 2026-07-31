@@ -33,7 +33,6 @@ import {
   resumeOffsetSec
 } from '../utils/playerAudio'
 import type { NamRenderRequest, NamRenderResponse } from '../workers/namRender.worker'
-import { ScanMode } from './ScanMode'
 
 /**
  * In-app tone preview player — REDESIGNED (tape transport + rebuilt DI picker + tuner).
@@ -52,12 +51,13 @@ const MAX_PREVIEW_SECONDS = 12
 
 type PlayerStatus = 'idle' | 'loading-di' | 'rendering' | 'ready' | 'error'
 
-export type PlayerMode = 'preview' | 'live' | 'scan'
+export type PlayerMode = 'preview' | 'live'
 
+// Both modes are about the ONE selected capture. Auditioning many captures lives in the Tone Map
+// instead - putting it here implied a relationship to the current capture that never existed.
 const PLAYER_MODES: { id: PlayerMode; label: string; hint: string }[] = [
   { id: 'preview', label: 'Preview', hint: 'Render this capture and play it back' },
-  { id: 'live', label: 'Live', hint: 'Play through this capture in real time' },
-  { id: 'scan', label: 'Scan', hint: 'Audition many captures by ear to find one' }
+  { id: 'live', label: 'Live', hint: 'Play through this capture in real time' }
 ]
 
 let lastIrPath: string | null = null
@@ -186,10 +186,6 @@ interface PlayerPanelProps {
   irLibraryPath?: string | null
   irMix?: number
   coverImagePath?: string | null
-  /** Every loaded capture — Scan mode narrows from these. Empty disables Scan. */
-  libraryFiles?: NamFile[]
-  /** Latch a scanned capture into Preview so it can be scrubbed, looped and kept. */
-  onOpenInPlayer?: (file: NamFile) => void
 }
 
 function toFileUrl(p: string): string {
@@ -346,9 +342,7 @@ export function PlayerPanel({
   diLibraryPath,
   irLibraryPath,
   irMix = 1,
-  coverImagePath,
-  libraryFiles = [],
-  onOpenInPlayer
+  coverImagePath
 }: PlayerPanelProps & { onClose: () => void }) {
   const [status, setStatus] = useState<PlayerStatus>('idle')
   const [errorMsg, setErrorMsg] = useState('')
@@ -943,7 +937,7 @@ export function PlayerPanel({
             className={`uppercase mb-0.5 ${liveMode ? 'text-amber-500 dark:text-amber-400' : 'text-[var(--accent)] dark:text-[var(--accent)]'}`}
             style={{ font: "700 10.5px 'IBM Plex Sans', sans-serif", letterSpacing: '.1em' }}
           >
-            {liveMode ? 'Live Input' : mode === 'scan' ? 'Scan' : 'Tone Preview'}
+            {liveMode ? 'Live Input' : 'Tone Preview'}
           </div>
           <div className="text-sm font-semibold truncate">{captureLabel}</div>
           {(m.gear_make || m.gear_model) && (
@@ -957,13 +951,8 @@ export function PlayerPanel({
             <button
               key={m.id}
               onClick={() => setMode(m.id)}
-              disabled={m.id === 'scan' && libraryFiles.length === 0}
-              title={
-                m.id === 'scan' && libraryFiles.length === 0
-                  ? 'Load a folder to scan through its captures'
-                  : m.hint
-              }
-              className={`h-6 px-2.5 rounded-md text-[11px] font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+              title={m.hint}
+              className={`h-6 px-2.5 rounded-md text-[11px] font-medium transition-colors ${
                 mode === m.id
                   ? 'bg-white dark:bg-[#232c36] text-gray-900 dark:text-gray-100 shadow-sm'
                   : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
@@ -985,17 +974,6 @@ export function PlayerPanel({
       </div>
 
       {/* ── Body */}
-      {mode === 'scan' ? (
-        <ScanMode
-          libraryFiles={libraryFiles}
-          diPath={diPath}
-          nowPlayingPath={file.filePath}
-          onOpenInPlayer={(picked) => {
-            onOpenInPlayer?.(picked)
-            setMode('preview')
-          }}
-        />
-      ) : (
       <div className="flex-1 overflow-y-auto">
         {liveMode ? (
           /* ══════════ LIVE MODE — recording lightbox + tuner + meters ══════════ */
@@ -1392,7 +1370,6 @@ export function PlayerPanel({
           </>
         )}
       </div>
-      )}
     </div>
   )
 }

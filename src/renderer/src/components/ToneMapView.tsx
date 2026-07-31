@@ -28,6 +28,9 @@ import {
   type ToneGridMark
 } from './dashboard/ToneGrid'
 import { paddedDomain } from './dashboard/scales'
+import { ScanList } from './ScanList'
+import { useAudition } from '../hooks/useAudition'
+import { resolveActiveDiClip } from '../utils/diSelection'
 
 const TONE_COLORS: Record<string, string> = {
   clean: '#38bdf8',
@@ -220,6 +223,8 @@ export interface ToneMapViewProps {
   onPlay: (file: NamFile) => void
   /** Currently previewed capture, so the map can mark and offer drill-downs from it. */
   nowPlaying?: NamFile | null
+  /** DI library root — auditioning needs a clip to play captures through. */
+  diLibraryPath?: string | null
   onClose?: () => void
 }
 
@@ -229,6 +234,7 @@ export function ToneMapView({
   scopeLabel,
   onPlay,
   nowPlaying = null,
+  diLibraryPath = null,
   onClose
 }: ToneMapViewProps) {
   const [scope, setScope] = useState<'library' | 'folder'>('library')
@@ -252,6 +258,21 @@ export function ToneMapView({
    * window slid along.
    */
   const [zoom, setZoom] = useState<[number, number] | null>(null)
+
+  /** Map is spatial, list is sequential - same captures, same facets, different reading. */
+  const [view, setView] = useState<'map' | 'list'>('map')
+  /**
+   * What a dot does.
+   *  open  - click opens it in the full player (the original behaviour, unchanged)
+   *  click - click plays it right here, without taking over the right panel
+   *  hover - it plays as you move across the map
+   * Hover is the most immediate but also the most likely to stutter, since moving anywhere is
+   * legal and prefetch can only guess from the cursor.
+   */
+  const [dotAction, setDotAction] = useState<'open' | 'click' | 'hover'>('open')
+  const [latched, setLatched] = useState(false)
+  const [diPath, setDiPath] = useState<string | null>(null)
+  const audition = useAudition(diPath)
 
   const plotRef = useRef<HTMLDivElement | null>(null)
   const [plotWidth, setPlotWidth] = useState(900)
@@ -494,9 +515,13 @@ export function ToneMapView({
   const handleSelect = useCallback(
     (mark: ToneGridMark) => {
       const file = byPath.get(mark.id)
-      if (file) onPlay(file)
+      if (!file) return
+      // In 'hover' mode the capture is already sounding, so a click promotes it to the full
+      // player - otherwise clicking what you can already hear would appear to do nothing.
+      if (dotAction === 'click') audition.play(file)
+      else onPlay(file)
     },
-    [byPath, onPlay]
+    [byPath, onPlay, dotAction, audition]
   )
 
   /**
@@ -538,6 +563,24 @@ export function ToneMapView({
     },
     [expandedMake]
   )
+
+  // Same clip the player auditions through, resolved from the shared prefs rather than passed
+  // down - otherwise the map and the player could disagree about what a capture sounds like.
+  useEffect(() => {
+    let cancelled = false
+    if (!diLibraryPath) {
+      setDiPath(null)
+      return
+    }
+    void (async () => {
+      const result = await window.api.scanWavLibrary(diLibraryPath)
+      if (cancelled) return
+      setDiPath(resolveActiveDiClip(result.categories))
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [diLibraryPath])
 
   /** Plot geometry must match ToneGrid's own padding for cursor->value maths to line up. */
   const PLOT_PAD_L = 132
@@ -679,6 +722,72 @@ export function ToneMapView({
         </div>
 
         <div className="flex-1" />
+
+        {/* Map vs list — same captures and same facets, read two different ways. */}
+        <div className="flex rounded-lg bg-gray-100 dark:bg-gray-800 p-0.5 flex-shrink-0">
+          {(['map', 'list'] as const).map((value) => (
+            <button
+              key={value}
+              onClick={() => setView(value)}
+              className={`h-6 px-2.5 rounded-md text-[11px] font-medium transition-colors ${
+                view === value
+                  ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+              }`}
+              title={value === 'map' ? 'Plot every capture' : 'Sweep them in order, by ear'}
+            >
+              {value === 'map' ? 'Map' : 'List'}
+            </button>
+          ))}
+        </div>
+
+        {/* What a dot does. Only meaningful on the map; the list is always hold-to-hear. */}
+        {view === 'map' && (
+          <div className="flex rounded-lg bg-gray-100 dark:bg-gray-800 p-0.5 flex-shrink-0">
+            {(
+              [
+                ['open', 'Open', 'Click a dot to open it in the player'],
+                ['click', 'Click to hear', 'Click a dot to play it here, without opening the player'],
+                ['hover', 'Hover to hear', 'Captures play as you move across the map']
+              ] as const
+            ).map(([value, label, hint]) => (
+              <button
+                key={value}
+                onClick={() => {
+                  setDotAction(value)
+                  audition.stop()
+                }}
+                disabled={value !== 'open' && !diPath}
+                title={!diPath && value !== 'open' ? 'Set a DI clip in the player first' : hint}
+                className={`h-6 px-2.5 rounded-md text-[11px] font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                  dotAction === value
+                    ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
+                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {view === 'list' && (
+          <button
+            onClick={() => setLatched((v) => !v)}
+            title={
+              latched
+                ? 'Latched — a capture keeps playing after you let go'
+                : 'Hold to listen — audio stops when you release'
+            }
+            className={`h-6 px-2.5 rounded-md text-[11px] font-medium transition-colors flex-shrink-0 ${
+              latched
+                ? 'text-[#06201d] bg-[var(--accent)]'
+                : 'text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800'
+            }`}
+          >
+            {latched ? 'Latched' : 'Hold'}
+          </button>
+        )}
 
         <div className="flex rounded-lg bg-gray-100 dark:bg-gray-800 p-0.5 flex-shrink-0">
           {(['library', 'folder'] as const).map((value) => (
@@ -867,7 +976,15 @@ export function ToneMapView({
         </div>
 
         <div className="flex-1 min-w-0 overflow-auto p-4">
-          {rows.length === 0 ? (
+          {view === 'list' ? (
+            <ScanList
+              files={filtered}
+              audition={audition}
+              latched={latched}
+              onOpenInPlayer={onPlay}
+              nowPlayingPath={nowPlaying?.filePath ?? null}
+            />
+          ) : rows.length === 0 ? (
             <div className="h-full flex items-center justify-center">
               <p className="text-sm text-gray-400 dark:text-gray-600">
                 {positionable.length === 0
@@ -906,6 +1023,15 @@ export function ToneMapView({
                 onHoverChange={(mark, x, y, cell) => {
                   setHover(mark ? { mark, x, y } : null)
                   setHoverCell(cell ? { cell, x, y } : null)
+                  if (dotAction === 'open' || !mark) return
+                  const file = byPath.get(mark.id)
+                  if (!file) return
+                  // Warm whatever is under the cursor even in click mode: on a map the pointer
+                  // can go anywhere, so hovering is the only signal about what may be pressed.
+                  audition.prefetch([file])
+                  if (dotAction === 'hover' && audition.playingPath !== file.filePath) {
+                    audition.play(file)
+                  }
                 }}
                 onSelect={handleSelect}
                 onDrillCell={handleDrillCell}

@@ -82,10 +82,10 @@ Grid view includes:
 Hear a capture without leaving NAM Lab and without loading a plugin host. Open it from the play
 button on a selected capture; it takes over the right-hand panel.
 
-The player has three modes, chosen from the toggle in its header: **Preview**, **Live**, and
-**Scan**.
+The player has two modes, chosen from the toggle in its header: **Preview** and **Live**. To
+audition *many* captures rather than one, use the Tone Map's List view and hover-to-hear, below.
 
-Nothing here is real-time except Live. Preview and Scan render the capture *offline* first — the
+Nothing here is real-time except Live. Preview renders the capture *offline* first — the
 model is run over an audio clip in a background worker, and you play the result. That is why a
 capture takes a moment to become ready, and why playback is then completely smooth regardless of
 how heavy the model is.
@@ -124,48 +124,6 @@ Runs your guitar through the model live using an `AudioWorklet`, so you can play
 - **Round-trip latency** is reported once running. Use headphones; monitoring through speakers with
   a live mic'd or acoustic source will feed back.
 
-### Scan — find a capture by ear
-
-Scan exists because every other way of finding a capture depends on a **name**, and you cannot name
-a tone you have not heard yet. Instead you narrow to a set and sweep through it, listening.
-
-**Scope** — three rows of chips: **Maker** (`modeled_by`), **Amp** (`gear_make`) and **Tone**
-(`tone_type`). Chips within a row combine with OR; different rows combine with AND. So "Marshall or
-Mesa, by this maker, crunch only" is three clicks.
-
-> Selecting several amps at once *is* how you make a "family". There is no fixed family list to
-> maintain, so it stays correct as your library grows.
-
-Split spellings are merged, so selecting **Marshall** finds captures tagged `MARSHALL` and
-`Marshall` alike, and the chip count is the real total. Captures whose make is missing or a
-placeholder are grouped under **Untagged**, which sorts last however many there are.
-
-**Listening**
-
-- **Press and hold** a row to hear it. Release to stop.
-- **Latched** — flip the Hold button to Latched and a capture keeps playing after you let go, so you
-  can move around, read its metadata, or line up the next one.
-- **Double-click** a row to open that capture in Preview, where you can scrub and loop it.
-- The clip **loops** while you listen, so a held audition never falls silent.
-
-**Order** — the sweep runs from cleanest to most aggressive by tone type, then by measured gain
-inside each group, so it travels somewhere instead of jumping about. Captures with no tone type
-sweep last rather than being hidden.
-
-> **Why not just sort by gain?** Measured across a real 3,853-capture library, `metadata.gain` has a
-> median of 0.797 and **79% of captures fall inside 0.55–0.85**. Sorting several hundred captures by
-> a value that flat means neighbours differ by around 0.0001 — the order would be arbitrary and the
-> sweep would sound random.
-
-**Readiness dot** — the small dot on each row shows whether that capture has been rendered yet.
-NAM Lab renders *ahead* of wherever your pointer is, several at a time, so by the time you press a
-row it is usually already done. The header shows how many are ready and roughly how long a full
-sweep of the current scope would take to render.
-
-Narrower scopes are much faster, because the cost scales with how many captures you selected. Every
-capture in a sweep is rendered through the *same* short clip from your DI selection, which is what
-makes them comparable at all.
-
 ---
 
 ## Tone Map
@@ -196,7 +154,43 @@ move along the range. **Fit** returns to the full width.
 > zooming in and back out always returns you to the same picture.
 
 **Facets** — multi-select filters for amp, creator and tone type, plus a breadcrumb of what is
-currently narrowed.
+currently narrowed. Selecting several amps at once is how you make a "family"; there is no fixed
+family list to maintain, so it stays correct as your library grows.
+
+### Map and List
+
+The header has a **Map / List** toggle. Both show exactly the captures your facets select — the
+same scope, read two different ways — so switching never changes *what* you are looking at.
+
+**List** sweeps them in order, cleanest to most aggressive by tone type, with gain only breaking
+ties inside a group. Press and hold a row to hear it, release to stop; **Latched** keeps it playing
+after you let go so you can move around. Double-click opens a capture in the player.
+
+> **Why not order by gain?** Measured across a real library, `metadata.gain` has a median of 0.797
+> and **79% of captures fall inside 0.55–0.85**. Sorting several hundred captures by a value that
+> flat would put neighbours ~0.0001 apart, and the sweep would be arbitrary.
+
+### Hearing captures from the map
+
+A second toggle chooses what a dot does:
+
+| Mode | Behaviour |
+|---|---|
+| **Open** | Click a dot to open it in the full player. The original behaviour. |
+| **Click to hear** | Click a dot to play it right there, without taking over the right panel. |
+| **Hover to hear** | Captures play as you move across the map. |
+
+Hover is the most immediate, and also the most likely to hesitate: on a map the cursor can go
+anywhere, so NAM Lab can only guess what to render next from where you are. The list can predict
+much better, because a sweep runs in one direction.
+
+Both listening modes need a **DI clip** — the same one the player uses, so the two never disagree
+about what a capture sounds like. If none is set, the two listening modes are disabled; pick one
+under **DI Source** in the player.
+
+Every capture is auditioned through the **same** short window from that clip, which is what makes
+them comparable. A small readiness dot in the list shows what has been rendered already; NAM Lab
+renders ahead of wherever your attention is, several at a time.
 
 **Height** — rows grow to fill about half the window, so a library with only a few amps does not
 leave the screen mostly empty, and the dots grow with the rows. Drag the grip beneath the plot to

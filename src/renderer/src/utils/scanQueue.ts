@@ -10,30 +10,15 @@
  * the very common "that one — go back" correction.
  */
 
-export interface PrefetchPlan {
-  /** Indices to start rendering now, in priority order. */
-  start: number[]
-  /** Cached indices safe to drop, least useful first. */
-  evict: number[]
-}
-
 export interface PrefetchOptions {
   /** How far ahead of the cursor to keep rendered. */
   ahead?: number
   /** How far behind, for going back one. */
   behind?: number
-  /** Renders allowed in flight at once — the worker pool size. */
-  concurrency?: number
-  /** Max rendered clips held in memory. */
-  capacity?: number
 }
 
-const DEFAULTS: Required<PrefetchOptions> = {
-  ahead: 8,
-  behind: 2,
-  concurrency: 4,
-  capacity: 48
-}
+const DEFAULTS: Required<PrefetchOptions> = { ahead: 8, behind: 2 }
+const DEFAULT_CONCURRENCY = 4
 
 /**
  * Indices around `cursor`, nearest first, ahead prioritised over behind.
@@ -48,47 +33,14 @@ export function prefetchWindow(
 ): number[] {
   const { ahead, behind } = { ...DEFAULTS, ...options }
   if (total <= 0) return []
-  const clamp = (i: number): boolean => i >= 0 && i < total
+  const inRange = (i: number): boolean => i >= 0 && i < total
   const out: number[] = []
-  if (clamp(cursor)) out.push(cursor)
+  if (inRange(cursor)) out.push(cursor)
   for (let d = 1; d <= Math.max(ahead, behind); d++) {
-    if (d <= ahead && clamp(cursor + d)) out.push(cursor + d)
-    if (d <= behind && clamp(cursor - d)) out.push(cursor - d)
+    if (d <= ahead && inRange(cursor + d)) out.push(cursor + d)
+    if (d <= behind && inRange(cursor - d)) out.push(cursor - d)
   }
   return out
-}
-
-/**
- * What to render next and what to drop.
- *
- * `done` and `inFlight` are passed in rather than held here so the caller keeps one source of
- * truth for cache state — a second copy inside the planner would inevitably drift from it.
- */
-export function planPrefetch(
-  cursor: number,
-  total: number,
-  done: ReadonlySet<number>,
-  inFlight: ReadonlySet<number>,
-  options: PrefetchOptions = {}
-): PrefetchPlan {
-  const opts = { ...DEFAULTS, ...options }
-  const want = prefetchWindow(cursor, total, opts)
-
-  const free = Math.max(0, opts.concurrency - inFlight.size)
-  const start = want.filter((i) => !done.has(i) && !inFlight.has(i)).slice(0, free)
-
-  // Evict by distance from the cursor, furthest first, and never evict anything still wanted -
-  // dropping a clip we are about to need again would cause an audible stall on the next press.
-  const keep = new Set(want)
-  const evict =
-    done.size <= opts.capacity
-      ? []
-      : [...done]
-          .filter((i) => !keep.has(i) && !inFlight.has(i))
-          .sort((a, b) => Math.abs(b - cursor) - Math.abs(a - cursor))
-          .slice(0, done.size - opts.capacity)
-
-  return { start, evict }
 }
 
 /**
@@ -100,7 +52,7 @@ export function planPrefetch(
 export function estimateRenderMs(
   count: number,
   clipSeconds: number,
-  concurrency = DEFAULTS.concurrency
+  concurrency = DEFAULT_CONCURRENCY
 ): number {
   const per = 60 + 120 * Math.max(0, clipSeconds)
   return (Math.max(0, count) * per) / Math.max(1, concurrency)
