@@ -28,6 +28,7 @@ import {
   type ToneGridMark
 } from './dashboard/ToneGrid'
 import { paddedDomain } from './dashboard/scales'
+import { captureNeedsCabIr } from '../utils/playerAudio'
 import { ScanList } from './ScanList'
 import { useAudition } from '../hooks/useAudition'
 import {
@@ -69,6 +70,27 @@ const PLOT_BOTTOM_GUTTER = 104
 const MAX_ROW_HEIGHT = 96
 /** Share of the free vertical space the map takes by default; drag the grip for more. */
 const DEFAULT_HEIGHT_FRACTION = 0.5
+/** How long the cursor must rest on a dot before it is rendered or played. */
+const HOVER_SETTLE_MS = 160
+
+/**
+ * Gear type matters for listening, not just for tidiness.
+ *
+ * A capture of an amp on its own is raw power-amp signal and needs a cabinet IR to sound like
+ * anything; a capture that already contains a cab must not get one. Auditioning a mixed set means
+ * half get a cab and half do not, so they are not comparable — hence a facet for it.
+ */
+const GEAR_LABELS: Record<string, string> = {
+  amp: 'Amp only (needs cab)',
+  preamp: 'Preamp (needs cab)',
+  pedal: 'Pedal (needs cab)',
+  pedal_amp: 'Pedal + Amp (needs cab)',
+  amp_cab: 'Amp + Cab',
+  amp_pedal_cab: 'Amp + Pedal + Cab',
+  studio: 'Studio'
+}
+const GEAR_ORDER = ['amp_cab', 'amp_pedal_cab', 'studio', 'amp', 'preamp', 'pedal', 'pedal_amp']
+const GEAR_UNTAGGED = 'untagged'
 
 /**
  * Row height that fills half the free vertical space, bounded both ways.
@@ -253,6 +275,7 @@ export function ToneMapView({
   const [makeKeys, setMakeKeys] = useState<Set<string>>(new Set())
   const [creatorKeys, setCreatorKeys] = useState<Set<string>>(new Set())
   const [toneKeys, setToneKeys] = useState<Set<string>>(new Set())
+  const [gearKeys, setGearKeys] = useState<Set<string>>(new Set())
   const [showUntagged, setShowUntagged] = useState(true)
   /** When set, rows become that amp's models instead of makes — one level of zoom in. */
   const [expandedMake, setExpandedMake] = useState<string | null>(null)
@@ -326,6 +349,22 @@ export function ToneMapView({
   const canScopeToFolder = scopedFiles.length > 0 && scopedFiles.length < files.length
   /** Any mode where captures actually make sound, and the DI/cab therefore matter. */
   const listening = view === 'list' || dotAction !== 'open'
+
+
+  /**
+   * Hover-play waits for the cursor to settle.
+   *
+   * Without this, dragging across the plot fired play() for every dot passed over. Each call
+   * supersedes the last, so the renders all get discarded — but they still occupy the worker
+   * pool, so the capture you actually stopped on queued behind dozens of dead ones and took
+   * seconds to sound, or appeared not to play at all.
+   */
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    return () => {
+      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current)
+    }
+  }, [])
   const baseFiles = scope === 'library' || !canScopeToFolder ? files : scopedFiles
 
   /** Captures that report a measured gain — the only ones the map can position. */
@@ -360,9 +399,13 @@ export function ToneMapView({
         if (!toneKeys.has(tone)) return false
       }
 
+      if (gearKeys.size > 0) {
+        if (!gearKeys.has(f.metadata.gear_type ?? GEAR_UNTAGGED)) return false
+      }
+
       return true
     })
-  }, [positionable, makeKeys, creatorKeys, toneKeys, showUntagged])
+  }, [positionable, makeKeys, creatorKeys, toneKeys, gearKeys, showUntagged])
 
   /**
    * Rows are makes, or one amp's models when drilled in.
@@ -502,6 +545,41 @@ export function ToneMapView({
     }))
   }, [positionable])
 
+  const gearOptions = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const f of positionable) {
+      const key = f.metadata.gear_type ?? GEAR_UNTAGGED
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+    }
+    const known = GEAR_ORDER.filter((g) => counts.has(g)).map((g) => ({
+      key: g,
+      label: GEAR_LABELS[g] ?? g,
+      count: counts.get(g) ?? 0
+    }))
+    // Anything unrecognised, plus untagged, after the known kinds rather than dropped.
+    const rest = [...counts.keys()]
+      .filter((k) => !GEAR_ORDER.includes(k))
+      .map((k) => ({
+        key: k,
+        label: k === GEAR_UNTAGGED ? 'Untagged' : (GEAR_LABELS[k] ?? k),
+        count: counts.get(k) ?? 0
+      }))
+    return [...known, ...rest]
+  }, [positionable])
+
+/**
+   * How the chosen cab applies to what is actually in scope.
+   *
+   * The IR is skipped for captures that already contain one, so with a cab-inclusive scope the
+   * picker looks broken — you choose a cab and nothing changes. Saying which way round it is
+   * costs a line and removes the confusion.
+   */
+  const cabSplit = useMemo(() => {
+    let needs = 0
+    for (const f of filtered) if (captureNeedsCabIr(f.metadata.gear_type)) needs++
+    return { needs, has: filtered.length - needs, total: filtered.length }
+  }, [filtered])
+
   const toggleIn = (setter: React.Dispatch<React.SetStateAction<Set<string>>>) => (key: string) =>
     setter((prev) => {
       const next = new Set(prev)
@@ -514,6 +592,7 @@ export function ToneMapView({
     setMakeKeys(new Set())
     setCreatorKeys(new Set())
     setToneKeys(new Set())
+    setGearKeys(new Set())
     setExpandedMake(null)
     setShowUntagged(true)
     setZoom(null)
@@ -523,6 +602,7 @@ export function ToneMapView({
     makeKeys.size > 0 ||
     creatorKeys.size > 0 ||
     toneKeys.size > 0 ||
+    gearKeys.size > 0 ||
     expandedMake !== null ||
     zoom !== null
 
@@ -1021,6 +1101,13 @@ export function ToneMapView({
             onToggle={toggleIn(setToneKeys)}
             onClear={() => setToneKeys(new Set())}
           />
+          <Facet
+            title="Gear type"
+            options={gearOptions}
+            selected={gearKeys}
+            onToggle={toggleIn(setGearKeys)}
+            onClear={() => setGearKeys(new Set())}
+          />
           <label className="flex items-center gap-2 cursor-pointer select-none pt-1">
             <input
               type="checkbox"
@@ -1103,8 +1190,28 @@ export function ToneMapView({
                 </select>
               </label>
 
+              {/* Which way round the cab applies for THIS scope, so the picker never looks broken. */}
+              {cabSplit.total > 0 && (
+                <span
+                  className={`text-[10px] ${
+                    irPath && cabSplit.needs === 0
+                      ? 'text-amber-600 dark:text-amber-500'
+                      : 'text-gray-400 dark:text-gray-500'
+                  }`}
+                >
+                  {irPath && cabSplit.needs === 0
+                    ? 'every capture in scope already has a cab — this IR is not applied to any of them'
+                    : irPath && cabSplit.has > 0
+                      ? `cab applied to ${cabSplit.needs.toLocaleString()} of ${cabSplit.total.toLocaleString()} · the other ${cabSplit.has.toLocaleString()} already have one. Filter by Gear type to compare like with like.`
+                      : irPath
+                        ? `cab applied to all ${cabSplit.total.toLocaleString()} in scope`
+                        : cabSplit.needs > 0
+                          ? `${cabSplit.needs.toLocaleString()} in scope have no cab — pick an IR or they will sound harsh`
+                          : 'no cab needed — every capture in scope has one'}
+                </span>
+              )}
               <span className="text-[10px] text-gray-400 dark:text-gray-500">
-                cab applied only to captures without one · same settings as the player
+                same settings as the player
               </span>
               {audition.error && (
                 <span className="text-[10px] text-red-500">{audition.error}</span>
@@ -1160,15 +1267,18 @@ export function ToneMapView({
                 onHoverChange={(mark, x, y, cell) => {
                   setHover(mark ? { mark, x, y } : null)
                   setHoverCell(cell ? { cell, x, y } : null)
-                  if (dotAction === 'open' || !mark) return
+                  if (dotAction === 'open') return
+                  if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current)
+                  if (!mark) return
                   const file = byPath.get(mark.id)
                   if (!file) return
-                  // Warm whatever is under the cursor even in click mode: on a map the pointer
-                  // can go anywhere, so hovering is the only signal about what may be pressed.
-                  audition.prefetch([file])
-                  if (dotAction === 'hover' && audition.playingPath !== file.filePath) {
-                    audition.play(file)
-                  }
+                  if (dotAction === 'hover' && audition.playingPath === file.filePath) return
+                  // Only act once the cursor has settled. Warming on the way past would fill the
+                  // pool with captures the user is merely travelling over.
+                  hoverTimerRef.current = setTimeout(() => {
+                    if (dotAction === 'hover') audition.play(file)
+                    else audition.prefetch([file])
+                  }, HOVER_SETTLE_MS)
                 }}
                 onSelect={handleSelect}
                 onDrillCell={handleDrillCell}

@@ -157,8 +157,13 @@ move along the range. **Fit** returns to the full width.
 actually narrower than the whole library; with nothing narrower selected it would name nothing and
 choose the same captures either way.
 
-**Facets** — multi-select filters for amp, creator and tone type, plus a breadcrumb of what is
-currently narrowed. Selecting several amps at once is how you make a "family"; there is no fixed
+**Facets** — multi-select filters for amp, creator, tone type and **gear type**, plus a breadcrumb
+of what is currently narrowed.
+
+> **Gear type is not just tidiness.** A capture of an amp on its own is raw power-amp signal and
+> needs a cabinet IR to sound like anything; one that already contains a cab must not get another.
+> Auditioning a mixed set therefore means half get a cab and half do not, and they are not
+> comparable. Filter by gear type before listening. Selecting several amps at once is how you make a "family"; there is no fixed
 family list to maintain, so it stays correct as your library grows.
 
 ### Map and List
@@ -197,7 +202,9 @@ exactly what you are hearing, with both parts changeable there:
   them, which is what makes them comparable.
 - **Cab IR** — applied *only* to captures that do not already contain a cab, so you never hear two
   speakers in series. A capture of an amp on its own is raw power-amp signal and sounds harsh
-  without one.
+  without one. The row says how the choice lands on the current scope — for example that the IR is
+  applied to 40 of 60 captures, or that every capture in scope already has a cab and the IR is
+  therefore doing nothing.
 
 Both are **shared with the player**, so a change in either place applies to both and a capture
 never sounds different depending on where you played it. Set them from whichever is in front of

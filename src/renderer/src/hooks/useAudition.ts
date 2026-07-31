@@ -69,7 +69,15 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
   const poolRef = useRef<ScanRenderPool | null>(null)
   const sourceRef = useRef<AudioBufferSourceNode | null>(null)
   const cacheRef = useRef(new Map<string, AudioBuffer>())
-  const inFlightRef = useRef(new Set<string>())
+  /**
+   * Renders in progress, keyed by path — the PROMISE, not just the path.
+   *
+   * This used to be a Set and `renderCapture` returned null when a key was present, so pressing a
+   * capture that prefetch had already started returned nothing and it silently never played.
+   * Prefetch warms exactly what you are about to press, so that was most presses. Sharing the
+   * promise means a second caller waits for the same render instead of being turned away.
+   */
+  const inFlightRef = useRef(new Map<string, Promise<AudioBuffer | null>>())
   const diByRateRef = useRef(new Map<number, Float32Array<ArrayBuffer>>())
   const rawDiRef = useRef<{ samples: Float32Array<ArrayBuffer>; rate: number } | null>(null)
   const irRef = useRef<{ samples: Float32Array; rate: number } | null>(null)
@@ -186,9 +194,11 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
       const key = file.filePath
       const cached = cacheRef.current.get(key)
       if (cached) return cached
-      if (inFlightRef.current.has(key)) return null
+      const existing = inFlightRef.current.get(key)
+      if (existing) return existing
       if (!rawDiRef.current) return null
-      inFlightRef.current.add(key)
+
+      const job = (async (): Promise<AudioBuffer | null> => {
       try {
         const modelRes = await window.api.readFileBinary(key)
         if (modelRes.error || !modelRes.data) throw new Error(modelRes.error ?? 'no data')
@@ -240,6 +250,9 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
       } finally {
         inFlightRef.current.delete(key)
       }
+      })()
+      inFlightRef.current.set(key, job)
+      return job
     },
     [getCtx, getPool, inputForRate, irMix]
   )
