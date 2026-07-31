@@ -198,6 +198,14 @@ Hover is the most immediate, and also the most likely to hesitate: on a map the 
 anywhere, so NAM Lab can only guess what to render next from where you are. The list can predict
 much better, because a sweep runs in one direction.
 
+**Stopping.** The clip loops while it plays, so it does not stop on its own. Any of these end it:
+
+- **click the same capture again**
+- the **Stop** button, which appears while anything is sounding
+- **Esc**
+- in *Hover to hear*, moving the pointer off the dots
+- opening a capture in the player, which hands over to the longer clip there
+
 ### Listening through
 
 Whenever a listening mode is active, a **Listening through** row appears above the plot showing

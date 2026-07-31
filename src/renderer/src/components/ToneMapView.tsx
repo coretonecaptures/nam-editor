@@ -378,6 +378,17 @@ export function ToneMapView({
       if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current)
     }
   }, [])
+
+  // Escape stops whatever is sounding, wherever focus happens to be.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current)
+      audition.stop()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [audition])
   const baseFiles = scope === 'library' || !canScopeToFolder ? files : scopedFiles
 
   /** Captures that report a measured gain — the only ones the map can position. */
@@ -680,8 +691,12 @@ export function ToneMapView({
       if (!file) return
       // In 'hover' mode the capture is already sounding, so a click promotes it to the full
       // player - otherwise clicking what you can already hear would appear to do nothing.
-      if (dotAction === 'click') audition.play(file)
-      else openInPlayer(file)
+      if (dotAction === 'click') {
+        // Clicking what is already sounding stops it. Without this the only way to end a clip was
+        // to start a different one, so it looped indefinitely.
+        if (audition.playingPath === file.filePath) audition.stop()
+        else audition.play(file)
+      } else openInPlayer(file)
     },
     [byPath, openInPlayer, dotAction, audition]
   )
@@ -1201,6 +1216,23 @@ export function ToneMapView({
                 {listening ? 'Listening through' : 'Will listen through'}
               </span>
 
+              {/* Visible stop. Clicking the sounding dot again also stops it, but that is not
+                  discoverable on its own, and a looping clip with no obvious way out is worse
+                  than an extra button. */}
+              {audition.playingPath !== null && (
+                <button
+                  onClick={() => {
+                    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current)
+                    audition.stop()
+                  }}
+                  title="Stop (Esc) — or click the same capture again"
+                  className="h-6 px-2 rounded-full text-[10px] font-semibold bg-[var(--accent)] text-[#06201d] hover:opacity-90 flex items-center gap-1.5"
+                >
+                  <span className="w-1.5 h-1.5 rounded-sm bg-[#06201d]" />
+                  Stop
+                </button>
+              )}
+
               <label className="flex items-center gap-1.5">
                 <span className="text-gray-500 dark:text-gray-400">DI</span>
                 <select
@@ -1362,7 +1394,12 @@ export function ToneMapView({
                   setHoverCell(cell ? { cell, x, y } : null)
                   if (dotAction === 'open') return
                   if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current)
-                  if (!mark) return
+                  if (!mark) {
+                    // Moving off the dots ends the sweep, so hover reads as scrubbing rather
+                    // than as latching whatever you happened to pass over last.
+                    if (dotAction === 'hover') audition.stop()
+                    return
+                  }
                   const file = byPath.get(mark.id)
                   if (!file) return
                   if (dotAction === 'hover' && audition.playingPath === file.filePath) return
