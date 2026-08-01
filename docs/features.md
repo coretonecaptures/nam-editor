@@ -77,6 +77,161 @@ Grid view includes:
 
 ---
 
+## Tone Player
+
+Hear a capture without leaving NAM Lab and without loading a plugin host. Open it from the play
+button on a selected capture; it takes over the right-hand panel.
+
+The player has two modes, chosen from the toggle in its header: **Preview** and **Live**. To
+audition *many* captures rather than one, use the Tone Map's List view and hover-to-hear, below.
+
+Nothing here is real-time except Live. Preview renders the capture *offline* first — the
+model is run over an audio clip in a background worker, and you play the result. That is why a
+capture takes a moment to become ready, and why playback is then completely smooth regardless of
+how heavy the model is.
+
+### Preview — listen to one capture
+
+Renders a reference DI clip through the selected capture and plays it back.
+
+- **Transport** — Restart, Play, Stop, Loop, styled as a physical tape transport. Play is not a
+  toggle: pressing it while already playing does nothing, and Stop is what ends playback. Restart
+  and Stop light briefly when pressed; Play and Loop stay lit while they are active.
+- **Scrub bar** — click anywhere to seek. Playing from the very end restarts from the top rather
+  than firing a silent fragment of the tail.
+- **Output meter** — a real level meter fed by an `AnalyserNode` on the output, showing peaks with
+  a decay rather than an average, so a normalized signal reads near full scale as it should.
+- **DI Source** — pick which clip captures are auditioned through. Folders appear as pills, clips
+  as a list. Your choice is remembered per folder.
+- **Cabinet IR** — captures of an amp *without* a cab are raw power-amp signal and sound harsh on
+  their own, because a real rig's speaker is doing heavy filtering the model does not contain. The
+  IR stage is enabled automatically for those and left off for captures that already include a cab,
+  so you never hear two speakers in series. You can always override it.
+- **Metadata summary** — name, gear, tone type, creator, ESR and so on, in a grid that reflows to
+  1, 2 or 3 columns as you resize the panel.
+
+### Live — play through a capture in real time
+
+Runs your guitar through the model live using an `AudioWorklet`, so you can play rather than listen.
+
+- **RECORDING sign** — the arm control. Click it to start and stop live input.
+- **Input device and gain** — pick the interface input and trim the level going into the model.
+- **Tuner** — an autocorrelation pitch detector reading the raw signal *before* the model, so
+  distortion and compression cannot confuse it. Shows note, octave and cents.
+- **Input and output meters** — input is tapped pre-model, output post-model, so you can see
+  whether you are driving the capture too hard.
+- **Bypass** — compare against the dry signal.
+- **Round-trip latency** is reported once running. Use headphones; monitoring through speakers with
+  a live mic'd or acoustic source will feed back.
+
+---
+
+## Tone Map
+
+A full-window picture of the whole library, for browsing rather than searching. Open it from the
+Tone Map button in the toolbar.
+
+**Layout** — each row is an amp, ordered cleanest at the bottom to heaviest at the top. The
+horizontal axis is measured saturation. Every dot is a real capture: nothing is averaged or
+invented, so anything you see is a file you own.
+
+> Row order is **measured**, not guessed. An amp's position comes from the mean measured gain of
+> its own captures, so it updates itself as your library changes. Rows marked `*` have fewer than
+> three measured captures, which is too few for the average to mean much.
+
+**Reading it**
+
+- **Hover** a dot to name that capture. Hovering never plays anything.
+- **Click** a dot to play it — the player opens on that capture.
+- **Click a row label** to isolate that amp.
+- Dense rows collapse into **heat bands** instead of unreadable overlapping dots. Bands are
+  clickable: clicking one zooms into it until the individual captures separate.
+
+**Zoom** — scroll to zoom about the cursor, drag to pan, and use the scrollbar under the plot to
+move along the range. **Fit** returns to the full width.
+
+> Zooming is a *view*, not a filter: rows, counts and facet selections do not change as you zoom, so
+> zooming in and back out always returns you to the same picture.
+
+**Scope** — a **Whole library / current view** toggle appears only when what you are browsing is
+actually narrower than the whole library; with nothing narrower selected it would name nothing and
+choose the same captures either way.
+
+**Facets** — multi-select filters for amp, creator, tone type and **gear type**, plus a breadcrumb
+of what is currently narrowed.
+
+**Untagged captures** — two checkboxes control whether captures with no amp, and captures with no
+tone type, appear at all. Both default to shown: a real library can have a third of its captures
+untagged in one field or another, and hiding that much by default would misrepresent what you own.
+The header count always reflects the choice.
+
+> **Gear type is not just tidiness.** A capture of an amp on its own is raw power-amp signal and
+> needs a cabinet IR to sound like anything; one that already contains a cab must not get another.
+> Auditioning a mixed set therefore means half get a cab and half do not, and they are not
+> comparable. Filter by gear type before listening. Selecting several amps at once is how you make a "family"; there is no fixed
+family list to maintain, so it stays correct as your library grows.
+
+### Map and List
+
+The header has a **Map / List** toggle. Both show exactly the captures your facets select — the
+same scope, read two different ways — so switching never changes *what* you are looking at.
+
+**List** sweeps them in order, cleanest to most aggressive by tone type, with gain only breaking
+ties inside a group. Press and hold a row to hear it, release to stop; **Latched** keeps it playing
+after you let go so you can move around. Double-click opens a capture in the player.
+
+> **Why not order by gain?** Measured across a real library, `metadata.gain` has a median of 0.797
+> and **79% of captures fall inside 0.55–0.85**. Sorting several hundred captures by a value that
+> flat would put neighbours ~0.0001 apart, and the sweep would be arbitrary.
+
+### Hearing captures from the map
+
+A second toggle chooses what a dot does:
+
+| Mode | Behaviour |
+|---|---|
+| **Open** | Click a dot to open it in the full player. The original behaviour. |
+| **Click to hear** | Click a dot to play it right there, without taking over the right panel. |
+| **Hover to hear** | Captures play as you move across the map. |
+
+Hover is the most immediate, and also the most likely to hesitate: on a map the cursor can go
+anywhere, so NAM Lab can only guess what to render next from where you are. The list can predict
+much better, because a sweep runs in one direction.
+
+**Stopping.** The clip loops while it plays, so it does not stop on its own. Any of these end it:
+
+- **click the same capture again**
+- the **Stop** button, which appears while anything is sounding
+- **Esc**
+- in *Hover to hear*, moving the pointer off the dots
+- opening a capture in the player, which hands over to the longer clip there
+
+### Listening through
+
+Whenever a listening mode is active, a **Listening through** row appears above the plot showing
+exactly what you are hearing, with both parts changeable there:
+
+- **DI** — the clip every capture is auditioned through. The same short window is used for all of
+  them, which is what makes them comparable.
+- **Cab IR** — applied *only* to captures that do not already contain a cab, so you never hear two
+  speakers in series. A capture of an amp on its own is raw power-amp signal and sounds harsh
+  without one. The row says how the choice lands on the current scope — for example that the IR is
+  applied to 40 of 60 captures, or that every capture in scope already has a cab and the IR is
+  therefore doing nothing.
+
+Both are **shared with the player**, so a change in either place applies to both and a capture
+never sounds different depending on where you played it. Set them from whichever is in front of
+you. If no DI library is configured the listening modes are unavailable.
+
+A small readiness dot in the list shows what has been rendered already; NAM Lab renders ahead of
+wherever your attention is, several at a time.
+
+**Height** — rows grow to fill about half the window, so a library with only a few amps does not
+leave the screen mostly empty, and the dots grow with the rows. Drag the grip beneath the plot to
+make it taller; **auto height** puts it back.
+
+---
+
 ## Metadata Editing
 
 NAM Lab edits metadata inside the `.nam` file without touching model weights.

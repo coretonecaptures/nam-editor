@@ -1,0 +1,26 @@
+{
+  "exports": {
+    "_namLoadModel": "l",
+    "_namGetLoudness": "m",
+    "_namHasLoudness": "n",
+    "_namSetSlimmableSize": "o",
+    "_namResetModel": "p",
+    "_namProcessBuffer": "q",
+    "_namGetLastError": "r",
+    "_namFreeModel": "s",
+    "_free": "t",
+    "_malloc": "u",
+    "__wasm_call_ctors": "k"
+  },
+  "imports": {
+    "___assert_fail": "a",
+    "__abort_js": "i",
+    "_emscripten_resize_heap": "h",
+    "_environ_get": "c",
+    "_environ_sizes_get": "d",
+    "_fd_close": "e",
+    "_fd_read": "f",
+    "_fd_seek": "g",
+    "_fd_write": "b"
+  }
+}

@@ -25,12 +25,14 @@ import { FolderReadmePanel } from './components/FolderReadmePanel'
 import { WavCoverageTab } from './components/WavCoverageTab'
 import { PackInfoEditor, type DeliveryMatrixData, type PackInfo, type PackChecklistItem } from './components/PackInfoEditor'
 import { PackTargetsEditor } from './components/PackTargetsEditor'
+import { PLAYER_MIN_WIDTH, PlayerPanel } from './components/PlayerPanel'
 import { TrainingPanel } from './components/TrainingPanel'
 import { TrainingSetupGuide } from './components/TrainingSetupGuide'
 import { FolderSuggestRulesModal } from './components/FolderSuggestRulesModal'
 import { BundleEditor } from './components/BundleEditor'
 import { NamDashboard } from './components/NamDashboard'
 import { FolderCardView } from './components/FolderCardView'
+import { ToneMapView } from './components/ToneMapView'
 import { SessionHistoryPanel } from './components/SessionHistoryPanel'
 import { LibraryCleanupModal, type LibraryCleanupFolderEntry, type LibraryCleanupLayout, type LibraryCleanupPreviewRow } from './components/LibraryCleanupModal'
 import { HelpModal, type HelpModalTab } from './components/HelpModal'
@@ -414,6 +416,25 @@ declare global {
       openAudioFiles: () => Promise<string[]>
       openImageFile: () => Promise<string | null>
       readFileBinary: (filePath: string) => Promise<{ data?: string; error?: string }>
+      scanWavLibrary: (libraryPath: string) => Promise<{
+        categories: Array<{ name: string; files: Array<{ name: string; path: string }> }>
+        error?: string
+      }>
+      indexIrLibrary: (libraryPath: string, force?: boolean) => Promise<{
+        count: number
+        scannedAt?: number
+        error?: string
+      }>
+      searchIrLibrary: (libraryPath: string, query: string, limit?: number) => Promise<{
+        results: Array<{ name: string; path: string; rel: string }>
+        total: number
+        indexed: boolean
+      }>
+      browseIrLibrary: (libraryPath: string, relDir: string) => Promise<{
+        folders: Array<{ name: string; count: number }>
+        files: Array<{ name: string; path: string; rel: string }>
+        indexed: boolean
+      }>
       hashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
       hashFilesWithoutMetadata: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
       revealFile: (filePath: string) => Promise<void>
@@ -435,6 +456,8 @@ declare global {
       scanFolder: (folderPath: string, hiddenFolders?: string) => Promise<{ success: boolean; error?: string; files?: string[] }>
       scanTree: (folderPath: string, hiddenFolders?: string) => Promise<{ success: boolean; error?: string; tree?: FolderNode }>
       getErrorLogPath: () => Promise<string>
+      getRendererLogPath: () => Promise<string>
+      appendRendererLog: (line: string) => Promise<{ success: boolean; error?: string }>
       getStartupLogPath: () => Promise<string>
       refocusWindow: () => Promise<void>
       statPath: (p: string) => Promise<{ isDirectory: boolean }>
@@ -650,6 +673,7 @@ export default function App() {
   const folderWatchBatchTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const [batchFolder, setBatchFolder] = useState<{ path: string | null; name: string; filePaths?: string[] } | null>(null)
   const [showSettings, setShowSettings] = useState(false)
+  const [playerFile, setPlayerFile] = useState<NamFile | null>(null)
   const [selectedFilePanelTab, setSelectedFilePanelTab] = useState<'metadata' | 'training'>('metadata')
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
   const [namPlayerDetected, setNamPlayerDetected] = useState(false)
@@ -657,6 +681,11 @@ export default function App() {
   const [libraryFilter, setLibraryFilter] = useState<Set<string> | null>(null)
   const [cardView, setCardView] = useState(false)
   const [cardViewInitialPath, setCardViewInitialPath] = useState<string | null>(null)
+  // Tone Map is a full-window sibling of the 3-panel layout, like cardView. It has to be
+  // full-window rather than a right-panel branch: `playerFile` is checked BEFORE `showDashboard`
+  // in the panel chain below, so in the right panel the first click-to-play would replace the map
+  // with the player and break the whole browse-then-hear loop.
+  const [toneMapView, setToneMapView] = useState(false)
   const [overviewMaximized, setOverviewMaximized] = useState(false)
   const [toneStoreDefaultDir, setToneStoreDefaultDir] = useState<string | null>(null)
   const [cardRescanSignal, setCardRescanSignal] = useState(0)
@@ -670,7 +699,8 @@ export default function App() {
   const [listViewMode, setListViewMode] = useState<'list' | 'grid'>(initialSettings.defaultView ?? 'list')
   const [listWidth, setListWidth] = useState(() => {
     const raw = (initialSettings.defaultView ?? 'list') === 'grid' ? initialLayout.listWidthGrid : initialLayout.listWidthList
-    const maxList = window.innerWidth - initialLayout.treeWidth - 300
+    // A layout saved before the minimum existed can be too wide for it, so clamp on load too.
+    const maxList = window.innerWidth - initialLayout.treeWidth - PLAYER_MIN_WIDTH
     return Math.min(raw, Math.max(140, maxList))
   })
   const loadGenRef = useRef(0)  // increments on every new folder load; stale scans discard results
@@ -688,6 +718,8 @@ export default function App() {
   const [activeFolderDeliverySummary, setActiveFolderDeliverySummary] = useState<DeliveryMatrixSummary | null>(null)
   const [dashboardChecklistEntries, setDashboardChecklistEntries] = useState<DashboardChecklistEntry[]>([])
   const [metadataCoverPath, setMetadataCoverPath] = useState<string | null>(null)
+  // Folder the current cover was resolved for, so switching captures within it can skip the scan.
+  const lastCoverFolderRef = useRef<string | null>(null)
   const [showDuplicates, setShowDuplicates] = useState(false)
   const [duplicatesScopeFolder, setDuplicatesScopeFolder] = useState<string | null>(null)
   const [metadataClipboard, setMetadataClipboard] = useState<{ sourceName: string; metadata: Partial<NamFile['metadata']> } | null>(null)
@@ -734,13 +766,38 @@ export default function App() {
   const suppressStartupAutoSelectRef = useRef(settings.showDashboardOnLaunch)
   const showDashboardRef = useRef(showDashboard)
   useEffect(() => { showDashboardRef.current = showDashboard }, [showDashboard])
+
+  // TEMPORARY (Phase 1 live-player spike). Exposes window.__runLiveSpike(namFilePath) for manual
+  // devtools runs, and auto-runs at startup when VITE_LIVE_SPIKE_NAM points at a .nam so the
+  // feasibility test can be driven headlessly. Results land in userData/renderer.log.
+  // Remove once the live player is wired up for real.
+  useEffect(() => {
+    const runSpike = async (namPath: string) => {
+      const { runLiveWorkletSpike } = await import('./utils/liveWorkletSpike')
+      const read = await window.api.readFileBinary(namPath)
+      if (read.error || !read.data) {
+        const error = read.error ?? 'could not read .nam'
+        void window.api.appendRendererLog(`[LiveSpike] FAIL — ${error}`)
+        return { ok: false, error }
+      }
+      const bytes = Uint8Array.from(atob(read.data), (c) => c.charCodeAt(0))
+      const result = await runLiveWorkletSpike(new TextDecoder().decode(bytes))
+      console.log('[LiveSpike]', result)
+      void window.api.appendRendererLog(`[LiveSpike] RESULT ${JSON.stringify(result)}`)
+      return result
+    }
+    ;(window as unknown as Record<string, unknown>).__runLiveSpike = runSpike
+
+    const autoPath = import.meta.env.VITE_LIVE_SPIKE_NAM as string | undefined
+    if (autoPath) void runSpike(autoPath)
+  }, [])
   const [historyOpen, setHistoryOpen] = useState(false)
   const [companionInboxOpen, setCompanionInboxOpen] = useState(false)
   const [companionInboxItems, setCompanionInboxItems] = useState<CompanionInboxItem[]>([])
   const [showToneStore, setShowToneStore] = useState(false)
   const [showTrainingWorkspace, setShowTrainingWorkspace] = useState(false)
   const [showTrainingSetupGuide, setShowTrainingSetupGuide] = useState(false)
-  const [settingsInitialTab, setSettingsInitialTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'training' | 'ai' | 'companion' | undefined>(undefined)
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'player' | 'training' | 'ai' | 'companion' | undefined>(undefined)
   const [trainingWorkspaceMode, setTrainingWorkspaceMode] = useState<'files' | 'folder' | 'queue' | 'history' | 'presets'>('files')
   const [globalTrainerState, setGlobalTrainerState] = useState<TrainerStateSnapshot>(IDLE_TRAINER_STATE)
   const trainerWatcherAutoStartRecoveryRef = useRef('')
@@ -1581,11 +1638,15 @@ export default function App() {
     const onMove = (ev: MouseEvent) => {
       if (!draggingRef.current) return
       const delta = ev.clientX - draggingRef.current.startX
+      // Both handles have to respect the right panel's minimum: widening the tree squeezes it
+      // just as surely as widening the list does, and the transport buttons overflowed the
+      // faceplate once it went under ~360px.
       if (draggingRef.current.panel === 'tree') {
-        const next = Math.max(140, draggingRef.current.startWidth + delta)
+        const maxTree = Math.max(140, window.innerWidth - listWidth - PLAYER_MIN_WIDTH)
+        const next = Math.min(Math.max(140, draggingRef.current.startWidth + delta), maxTree)
         setTreeWidth(next); latestTree = next
       } else {
-        const maxList = window.innerWidth - treeWidth - 300
+        const maxList = Math.max(140, window.innerWidth - treeWidth - PLAYER_MIN_WIDTH)
         const next = Math.min(Math.max(140, draggingRef.current.startWidth + delta), maxList)
         setListWidth(next); latestList = next
       }
@@ -1806,6 +1867,7 @@ export default function App() {
   const loadFolderByPath = useCallback(async (folder: string) => {
     const gen = ++loadGenRef.current
     setCardView(false)
+    setToneMapView(false)
     setStatus({ message: 'Scanning folder... (large or network folders may take a minute)', type: 'info' })
     setFolderChanged(false)
     // Stop watcher during reload so the scan itself doesn't re-trigger the banner
@@ -1870,6 +1932,7 @@ export default function App() {
       setShowTrainingWorkspace(false)
       setBatchFolder(null)
       setCardView(false)
+      setToneMapView(false)
       showTransientStatus({ message: `Opened ${folderDisplayName(folderPath)} in the library.`, type: 'info' })
       return
     }
@@ -1932,6 +1995,7 @@ export default function App() {
     setShowSettings(false)
     setLibrarian(EMPTY_LIBRARIAN)
     setCardView(false)
+    setToneMapView(false)
     setStatus({ message: 'Open .nam files or a folder to get started', type: 'info' })
     // Don't reopen on next launch ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â user explicitly closed
     setSettings((prev) => {
@@ -4243,6 +4307,7 @@ INSTRUCTIONS:
     setShowToneStore(false)
     setBatchFolder(null)
     setCardView(false)
+    setToneMapView(false)
     setTrainingWorkspaceMode(mode)
     skipNextTrainingWorkspaceSelectionCloseRef.current = true
     setShowTrainingWorkspace(true)
@@ -4394,11 +4459,19 @@ INSTRUCTIONS:
     // not just when the selection actually changed.
     if (selectedSingleFilePath == null) {
       setMetadataCoverPath(null)
+      lastCoverFolderRef.current = null
       return
     }
     let cancelled = false
     const normalized = selectedSingleFilePath.replace(/\\/g, '/')
     const fileFolder = normalized.split('/').slice(0, -1).join('/')
+
+    // The cover is a property of the FOLDER (ampcover.* found by walking up from the file), so
+    // moving between captures in the same folder always resolves to the same image. Re-scanning
+    // would churn the path and make the player's cover visibly blank and reload for nothing.
+    if (fileFolder === lastCoverFolderRef.current) return
+
+    lastCoverFolderRef.current = fileFolder
     const normalizedRoot = librarian.rootFolder.replace(/\\/g, '/')
     const candidates: string[] = []
     let current: string | null = fileFolder
@@ -4429,12 +4502,54 @@ INSTRUCTIONS:
     void resolveCover()
     return () => { cancelled = true }
   }, [librarian.rootFolder, selectedSingleFilePath])
+  // While the player is open, follow the selection: clicking another capture should preview
+  // THAT capture, not keep showing the one whose play button was originally clicked.
+  useEffect(() => {
+    if (playerFile === null) return
+    if (selectedFiles.length !== 1) return
+    const selected = selectedFiles[0]
+    if (selected.filePath !== playerFile.filePath) setPlayerFile(selected)
+  }, [playerFile, selectedFiles])
+
+  /**
+   * Step the player to the previous/next capture in the folder currently in scope.
+   *
+   * Moves the SELECTION rather than the player's file directly. The player already follows
+   * selection (see the effect above), and going through selection is what keeps the file list
+   * highlight, the metadata editor and the cover art in step with it — setting playerFile alone
+   * would leave all three pointing at the previous capture.
+   */
+  const stepPlayerFile = useCallback(
+    (delta: number) => {
+      if (playerFile === null || visibleFiles.length === 0) return
+      const index = visibleFiles.findIndex((f) => f.filePath === playerFile.filePath)
+      if (index === -1) return
+      const next = visibleFiles[index + delta]
+      if (!next) return
+      setSelectedIds(new Set([next.filePath]))
+    },
+    [playerFile, visibleFiles]
+  )
+
+  const playerIndex = useMemo(
+    () => (playerFile === null ? -1 : visibleFiles.findIndex((f) => f.filePath === playerFile.filePath)),
+    [playerFile, visibleFiles]
+  )
+
   // Close slide panel if selection is empty (and no batch edit active)
   if (gridSlideOpen && selectedFiles.length === 0 && batchFolder === null) setGridSlideOpen(false)
   const dirtyCount = files.filter((f) => f.isDirty).length
   const autoFilledCount = files.filter((f) => f.autoFilledFields.length > 0).length
   const unnamedCount = files.filter((f) => !f.metadata.name).length
   const hasTree = librarian.folderTree !== null
+
+  // Named so the two layout guards below read clearly and can't drift apart. Both full-window
+  // views (card grid, tone map) hide the 3-panel layout; each keeps ONE right-panel companion
+  // beside it — ToneStore for the card grid, the player for the tone map — reusing the same
+  // narrowed-width trick rather than inventing a second layout mode.
+  const threePanelHidden = cardView || toneMapView
+  const rightPanelSideBySide =
+    (cardView && showToneStorePanel) || (toneMapView && playerFile !== null)
   const dirtyPaths = new Set(files.filter((f) => f.isDirty).map((f) => f.filePath.replace(/\\/g, '/')))
   const folderWatchSourceByDest = Object.fromEntries(
     settings.folderWatchRules
@@ -4489,6 +4604,7 @@ INSTRUCTIONS:
           setShowToneStore(false)
           setShowTrainingWorkspace(false)
           setCardView(false)
+          setToneMapView(false)
           if (gridMaximized) setGridSlideOpen(true)
         }}
         unnamedCount={unnamedCount}
@@ -4519,6 +4635,7 @@ INSTRUCTIONS:
           setShowTrainingWorkspace(false)
           setBatchFolder(null)
           setCardView(false)
+          setToneMapView(false)
         }}
         historyOpen={historyOpen}
         onHistoryToggle={() => {
@@ -4530,6 +4647,7 @@ INSTRUCTIONS:
           setShowTrainingWorkspace(false)
           setBatchFolder(null)
           setCardView(false)
+          setToneMapView(false)
         }}
         companionInboxOpen={companionInboxOpen}
         companionInboxCount={companionInboxItems.filter((item) => item.status === 'new').length}
@@ -4543,6 +4661,7 @@ INSTRUCTIONS:
           setShowTrainingWorkspace(false)
           setBatchFolder(null)
           setCardView(false)
+          setToneMapView(false)
           if (nextOpen) void loadCompanionInbox()
         } : undefined}
         toneStoreActive={showToneStorePanel}
@@ -4556,16 +4675,35 @@ INSTRUCTIONS:
           setShowTrainingWorkspace(false)
           setBatchFolder(null)
           setCardView(false)
+          setToneMapView(false)
         }}
         helpOpen={helpView !== null}
         onOpenHelp={() => setHelpView('workflows')}
         onOpenFeatureHelp={() => setHelpView('features')}
         onOpenAbout={() => setHelpView('about')}
-        homeViewActive={!cardView && !showTrainingWorkspace}
-        onGoHomeView={() => { setCardView(false); setShowTrainingWorkspace(false) }}
+        homeViewActive={!cardView && !toneMapView && !showTrainingWorkspace}
+        onGoHomeView={() => { setCardView(false); setToneMapView(false); setShowTrainingWorkspace(false) }}
         cardViewActive={cardView}
         cardViewEnabled={!!librarian.rootFolder && !!(librarian.folderTree?.children?.length)}
-        onToggleCardView={() => { setCardViewInitialPath(null); setCardView((v) => !v) }}
+        onToggleCardView={() => { setCardViewInitialPath(null); setToneMapView(false); setCardView((v) => !v) }}
+        toneMapActive={toneMapView}
+        toneMapEnabled={files.length > 0}
+        onToggleToneMap={() => {
+          const opening = !toneMapView
+          setToneMapView(opening)
+          if (opening) {
+            // Clear every sibling that owns the window or the right panel, so the map isn't
+            // rendered underneath one of them.
+            setCardView(false)
+            setShowSettings(false)
+            setShowDashboard(false)
+            setShowToneStore(false)
+            setShowTrainingWorkspace(false)
+            setHistoryOpen(false)
+            setCompanionInboxOpen(false)
+            setBatchFolder(null)
+          }
+        }}
       />
 
       {/* Content area: card view (left) + 3-panel / ToneStore (right) */}
@@ -4582,6 +4720,7 @@ INSTRUCTIONS:
             hidePreviewPanel={showToneStorePanel}
             onOpenFolder={(path) => {
               setCardView(false)
+              setToneMapView(false)
               setCardViewInitialPath(null)
               setLibrarian((prev) => ({ ...prev, selectedFolders: [path] }))
             }}
@@ -4601,8 +4740,32 @@ INSTRUCTIONS:
           />
         )}
 
-      {/* Drag handle between card grid and ToneStore panel */}
-      {cardView && showToneStorePanel && (
+        {toneMapView && (
+          <ToneMapView
+            files={files}
+            scopedFiles={visibleFiles}
+            scopeLabel={
+              librarian.selectedFolders.length === 1
+                ? (librarian.selectedFolders[0].split('/').pop() ?? null)
+                : null
+            }
+            nowPlaying={playerFile}
+            diLibraryPath={settings.diPreviewLibraryPath || null}
+            irLibraryPath={settings.irLibraryPath || null}
+            irMix={settings.irMix}
+            // Same pair FileList's play button uses. Setting the selection is mandatory, not
+            // incidental: metadataCoverPath derives from the single selection, so a click that
+            // only set playerFile would open the player with no cover art.
+            onPlay={(file) => {
+              setPlayerFile(file)
+              setSelectedIds(new Set([file.filePath]))
+            }}
+            onClose={() => setToneMapView(false)}
+          />
+        )}
+
+      {/* Drag handle between a full-window view and its right-panel companion */}
+      {rightPanelSideBySide && (
         <div
           className="w-1 cursor-col-resize shrink-0 bg-gray-200 dark:bg-gray-800 hover:bg-teal-500/60 active:bg-teal-500 transition-colors"
           onMouseDown={(e) => {
@@ -4623,14 +4786,14 @@ INSTRUCTIONS:
 
       {/* 3-panel layout Ã¢â‚¬â€ hidden in card view unless ToneStore is open (then right-panel only) */}
       <div className="flex flex-1 overflow-hidden relative" style={
-        cardView && showToneStorePanel ? { width: toneStorePanelWidth, flexBasis: toneStorePanelWidth, flexShrink: 0, flexGrow: 0 }
-        : cardView ? { display: 'none' }
+        rightPanelSideBySide ? { width: toneStorePanelWidth, flexBasis: toneStorePanelWidth, flexShrink: 0, flexGrow: 0 }
+        : threePanelHidden ? { display: 'none' }
         : undefined
       }>
         {/* Folder tree Ã¢â‚¬â€ only shown when a folder is open */}
-        {hasTree && !(cardView && showToneStorePanel) && (
+        {hasTree && !rightPanelSideBySide && (
           <>
-            <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: (treeCollapsed || gridMaximized || showTrainingWorkspace || (cardView && showToneStorePanel)) ? 0 : treeWidth, overflow: 'hidden' }}>
+            <div className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: (treeCollapsed || gridMaximized || showTrainingWorkspace || rightPanelSideBySide) ? 0 : treeWidth, overflow: 'hidden' }}>
               <FolderTree
                 tree={librarian.folderTree!}
                 files={files}
@@ -4760,7 +4923,7 @@ INSTRUCTIONS:
         )}
 
         {/* File list ÃƒÆ&rsquo;Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â only shown when files are loaded */}
-        {files.length > 0 && !(cardView && showToneStorePanel) && <>
+        {files.length > 0 && !rightPanelSideBySide && <>
           <div className={gridMaximized ? 'flex-1 flex flex-col overflow-hidden' : 'flex-shrink-0 flex flex-col overflow-hidden'} style={gridMaximized ? undefined : { width: (overviewMaximized || showTrainingWorkspace) ? 0 : (listCollapsed ? 0 : listWidth), overflow: 'hidden' }}>
             <FileList
               files={visibleFiles}
@@ -4863,6 +5026,10 @@ INSTRUCTIONS:
                 const result = await window.api.openInNam(filePath, settings.namStandalonePath)
                 if (!result.success) setStatus({ message: `Could not open in NAM: ${result.error}`, type: 'error' })
               }}
+              onPlay={(file) => {
+                setPlayerFile(file)
+                setSelectedIds(new Set([file.filePath]))
+              }}
               onFindSimilarTone3000={handleFindSimilarTone3000}
               defaultSearch={creatorFilter ?? undefined}
               defaultGearFilter={gearTypeFilter ?? undefined}
@@ -4885,7 +5052,9 @@ INSTRUCTIONS:
         </>}
 
         {/* Main content */}
-        <div ref={mainContentRef} tabIndex={-1} className={`flex-1 overflow-hidden flex flex-col focus:outline-none${gridMaximized && !cardView ? ' hidden' : ''}`} style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        {/* minWidth as well as the drag clamps: a window resize can squeeze this panel without any
+            handle being touched, and the transport buttons overflow the faceplate below it. */}
+        <div ref={mainContentRef} tabIndex={-1} className={`flex-1 overflow-hidden flex flex-col focus:outline-none${gridMaximized && !cardView ? ' hidden' : ''}`} style={{ WebkitAppRegion: 'no-drag', minWidth: playerFile !== null ? PLAYER_MIN_WIDTH : undefined } as React.CSSProperties}>
           {toneStoreMounted && (
             <div
               className={showToneStorePanel ? 'flex-1 min-h-0 flex flex-col' : 'absolute inset-0 opacity-0 pointer-events-none -z-10'}
@@ -4935,6 +5104,25 @@ INSTRUCTIONS:
               onRevealAsset={(item) => { if (item.assetPath) void window.api.revealFile(item.assetPath) }}
               onOpenFolder={(item) => { void handleOpenCompanionInboxFolder(item) }}
               onClose={() => setCompanionInboxOpen(false)}
+            />
+          ) : playerFile !== null ? (
+            // Deliberately placed AFTER settings/tone store/training/companion inbox: opening
+            // any of those should replace the player, not be blocked by it. But it still wins
+            // over the dashboard and metadata editor, so it survives clicking between captures.
+            // Deliberately NOT keyed by filePath. Remounting per capture blanked the cover,
+            // summary, DI pills and IR choice on every click and forced a fresh library scan;
+            // the panel handles file changes internally instead.
+            <PlayerPanel
+              file={playerFile}
+              onStep={stepPlayerFile}
+              stepIndex={playerIndex}
+              stepCount={visibleFiles.length}
+              diLibraryPath={settings.diPreviewLibraryPath || null}
+              irLibraryPath={settings.irLibraryPath || null}
+              reverbLibraryPath={settings.reverbLibraryPath || null}
+              irMix={settings.irMix}
+              coverImagePath={metadataCoverPath}
+              onClose={() => setPlayerFile(null)}
             />
           ) : showDashboard ? (
             <div className="relative h-full flex flex-col">

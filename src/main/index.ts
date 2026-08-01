@@ -1,5 +1,5 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net, Menu, safeStorage } from 'electron'
-import { join, dirname, basename, extname, normalize as normalizePath, resolve, sep } from 'path'
+import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net, Menu, safeStorage, session } from 'electron'
+import { join, dirname, basename, extname, normalize as normalizePath, relative, resolve, sep } from 'path'
 import fs from 'fs'
 import os from 'os'
 import http from 'http'
@@ -6037,7 +6037,10 @@ async function saveTone3kTokens(): Promise<void> {
 }
 
 async function ensureValidToken(): Promise<boolean> {
-  if (!tone3kTokens) return false
+  if (!tone3kTokens) {
+    log('tone3000 auth: no stored tokens')
+    return false
+  }
   if (Date.now() < tone3kTokens.expiresAt - 60_000) return true
   try {
     const res = await fetch(`${T3K_BASE}/api/v1/oauth/token`, {
@@ -6045,15 +6048,54 @@ async function ensureValidToken(): Promise<boolean> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: tone3kTokens.refreshToken, client_id: tone3kTokens.clientId })
     })
-    if (!res.ok) { tone3kTokens = null; return false }
+    if (!res.ok) {
+      // Clearing the tokens here silently signs the user out, and every later call just says
+      // "Not authenticated" — so the reason has to be recorded at the point it is known.
+      const body = await res.text().catch(() => '')
+      log(`tone3000 auth: refresh FAILED ${res.status} ${res.statusText} body=${body.slice(0, 300)} — signing out`)
+      tone3kTokens = null
+      return false
+    }
     const d = await res.json() as { access_token: string; refresh_token?: string; expires_in: number }
     tone3kTokens = { ...tone3kTokens, accessToken: d.access_token, refreshToken: d.refresh_token ?? tone3kTokens.refreshToken, expiresAt: Date.now() + d.expires_in * 1000 }
     await saveTone3kTokens()
+    log('tone3000 auth: refreshed access token')
     return true
-  } catch { return false }
+  } catch (e) {
+    log(`tone3000 auth: refresh THREW ${String(e)}`)
+    return false
+  }
 }
 
 app.whenReady().then(async () => {
+  // NOTE: COOP/COEP header injection was removed here. It was added to try to make
+  // `crossOriginIsolated` true so the real-time WASM AudioWorklet player could transfer a
+  // SharedArrayBuffer into the worklet thread. It never worked in Electron (see
+  // docs/player-investigation.md), and `Cross-Origin-Embedder-Policy: require-corp` risks
+  // blocking legitimately-loaded sub-resources (local-file:// images, Tone3000 assets).
+  // The offline-render player replacing it does not use SharedArrayBuffer at all.
+
+  // Audio input permission for the live player.
+  //
+  // Electron denies getUserMedia by default with no prompt and no useful error, so without this
+  // the live player just fails. Only 'audio'/'media' is granted, and only to our own renderer —
+  // everything else keeps the default deny.
+  //
+  // Note this covers Chromium's permission layer only. On macOS the OS also gates microphone
+  // access separately (Info.plist NSMicrophoneUsageDescription + a system prompt), which
+  // electron-builder config has to declare.
+  const LIVE_AUDIO_PERMISSIONS = new Set(['media', 'audioCapture'])
+
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    callback(LIVE_AUDIO_PERMISSIONS.has(permission))
+  })
+
+  // enumerateDevices()/getUserMedia also consult the synchronous check handler; without it the
+  // device list comes back with empty labels even once permission is granted.
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission) =>
+    LIVE_AUDIO_PERMISSIONS.has(permission)
+  )
+
   // Serve local filesystem files under local-file:// scheme
   protocol.handle('local-file', (req) => {
     const fileUrl = 'file://' + req.url.slice('local-file://'.length)
@@ -6318,6 +6360,377 @@ app.whenReady().then(async () => {
     return result.filePaths[0] ?? null
   })
 
+  // IPC: Scan a folder of .wav files into { category, files[] } groups. Category is the
+  // immediate subfolder name (e.g. "Clean", "Medium Gain", "High Gain" for DI clips; "1x12",
+  // "4x12" for IRs) -- the folder structure IS the categorization, deliberately avoiding a
+  // separate tagging data model. Loose .wav files sitting directly in the root (not in a
+  // subfolder) are grouped under "Uncategorized".
+  //
+  // Shared by the DI clip library and the cabinet IR library: both are "a folder of wavs the
+  // user organized into categories", so they get one implementation.
+  ipcMain.handle('player:scanWavLibrary', async (_event, libraryPath: string) => {
+    if (!libraryPath) return { categories: [] }
+    try {
+      const stat = await fs.promises.stat(libraryPath).catch(() => null)
+      if (!stat || !stat.isDirectory()) return { categories: [], error: 'Library folder not found.' }
+
+      const topEntries = await fs.promises.readdir(libraryPath, { withFileTypes: true })
+      const categories: Array<{ name: string; files: Array<{ name: string; path: string }> }> = []
+
+      const collectWavs = async (dirPath: string): Promise<Array<{ name: string; path: string }>> => {
+        const entries = await fs.promises.readdir(dirPath, { withFileTypes: true }).catch(() => [])
+        return entries
+          .filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.wav'))
+          .map((e) => ({ name: e.name, path: join(dirPath, e.name) }))
+          .sort((a, b) => a.name.localeCompare(b.name))
+      }
+
+      const rootWavs = await collectWavs(libraryPath)
+      if (rootWavs.length > 0) categories.push({ name: 'Uncategorized', files: rootWavs })
+
+      for (const entry of topEntries) {
+        if (!entry.isDirectory()) continue
+        const files = await collectWavs(join(libraryPath, entry.name))
+        if (files.length > 0) categories.push({ name: entry.name, files })
+      }
+
+      return { categories }
+    } catch (err) {
+      return { categories: [], error: String(err) }
+    }
+  })
+
+  // ── Cabinet IR index ────────────────────────────────────────────────────────
+  //
+  // scanWavLibrary above reads exactly two levels, which is right for a DI library the user
+  // organized by hand but useless for a bought IR library: those nest
+  // Brand/Cab/Mic/Position/*.wav, so a real collection is invisible to it. A measured example
+  // reached 198 of 492,718 files.
+  //
+  // The index therefore recurses the whole tree, and lives HERE rather than in the renderer:
+  // half a million paths is far too much to hand across IPC on every open, and it would be
+  // duplicated in renderer memory for the life of the window. Instead the renderer asks for
+  // matches and gets back only the page it will draw.
+  //
+  // Paths are stored as ONE UTF-8 buffer plus an offset table rather than as objects with string
+  // fields. The obvious shape — {name, path, rel, haystack} per entry — measured at 443MB of heap
+  // on that 492k library, because every JS string carries a header and V8 stores them as UTF-16.
+  // Concatenated bytes with a Uint32Array index costs a fraction of that and is what makes
+  // indexing a library this size reasonable at all. Only the ~200 rows actually returned are ever
+  // decoded back into strings.
+  interface IrIndex {
+    root: string
+    /** Every relative path, UTF-8, original case, concatenated with no separator. */
+    bytes: Uint8Array
+    /** Byte offset of entry i; `offsets[count]` is the end of the last one. */
+    offsets: Uint32Array
+    count: number
+    scannedAt: number
+  }
+
+  /** Cabinet and reverb libraries are both indexed; nothing needs a third. */
+  const MAX_IR_INDEXES = 2
+  const irIndexes = new Map<string, IrIndex>()
+
+  /** Last search's matches, so a longer query can narrow them instead of rescanning. */
+  let irSearchCache: {
+    libraryPath: string
+    scannedAt: number
+    query: string
+    matches: number[]
+  } | null = null
+
+  const buildIrIndex = async (root: string): Promise<IrIndex> => {
+    const rels: string[] = []
+
+    // Iterative walk with an explicit stack: a 10-deep tree is fine for recursion, but a
+    // symlink loop is not, and this also keeps one `await` per directory rather than per level.
+    const stack: string[] = [root]
+    const seen = new Set<string>()
+
+    while (stack.length > 0) {
+      const dir = stack.pop() as string
+
+      // Guard against symlink cycles, which would otherwise walk forever.
+      let real: string
+      try {
+        real = await fs.promises.realpath(dir)
+      } catch {
+        continue
+      }
+      if (seen.has(real)) continue
+      seen.add(real)
+
+      const dirents = await fs.promises.readdir(dir, { withFileTypes: true }).catch(() => [])
+      for (const dirent of dirents) {
+        if (dirent.isDirectory()) {
+          // Skip the noise that ships inside IR packs — resource forks, OS metadata.
+          if (dirent.name.startsWith('.') || dirent.name === '__MACOSX') continue
+          stack.push(join(dir, dirent.name))
+        } else if (dirent.isFile() && dirent.name.toLowerCase().endsWith('.wav')) {
+          if (dirent.name.startsWith('._')) continue
+          rels.push(relative(root, join(dir, dirent.name)))
+        }
+      }
+    }
+
+    rels.sort((a, b) => a.localeCompare(b))
+
+    const encoded = rels.map((rel) => Buffer.from(rel, 'utf8'))
+    let totalBytes = 0
+    for (const buf of encoded) totalBytes += buf.length
+
+    const bytes = new Uint8Array(totalBytes)
+    const offsets = new Uint32Array(encoded.length + 1)
+    let pos = 0
+    for (let i = 0; i < encoded.length; i++) {
+      offsets[i] = pos
+      bytes.set(encoded[i], pos)
+      pos += encoded[i].length
+    }
+    offsets[encoded.length] = pos
+
+    return { root, bytes, offsets, count: encoded.length, scannedAt: Date.now() }
+  }
+
+  ipcMain.handle('player:indexIrLibrary', async (_event, libraryPath: string, force = false) => {
+    if (!libraryPath) return { count: 0 }
+    try {
+      const stat = await fs.promises.stat(libraryPath).catch(() => null)
+      if (!stat || !stat.isDirectory()) return { count: 0, error: 'IR library folder not found.' }
+
+      const cached = irIndexes.get(libraryPath)
+      if (cached && !force) return { count: cached.count, scannedAt: cached.scannedAt }
+
+      // Two libraries are in use at once — cabinets and reverbs — so this keeps the most recent
+      // pair rather than clearing outright, which would make the two evict each other and
+      // re-index on every switch. Each costs real memory, hence the cap.
+      irSearchCache = null
+      while (irIndexes.size >= MAX_IR_INDEXES) {
+        const oldest = irIndexes.keys().next().value
+        if (oldest === undefined) break
+        irIndexes.delete(oldest)
+      }
+      const index = await buildIrIndex(libraryPath)
+      irIndexes.set(libraryPath, index)
+      return { count: index.count, scannedAt: index.scannedAt }
+    } catch (err) {
+      return { count: 0, error: String(err) }
+    }
+  })
+
+  const SEP_BYTE = sep.charCodeAt(0)
+
+  /**
+   * Case-insensitive substring test over a byte range, without allocating.
+   *
+   * `needle` must already be lowercase ASCII. Folding is applied to A-Z only: an accented
+   * character in a path still matches, but only case-sensitively. That is a deliberate trade for
+   * not keeping a second lowercased copy of every path in memory, and IR packs name their files
+   * in ASCII essentially without exception.
+   */
+  const rangeIncludes = (
+    bytes: Uint8Array,
+    start: number,
+    end: number,
+    needle: Uint8Array
+  ): boolean => {
+    const n = needle.length
+    if (n === 0) return true
+    const limit = end - n
+    // Scan for the first byte in either case before checking the rest. Nearly every position
+    // fails on byte one, so keeping that test to a pair of integer compares — rather than the
+    // fold-then-compare the inner loop does — is what keeps a half-million-path scan quick.
+    const first = needle[0]
+    const firstUpper = first >= 97 && first <= 122 ? first - 32 : first
+    outer: for (let i = start; i <= limit; i++) {
+      const b = bytes[i]
+      if (b !== first && b !== firstUpper) continue
+      for (let j = 1; j < n; j++) {
+        let c = bytes[i + j]
+        if (c >= 65 && c <= 90) c += 32
+        if (c !== needle[j]) continue outer
+      }
+      return true
+    }
+    return false
+  }
+
+  /** Byte offset just past the last path separator in a range — where the file name starts. */
+  const fileNameStart = (bytes: Uint8Array, start: number, end: number): number => {
+    for (let i = end - 1; i >= start; i--) {
+      if (bytes[i] === SEP_BYTE) return i + 1
+    }
+    return start
+  }
+
+  /**
+   * Rank matches for a query.
+   *
+   * Every whitespace-separated token must appear somewhere in the relative path, so "v30 57"
+   * finds "OwnHammer/Mesa V30/SM57 Cone.wav" regardless of the order the user typed them or how
+   * deep the pack nests. That AND-of-substrings behaviour is what makes a 492k library usable by
+   * typing rather than scrolling.
+   */
+  ipcMain.handle(
+    'player:searchIrLibrary',
+    async (_event, libraryPath: string, query: string, limit = 200) => {
+      const index = irIndexes.get(libraryPath)
+      if (!index) return { results: [], total: 0, indexed: false }
+
+      const { bytes, offsets, count, root } = index
+      const tokens = query
+        .toLowerCase()
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((t) => Buffer.from(t, 'utf8'))
+
+      const decoder = new TextDecoder()
+      const describe = (i: number): { name: string; path: string; rel: string } => {
+        const rel = decoder.decode(bytes.subarray(offsets[i], offsets[i + 1]))
+        return { name: rel.slice(rel.lastIndexOf(sep) + 1), path: join(root, rel), rel }
+      }
+
+      // An empty query is the state the picker opens in, so it must not cost a full scan just to
+      // show the first screenful.
+      if (tokens.length === 0) {
+        const results: Array<{ name: string; path: string; rel: string }> = []
+        for (let i = 0; i < Math.min(limit, count); i++) results.push(describe(i))
+        irSearchCache = null
+        return { results, total: count, indexed: true }
+      }
+
+      // Typing narrows monotonically: adding characters can only shrink the match set, because
+      // every token of the shorter query is a prefix of a token of the longer one. So once the
+      // first keystroke has paid for a full scan, the rest only re-check what already matched,
+      // which is the difference between a picker that lags behind your typing and one that
+      // doesn't.
+      const reusable =
+        irSearchCache &&
+        irSearchCache.libraryPath === libraryPath &&
+        irSearchCache.scannedAt === index.scannedAt &&
+        query.toLowerCase().startsWith(irSearchCache.query)
+          ? irSearchCache.matches
+          : null
+
+      // Kept as parallel scalars rather than objects: with 100k+ matches on a broad query like
+      // "v30", allocating a result object per match is most of the cost of the search.
+      const bestIdx: number[] = []
+      const bestScore: number[] = []
+      let total = 0
+
+      const candidateCount = reusable ? reusable.length : count
+      for (let c = 0; c < candidateCount; c++) {
+        const i = reusable ? reusable[c] : c
+        const start = offsets[i]
+        const end = offsets[i + 1]
+
+        let all = true
+        for (const token of tokens) {
+          if (!rangeIncludes(bytes, start, end, token)) {
+            all = false
+            break
+          }
+        }
+        if (!all) continue
+        total++
+
+        // A hit in the file name beats a hit in some ancestor folder: "57" in "SM57 Cone.wav" is
+        // what you meant; "57" in a "1957 Reissue" folder name usually is not. Shorter paths win
+        // ties so top-level favourites outrank things buried eight folders deep.
+        const nameStart = fileNameStart(bytes, start, end)
+        let score = 0
+        for (const token of tokens) {
+          if (rangeIncludes(bytes, nameStart, end, token)) score += 10
+        }
+        score -= (end - start) * 0.01
+
+        bestIdx.push(i)
+        bestScore.push(score)
+      }
+
+      irSearchCache = {
+        libraryPath,
+        scannedAt: index.scannedAt,
+        query: query.toLowerCase(),
+        matches: bestIdx
+      }
+
+      const order = bestIdx
+        .map((_, k) => k)
+        .sort((a, b) => bestScore[b] - bestScore[a])
+        .slice(0, limit)
+
+      return {
+        results: order.map((k) => describe(bestIdx[k])),
+        total,
+        indexed: true
+      }
+    }
+  )
+
+  /**
+   * One directory level, for the Browse tab.
+   *
+   * Served from the index rather than the disk so browsing agrees with searching, and so an
+   * empty branch (folders that contain no .wav anywhere below) never appears as a dead end.
+   */
+  ipcMain.handle('player:browseIrLibrary', async (_event, libraryPath: string, relDir: string) => {
+    const index = irIndexes.get(libraryPath)
+    if (!index) return { folders: [], files: [], indexed: false }
+
+    const { bytes, offsets, count, root } = index
+    // The renderer sends a '/'-joined trail; the index stores the platform separator.
+    const normalizedDir = relDir ? relDir.split(/[\\/]/).join(sep) : ''
+    const prefix = normalizedDir ? Buffer.from(`${normalizedDir}${sep}`, 'utf8') : null
+    const folders = new Map<string, number>()
+    const files: Array<{ name: string; path: string; rel: string }> = []
+    const decoder = new TextDecoder()
+
+    for (let i = 0; i < count; i++) {
+      const start = offsets[i]
+      const end = offsets[i + 1]
+
+      let contentStart = start
+      if (prefix) {
+        if (end - start <= prefix.length) continue
+        let matches = true
+        for (let j = 0; j < prefix.length; j++) {
+          if (bytes[start + j] !== prefix[j]) {
+            matches = false
+            break
+          }
+        }
+        if (!matches) continue
+        contentStart = start + prefix.length
+      }
+
+      let slash = -1
+      for (let j = contentStart; j < end; j++) {
+        if (bytes[j] === SEP_BYTE) {
+          slash = j
+          break
+        }
+      }
+
+      if (slash === -1) {
+        const rel = decoder.decode(bytes.subarray(start, end))
+        files.push({ name: rel.slice(rel.lastIndexOf(sep) + 1), path: join(root, rel), rel })
+      } else {
+        const child = decoder.decode(bytes.subarray(contentStart, slash))
+        folders.set(child, (folders.get(child) ?? 0) + 1)
+      }
+    }
+
+    return {
+      folders: [...folders.entries()]
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      files,
+      indexed: true
+    }
+  })
+
   // IPC: Read any file as base64 (used for xlsx import parsing)
   ipcMain.handle('file:readBinary', async (_event, filePath: string) => {
     try {
@@ -6413,6 +6826,24 @@ app.whenReady().then(async () => {
 
   // IPC: Return the path to the parse error log file
   ipcMain.handle('log:getErrorLogPath', () => errorLogPath)
+
+  // IPC: Renderer-side diagnostic log. The preload has exposed appendRendererLog /
+  // getRendererLogPath for a while but the main-process handlers were lost in a merge, so both
+  // calls were rejecting. Needed to get diagnostics out of contexts with no reachable console —
+  // notably AudioWorkletGlobalScope, where the live player's DSP runs.
+  const getRendererLogPath = () => join(app.getPath('userData'), 'renderer.log')
+
+  ipcMain.handle('log:getRendererLogPath', () => getRendererLogPath())
+
+  ipcMain.handle('log:appendRendererLog', async (_event, line: string) => {
+    try {
+      const stamped = `[${new Date().toISOString()}] ${line}\n`
+      await fs.promises.appendFile(getRendererLogPath(), stamped, 'utf-8')
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  })
 
   // IPC: Write updated metadata back to file (preserves weights and all non-editable fields)
   // Only updates the fields the editor explicitly manages â€” never injects new keys.
@@ -8445,6 +8876,110 @@ app.whenReady().then(async () => {
       }
     })
 
+  /**
+   * Summarise a tones response for the log, without dumping the whole payload.
+   *
+   * Reports the SHAPE — how many tones came back, how many carried images, and what an image
+   * value actually looks like — because the failure being chased is that results and their images
+   * vanished with no code change on our side, which means the shape is what has to be checked.
+   * Only the image URL's origin is logged, never a token or a full signed URL.
+   */
+  /**
+   * One-shot probe of an image URL, with and without the bearer token.
+   *
+   * The renderer shows images with a plain <img src>, which sends no Authorization header. Now
+   * that images come from api.tone3000.com — the authenticated host — that may simply be a 401
+   * the renderer can only render as a broken image. Fetching the same URL both ways says which
+   * it is, and therefore whether the fix is a main-process proxy or something else entirely.
+   */
+  let lastSampleImageUrl: string | null = null
+  let imageProbeDone = false
+  const probeImageUrl = async (imageUrl: string): Promise<void> => {
+    if (imageProbeDone) return
+    imageProbeDone = true
+    const head = async (label: string, init?: RequestInit): Promise<string> => {
+      try {
+        const res = await fetch(imageUrl, { ...init, method: 'GET' })
+        return `${label}=${res.status} type=${res.headers.get('content-type') ?? '?'} len=${res.headers.get('content-length') ?? '?'}`
+      } catch (e) {
+        return `${label}=THREW ${String(e)}`
+      }
+    }
+    const anonymous = await head('noAuth')
+    const authed = tone3kTokens
+      ? await head('withAuth', { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+      : 'withAuth=skipped(no token)'
+    // Path only, never the query string — a signed URL carries its credentials there.
+    let path = imageUrl
+    try {
+      const u = new URL(imageUrl)
+      path = `${u.origin}${u.pathname}${u.search ? '?<query omitted>' : ''}`
+    } catch { /* log it raw */ }
+    log(`tone3000 image probe url=${path} ${anonymous} ${authed}`)
+  }
+
+  const describeToneResponse = (data: unknown): string => {
+    if (data === null || typeof data !== 'object') return `payload=${typeof data}`
+    const body = data as Record<string, unknown>
+    const tones = Array.isArray(body.data) ? body.data : null
+    if (!tones) {
+      return `keys=[${Object.keys(body).join(',')}] total=${String(body.total)} (no 'data' array)`
+    }
+    let withImages = 0
+    let sampleShape = 'none'
+    let sampleOrigin = ''
+    lastSampleImageUrl = null
+    for (const raw of tones) {
+      const tone = raw as Record<string, unknown> | null
+      const images = tone?.images
+      if (!Array.isArray(images) || images.length === 0) continue
+      withImages++
+      if (sampleShape === 'none') {
+        const first = images[0]
+        sampleShape = first === null ? 'null' : typeof first
+        if (typeof first === 'string') {
+          lastSampleImageUrl = first
+          try {
+            sampleOrigin = new URL(first).origin
+          } catch {
+            sampleOrigin = `not-a-url:${first.slice(0, 60)}`
+          }
+        } else if (first && typeof first === 'object') {
+          sampleOrigin = `object keys=[${Object.keys(first as object).join(',')}]`
+        }
+      }
+    }
+    const firstTone = tones[0] as Record<string, unknown> | undefined
+
+    // The renderer re-filters on these three after the server has already filtered, so their exact
+    // runtime type is what decides whether a result survives. `sizes` has already gone missing
+    // from the payload; if `format` or `gear` have changed type too, the string helpers that
+    // normalise them throw and take the whole result list with them.
+    const describeField = (key: string): string => {
+      if (!firstTone || !(key in firstTone)) return `${key}=ABSENT`
+      const value = firstTone[key]
+      if (Array.isArray(value)) return `${key}=array(${JSON.stringify(value).slice(0, 80)})`
+      if (value === null) return `${key}=null`
+      if (typeof value === 'object') return `${key}=object[${Object.keys(value).join(',')}]`
+      return `${key}=${typeof value}:${JSON.stringify(value)}`
+    }
+
+    return [
+      `tones=${tones.length}`,
+      `total=${String(body.total)}`,
+      `withImages=${withImages}`,
+      `imageType=${sampleShape}`,
+      sampleOrigin ? `imageOrigin=${sampleOrigin}` : '',
+      describeField('format'),
+      describeField('platform'),
+      describeField('gear'),
+      describeField('sizes'),
+      firstTone ? `toneKeys=[${Object.keys(firstTone).join(',')}]` : ''
+    ]
+      .filter(Boolean)
+      .join(' ')
+  }
+
   ipcMain.handle('tone3000:search', async (_event, params: { query?: string; page?: number; pageSize?: number; gears?: string[]; sizes?: string[]; sort?: string; architecture?: string; platform?: string; format?: string }) => {
     const valid = await ensureValidToken()
     if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
@@ -8461,9 +8996,19 @@ app.whenReady().then(async () => {
     else if (params.platform) sp.set('platform', params.platform)
     try {
       const res = await fetch(`${T3K_BASE}/api/v1/tones/search?${sp}`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
-      if (!res.ok) return { error: `API error ${res.status}` }
-      return { ok: true, data: await res.json() }
-    } catch (e) { return { error: String(e) } }
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        log(`tone3000 search FAILED ${res.status} ${res.statusText} query=${sp} body=${body.slice(0, 500)}`)
+        return { error: `API error ${res.status}` }
+      }
+      const data = await res.json()
+      log(`tone3000 search ok query=${sp} ${describeToneResponse(data)}`)
+      if (lastSampleImageUrl) void probeImageUrl(lastSampleImageUrl)
+      return { ok: true, data }
+    } catch (e) {
+      log(`tone3000 search THREW query=${sp} ${String(e)}`)
+      return { error: String(e) }
+    }
   })
 
   ipcMain.handle('tone3000:trending', async (_event, gear: string) => {
@@ -8474,9 +9019,18 @@ app.whenReady().then(async () => {
     sp.set('gear', gear)
     try {
       const res = await fetch(`${T3K_BASE}/api/v1/tones/trending?${sp}`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
-      if (!res.ok) return { error: `API error ${res.status}` }
-      return { ok: true, data: await res.json() }
-    } catch (e) { return { error: String(e) } }
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        log(`tone3000 trending FAILED ${res.status} ${res.statusText} gear=${gear} body=${body.slice(0, 500)}`)
+        return { error: `API error ${res.status}` }
+      }
+      const data = await res.json()
+      log(`tone3000 trending ok gear=${gear} ${describeToneResponse(data)}`)
+      return { ok: true, data }
+    } catch (e) {
+      log(`tone3000 trending THREW gear=${gear} ${String(e)}`)
+      return { error: String(e) }
+    }
   })
 
   ipcMain.handle('tone3000:usersSearch', async (_event, params: { query: string; page?: number; pageSize?: number; sort?: string }) => {

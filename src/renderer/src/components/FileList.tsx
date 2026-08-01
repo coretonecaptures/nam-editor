@@ -49,6 +49,7 @@ interface FileListProps {
   onCleanOutdatedNamBot?: (filePaths: string[]) => void
   namPlayerAvailable?: boolean
   onOpenInNam?: (filePath: string) => void
+  onPlay?: (file: NamFile) => void
   onFindSimilarTone3000?: (filePath: string) => void
   viewMode: ViewMode
   onViewModeChange: (mode: ViewMode) => void
@@ -332,6 +333,7 @@ export function FileList({
   onCleanOutdatedNamBot,
   namPlayerAvailable,
   onOpenInNam,
+  onPlay,
   onFindSimilarTone3000,
   viewMode,
   onViewModeChange,
@@ -1024,6 +1026,7 @@ export function FileList({
                   e.dataTransfer.setData('application/x-nam-files', JSON.stringify(paths))
                 } : undefined}
                 onRemove={onRemove ? () => onRemove(file.filePath) : undefined}
+                onPlay={onPlay ? () => onPlay(file) : undefined}
               />
             ))
           )}
@@ -1837,6 +1840,7 @@ function FileItem({
   onSelect,
   onDragStart,
   onRemove,
+  onPlay,
   onContextMenu
 }: {
   file: NamFile
@@ -1845,6 +1849,7 @@ function FileItem({
   onSelect: (e: React.MouseEvent) => void
   onDragStart?: (e: React.DragEvent<HTMLDivElement>) => void
   onRemove?: () => void
+  onPlay?: () => void
   onContextMenu?: (e: React.MouseEvent) => void
 }) {
   const meta = file.metadata
@@ -1968,6 +1973,21 @@ function FileItem({
             </div>
           )}
         </div>
+      )}
+
+      {/* self-center because the row is items-start (so it doesn't ride at the top edge).
+          Faintly visible at rest rather than fully hidden — it was effectively undiscoverable
+          at opacity-0, and grows into a solid filled circle on hover. */}
+      {onPlay && (
+        <button
+          className="flex-shrink-0 self-center w-9 h-9 rounded-full flex items-center justify-center opacity-40 group-hover:opacity-100 text-green-500 dark:text-green-400 group-hover:bg-green-500 group-hover:text-white dark:group-hover:bg-green-500 dark:group-hover:text-white group-hover:shadow-md hover:!bg-green-600 transition-all duration-150 group-hover:scale-110"
+          onClick={(e) => { e.stopPropagation(); onPlay() }}
+          title="Play capture"
+        >
+          <svg className="w-5 h-5 ml-0.5" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M8 5.14v14l11-7-11-7z"/>
+          </svg>
+        </button>
       )}
 
       {onRemove && (

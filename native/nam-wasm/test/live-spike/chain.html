@@ -1,0 +1,160 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>NAM live chain test</title>
+<body>
+<script>
+// Verifies the FULL live signal chain the LiveEngine builds:
+//
+//   source -> [NAM worklet] -> [ConvolverNode] -> wetGain -+-> outputGain -> destination
+//                           \-> dryGain -----------------/
+//
+// Uses an oscillator instead of getUserMedia so it runs without an audio device or mic
+// permission — this proves the GRAPH, not the capture. Live mic input still needs a human.
+const log = (m) => console.log('[ChainTest] ' + m)
+
+// Goertzel: energy at one frequency, enough to prove the cab is actually in the chain.
+function bandEnergy(x, rate, freq) {
+  const w = (2 * Math.PI * freq) / rate
+  const coeff = 2 * Math.cos(w)
+  let s1 = 0, s2 = 0
+  for (let i = 0; i < x.length; i++) { const s0 = x[i] + coeff * s1 - s2; s2 = s1; s1 = s0 }
+  return Math.sqrt(Math.max(0, s1 * s1 + s2 * s2 - coeff * s1 * s2)) / x.length
+}
+const db = (x) => (x > 0 ? 20 * Math.log10(x) : -Infinity)
+
+async function buildAndRender({ withIr, irBuffer, mix }) {
+  const RATE = 48000
+  const ctx = new OfflineAudioContext(1, RATE, RATE)
+  await ctx.audioWorklet.addModule('/nam-worklet.js')
+
+  const node = new AudioWorkletNode(ctx, 'nam-processor', {
+    numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1],
+    processorOptions: { wasmModule: window.__wasmModule, manifest: window.__manifest }
+  })
+
+  let err = null
+  const ready = new Promise((resolve) => {
+    node.port.onmessage = (e) => {
+      if (e.data.type === 'modelLoaded') resolve()
+      else if (e.data.type === 'error') { err = e.data.stage + ': ' + e.data.error; resolve() }
+    }
+  })
+  node.port.postMessage({ type: 'loadModel', modelBytes: window.__modelBytes })
+  await Promise.race([ready, new Promise((r) => setTimeout(r, 15000))])
+  if (err) throw new Error(err)
+
+  const outputGain = ctx.createGain()
+
+  if (withIr) {
+    const conv = ctx.createConvolver()
+    conv.normalize = false
+    conv.buffer = irBuffer
+    const wet = ctx.createGain(); wet.gain.value = mix
+    const dry = ctx.createGain(); dry.gain.value = 1 - mix
+    node.connect(conv); conv.connect(wet); wet.connect(outputGain)
+    node.connect(dry); dry.connect(outputGain)
+  } else {
+    node.connect(outputGain)
+  }
+  outputGain.connect(ctx.destination)
+
+  // Broadband-ish input so the cab's rolloff is measurable.
+  const osc = ctx.createOscillator()
+  osc.type = 'sawtooth'
+  osc.frequency.value = 220
+  const g = ctx.createGain(); g.gain.value = 0.3
+  osc.connect(g); g.connect(node)
+  osc.start()
+
+  const rendered = await ctx.startRendering()
+  return rendered.getChannelData(0)
+}
+
+function stats(ch) {
+  let peak = 0, nonFinite = 0
+  for (let i = 0; i < ch.length; i++) {
+    const v = ch[i]
+    if (!Number.isFinite(v)) { nonFinite++; continue }
+    const a = Math.abs(v); if (a > peak) peak = a
+  }
+  return { peak, nonFinite }
+}
+
+async function run() {
+  const result = { ok: false, checks: [] }
+  const check = (ok, label, detail) => {
+    result.checks.push({ ok, label })
+    log((ok ? 'PASS ' : 'FAIL ') + label + (detail ? ' -> ' + detail : ''))
+    return ok
+  }
+
+  try {
+    const [wasmRes, manRes, namRes, irRes] = await Promise.all([
+      fetch('/nam-worklet.wasm'), fetch('/nam-worklet.manifest.json'),
+      fetch('/model.nam'), fetch('/ir.wav')
+    ])
+    window.__wasmModule = await WebAssembly.compile(await wasmRes.arrayBuffer())
+    window.__manifest = await manRes.json()
+    window.__modelBytes = new Uint8Array(await namRes.arrayBuffer())
+
+    const decodeCtx = new OfflineAudioContext(1, 48000, 48000)
+    const irBuffer = await decodeCtx.decodeAudioData(await irRes.arrayBuffer())
+    log('IR decoded: ' + irBuffer.length + ' frames @ ' + irBuffer.sampleRate + 'Hz')
+
+    // 1. Model only.
+    const dryOut = await buildAndRender({ withIr: false })
+    const dryStats = stats(dryOut)
+    check(dryStats.nonFinite === 0, 'model-only chain: no non-finite output')
+    check(dryStats.peak > 0, 'model-only chain: produced audio', 'peak ' + dryStats.peak.toFixed(5))
+
+    // 2. Model + cab, fully wet.
+    const wetOut = await buildAndRender({ withIr: true, irBuffer, mix: 1 })
+    const wetStats = stats(wetOut)
+    check(wetStats.nonFinite === 0, 'model+IR chain: no non-finite output')
+    check(wetStats.peak > 0, 'model+IR chain: produced audio', 'peak ' + wetStats.peak.toFixed(5))
+
+    // Assert the convolver measurably CHANGES the response, not that it rolls off — direction is
+    // model-dependent. A capture that already includes a cab (any *_CAB.nam) has almost no 6kHz
+    // left to remove, so a cab-on-cab test can legitimately show highs going *up*. The rolloff
+    // itself is verified separately against a broadband source. What matters here is only that
+    // the ConvolverNode is genuinely in the live path.
+    const ratio = (buf) => db(bandEnergy(buf, 48000, 6000) / bandEnergy(buf, 48000, 220))
+    const dryRatio = ratio(dryOut)
+    const wetRatio = ratio(wetOut)
+    const delta = wetRatio - dryRatio
+    log('6kHz relative to 220Hz: dry ' + dryRatio.toFixed(1) + 'dB, wet ' + wetRatio.toFixed(1) +
+        'dB (change ' + delta.toFixed(1) + 'dB)')
+    check(Math.abs(delta) > 6, 'cabinet IR alters the response in the live chain',
+      delta.toFixed(1) + 'dB')
+
+    // The IR must not blow up the level. normalize=false keeps each cab's relative character,
+    // but live has no loudness stage after it, so LiveEngine applies makeup gain (1 / L2 norm of
+    // the IR). Without that this measured 0.25 -> 2.06 peak, i.e. ~8x louder and clipping.
+    let irEnergy = 0
+    const irData = irBuffer.getChannelData(0)
+    for (let i = 0; i < irData.length; i++) irEnergy += irData[i] * irData[i]
+    const makeup = irEnergy > 0 ? 1 / Math.sqrt(irEnergy) : 1
+    const compensatedPeak = wetStats.peak * makeup
+    log('IR makeup gain ' + makeup.toFixed(4) + ' -> compensated peak ' +
+        compensatedPeak.toFixed(5) + ' (raw ' + wetStats.peak.toFixed(5) + ')')
+    check(compensatedPeak < dryStats.peak * 4,
+      'IR makeup gain keeps the live level in range',
+      'compensated ' + compensatedPeak.toFixed(3) + ' vs dry ' + dryStats.peak.toFixed(3))
+
+    // 3. Fully dry mix must bypass the cab entirely.
+    const bypassOut = await buildAndRender({ withIr: true, irBuffer, mix: 0 })
+    const bypassRatio = ratio(bypassOut)
+    check(Math.abs(bypassRatio - dryRatio) < 3,
+      'mix=0 leaves the signal uncoloured', bypassRatio.toFixed(1) + 'dB vs ' + dryRatio.toFixed(1))
+
+    result.ok = result.checks.every((c) => c.ok)
+    log(result.ok ? 'PASS — full live chain works' : 'FAIL — see above')
+  } catch (err) {
+    result.error = (err && err.message) || String(err)
+    log('FAIL — ' + result.error)
+  }
+  console.log('SPIKE_DONE ' + JSON.stringify(result))
+}
+run()
+</script>
+</body>

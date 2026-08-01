@@ -46,6 +46,9 @@ interface ToolbarProps {
   cardViewEnabled?: boolean
   onToggleCardView?: () => void
   homeViewActive?: boolean
+  toneMapActive?: boolean
+  toneMapEnabled?: boolean
+  onToggleToneMap?: () => void
   onGoHomeView?: () => void
 }
 
@@ -95,6 +98,9 @@ export function Toolbar({
   cardViewEnabled = false,
   onToggleCardView,
   homeViewActive = false,
+  toneMapActive = false,
+  toneMapEnabled = false,
+  onToggleToneMap,
   onGoHomeView,
 }: ToolbarProps) {
   const [showFileMenu, setShowFileMenu] = useState(false)
@@ -411,6 +417,31 @@ export function Toolbar({
         </button>
       )}
 
+      {onToggleToneMap && (
+        <button
+          onClick={toneMapEnabled ? onToggleToneMap : undefined}
+          title={
+            toneMapEnabled
+              ? 'Tone Map — browse every capture by amp and measured saturation'
+              : 'Load a library to use the Tone Map'
+          }
+          disabled={!toneMapEnabled}
+          className={`tb-menu-btn relative ${!toneMapEnabled ? 'opacity-40 cursor-not-allowed' : ''} ${toneMapActive ? 'active' : ''}`}
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        >
+          {/* Scattered marks rising left-to-right — the map's clean-to-heavy reading. */}
+          <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
+            <circle cx="2.5" cy="12.5" r="1.4" />
+            <circle cx="6" cy="9.5" r="1.4" />
+            <circle cx="6.5" cy="13" r="1.1" opacity="0.6" />
+            <circle cx="9.5" cy="6" r="1.4" />
+            <circle cx="10" cy="10" r="1.1" opacity="0.6" />
+            <circle cx="13.5" cy="3" r="1.4" />
+            <circle cx="13" cy="7" r="1.1" opacity="0.6" />
+          </svg>
+        </button>
+      )}
+
       {showExperimentalTraining && onOpenTrainingQueue && (
         <button
           onClick={onOpenTrainingQueue}
@@ -482,14 +513,14 @@ export function Toolbar({
       {onToggleToneStore && (
         <button
           onClick={onToggleToneStore}
-          title="Browse and download tones from tone3000"
+          title="Browse and download tones from Tone3000"
           className={`tb-menu-btn ${toneStoreActive ? 'active' : ''}`}
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
-          Find Tones
+          Tone3000
         </button>
       )}
 

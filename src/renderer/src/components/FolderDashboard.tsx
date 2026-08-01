@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import type { NamFile } from '../types/nam'
 import { detectPreset } from '../utils/detectPreset'
 import { getGearImageSrc } from '../assets/gear'
-import { Gauge, TrendLine } from './dashboard/Charts'
+import { Gauge, TrendLine, gainRamp } from './dashboard/Charts'
 import { folderHealth, buildEsrRuns, getEsrBucketTone } from './dashboard/dashboardMetrics'
 
 // ── Design tokens ────────────────────────────────────────────────────────────
@@ -221,10 +221,16 @@ const TONE_GAIN_COLORS: Record<string, string> = {
 }
 
 /**
- * Continuous gradient strip of every capture's `metadata.gain`, cleanest to highest.
+ * Continuous gradient strip of every capture's `metadata.gain`, cleanest to most saturated.
  *
  * Each capture is one segment, ordered by gain, colored by where it sits between the library's
- * min and max. Shows the shape of your gain coverage at a glance — clustering, and any gaps.
+ * min and max. Shows the shape of your saturation coverage at a glance — clustering, and any gaps.
+ *
+ * NOTE ON UNITS: `metadata.gain` is NOT decibels. NAM derives it from the model's own transfer
+ * curve — see `nam/models/base.py::_metadata_gain`, documented as "Between 0 and 1, how much gain
+ * / compression does the model seem to have?". Measured across a real 2,577-capture library it
+ * runs 0.126..0.928 (median 0.741), so this renders 2 decimal places and no unit. An earlier
+ * version of this card labelled these values "dB", which was wrong.
  */
 function D1GainStrip({ values, title }: { values: number[]; title: string }) {
   if (values.length === 0) {
@@ -232,7 +238,7 @@ function D1GainStrip({ values, title }: { values: number[]; title: string }) {
       <div className={`${CARD} flex flex-col gap-3`}>
         <span className={EYEBROW}>{title}</span>
         <p className="text-[11px] text-gray-400 dark:text-gray-600">
-          No gain data — captures in this folder don&apos;t report a gain value.
+          No saturation data — captures in this folder don&apos;t report a gain value.
         </p>
       </div>
     )
@@ -243,32 +249,23 @@ function D1GainStrip({ values, title }: { values: number[]; title: string }) {
   const max = sorted[sorted.length - 1]
   const span = max - min
 
-  // Interpolate sky -> green -> yellow -> orange -> red across the observed gain range.
-  const stops: Array<[number, number, number]> = [
-    [56, 189, 248],
-    [34, 197, 94],
-    [234, 179, 8],
-    [249, 115, 22],
-    [239, 68, 68],
-  ]
-  const colorFor = (t: number) => {
-    const clamped = Math.max(0, Math.min(1, t))
-    const scaled = clamped * (stops.length - 1)
-    const i = Math.min(stops.length - 2, Math.floor(scaled))
-    const f = scaled - i
-    const [r1, g1, b1] = stops[i]
-    const [r2, g2, b2] = stops[i + 1]
-    return `rgb(${Math.round(r1 + (r2 - r1) * f)}, ${Math.round(g1 + (g2 - g1) * f)}, ${Math.round(b1 + (b2 - b1) * f)})`
-  }
+  // Shared with the Tone Map via gainRamp, so identical saturation values colour identically
+  // in both places.
+  const colorFor = gainRamp
 
   const median = sorted[Math.floor(sorted.length / 2)]
 
   return (
     <div className={`${CARD} flex flex-col gap-3`}>
       <div className="flex items-baseline justify-between gap-2">
-        <span className={EYEBROW}>{title}</span>
-        <span className="font-mono tabular-nums text-[10px] text-gray-400 dark:text-gray-500">
-          {values.length.toLocaleString()} with gain
+        <div className="min-w-0">
+          <span className={EYEBROW}>{title}</span>
+          <span className="block text-[9.5px] text-gray-400 dark:text-gray-500 mt-0.5">
+            NAM&apos;s measured 0&ndash;1 saturation, not decibels
+          </span>
+        </div>
+        <span className="font-mono tabular-nums text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0">
+          {values.length.toLocaleString()} measured
         </span>
       </div>
 
@@ -278,19 +275,19 @@ function D1GainStrip({ values, title }: { values: number[]; title: string }) {
             key={index}
             className="h-full flex-1"
             style={{ backgroundColor: colorFor(span > 0 ? (value - min) / span : 0.5) }}
-            title={`${value.toFixed(2)} dB`}
+            title={value.toFixed(2)}
           />
         ))}
       </div>
 
       <div className="flex items-center justify-between font-mono tabular-nums text-[10px] text-gray-400 dark:text-gray-500">
-        <span>{min.toFixed(1)} dB</span>
-        <span className="text-gray-500 dark:text-gray-400">med {median.toFixed(1)}</span>
-        <span>{max.toFixed(1)} dB</span>
+        <span>{min.toFixed(2)}</span>
+        <span className="text-gray-500 dark:text-gray-400">med {median.toFixed(2)}</span>
+        <span>{max.toFixed(2)}</span>
       </div>
       <div className="flex items-center justify-between text-[10px] text-gray-400 dark:text-gray-600">
         <span>Cleanest</span>
-        <span>Highest gain</span>
+        <span>Most saturated</span>
       </div>
     </div>
   )
@@ -691,7 +688,7 @@ export function FolderDashboard({
 
       {/* 4b. Gain coverage strips — clean to high gain */}
       <div className="grid grid-cols-2 gap-2.5">
-        <D1GainStrip title="Gain Range" values={stats.gainValues} />
+        <D1GainStrip title="Saturation Range" values={stats.gainValues} />
         <D1ToneGainStrip
           title="Tone Spread"
           counts={stats.toneCounts}

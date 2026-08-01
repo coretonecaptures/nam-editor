@@ -1,5 +1,275 @@
 # TODO
 
+## Convolution delay
+
+The reverb can load an impulse; the delay cannot. A convolution delay would cover the things an
+algorithmic line cannot reach — real tape machine repeats with their wow, head bump and saturation
+baked in, spring tanks, and the odd non-linear pedals people capture.
+
+**Blocked on material.** Nothing has been tried yet because no delay impulse pack has been bought
+or tested, and it is genuinely unclear whether the results justify the CPU. Worth remembering what
+the reverb work established: convolution can only reproduce a LINEAR, TIME-INVARIANT system, and a
+tape delay's wow, flutter and self-oscillation are none of those. A tape impulse will give the
+tonal colour of the repeats but not their movement.
+
+If it turns out to be worth it, the pieces mostly exist:
+
+- `setReverbIr` already does the whole job — decode, trim silence, resample, stereo, energy
+  normalisation. A delay convolver would be the same code pointed at a different node.
+- `IrPicker` already browses an indexed library; a third library path alongside `irLibraryPath`
+  and `reverbLibraryPath` follows the pattern set in Settings &rarr; Player.
+- Impulse length is the open question. Reverb impulses trim to ~11s; a delay impulse with several
+  audible repeats could be longer still, and convolution cost is linear in length.
+
+---
+
+## Noise gate
+
+Wanted at the front of the live chain, before the model — a high-gain capture amplifies room noise
+and single-coil hum along with everything else, and the tuner work already showed how much hum a
+real rig carries.
+
+**Sourcing question, not a coding one.** The official NeuralAmpModelerPlugin has a gate whose
+behaviour is well matched to these models, and reusing it would sound closer to what people expect
+than something hand-rolled. Before any of that:
+
+- **Confirm the licence.** The plugin and NeuralAmpModelerCore need checking for whether their
+  terms allow lifting the DSP into this project, and under what attribution. Do not copy first and
+  read the licence afterwards.
+- Confirm where the gate actually lives — plugin repo or core — since only one of them is vendored
+  in the usual builds.
+- A gate is a few dozen lines (threshold, attack, hold, release, with the detector on the dry
+  input). Writing one is not the hard part; matching NAM's feel is.
+
+Placement is settled either way: on the raw input, before the model. Gating after a high-gain model
+means gating the amplified noise, which chatters.
+
+---
+
+## Pop-out pedalboard view for the player FX
+
+A photoreal pedalboard as an alternative to the condensed slider layout, in a modal/full-screen
+view so it is not constrained by the player panel's 420px floor.
+
+**Status: assets prepared, nothing wired up.** No code references any of it yet.
+
+### What exists
+
+| File | State |
+|---|---|
+| `assets/fx/pedalboard.jpg` | Gemini render, 2528x1686. Watermark patched out. Chorus's baked-in lit LED neutralised, so all three sockets are unlit and the glow is ours to control. |
+| `assets/fx/knob-black.png` | Sheet row 1 #2. Cut, de-fringed, circular-masked. Delay. |
+| `assets/fx/knob-cream.png` | Sheet row 1 #4. Same treatment. Chorus + Reverb. |
+
+Measured coordinates (pixels in the 2528x1686 background):
+
+| Pedal | x | y | w | h |
+|---|---|---|---|---|
+| Chorus | 138 | 436 | 556 | 862 |
+| Delay | 793 | 436 | 748 | 865 |
+| Reverb | 1640 | 435 | 755 | 863 |
+
+LED centre is at (0.50, 0.687) of each pedal. Footswitch top edge on the chorus is y=1096 — any
+future clone/patch of that pedal must stay above it, which is what the asserts in the prep script
+enforce. Knob diameter used in the preview: 0.052 of the image width.
+
+### The architecture decision that matters
+
+Position every control as a **percentage of its own pedal**, never of the background image. Then
+swapping the artwork means re-measuring three rectangles and nothing else; the 16 knob positions,
+labels, LEDs and switches all survive untouched. Done the obvious way — absolute coordinates
+against the whole image — every background change costs a re-measure of all 22 elements.
+
+### Still to build
+
+- Knob component: **vertical** drag (rotational drag feels wrong), shift for fine, wheel, double-
+  click to reset, and a visually-hidden `<input type="range">` behind each one so keyboard and
+  screen-reader support is not thrown away.
+- Rotation is the whole bitmap, -135deg..+135deg. Safe because these knobs are radially symmetric
+  apart from the indicator line — the chrome skirt rotates but reads as static.
+- Silk-screen labels as real HTML text, blended (`mix-blend-mode` / screen) so the ink picks up
+  the brushed grain rather than floating on it. Proven in the preview; do NOT bake text into the
+  artwork.
+- LED sprites (see below) rather than a CSS glow — the CSS approximation does not look good enough.
+- The reverb's **Plate/Convolution toggle has no home** in the current artwork.
+
+### If the artwork is regenerated
+
+Lock the control set first: **chorus 3, delay 7, reverb 6 + one toggle**, three footswitches,
+three LEDs. Then:
+
+- Still **no knobs** in the render. They have to rotate, and baking them freezes positions that
+  are still being tuned.
+- Feed the existing preview back as a **reference image** for proportions. The one real defect in
+  the current render is that the delay enclosure never got the extra width it was asked for, so
+  7 knobs at 4-across is cramped while the chorus has half a pedal of dead space.
+- Ask for **two versions: all LEDs off, and all LEDs on.** The off one is the background; the on
+  one exists only so the three lit LEDs can be cut out as sprites. Three pedals switching
+  independently is 8 combinations — two whole-board images cover 2 of them, but background +
+  three sprites covers all 8, with real rendered glow.
+- Give the reverb somewhere for its toggle.
+
+### Open
+
+- Cream knob's indicator is a wide stripe that reads as a screw slot rather than a pointer at
+  size. Row 1 #6 (plain black, thin line, no chrome skirt) is the obvious alternative.
+- Whether the pop-out replaces the condensed layout at wide widths or stays a separate mode.
+
+---
+
+## Save the player's FX rig as a recallable preset
+
+Every player control now persists — delay, chorus, reverb (mode and per-mode parameters), cab IR,
+reverb impulse, volume, input channel, output device — but there is exactly ONE of each. Dialling
+in a clean ambient sound means losing the tight slapback you had, and there is no way back to it
+short of remembering six slider positions.
+
+**Wanted:** named presets, saved and recalled from the player.
+
+- A preset is the FX state, not the rig: delay, chorus, reverb settings, and the chosen reverb
+  impulse path. Deliberately NOT the input channel, output device, or input gain — those describe
+  the room you are sitting in, not the sound, and carrying them between presets would mean
+  recalling a preset could silently change which socket the app listens to.
+- Cab IR is the awkward case. It belongs to the capture more than to the effects, and it is
+  already shared with the Tone Map through `diSelection.ts`. Probably store it in the preset but
+  make recalling it optional.
+- Storage: the settings file rather than localStorage, since presets are worth surviving a
+  profile reset and worth exporting. `AppSettings` already carries similar lists
+  (`trainingPresets`, `metadataSuggestRuleLibrary`) that this can follow.
+
+Open questions:
+- **Per-capture recall.** Should a capture remember which preset it was last auditioned through?
+  Tempting, but it would make two captures sound different for reasons the Tone Map cannot show,
+  which is the same trap the shared DI/cab choice exists to avoid.
+- **Factory presets.** A few starting points (slapback, ambient wash, clean plate) would show what
+  the controls do far better than the defaults, which are all off.
+- Whether presets should also cover the preview player once FX exist there — see below.
+
+---
+
+## FX in the preview player
+
+Delay, chorus and reverb are Live-only. Preview renders offline through a Worker
+(`namRender.worker`), so each effect would need a second, offline implementation — the live ones
+are all Web Audio nodes and an AudioWorklet, none of which exist in that path. Until then, a
+capture auditioned in Preview and played in Live are not the same sound, which undercuts the
+"both modes agree" principle the shared cab IR was built for.
+
+The plausible route is an OfflineAudioContext render for the effects stage: it supports the same
+node types, so the delay and convolution reverb would port nearly unchanged. The plate reverb
+would need the worklet to run under OfflineAudioContext, which is supported but untested here.
+
+---
+
+## Let the user choose the start/end point of an audition clip
+
+Both the hover audition and the preview render take a fixed slice of the DI, chosen by
+`findLoudestWindowStart` — the loudest window of `AUDITION_CLIP_SECONDS` (hover, 5 s) or
+`MAX_PREVIEW_SECONDS` (preview, 12 s). "Loudest" is a decent guess and a poor answer: the part of
+a DI that best shows what a capture does is often not its loudest part, and the automatic window
+can land mid-phrase, cut off a chord, or sit on the one bar of palm mutes in an otherwise open
+riff. There is no way to say "audition *this* bit".
+
+**Wanted:** per-clip in/out points the user sets once and the app remembers.
+
+- A waveform strip for the selected DI with draggable in/out handles, most naturally in the DI
+  Source section of the player, where the clip is already chosen.
+- Stored per DI file path, alongside the existing DI preferences in `utils/diSelection.ts`
+  (`nam-player-di-prefs`) — the same "player and Tone Map must agree" argument applies, since a
+  capture auditioned over two different bars of playing is not being compared fairly.
+- Falls back to `findLoudestWindowStart` when a clip has no saved points, so nothing changes for
+  anyone who doesn't set them.
+
+Open questions:
+- **Two lengths or one.** Hover wants short (render cost is linear in length); preview can afford
+  12 s. Either the user sets one region and hover takes the first `AUDITION_CLIP_SECONDS` of it,
+  or they set the region per mode. The first is simpler and probably right.
+- **Cache invalidation.** `useAudition` caches rendered clips keyed by capture; changing the
+  in/out points must evict them, or auditioning keeps playing the old region.
+- Whether the clip length itself should become a setting at the same time — it is currently the
+  hardcoded `AUDITION_CLIP_SECONDS` and `MAX_PREVIEW_SECONDS`.
+
+---
+
+## [HIGH PRIORITY] Settings: dedicated "Playback" section with per-type DI folders
+
+**Partly done.** Settings → **Player** now exists and holds `diPreviewLibraryPath`,
+`irLibraryPath` and `irMix`. The per-type DI folder work below is still outstanding. The IR half
+of the question is also answered: `irLibraryPath` is now recursively indexed and browsed through
+IrPicker rather than by subfolder-as-category, so IRs do *not* need per-type folders.
+
+Player settings are currently squeezed into Settings → Library alongside unrelated options
+(`diPreviewLibraryPath`, `irLibraryPath`, `irMix`). They deserve their own **Playback** section,
+and the DI library needs to stop depending on the user having pre-organized one folder tree.
+
+**Today:** one `diPreviewLibraryPath`, and categories are inferred from its immediate subfolder
+names (`Clean/`, `Break Up/`, ...). That works only if the user restructures their existing DI
+collection to match, which is a real barrier — most people already have DIs scattered across
+folders they don't want to move.
+
+**Wanted:** pick a folder *per type*, so the app does the organizing instead of the filesystem:
+
+| Type | Folder |
+|---|---|
+| Clean | `<browse>` |
+| Break Up | `<browse>` |
+| Medium Gain | `<browse>` |
+| High Gain | `<browse>` |
+| Lead | `<browse>` |
+| Heavy | `<browse>` |
+
+Then the player's pill row is built from configured types rather than discovered subfolders, and
+the per-type dropdown lists the wavs in that type's folder.
+
+Design decisions still open:
+- **Shape of the setting.** A `Record<categoryName, folderPath>` is the obvious model, but should
+  the type list itself be user-editable (add "Acoustic", "Bass", rename "Heavy")? Leaning yes —
+  hardcoding six categories will be wrong for someone. `DI_CATEGORY_ORDER` in
+  `utils/playerAudio.ts` is the current canonical list and would become the *default* set.
+- **Coexistence with the current single-folder mode.** Simplest is to keep both: if per-type
+  folders are configured they win; otherwise fall back to scanning `diPreviewLibraryPath` for
+  subfolders (which already works and shouldn't break for anyone using it).
+- **Same question for IRs.** `irLibraryPath` has the identical subfolder-as-category convention,
+  so per-type IR folders (by cab size? by mic?) may deserve the same treatment — or may not,
+  since IR packs usually *are* already organized in folders.
+- **Ordering** when types are user-defined: explicit drag order, or keep matching against the
+  canonical gain progression and append unknowns (what `sortDiCategories` does now).
+
+Also worth moving into the new Playback section while it exists: `namStandalonePath` arguably
+belongs there rather than under Library, and the preview length (currently the hardcoded
+`MAX_PREVIEW_SECONDS = 12` in `PlayerPanel.tsx`) could become a setting.
+
+---
+
+## DONE: Player cabinet IR stage
+
+**Implemented.** Captures whose `gear_type` has no cabinet (`amp`, `preamp`, `pedal_amp`,
+`pedal`, `studio`) are raw power-amp signal and sound harsh alone; they now get a cabinet IR
+convolved in. `amp_cab`/`amp_pedal_cab` skip it automatically so you never hear two speakers
+in series. Unknown/absent `gear_type` is left alone rather than coloured wrongly, and the user
+can force the IR on or off either way.
+
+- **IR source:** a user-pointed folder (`irLibraryPath`, Settings -> Library), same
+  subfolder-as-category convention as the DI clip library. Nothing is bundled, which sidesteps
+  the cab-IR licensing question entirely.
+- **Scan IPC:** `player:scanWavLibrary` — the DI handler generalized, since both libraries are
+  "a folder of wavs organized into category subfolders".
+- **Convolution:** Web Audio `ConvolverNode` inside an `OfflineAudioContext`, baked into the
+  cached preview buffer (suits render-then-play; no live graph to rebuild per play). Parallel
+  wet/dry paths with `dryGain = 1 - mix` copied from upstream's topology, so cab amount is
+  blendable via the `irMix` setting. `convolver.normalize = false` so switching cabs doesn't
+  jump the level — our own loudness stage handles that.
+- **Chain order:** model -> IR -> DC blocker -> normalize. IR before normalization because IRs
+  vary wildly in gain. When an IR is applied, loudness metadata no longer describes the signal,
+  so normalization falls back to peak-based.
+- **Verified** against a real IR (`FNDR 2x12 G12-65 MIX.wav`): 6kHz down 21.2dB, 2kHz down
+  5.2dB, fundamental unchanged — a real speaker's rolloff.
+
+Follow-ups worth considering: per-capture IR memory (currently one selection for the session),
+suggesting an IR from `nl_cabinet` metadata, and IR support in the future tone map.
+
+---
+
 ## [HIGH PRIORITY] In-app tone player — offline WASM render (no real-time AudioWorklet)
 
 **Status: IN PROGRESS on `feature/player`.** Prior attempt on this branch (see
@@ -60,10 +330,16 @@ needs `emcc` installed and confirmed first.
 
 ---
 
-## [HIGH PRIORITY] Report / brainstorm: "Tone Map" — organic clickable tone-browsing dashboard(s)
+## DONE (branch `feature/player`): "Tone Map" — organic clickable tone-browsing dashboard(s)
 
-**Not scoped for implementation yet — needs the visualization design flushed out further before
-building anything.** Capturing the idea while it's fresh.
+**Built.** Full-window view: amp rows ordered cleanest→heaviest by *measured* mean gain, continuous
+saturation X axis, tone-type colour, multi-select facets (amp / creator / tone type), hover-to-name,
+click-to-play through the in-app player, heat cells for dense rows, real axis zoom with pan +
+scrollbar, and rows that auto-size to half the window with a drag grip. The brainstorm below is kept
+for the design rationale; **the successor ideas are the "Scan mode" and "Tone Radio" entries that
+follow it.**
+
+Original brainstorm follows.
 
 **Immediate, concrete first step (separate, smaller item — see the folder-dashboard gain strip
 entry below):** two simple 1D gradient/heat strips on the folder dashboard — one for gain level
@@ -101,6 +377,213 @@ similar-sounding captures, clustered rather than just linearly sorted. The user 
 
 Do not start building the big map until these are actually answered; the gain/tone-type strips
 below are the right-sized next step.
+
+---
+
+## [HIGH PRIORITY] Scan mode — audition a scoped set by ear, in order
+
+**Next thing to build.** The Tone Map's weakness is that every facet it offers is a *name*, and you
+cannot name a tone you have not heard. Scan mode makes the ear the filter: pick a scope, then sweep
+through it hearing each capture crossfade into the next, radio-tuning style. Stop when something
+catches you.
+
+**Scope first, then scan** — the drill-down is the point, not a later refinement:
+- this creator only (`modeled_by`, normalized via `utils/gearMake.ts`)
+- this amp only (`gear_make` + optional `gear_model`)
+- **this amp family**, and **several families at once** — see the amp-family taxonomy entry below
+- the current folder-tree scope, or library-wide
+- compose with the Tone Map's existing facet state so scanning "what I'm looking at" is one click
+
+**Scan order matters more than similarity does.** v1 orders the scoped set by measured
+`metadata.gain` (clean → saturated), which needs *no new measurement at all* and is already a
+smooth, meaningful sweep. Better orderings (see Tone Radio below) can replace the comparator later
+without touching the UI — keep ordering behind a single function so that swap stays cheap.
+
+**The real engineering constraint — MEASURED.** Each capture must be rendered through the WASM model
+before it can be heard, and render time is dominated by clip length (~60 ms fixed model load/reset,
+then ~120 ms per audio-second):
+
+| scan clip | render per capture |
+|---|---|
+| 0.5 s | 117 ms |
+| 1 s | 176 ms |
+| 3 s | 406 ms |
+| 6 s | 727 ms |
+| **12 s (today's `MAX_PREVIEW_SECONDS`)** | **1518 ms** |
+
+So scanning must **not** reuse the 12 s preview — 1.5 s of silence before every capture makes a
+sweep unusable. Use a short dedicated scan clip (~3 s) and a prefetch pool rendering ahead of the
+playhead; at 406 ms across 4 workers that is one capture ready every ~100 ms, comfortably faster
+than anyone sweeps. Prefetch is most of the work here — budget for it rather than discovering it
+late.
+
+**Descriptors are scope-lazy, never library-wide.** 38k captures would be ~1.6 h across 4 workers;
+the ~100–500 captures in the scope you are about to sweep are far less. Sweeping starts immediately
+on metadata ordering and re-sorts as descriptors land, so the wait is never blocking.
+
+**Incremental, and cheaper than the prescan.** Cache per capture keyed by path + mtime + size +
+probeVersion, so adding or editing captures rescans only what changed — never the whole scope again.
+The prescan's 618 ms probe was sized to *test identity* (sine + three sweep levels); ordering only
+needs the sweeps, so the shipped probe is smaller:
+
+| probe | per capture | 3,853-capture folder, 4 workers |
+|---|---|---|
+| 1 sweep — brightness only | ~176 ms | **~2.8 min** |
+| 2 sweeps — brightness + drive-dependent tilt | ~300 ms | ~4.8 min |
+
+Show the estimate before starting (count x measured ms / workers) and let the user cancel; the cost
+scales with scope, and a narrow scope like "these two amps from this maker" is seconds.
+
+**Changing the audition DI does NOT invalidate the scan.** Worth stating because it is the obvious
+worry: the descriptor probe is a *synthetic sweep*, not the user's DI, so it characterises the model
+itself and is independent of whatever clip you later audition with. The DI only affects what you
+hear during a sweep, and is rendered on demand.
+
+The real nuance is drive level, not clip choice. Model response is level-dependent — measured `tilt`
+spanned **-300 to +217 Hz**, so some captures genuinely reorder between gentle and hard playing.
+That is handled by storing centroid at more than one drive level in the *same* scan, so sorting by
+"clean playing" vs "driven" is free and still needs only one pass. No per-DI rescan, ever.
+
+**Metadata cleanup is the user's job, not the scanner's.** Split spellings (SLAMMIN MOFO x4,
+`MARSHALL`/`Marshall`) are exactly what the app's batch editor exists for. `gearMake.ts` grouping
+still helps the picker read sensibly, but scan mode should not try to be clever about it.
+
+**This is ordinary app code.** The scan runs locally in worker threads on the user's own machine —
+no network, no service, nothing external. Every user scans their own library.
+
+**Open questions:**
+- Fixed dwell time per capture, or hold-to-listen / release-to-advance?
+- Same DI clip for every capture in a sweep (fair comparison, and the render cache stays warm) —
+  confirm, but almost certainly yes.
+- Crossfade length: long enough to be pleasant, short enough that 50 captures is not 5 minutes.
+- Does a "keep" action collect favourites into a shortlist as you sweep?
+
+---
+
+## [MEDIUM] Amp family taxonomy — group makes into families for scoping
+
+Needed by Scan mode's drill-down and useful to the Tone Map's facets. Curated `gear_make` → family
+mapping (British / American clean / American high-gain / boutique / fuzz / bass / …), covering the
+~54 distinct makes in the library. Curated rather than measured because it is instantly explainable
+and reliable, where a clustered grouping would be neither.
+
+Must handle the dirty reality already documented above: case-split spellings, and the 656
+`tz-make` placeholder captures that belong to no make at all. Families are a *grouping over* the
+normalized keys from `utils/gearMake.ts`, not a replacement for it. Multi-select, since "Marshall
+and everything Marshall-derived" (Friedman, Splawn, Bogner …) is exactly the query worth having.
+
+---
+
+## [MEDIUM] Tone Radio — browse by ear-adjacency instead of by name
+
+Successor to the Tone Map, and the eventual source of a better Scan ordering. One capture plays;
+8–12 nearest neighbours by *measured timbral distance* sit around it, closer ring = more similar.
+Click one → it plays and becomes the new centre, neighbours recompute. Two dials bias the
+neighbourhood rather than filter it: darker ⟷ brighter, cleaner ⟷ dirtier. The "filter" is a
+heading, not a checkbox.
+
+**The reason it is worth doing at all:** similarity never looks at `gear_make`, so the 656 untagged
+captures become exactly as findable as a tagged Marshall. No name-based facet can reach them.
+
+**Do not trust the descriptor before testing it — see the validation entry below.** A single
+fixed-amplitude sweep response captures static EQ and saturation but *not* harmonic order and *not*
+dynamic feel, which is a large part of what separates two amps by ear. Expect to need the richer
+feature set (harmonic even/odd ratio, multi-level compression index) described there.
+
+Also worth keeping in mind: neighbour-browsing can trap you in a pocket where everything sounds the
+same, so a deliberate "further afield" / temperature control is part of the feature, not a polish
+item.
+
+**Deferred sibling:** the "molecules" free-floating scatter (user: *"like molecules"*) is the same
+data in a second view mode — positions from the same descriptors, same hit-testing and
+click-to-play, only the layout and mark rendering differ.
+
+---
+
+## MEASURED (2026-07-31): descriptor prescan results — Tone Radio is NOT supported by the evidence
+
+Ran the falsifiable test on the real library (3,853 captures, 140 sampled at 14 each across the 10
+makes with enough captures). One combined probe per capture — 220 Hz sine for harmonic structure,
+plus log sweeps at three drive levels for spectral tilt and compression — rendered through the
+bundled WASM core in Node. 140/140 rendered, 0 failures, 618 ms/capture (~40 min library-wide
+single-threaded, ~10 min across 4 workers, cached).
+
+**Verdict: do not build Tone Radio.** Nearest-neighbour same-make accuracy was **23.6% against 9.4%
+chance** — real signal at 2.5x lift, but far too weak to navigate by. Same-make captures sit only
+**1.13x** closer to each other than to other makes. Per-make recall is wildly uneven: Two Rock and
+Victory 50%, but **Friedman 0/14** — not one Friedman's nearest neighbour was another Friedman.
+Clicking a capture and being offered "similar" amps would be wrong three times in four.
+
+**Caveat worth keeping:** "same make" may itself be a poor ground truth, since one amp's clean and
+lead channels genuinely sound different. A low score partly indicts the label, not only the
+descriptor. But it does settle the product question — similarity cannot be *sold* as "amps like
+this one".
+
+**What the run did prove, and it is useful:**
+- **`metadata.gain` is nearly useless as an axis.** Measured across all 3,853: median 0.797, and
+  **79.2% fall inside 0.55–0.85** — a 30% slice of the axis holding four fifths of the library.
+  Only 10 captures (0.3%) are below 0.40. On identity it scores 12.1%, barely over 9.4% chance.
+  Adding it to the timbre features made them *worse* (25.7% timbre-only vs 23.6% with gain).
+  This is why the Tone Map's X axis looks bunched — the axis is real but the data is not spread
+  along it.
+- **Compression (how much output level fails to track input level) is the single best feature at
+  20%** — and it is exactly what a fixed-amplitude probe cannot see. Multi-level probing earns its
+  cost; single-level probing would have missed the most informative dimension.
+- **Spectral centroid has genuinely wide spread**: 372–1083 Hz, sd 159. It fails at *identity* but
+  it is a real, continuous, well-distributed perceptual quantity — i.e. a good **sort key**, which
+  is what Scan mode actually needs. Brightness ordering beats gain ordering on spread alone.
+
+**Reframe: the descriptor fails as a similarity metric but succeeds as an ordering.** Use it to sort
+a scan sweep, not to claim two captures sound alike.
+
+**Library metadata reality — CORRECTED.** A first pass scanned only `Y:/_RELEASES` (3,853 captures,
+own releases) and concluded the creator facet was dead. That was an artifact of the folder chosen.
+Across the real collection (`Y:` plus `F:/NAM Captures Paid and Tone3000`) there are **38,263
+captures**, and:
+- **26 distinct `modeled_by`** — the creator facet is very much alive. It is also the strongest case
+  for normalization anywhere in the app: SLAMMIN MOFO appears as **four** spellings totalling ~5,840
+  (`SLAMMIN MOFO` 3863, `slamminmofo` 1425, `Slammin Mofo` 184, plus `MADE BY KDM TRAINED BY SLAMMIN
+  MOFO` 368). Others: Core Tone Captures 18,372, ML Soundlab 904, stjepanherceg 520, 2dor 320.
+- **71 distinct `gear_make`**, 15,251 (40%) with none at all, `tz-make` placeholder 1,947, and
+  `MARSHALL` 1590 vs `Marshall` 182 again splitting on case.
+- Gain stays useless regardless of folder — the distribution above holds.
+
+**Scale changes the descriptor economics completely.** 38,263 x 618 ms = **6.6 hours
+single-threaded, ~1.6 hours across 4 workers**. That is far too much to ask of every user as a
+blocking step, and every user builds their own collection so it cannot be precomputed and shipped.
+**Descriptors must therefore be scope-lazy, not library-wide** — see the Scan mode entry.
+
+---
+
+## [HIGH PRIORITY] Validate timbral descriptors before building anything on them
+
+**Gate for Tone Radio and for any similarity-based Scan ordering.** The earlier probe measured
+spectral centroid across 14 real captures at 349–608 Hz and, importantly, *independent of gain*
+(five captures at gain ≈0.43 sat at ≈530 Hz while five at ≈0.44 sat at ≈370 Hz) — so it is a
+genuinely orthogonal axis, ~133 ms/capture, ~1.5 min for the library across 4 workers, cached.
+
+**But a single fixed-amplitude sweep is probably not enough**, and this should be proven or
+disproven cheaply before any UI depends on it. What it misses:
+- **Harmonic order** — even (2nd/4th) vs odd (3rd/5th) is much of "warm/tubey" vs "harsh/fizzy",
+  and a sweep's centroid confounds harmonic generation with EQ rather than separating them.
+- **Dynamic response** — how the tone changes with input level is arguably *the* thing that
+  separates captures, and a fixed-amplitude probe cannot see it at all.
+
+Richer feature set to measure instead (all cheap, all from the same render path):
+- spectral tilt / centroid at **two or three drive levels**, not one
+- **even/odd harmonic ratio** from a pure sine via Goertzel (the "character" axis)
+- **compression index**: how much output level compresses as input rises (the "feel" axis)
+- measured `metadata.gain`, free, already present
+
+**The falsifiable test, and it must come first:** captures of the *same amp by the same creator*
+should land close together, and captures of clearly different amps should not. If same-amp captures
+do not cluster, the descriptor is not capturing amp identity and we need to know that *before*
+building a browser on top of it. Cheap to run, and it settles the question by measurement instead of
+argument.
+
+Also measure before committing: base64 IPC for 2,577 models may dominate the 133 ms of DSP, in which
+case the render path moves to the main process. Do not pre-build that — measure on ~50 real captures
+first.
 
 ---
 

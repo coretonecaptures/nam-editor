@@ -1,0 +1,4 @@
+# Fetched by build.sh (Eigen is ~20MB of headers — not worth vendoring)
+deps/
+# CMake/Emscripten build output
+build/
