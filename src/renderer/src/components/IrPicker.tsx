@@ -25,6 +25,22 @@ const RESULT_LIMIT = 200
 /** Long enough that typing a word doesn't fire a scan per keystroke, short enough to feel live. */
 const SEARCH_DEBOUNCE_MS = 130
 
+
+/**
+ * Pick an impulse from anywhere on disk, outside the configured library.
+ *
+ * The library is indexed and searchable, which is what makes a large collection usable — but it
+ * is one folder, and an impulse you just bought or were sent lives wherever you put it. This is
+ * the escape hatch. The returned `rel` is the file's own last two path segments rather than a
+ * path relative to a root, since there is no root here.
+ */
+async function browseForImpulse(): Promise<IrRef | null> {
+  const path = await window.api.openAudioFile()
+  if (!path) return null
+  const parts = path.replace(/\\/g, '/').split('/').filter(Boolean)
+  return { path, rel: parts.slice(-2).join('/') }
+}
+
 type Tab = 'search' | 'recent' | 'favorites' | 'browse'
 
 interface IrPickerProps {
@@ -211,7 +227,7 @@ export function IrPicker({
       {variant === 'inline' ? (
         <button
           onClick={() => setOpen(true)}
-          disabled={disabled || !libraryPath}
+          disabled={disabled}
           className="h-6 max-w-[190px] flex items-center gap-1.5 px-1.5 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 disabled:opacity-40 hover:border-[var(--accent)] transition-colors"
           title={value ?? 'Applied only to captures that do not already include a cab.'}
         >
@@ -223,7 +239,7 @@ export function IrPicker({
       ) : (
         <button
           onClick={() => setOpen(true)}
-          disabled={disabled || !libraryPath}
+          disabled={disabled}
           className="w-full flex items-center gap-2.5 h-9 px-3 rounded-[9px] bg-gray-50 dark:bg-[var(--field)] border border-gray-200 dark:border-[var(--field-border)] text-left disabled:opacity-40 hover:border-[var(--accent)] transition-colors"
           title={value ?? placeholder}
         >
@@ -271,6 +287,18 @@ export function IrPicker({
                   <span className="text-[10px] text-gray-400 dark:text-gray-500 font-mono">
                     {indexing ? 'indexing…' : indexCount !== null ? `${indexCount.toLocaleString()} IRs` : '—'}
                   </span>
+                  <button
+                    onClick={() => {
+                      void (async () => {
+                        const ref = await browseForImpulse()
+                        if (ref) choose(ref)
+                      })()
+                    }}
+                    className="text-[10px] text-gray-400 hover:text-[var(--accent)] transition-colors"
+                    title="Choose an impulse from anywhere on disk"
+                  >
+                    Browse&hellip;
+                  </button>
                   <button
                     onClick={() => void rescan()}
                     disabled={indexing}

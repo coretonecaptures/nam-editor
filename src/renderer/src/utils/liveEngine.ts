@@ -32,6 +32,35 @@ export interface LiveEngineState {
 }
 
 /**
+ * Noise gate settings, at the front of the live chain.
+ *
+ * Ported from NAM's own gate (see public/gate-worklet.js), so a capture gates the way it does in
+ * the plugin. `threshold` is where expansion starts; below it the reduction grows quadratically.
+ */
+export interface GateSettings {
+  enabled: boolean
+  /** dB. Below this the gate starts closing. */
+  threshold: number
+  /** Seconds to open. */
+  openTime: number
+  /** Seconds held open after the signal drops below threshold. */
+  holdTime: number
+  /** Seconds to close. */
+  closeTime: number
+}
+
+export const DEFAULT_GATE: GateSettings = {
+  enabled: false,
+  threshold: -60,
+  openTime: 0.005,
+  holdTime: 0.05,
+  closeTime: 0.05
+}
+
+/** Which delay is in the chain. */
+export type DelayMode = 'algorithmic' | 'convolution'
+
+/**
  * Pre-effects tone stack, mimicking a plugin's amp EQ.
  *
  * Sits at the very front of the chain, before the chorus, so it shapes the amp's own voice going
@@ -80,6 +109,14 @@ export interface DelaySettings {
   /** Master on/off. Off bypasses the wet path entirely rather than just muting it. */
   enabled: boolean
   /**
+   * Algorithmic delay line, or convolution against a captured delay.
+   *
+   * Convolution buys the character of a real rack unit, and costs every control except mix: a
+   * delay impulse bakes in its own time AND its feedback, so it is a preset rather than a delay
+   * you dial. The two modes complement each other rather than one replacing the other.
+   */
+  mode: DelayMode
+  /**
    * Ping-pong, or plain mono repeats.
    *
    * On, the taps are chained so repeats alternate across the stereo field. Off, one tap feeds
@@ -87,6 +124,16 @@ export interface DelaySettings {
    * or when the repeats are meant to thicken rather than move.
    */
   pingPong: boolean
+  /**
+   * Auto-pan the repeats across the stereo field, independent of ping-pong.
+   *
+   * Ping-pong alternates taps discretely, left-right-left; this sweeps continuously, so it reads
+   * as movement rather than alternation. It runs on the wet signal only — the dry input stays
+   * centred — so it works in either delay mode, algorithmic or convolution.
+   */
+  panEnabled: boolean
+  /** Sweep rate in Hz. One knob: how fast it moves left to right and back. */
+  panRateHz: number
 }
 
 /** Which reverb is in the chain. */
@@ -144,6 +191,14 @@ export const DEFAULT_REVERB: ReverbSettings = {
 export interface ChorusSettings {
   enabled: boolean
   mix: number
+  /**
+   * Stereo spread of the two chorus voices, 0..1.
+   *
+   * At 1 each swept voice stays on its own side; at 0 they are averaged into both, which is a
+   * mono chorus. This is the chain's mono-to-stereo conversion point, so it is also what decides
+   * how wide everything downstream starts out.
+   */
+  width: number
   /** Sweep depth in milliseconds. */
   depthMs: number
   rateHz: number
@@ -152,6 +207,7 @@ export interface ChorusSettings {
 export const DEFAULT_CHORUS: ChorusSettings = {
   enabled: false,
   mix: 0.35,
+  width: 1,
   depthMs: 2.6,
   rateHz: 0.5
 }
@@ -168,8 +224,15 @@ export const DEFAULT_DELAY: DelaySettings = {
   modDepthMs: 0,
   modRateHz: 0.6,
   enabled: false,
-  pingPong: true
+  pingPong: true,
+  panEnabled: false,
+  panRateHz: 0.5,
+  mode: 'algorithmic'
 }
+
+/** Auto-pan sweep range. Below this it reads as drift rather than pan; above, a warble. */
+export const MIN_PAN_RATE_HZ = 0.05
+export const MAX_PAN_RATE_HZ = 5
 
 /** Highest feedback allowed. Above this the loop gains more than it loses and never decays. */
 export const MAX_FEEDBACK = 0.9
@@ -200,8 +263,11 @@ export interface LiveStartOptions {
   inputChannel?: number
   /** Output device to play through; omit for the system default. */
   outputDeviceId?: string | null
+  gate?: GateSettings
   eq?: EqSettings
   delay?: DelaySettings
+  /** Decoded delay impulse for convolution mode. Stereo and 4-channel true-stereo both work. */
+  delayIr?: ImpulseResponse | null
   reverb?: ReverbSettings
   chorus?: ChorusSettings
   /** Decoded reverb impulse, or null for none. Stereo is preserved. */
@@ -259,6 +325,9 @@ export class LiveEngine {
   private channelAnalysers: AnalyserNode[] = []
   private channelBuffer: Float32Array<ArrayBuffer> = new Float32Array(1024)
   private inputChannel = 0
+  private gate: AudioWorkletNode | null = null
+  private gateSettings: GateSettings = { ...DEFAULT_GATE }
+  private gateAvailable = false
   private convolver: ConvolverNode | null = null
   private wetGain: GainNode | null = null
   private dryGain: GainNode | null = null
@@ -289,6 +358,10 @@ export class LiveEngine {
   private ppOut: GainNode | null = null
   private monoTap: GainNode | null = null
   private monoOut: GainNode | null = null
+  private delayConvolver: ConvolverNode | null = null
+  private delayConvWet: GainNode | null = null
+  private delayIrSeconds = 0
+  private delayIrChannels = 0
   private delayL: DelayNode | null = null
   private delayR: DelayNode | null = null
   private delayFeedback: GainNode | null = null
@@ -296,6 +369,10 @@ export class LiveEngine {
   private delayWet: GainNode | null = null
   private delayDry: GainNode | null = null
   private delayMerger: ChannelMergerNode | null = null
+  private delayPanIn: GainNode | null = null
+  private delayPanner: StereoPannerNode | null = null
+  private delayPanOsc: OscillatorNode | null = null
+  private delayPanDepth: GainNode | null = null
   private modOsc: OscillatorNode | null = null
   private modDepthL: GainNode | null = null
   private modDepthR: GainNode | null = null
@@ -319,8 +396,14 @@ export class LiveEngine {
   private chorusDepthR: GainNode | null = null
   private chorusWet: GainNode | null = null
   private chorusMerger: ChannelMergerNode | null = null
+  /** Width matrix: each voice's own side, and its bleed into the other. */
+  private chorusDirectL: GainNode | null = null
+  private chorusDirectR: GainNode | null = null
+  private chorusCrossL: GainNode | null = null
+  private chorusCrossR: GainNode | null = null
   /** Length of the loaded impulse after trimming, for the UI to report. */
   private reverbLoadedSeconds = 0
+  private reverbIrChannels = 0
   private plateAvailable = false
   private reverbMix = 0.25
   private meterBuffer: Float32Array<ArrayBuffer> = new Float32Array(1024)
@@ -438,6 +521,13 @@ export class LiveEngine {
         this.plateAvailable = false
         this.onError(`Plate reverb unavailable: ${error instanceof Error ? error.message : String(error)}`)
       }
+      try {
+        await ctx.audioWorklet.addModule('/gate-worklet.js')
+        this.gateAvailable = true
+      } catch (error) {
+        this.gateAvailable = false
+        this.onError(`Noise gate unavailable: ${error instanceof Error ? error.message : String(error)}`)
+      }
 
       this.worklet = new AudioWorkletNode(ctx, 'nam-processor', {
         numberOfInputs: 1,
@@ -495,12 +585,32 @@ export class LiveEngine {
       this.inputAnalyser = ctx.createAnalyser()
       this.inputAnalyser.fftSize = 4096
       this.splitter.connect(this.inputAnalyser, this.inputChannel, 0)
-      this.splitter.connect(this.worklet, this.inputChannel, 0)
+
+      // Gate on the RAW input, ahead of the model — gating a high-gain model's output means
+      // gating noise it has already amplified, which chatters. The tuner tap is deliberately
+      // BEFORE the gate, so a gated-out note does not make the tuner go blank mid-adjustment.
+      if (this.gateAvailable) {
+        try {
+          this.gate = new AudioWorkletNode(ctx, 'nam-gate', {
+            numberOfInputs: 1,
+            numberOfOutputs: 1,
+            outputChannelCount: [1]
+          })
+          this.splitter.connect(this.gate, this.inputChannel, 0)
+          this.gate.connect(this.worklet)
+        } catch (error) {
+          this.gate = null
+          this.onError(`Noise gate failed to start: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
+      if (!this.gate) this.splitter.connect(this.worklet, this.inputChannel, 0)
 
       this.buildFxChain(ctx)
       this.buildPlate(ctx)
+      this.setGate(options.gate ?? DEFAULT_GATE)
       this.setEq(options.eq ?? DEFAULT_EQ)
       this.setDelay(options.delay ?? DEFAULT_DELAY)
+      if (options.delayIr) await this.setDelayIr(options.delayIr)
       this.setChorus(options.chorus ?? DEFAULT_CHORUS)
       this.setReverb(options.reverb ?? DEFAULT_REVERB)
       if (options.reverbIr) await this.setReverbIr(options.reverbIr)
@@ -549,6 +659,17 @@ export class LiveEngine {
     this.fxInput = ctx.createGain()
     this.fxMid = ctx.createGain()
 
+    // The buses are pinned to two channels EXPLICITLY rather than inheriting a count from
+    // whatever happens to be connected. Left to infer, a bus is only as wide as its widest live
+    // input, so the convolution delay was stereo when the chorus was on and mono when it was off
+    // — width appearing and disappearing with an unrelated effect. Pinning them makes the chain
+    // stereo from the chorus onwards regardless of what is switched on.
+    for (const bus of [this.fxMid]) {
+      bus.channelCount = 2
+      bus.channelCountMode = 'explicit'
+      bus.channelInterpretation = 'speakers'
+    }
+
     // ── Tone stack (first of all).
     // Always in circuit, and flat when disabled — a shelf or bell at 0 dB is mathematically
     // transparent, so bypassing costs nothing and avoids rewiring the head of the chain.
@@ -573,6 +694,9 @@ export class LiveEngine {
     // single detune applied to both.
     this.chorusIn = ctx.createGain()
     this.chorusOut = ctx.createGain()
+    this.chorusOut.channelCount = 2
+    this.chorusOut.channelCountMode = 'explicit'
+    this.chorusOut.channelInterpretation = 'speakers'
     this.chorusWet = ctx.createGain()
     this.chorusWet.gain.value = 0
     this.chorusMerger = ctx.createChannelMerger(2)
@@ -593,11 +717,24 @@ export class LiveEngine {
     this.chorusDepthL.connect(this.chorusDelayL.delayTime)
     this.chorusDepthR.connect(this.chorusDelayR.delayTime)
 
+    // Width matrix. Each voice goes to its own side at `direct` and to the other at `cross`,
+    // with direct + cross held at 1 so width changes the image without changing the level.
+    this.chorusDirectL = ctx.createGain()
+    this.chorusDirectR = ctx.createGain()
+    this.chorusCrossL = ctx.createGain()
+    this.chorusCrossR = ctx.createGain()
+
     this.eqTreble.connect(this.chorusIn)
     this.chorusIn.connect(this.chorusDelayL)
     this.chorusIn.connect(this.chorusDelayR)
-    this.chorusDelayL.connect(this.chorusMerger, 0, 0)
-    this.chorusDelayR.connect(this.chorusMerger, 0, 1)
+    this.chorusDelayL.connect(this.chorusDirectL)
+    this.chorusDelayL.connect(this.chorusCrossL)
+    this.chorusDelayR.connect(this.chorusDirectR)
+    this.chorusDelayR.connect(this.chorusCrossR)
+    this.chorusDirectL.connect(this.chorusMerger, 0, 0)
+    this.chorusCrossR.connect(this.chorusMerger, 0, 0)
+    this.chorusDirectR.connect(this.chorusMerger, 0, 1)
+    this.chorusCrossL.connect(this.chorusMerger, 0, 1)
     this.chorusMerger.connect(this.chorusWet)
     this.chorusWet.connect(this.chorusOut)
     this.eqTreble.connect(this.chorusOut)
@@ -647,11 +784,39 @@ export class LiveEngine {
     this.ppOut.connect(this.delayMerger, 0, 1)
     this.delayL.connect(this.monoOut)
     this.monoOut.connect(this.delayMerger, 0, 1)
+
+    // Auto-pan sits after BOTH delay modes and before fxMid, so one sweep serves whichever mode is
+    // active. It is pinned to 2 channels for the same reason fxMid and chorusOut are: left to
+    // infer, a bus this narrow only widens when something wide happens to already be connected.
+    this.delayPanIn = ctx.createGain()
+    this.delayPanIn.channelCount = 2
+    this.delayPanIn.channelCountMode = 'explicit'
+    this.delayPanIn.channelInterpretation = 'speakers'
+    this.delayPanner = ctx.createStereoPanner()
+    this.delayPanOsc = ctx.createOscillator()
+    this.delayPanOsc.type = 'sine'
+    this.delayPanOsc.frequency.value = this.delaySettings.panRateHz
+    this.delayPanDepth = ctx.createGain()
+    // Zero until setDelay turns it on — the oscillator runs continuously, so on/off is depth, not
+    // start/stop, which is what lets it fade in click-free instead of jumping to hard left or right.
+    this.delayPanDepth.gain.value = 0
+    this.delayPanOsc.connect(this.delayPanDepth)
+    this.delayPanDepth.connect(this.delayPanner.pan)
+    this.delayPanOsc.start()
+
     this.delayMerger.connect(this.delayWet)
-    this.delayWet.connect(this.fxMid)
+    this.delayWet.connect(this.delayPanIn)
+    this.delayPanIn.connect(this.delayPanner)
+    this.delayPanner.connect(this.fxMid)
 
     this.chorusOut.connect(this.delayDry)
     this.delayDry.connect(this.fxMid)
+
+    // Convolution branch. Built empty; setDelayIr adds the convolver once an impulse is chosen,
+    // because unlike a delay line a convolver costs real CPU per block even with nothing to do.
+    this.delayConvWet = ctx.createGain()
+    this.delayConvWet.gain.value = 0
+    this.delayConvWet.connect(this.delayPanIn)
 
     this.modOsc = ctx.createOscillator()
     this.modOsc.type = 'sine'
@@ -689,6 +854,25 @@ export class LiveEngine {
     this.reverbDry.connect(this.outputGain)
   }
 
+  get gateConfig(): GateSettings {
+    return { ...this.gateSettings }
+  }
+
+  /** Whether the gate worklet loaded. False means the input runs ungated. */
+  get hasGate(): boolean {
+    return this.gate !== null
+  }
+
+  setGate(settings: Partial<GateSettings>): void {
+    const next: GateSettings = { ...this.gateSettings, ...settings }
+    next.threshold = Math.max(-100, Math.min(0, next.threshold))
+    next.openTime = Math.max(0.0005, Math.min(0.5, next.openTime))
+    next.holdTime = Math.max(0, Math.min(2, next.holdTime))
+    next.closeTime = Math.max(0.001, Math.min(2, next.closeTime))
+    this.gateSettings = next
+    this.gate?.port.postMessage({ type: 'params', ...next })
+  }
+
   get eq(): EqSettings {
     return { ...this.eqSettings }
   }
@@ -720,6 +904,7 @@ export class LiveEngine {
     next.mix = Math.max(0, Math.min(1, next.mix))
     next.depthMs = Math.max(0, Math.min(20, next.depthMs))
     next.rateHz = Math.max(0.05, Math.min(8, next.rateHz))
+    next.width = Math.max(0, Math.min(1, next.width))
     this.chorusSettings = next
 
     const ctx = this.ctx
@@ -736,6 +921,77 @@ export class LiveEngine {
     this.chorusOscR?.frequency.linearRampToValueAtTime(next.rateHz, now + RAMP)
     this.chorusDepthL?.gain.linearRampToValueAtTime(depthSec, now + RAMP)
     this.chorusDepthR?.gain.linearRampToValueAtTime(-depthSec, now + RAMP)
+
+    const direct = 0.5 + next.width / 2
+    const cross = 0.5 - next.width / 2
+    this.chorusDirectL?.gain.linearRampToValueAtTime(direct, now + RAMP)
+    this.chorusDirectR?.gain.linearRampToValueAtTime(direct, now + RAMP)
+    this.chorusCrossL?.gain.linearRampToValueAtTime(cross, now + RAMP)
+    this.chorusCrossR?.gain.linearRampToValueAtTime(cross, now + RAMP)
+  }
+
+  /** Seconds of delay impulse being convolved, after trimming. 0 when none. */
+  get delayIrSecondsLoaded(): number {
+    return this.delayIrSeconds
+  }
+
+  /**
+   * Channels in the loaded delay impulse.
+   *
+   * Surfaced because "is this actually stereo" is otherwise unanswerable from outside: the model
+   * is mono, so a stereo image can only come from the impulse, and a file that silently arrived
+   * as 1 channel looks identical to one that worked.
+   */
+  get delayIrChannelCount(): number {
+    return this.delayIrChannels
+  }
+
+  /** Channels in the loaded reverb impulse. Same reasoning as delayIrChannelCount. */
+  get reverbIrChannelCount(): number {
+    return this.reverbIrChannels
+  }
+
+  /**
+   * Load or clear the delay impulse.
+   *
+   * Same treatment as the reverb: stereo preserved, silence trimmed, the browser's calibrated
+   * normalization. These impulses are far shorter than reverb ones — a measured rack pack runs to
+   * a 1.36s median against a reverb pack's 11s — so the convolution cost is comparatively light.
+   */
+  async setDelayIr(ir: ImpulseResponse | null): Promise<void> {
+    const ctx = this.ctx
+    if (!ctx || !this.chorusOut || !this.delayConvWet) return
+
+    try {
+      this.delayConvolver?.disconnect()
+    } catch {
+      // Already disconnected.
+    }
+    this.delayConvolver = null
+    this.delayIrSeconds = 0
+    this.delayIrChannels = 0
+
+    if (!ir || ir.channels.length === 0 || ir.channels[0].length === 0) return
+
+    const trimmed = trimImpulse(ir)
+    const channels = await Promise.all(
+      trimmed.channels.map((c) => resampleForContext(c, trimmed.sampleRate, ctx.sampleRate))
+    )
+    const length = channels[0].length
+    if (length === 0) return
+
+    const buffer = ctx.createBuffer(channels.length, length, ctx.sampleRate)
+    for (let c = 0; c < channels.length; c++) buffer.copyToChannel(channels[c], c)
+
+    this.delayConvolver = ctx.createConvolver()
+    this.delayConvolver.normalize = true
+    this.delayConvolver.buffer = buffer
+    this.delayIrSeconds = impulseSeconds({ channels: [channels[0]], sampleRate: ctx.sampleRate })
+    this.delayIrChannels = channels.length
+
+    this.chorusOut.connect(this.delayConvolver)
+    this.delayConvolver.connect(this.delayConvWet)
+    this.setDelay({})
   }
 
   get reverb(): ReverbSettings {
@@ -830,6 +1086,7 @@ export class LiveEngine {
     next.toneHz = Math.max(200, Math.min(20000, next.toneHz))
     next.modDepthMs = Math.max(0, Math.min(MAX_MOD_DEPTH_MS, next.modDepthMs))
     next.modRateHz = Math.max(0.05, Math.min(12, next.modRateHz))
+    next.panRateHz = Math.max(MIN_PAN_RATE_HZ, Math.min(MAX_PAN_RATE_HZ, next.panRateHz))
     this.delaySettings = next
 
     const ctx = this.ctx
@@ -846,8 +1103,12 @@ export class LiveEngine {
     this.delayR?.delayTime.linearRampToValueAtTime(Math.min(rightSec, MAX_DELAY_SECONDS), now + RAMP)
     if (this.delayFeedback) this.delayFeedback.gain.linearRampToValueAtTime(next.feedback, now + RAMP)
     if (this.delayDamp) this.delayDamp.frequency.linearRampToValueAtTime(next.toneHz, now + RAMP)
+    const wet = next.enabled ? next.mix : 0
     if (this.delayWet) {
-      this.delayWet.gain.linearRampToValueAtTime(next.enabled ? next.mix : 0, now + RAMP)
+      this.delayWet.gain.linearRampToValueAtTime(next.mode === 'algorithmic' ? wet : 0, now + RAMP)
+    }
+    if (this.delayConvWet) {
+      this.delayConvWet.gain.linearRampToValueAtTime(next.mode === 'convolution' ? wet : 0, now + RAMP)
     }
     // Equal-gain rather than equal-power: the dry signal is the capture itself, and dipping it as
     // you add ambience makes the amp sound like it is losing level rather than gaining space.
@@ -864,6 +1125,11 @@ export class LiveEngine {
     if (this.modOsc) this.modOsc.frequency.linearRampToValueAtTime(next.modRateHz, now + RAMP)
     if (this.modDepthL) this.modDepthL.gain.linearRampToValueAtTime(depthSec, now + RAMP)
     if (this.modDepthR) this.modDepthR.gain.linearRampToValueAtTime(-depthSec, now + RAMP)
+
+    if (this.delayPanOsc) this.delayPanOsc.frequency.linearRampToValueAtTime(next.panRateHz, now + RAMP)
+    if (this.delayPanDepth) {
+      this.delayPanDepth.gain.linearRampToValueAtTime(next.panEnabled ? 1 : 0, now + RAMP)
+    }
   }
 
   get reverbMixValue(): number {
@@ -920,6 +1186,7 @@ export class LiveEngine {
       this.reverbConvolver = null
       this.reverbWet = null
       this.reverbLoadedSeconds = 0
+      this.reverbIrChannels = 0
     }
 
     if (!ir || ir.channels.length === 0 || ir.channels[0].length === 0) {
@@ -943,6 +1210,7 @@ export class LiveEngine {
     this.reverbConvolver.normalize = true
     this.reverbConvolver.buffer = buffer
     this.reverbLoadedSeconds = impulseSeconds({ channels: [channels[0]], sampleRate: ctx.sampleRate })
+    this.reverbIrChannels = channels.length
 
     this.reverbWet = ctx.createGain()
     this.reverbWet.gain.value = this.reverbMix
@@ -1125,13 +1393,15 @@ export class LiveEngine {
     const next = Math.min(Math.max(0, channel), this.channelAnalysers.length - 1)
     if (next === this.inputChannel) return
     try {
-      this.splitter.disconnect(this.worklet)
+      if (this.gate) this.splitter.disconnect(this.gate)
+      else this.splitter.disconnect(this.worklet)
       this.splitter.disconnect(this.inputAnalyser)
     } catch {
       // Not connected yet.
     }
     this.inputChannel = next
-    this.splitter.connect(this.worklet, next, 0)
+    if (this.gate) this.splitter.connect(this.gate, next, 0)
+    else this.splitter.connect(this.worklet, next, 0)
     this.splitter.connect(this.inputAnalyser, next, 0)
   }
 
@@ -1219,6 +1489,7 @@ export class LiveEngine {
       this.splitter,
       ...this.channelAnalysers,
       this.worklet,
+      this.gate,
       this.fxInput,
       this.fxMid,
       this.eqBass,
@@ -1229,6 +1500,8 @@ export class LiveEngine {
       this.ppOut,
       this.monoTap,
       this.monoOut,
+      this.delayConvolver,
+      this.delayConvWet,
       this.delayL,
       this.delayR,
       this.delayFeedback,
@@ -1236,6 +1509,9 @@ export class LiveEngine {
       this.delayWet,
       this.delayDry,
       this.delayMerger,
+      this.delayPanIn,
+      this.delayPanner,
+      this.delayPanDepth,
       this.modDepthL,
       this.modDepthR,
       this.reverbConvolver,
@@ -1253,6 +1529,10 @@ export class LiveEngine {
       this.chorusDelayR,
       this.chorusDepthL,
       this.chorusDepthR,
+      this.chorusDirectL,
+      this.chorusDirectR,
+      this.chorusCrossL,
+      this.chorusCrossR,
       this.convolver,
       this.wetGain,
       this.dryGain,
@@ -1270,6 +1550,8 @@ export class LiveEngine {
     this.splitter = null
     this.channelAnalysers = []
     this.inputChannel = 0
+    this.gate = null
+    this.gateSettings = { ...DEFAULT_GATE }
     this.worklet = null
     this.convolver = null
     this.wetGain = null
@@ -1292,6 +1574,10 @@ export class LiveEngine {
     this.ppOut = null
     this.monoTap = null
     this.monoOut = null
+    this.delayConvolver = null
+    this.delayConvWet = null
+    this.delayIrSeconds = 0
+    this.delayIrChannels = 0
     this.delayL = null
     this.delayR = null
     this.delayFeedback = null
@@ -1299,6 +1585,16 @@ export class LiveEngine {
     this.delayWet = null
     this.delayDry = null
     this.delayMerger = null
+    this.delayPanIn = null
+    this.delayPanner = null
+    try {
+      this.delayPanOsc?.stop()
+      this.delayPanOsc?.disconnect()
+    } catch {
+      // Never started, or already stopped.
+    }
+    this.delayPanOsc = null
+    this.delayPanDepth = null
     try {
       this.modOsc?.stop()
       this.modOsc?.disconnect()
@@ -1317,6 +1613,7 @@ export class LiveEngine {
     this.reverbEqLow = null
     this.reverbEqHigh = null
     this.reverbLoadedSeconds = 0
+    this.reverbIrChannels = 0
     this.reverbSettings = { ...DEFAULT_REVERB }
     this.chorusSettings = { ...DEFAULT_CHORUS }
     for (const osc of [this.chorusOscL, this.chorusOscR]) {
@@ -1337,6 +1634,10 @@ export class LiveEngine {
     this.chorusDelayR = null
     this.chorusDepthL = null
     this.chorusDepthR = null
+    this.chorusDirectL = null
+    this.chorusDirectR = null
+    this.chorusCrossL = null
+    this.chorusCrossR = null
 
     if (this.ctx) {
       try {

@@ -1,5 +1,109 @@
 # TODO
 
+## Play groups — save a shortlist of captures and audition just those, back and forth
+
+Comparing a handful of captures today means finding them again by scrolling/searching the tree or
+Tone Map each time there's a new one to add to the comparison. **Wanted:** a lightweight, named
+group — add captures to it from anywhere in the library (crosses folders, not a single-folder
+scope) — then open the player already scoped to just that group, and step forward/back through
+only its members with the existing prev/next stepper (`onStep`/`stepIndex`/`stepCount` in
+`PlayerPanel.tsx`, currently fed by `visibleFiles` in `App.tsx`) rather than every visible file.
+
+- Works with either audition mode already in the player — the rendered Preview clip or the live
+  looped DI — since a group is just a different *set of files* to step through, not a new
+  playback mechanism.
+- "Add to group" needs a UI entry point somewhere captures are already selectable — FileList
+  multi-select context menu is the obvious first one; Tone Map is a natural second, since that's
+  where someone is most likely to be comparing tones by ear already.
+- Storage: a named list of file paths, most likely `AppSettings` alongside the other named lists
+  (`userCaptureProfiles`, the FX presets) rather than per-folder state, since the whole point is
+  crossing folder boundaries.
+
+Open questions:
+- Multiple groups at once, or one scratch group you keep replacing? Multiple named groups is more
+  useful (build a "maybe" shortlist while still comparing others) but is also the bigger UI lift.
+- What happens when a grouped capture is moved, renamed, or trashed — does the group silently
+  lose it, or flag a broken entry?
+- Should stepping through a group loop (last -> first) rather than stop, given the whole use case
+  is rapid back-and-forth comparison rather than working through a list top to bottom?
+
+---
+
+## Live recorder — DI to mono, post-FX to stereo
+
+Record what's actually happening in Live mode to disk, not just monitor it. Two independent
+tracks, each optional:
+
+- **DI track**: the raw input, tapped before the gate — mono, one file per take. This is the
+  reference DI other tools (or a re-amp later) would want, and it's exactly the signal already
+  available at `this.splitter` in `liveEngine.ts`, before anything in the chain touches it.
+- **Post-FX track**: everything after `outputGain` — stereo, capturing the model plus the whole FX
+  chain (gate/EQ/chorus/delay/reverb) as actually heard.
+
+Renderer can't touch the filesystem directly (see CLAUDE.md), so this needs a new IPC write path
+alongside the existing `file:*` channels, plus a way to get audio out of the graph in the first
+place — most likely a `MediaStreamAudioDestinationNode` tapped off the two points above and
+recorded with `MediaRecorder`, or manual buffer accumulation via a `ScriptProcessorNode`/worklet
+if sample-accurate WAV (not container-compressed) output matters more than convenience.
+
+- WAV first — no encoder dependency, exact match to what NAM captures themselves ship as.
+- **MP3 explicitly deferred** ("future option") — needs an actual encoder (e.g. `lamejs`), which
+  is new dependency weight for a compression step nobody's asked to have today.
+- Where files land, and naming — probably alongside the capture being played, or a dedicated
+  recordings folder set in Settings → Player.
+
+Open questions: start/stop tied to transport play/stop, or an independent record-arm toggle?
+Does starting the DI/post-FX record together make sense as one button, or should they be
+independently armable given they're genuinely different use cases (reamp material vs. "how did
+that just sound")?
+
+---
+
+## Chain two NAM captures live — "pedal into amp"
+
+Feed one capture's output into a second capture's input, live — e.g. an overdrive/fuzz pedal
+capture feeding an amp capture, both being NAM models. Live-mode-only, since Preview renders
+offline through a Worker with its own single-model path.
+
+**Architecturally plausible, not yet attempted.** `liveEngine.ts` currently loads exactly one
+model into one `AudioWorkletNode(ctx, 'nam-processor', ...)` (`public/nam-worklet.js`). Chaining
+is, on paper, "instantiate a second `nam-processor` node, load a second model into it, wire
+`gate -> worklet A -> worklet B -> fxInput` instead of `gate -> worklet -> fxInput`" — the graph
+is already linear, so there's no topology fight.
+
+**The real unknown is whether it sounds like anything usable, not whether it's wireable.** A NAM
+capture is trained to reproduce one specific analog gain stage's response to *its own reference
+DI* — clean guitar in, that stage's output out. Chaining two captures means feeding model A's
+*output* into model B as if it were guitar-level input, which is nothing like what model B was
+trained on. Real pedal-into-amp works because both stages tolerate a continuous range of input
+levels by nature; two neural models chained is a genuinely different, untested thing — worth
+prototyping with one clearly-clean capture into one clearly-driven capture before assuming the
+feature is worth the UI (second file picker, per-stage gain staging, roughly double the CPU/
+latency of today's single-model path).
+
+---
+
+## DONE (verified 2026-08-01): switching captures already keeps the FX rig locked
+
+Checked rather than built — this already works. `PlayerPanel` is deliberately not remounted when
+`file` changes (comment at the call site: "the panel handles file changes internally instead"),
+and Gate/EQ/Chorus/Delay/Reverb all live in that one component's React state. Switching to a
+different capture while Live is running only reloads the model
+(`useEffect(() => { if (liveRunning) void startLive() }, [file.filePath])`,
+`PlayerPanel.tsx:1318-1321`) — it does not touch any FX state, so `startLive()` re-sends whatever
+the rig currently is. Change amps, keep the whole rig, exactly as asked.
+
+Two things intentionally still vary per capture, and should keep doing so:
+- **Cab IR auto on/off** — follows each capture's `gear_type` (`needsCabIr`) unless the user has
+  manually toggled it this session (`irManuallySetRef`), which then locks it regardless of what
+  the next capture would normally suggest.
+- **Output normalize gain** — recalculated per capture from its own loudness metadata
+  (`computeLiveNormalizeGain`), because this is loudness *matching* between captures, not a rig
+  setting; locking it would make quieter/louder captures actually sound quieter/louder rather than
+  levelled for fair comparison.
+
+---
+
 ## Convolution delay
 
 The reverb can load an impulse; the delay cannot. A convolution delay would cover the things an
@@ -29,17 +133,25 @@ Wanted at the front of the live chain, before the model — a high-gain capture 
 and single-coil hum along with everything else, and the tuner work already showed how much hum a
 real rig carries.
 
-**Sourcing question, not a coding one.** The official NeuralAmpModelerPlugin has a gate whose
-behaviour is well matched to these models, and reusing it would sound closer to what people expect
-than something hand-rolled. Before any of that:
+**Licence checked 2026-08-01 — cleared to proceed.**
 
-- **Confirm the licence.** The plugin and NeuralAmpModelerCore need checking for whether their
-  terms allow lifting the DSP into this project, and under what attribution. Do not copy first and
-  read the licence afterwards.
-- Confirm where the gate actually lives — plugin repo or core — since only one of them is vendored
-  in the usual builds.
-- A gate is a few dozen lines (threshold, attack, hold, release, with the detector on the dry
-  input). Writing one is not the hard part; matching NAM's feel is.
+The gate is not in the plugin repo or in NeuralAmpModelerCore. It lives in **AudioDSPTools** at
+`dsp/NoiseGate.cpp` / `dsp/NoiseGate.h`. All three repos are **MIT, (c) Steven Atkinson**
+(plugin 2022, AudioDSPTools and Core 2023).
+
+MIT is permissive but NOT public domain: the copyright notice and permission text must be retained
+in copies and substantial portions. A C++ to TypeScript port is a derivative work, so porting it
+still carries that obligation. Concretely:
+
+- Header comment in our file crediting Steven Atkinson / AudioDSPTools with the MIT notice.
+- A third-party notices file if we start carrying more than one such port.
+- No copyleft, no share-alike, commercial use fine. (Worth having checked — plenty of open-source
+  audio DSP is GPL, which would have forced this whole app to be GPL.)
+
+Remaining work is just the port. A gate is a few dozen lines (threshold, attack, hold, release),
+and the detector belongs on the DRY INPUT before the model: gating after a high-gain model means
+gating amplified noise, which chatters. Writing one is not the hard part; matching NAM's feel is,
+which is the whole reason for porting theirs rather than inventing one.
 
 Placement is settled either way: on the raw input, before the model. Gating after a high-gain model
 means gating the amplified noise, which chatters.

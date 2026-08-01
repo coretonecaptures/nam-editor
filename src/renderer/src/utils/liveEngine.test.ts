@@ -237,3 +237,26 @@ describe('setEq', () => {
     expect(EQ_TREBLE_HZ).toBeGreaterThan(2000)
   })
 })
+
+describe('delay mode', () => {
+  it('defaults to the algorithmic line, which needs no impulse to work', () => {
+    expect(DEFAULT_DELAY.mode).toBe('algorithmic')
+  })
+
+  it('switches mode without losing the algorithmic settings', () => {
+    const e = engine()
+    e.setDelay({ timeMs: 420, feedback: 0.6 })
+    e.setDelay({ mode: 'convolution' })
+    expect(e.delay.mode).toBe('convolution')
+    expect(e.delay.timeMs).toBe(420)
+    expect(e.delay.feedback).toBeCloseTo(0.6)
+    e.setDelay({ mode: 'algorithmic' })
+    expect(e.delay.timeMs).toBe(420)
+  })
+
+  it('keeps mix meaningful in both modes — it is the only shared control', () => {
+    const e = engine()
+    e.setDelay({ mode: 'convolution', mix: 0.4 })
+    expect(e.delay.mix).toBeCloseTo(0.4)
+  })
+})

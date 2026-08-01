@@ -5120,9 +5120,18 @@ INSTRUCTIONS:
               diLibraryPath={settings.diPreviewLibraryPath || null}
               irLibraryPath={settings.irLibraryPath || null}
               reverbLibraryPath={settings.reverbLibraryPath || null}
+              delayLibraryPath={settings.delayLibraryPath || null}
               irMix={settings.irMix}
               coverImagePath={metadataCoverPath}
               onClose={() => setPlayerFile(null)}
+              chorusPresets={settings.chorusPresets}
+              delayPresets={settings.delayPresets}
+              reverbPresets={settings.reverbPresets}
+              rigPresets={settings.rigPresets}
+              onChorusPresetsChange={(list) => handleSaveSettings({ ...settings, chorusPresets: list })}
+              onDelayPresetsChange={(list) => handleSaveSettings({ ...settings, delayPresets: list })}
+              onReverbPresetsChange={(list) => handleSaveSettings({ ...settings, reverbPresets: list })}
+              onRigPresetsChange={(list) => handleSaveSettings({ ...settings, rigPresets: list })}
             />
           ) : showDashboard ? (
             <div className="relative h-full flex flex-col">

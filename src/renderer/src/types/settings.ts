@@ -1,5 +1,6 @@
 import { GEAR_TYPES, TONE_TYPES } from './nam'
 import type { WaveNetConfig } from './trainer'
+import type { ChorusSettings, DelaySettings, EqSettings, GateSettings, ReverbSettings } from '../utils/liveEngine'
 
 export interface FolderOverride {
   manufacturer?: string
@@ -232,6 +233,55 @@ export const DEFAULT_TARGET_CHECKLIST_TEMPLATES: TargetChecklistTemplates = {
   ],
 }
 
+/**
+ * Named, saveable configurations for the live player's FX blocks.
+ *
+ * Block presets (Chorus/Delay/Reverb) are independent per effect, so they can be mixed and
+ * matched. Delay/Reverb presets also carry the convolution IR path, since in convolution mode
+ * the impulse IS most of the sound — a preset without it would only restore the mix knob.
+ */
+export interface ChorusPreset {
+  id: string
+  name: string
+  settings: ChorusSettings
+}
+export interface DelayPreset {
+  id: string
+  name: string
+  settings: DelaySettings
+  /** Convolution IR, absolute path. Unused (but harmless) when settings.mode is 'algorithmic'. */
+  irPath: string | null
+}
+export interface ReverbPreset {
+  id: string
+  name: string
+  settings: ReverbSettings
+  /** Convolution IR, absolute path. Unused (but harmless) when settings.mode is 'plate'. */
+  irPath: string | null
+}
+
+/**
+ * A full-rig snapshot — all five FX blocks at once, for instant recall.
+ *
+ * Self-contained rather than referencing block presets by id: deleting or editing a Chorus block
+ * preset must never change a Rig preset saved earlier. Each settings object already carries its
+ * own `enabled`, so this captures which blocks were on as well as their values.
+ */
+export interface RigSnapshot {
+  gate: GateSettings
+  eq: EqSettings
+  chorus: ChorusSettings
+  delay: DelaySettings
+  delayIrPath: string | null
+  reverb: ReverbSettings
+  reverbIrPath: string | null
+}
+export interface RigPreset {
+  id: string
+  name: string
+  settings: RigSnapshot
+}
+
 export interface AppSettings {
   // Current Amp Info
   enableAmpInfo: boolean
@@ -311,6 +361,9 @@ export interface AppSettings {
   // at a different point in the chain, and mixing a hall into the cab picker (or a 4x12 into the
   // reverb picker) makes both lists worse.
   reverbLibraryPath: string
+  // Delay impulses (rack echo units). Separate again from cabinets and reverbs: a delay IR bakes
+  // in its own time and feedback, so it is chosen for a different job entirely.
+  delayLibraryPath: string
   /** Cabinet mix 0..1 applied after the model. 1 = fully wet (cab only). */
   irMix: number
 
@@ -389,6 +442,12 @@ export interface AppSettings {
   // User-defined capture profiles (custom WaveNet architectures)
   userCaptureProfiles: UserCaptureProfile[]
 
+  // Live player FX presets — per-block (chorus/delay/reverb) and whole-rig snapshots
+  chorusPresets: ChorusPreset[]
+  delayPresets: DelayPreset[]
+  reverbPresets: ReverbPreset[]
+  rigPresets: RigPreset[]
+
   // AI enrichment (keys stored in main via safeStorage — never in settings JSON)
   hasAnthropicKey: boolean
   hasOpenAiKey: boolean
@@ -442,6 +501,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   diPreviewLibraryPath: '',
   irLibraryPath: '',
   reverbLibraryPath: '',
+  delayLibraryPath: '',
   irMix: 1,
   namStandalonePath: '',
   // On by default: training is no longer the risky corner it was when this flag was added, and
@@ -482,6 +542,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   libraryCleanupIgnoredPaths: [],
   folderWavComparisonPaths: {},
   userCaptureProfiles: [],
+  chorusPresets: [],
+  delayPresets: [],
+  reverbPresets: [],
+  rigPresets: [],
   hasAnthropicKey: false,
   hasOpenAiKey: false,
   aiProvider: 'anthropic',
@@ -644,7 +708,20 @@ function normalizeSettingsMetadataRules(settings: AppSettings): AppSettings {
     trainingBundles: (settings.trainingBundles ?? []).filter(
       (b): b is TrainingBundle => Boolean(b?.id && b?.name && Array.isArray(b?.presetIds))
     ),
+    chorusPresets: normalizePresetList<ChorusPreset>(settings.chorusPresets),
+    delayPresets: normalizePresetList<DelayPreset>(settings.delayPresets),
+    reverbPresets: normalizePresetList<ReverbPreset>(settings.reverbPresets),
+    rigPresets: normalizePresetList<RigPreset>(settings.rigPresets),
   }
+}
+
+/** Drops any FX preset missing a string id/name or an object settings payload. */
+function normalizePresetList<T extends { id?: unknown; name?: unknown; settings?: unknown }>(
+  list: T[] | undefined
+): T[] {
+  return (list ?? []).filter(
+    (p): p is T => Boolean(p && typeof p.id === 'string' && typeof p.name === 'string' && p.settings && typeof p.settings === 'object')
+  )
 }
 
 export function loadSettings(): AppSettings {

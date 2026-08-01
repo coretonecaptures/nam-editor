@@ -18,12 +18,14 @@ import loopBarUnlit from '../assets/transport/loop-bar-unlit.png'
 import loopBarLit from '../assets/transport/loop-bar-lit.png'
 import transportPanelBg from '../assets/transport/panel-bg.jpg'
 import { NamFile } from '../types/nam'
+import type { ChorusPreset, DelayPreset, ReverbPreset, RigPreset, RigSnapshot } from '../types/settings'
 import { detectPreset } from '../utils/detectPreset'
 import { getCaptureBestEsr, getEsrTone } from '../utils/esr'
 import {
   DEFAULT_CHORUS,
   DEFAULT_DELAY,
   DEFAULT_EQ,
+  DEFAULT_GATE,
   DEFAULT_REVERB,
   EQ_BASS_HZ,
   EQ_MAX_DB,
@@ -32,6 +34,8 @@ import {
   LiveEngine,
   MAX_FEEDBACK,
   MAX_MOD_DEPTH_MS,
+  MAX_PAN_RATE_HZ,
+  MIN_PAN_RATE_HZ,
   REVERB_EQ_MAX_DB,
   REVERB_HIGH_SHELF_HZ,
   REVERB_LOW_SHELF_HZ,
@@ -40,6 +44,7 @@ import {
   type ChorusSettings,
   type DelaySettings,
   type EqSettings,
+  type GateSettings,
   type LiveDeviceInfo,
   type ReverbSettings
 } from '../utils/liveEngine'
@@ -129,9 +134,11 @@ const INPUT_CHANNEL_PREF_KEY = 'nam-player-input-channel'
 const OUTPUT_DEVICE_PREF_KEY = 'nam-player-output-device'
 const DELAY_PREF_KEY = 'nam-player-delay'
 const REVERB_PREF_KEY = 'nam-player-reverb'
+const DELAY_IR_PREF_KEY = 'nam-player-delay-ir'
 const REVERB_SETTINGS_PREF_KEY = 'nam-player-reverb-settings'
 const CHORUS_PREF_KEY = 'nam-player-chorus'
 const EQ_PREF_KEY = 'nam-player-eq'
+const GATE_PREF_KEY = 'nam-player-gate'
 const DEVICES_OPEN_PREF_KEY = 'nam-player-devices-open'
 
 /** Devices start expanded; once a rig is set up, collapsing it sticks. */
@@ -224,6 +231,7 @@ interface PlayerPanelProps {
   diLibraryPath?: string | null
   irLibraryPath?: string | null
   reverbLibraryPath?: string | null
+  delayLibraryPath?: string | null
   irMix?: number
   coverImagePath?: string | null
   /** Move to the previous (-1) or next (+1) capture in the folder currently in scope. */
@@ -231,6 +239,15 @@ interface PlayerPanelProps {
   /** Position of this capture in that scope, and its size, for the "3 / 42" readout. */
   stepIndex?: number
   stepCount?: number
+  /** Named FX presets, persisted in AppSettings so they survive across captures and restarts. */
+  chorusPresets?: ChorusPreset[]
+  delayPresets?: DelayPreset[]
+  reverbPresets?: ReverbPreset[]
+  rigPresets?: RigPreset[]
+  onChorusPresetsChange?: (presets: ChorusPreset[]) => void
+  onDelayPresetsChange?: (presets: DelayPreset[]) => void
+  onReverbPresetsChange?: (presets: ReverbPreset[]) => void
+  onRigPresetsChange?: (presets: RigPreset[]) => void
 }
 
 function toFileUrl(p: string): string {
@@ -399,11 +416,20 @@ export function PlayerPanel({
   diLibraryPath,
   irLibraryPath,
   reverbLibraryPath,
+  delayLibraryPath,
   irMix = 1,
   onStep,
   stepIndex = -1,
   stepCount = 0,
-  coverImagePath
+  coverImagePath,
+  chorusPresets = [],
+  delayPresets = [],
+  reverbPresets = [],
+  rigPresets = [],
+  onChorusPresetsChange,
+  onDelayPresetsChange,
+  onReverbPresetsChange,
+  onRigPresetsChange
 }: PlayerPanelProps & { onClose: () => void }) {
   const [status, setStatus] = useState<PlayerStatus>('idle')
   const [errorMsg, setErrorMsg] = useState('')
@@ -454,9 +480,15 @@ export function PlayerPanel({
   const [reverb, setReverbState] = useState<ReverbSettings>(() => loadPref(REVERB_SETTINGS_PREF_KEY, DEFAULT_REVERB))
   const [chorus, setChorusState] = useState<ChorusSettings>(() => loadPref(CHORUS_PREF_KEY, DEFAULT_CHORUS))
   const [eq, setEqState] = useState<EqSettings>(() => loadPref(EQ_PREF_KEY, DEFAULT_EQ))
+  const [gate, setGateState] = useState<GateSettings>(() => loadPref(GATE_PREF_KEY, DEFAULT_GATE))
   const [reverbPath, setReverbPath] = useState<string | null>(null)
   const [reverbCount, setReverbCount] = useState(0)
   const [reverbSeconds, setReverbSeconds] = useState(0)
+  const [delayIrPath, setDelayIrPath] = useState<string | null>(null)
+  const [delayIrCount, setDelayIrCount] = useState(0)
+  const [delayIrSeconds, setDelayIrSeconds] = useState(0)
+  const [delayIrChannels, setDelayIrChannels] = useState(0)
+  const [reverbIrChannels, setReverbIrChannels] = useState(0)
 
   // The FX grid is chosen from the measured panel width. Same reasoning as the scan list: this
   // panel is dragged, so a viewport breakpoint says nothing about the room it actually has.
@@ -631,6 +663,28 @@ export function PlayerPanel({
   // across a deep folder tree, so IrPicker searches an index held in the main process rather than
   // this component holding the library. All that is needed here is how many there are (to tell
   // "no library" from "library with nothing in it") and which one is currently chosen.
+  useEffect(() => {
+    let cancelled = false
+    if (!delayLibraryPath) {
+      setDelayIrCount(0)
+      return
+    }
+    void (async () => {
+      const result = await window.api.indexIrLibrary(delayLibraryPath)
+      if (cancelled) return
+      setDelayIrCount(result.count)
+      try {
+        const remembered = localStorage.getItem(DELAY_IR_PREF_KEY)
+        if (remembered) setDelayIrPath(remembered)
+      } catch {
+        // Non-fatal.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [delayLibraryPath])
+
   useEffect(() => {
     let cancelled = false
     if (!reverbLibraryPath) {
@@ -848,6 +902,9 @@ export function PlayerPanel({
     setLiveLatencyMs(null)
     setChannelPeaks([])
     setReverbSeconds(0)
+    setDelayIrSeconds(0)
+    setDelayIrChannels(0)
+    setReverbIrChannels(0)
   }, [])
 
   /**
@@ -911,6 +968,7 @@ export function PlayerPanel({
         inputGain: Math.pow(10, liveInputGainDb * 0.05),
         inputChannel,
         outputDeviceId,
+        gate,
         eq,
         delay,
         reverb,
@@ -918,6 +976,10 @@ export function PlayerPanel({
         reverbIr:
           reverbPath && reverb.mode === 'convolution'
             ? await decodeImpulse(reverbPath).catch(() => null)
+            : null,
+        delayIr:
+          delayIrPath && delay.mode === 'convolution'
+            ? await decodeImpulse(delayIrPath).catch(() => null)
             : null,
         // Same loudness target the offline preview uses, so switching between the two modes is
         // not a volume jump.
@@ -1071,6 +1133,116 @@ export function PlayerPanel({
   }, [eq])
 
   useEffect(() => {
+    liveEngineRef.current?.setGate(gate)
+    savePref(GATE_PREF_KEY, gate)
+  }, [gate])
+
+  /**
+   * FX presets — save/apply/delete for Chorus, Delay, Reverb (independent per block) and Rig
+   * (all five blocks at once). Applying one is just calling the same state setters the sliders
+   * already use, so it rides the effects above for free: no separate "push to engine" path.
+   *
+   * Save is an upsert by case-insensitive name, so re-saving under an existing name overwrites it
+   * rather than piling up duplicates.
+   */
+  function upsertPreset<P extends { id: string; name: string }>(
+    list: P[],
+    name: string,
+    build: (id: string) => P
+  ): P[] {
+    const existingId = list.find((p) => p.name.toLowerCase() === name.toLowerCase())?.id
+    const preset = build(existingId ?? crypto.randomUUID())
+    return existingId ? list.map((p) => (p.id === existingId ? preset : p)) : [...list, preset]
+  }
+
+  const applyChorusPreset = useCallback((settings: ChorusSettings) => setChorusState({ ...settings }), [])
+  const saveChorusPreset = useCallback(
+    (name: string) => {
+      onChorusPresetsChange?.(
+        upsertPreset(chorusPresets, name, (id) => ({ id, name, settings: { ...chorus } }))
+      )
+    },
+    [chorusPresets, chorus, onChorusPresetsChange]
+  )
+  const deleteChorusPreset = useCallback(
+    (id: string) => onChorusPresetsChange?.(chorusPresets.filter((p) => p.id !== id)),
+    [chorusPresets, onChorusPresetsChange]
+  )
+
+  const applyDelayPreset = useCallback((settings: DelaySettings, irPath?: string | null) => {
+    setDelayState({ ...settings })
+    setDelayIrPath(irPath ?? null)
+    try {
+      if (irPath) localStorage.setItem(DELAY_IR_PREF_KEY, irPath)
+      else localStorage.removeItem(DELAY_IR_PREF_KEY)
+    } catch {
+      // Non-fatal.
+    }
+  }, [])
+  const saveDelayPreset = useCallback(
+    (name: string) => {
+      onDelayPresetsChange?.(
+        upsertPreset(delayPresets, name, (id) => ({ id, name, settings: { ...delay }, irPath: delayIrPath }))
+      )
+    },
+    [delayPresets, delay, delayIrPath, onDelayPresetsChange]
+  )
+  const deleteDelayPreset = useCallback(
+    (id: string) => onDelayPresetsChange?.(delayPresets.filter((p) => p.id !== id)),
+    [delayPresets, onDelayPresetsChange]
+  )
+
+  const applyReverbPreset = useCallback((settings: ReverbSettings, irPath?: string | null) => {
+    setReverbState({ ...settings })
+    setReverbPath(irPath ?? null)
+    try {
+      if (irPath) localStorage.setItem(REVERB_PREF_KEY, irPath)
+      else localStorage.removeItem(REVERB_PREF_KEY)
+    } catch {
+      // Non-fatal.
+    }
+  }, [])
+  const saveReverbPreset = useCallback(
+    (name: string) => {
+      onReverbPresetsChange?.(
+        upsertPreset(reverbPresets, name, (id) => ({ id, name, settings: { ...reverb }, irPath: reverbPath }))
+      )
+    },
+    [reverbPresets, reverb, reverbPath, onReverbPresetsChange]
+  )
+  const deleteReverbPreset = useCallback(
+    (id: string) => onReverbPresetsChange?.(reverbPresets.filter((p) => p.id !== id)),
+    [reverbPresets, onReverbPresetsChange]
+  )
+
+  const applyRigPreset = useCallback((snap: RigSnapshot) => {
+    setGateState({ ...snap.gate })
+    setEqState({ ...snap.eq })
+    applyChorusPreset(snap.chorus)
+    applyDelayPreset(snap.delay, snap.delayIrPath)
+    applyReverbPreset(snap.reverb, snap.reverbIrPath)
+  }, [applyChorusPreset, applyDelayPreset, applyReverbPreset])
+  const saveRigPreset = useCallback(
+    (name: string) => {
+      const snapshot: RigSnapshot = {
+        gate,
+        eq,
+        chorus,
+        delay,
+        delayIrPath,
+        reverb,
+        reverbIrPath: reverbPath
+      }
+      onRigPresetsChange?.(upsertPreset(rigPresets, name, (id) => ({ id, name, settings: snapshot })))
+    },
+    [rigPresets, gate, eq, chorus, delay, delayIrPath, reverb, reverbPath, onRigPresetsChange]
+  )
+  const deleteRigPreset = useCallback(
+    (id: string) => onRigPresetsChange?.(rigPresets.filter((p) => p.id !== id)),
+    [rigPresets, onRigPresetsChange]
+  )
+
+  useEffect(() => {
     try {
       localStorage.setItem(DEVICES_OPEN_PREF_KEY, devicesOpen ? '1' : '0')
     } catch {
@@ -1092,6 +1264,7 @@ export function PlayerPanel({
         if (cancelled) return
         await engine.setReverbIr(ir)
         setReverbSeconds(engine.reverbSeconds)
+        setReverbIrChannels(engine.reverbIrChannelCount)
       } catch (error) {
         if (!cancelled) setLiveError(formatError(error))
       }
@@ -1100,6 +1273,26 @@ export function PlayerPanel({
       cancelled = true
     }
   }, [reverbPath, liveRunning, reverb.mode, decodeImpulse])
+
+  useEffect(() => {
+    const engine = liveEngineRef.current
+    if (!engine || !liveRunning) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const ir = delayIrPath && delay.mode === 'convolution' ? await decodeImpulse(delayIrPath) : null
+        if (cancelled) return
+        await engine.setDelayIr(ir)
+        setDelayIrSeconds(engine.delayIrSecondsLoaded)
+        setDelayIrChannels(engine.delayIrChannelCount)
+      } catch (error) {
+        if (!cancelled) setLiveError(formatError(error))
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [delayIrPath, liveRunning, delay.mode, decodeImpulse])
 
   // Both are rewires, not restarts — hunting for the input your guitar is in, or moving to
   // headphones, should not drop the device and reload the model on every attempt.
@@ -1349,6 +1542,20 @@ export function PlayerPanel({
 
   const fxSection = (
     <div ref={fxRef} className="px-4 py-3.5 border-b border-gray-200 dark:border-[var(--border-soft)]">
+      {/* Rig presets snapshot all five blocks at once (including which are on) — sits above the
+          grid because it isn't any one card's business. */}
+      <div className="flex items-center gap-2 mb-3">
+        <TapeLabel>Rig</TapeLabel>
+        <div className="flex-1">
+          <FxPresetBar
+            presets={rigPresets.map((p) => ({ id: p.id, name: p.name, settings: p.settings }))}
+            onApply={applyRigPreset}
+            onSave={saveRigPreset}
+            onDelete={deleteRigPreset}
+          />
+        </div>
+      </div>
+
       {/* Chorus and Delay share a row once each half can still hold two controls across; below
           that they stack, because two narrow cards are taller than one wide one. */}
       <div
@@ -1359,6 +1566,25 @@ export function PlayerPanel({
           alignItems: 'start'
         }}
       >
+        <FxCard
+          label="Gate"
+          enabled={gate.enabled}
+          onToggle={(v) => setGateState((g) => ({ ...g, enabled: v }))}
+          summary={gate.enabled ? `${gate.threshold.toFixed(0)}dB` : 'off'}
+        >
+          <div style={fxCardGrid}>
+            <FxSlider compact={fxCompact} label="Threshold" value={gate.threshold} min={-100} max={0} step={1}
+              format={(v) => `${v.toFixed(0)} dB`}
+              onChange={(v) => setGateState((g) => ({ ...g, threshold: v }))} />
+            <FxSlider compact={fxCompact} label="Hold" hint="ms" value={gate.holdTime * 1000} min={0} max={500} step={5}
+              format={(v) => `${v.toFixed(0)} ms`}
+              onChange={(v) => setGateState((g) => ({ ...g, holdTime: v / 1000 }))} />
+            <FxSlider compact={fxCompact} label="Release" hint="ms" value={gate.closeTime * 1000} min={1} max={500} step={5}
+              format={(v) => `${v.toFixed(0)} ms`}
+              onChange={(v) => setGateState((g) => ({ ...g, closeTime: v / 1000 }))} />
+          </div>
+        </FxCard>
+
         <FxCard
           label="EQ"
           enabled={eq.enabled}
@@ -1389,6 +1615,12 @@ export function PlayerPanel({
           onToggle={(v) => setChorusState((c) => ({ ...c, enabled: v }))}
           summary={chorus.enabled ? `${Math.round(chorus.mix * 100)}%` : 'off'}
         >
+          <FxPresetBar
+            presets={chorusPresets}
+            onApply={applyChorusPreset}
+            onSave={saveChorusPreset}
+            onDelete={deleteChorusPreset}
+          />
           <div style={fxCardGrid}>
             <FxSlider compact={fxCompact} label="Mix" value={chorus.mix} min={0} max={1} step={0.01}
               format={(v) => `${Math.round(v * 100)}%`}
@@ -1408,6 +1640,23 @@ export function PlayerPanel({
           onToggle={(v) => setDelayState((d) => ({ ...d, enabled: v }))}
           summary={delay.enabled ? `${Math.round(delay.mix * 100)}% \u00b7 ${Math.round(delay.timeMs)}ms` : 'off'}
           header={
+            <div className="flex items-center gap-1.5">
+              <div className="flex rounded-md bg-gray-100 dark:bg-[var(--field)] border border-gray-200 dark:border-[var(--border)] p-0.5">
+                {([['algorithmic', 'Algorithmic'], ['convolution', 'Convolution']] as const).map(([mode, modeLabel]) => (
+                  <button
+                    key={mode}
+                    onClick={() => setDelayState((d) => ({ ...d, mode }))}
+                    className={`h-[22px] px-2 rounded text-[11px] font-medium transition-colors ${
+                      delay.mode === mode
+                        ? 'bg-white dark:bg-[#232c36] text-gray-900 dark:text-gray-100 shadow-sm'
+                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                    }`}
+                  >
+                    {modeLabel}
+                  </button>
+                ))}
+              </div>
+              {delay.mode === 'algorithmic' && (
             <button
               onClick={() => setDelayState((d) => ({ ...d, pingPong: !d.pingPong }))}
               className={`h-[22px] px-2.5 rounded text-[11px] font-medium border transition-colors ${
@@ -1421,36 +1670,114 @@ export function PlayerPanel({
             >
               {delay.pingPong ? 'Ping-Pong' : 'Mono'}
             </button>
+              )}
+              {/* Independent of ping-pong: a continuous sweep instead of a discrete alternation,
+                  and it works on either delay mode since it sits after both wet paths merge. */}
+              <button
+                onClick={() => setDelayState((d) => ({ ...d, panEnabled: !d.panEnabled }))}
+                className={`h-[22px] px-2.5 rounded text-[11px] font-medium border transition-colors ${
+                  delay.panEnabled
+                    ? 'bg-[var(--active)] border-[var(--accent)] text-gray-900 dark:text-gray-100'
+                    : 'border-gray-200 dark:border-[var(--border)] text-gray-500 dark:text-gray-400'
+                }`}
+                title={delay.panEnabled
+                  ? 'Auto-pan: repeats sweep continuously left to right'
+                  : 'Auto-pan off: repeats stay where the delay mode puts them'}
+              >
+                Pan
+              </button>
+            </div>
           }
         >
-          <div style={fxCardGrid}>
-            <FxSlider compact={fxCompact} label="Mix" value={delay.mix} min={0} max={1} step={0.01}
-              format={(v) => `${Math.round(v * 100)}%`}
-              onChange={(v) => setDelayState((d) => ({ ...d, mix: v }))} />
-            <FxSlider compact={fxCompact} label="Time" value={delay.timeMs} min={20} max={1200} step={5}
-              format={(v) => `${Math.round(v)} ms`}
-              onChange={(v) => setDelayState((d) => ({ ...d, timeMs: v }))} />
-            {/* Ratio sets the second tap against the first, so with one tap it does nothing. */}
-            {delay.pingPong && (
-              <FxSlider compact={fxCompact} label="Ratio" hint="right tap vs left" value={delay.ratio} min={0.25} max={2} step={0.05}
-                format={(v) => `${v.toFixed(2)}x`}
-                onChange={(v) => setDelayState((d) => ({ ...d, ratio: v }))} />
-            )}
-            <FxSlider compact={fxCompact} label="Feedback" value={delay.feedback} min={0} max={MAX_FEEDBACK} step={0.01}
-              format={(v) => `${Math.round(v * 100)}%`}
-              onChange={(v) => setDelayState((d) => ({ ...d, feedback: v }))} />
-            <FxSlider compact={fxCompact} label="Tone" hint="darkens repeats" value={delay.toneHz} min={500} max={12000} step={100}
-              format={(v) => `${(v / 1000).toFixed(1)} kHz`}
-              onChange={(v) => setDelayState((d) => ({ ...d, toneHz: v }))} />
-            <FxSlider compact={fxCompact} label="Mod" hint="pitch movement" value={delay.modDepthMs} min={0} max={MAX_MOD_DEPTH_MS} step={0.05}
-              format={(v) => (v === 0 ? 'off' : `${v.toFixed(2)} ms`)}
-              onChange={(v) => setDelayState((d) => ({ ...d, modDepthMs: v }))} />
-            {delay.modDepthMs > 0 && (
-              <FxSlider compact={fxCompact} label="Mod rate" value={delay.modRateHz} min={0.05} max={8} step={0.05}
-                format={(v) => `${v.toFixed(2)} Hz`}
-                onChange={(v) => setDelayState((d) => ({ ...d, modRateHz: v }))} />
-            )}
-          </div>
+          <FxPresetBar
+            presets={delayPresets}
+            onApply={applyDelayPreset}
+            onSave={saveDelayPreset}
+            onDelete={deleteDelayPreset}
+          />
+          {delay.mode === 'algorithmic' ? (
+            <div style={fxCardGrid}>
+              <FxSlider compact={fxCompact} label="Mix" value={delay.mix} min={0} max={1} step={0.01}
+                format={(v) => `${Math.round(v * 100)}%`}
+                onChange={(v) => setDelayState((d) => ({ ...d, mix: v }))} />
+              <FxSlider compact={fxCompact} label="Time" value={delay.timeMs} min={20} max={1200} step={5}
+                format={(v) => `${Math.round(v)} ms`}
+                onChange={(v) => setDelayState((d) => ({ ...d, timeMs: v }))} />
+              {/* Ratio sets the second tap against the first, so with one tap it does nothing. */}
+              {delay.pingPong && (
+                <FxSlider compact={fxCompact} label="Ratio" hint="right tap vs left" value={delay.ratio} min={0.25} max={2} step={0.05}
+                  format={(v) => `${v.toFixed(2)}x`}
+                  onChange={(v) => setDelayState((d) => ({ ...d, ratio: v }))} />
+              )}
+              <FxSlider compact={fxCompact} label="Feedback" value={delay.feedback} min={0} max={MAX_FEEDBACK} step={0.01}
+                format={(v) => `${Math.round(v * 100)}%`}
+                onChange={(v) => setDelayState((d) => ({ ...d, feedback: v }))} />
+              <FxSlider compact={fxCompact} label="Tone" hint="darkens repeats" value={delay.toneHz} min={500} max={12000} step={100}
+                format={(v) => `${(v / 1000).toFixed(1)} kHz`}
+                onChange={(v) => setDelayState((d) => ({ ...d, toneHz: v }))} />
+              <FxSlider compact={fxCompact} label="Mod" hint="pitch movement" value={delay.modDepthMs} min={0} max={MAX_MOD_DEPTH_MS} step={0.05}
+                format={(v) => (v === 0 ? 'off' : `${v.toFixed(2)} ms`)}
+                onChange={(v) => setDelayState((d) => ({ ...d, modDepthMs: v }))} />
+              {delay.modDepthMs > 0 && (
+                <FxSlider compact={fxCompact} label="Mod rate" value={delay.modRateHz} min={0.05} max={8} step={0.05}
+                  format={(v) => `${v.toFixed(2)} Hz`}
+                  onChange={(v) => setDelayState((d) => ({ ...d, modRateHz: v }))} />
+              )}
+              {delay.panEnabled && (
+                <FxSlider compact={fxCompact} label="Pan speed" value={delay.panRateHz} min={MIN_PAN_RATE_HZ} max={MAX_PAN_RATE_HZ} step={0.05}
+                  format={(v) => `${v.toFixed(2)} Hz`}
+                  onChange={(v) => setDelayState((d) => ({ ...d, panRateHz: v }))} />
+              )}
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2.5">
+              <div style={fxCardGrid}>
+                {/* Mix is the ONLY control here, and that is the nature of the thing: a delay
+                    impulse has its time and its feedback baked in. */}
+                <FxSlider compact={fxCompact} label="Mix" value={delay.mix} min={0} max={1} step={0.01}
+                  format={(v) => `${Math.round(v * 100)}%`}
+                  onChange={(v) => setDelayState((d) => ({ ...d, mix: v }))} />
+                {delay.panEnabled && (
+                  <FxSlider compact={fxCompact} label="Pan speed" value={delay.panRateHz} min={MIN_PAN_RATE_HZ} max={MAX_PAN_RATE_HZ} step={0.05}
+                    format={(v) => `${v.toFixed(2)} Hz`}
+                    onChange={(v) => setDelayState((d) => ({ ...d, panRateHz: v }))} />
+                )}
+              </div>
+                <>
+                  <IrPicker
+                    libraryPath={delayLibraryPath ?? ''}
+                    value={delayIrPath}
+                    allowNone
+                    placeholder={`Choose from ${delayIrCount.toLocaleString()} delay impulses\u2026`}
+                    onChange={(ref) => {
+                      setDelayIrPath(ref.path)
+                      try {
+                        localStorage.setItem(DELAY_IR_PREF_KEY, ref.path)
+                      } catch {
+                        // Non-fatal.
+                      }
+                    }}
+                    onClear={() => {
+                      setDelayIrPath(null)
+                      try {
+                        localStorage.removeItem(DELAY_IR_PREF_KEY)
+                      } catch {
+                        // Non-fatal.
+                      }
+                    }}
+                  />
+                  {delayIrSeconds > 0 && (
+                    <p className="text-[10px] text-gray-400 dark:text-gray-600">
+                      {delayIrSeconds.toFixed(2)}s of repeats &middot; {describeIrChannels(delayIrChannels)}
+                    </p>
+                  )}
+                  <p className="text-[10px] text-gray-400 dark:text-gray-600 leading-relaxed">
+                    Time and feedback are part of the impulse, so each one is a preset. Patches that
+                    shift pitch or modulate cannot be convolved &mdash; use Algorithmic for those.
+                  </p>
+                </>
+            </div>
+          )}
         </FxCard>
       </div>
 
@@ -1480,6 +1807,12 @@ export function PlayerPanel({
             </div>
           }
         >
+          <FxPresetBar
+            presets={reverbPresets}
+            onApply={applyReverbPreset}
+            onSave={saveReverbPreset}
+            onDelete={deleteReverbPreset}
+          />
           <div style={fxReverbGrid}>
             <FxSlider compact={fxCompact} label="Mix" value={reverb.mix} min={0} max={1} step={0.01}
               format={(v) => `${Math.round(v * 100)}%`}
@@ -1509,11 +1842,6 @@ export function PlayerPanel({
 
           {reverb.mode === 'convolution' && (
             <div className="mt-2.5 flex flex-col gap-1.5">
-              {reverbCount === 0 ? (
-                <p className="text-[11px] text-gray-400 dark:text-gray-600 leading-relaxed">
-                  Set a Convolution Reverbs folder in Settings &rarr; Player.
-                </p>
-              ) : (
                 <>
                   <IrPicker
                     libraryPath={reverbLibraryPath ?? ''}
@@ -1539,7 +1867,7 @@ export function PlayerPanel({
                   />
                   {reverbSeconds > 0 && (
                     <p className="text-[10px] text-gray-400 dark:text-gray-600">
-                      {reverbSeconds.toFixed(1)}s tail after trimming silence
+                      {reverbSeconds.toFixed(1)}s tail &middot; {describeIrChannels(reverbIrChannels)}
                     </p>
                   )}
                   <p className="text-[10px] text-gray-400 dark:text-gray-600 leading-relaxed">
@@ -1548,7 +1876,6 @@ export function PlayerPanel({
                     than shimmer. Use Plate for those.
                   </p>
                 </>
-              )}
             </div>
           )}
         </FxCard>
@@ -1576,28 +1903,26 @@ export function PlayerPanel({
           </button>
         </div>
       </div>
-      {irCount === 0 ? (
-        <p className="text-[11px] text-gray-400 dark:text-gray-600 leading-relaxed">
-          {needsCabIr
-            ? `This capture has no cabinet (${GEAR_LABELS[m.gear_type as string] ?? m.gear_type}), so it will sound harsh without an IR. Set an IR Library folder in Settings → Player.`
-            : 'Set an IR Library folder in Settings → Player to audition cabinets.'}
-        </p>
-      ) : (
-        irEnabled && (
-          <>
-            <IrPicker
-              libraryPath={irLibraryPath ?? ''}
-              value={irPath}
-              disabled={busy}
-              onChange={(ref) => { setIrPath(ref.path); lastIrPath = ref.path; saveIrPath(ref.path) }}
-            />
-            {!irPath && (
-              <p className="text-[10.5px] text-amber-500 mt-1.5 leading-relaxed">
-                No cabinet chosen yet — search the {irCount.toLocaleString()} IRs in your library, or star the ones you use.
-              </p>
-            )}
-          </>
-        )
+      {/* The picker renders whether or not a library is configured: Browse lives inside it, and
+          "no library set" is exactly when reaching for a single file matters most. */}
+      {irEnabled && (
+        <>
+          <IrPicker
+            libraryPath={irLibraryPath ?? ''}
+            value={irPath}
+            disabled={busy}
+            onChange={(ref) => { setIrPath(ref.path); lastIrPath = ref.path; saveIrPath(ref.path) }}
+          />
+          {!irPath && (
+            <p className="text-[10.5px] text-amber-500 mt-1.5 leading-relaxed">
+              {irCount === 0
+                ? (needsCabIr
+                    ? `This capture has no cabinet (${GEAR_LABELS[m.gear_type as string] ?? m.gear_type}), so it will sound harsh without one. Set an IR Library folder in Settings, or Browse for a single file.`
+                    : 'Set an IR Library folder in Settings, or Browse for a single file.')
+                : `No cabinet chosen yet \u2014 search the ${irCount.toLocaleString()} IRs in your library, or star the ones you use.`}
+            </p>
+          )}
+        </>
       )}
     </div>
   )
@@ -2235,7 +2560,11 @@ function PlayerPopout({
           {/* Cover and metadata share the top row — the capture you are playing through, stated
               once, with the room to state it properly. */}
           <div className="flex flex-wrap gap-5 px-5 py-5 border-b border-gray-200 dark:border-[var(--border-soft)]">
-            <div className="flex-none rounded-lg overflow-hidden bg-gray-100 dark:bg-[var(--field)]" style={{ width: 300, aspectRatio: '2.2 / 1' }}>
+            {/* Same 2.2:1 crop the side panel uses, just at pop-out scale — the panel caps at
+                232 * 2.2 (~510px) because that's all a 420px-floor side panel can spare; the
+                pop-out's whole point is having a wide canvas, so it gets a wider cap instead of
+                the same fixed pixel box stretched across all that extra room. */}
+            <div className="flex-none rounded-lg overflow-hidden bg-gray-100 dark:bg-[var(--field)]" style={{ width: 460, aspectRatio: '2.2 / 1' }}>
               <img src={coverSrc} alt="Amp cover" className="w-full h-full object-cover block" onError={onCoverError} />
             </div>
             {summaryRows.length > 0 && (
@@ -2330,6 +2659,131 @@ function FxCard({
       {enabled && <div className="mt-2.5">{children}</div>}
     </div>
   )
+}
+
+const fxPresetControlClass =
+  'h-[22px] px-2 rounded text-[11px] font-medium border border-gray-200 dark:border-[var(--border)] text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[var(--hover)] transition-colors disabled:opacity-40 disabled:pointer-events-none'
+
+/**
+ * Save/load/delete bar for one named preset list.
+ *
+ * Deliberately dumb: it holds only which row is selected and whether the save-name field is
+ * open. The parent owns the actual list and persistence, and re-uses the SAME state setters the
+ * sliders already call — so applying a preset needs no separate "push to engine" path.
+ */
+function FxPresetBar<T>({
+  presets,
+  onApply,
+  onSave,
+  onDelete
+}: {
+  presets: { id: string; name: string; settings: T; irPath?: string | null }[]
+  onApply: (settings: T, irPath?: string | null) => void
+  onSave: (name: string) => void
+  onDelete: (id: string) => void
+}) {
+  // Which preset is currently "loaded" — kept separate from the <select> element's own value
+  // (always reset to "" below) so re-picking the same option still fires a change event. A native
+  // <select> does not fire onChange when the chosen option is already the one selected, which is
+  // why picking the preset you just saved appeared to do nothing until the component remounted.
+  const [selectedId, setSelectedId] = useState('')
+  const [savingName, setSavingName] = useState<string | null>(null)
+
+  const applied = presets.find((p) => p.id === selectedId) ?? null
+
+  function confirmSave(): void {
+    const trimmed = (savingName ?? '').trim()
+    if (!trimmed) return
+    onSave(trimmed)
+    setSavingName(null)
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 mb-2">
+      <select
+        value=""
+        onChange={(e) => {
+          const id = e.target.value
+          if (!id) return
+          setSelectedId(id)
+          const preset = presets.find((p) => p.id === id)
+          if (preset) onApply(preset.settings, preset.irPath ?? null)
+        }}
+        className="h-[22px] flex-1 min-w-0 rounded border border-gray-200 dark:border-[var(--border)] bg-white dark:bg-[var(--panel)] text-[11px] px-1.5 text-gray-700 dark:text-gray-300"
+      >
+        <option value="">{applied ? applied.name : presets.length ? 'Presets…' : 'No presets saved'}</option>
+        {presets.map((p) => (
+          <option key={p.id} value={p.id}>{p.name}</option>
+        ))}
+      </select>
+      {savingName === null ? (
+        <>
+          {applied && (
+            <button
+              className={fxPresetControlClass}
+              onClick={() => onSave(applied.name)}
+              title={`Overwrite "${applied.name}" with the current settings`}
+            >
+              Update
+            </button>
+          )}
+          <button
+            className={fxPresetControlClass}
+            onClick={() => setSavingName('')}
+            title="Save the current settings as a new preset"
+          >
+            Save new
+          </button>
+          <button
+            className={fxPresetControlClass}
+            disabled={!applied}
+            onClick={() => {
+              if (applied && window.confirm(`Delete preset "${applied.name}"?`)) {
+                onDelete(applied.id)
+                setSelectedId('')
+              }
+            }}
+          >
+            Delete
+          </button>
+        </>
+      ) : (
+        <>
+          <input
+            autoFocus
+            value={savingName}
+            onChange={(e) => setSavingName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') confirmSave()
+              if (e.key === 'Escape') setSavingName(null)
+            }}
+            placeholder="Preset name"
+            className="h-[22px] flex-1 min-w-0 rounded border border-gray-200 dark:border-[var(--border)] bg-white dark:bg-[var(--panel)] text-[11px] px-1.5 text-gray-700 dark:text-gray-300"
+          />
+          <button className={fxPresetControlClass} disabled={!savingName.trim()} onClick={confirmSave}>
+            ✓
+          </button>
+          <button className={fxPresetControlClass} onClick={() => setSavingName(null)}>
+            ✕
+          </button>
+        </>
+      )}
+    </div>
+  )
+}
+
+/**
+ * How an impulse's channel count will actually behave.
+ *
+ * The amp model is mono, so any width has to come from the impulse. Per the Web Audio spec a mono
+ * input convolved with a stereo impulse yields two channels (the input against each side), which
+ * is real stereo; a 4-channel impulse is true-stereo; a mono one stays mono however it is mixed.
+ */
+function describeIrChannels(channels: number): string {
+  if (channels >= 4) return `${channels}ch true-stereo`
+  if (channels === 2) return 'stereo'
+  if (channels === 1) return 'mono impulse \u2014 no width'
+  return 'loading\u2026'
 }
 
 /** \u2500\u2500 One labelled FX parameter slider. */

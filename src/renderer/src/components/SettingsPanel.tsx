@@ -1047,6 +1047,51 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab, onOpenTra
             </div>
 
             <div className="flex items-center gap-2 mb-4 mt-8">
+              <span className="text-sm">DLY</span>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Convolution Delays</h3>
+              <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
+            </div>
+            <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-3 space-y-3">
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">Folder</span>
+                <span className="text-xs text-gray-400 dark:text-gray-500 truncate flex-1 font-mono">
+                  {draft.delayLibraryPath || <span className="italic text-gray-400 dark:text-gray-600">Not configured</span>}
+                </span>
+                <button
+                  onClick={async () => {
+                    const p = await window.api.openFolder(draft.delayLibraryPath || undefined)
+                    if (p) {
+                      const updated = { ...draft, delayLibraryPath: p }
+                      setDraft(updated)
+                      onSave(updated)
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 flex-shrink-0"
+                >
+                  Browse...
+                </button>
+                {draft.delayLibraryPath && (
+                  <button
+                    onClick={() => {
+                      const updated = { ...draft, delayLibraryPath: '' }
+                      setDraft(updated)
+                      onSave(updated)
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-red-500/20 text-gray-500 dark:text-gray-400 flex-shrink-0"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              <p className="text-[11px] text-gray-400 dark:text-gray-600 leading-relaxed">
+                Captured echoes from rack units. A delay impulse bakes in its own time and feedback,
+                so each one is a preset rather than a delay you dial &mdash; mix is the only control.
+                Note that anything which shifts pitch or modulates (H3000-style patches) cannot be
+                reproduced by convolution and will smear; use the algorithmic delay for those.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 mb-4 mt-8">
               <span className="text-sm">FX</span>
               <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Convolution Reverbs</h3>
               <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />

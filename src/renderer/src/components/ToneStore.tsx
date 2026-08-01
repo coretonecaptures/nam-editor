@@ -107,6 +107,57 @@ export interface ToneStoreDownloadQueueJob {
   } | null
 }
 
+function ToneArtworkFallback({ className }: { className?: string }) {
+  return (
+    <div className={`bg-gray-100 dark:bg-gray-750 flex items-center justify-center ${className ?? ''}`}>
+      <svg className="w-7 h-7 text-gray-300 dark:text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+      </svg>
+    </div>
+  )
+}
+
+/**
+ * Tone artwork, with the failure surfaced rather than swallowed.
+ *
+ * A bare <img> that fails shows its alt text and says nothing about why, which is exactly how a
+ * broken-image bug survived: the URL is public and returns 200 to curl, so the failure is only
+ * visible from inside the renderer. onError logs the real reason and falls back to the placeholder
+ * instead of leaving a broken icon in the grid.
+ *
+ * loading="lazy" is deliberately NOT used. These are a couple of dozen small thumbnails in a
+ * nested scroll container, which is the setup where a lazy image can simply never enter the
+ * intersection root and therefore never load at all.
+ */
+function ToneArtwork({ src, alt, className }: { src: string; alt: string; className?: string }) {
+  const [failed, setFailed] = useState(false)
+  useEffect(() => setFailed(false), [src])
+  if (failed) return <ToneArtworkFallback className={className} />
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className={className}
+      // crossOrigin makes this a CORS request, which is what lets it survive a
+      // Cross-Origin-Embedder-Policy of require-corp: under COEP a cross-origin subresource is
+      // blocked unless it either sends Cross-Origin-Resource-Policy (Tone3000's CDN does not) or
+      // is fetched with CORS and allowed by the server (it sends access-control-allow-origin: *).
+      // Without this the image downloads with a 200 and Chromium then discards it, which is
+      // exactly the ERR_BLOCKED_BY_RESPONSE.NotSameOriginAfterDefaultedToSameOriginByCoep case.
+      crossOrigin="anonymous"
+      referrerPolicy="no-referrer"
+      onError={(e) => {
+        const img = e.currentTarget
+        console.error(
+          `[tone3000] artwork failed to load\n  src: ${src}\n  naturalSize: ${img.naturalWidth}x${img.naturalHeight}\n  complete: ${img.complete}\n` +
+          '  Check the Network tab for this URL — the status/error there is the actual cause.'
+        )
+        setFailed(true)
+      }}
+    />
+  )
+}
+
 function normalizeUsername(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '')
 }
@@ -755,7 +806,7 @@ export function ToneStore({
             onContextMenu={showNativeTextContextMenu}
           >
             {detailImage && (
-              <img
+              <ToneArtwork
                 src={detailImage}
                 alt={selectedTone.title}
                 className="w-full h-44 object-cover rounded-lg border border-gray-200 dark:border-gray-700"
@@ -1153,13 +1204,9 @@ export function ToneStore({
               {results.map((tone) => (
                 <div key={tone.id} className={`rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden flex flex-col ${queueLocked ? 'opacity-60' : ''}`}>
                   {tone.images?.[0] ? (
-                    <img src={tone.images[0]} alt={tone.title} className="w-full h-24 object-cover" loading="lazy" />
+                    <ToneArtwork src={tone.images[0]} alt={tone.title} className="w-full h-24 object-cover" />
                   ) : (
-                    <div className="w-full h-24 bg-gray-100 dark:bg-gray-750 flex items-center justify-center">
-                      <svg className="w-7 h-7 text-gray-300 dark:text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
-                      </svg>
-                    </div>
+                    <ToneArtworkFallback className="w-full h-24" />
                   )}
                   <div className="p-2 flex flex-col gap-1 flex-1">
                     <div className="text-xs font-medium text-gray-900 dark:text-white truncate" title={tone.title}>{tone.title}</div>
