@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef, startTransition } from 'react'
 import beakerTransparent from './assets/images/beaker.only.transparent.png'
 import { NamFile, NamMetadata, TONE_TYPES, GEAR_TYPES } from './types/nam'
-import { AppSettings, FolderWatchImportEntry, FolderWatchRule, MetadataSuggestRule, TrainingBundle, TrainingPreset, TrainingProfile, loadSettings, saveSettings } from './types/settings'
+import { AppSettings, FolderWatchImportEntry, FolderWatchRule, MetadataSuggestRule, PlayGroup, TrainingBundle, TrainingPreset, TrainingProfile, loadSettings, saveSettings } from './types/settings'
 import { effectiveFormula } from './utils/resolveOutputFormula'
 import { loadLayout, saveLayout } from './types/layout'
 import { LibrarianState } from './types/librarian'
@@ -26,6 +26,8 @@ import { WavCoverageTab } from './components/WavCoverageTab'
 import { PackInfoEditor, type DeliveryMatrixData, type PackInfo, type PackChecklistItem } from './components/PackInfoEditor'
 import { PackTargetsEditor } from './components/PackTargetsEditor'
 import { PLAYER_MIN_WIDTH, PlayerPanel } from './components/PlayerPanel'
+import { GroupsAdminPage } from './components/GroupsAdminPage'
+import { AddToGroupPopover } from './components/AddToGroupPopover'
 import { TrainingPanel } from './components/TrainingPanel'
 import { TrainingSetupGuide } from './components/TrainingSetupGuide'
 import { FolderSuggestRulesModal } from './components/FolderSuggestRulesModal'
@@ -795,6 +797,10 @@ export default function App() {
   const [companionInboxOpen, setCompanionInboxOpen] = useState(false)
   const [companionInboxItems, setCompanionInboxItems] = useState<CompanionInboxItem[]>([])
   const [showToneStore, setShowToneStore] = useState(false)
+  const [showGroupsAdmin, setShowGroupsAdmin] = useState(false)
+  // Which play group is driving the player's prev/next, if any. Ephemeral — not persisted.
+  const [activeGroupId, setActiveGroupId] = useState<string | null>(null)
+  const [addToGroupPaths, setAddToGroupPaths] = useState<string[] | null>(null)
   const [showTrainingWorkspace, setShowTrainingWorkspace] = useState(false)
   const [showTrainingSetupGuide, setShowTrainingSetupGuide] = useState(false)
   const [settingsInitialTab, setSettingsInitialTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'player' | 'training' | 'ai' | 'companion' | undefined>(undefined)
@@ -4536,6 +4542,82 @@ INSTRUCTIONS:
     [playerFile, visibleFiles]
   )
 
+  // ── Play groups: a hand-picked, cross-folder scope the player's stepper can drive from instead
+  // of the current folder view. See TODO.md / the play-groups plan for the full design.
+  const activeGroup = useMemo(
+    () => (activeGroupId ? settings.playGroups.find((g) => g.id === activeGroupId) ?? null : null),
+    [activeGroupId, settings.playGroups]
+  )
+  const groupFiles = useMemo(
+    () => (activeGroup ? activeGroup.filePaths.map((p) => files.find((f) => f.filePath === p)).filter((f): f is NamFile => Boolean(f)) : []),
+    [activeGroup, files]
+  )
+
+  const playGroup = useCallback((group: PlayGroup | null | undefined) => {
+    if (!group) return
+    const missing = group.filePaths.filter((p) => !files.some((f) => f.filePath === p))
+    if (missing.length > 0) void loadFiles(missing, 'append')
+    setActiveGroupId(group.id)
+  }, [files, loadFiles])
+
+  // Jumps the player onto the group once its members are resolved — deliberately an effect, not
+  // inline in playGroup, because members loaded via loadFiles above are not yet in `files` by the
+  // time playGroup's own closure returns (state updates there are async). If the currently open
+  // capture is already in the group, playback is left alone rather than restarted.
+  useEffect(() => {
+    if (!activeGroup || groupFiles.length === 0) return
+    if (playerFile && groupFiles.some((f) => f.filePath === playerFile.filePath)) return
+    setPlayerFile(groupFiles[0])
+    setSelectedIds(new Set([groupFiles[0].filePath]))
+  }, [activeGroup, groupFiles, playerFile])
+
+  const stepGroupFile = useCallback(
+    (delta: number) => {
+      if (!playerFile || groupFiles.length === 0) return
+      const index = groupFiles.findIndex((f) => f.filePath === playerFile.filePath)
+      if (index === -1) return
+      const next = groupFiles[index + delta]
+      if (!next) return
+      setPlayerFile(next)
+      setSelectedIds(new Set([next.filePath]))
+    },
+    [playerFile, groupFiles]
+  )
+
+  const handleAddToGroup = useCallback((paths: string[]) => setAddToGroupPaths(paths), [])
+
+  const handleAddPathsToExistingGroup = useCallback((groupId: string) => {
+    if (!addToGroupPaths) return
+    const next = settings.playGroups.map((g) => g.id === groupId
+      ? { ...g, filePaths: Array.from(new Set([...g.filePaths, ...addToGroupPaths])) }
+      : g)
+    handleSaveSettings({ ...settings, playGroups: next })
+    setAddToGroupPaths(null)
+  }, [addToGroupPaths, settings])
+
+  const handleCreateGroupWithPaths = useCallback((name: string) => {
+    if (!addToGroupPaths) return
+    const newGroup: PlayGroup = { id: crypto.randomUUID(), name, filePaths: [...addToGroupPaths] }
+    handleSaveSettings({ ...settings, playGroups: [...settings.playGroups, newGroup] })
+    setAddToGroupPaths(null)
+  }, [addToGroupPaths, settings])
+
+  const handleRenameGroup = useCallback((groupId: string, name: string) => {
+    handleSaveSettings({ ...settings, playGroups: settings.playGroups.map((g) => (g.id === groupId ? { ...g, name } : g)) })
+  }, [settings])
+
+  const handleDeleteGroup = useCallback((groupId: string) => {
+    handleSaveSettings({ ...settings, playGroups: settings.playGroups.filter((g) => g.id !== groupId) })
+    if (activeGroupId === groupId) setActiveGroupId(null)
+  }, [settings, activeGroupId])
+
+  const handleRemoveGroupMember = useCallback((groupId: string, filePath: string) => {
+    handleSaveSettings({
+      ...settings,
+      playGroups: settings.playGroups.map((g) => (g.id === groupId ? { ...g, filePaths: g.filePaths.filter((p) => p !== filePath) } : g))
+    })
+  }, [settings])
+
   // Close slide panel if selection is empty (and no batch edit active)
   if (gridSlideOpen && selectedFiles.length === 0 && batchFolder === null) setGridSlideOpen(false)
   const dirtyCount = files.filter((f) => f.isDirty).length
@@ -4602,6 +4684,7 @@ INSTRUCTIONS:
           setCompanionInboxOpen(false)
           setBatchFolder(null)
           setShowToneStore(false)
+          setShowGroupsAdmin(false)
           setShowTrainingWorkspace(false)
           setCardView(false)
           setToneMapView(false)
@@ -4632,6 +4715,7 @@ INSTRUCTIONS:
           setCompanionInboxOpen(false)
           setShowSettings(false)
           setShowToneStore(false)
+          setShowGroupsAdmin(false)
           setShowTrainingWorkspace(false)
           setBatchFolder(null)
           setCardView(false)
@@ -4644,6 +4728,7 @@ INSTRUCTIONS:
           setCompanionInboxOpen(false)
           setShowSettings(false)
           setShowToneStore(false)
+          setShowGroupsAdmin(false)
           setShowTrainingWorkspace(false)
           setBatchFolder(null)
           setCardView(false)
@@ -4658,6 +4743,7 @@ INSTRUCTIONS:
           setHistoryOpen(false)
           setShowSettings(false)
           setShowToneStore(false)
+          setShowGroupsAdmin(false)
           setShowTrainingWorkspace(false)
           setBatchFolder(null)
           setCardView(false)
@@ -4672,6 +4758,21 @@ INSTRUCTIONS:
           setHistoryOpen(false)
           setCompanionInboxOpen(false)
           setShowSettings(false)
+          setShowGroupsAdmin(false)
+          setShowTrainingWorkspace(false)
+          setBatchFolder(null)
+          setCardView(false)
+          setToneMapView(false)
+        }}
+        groupsAdminActive={showGroupsAdmin}
+        groupsAdminEnabled={files.length > 0}
+        onToggleGroupsAdmin={() => {
+          setShowGroupsAdmin((v) => !v)
+          setShowDashboard(false)
+          setHistoryOpen(false)
+          setCompanionInboxOpen(false)
+          setShowSettings(false)
+          setShowToneStore(false)
           setShowTrainingWorkspace(false)
           setBatchFolder(null)
           setCardView(false)
@@ -4698,6 +4799,7 @@ INSTRUCTIONS:
             setShowSettings(false)
             setShowDashboard(false)
             setShowToneStore(false)
+            setShowGroupsAdmin(false)
             setShowTrainingWorkspace(false)
             setHistoryOpen(false)
             setCompanionInboxOpen(false)
@@ -4759,6 +4861,7 @@ INSTRUCTIONS:
             onPlay={(file) => {
               setPlayerFile(file)
               setSelectedIds(new Set([file.filePath]))
+              setActiveGroupId(null)
             }}
             onClose={() => setToneMapView(false)}
           />
@@ -5029,7 +5132,9 @@ INSTRUCTIONS:
               onPlay={(file) => {
                 setPlayerFile(file)
                 setSelectedIds(new Set([file.filePath]))
+                setActiveGroupId(null)
               }}
+              onAddToGroup={handleAddToGroup}
               onFindSimilarTone3000={handleFindSimilarTone3000}
               defaultSearch={creatorFilter ?? undefined}
               defaultGearFilter={gearTypeFilter ?? undefined}
@@ -5114,16 +5219,16 @@ INSTRUCTIONS:
             // the panel handles file changes internally instead.
             <PlayerPanel
               file={playerFile}
-              onStep={stepPlayerFile}
-              stepIndex={playerIndex}
-              stepCount={visibleFiles.length}
+              onStep={activeGroup ? stepGroupFile : stepPlayerFile}
+              stepIndex={activeGroup ? groupFiles.findIndex((f) => f.filePath === playerFile.filePath) : playerIndex}
+              stepCount={activeGroup ? groupFiles.length : visibleFiles.length}
               diLibraryPath={settings.diPreviewLibraryPath || null}
               irLibraryPath={settings.irLibraryPath || null}
               reverbLibraryPath={settings.reverbLibraryPath || null}
               delayLibraryPath={settings.delayLibraryPath || null}
               irMix={settings.irMix}
               coverImagePath={metadataCoverPath}
-              onClose={() => setPlayerFile(null)}
+              onClose={() => { setPlayerFile(null); setActiveGroupId(null) }}
               chorusPresets={settings.chorusPresets}
               delayPresets={settings.delayPresets}
               reverbPresets={settings.reverbPresets}
@@ -5132,6 +5237,19 @@ INSTRUCTIONS:
               onDelayPresetsChange={(list) => handleSaveSettings({ ...settings, delayPresets: list })}
               onReverbPresetsChange={(list) => handleSaveSettings({ ...settings, reverbPresets: list })}
               onRigPresetsChange={(list) => handleSaveSettings({ ...settings, rigPresets: list })}
+              playGroups={settings.playGroups}
+              activeGroupName={activeGroup?.name ?? null}
+              onLoadGroup={(groupId) => playGroup(settings.playGroups.find((g) => g.id === groupId) ?? null)}
+              onExitGroup={() => setActiveGroupId(null)}
+            />
+          ) : showGroupsAdmin ? (
+            <GroupsAdminPage
+              groups={settings.playGroups}
+              files={files}
+              onRename={handleRenameGroup}
+              onDelete={handleDeleteGroup}
+              onRemoveMember={handleRemoveGroupMember}
+              onLoadToPlayer={playGroup}
             />
           ) : showDashboard ? (
             <div className="relative h-full flex flex-col">
@@ -5755,6 +5873,16 @@ INSTRUCTIONS:
         </div>
       )}
       <StatusBar message={status.message} type={status.type} logPath={status.logPath} />
+
+      {addToGroupPaths && (
+        <AddToGroupPopover
+          paths={addToGroupPaths}
+          groups={settings.playGroups}
+          onAddToGroup={handleAddPathsToExistingGroup}
+          onCreateGroup={handleCreateGroupWithPaths}
+          onClose={() => setAddToGroupPaths(null)}
+        />
+      )}
 
       {showDuplicates && (
         <DuplicatesModal

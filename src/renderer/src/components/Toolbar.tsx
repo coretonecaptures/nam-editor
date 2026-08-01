@@ -50,6 +50,9 @@ interface ToolbarProps {
   toneMapEnabled?: boolean
   onToggleToneMap?: () => void
   onGoHomeView?: () => void
+  groupsAdminActive?: boolean
+  groupsAdminEnabled?: boolean
+  onToggleGroupsAdmin?: () => void
 }
 
 export function Toolbar({
@@ -102,6 +105,9 @@ export function Toolbar({
   toneMapEnabled = false,
   onToggleToneMap,
   onGoHomeView,
+  groupsAdminActive = false,
+  groupsAdminEnabled = false,
+  onToggleGroupsAdmin,
 }: ToolbarProps) {
   const [showFileMenu, setShowFileMenu] = useState(false)
   const [showActionsMenu, setShowActionsMenu] = useState(false)
@@ -438,6 +444,26 @@ export function Toolbar({
             <circle cx="10" cy="10" r="1.1" opacity="0.6" />
             <circle cx="13.5" cy="3" r="1.4" />
             <circle cx="13" cy="7" r="1.1" opacity="0.6" />
+          </svg>
+        </button>
+      )}
+
+      {onToggleGroupsAdmin && (
+        <button
+          onClick={groupsAdminEnabled ? onToggleGroupsAdmin : undefined}
+          title={
+            groupsAdminEnabled
+              ? 'Play groups — hand-picked shortlists to compare back and forth'
+              : 'Load a library to use play groups'
+          }
+          disabled={!groupsAdminEnabled}
+          className={`tb-menu-btn relative ${!groupsAdminEnabled ? 'opacity-40 cursor-not-allowed' : ''} ${groupsAdminActive ? 'active' : ''}`}
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        >
+          {/* Stacked cards — a hand-picked shortlist pulled out of the full library. */}
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+            <rect x="4" y="4" width="12" height="12" rx="1.5" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8 8h12v12H8z" />
           </svg>
         </button>
       )}

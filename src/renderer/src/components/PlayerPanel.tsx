@@ -18,7 +18,7 @@ import loopBarUnlit from '../assets/transport/loop-bar-unlit.png'
 import loopBarLit from '../assets/transport/loop-bar-lit.png'
 import transportPanelBg from '../assets/transport/panel-bg.jpg'
 import { NamFile } from '../types/nam'
-import type { ChorusPreset, DelayPreset, ReverbPreset, RigPreset, RigSnapshot } from '../types/settings'
+import type { ChorusPreset, DelayPreset, PlayGroup, ReverbPreset, RigPreset, RigSnapshot } from '../types/settings'
 import { detectPreset } from '../utils/detectPreset'
 import { getCaptureBestEsr, getEsrTone } from '../utils/esr'
 import {
@@ -248,6 +248,11 @@ interface PlayerPanelProps {
   onDelayPresetsChange?: (presets: DelayPreset[]) => void
   onReverbPresetsChange?: (presets: ReverbPreset[]) => void
   onRigPresetsChange?: (presets: RigPreset[]) => void
+  /** Play groups — a hand-picked scope the stepper can drive from instead of the current folder. */
+  playGroups?: PlayGroup[]
+  activeGroupName?: string | null
+  onLoadGroup?: (groupId: string) => void
+  onExitGroup?: () => void
 }
 
 function toFileUrl(p: string): string {
@@ -429,7 +434,11 @@ export function PlayerPanel({
   onChorusPresetsChange,
   onDelayPresetsChange,
   onReverbPresetsChange,
-  onRigPresetsChange
+  onRigPresetsChange,
+  playGroups = [],
+  activeGroupName = null,
+  onLoadGroup,
+  onExitGroup
 }: PlayerPanelProps & { onClose: () => void }) {
   const [status, setStatus] = useState<PlayerStatus>('idle')
   const [errorMsg, setErrorMsg] = useState('')
@@ -1445,6 +1454,43 @@ export function PlayerPanel({
       </div>
     ) : null
 
+  /**
+   * Switch which play group is driving prev/next without leaving the player — the whole point of
+   * "pick 4 favorites and step through them back to back" without a trip to Group Administration
+   * first. Native <select> reset to "" on every pick for the same reason FxPresetBar does: picking
+   * the group that's already active would not otherwise fire onChange at all.
+   */
+  const groupControl = activeGroupName ? (
+    <div className="flex-shrink-0 flex items-center gap-1 h-[22px] pl-2 pr-1 rounded-full bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900">
+      <span className="text-[10px] font-medium text-indigo-600 dark:text-indigo-300 truncate max-w-[110px]" title={activeGroupName}>
+        {activeGroupName}
+      </span>
+      {onExitGroup && (
+        <button
+          onClick={onExitGroup}
+          title="Exit group — back to the full folder view"
+          className="w-4 h-4 flex items-center justify-center rounded-full text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-200 hover:bg-indigo-200 dark:hover:bg-indigo-800 transition-colors"
+        >
+          <svg viewBox="0 0 24 24" className="w-2.5 h-2.5" fill="none" stroke="currentColor" strokeWidth={3}>
+            <path d="M6 18L18 6M6 6l12 12" strokeLinecap="round" />
+          </svg>
+        </button>
+      )}
+    </div>
+  ) : onLoadGroup && playGroups.length > 0 ? (
+    <select
+      value=""
+      onChange={(e) => { if (e.target.value) onLoadGroup(e.target.value) }}
+      title="Load a play group — drives prev/next until you exit it"
+      className="flex-shrink-0 h-[22px] max-w-[110px] rounded border border-gray-200 dark:border-[var(--border)] bg-white dark:bg-[var(--field)] text-[10px] px-1 text-gray-500 dark:text-gray-400"
+    >
+      <option value="">Load group…</option>
+      {playGroups.map((g) => (
+        <option key={g.id} value={g.id}>{g.name}</option>
+      ))}
+    </select>
+  ) : null
+
   const needsCabIr = captureNeedsCabIr(m.gear_type)
 
   const coverSrc = coverImagePath ? toFileUrl(coverImagePath) : ampPlaceholder
@@ -2190,6 +2236,7 @@ export function PlayerPanel({
           summaryRows={summaryRows}
           onClose={() => setPoppedOut(false)}
           stepper={stepper}
+          groupControl={groupControl}
           recording={recordingSection}
           fx={fxSection}
           tuner={tunerSection}
@@ -2220,6 +2267,7 @@ export function PlayerPanel({
             </div>
           )}
         </div>
+        {groupControl}
         {stepper}
         <div className="flex-shrink-0 flex rounded-[9px] bg-gray-100 dark:bg-[var(--field)] border border-gray-200 dark:border-[var(--border)] p-0.5">
           {PLAYER_MODES.map((m) => (
@@ -2501,6 +2549,7 @@ function PlayerPopout({
   summaryRows,
   onClose,
   stepper,
+  groupControl,
   recording,
   tuner,
   meters,
@@ -2516,6 +2565,7 @@ function PlayerPopout({
   summaryRows: Array<{ label: string; value: string; tone?: string }>
   onClose: () => void
   stepper: React.ReactNode
+  groupControl: React.ReactNode
   recording: React.ReactNode
   tuner: React.ReactNode
   meters: React.ReactNode
@@ -2545,6 +2595,7 @@ function PlayerPopout({
           <span className="text-sm font-semibold truncate">{captureLabel}</span>
           {gearLine && <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">{gearLine}</span>}
         </div>
+        {groupControl}
         {stepper}
         <button
           onClick={onClose}

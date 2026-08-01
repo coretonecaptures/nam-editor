@@ -282,6 +282,20 @@ export interface RigPreset {
   settings: RigSnapshot
 }
 
+/**
+ * A named, hand-picked shortlist of captures for A/B comparison — crosses folders on purpose,
+ * since the whole point is pulling favorites together from wherever they actually live.
+ *
+ * `filePaths` is not rename/move-safe: nothing in the app today repairs a stored path when a file
+ * moves (`libraryCleanupIgnoredPaths` has the identical accepted weakness). A path that stops
+ * resolving is dropped when the group is loaded rather than treated as an error.
+ */
+export interface PlayGroup {
+  id: string
+  name: string
+  filePaths: string[]
+}
+
 export interface AppSettings {
   // Current Amp Info
   enableAmpInfo: boolean
@@ -448,6 +462,9 @@ export interface AppSettings {
   reverbPresets: ReverbPreset[]
   rigPresets: RigPreset[]
 
+  // Named, cross-folder shortlists of captures for A/B comparison in the player
+  playGroups: PlayGroup[]
+
   // AI enrichment (keys stored in main via safeStorage — never in settings JSON)
   hasAnthropicKey: boolean
   hasOpenAiKey: boolean
@@ -546,6 +563,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   delayPresets: [],
   reverbPresets: [],
   rigPresets: [],
+  playGroups: [],
   hasAnthropicKey: false,
   hasOpenAiKey: false,
   aiProvider: 'anthropic',
@@ -712,6 +730,9 @@ function normalizeSettingsMetadataRules(settings: AppSettings): AppSettings {
     delayPresets: normalizePresetList<DelayPreset>(settings.delayPresets),
     reverbPresets: normalizePresetList<ReverbPreset>(settings.reverbPresets),
     rigPresets: normalizePresetList<RigPreset>(settings.rigPresets),
+    playGroups: (settings.playGroups ?? []).filter(
+      (g): g is PlayGroup => Boolean(g && typeof g.id === 'string' && typeof g.name === 'string' && Array.isArray(g.filePaths))
+    ),
   }
 }
 

@@ -50,6 +50,7 @@ interface FileListProps {
   namPlayerAvailable?: boolean
   onOpenInNam?: (filePath: string) => void
   onPlay?: (file: NamFile) => void
+  onAddToGroup?: (paths: string[]) => void
   onFindSimilarTone3000?: (filePath: string) => void
   viewMode: ViewMode
   onViewModeChange: (mode: ViewMode) => void
@@ -109,6 +110,9 @@ const ALL_GRID_COLUMNS: { key: string; label: string; minWidth: number; defaultV
 ]
 
 export { ALL_GRID_COLUMNS }
+
+/** Pinned leading column in grid view — Play + Add to group, not part of the toggleable set. */
+const GRID_ACTIONS_COL_WIDTH = 60
 
 const DEFAULT_VISIBLE_COLS = ALL_GRID_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key)
 const GRID_COL_STORAGE_KEY = 'nam-lab-grid-columns'
@@ -334,6 +338,7 @@ export function FileList({
   namPlayerAvailable,
   onOpenInNam,
   onPlay,
+  onAddToGroup,
   onFindSimilarTone3000,
   viewMode,
   onViewModeChange,
@@ -975,6 +980,8 @@ export function FileList({
           onSelectRange={onSelectRange}
           solidPills={solidPills}
           draggable={draggable}
+          onPlay={onPlay}
+          onAddToGroup={onAddToGroup}
           visibleCols={visibleCols}
           onVisibleColsChange={handleVisibleColsChange}
           columnFilters={columnFilters}
@@ -1027,6 +1034,7 @@ export function FileList({
                 } : undefined}
                 onRemove={onRemove ? () => onRemove(file.filePath) : undefined}
                 onPlay={onPlay ? () => onPlay(file) : undefined}
+                onAddToGroup={onAddToGroup ? () => onAddToGroup([file.filePath]) : undefined}
               />
             ))
           )}
@@ -1125,6 +1133,17 @@ export function FileList({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
               </svg>
               Move {selectedVisible.length > 1 ? `${selectedVisible.length} files` : 'file'} to folder...
+            </button>
+          )}
+          {onAddToGroup && (
+            <button
+              className="w-full text-left px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
+              onClick={() => { onAddToGroup(selectedVisible); setCtxMenu(null) }}
+            >
+              <svg className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Add {selectedVisible.length > 1 ? `${selectedVisible.length} files` : 'file'} to group...
             </button>
           )}
           {onApplyDefaults && (
@@ -1373,7 +1392,8 @@ const DEFAULT_COL_WIDTHS: Record<string, number> = {
 
 function GridView({
   files, allFiles, selectedIds, sortKey, sortDir, onSortClick,
-  anchorIndexRef, onSelect, onSelectRange, solidPills, draggable, visibleCols, onVisibleColsChange,
+  anchorIndexRef, onSelect, onSelectRange, solidPills, draggable, onPlay, onAddToGroup,
+  visibleCols, onVisibleColsChange,
   columnFilters, onColumnFilterChange, onContextMenu
 }: {
   files: NamFile[]
@@ -1387,6 +1407,8 @@ function GridView({
   onSelectRange: (ids: string[]) => void
   solidPills: boolean
   draggable: boolean
+  onPlay?: (file: NamFile) => void
+  onAddToGroup?: (paths: string[]) => void
   visibleCols: string[]
   onVisibleColsChange: (cols: string[]) => void
   columnFilters: Record<string, ColFilterState>
@@ -1409,7 +1431,7 @@ function GridView({
 
   // Order-preserving: visibleCols drives display order
   const activeColumns = visibleCols.map((k) => ALL_GRID_COLUMNS.find((c) => c.key === k)).filter((c): c is typeof ALL_GRID_COLUMNS[0] => c != null)
-  const tableWidth = activeColumns.reduce((s, c) => s + colWidths[c.key], 24)
+  const tableWidth = activeColumns.reduce((s, c) => s + colWidths[c.key], 24 + (onPlay || onAddToGroup ? GRID_ACTIONS_COL_WIDTH : 0))
 
   useEffect(() => {
     const topEl = topScrollRef.current
@@ -1577,6 +1599,9 @@ function GridView({
         <table className="border-collapse text-xs" style={{ tableLayout: 'fixed', width: tableWidth }}>
           <thead className="sticky top-0 z-10">
             <tr className="border-b-2" style={{ background: 'var(--panel-2, #171c22)', borderColor: 'var(--border, #242b34)' }}>
+              {(onPlay || onAddToGroup) && (
+                <th className="border-r" style={{ width: GRID_ACTIONS_COL_WIDTH, borderColor: 'var(--border, #242b34)' }} />
+              )}
               <th className="border-r" style={{ width: 24, borderColor: 'var(--border, #242b34)' }} />
             {activeColumns.map((col) => {
               const hasFilter = !!(columnFilters[col.key]?.text || columnFilters[col.key]?.selected?.length)
@@ -1738,7 +1763,7 @@ function GridView({
         <tbody>
           {files.length === 0 ? (
             <tr>
-              <td colSpan={activeColumns.length + 1} className="text-center py-8 text-gray-400 dark:text-gray-600">No matches</td>
+              <td colSpan={activeColumns.length + 1 + (onPlay || onAddToGroup ? 1 : 0)} className="text-center py-8 text-gray-400 dark:text-gray-600">No matches</td>
             </tr>
           ) : (
             files.map((file, index) => {
@@ -1770,6 +1795,37 @@ function GridView({
                   onContextMenu={(e) => onContextMenu(e, file.filePath)}
                   onMouseDown={(e) => { if (e.shiftKey) e.preventDefault() }}
                 >
+                  {(onPlay || onAddToGroup) && (
+                    <td
+                      className="border-r border-gray-200 dark:border-gray-700/60 text-center align-middle"
+                      style={{ width: GRID_ACTIONS_COL_WIDTH }}
+                    >
+                      <div className="flex items-center justify-center gap-1">
+                        {onPlay && (
+                          <button
+                            className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-green-500 dark:text-green-400 hover:bg-green-500 hover:text-white dark:hover:bg-green-500 dark:hover:text-white transition-colors"
+                            onClick={(e) => { e.stopPropagation(); onPlay(file) }}
+                            title="Play capture"
+                          >
+                            <svg className="w-3.5 h-3.5 ml-0.5" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M8 5.14v14l11-7-11-7z"/>
+                            </svg>
+                          </button>
+                        )}
+                        {onAddToGroup && (
+                          <button
+                            className="flex-shrink-0 p-1 rounded text-gray-500 hover:bg-gray-300 dark:hover:bg-gray-700 hover:text-indigo-400 transition-colors"
+                            onClick={(e) => { e.stopPropagation(); onAddToGroup([file.filePath]) }}
+                            title="Add to group"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  )}
                   <td className="border-r border-gray-200 dark:border-gray-700/60 text-center align-middle" style={{ width: 24 }}>
                     {file.isDirty
                       ? <div className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" title="Unsaved changes" />
@@ -1841,6 +1897,7 @@ function FileItem({
   onDragStart,
   onRemove,
   onPlay,
+  onAddToGroup,
   onContextMenu
 }: {
   file: NamFile
@@ -1850,6 +1907,7 @@ function FileItem({
   onDragStart?: (e: React.DragEvent<HTMLDivElement>) => void
   onRemove?: () => void
   onPlay?: () => void
+  onAddToGroup?: () => void
   onContextMenu?: (e: React.MouseEvent) => void
 }) {
   const meta = file.metadata
@@ -1986,6 +2044,18 @@ function FileItem({
         >
           <svg className="w-5 h-5 ml-0.5" viewBox="0 0 24 24" fill="currentColor">
             <path d="M8 5.14v14l11-7-11-7z"/>
+          </svg>
+        </button>
+      )}
+
+      {onAddToGroup && (
+        <button
+          className="flex-shrink-0 self-center opacity-0 group-hover:opacity-100 p-1.5 rounded hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-500 hover:text-indigo-400 transition-all"
+          onClick={(e) => { e.stopPropagation(); onAddToGroup() }}
+          title="Add to group"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
           </svg>
         </button>
       )}
