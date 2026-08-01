@@ -307,6 +307,10 @@ export interface AppSettings {
   // no cabinet (amp, preamp, pedal_amp, pedal) are raw power-amp signal and sound fizzy without
   // one. Same subfolder-as-category convention as diPreviewLibraryPath.
   irLibraryPath: string
+  // Reverb IRs are kept apart from cabinet IRs on purpose: they are chosen for a different job,
+  // at a different point in the chain, and mixing a hall into the cab picker (or a 4x12 into the
+  // reverb picker) makes both lists worse.
+  reverbLibraryPath: string
   /** Cabinet mix 0..1 applied after the model. 1 = fully wet (cab only). */
   irMix: number
 
@@ -437,9 +441,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   checkForRCBuilds: false,
   diPreviewLibraryPath: '',
   irLibraryPath: '',
+  reverbLibraryPath: '',
   irMix: 1,
   namStandalonePath: '',
-  enableExperimentalTraining: false,
+  // On by default: training is no longer the risky corner it was when this flag was added, and
+  // defaulting it off meant a fresh install hid the Training tab until someone knew to go looking
+  // for a setting to turn it on. Existing installs keep whatever is already in settings.json.
+  enableExperimentalTraining: true,
   namPythonPath: '',
   namTrainingInputWav: '',
   normalizeWavBeforeTraining: false,

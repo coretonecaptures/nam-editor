@@ -34,11 +34,13 @@ import { useAudition } from '../hooks/useAudition'
 import {
   loadDiPrefs,
   resolveActiveDiClip,
-  resolveActiveIr,
+  resolveRememberedIr,
   saveDiPrefs,
   saveIrPath,
   type DiCategoryLike
 } from '../utils/diSelection'
+import { IrPicker } from './IrPicker'
+import { loadIrFavorites } from '../utils/irLibrary'
 
 const TONE_COLORS: Record<string, string> = {
   clean: '#38bdf8',
@@ -322,7 +324,6 @@ export function ToneMapView({
   const [diPath, setDiPath] = useState<string | null>(null)
   const [irPath, setIrPath] = useState<string | null>(null)
   const [diCategories, setDiCategories] = useState<DiCategoryLike[]>([])
-  const [irCategories, setIrCategories] = useState<DiCategoryLike[]>([])
   const audition = useAudition(diPath, { irPath, irMix })
 
   const plotRef = useRef<HTMLDivElement | null>(null)
@@ -764,21 +765,15 @@ export function ToneMapView({
 
   // Same cab the player would apply. useAudition only uses it for captures that lack a cab of
   // their own, so this is safe to resolve unconditionally.
+  // Resolved from what the player last chose rather than by listing the library: an IR library is
+  // typically a bought pack of many thousands of files, far too many to enumerate here just to
+  // pick a default. IrPicker owns the browsing.
   useEffect(() => {
-    let cancelled = false
     if (!irLibraryPath) {
       setIrPath(null)
       return
     }
-    void (async () => {
-      const result = await window.api.scanWavLibrary(irLibraryPath)
-      if (cancelled) return
-      setIrCategories(result.categories)
-      setIrPath(resolveActiveIr(result.categories))
-    })()
-    return () => {
-      cancelled = true
-    }
+    setIrPath(resolveRememberedIr(loadIrFavorites()))
   }, [irLibraryPath])
 
   /** Plot geometry must match ToneGrid's own padding for cursor->value maths to line up. */
@@ -1206,7 +1201,7 @@ export function ToneMapView({
               otherwise captures are auditioned through settings you cannot see or change here. */}
           {/* Always shown, not only while listening: it is also how you find out what a listening
               mode WILL use, and the cab warning is the main way the gear-type mismatch surfaces. */}
-          {(diCategories.length > 0 || irCategories.length > 0) && (
+          {(diCategories.length > 0 || !!irLibraryPath) && (
             <div
               className={`flex items-center gap-3 px-4 pt-3 text-[11px] flex-wrap ${
                 listening ? '' : 'opacity-70'
@@ -1268,28 +1263,20 @@ export function ToneMapView({
 
               <label className="flex items-center gap-1.5">
                 <span className="text-gray-500 dark:text-gray-400">Cab IR</span>
-                <select
-                  value={irPath ?? ''}
-                  onChange={(e) => {
-                    const path = e.target.value || null
-                    setIrPath(path)
-                    saveIrPath(path)
+                <IrPicker
+                  variant="inline"
+                  allowNone
+                  libraryPath={irLibraryPath ?? ''}
+                  value={irPath}
+                  onChange={(ref) => {
+                    setIrPath(ref.path)
+                    saveIrPath(ref.path)
                   }}
-                  disabled={irCategories.length === 0}
-                  className="h-6 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 px-1.5 max-w-[190px] disabled:opacity-40"
-                  title="Applied only to captures that do not already include a cab."
-                >
-                  <option value="">None (dry)</option>
-                  {irCategories.map((c) => (
-                    <optgroup key={c.name} label={c.name}>
-                      {c.files.map((f) => (
-                        <option key={f.path} value={f.path}>
-                          {f.name.replace(/\.wav$/i, '')}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
+                  onClear={() => {
+                    setIrPath(null)
+                    saveIrPath(null)
+                  }}
+                />
               </label>
 
               {/* A mixed scope is not comparable by ear: the cab is applied to one half and

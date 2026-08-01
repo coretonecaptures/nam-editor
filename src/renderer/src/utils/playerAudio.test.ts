@@ -10,6 +10,9 @@ import {
   captureNeedsCabIr,
   base64ToArrayBuffer,
   computePlaybackGain,
+  computeLiveNormalizeGain,
+  loudnessAfterIr,
+  rmsDbOf,
   resumeOffsetSec,
   PLAY_RESTART_THRESHOLD,
   findLoudestWindowStart,
@@ -387,5 +390,76 @@ describe('resumeOffsetSec', () => {
   it('returns 0 when no clip is loaded, so Play cannot seek into nothing', () => {
     expect(resumeOffsetSec(0.5, 0)).toBe(0)
     expect(resumeOffsetSec(0.5, -1)).toBe(0)
+  })
+})
+
+describe('rmsDbOf', () => {
+  it('measures a full-scale square wave as 0 dBFS', () => {
+    const buf = new Float32Array(1000)
+    for (let i = 0; i < buf.length; i++) buf[i] = i % 2 === 0 ? 1 : -1
+    expect(rmsDbOf(buf)).toBeCloseTo(0, 6)
+  })
+
+  it('halving amplitude drops the reading by 6 dB', () => {
+    const loud = new Float32Array(1000).fill(0.5)
+    const quiet = new Float32Array(1000).fill(0.25)
+    expect(rmsDbOf(loud) - rmsDbOf(quiet)).toBeCloseTo(6.02, 1)
+  })
+
+  it('reports silence as -Infinity rather than NaN', () => {
+    expect(rmsDbOf(new Float32Array(100))).toBe(-Infinity)
+  })
+})
+
+describe('loudnessAfterIr', () => {
+  it('shifts the declared loudness by however much the IR moved the level', () => {
+    const before = new Float32Array(1000).fill(0.5)
+    // 6 dB quieter after the cab.
+    const after = new Float32Array(1000).fill(0.25)
+    expect(loudnessAfterIr(-15, before, after)).toBeCloseTo(-21.02, 1)
+  })
+
+  it('leaves the loudness alone when the IR did not change the level', () => {
+    const same = new Float32Array(1000).fill(0.4)
+    expect(loudnessAfterIr(-15, same, same)).toBeCloseTo(-15, 6)
+  })
+
+  it('passes null through, so an unknown loudness stays unknown', () => {
+    const buf = new Float32Array(100).fill(0.3)
+    expect(loudnessAfterIr(null, buf, buf)).toBeNull()
+  })
+
+  it('keeps a capture with a cab at the same target as one without', () => {
+    // The bug this exists to prevent: the IR path used to abandon the declared loudness and
+    // peak-normalize instead, landing several dB louder than the same capture dry.
+    const dry = new Float32Array(2000)
+    for (let i = 0; i < dry.length; i++) dry[i] = Math.sin(i / 8) * 0.5
+    const wet = new Float32Array(dry.length)
+    for (let i = 0; i < wet.length; i++) wet[i] = dry[i] * 0.3
+
+    const dryGain = computePlaybackGain(dry, -15)
+    const wetGain = computePlaybackGain(wet, loudnessAfterIr(-15, dry, wet))
+
+    const dryOut = rmsDbOf(dry.map((v) => v * dryGain))
+    const wetOut = rmsDbOf(wet.map((v) => v * wetGain))
+    expect(Math.abs(dryOut - wetOut)).toBeLessThan(0.5)
+  })
+})
+
+describe('computeLiveNormalizeGain', () => {
+  it('targets the same loudness the offline path does', () => {
+    // A model 6 dB hotter than target should be turned down by 6 dB.
+    expect(computeLiveNormalizeGain(TARGET_LOUDNESS_DB + 6)).toBeCloseTo(0.5, 2)
+    expect(computeLiveNormalizeGain(TARGET_LOUDNESS_DB)).toBeCloseTo(1, 6)
+  })
+
+  it('is unity when the model declares no loudness', () => {
+    expect(computeLiveNormalizeGain(null)).toBe(1)
+    expect(computeLiveNormalizeGain(NaN)).toBe(1)
+  })
+
+  it('clamps absurd loudness values, which go straight to headphones with no limiter', () => {
+    expect(computeLiveNormalizeGain(-200)).toBeLessThanOrEqual(4)
+    expect(computeLiveNormalizeGain(200)).toBeGreaterThanOrEqual(0.02)
   })
 })

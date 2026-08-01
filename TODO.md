@@ -1,6 +1,202 @@
 # TODO
 
+## Convolution delay
+
+The reverb can load an impulse; the delay cannot. A convolution delay would cover the things an
+algorithmic line cannot reach — real tape machine repeats with their wow, head bump and saturation
+baked in, spring tanks, and the odd non-linear pedals people capture.
+
+**Blocked on material.** Nothing has been tried yet because no delay impulse pack has been bought
+or tested, and it is genuinely unclear whether the results justify the CPU. Worth remembering what
+the reverb work established: convolution can only reproduce a LINEAR, TIME-INVARIANT system, and a
+tape delay's wow, flutter and self-oscillation are none of those. A tape impulse will give the
+tonal colour of the repeats but not their movement.
+
+If it turns out to be worth it, the pieces mostly exist:
+
+- `setReverbIr` already does the whole job — decode, trim silence, resample, stereo, energy
+  normalisation. A delay convolver would be the same code pointed at a different node.
+- `IrPicker` already browses an indexed library; a third library path alongside `irLibraryPath`
+  and `reverbLibraryPath` follows the pattern set in Settings &rarr; Player.
+- Impulse length is the open question. Reverb impulses trim to ~11s; a delay impulse with several
+  audible repeats could be longer still, and convolution cost is linear in length.
+
+---
+
+## Noise gate
+
+Wanted at the front of the live chain, before the model — a high-gain capture amplifies room noise
+and single-coil hum along with everything else, and the tuner work already showed how much hum a
+real rig carries.
+
+**Sourcing question, not a coding one.** The official NeuralAmpModelerPlugin has a gate whose
+behaviour is well matched to these models, and reusing it would sound closer to what people expect
+than something hand-rolled. Before any of that:
+
+- **Confirm the licence.** The plugin and NeuralAmpModelerCore need checking for whether their
+  terms allow lifting the DSP into this project, and under what attribution. Do not copy first and
+  read the licence afterwards.
+- Confirm where the gate actually lives — plugin repo or core — since only one of them is vendored
+  in the usual builds.
+- A gate is a few dozen lines (threshold, attack, hold, release, with the detector on the dry
+  input). Writing one is not the hard part; matching NAM's feel is.
+
+Placement is settled either way: on the raw input, before the model. Gating after a high-gain model
+means gating the amplified noise, which chatters.
+
+---
+
+## Pop-out pedalboard view for the player FX
+
+A photoreal pedalboard as an alternative to the condensed slider layout, in a modal/full-screen
+view so it is not constrained by the player panel's 420px floor.
+
+**Status: assets prepared, nothing wired up.** No code references any of it yet.
+
+### What exists
+
+| File | State |
+|---|---|
+| `assets/fx/pedalboard.jpg` | Gemini render, 2528x1686. Watermark patched out. Chorus's baked-in lit LED neutralised, so all three sockets are unlit and the glow is ours to control. |
+| `assets/fx/knob-black.png` | Sheet row 1 #2. Cut, de-fringed, circular-masked. Delay. |
+| `assets/fx/knob-cream.png` | Sheet row 1 #4. Same treatment. Chorus + Reverb. |
+
+Measured coordinates (pixels in the 2528x1686 background):
+
+| Pedal | x | y | w | h |
+|---|---|---|---|---|
+| Chorus | 138 | 436 | 556 | 862 |
+| Delay | 793 | 436 | 748 | 865 |
+| Reverb | 1640 | 435 | 755 | 863 |
+
+LED centre is at (0.50, 0.687) of each pedal. Footswitch top edge on the chorus is y=1096 — any
+future clone/patch of that pedal must stay above it, which is what the asserts in the prep script
+enforce. Knob diameter used in the preview: 0.052 of the image width.
+
+### The architecture decision that matters
+
+Position every control as a **percentage of its own pedal**, never of the background image. Then
+swapping the artwork means re-measuring three rectangles and nothing else; the 16 knob positions,
+labels, LEDs and switches all survive untouched. Done the obvious way — absolute coordinates
+against the whole image — every background change costs a re-measure of all 22 elements.
+
+### Still to build
+
+- Knob component: **vertical** drag (rotational drag feels wrong), shift for fine, wheel, double-
+  click to reset, and a visually-hidden `<input type="range">` behind each one so keyboard and
+  screen-reader support is not thrown away.
+- Rotation is the whole bitmap, -135deg..+135deg. Safe because these knobs are radially symmetric
+  apart from the indicator line — the chrome skirt rotates but reads as static.
+- Silk-screen labels as real HTML text, blended (`mix-blend-mode` / screen) so the ink picks up
+  the brushed grain rather than floating on it. Proven in the preview; do NOT bake text into the
+  artwork.
+- LED sprites (see below) rather than a CSS glow — the CSS approximation does not look good enough.
+- The reverb's **Plate/Convolution toggle has no home** in the current artwork.
+
+### If the artwork is regenerated
+
+Lock the control set first: **chorus 3, delay 7, reverb 6 + one toggle**, three footswitches,
+three LEDs. Then:
+
+- Still **no knobs** in the render. They have to rotate, and baking them freezes positions that
+  are still being tuned.
+- Feed the existing preview back as a **reference image** for proportions. The one real defect in
+  the current render is that the delay enclosure never got the extra width it was asked for, so
+  7 knobs at 4-across is cramped while the chorus has half a pedal of dead space.
+- Ask for **two versions: all LEDs off, and all LEDs on.** The off one is the background; the on
+  one exists only so the three lit LEDs can be cut out as sprites. Three pedals switching
+  independently is 8 combinations — two whole-board images cover 2 of them, but background +
+  three sprites covers all 8, with real rendered glow.
+- Give the reverb somewhere for its toggle.
+
+### Open
+
+- Cream knob's indicator is a wide stripe that reads as a screw slot rather than a pointer at
+  size. Row 1 #6 (plain black, thin line, no chrome skirt) is the obvious alternative.
+- Whether the pop-out replaces the condensed layout at wide widths or stays a separate mode.
+
+---
+
+## Save the player's FX rig as a recallable preset
+
+Every player control now persists — delay, chorus, reverb (mode and per-mode parameters), cab IR,
+reverb impulse, volume, input channel, output device — but there is exactly ONE of each. Dialling
+in a clean ambient sound means losing the tight slapback you had, and there is no way back to it
+short of remembering six slider positions.
+
+**Wanted:** named presets, saved and recalled from the player.
+
+- A preset is the FX state, not the rig: delay, chorus, reverb settings, and the chosen reverb
+  impulse path. Deliberately NOT the input channel, output device, or input gain — those describe
+  the room you are sitting in, not the sound, and carrying them between presets would mean
+  recalling a preset could silently change which socket the app listens to.
+- Cab IR is the awkward case. It belongs to the capture more than to the effects, and it is
+  already shared with the Tone Map through `diSelection.ts`. Probably store it in the preset but
+  make recalling it optional.
+- Storage: the settings file rather than localStorage, since presets are worth surviving a
+  profile reset and worth exporting. `AppSettings` already carries similar lists
+  (`trainingPresets`, `metadataSuggestRuleLibrary`) that this can follow.
+
+Open questions:
+- **Per-capture recall.** Should a capture remember which preset it was last auditioned through?
+  Tempting, but it would make two captures sound different for reasons the Tone Map cannot show,
+  which is the same trap the shared DI/cab choice exists to avoid.
+- **Factory presets.** A few starting points (slapback, ambient wash, clean plate) would show what
+  the controls do far better than the defaults, which are all off.
+- Whether presets should also cover the preview player once FX exist there — see below.
+
+---
+
+## FX in the preview player
+
+Delay, chorus and reverb are Live-only. Preview renders offline through a Worker
+(`namRender.worker`), so each effect would need a second, offline implementation — the live ones
+are all Web Audio nodes and an AudioWorklet, none of which exist in that path. Until then, a
+capture auditioned in Preview and played in Live are not the same sound, which undercuts the
+"both modes agree" principle the shared cab IR was built for.
+
+The plausible route is an OfflineAudioContext render for the effects stage: it supports the same
+node types, so the delay and convolution reverb would port nearly unchanged. The plate reverb
+would need the worklet to run under OfflineAudioContext, which is supported but untested here.
+
+---
+
+## Let the user choose the start/end point of an audition clip
+
+Both the hover audition and the preview render take a fixed slice of the DI, chosen by
+`findLoudestWindowStart` — the loudest window of `AUDITION_CLIP_SECONDS` (hover, 5 s) or
+`MAX_PREVIEW_SECONDS` (preview, 12 s). "Loudest" is a decent guess and a poor answer: the part of
+a DI that best shows what a capture does is often not its loudest part, and the automatic window
+can land mid-phrase, cut off a chord, or sit on the one bar of palm mutes in an otherwise open
+riff. There is no way to say "audition *this* bit".
+
+**Wanted:** per-clip in/out points the user sets once and the app remembers.
+
+- A waveform strip for the selected DI with draggable in/out handles, most naturally in the DI
+  Source section of the player, where the clip is already chosen.
+- Stored per DI file path, alongside the existing DI preferences in `utils/diSelection.ts`
+  (`nam-player-di-prefs`) — the same "player and Tone Map must agree" argument applies, since a
+  capture auditioned over two different bars of playing is not being compared fairly.
+- Falls back to `findLoudestWindowStart` when a clip has no saved points, so nothing changes for
+  anyone who doesn't set them.
+
+Open questions:
+- **Two lengths or one.** Hover wants short (render cost is linear in length); preview can afford
+  12 s. Either the user sets one region and hover takes the first `AUDITION_CLIP_SECONDS` of it,
+  or they set the region per mode. The first is simpler and probably right.
+- **Cache invalidation.** `useAudition` caches rendered clips keyed by capture; changing the
+  in/out points must evict them, or auditioning keeps playing the old region.
+- Whether the clip length itself should become a setting at the same time — it is currently the
+  hardcoded `AUDITION_CLIP_SECONDS` and `MAX_PREVIEW_SECONDS`.
+
+---
+
 ## [HIGH PRIORITY] Settings: dedicated "Playback" section with per-type DI folders
+
+**Partly done.** Settings → **Player** now exists and holds `diPreviewLibraryPath`,
+`irLibraryPath` and `irMix`. The per-type DI folder work below is still outstanding. The IR half
+of the question is also answered: `irLibraryPath` is now recursively indexed and browsed through
+IrPicker rather than by subfolder-as-category, so IRs do *not* need per-type folders.
 
 Player settings are currently squeezed into Settings → Library alongside unrelated options
 (`diPreviewLibraryPath`, `irLibraryPath`, `irMix`). They deserve their own **Playback** section,

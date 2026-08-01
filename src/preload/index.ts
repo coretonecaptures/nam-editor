@@ -25,6 +25,31 @@ const api = {
     libraryPath: string
   ): Promise<{ categories: Array<{ name: string; files: Array<{ name: string; path: string }> }>; error?: string }> =>
     ipcRenderer.invoke('player:scanWavLibrary', libraryPath),
+  // The IR library is indexed rather than scanned: it recurses the whole tree (bought IR packs
+  // nest several folders deep) and stays in the main process, because half a million paths is far
+  // too much to hand to the renderer. These three calls are the only view onto it.
+  indexIrLibrary: (
+    libraryPath: string,
+    force?: boolean
+  ): Promise<{ count: number; scannedAt?: number; error?: string }> =>
+    ipcRenderer.invoke('player:indexIrLibrary', libraryPath, force),
+  searchIrLibrary: (
+    libraryPath: string,
+    query: string,
+    limit?: number
+  ): Promise<{
+    results: Array<{ name: string; path: string; rel: string }>
+    total: number
+    indexed: boolean
+  }> => ipcRenderer.invoke('player:searchIrLibrary', libraryPath, query, limit),
+  browseIrLibrary: (
+    libraryPath: string,
+    relDir: string
+  ): Promise<{
+    folders: Array<{ name: string; count: number }>
+    files: Array<{ name: string; path: string; rel: string }>
+    indexed: boolean
+  }> => ipcRenderer.invoke('player:browseIrLibrary', libraryPath, relDir),
   hashFiles: (filePaths: string[]): Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]> =>
     ipcRenderer.invoke('file:hashMany', filePaths),
   hashFilesWithoutMetadata: (filePaths: string[]): Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]> =>

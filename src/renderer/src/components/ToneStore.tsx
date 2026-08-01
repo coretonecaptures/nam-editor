@@ -15,7 +15,9 @@ interface ToneResult {
   // platform is kept for backward compat with older API responses.
   format?: ToneFormat
   platform?: Exclude<TonePlatform, ''>
-  sizes: string[]
+  // Optional since the 2026-07 API update stopped returning it on search results. Anything
+  // reading it must cope with its absence rather than treating that as "no sizes".
+  sizes?: string[]
   images: string[] | null
   downloads_count: number
   models_count: number
@@ -109,21 +111,51 @@ function normalizeUsername(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '')
 }
 
-function normalizePlatform(value?: string | null): TonePlatform {
-  return (value ?? '').toLowerCase() as TonePlatform
+/**
+ * Coerce an API field to a lowercase string.
+ *
+ * Typed as a string, but the API is free to change that under us — and it does: `sizes` has
+ * already vanished from the search response. Calling .toLowerCase() on whatever arrives throws,
+ * and because these run inside the search callback, one changed field would empty the entire
+ * result list rather than degrade one filter.
+ */
+export function asLowerString(value: unknown): string {
+  if (typeof value === 'string') return value.toLowerCase()
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value).toLowerCase()
+  // A single-element array is how an API most often widens a scalar field.
+  if (Array.isArray(value) && value.length > 0) return asLowerString(value[0])
+  return ''
+}
+
+function normalizePlatform(value?: unknown): TonePlatform {
+  return asLowerString(value) as TonePlatform
 }
 
 // Normalise legacy/preview gear values to the canonical API values.
-function normalizeGear(value?: string | null): string {
-  const v = (value ?? '').toLowerCase()
+export function normalizeGear(value?: unknown): string {
+  const v = asLowerString(value)
   if (v === 'full-rig') return 'amp-cab'
   if (v === 'speaker-cab') return 'cab'  // email preview name vs live API name
   return v
 }
 
 // Returns the effective format (nam/ir/etc) preferring the new format field over legacy platform.
-function toneEffectiveFormat(tone: Pick<ToneResult, 'format' | 'platform'>): TonePlatform {
+export function toneEffectiveFormat(tone: Pick<ToneResult, 'format' | 'platform'>): TonePlatform {
   return normalizePlatform(tone.format ?? tone.platform)
+}
+
+/**
+ * Format filter, applied on top of the server's own — same reasoning as filterToneBySize.
+ *
+ * A tone that declares no format at all is kept: the request already carried `format`, so the
+ * server has had its say, and excluding on a field the API may simply have stopped sending is how
+ * a whole result list disappears.
+ */
+export function filterToneByFormat(tone: ToneResult, platform: TonePlatform): boolean {
+  if (!platform) return true
+  const effective = toneEffectiveFormat(tone)
+  if (!effective) return true
+  return effective === platform
 }
 
 function mergeToneResults(...lists: ToneResult[][]): ToneResult[] {
@@ -148,16 +180,28 @@ function mergeToneResults(...lists: ToneResult[][]): ToneResult[] {
   return Array.from(merged.values())
 }
 
-function filterToneByArchitecture(tone: ToneResult, architecture: ToneArchitectureFilter): boolean {
+export function filterToneByArchitecture(tone: ToneResult, architecture: ToneArchitectureFilter): boolean {
   if (!architecture) return true
   if (architecture === '1') return (tone.a1_models_count ?? 0) > 0
   if (architecture === '2') return (tone.a2_models_count ?? 0) > 0
   return (tone.custom_models_count ?? 0) > 0
 }
 
-function filterToneBySize(tone: ToneResult, size: string): boolean {
+/**
+ * Size filter, applied on top of the server's own.
+ *
+ * The request already sends `sizes`, so the server has filtered; this is a second pass over the
+ * same criterion. That was harmless while the response carried `sizes` — and became a total
+ * blackout when the API stopped returning the field, because "no sizes listed" then read as "does
+ * not match" for every result.
+ *
+ * So an ABSENT field means "the server already decided, keep it", while a present-but-empty one
+ * still means the tone genuinely has no sizes.
+ */
+export function filterToneBySize(tone: ToneResult, size: string): boolean {
   if (!size) return true
-  return (tone.sizes ?? []).some((entry) => entry.toLowerCase() === size.toLowerCase())
+  if (!Array.isArray(tone.sizes)) return true
+  return tone.sizes.some((entry) => asLowerString(entry) === size.toLowerCase())
 }
 
 function summarizeArchitectureBadges(tone: ToneResult | ToneDetail): Array<{ key: string; label: string; toneClass: string }> {
@@ -395,7 +439,7 @@ export function ToneStore({
             let filtered = trendingData.data ?? []
             if (searchSizeValue) filtered = filtered.filter((tone) => filterToneBySize(tone, searchSizeValue))
             if (arch) filtered = filtered.filter((tone) => filterToneByArchitecture(tone, arch))
-            if (plat) filtered = filtered.filter((tone) => toneEffectiveFormat(tone) === plat)
+            if (plat) filtered = filtered.filter((tone) => filterToneByFormat(tone, plat))
             return {
               ok: true,
               data: {
@@ -457,7 +501,7 @@ export function ToneStore({
       if (g) filtered = filtered.filter((tone) => normalizeGear(tone.gear) === normalizeGear(g))
       if (searchSizeValue) filtered = filtered.filter((tone) => filterToneBySize(tone, searchSizeValue))
       if (arch) filtered = filtered.filter((tone) => filterToneByArchitecture(tone, arch))
-      if (plat) filtered = filtered.filter((tone) => toneEffectiveFormat(tone) === plat)
+      if (plat) filtered = filtered.filter((tone) => filterToneByFormat(tone, plat))
       filtered = [...filtered].sort((a, b) => {
         const aTime = a.created_at ? new Date(a.created_at).getTime() : 0
         const bTime = b.created_at ? new Date(b.created_at).getTime() : 0
@@ -469,7 +513,7 @@ export function ToneStore({
     if (!useCreated && !useFavorited) {
       if (searchSizeValue) filtered = filtered.filter((tone) => filterToneBySize(tone, searchSizeValue))
       if (arch) filtered = filtered.filter((tone) => filterToneByArchitecture(tone, arch))
-      if (plat) filtered = filtered.filter((tone) => toneEffectiveFormat(tone) === plat)
+      if (plat) filtered = filtered.filter((tone) => filterToneByFormat(tone, plat))
     }
     setResults(filtered)
     setTotal((useCreated || useFavorited || requestedUsername) ? filtered.length : (data.total ?? 0))

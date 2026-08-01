@@ -96,3 +96,16 @@ export function resolveActiveIr(categories: DiCategoryLike[]): string | null {
   const remembered = loadIrPath()
   return all.find((f) => f.path === remembered)?.path ?? all[0].path
 }
+
+/**
+ * The IR to audition through, without needing a listing of the library.
+ *
+ * The categories overload above could fall back to "the first file", which was reasonable when a
+ * library was a handful of hand-sorted cabs. It isn't once the library is a bought pack of a few
+ * hundred thousand: the alphabetically-first IR is an arbitrary stranger, and quietly colouring
+ * every amp-only capture with it is worse than leaving the cab off and saying so. So the fallback
+ * is a favourite the user actually chose, and failing that, nothing.
+ */
+export function resolveRememberedIr(favorites: Array<{ path: string }> = []): string | null {
+  return loadIrPath() ?? favorites[0]?.path ?? null
+}

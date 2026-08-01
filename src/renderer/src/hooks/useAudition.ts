@@ -31,8 +31,15 @@ import { applyCabinetIr } from '../utils/audioGraph'
 import { ScanRenderPool } from '../utils/scanRenderPool'
 import type { NamRenderRequest } from '../workers/namRender.worker'
 
-/** Short on purpose: a 12 s clip costs ~1.5 s to render, which makes auditioning unusable. */
-export const AUDITION_CLIP_SECONDS = 3
+/**
+ * Length of the clip auditioned on hover.
+ *
+ * Bounded by render cost, which is linear in clip length: a 12 s clip takes ~1.5 s to render,
+ * which makes hovering unusable. 3 s was under the length of a musical phrase, though — not long
+ * enough to tell two captures apart — so this trades ~0.25 s more render for a clip you can
+ * actually judge. Also sets cache memory: CACHE_CAPACITY clips at this length, mono float32.
+ */
+export const AUDITION_CLIP_SECONDS = 5
 const POOL_SIZE = 4
 /** Rendered clips kept in memory before the furthest from attention are dropped. */
 const CACHE_CAPACITY = 64

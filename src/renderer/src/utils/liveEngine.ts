@@ -1,3 +1,5 @@
+import { impulseSeconds, trimImpulse, type ImpulseResponse } from './impulseTrim'
+
 /**
  * Real-time NAM engine: guitar in -> model -> cabinet IR -> speakers.
  *
@@ -29,6 +31,153 @@ export interface LiveEngineState {
   error: string | null
 }
 
+/**
+ * Pre-effects tone stack, mimicking a plugin's amp EQ.
+ *
+ * Sits at the very front of the chain, before the chorus, so it shapes the amp's own voice going
+ * INTO the effects rather than colouring their output. Frequencies are the conventional guitar
+ * tone-stack centres, not measured from any particular plugin.
+ */
+export interface EqSettings {
+  enabled: boolean
+  bassDb: number
+  midDb: number
+  trebleDb: number
+}
+
+export const DEFAULT_EQ: EqSettings = { enabled: false, bassDb: 0, midDb: 0, trebleDb: 0 }
+
+/** Tone-stack centres. Bass shelf, mid bell, treble shelf. */
+export const EQ_BASS_HZ = 100
+export const EQ_MID_HZ = 650
+export const EQ_TREBLE_HZ = 3200
+/** Mid bell width. Broad enough to move a voice rather than notch it. */
+export const EQ_MID_Q = 0.7
+export const EQ_MAX_DB = 12
+
+/** Ping-pong stereo delay. All of it maps onto native nodes; none of it needs the worklet. */
+export interface DelaySettings {
+  /** Wet level, 0..1. At 0 the delay nodes stay wired but silent. */
+  mix: number
+  /** Left tap in milliseconds; the right tap follows it. */
+  timeMs: number
+  /** Right tap as a multiple of the left. 1 is symmetrical; 0.5 gives dotted-eighth patterns. */
+  ratio: number
+  /** Regeneration, 0..0.9. Clamped below 1 or the loop runs away. */
+  feedback: number
+  /** Lowpass in the feedback loop — each repeat darker than the last, as tape and BBD both do. */
+  toneHz: number
+  /**
+   * Modulation depth in milliseconds, 0 for none.
+   *
+   * Moving the delay time moves the read head, which shifts the pitch of what is already in the
+   * line — the same mechanism as tape wow or a BBD chorus. A fraction of a millisecond is all it
+   * takes; past a few the repeats audibly warble.
+   */
+  modDepthMs: number
+  /** Modulation rate in Hz. */
+  modRateHz: number
+  /** Master on/off. Off bypasses the wet path entirely rather than just muting it. */
+  enabled: boolean
+  /**
+   * Ping-pong, or plain mono repeats.
+   *
+   * On, the taps are chained so repeats alternate across the stereo field. Off, one tap feeds
+   * both channels equally and the delay sits centred — which is what you want under a dense mix,
+   * or when the repeats are meant to thicken rather than move.
+   */
+  pingPong: boolean
+}
+
+/** Which reverb is in the chain. */
+export type ReverbMode = 'plate' | 'convolution'
+
+/**
+ * Corner frequencies for the reverb's tone controls.
+ *
+ * These are the standard places engineers reach for when a reverb sits badly in a mix, so they are
+ * fixed rather than exposed as two more sliders:
+ *
+ *  - LOW, 250 Hz. Reverb turns to mud from roughly 200-400 Hz down, because the tail's low end
+ *    piles up under everything and blurs the attack. Cutting here is the single most common move
+ *    on any send reverb, and the reason hardware units ship with a low-cut in the tail.
+ *
+ *  - HIGH, 4 kHz. Air and sizzle live above ~4 kHz. Real rooms absorb high frequencies as sound
+ *    travels, so cutting here reads as "further away" and "darker room", while a lift reads as
+ *    "brighter plate". Cut ranges of 5-8 kHz are typical; 4 kHz sits low enough that a boost adds
+ *    audible sheen rather than just hiss.
+ */
+export const REVERB_LOW_SHELF_HZ = 250
+export const REVERB_HIGH_SHELF_HZ = 4000
+/** Shelf range. Wide enough to remove boom entirely or add obvious air, without being a synth. */
+export const REVERB_EQ_MAX_DB = 15
+
+export interface ReverbSettings {
+  enabled: boolean
+  mode: ReverbMode
+  mix: number
+  /** Low shelf gain in dB at REVERB_LOW_SHELF_HZ. Negative tightens the tail. */
+  lowDb: number
+  /** High shelf gain in dB at REVERB_HIGH_SHELF_HZ. Positive brightens it. */
+  highDb: number
+  /** Plate only: tail length, 0..1. */
+  roomSize: number
+  /** Plate only: how fast highs decay out of the tail, 0..1. */
+  damping: number
+  /** Plate only: stereo spread, 0..1. */
+  width: number
+}
+
+export const DEFAULT_REVERB: ReverbSettings = {
+  enabled: false,
+  mode: 'plate',
+  mix: 0.25,
+  // A gentle low cut by default: it is almost always wanted, and a tail with no low-end trim is
+  // the first thing that makes a reverb sound like it is fighting the amp.
+  lowDb: -3,
+  highDb: 0,
+  roomSize: 0.72,
+  damping: 0.5,
+  width: 1
+}
+
+export interface ChorusSettings {
+  enabled: boolean
+  mix: number
+  /** Sweep depth in milliseconds. */
+  depthMs: number
+  rateHz: number
+}
+
+export const DEFAULT_CHORUS: ChorusSettings = {
+  enabled: false,
+  mix: 0.35,
+  depthMs: 2.6,
+  rateHz: 0.5
+}
+
+/** Centre delay a chorus sweeps around. Short enough to fuse with the dry signal. */
+const CHORUS_CENTRE_MS = 18
+
+export const DEFAULT_DELAY: DelaySettings = {
+  mix: 0,
+  timeMs: 380,
+  ratio: 1,
+  feedback: 0.35,
+  toneHz: 4200,
+  modDepthMs: 0,
+  modRateHz: 0.6,
+  enabled: false,
+  pingPong: true
+}
+
+/** Highest feedback allowed. Above this the loop gains more than it loses and never decays. */
+export const MAX_FEEDBACK = 0.9
+/** Longest tap the delay lines are allocated for. */
+export const MAX_DELAY_SECONDS = 2
+/** Deepest modulation offered. Beyond this the repeats warble rather than shimmer. */
+export const MAX_MOD_DEPTH_MS = 8
+
 export interface LiveStartOptions {
   /** Input device to capture from; omit for the system default. */
   deviceId?: string | null
@@ -40,6 +189,30 @@ export interface LiveStartOptions {
   irMix?: number
   inputGain?: number
   outputGain?: number
+  /**
+   * Which input channel carries the guitar, 0-based.
+   *
+   * Nearly every interface is stereo, and a guitar is plugged into ONE of its inputs. Asking for
+   * a mono stream does not pick that input, it downmixes both — so a guitar on input 2 arrived at
+   * roughly half level with whatever was on input 1 summed into it, and nothing in the UI
+   * explained why.
+   */
+  inputChannel?: number
+  /** Output device to play through; omit for the system default. */
+  outputDeviceId?: string | null
+  eq?: EqSettings
+  delay?: DelaySettings
+  reverb?: ReverbSettings
+  chorus?: ChorusSettings
+  /** Decoded reverb impulse, or null for none. Stereo is preserved. */
+  reverbIr?: ImpulseResponse | null
+  /**
+   * Gain that brings this model to the same playback loudness the offline preview targets.
+   * Compute it with computeLiveNormalizeGain from playerAudio.
+   */
+  normalizeGain?: number
+  /** Listener volume trim, 0..1. */
+  volume?: number
 }
 
 /**
@@ -49,6 +222,16 @@ export interface LiveStartOptions {
  * first and immediately discards it — the standard workaround, and harmless because the live
  * player is about to want that permission anyway.
  */
+export async function listAudioOutputs(): Promise<LiveDeviceInfo[]> {
+  const devices = await navigator.mediaDevices.enumerateDevices()
+  return devices
+    .filter((d) => d.kind === 'audiooutput')
+    .map((d, index) => ({
+      deviceId: d.deviceId,
+      label: d.label || `Output ${index + 1}`
+    }))
+}
+
 export async function listAudioInputs(): Promise<LiveDeviceInfo[]> {
   try {
     const probe = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -70,12 +253,76 @@ export class LiveEngine {
   private ctx: AudioContext | null = null
   private stream: MediaStream | null = null
   private source: MediaStreamAudioSourceNode | null = null
+  private splitter: ChannelSplitterNode | null = null
   private worklet: AudioWorkletNode | null = null
+  /** One analyser per input channel, so the UI can show which one has signal. */
+  private channelAnalysers: AnalyserNode[] = []
+  private channelBuffer: Float32Array<ArrayBuffer> = new Float32Array(1024)
+  private inputChannel = 0
   private convolver: ConvolverNode | null = null
   private wetGain: GainNode | null = null
   private dryGain: GainNode | null = null
   private outputGain: GainNode | null = null
   private analyser: AnalyserNode | null = null
+
+  /**
+   * Effects chain, sitting between the cabinet and the output stage.
+   *
+   *   [cab] -> fxInput -+-> delayDry ------------------+-> fxMid -+-> reverbDry -+-> outputGain
+   *                     |                              |          |              |
+   *                     +-> delayL -> delayR -> delayWet          +-> convolver -+
+   *                            ^         |                           -> reverbWet
+   *                            +- damp <-+  (feedback)
+   *
+   * fxInput and fxMid exist so the cabinet can be swapped, and a reverb impulse loaded or
+   * cleared, without rebuilding the parts on either side of them.
+   */
+  private fxInput: GainNode | null = null
+  private fxMid: GainNode | null = null
+  private eqBass: BiquadFilterNode | null = null
+  private eqMid: BiquadFilterNode | null = null
+  private eqTreble: BiquadFilterNode | null = null
+  private eqSettings: EqSettings = { ...DEFAULT_EQ }
+  /** Ping-pong routing gains — see buildFxChain for why this is gains and not rewiring. */
+  private ppSend: GainNode | null = null
+  private ppTap: GainNode | null = null
+  private ppOut: GainNode | null = null
+  private monoTap: GainNode | null = null
+  private monoOut: GainNode | null = null
+  private delayL: DelayNode | null = null
+  private delayR: DelayNode | null = null
+  private delayFeedback: GainNode | null = null
+  private delayDamp: BiquadFilterNode | null = null
+  private delayWet: GainNode | null = null
+  private delayDry: GainNode | null = null
+  private delayMerger: ChannelMergerNode | null = null
+  private modOsc: OscillatorNode | null = null
+  private modDepthL: GainNode | null = null
+  private modDepthR: GainNode | null = null
+  private delaySettings: DelaySettings = { ...DEFAULT_DELAY }
+  private reverbConvolver: ConvolverNode | null = null
+  private reverbWet: GainNode | null = null
+  private reverbDry: GainNode | null = null
+  private plate: AudioWorkletNode | null = null
+  private plateWet: GainNode | null = null
+  private reverbEqLow: BiquadFilterNode | null = null
+  private reverbEqHigh: BiquadFilterNode | null = null
+  private reverbSettings: ReverbSettings = { ...DEFAULT_REVERB }
+  private chorusSettings: ChorusSettings = { ...DEFAULT_CHORUS }
+  private chorusIn: GainNode | null = null
+  private chorusOut: GainNode | null = null
+  private chorusDelayL: DelayNode | null = null
+  private chorusDelayR: DelayNode | null = null
+  private chorusOscL: OscillatorNode | null = null
+  private chorusOscR: OscillatorNode | null = null
+  private chorusDepthL: GainNode | null = null
+  private chorusDepthR: GainNode | null = null
+  private chorusWet: GainNode | null = null
+  private chorusMerger: ChannelMergerNode | null = null
+  /** Length of the loaded impulse after trimming, for the UI to report. */
+  private reverbLoadedSeconds = 0
+  private plateAvailable = false
+  private reverbMix = 0.25
   private meterBuffer: Float32Array<ArrayBuffer> = new Float32Array(1024)
 
   /**
@@ -89,9 +336,20 @@ export class LiveEngine {
    * This is a pure observer: connecting a node to an analyser does not alter the signal path.
    */
   private inputAnalyser: AnalyserNode | null = null
-  private inputBuffer: Float32Array<ArrayBuffer> = new Float32Array(2048)
-  /** Gain compensating the active IR's own level; see where it is computed in start(). */
+  private inputBuffer: Float32Array<ArrayBuffer> = new Float32Array(4096)
+  /** Gain compensating the active IR's own level; see where it is computed in wireIr(). */
   private irMakeup = 1
+  /** Wet/dry blend, kept so a cabinet swap rebuilds at the mix already set. */
+  private irMix = 1
+  /**
+   * Loudness-normalization gain for this capture, and the listener's volume trim.
+   *
+   * Kept apart so they can be set independently, and multiplied into outputGain. Live used to run
+   * at unity with no normalization at all, while the offline preview normalized to
+   * TARGET_LOUDNESS_DB — which is why the two modes were nowhere near the same loudness.
+   */
+  private normalizeGain = 1
+  private volume = 1
 
   /** Cached so repeated starts don't refetch/recompile the module. */
   private static wasmModule: WebAssembly.Module | null = null
@@ -155,18 +413,31 @@ export class LiveEngine {
 
       // Every voice-call DSP must be off or it mangles a guitar signal: AGC pumps the level,
       // noise suppression eats sustain and pick attack, echo cancellation gates entirely.
+      //
+      // channelCount is deliberately NOT constrained. Asking for 1 makes Chromium downmix the
+      // interface's inputs together rather than give you the one your guitar is in; the channel
+      // is chosen further down the graph instead, where it can be changed without reopening the
+      // device.
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           ...(options.deviceId ? { deviceId: { exact: options.deviceId } } : {}),
           echoCancellation: false,
           noiseSuppression: false,
-          autoGainControl: false,
-          channelCount: 1
+          autoGainControl: false
         },
         video: false
       })
 
       await ctx.audioWorklet.addModule('/nam-worklet.js')
+      // Loaded unconditionally so switching to the plate reverb mid-session is instant. It is a
+      // small text module; the cost is a parse, not a WASM compile.
+      try {
+        await ctx.audioWorklet.addModule('/reverb-worklet.js')
+        this.plateAvailable = true
+      } catch (error) {
+        this.plateAvailable = false
+        this.onError(`Plate reverb unavailable: ${error instanceof Error ? error.message : String(error)}`)
+      }
 
       this.worklet = new AudioWorkletNode(ctx, 'nam-processor', {
         numberOfInputs: 1,
@@ -193,62 +464,49 @@ export class LiveEngine {
         outputGain: options.outputGain ?? 1
       })
 
+      this.normalizeGain = options.normalizeGain ?? 1
+      this.volume = options.volume ?? 1
       this.outputGain = ctx.createGain()
-      this.outputGain.gain.value = 1
+      this.outputGain.gain.value = this.normalizeGain * this.volume
 
       this.source = ctx.createMediaStreamSource(this.stream)
-      this.source.connect(this.worklet)
 
-      // Pre-model tap for the tuner and the dry-input meter.
-      this.inputAnalyser = ctx.createAnalyser()
-      this.inputAnalyser.fftSize = 2048
-      this.source.connect(this.inputAnalyser)
+      // Split the input so ONE channel feeds the model, and every channel can be metered. The
+      // meters are the point: without them "no sound" and "guitar is in the other input" look
+      // identical, and the only way to tell was to unplug and try the other socket.
+      const channels = Math.max(1, this.source.channelCount)
+      this.splitter = ctx.createChannelSplitter(channels)
+      this.source.connect(this.splitter)
 
-      const mix = Math.max(0, Math.min(1, options.irMix ?? 1))
-      if (options.ir && options.ir.samples.length > 0 && mix > 0) {
-        // Parallel wet/dry so cab amount stays blendable, matching the offline path.
-        this.convolver = ctx.createConvolver()
-        this.convolver.normalize = false
-
-        // Always route through resampleForContext: it short-circuits when the rates match, and
-        // returns a fresh ArrayBuffer-backed array, which copyToChannel's typing requires.
-        const irSamples = await resampleForContext(
-          options.ir.samples,
-          options.ir.sampleRate,
-          ctx.sampleRate
-        )
-        const irBuffer = ctx.createBuffer(1, irSamples.length, ctx.sampleRate)
-        irBuffer.copyToChannel(irSamples, 0)
-        this.convolver.buffer = irBuffer
-
-        // Compensate for the IR's own gain.
-        //
-        // normalize=false preserves each cab's real relative level, which the OFFLINE path wants
-        // because it runs a loudness normalization afterwards. Live has no such stage, so without
-        // makeup gain enabling a cab jumps the output level hard — measured 0.25 -> 2.06 peak
-        // with a real 200ms IR, i.e. ~8x louder and clipping.
-        //
-        // Dividing by the IR's L2 norm is the same energy normalization ConvolverNode's
-        // normalize=true approximates, but applied where we can see and adjust it.
-        let irEnergy = 0
-        for (let i = 0; i < irSamples.length; i++) irEnergy += irSamples[i] * irSamples[i]
-        const irMakeup = irEnergy > 0 ? 1 / Math.sqrt(irEnergy) : 1
-        this.irMakeup = irMakeup
-
-        this.wetGain = ctx.createGain()
-        this.wetGain.gain.value = mix * irMakeup
-        this.dryGain = ctx.createGain()
-        this.dryGain.gain.value = 1 - mix
-
-        this.worklet.connect(this.convolver)
-        this.convolver.connect(this.wetGain)
-        this.wetGain.connect(this.outputGain)
-
-        this.worklet.connect(this.dryGain)
-        this.dryGain.connect(this.outputGain)
-      } else {
-        this.worklet.connect(this.outputGain)
+      this.channelAnalysers = []
+      for (let i = 0; i < channels; i++) {
+        const analyser = ctx.createAnalyser()
+        analyser.fftSize = 1024
+        this.splitter.connect(analyser, i, 0)
+        this.channelAnalysers.push(analyser)
       }
+
+      this.inputChannel = Math.min(Math.max(0, options.inputChannel ?? 0), channels - 1)
+
+      // Pre-model tap for the tuner and the dry-input meter, taken from the SELECTED channel so
+      // the tuner reads the guitar rather than a sum of both inputs. 4096 rather than 2048
+      // because the tuner's accuracy on the low E depends directly on how many periods of it fit
+      // in a window: at 82Hz and 48kHz, 2048 samples is barely three.
+      this.inputAnalyser = ctx.createAnalyser()
+      this.inputAnalyser.fftSize = 4096
+      this.splitter.connect(this.inputAnalyser, this.inputChannel, 0)
+      this.splitter.connect(this.worklet, this.inputChannel, 0)
+
+      this.buildFxChain(ctx)
+      this.buildPlate(ctx)
+      this.setEq(options.eq ?? DEFAULT_EQ)
+      this.setDelay(options.delay ?? DEFAULT_DELAY)
+      this.setChorus(options.chorus ?? DEFAULT_CHORUS)
+      this.setReverb(options.reverb ?? DEFAULT_REVERB)
+      if (options.reverbIr) await this.setReverbIr(options.reverbIr)
+
+      this.irMix = Math.max(0, Math.min(1, options.irMix ?? 1))
+      await this.wireIr(options.ir ?? null)
 
       // Post-everything, so the meter shows what actually reaches the speakers.
       this.analyser = ctx.createAnalyser()
@@ -256,11 +514,549 @@ export class LiveEngine {
       this.outputGain.connect(this.analyser)
       this.outputGain.connect(ctx.destination)
 
+      if (options.outputDeviceId) await this.setOutputDevice(options.outputDeviceId)
+
       await ctx.resume()
     } catch (error) {
       await this.stop()
       throw error instanceof Error ? error : new Error(String(error))
     }
+  }
+
+  /**
+   * Wire the effects once, at start.
+   *
+   * Signal order is CHORUS -> DELAY -> REVERB, which is how the same three would be patched on a
+   * board. Chorus first because it is a pitch/width treatment of the note itself: put it after the
+   * delay and it smears the repeats instead of the note, and after the reverb it would wobble the
+   * tail rather than the playing.
+   *
+   *   fxInput -+-> (dry) ------------------+-> chorusOut -+-> (dry) ---------------+-> fxMid
+   *            +-> chorusDelayL/R -> wet --+              +-> delayL <-> delayR ---+
+   *
+   *   fxMid -+-> reverbDry ------------------------------------------> outputGain
+   *          +-> plate ----------> plateWet ---+
+   *          +-> convolver -> reverbWet -------+-> eqLow -> eqHigh --> outputGain
+   *
+   * Everything is built even when fully dry, and silenced with gains instead. Rebuilding a graph
+   * mid-stream clicks, and these are reached for while playing — so a couple of idle delay lines
+   * buys controls that can be swept without any of that. The convolver is the exception: it only
+   * exists once an impulse is loaded, because unlike a delay line it costs real CPU per block.
+   */
+  private buildFxChain(ctx: AudioContext): void {
+    if (!this.outputGain) return
+
+    this.fxInput = ctx.createGain()
+    this.fxMid = ctx.createGain()
+
+    // ── Tone stack (first of all).
+    // Always in circuit, and flat when disabled — a shelf or bell at 0 dB is mathematically
+    // transparent, so bypassing costs nothing and avoids rewiring the head of the chain.
+    this.eqBass = ctx.createBiquadFilter()
+    this.eqBass.type = 'lowshelf'
+    this.eqBass.frequency.value = EQ_BASS_HZ
+    this.eqMid = ctx.createBiquadFilter()
+    this.eqMid.type = 'peaking'
+    this.eqMid.frequency.value = EQ_MID_HZ
+    this.eqMid.Q.value = EQ_MID_Q
+    this.eqTreble = ctx.createBiquadFilter()
+    this.eqTreble.type = 'highshelf'
+    this.eqTreble.frequency.value = EQ_TREBLE_HZ
+    for (const f of [this.eqBass, this.eqMid, this.eqTreble]) f.gain.value = 0
+    this.fxInput.connect(this.eqBass)
+    this.eqBass.connect(this.eqMid)
+    this.eqMid.connect(this.eqTreble)
+
+    // ── Chorus (first).
+    // A short delay swept by an LFO. Two lines with their oscillators in quadrature so the sides
+    // sweep at different points in the cycle — that difference is the chorus, rather than a
+    // single detune applied to both.
+    this.chorusIn = ctx.createGain()
+    this.chorusOut = ctx.createGain()
+    this.chorusWet = ctx.createGain()
+    this.chorusWet.gain.value = 0
+    this.chorusMerger = ctx.createChannelMerger(2)
+    this.chorusDelayL = ctx.createDelay(0.1)
+    this.chorusDelayR = ctx.createDelay(0.1)
+    this.chorusDelayL.delayTime.value = CHORUS_CENTRE_MS / 1000
+    this.chorusDelayR.delayTime.value = CHORUS_CENTRE_MS / 1000
+    this.chorusOscL = ctx.createOscillator()
+    this.chorusOscR = ctx.createOscillator()
+    this.chorusOscL.type = 'sine'
+    this.chorusOscR.type = 'sine'
+    this.chorusDepthL = ctx.createGain()
+    this.chorusDepthR = ctx.createGain()
+    this.chorusDepthL.gain.value = 0
+    this.chorusDepthR.gain.value = 0
+    this.chorusOscL.connect(this.chorusDepthL)
+    this.chorusOscR.connect(this.chorusDepthR)
+    this.chorusDepthL.connect(this.chorusDelayL.delayTime)
+    this.chorusDepthR.connect(this.chorusDelayR.delayTime)
+
+    this.eqTreble.connect(this.chorusIn)
+    this.chorusIn.connect(this.chorusDelayL)
+    this.chorusIn.connect(this.chorusDelayR)
+    this.chorusDelayL.connect(this.chorusMerger, 0, 0)
+    this.chorusDelayR.connect(this.chorusMerger, 0, 1)
+    this.chorusMerger.connect(this.chorusWet)
+    this.chorusWet.connect(this.chorusOut)
+    this.eqTreble.connect(this.chorusOut)
+
+    this.chorusOscL.start()
+    // A quarter period late, which is the quadrature that gives the two sides independent motion.
+    this.chorusOscR.start(ctx.currentTime + 0.25 / Math.max(0.05, this.chorusSettings.rateHz))
+
+    // ── Ping-pong delay (second).
+    // Input hits the left tap; left feeds right; right feeds back into left through the damping
+    // filter. That single crossing is what makes repeats alternate across the stereo field rather
+    // than sit in the middle, and it is why the taps are chained instead of parallel.
+    this.delayL = ctx.createDelay(MAX_DELAY_SECONDS)
+    this.delayR = ctx.createDelay(MAX_DELAY_SECONDS)
+    this.delayFeedback = ctx.createGain()
+    this.delayDamp = ctx.createBiquadFilter()
+    this.delayDamp.type = 'lowpass'
+    this.delayWet = ctx.createGain()
+    this.delayDry = ctx.createGain()
+    this.delayMerger = ctx.createChannelMerger(2)
+
+    // Both topologies are wired at once and selected with gains, rather than reconnected on the
+    // fly. Rewiring a live graph clicks, and ping-pong is a switch you flip while playing to hear
+    // the difference — so the two paths coexist and only their levels change.
+    //
+    //   ping-pong: L -> R, both taps heard, feedback from R
+    //   mono:      L only, heard on both channels, feedback from L
+    this.ppSend = ctx.createGain()
+    this.ppTap = ctx.createGain()
+    this.ppOut = ctx.createGain()
+    this.monoTap = ctx.createGain()
+    this.monoOut = ctx.createGain()
+
+    this.chorusOut.connect(this.delayL)
+    this.delayL.connect(this.ppSend)
+    this.ppSend.connect(this.delayR)
+
+    this.delayR.connect(this.ppTap)
+    this.ppTap.connect(this.delayDamp)
+    this.delayL.connect(this.monoTap)
+    this.monoTap.connect(this.delayDamp)
+    this.delayDamp.connect(this.delayFeedback)
+    this.delayFeedback.connect(this.delayL)
+
+    this.delayL.connect(this.delayMerger, 0, 0)
+    this.delayR.connect(this.ppOut)
+    this.ppOut.connect(this.delayMerger, 0, 1)
+    this.delayL.connect(this.monoOut)
+    this.monoOut.connect(this.delayMerger, 0, 1)
+    this.delayMerger.connect(this.delayWet)
+    this.delayWet.connect(this.fxMid)
+
+    this.chorusOut.connect(this.delayDry)
+    this.delayDry.connect(this.fxMid)
+
+    this.modOsc = ctx.createOscillator()
+    this.modOsc.type = 'sine'
+    this.modDepthL = ctx.createGain()
+    this.modDepthR = ctx.createGain()
+    this.modDepthL.gain.value = 0
+    this.modDepthR.gain.value = 0
+    this.modOsc.connect(this.modDepthL)
+    this.modOsc.connect(this.modDepthR)
+    this.modDepthL.connect(this.delayL.delayTime)
+    this.modDepthR.connect(this.delayR.delayTime)
+    this.modOsc.start()
+
+    // ── Reverb tone (third), on the WET path only.
+    //
+    // Both reverb modes share one pair of shelves, sitting between their wet gains and the output.
+    // Wet-only is the whole point: it is what lets a tail be darkened or lifted without touching
+    // the amp tone in front of it, and it is where every hardware reverb puts its own tone
+    // controls. See REVERB_LOW_SHELF_HZ / REVERB_HIGH_SHELF_HZ for the corner frequencies.
+    this.reverbEqLow = ctx.createBiquadFilter()
+    this.reverbEqLow.type = 'lowshelf'
+    this.reverbEqLow.frequency.value = REVERB_LOW_SHELF_HZ
+    this.reverbEqLow.gain.value = 0
+    this.reverbEqHigh = ctx.createBiquadFilter()
+    this.reverbEqHigh.type = 'highshelf'
+    this.reverbEqHigh.frequency.value = REVERB_HIGH_SHELF_HZ
+    this.reverbEqHigh.gain.value = 0
+    this.reverbEqLow.connect(this.reverbEqHigh)
+    this.reverbEqHigh.connect(this.outputGain)
+
+    // Dry path bypasses the reverb EQ entirely — it is not reverb.
+    this.reverbDry = ctx.createGain()
+    this.reverbDry.gain.value = 1
+    this.fxMid.connect(this.reverbDry)
+    this.reverbDry.connect(this.outputGain)
+  }
+
+  get eq(): EqSettings {
+    return { ...this.eqSettings }
+  }
+
+  /** Update the tone stack. Disabled means flat, not bypassed — the result is identical. */
+  setEq(settings: Partial<EqSettings>): void {
+    const next: EqSettings = { ...this.eqSettings, ...settings }
+    const clamp = (v: number): number => Math.max(-EQ_MAX_DB, Math.min(EQ_MAX_DB, v))
+    next.bassDb = clamp(next.bassDb)
+    next.midDb = clamp(next.midDb)
+    next.trebleDb = clamp(next.trebleDb)
+    this.eqSettings = next
+
+    const ctx = this.ctx
+    if (!ctx) return
+    const now = ctx.currentTime
+    const on = next.enabled
+    this.eqBass?.gain.linearRampToValueAtTime(on ? next.bassDb : 0, now + 0.05)
+    this.eqMid?.gain.linearRampToValueAtTime(on ? next.midDb : 0, now + 0.05)
+    this.eqTreble?.gain.linearRampToValueAtTime(on ? next.trebleDb : 0, now + 0.05)
+  }
+
+  get chorus(): ChorusSettings {
+    return { ...this.chorusSettings }
+  }
+
+  setChorus(settings: Partial<ChorusSettings>): void {
+    const next: ChorusSettings = { ...this.chorusSettings, ...settings }
+    next.mix = Math.max(0, Math.min(1, next.mix))
+    next.depthMs = Math.max(0, Math.min(20, next.depthMs))
+    next.rateHz = Math.max(0.05, Math.min(8, next.rateHz))
+    this.chorusSettings = next
+
+    const ctx = this.ctx
+    if (!ctx) return
+    const now = ctx.currentTime
+    const RAMP = 0.05
+    const wet = next.enabled ? next.mix : 0
+    // Depth is halved because the LFO swings both ways: a 2ms "depth" should sweep 2ms in total,
+    // not 2ms either side of centre.
+    const depthSec = next.enabled ? next.depthMs / 2000 : 0
+
+    this.chorusWet?.gain.linearRampToValueAtTime(wet, now + RAMP)
+    this.chorusOscL?.frequency.linearRampToValueAtTime(next.rateHz, now + RAMP)
+    this.chorusOscR?.frequency.linearRampToValueAtTime(next.rateHz, now + RAMP)
+    this.chorusDepthL?.gain.linearRampToValueAtTime(depthSec, now + RAMP)
+    this.chorusDepthR?.gain.linearRampToValueAtTime(-depthSec, now + RAMP)
+  }
+
+  get reverb(): ReverbSettings {
+    return { ...this.reverbSettings }
+  }
+
+  /**
+   * Apply reverb settings, switching between the plate and convolution wet paths.
+   *
+   * Only one wet path is audible at a time, but both stay wired — a convolver with a loaded
+   * impulse is expensive to rebuild, and switching modes to compare them is exactly the thing
+   * you want to be instant.
+   */
+  setReverb(settings: Partial<ReverbSettings>): void {
+    const next: ReverbSettings = { ...this.reverbSettings, ...settings }
+    next.mix = Math.max(0, Math.min(1, next.mix))
+    next.roomSize = Math.max(0, Math.min(1, next.roomSize))
+    next.damping = Math.max(0, Math.min(1, next.damping))
+    next.width = Math.max(0, Math.min(1, next.width))
+    next.lowDb = Math.max(-REVERB_EQ_MAX_DB, Math.min(REVERB_EQ_MAX_DB, next.lowDb))
+    next.highDb = Math.max(-REVERB_EQ_MAX_DB, Math.min(REVERB_EQ_MAX_DB, next.highDb))
+    this.reverbSettings = next
+    this.reverbMix = next.mix
+
+    const ctx = this.ctx
+    if (!ctx) return
+    const now = ctx.currentTime
+    const RAMP = 0.05
+
+    const wet = next.enabled ? next.mix : 0
+    const plateWet = next.mode === 'plate' ? wet : 0
+    const convWet = next.mode === 'convolution' ? wet : 0
+
+    this.plateWet?.gain.linearRampToValueAtTime(plateWet, now + RAMP)
+    this.reverbWet?.gain.linearRampToValueAtTime(convWet, now + RAMP)
+    this.reverbDry?.gain.linearRampToValueAtTime(1, now + RAMP)
+
+    this.reverbEqLow?.gain.linearRampToValueAtTime(next.lowDb, now + RAMP)
+    this.reverbEqHigh?.gain.linearRampToValueAtTime(next.highDb, now + RAMP)
+
+    this.plate?.port.postMessage({
+      type: 'params',
+      roomSize: next.roomSize,
+      damping: next.damping,
+      width: next.width
+    })
+  }
+
+  /** Whether the plate worklet loaded. False means only convolution is available. */
+  get hasPlateReverb(): boolean {
+    return this.plateAvailable
+  }
+
+  /** Build the plate reverb node. Separate from buildFxChain because it needs the module loaded. */
+  private buildPlate(ctx: AudioContext): void {
+    if (!this.plateAvailable || !this.fxMid || !this.outputGain) return
+    try {
+      this.plate = new AudioWorkletNode(ctx, 'freeverb', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [2]
+      })
+      this.plateWet = ctx.createGain()
+      this.plateWet.gain.value = 0
+      this.fxMid.connect(this.plate)
+      this.plate.connect(this.plateWet)
+      this.plateWet.connect(this.reverbEqLow ?? this.outputGain)
+    } catch (error) {
+      this.plateAvailable = false
+      this.onError(`Plate reverb failed to start: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  /** Current delay settings, so the UI can render what the engine actually holds. */
+  get delay(): DelaySettings {
+    return { ...this.delaySettings }
+  }
+
+  /**
+   * Update the delay.
+   *
+   * Times are ramped rather than assigned: writing DelayNode.delayTime directly while audio is
+   * flowing jumps the read head and clicks, where a short ramp pitch-bends the tails the way a
+   * real delay does when you turn the knob.
+   */
+  setDelay(settings: Partial<DelaySettings>): void {
+    const next: DelaySettings = { ...this.delaySettings, ...settings }
+    next.mix = Math.max(0, Math.min(1, next.mix))
+    next.feedback = Math.max(0, Math.min(MAX_FEEDBACK, next.feedback))
+    next.ratio = Math.max(0.05, Math.min(2, next.ratio))
+    next.timeMs = Math.max(1, Math.min(MAX_DELAY_SECONDS * 1000, next.timeMs))
+    next.toneHz = Math.max(200, Math.min(20000, next.toneHz))
+    next.modDepthMs = Math.max(0, Math.min(MAX_MOD_DEPTH_MS, next.modDepthMs))
+    next.modRateHz = Math.max(0.05, Math.min(12, next.modRateHz))
+    this.delaySettings = next
+
+    const ctx = this.ctx
+    if (!ctx) return
+    const now = ctx.currentTime
+    const RAMP = 0.05
+
+    // The right tap is the SECOND half of the ping-pong, so the pair must sum to the full time or
+    // the ratio control would also change the tempo of the repeats.
+    const leftSec = (next.timeMs / 1000) * (next.ratio >= 1 ? 1 : next.ratio)
+    const rightSec = (next.timeMs / 1000) * (next.ratio >= 1 ? next.ratio : 1)
+
+    this.delayL?.delayTime.linearRampToValueAtTime(Math.min(leftSec, MAX_DELAY_SECONDS), now + RAMP)
+    this.delayR?.delayTime.linearRampToValueAtTime(Math.min(rightSec, MAX_DELAY_SECONDS), now + RAMP)
+    if (this.delayFeedback) this.delayFeedback.gain.linearRampToValueAtTime(next.feedback, now + RAMP)
+    if (this.delayDamp) this.delayDamp.frequency.linearRampToValueAtTime(next.toneHz, now + RAMP)
+    if (this.delayWet) {
+      this.delayWet.gain.linearRampToValueAtTime(next.enabled ? next.mix : 0, now + RAMP)
+    }
+    // Equal-gain rather than equal-power: the dry signal is the capture itself, and dipping it as
+    // you add ambience makes the amp sound like it is losing level rather than gaining space.
+    if (this.delayDry) this.delayDry.gain.linearRampToValueAtTime(1, now + RAMP)
+
+    const pp = next.pingPong ? 1 : 0
+    this.ppSend?.gain.linearRampToValueAtTime(pp, now + RAMP)
+    this.ppTap?.gain.linearRampToValueAtTime(pp, now + RAMP)
+    this.ppOut?.gain.linearRampToValueAtTime(pp, now + RAMP)
+    this.monoTap?.gain.linearRampToValueAtTime(1 - pp, now + RAMP)
+    this.monoOut?.gain.linearRampToValueAtTime(1 - pp, now + RAMP)
+
+    const depthSec = next.modDepthMs / 1000
+    if (this.modOsc) this.modOsc.frequency.linearRampToValueAtTime(next.modRateHz, now + RAMP)
+    if (this.modDepthL) this.modDepthL.gain.linearRampToValueAtTime(depthSec, now + RAMP)
+    if (this.modDepthR) this.modDepthR.gain.linearRampToValueAtTime(-depthSec, now + RAMP)
+  }
+
+  get reverbMixValue(): number {
+    return this.reverbMix
+  }
+
+  /** Reverb wet/dry, without touching the impulse. */
+  setReverbMix(mix: number): void {
+    this.reverbMix = Math.max(0, Math.min(1, mix))
+    const ctx = this.ctx
+    if (!ctx) return
+    const now = ctx.currentTime
+    if (this.reverbWet) {
+      this.reverbWet.gain.linearRampToValueAtTime(this.reverbMix, now + 0.05)
+    }
+    if (this.reverbDry) this.reverbDry.gain.linearRampToValueAtTime(1, now + 0.05)
+  }
+
+  /** Seconds of reverb impulse actually being convolved, after trimming. 0 when none. */
+  get reverbSeconds(): number {
+    return this.reverbLoadedSeconds
+  }
+
+  /**
+   * Load or clear the reverb impulse.
+   *
+   * Three things differ from the cabinet path, all because a reverb impulse is a different animal
+   * — a measured Strymon BigSky set is 61 s, stereo, 44.1 kHz, against a cabinet's ~20-200 ms mono:
+   *
+   *  1. STEREO IS KEPT. The cabinet path takes channel 0 and discards the rest, which is fine for
+   *     a mono cabinet capture and destroys a reverb: the width between the two channels is most
+   *     of what you are buying.
+   *
+   *  2. NORMALIZATION IS THE BROWSER'S. ConvolverNode.normalize implements the spec's calibrated
+   *     scale (a fixed gain calibration and a sample-rate correction over the impulse's total
+   *     energy), which exists precisely for reverb impulses. The cabinet's hand-rolled 1/L2 makeup
+   *     is calibrated for something a thousand times shorter, and applied to a 61 s tail it lands
+   *     nowhere near a usable wet level.
+   *
+   *  3. THE TAIL IS TRIMMED. ~82% of each of those files is silent padding, and convolving
+   *     against silence costs CPU every block for nothing.
+   */
+  async setReverbIr(ir: ImpulseResponse | null): Promise<void> {
+    const ctx = this.ctx
+    if (!ctx || !this.fxMid || !this.outputGain) return
+
+    if (this.reverbConvolver || this.reverbWet) {
+      try {
+        this.reverbConvolver?.disconnect()
+        this.reverbWet?.disconnect()
+      } catch {
+        // Already disconnected.
+      }
+      this.reverbConvolver = null
+      this.reverbWet = null
+      this.reverbLoadedSeconds = 0
+    }
+
+    if (!ir || ir.channels.length === 0 || ir.channels[0].length === 0) {
+      this.setReverbMix(this.reverbMix)
+      return
+    }
+
+    const trimmed = trimImpulse(ir)
+    const channels = await Promise.all(
+      trimmed.channels.map((channel) =>
+        resampleForContext(channel, trimmed.sampleRate, ctx.sampleRate)
+      )
+    )
+    const length = channels[0].length
+    if (length === 0) return
+
+    const buffer = ctx.createBuffer(channels.length, length, ctx.sampleRate)
+    for (let c = 0; c < channels.length; c++) buffer.copyToChannel(channels[c], c)
+
+    this.reverbConvolver = ctx.createConvolver()
+    this.reverbConvolver.normalize = true
+    this.reverbConvolver.buffer = buffer
+    this.reverbLoadedSeconds = impulseSeconds({ channels: [channels[0]], sampleRate: ctx.sampleRate })
+
+    this.reverbWet = ctx.createGain()
+    this.reverbWet.gain.value = this.reverbMix
+
+    this.fxMid.connect(this.reverbConvolver)
+    this.reverbConvolver.connect(this.reverbWet)
+    this.reverbWet.connect(this.reverbEqLow ?? this.outputGain)
+    // Re-apply so a freshly built wet node picks up the current mode and mix.
+    this.setReverb({})
+  }
+
+  /**
+   * Build (or rebuild) the cabinet stage between the model and the output.
+   *
+   * Split out of start() because the IR has to be changeable while playing: rebuilding the whole
+   * engine to try another cab would drop the mic, reload the model and silence you for about a
+   * second, which makes comparing two cabs by ear impossible.
+   *
+   * Assumes the caller has already disconnected the worklet's outputs.
+   */
+  private async wireIr(ir: { samples: Float32Array; sampleRate: number } | null): Promise<void> {
+    const ctx = this.ctx
+    if (!ctx || !this.worklet || !this.fxInput) return
+
+    // Drop any previous cabinet stage.
+    for (const node of [this.convolver, this.wetGain, this.dryGain]) {
+      try {
+        node?.disconnect()
+      } catch {
+        // Already disconnected.
+      }
+    }
+    this.convolver = null
+    this.wetGain = null
+    this.dryGain = null
+    this.irMakeup = 1
+
+    if (!ir || ir.samples.length === 0 || this.irMix <= 0) {
+      this.worklet.connect(this.fxInput)
+      return
+    }
+
+    // Parallel wet/dry so cab amount stays blendable, matching the offline path.
+    this.convolver = ctx.createConvolver()
+    this.convolver.normalize = false
+
+    // Always route through resampleForContext: it short-circuits when the rates match, and
+    // returns a fresh ArrayBuffer-backed array, which copyToChannel's typing requires.
+    const irSamples = await resampleForContext(ir.samples, ir.sampleRate, ctx.sampleRate)
+    const irBuffer = ctx.createBuffer(1, irSamples.length, ctx.sampleRate)
+    irBuffer.copyToChannel(irSamples, 0)
+    this.convolver.buffer = irBuffer
+
+    // Compensate for the IR's own gain.
+    //
+    // normalize=false preserves each cab's real relative level, which the OFFLINE path wants
+    // because it runs a loudness normalization afterwards. Live has no such stage, so without
+    // makeup gain enabling a cab jumps the output level hard — measured 0.25 -> 2.06 peak
+    // with a real 200ms IR, i.e. ~8x louder and clipping.
+    //
+    // Dividing by the IR's L2 norm is the same energy normalization ConvolverNode's
+    // normalize=true approximates, but applied where we can see and adjust it.
+    let irEnergy = 0
+    for (let i = 0; i < irSamples.length; i++) irEnergy += irSamples[i] * irSamples[i]
+    this.irMakeup = irEnergy > 0 ? 1 / Math.sqrt(irEnergy) : 1
+
+    this.wetGain = ctx.createGain()
+    this.wetGain.gain.value = this.irMix * this.irMakeup
+    this.dryGain = ctx.createGain()
+    this.dryGain.gain.value = 1 - this.irMix
+
+    this.worklet.connect(this.convolver)
+    this.convolver.connect(this.wetGain)
+    this.wetGain.connect(this.fxInput)
+
+    this.worklet.connect(this.dryGain)
+    this.dryGain.connect(this.fxInput)
+  }
+
+  /**
+   * Swap the cabinet while playing.
+   *
+   * Rewiring an audio graph mid-stream steps the signal discontinuously, which is an audible
+   * click through headphones, so the output is faded down first and back up after. The fade is
+   * short enough to read as a crossfade between cabs rather than a gap.
+   */
+  async setIr(ir: { samples: Float32Array; sampleRate: number } | null): Promise<void> {
+    const ctx = this.ctx
+    if (!ctx || !this.worklet || !this.fxInput || !this.outputGain) return
+
+    const FADE = 0.02
+    const now = ctx.currentTime
+    const gain = this.outputGain.gain
+    gain.cancelScheduledValues(now)
+    gain.setValueAtTime(gain.value, now)
+    gain.linearRampToValueAtTime(0.0001, now + FADE)
+
+    // Let the fade actually reach silence before the graph changes under it.
+    await new Promise((resolve) => setTimeout(resolve, FADE * 1000 + 5))
+    if (this.ctx !== ctx) return // Stopped while we waited.
+
+    try {
+      this.worklet.disconnect()
+    } catch {
+      // Already disconnected.
+    }
+    // The tap is on the source, not the worklet, so it survives this rewiring untouched.
+    await this.wireIr(ir)
+    if (this.ctx !== ctx) return
+
+    const resumeAt = ctx.currentTime
+    gain.cancelScheduledValues(resumeAt)
+    gain.setValueAtTime(gain.value, resumeAt)
+    gain.linearRampToValueAtTime(this.normalizeGain * this.volume, resumeAt + FADE)
   }
 
   /** Current output peak, 0..1. Cheap enough to poll from an animation frame. */
@@ -308,6 +1104,70 @@ export class LiveEngine {
     return this.inputAnalyser !== null
   }
 
+  /** How many input channels the open device actually has. 0 when not running. */
+  get inputChannelCount(): number {
+    return this.channelAnalysers.length
+  }
+
+  /** Which channel currently feeds the model. */
+  get selectedInputChannel(): number {
+    return this.inputChannel
+  }
+
+  /**
+   * Route a different input channel into the model.
+   *
+   * Rewires rather than restarting, so switching inputs to find your guitar does not drop the
+   * device and reload the model each time you try one.
+   */
+  setInputChannel(channel: number): void {
+    if (!this.splitter || !this.worklet || !this.inputAnalyser) return
+    const next = Math.min(Math.max(0, channel), this.channelAnalysers.length - 1)
+    if (next === this.inputChannel) return
+    try {
+      this.splitter.disconnect(this.worklet)
+      this.splitter.disconnect(this.inputAnalyser)
+    } catch {
+      // Not connected yet.
+    }
+    this.inputChannel = next
+    this.splitter.connect(this.worklet, next, 0)
+    this.splitter.connect(this.inputAnalyser, next, 0)
+  }
+
+  /** Peak level of every input channel, 0..1 — what the channel picker's meters show. */
+  readChannelPeaks(): number[] {
+    return this.channelAnalysers.map((analyser) => {
+      if (this.channelBuffer.length !== analyser.fftSize) {
+        this.channelBuffer = new Float32Array(analyser.fftSize)
+      }
+      analyser.getFloatTimeDomainData(this.channelBuffer)
+      let peak = 0
+      for (let i = 0; i < this.channelBuffer.length; i++) {
+        const v = Math.abs(this.channelBuffer[i])
+        if (v > peak) peak = v
+      }
+      return peak
+    })
+  }
+
+  /**
+   * Send output to a specific device.
+   *
+   * setSinkId on an AudioContext is comparatively recent, and is absent from the DOM typings we
+   * build against, hence the cast. Guarded so an older runtime falls back to the default device
+   * rather than throwing and taking live playback down with it.
+   */
+  async setOutputDevice(deviceId: string | null): Promise<void> {
+    const ctx = this.ctx as (AudioContext & { setSinkId?: (id: string) => Promise<void> }) | null
+    if (!ctx || typeof ctx.setSinkId !== 'function') return
+    try {
+      await ctx.setSinkId(deviceId ?? '')
+    } catch (error) {
+      this.onError(`Could not switch output device: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
   setBypass(bypass: boolean): void {
     this.worklet?.port.postMessage({ type: 'setBypass', bypass })
   }
@@ -316,9 +1176,27 @@ export class LiveEngine {
     this.worklet?.port.postMessage({ type: 'setGain', inputGain, outputGain })
   }
 
+  /**
+   * Player volume, applied at the very end of the chain.
+   *
+   * Separate from the normalization gain passed to start(): that one decides how loud this
+   * capture is relative to other captures, this one is the listener's own trim. Ramped rather
+   * than set, because stepping a gain while audio is flowing clicks.
+   */
+  setOutputVolume(volume: number): void {
+    if (!this.outputGain || !this.ctx) return
+    this.volume = Math.max(0, volume)
+    const target = this.volume * this.normalizeGain
+    const now = this.ctx.currentTime
+    this.outputGain.gain.cancelScheduledValues(now)
+    this.outputGain.gain.setValueAtTime(this.outputGain.gain.value, now)
+    this.outputGain.gain.linearRampToValueAtTime(target, now + 0.015)
+  }
+
   /** Change cabinet blend without rebuilding the graph. */
   setIrMix(mix: number): void {
     const wet = Math.max(0, Math.min(1, mix))
+    this.irMix = wet
     // Keep the IR makeup applied, or sliding the mix would reintroduce the level jump.
     if (this.wetGain) this.wetGain.gain.value = wet * this.irMakeup
     if (this.dryGain) this.dryGain.gain.value = 1 - wet
@@ -338,7 +1216,43 @@ export class LiveEngine {
 
     for (const node of [
       this.source,
+      this.splitter,
+      ...this.channelAnalysers,
       this.worklet,
+      this.fxInput,
+      this.fxMid,
+      this.eqBass,
+      this.eqMid,
+      this.eqTreble,
+      this.ppSend,
+      this.ppTap,
+      this.ppOut,
+      this.monoTap,
+      this.monoOut,
+      this.delayL,
+      this.delayR,
+      this.delayFeedback,
+      this.delayDamp,
+      this.delayWet,
+      this.delayDry,
+      this.delayMerger,
+      this.modDepthL,
+      this.modDepthR,
+      this.reverbConvolver,
+      this.reverbWet,
+      this.reverbDry,
+      this.plate,
+      this.plateWet,
+      this.reverbEqLow,
+      this.reverbEqHigh,
+      this.chorusIn,
+      this.chorusOut,
+      this.chorusWet,
+      this.chorusMerger,
+      this.chorusDelayL,
+      this.chorusDelayR,
+      this.chorusDepthL,
+      this.chorusDepthR,
       this.convolver,
       this.wetGain,
       this.dryGain,
@@ -353,6 +1267,9 @@ export class LiveEngine {
       }
     }
     this.source = null
+    this.splitter = null
+    this.channelAnalysers = []
+    this.inputChannel = 0
     this.worklet = null
     this.convolver = null
     this.wetGain = null
@@ -361,6 +1278,65 @@ export class LiveEngine {
     this.analyser = null
     this.inputAnalyser = null
     this.irMakeup = 1
+    this.irMix = 1
+    this.normalizeGain = 1
+    this.volume = 1
+    this.fxInput = null
+    this.fxMid = null
+    this.eqBass = null
+    this.eqMid = null
+    this.eqTreble = null
+    this.eqSettings = { ...DEFAULT_EQ }
+    this.ppSend = null
+    this.ppTap = null
+    this.ppOut = null
+    this.monoTap = null
+    this.monoOut = null
+    this.delayL = null
+    this.delayR = null
+    this.delayFeedback = null
+    this.delayDamp = null
+    this.delayWet = null
+    this.delayDry = null
+    this.delayMerger = null
+    try {
+      this.modOsc?.stop()
+      this.modOsc?.disconnect()
+    } catch {
+      // Never started, or already stopped.
+    }
+    this.modOsc = null
+    this.modDepthL = null
+    this.modDepthR = null
+    this.delaySettings = { ...DEFAULT_DELAY }
+    this.reverbConvolver = null
+    this.reverbWet = null
+    this.reverbDry = null
+    this.plate = null
+    this.plateWet = null
+    this.reverbEqLow = null
+    this.reverbEqHigh = null
+    this.reverbLoadedSeconds = 0
+    this.reverbSettings = { ...DEFAULT_REVERB }
+    this.chorusSettings = { ...DEFAULT_CHORUS }
+    for (const osc of [this.chorusOscL, this.chorusOscR]) {
+      try {
+        osc?.stop()
+        osc?.disconnect()
+      } catch {
+        // Never started, or already stopped.
+      }
+    }
+    this.chorusOscL = null
+    this.chorusOscR = null
+    this.chorusIn = null
+    this.chorusOut = null
+    this.chorusWet = null
+    this.chorusMerger = null
+    this.chorusDelayL = null
+    this.chorusDelayR = null
+    this.chorusDepthL = null
+    this.chorusDepthR = null
 
     if (this.ctx) {
       try {

@@ -420,6 +420,21 @@ declare global {
         categories: Array<{ name: string; files: Array<{ name: string; path: string }> }>
         error?: string
       }>
+      indexIrLibrary: (libraryPath: string, force?: boolean) => Promise<{
+        count: number
+        scannedAt?: number
+        error?: string
+      }>
+      searchIrLibrary: (libraryPath: string, query: string, limit?: number) => Promise<{
+        results: Array<{ name: string; path: string; rel: string }>
+        total: number
+        indexed: boolean
+      }>
+      browseIrLibrary: (libraryPath: string, relDir: string) => Promise<{
+        folders: Array<{ name: string; count: number }>
+        files: Array<{ name: string; path: string; rel: string }>
+        indexed: boolean
+      }>
       hashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
       hashFilesWithoutMetadata: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
       revealFile: (filePath: string) => Promise<void>
@@ -782,7 +797,7 @@ export default function App() {
   const [showToneStore, setShowToneStore] = useState(false)
   const [showTrainingWorkspace, setShowTrainingWorkspace] = useState(false)
   const [showTrainingSetupGuide, setShowTrainingSetupGuide] = useState(false)
-  const [settingsInitialTab, setSettingsInitialTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'training' | 'ai' | 'companion' | undefined>(undefined)
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'player' | 'training' | 'ai' | 'companion' | undefined>(undefined)
   const [trainingWorkspaceMode, setTrainingWorkspaceMode] = useState<'files' | 'folder' | 'queue' | 'history' | 'presets'>('files')
   const [globalTrainerState, setGlobalTrainerState] = useState<TrainerStateSnapshot>(IDLE_TRAINER_STATE)
   const trainerWatcherAutoStartRecoveryRef = useRef('')
@@ -4496,6 +4511,31 @@ INSTRUCTIONS:
     if (selected.filePath !== playerFile.filePath) setPlayerFile(selected)
   }, [playerFile, selectedFiles])
 
+  /**
+   * Step the player to the previous/next capture in the folder currently in scope.
+   *
+   * Moves the SELECTION rather than the player's file directly. The player already follows
+   * selection (see the effect above), and going through selection is what keeps the file list
+   * highlight, the metadata editor and the cover art in step with it — setting playerFile alone
+   * would leave all three pointing at the previous capture.
+   */
+  const stepPlayerFile = useCallback(
+    (delta: number) => {
+      if (playerFile === null || visibleFiles.length === 0) return
+      const index = visibleFiles.findIndex((f) => f.filePath === playerFile.filePath)
+      if (index === -1) return
+      const next = visibleFiles[index + delta]
+      if (!next) return
+      setSelectedIds(new Set([next.filePath]))
+    },
+    [playerFile, visibleFiles]
+  )
+
+  const playerIndex = useMemo(
+    () => (playerFile === null ? -1 : visibleFiles.findIndex((f) => f.filePath === playerFile.filePath)),
+    [playerFile, visibleFiles]
+  )
+
   // Close slide panel if selection is empty (and no batch edit active)
   if (gridSlideOpen && selectedFiles.length === 0 && batchFolder === null) setGridSlideOpen(false)
   const dirtyCount = files.filter((f) => f.isDirty).length
@@ -5074,8 +5114,12 @@ INSTRUCTIONS:
             // the panel handles file changes internally instead.
             <PlayerPanel
               file={playerFile}
+              onStep={stepPlayerFile}
+              stepIndex={playerIndex}
+              stepCount={visibleFiles.length}
               diLibraryPath={settings.diPreviewLibraryPath || null}
               irLibraryPath={settings.irLibraryPath || null}
+              reverbLibraryPath={settings.reverbLibraryPath || null}
               irMix={settings.irMix}
               coverImagePath={metadataCoverPath}
               onClose={() => setPlayerFile(null)}

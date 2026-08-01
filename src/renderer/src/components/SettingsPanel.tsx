@@ -63,7 +63,7 @@ interface SettingsPanelProps {
   settings: AppSettings
   onSave: (settings: AppSettings) => void
   onClose: () => void
-  initialTab?: 'global' | 'defaults' | 'metadata' | 'pack' | 'training' | 'ai' | 'companion'
+  initialTab?: 'global' | 'defaults' | 'metadata' | 'pack' | 'player' | 'training' | 'ai' | 'companion'
   onOpenTrainingPresets?: () => void
 }
 
@@ -80,7 +80,7 @@ interface CompanionBridgeInfo {
 
 export function SettingsPanel({ settings, onSave, onClose, initialTab, onOpenTrainingPresets }: SettingsPanelProps) {
   const [draft, setDraft] = useState<AppSettings>({ ...settings })
-  const [settingsTab, setSettingsTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'training' | 'ai' | 'companion'>(initialTab ?? 'global')
+  const [settingsTab, setSettingsTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'player' | 'training' | 'ai' | 'companion'>(initialTab ?? 'global')
   const [maximized, setMaximized] = useState(false)
   const [saved, setSaved] = useState(false)
   const [updateState, setUpdateState] = useState<UpdateState>({ status: 'idle' })
@@ -495,6 +495,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab, onOpenTra
             ['defaults', 'Capture Defaults'],
             ['metadata', 'Metadata'],
             ['pack', 'Pack'],
+            ['player', 'Player'],
             ['training', 'Training'],
             ['ai', 'AI'],
             ['companion', 'Companion'],
@@ -923,103 +924,173 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab, onOpenTra
                     </button>
                   )}
                 </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">DI Clip Library</span>
-                  <span className="text-xs text-gray-400 dark:text-gray-500 truncate flex-1 font-mono">
-                    {draft.diPreviewLibraryPath || <span className="italic text-gray-400 dark:text-gray-600">Not configured</span>}
-                  </span>
+              </div>
+            </div>
+          </div>
+          )}
+
+          {/* ── Player tab ─────────────────────────────────────────────
+              The DI and IR libraries are what the Tone Player and the Tone Map's auditioning
+              listen through, so they live with the player rather than under Application, where
+              they read as unrelated app paths. */}
+          {settingsTab === 'player' && (
+          <div>
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-sm">DI</span>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">DI Clip Library</h3>
+              <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
+            </div>
+            <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-3 space-y-3">
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">Folder</span>
+                <span className="text-xs text-gray-400 dark:text-gray-500 truncate flex-1 font-mono">
+                  {draft.diPreviewLibraryPath || <span className="italic text-gray-400 dark:text-gray-600">Not configured</span>}
+                </span>
+                <button
+                  onClick={async () => {
+                    const p = await window.api.openFolder(draft.diPreviewLibraryPath || undefined)
+                    if (p) {
+                      const updated = { ...draft, diPreviewLibraryPath: p }
+                      setDraft(updated)
+                      onSave(updated)
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 flex-shrink-0"
+                >
+                  Browse...
+                </button>
+                {draft.diPreviewLibraryPath && (
                   <button
-                    onClick={async () => {
-                      const p = await window.api.openFolder(draft.diPreviewLibraryPath || undefined)
-                      if (p) {
-                        const updated = { ...draft, diPreviewLibraryPath: p }
-                        setDraft(updated)
-                        onSave(updated)
-                      }
-                    }}
-                    className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 flex-shrink-0"
-                  >
-                    Browse...
-                  </button>
-                  {draft.diPreviewLibraryPath && (
-                    <button
-                      onClick={() => {
-                        const updated = { ...draft, diPreviewLibraryPath: '' }
-                        setDraft(updated)
-                        onSave(updated)
-                      }}
-                      className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-red-500/20 text-gray-500 dark:text-gray-400 flex-shrink-0"
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-                <p className="text-[11px] text-gray-400 dark:text-gray-600 leading-relaxed">
-                  Guitar DI recordings used by the tone preview player. Organize them into subfolders
-                  (<span className="font-mono">Clean/</span>, <span className="font-mono">Medium Gain/</span>,{' '}
-                  <span className="font-mono">High Gain/</span>) — each becomes a category in the player.
-                  This is separate from the training Input DI, which is a calibration signal and is not
-                  meant to be listened to.
-                </p>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">IR Library</span>
-                  <span className="text-xs text-gray-400 dark:text-gray-500 truncate flex-1 font-mono">
-                    {draft.irLibraryPath || <span className="italic text-gray-400 dark:text-gray-600">Not configured</span>}
-                  </span>
-                  <button
-                    onClick={async () => {
-                      const p = await window.api.openFolder(draft.irLibraryPath || undefined)
-                      if (p) {
-                        const updated = { ...draft, irLibraryPath: p }
-                        setDraft(updated)
-                        onSave(updated)
-                      }
-                    }}
-                    className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 flex-shrink-0"
-                  >
-                    Browse...
-                  </button>
-                  {draft.irLibraryPath && (
-                    <button
-                      onClick={() => {
-                        const updated = { ...draft, irLibraryPath: '' }
-                        setDraft(updated)
-                        onSave(updated)
-                      }}
-                      className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-red-500/20 text-gray-500 dark:text-gray-400 flex-shrink-0"
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">Cabinet mix</span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    step={5}
-                    value={Math.round((draft.irMix ?? 1) * 100)}
-                    onChange={(e) => {
-                      const updated = { ...draft, irMix: Number(e.target.value) / 100 }
+                    onClick={() => {
+                      const updated = { ...draft, diPreviewLibraryPath: '' }
                       setDraft(updated)
                       onSave(updated)
                     }}
-                    className="flex-1 accent-teal-500"
-                  />
-                  <span className="text-xs tabular-nums text-gray-400 dark:text-gray-500 w-10 text-right flex-shrink-0">
-                    {Math.round((draft.irMix ?? 1) * 100)}%
-                  </span>
-                </div>
-                <p className="text-[11px] text-gray-400 dark:text-gray-600 leading-relaxed">
-                  Cabinet impulse responses for previewing captures that don&apos;t include a cab
-                  (<span className="font-mono">amp</span>, <span className="font-mono">preamp</span>,{' '}
-                  <span className="font-mono">pedal</span>) — those are raw power-amp signal and sound
-                  harsh without one. Subfolders become categories, same as the DI library. Captures
-                  that already include a cab skip the IR automatically.
-                </p>
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-red-500/20 text-gray-500 dark:text-gray-400 flex-shrink-0"
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
+              <p className="text-[11px] text-gray-400 dark:text-gray-600 leading-relaxed">
+                Guitar DI recordings used by the tone preview player. Organize them into subfolders
+                (<span className="font-mono">Clean/</span>, <span className="font-mono">Medium Gain/</span>,{' '}
+                <span className="font-mono">High Gain/</span>) — each becomes a category in the player.
+                This is separate from the training Input DI, which is a calibration signal and is not
+                meant to be listened to.
+              </p>
             </div>
+
+            <div className="flex items-center gap-2 mb-4 mt-8">
+              <span className="text-sm">IR</span>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Cabinet IRs</h3>
+              <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
+            </div>
+            <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-3 space-y-3">
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">Folder</span>
+                <span className="text-xs text-gray-400 dark:text-gray-500 truncate flex-1 font-mono">
+                  {draft.irLibraryPath || <span className="italic text-gray-400 dark:text-gray-600">Not configured</span>}
+                </span>
+                <button
+                  onClick={async () => {
+                    const p = await window.api.openFolder(draft.irLibraryPath || undefined)
+                    if (p) {
+                      const updated = { ...draft, irLibraryPath: p }
+                      setDraft(updated)
+                      onSave(updated)
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 flex-shrink-0"
+                >
+                  Browse...
+                </button>
+                {draft.irLibraryPath && (
+                  <button
+                    onClick={() => {
+                      const updated = { ...draft, irLibraryPath: '' }
+                      setDraft(updated)
+                      onSave(updated)
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-red-500/20 text-gray-500 dark:text-gray-400 flex-shrink-0"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">Cabinet mix</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={5}
+                  value={Math.round((draft.irMix ?? 1) * 100)}
+                  onChange={(e) => {
+                    const updated = { ...draft, irMix: Number(e.target.value) / 100 }
+                    setDraft(updated)
+                    onSave(updated)
+                  }}
+                  className="flex-1 accent-teal-500"
+                />
+                <span className="text-xs tabular-nums text-gray-400 dark:text-gray-500 w-10 text-right flex-shrink-0">
+                  {Math.round((draft.irMix ?? 1) * 100)}%
+                </span>
+              </div>
+              <p className="text-[11px] text-gray-400 dark:text-gray-600 leading-relaxed">
+                Cabinet impulse responses for previewing captures that don&apos;t include a cab
+                (<span className="font-mono">amp</span>, <span className="font-mono">preamp</span>,{' '}
+                <span className="font-mono">pedal</span>) — those are raw power-amp signal and sound
+                harsh without one. Subfolders become categories, same as the DI library. Captures
+                that already include a cab skip the IR automatically.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 mb-4 mt-8">
+              <span className="text-sm">FX</span>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Convolution Reverbs</h3>
+              <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
+            </div>
+            <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-3 space-y-3">
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">Folder</span>
+                <span className="text-xs text-gray-400 dark:text-gray-500 truncate flex-1 font-mono">
+                  {draft.reverbLibraryPath || <span className="italic text-gray-400 dark:text-gray-600">Not configured</span>}
+                </span>
+                <button
+                  onClick={async () => {
+                    const p = await window.api.openFolder(draft.reverbLibraryPath || undefined)
+                    if (p) {
+                      const updated = { ...draft, reverbLibraryPath: p }
+                      setDraft(updated)
+                      onSave(updated)
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 flex-shrink-0"
+                >
+                  Browse...
+                </button>
+                {draft.reverbLibraryPath && (
+                  <button
+                    onClick={() => {
+                      const updated = { ...draft, reverbLibraryPath: '' }
+                      setDraft(updated)
+                      onSave(updated)
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-200 dark:bg-gray-700 hover:bg-red-500/20 text-gray-500 dark:text-gray-400 flex-shrink-0"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              <p className="text-[11px] text-gray-400 dark:text-gray-600 leading-relaxed">
+                Room, hall and plate impulse responses for the player&apos;s reverb. Kept separate
+                from the cabinet library on purpose &mdash; they are chosen for a different job and sit at
+                a different point in the chain, so mixing a hall into the cab picker would make both
+                lists worse. Searched and browsed the same way, so a deep pack is fine.
+              </p>
+            </div>
+
           </div>
           )}
 
@@ -2074,7 +2145,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab, onOpenTra
                   <SettingsField
                     label="NAM output path formula"
                     hint="Derive the .nam output folder from the staging WAV path using tokens. Leave blank to use a fixed path per run."
-                    help={<>Tokens derive the output path from your input WAV's location:<br /><br /><code>{'{folder}'}</code> \u2014 parent folder name<br /><code>{'{filename}'}</code> \u2014 WAV filename without extension<br /><code>{'{architecture}'}</code> \u2014 e.g. standard, lite<br /><code>{'{date}'}</code> \u2014 YYYY-MM-DD<br /><br />Example: <code>../../Captures/{'{folder}'}/{'{architecture}'}</code></>}
+                    help={<>Tokens derive the output path from your input WAV's location:<br /><br /><code>{'{folder}'}</code> &mdash; parent folder name<br /><code>{'{filename}'}</code> &mdash; WAV filename without extension<br /><code>{'{architecture}'}</code> &mdash; e.g. standard, lite<br /><code>{'{date}'}</code> &mdash; YYYY-MM-DD<br /><br />Example: <code>../../Captures/{'{folder}'}/{'{architecture}'}</code></>}
                   >
                     <OutputFormulaField
                       value={draft.trainingOutputFormula ?? ''}

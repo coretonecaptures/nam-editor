@@ -202,6 +202,45 @@ export function peakOf(samples: Float32Array): number {
   return peak
 }
 
+/** RMS of a buffer, in dBFS. Returns -Infinity for silence. */
+export function rmsDbOf(samples: Float32Array): number {
+  let sum = 0
+  let count = 0
+  for (let i = 0; i < samples.length; i++) {
+    const v = samples[i]
+    if (!Number.isFinite(v)) continue
+    sum += v * v
+    count++
+  }
+  if (count === 0) return -Infinity
+  const rms = Math.sqrt(sum / count)
+  return rms > 0 ? 20 * Math.log10(rms) : -Infinity
+}
+
+/**
+ * Adjust a model's declared loudness to account for a cabinet IR applied after it.
+ *
+ * Applying an IR changes the output level, so the loudness a model declares no longer describes
+ * what comes out. The previous code handled that by giving up on the declared value and peak-
+ * normalizing to PEAK_FALLBACK_TARGET instead — which made every capture WITH a cab roughly 8 dB
+ * louder than the same capture without one, because peak-to-0.7 and loudness-to-target are not
+ * the same target at all. That is the jump that makes preview uncomfortable next to live playing.
+ *
+ * Measuring how much the IR actually moved the level, and shifting the declared loudness by that,
+ * keeps one calibrated scale for both cases.
+ */
+export function loudnessAfterIr(
+  declaredLoudnessDb: number | null,
+  before: Float32Array,
+  after: Float32Array
+): number | null {
+  if (declaredLoudnessDb === null || !Number.isFinite(declaredLoudnessDb)) return null
+  const beforeDb = rmsDbOf(before)
+  const afterDb = rmsDbOf(after)
+  if (!Number.isFinite(beforeDb) || !Number.isFinite(afterDb)) return declaredLoudnessDb
+  return declaredLoudnessDb + (afterDb - beforeDb)
+}
+
 /**
  * Compute the playback gain for a rendered buffer.
  *
@@ -231,6 +270,23 @@ export function computePlaybackGain(samples: Float32Array, loudnessDb: number | 
   if (peakAfter > PEAK_CEILING) gain *= PEAK_CEILING / peakAfter
 
   return gain
+}
+
+/**
+ * Playback gain for the LIVE path, from the model's declared loudness alone.
+ *
+ * The offline path can measure what it rendered; live has to commit to a gain before any audio
+ * exists, so it can only use what the .nam declares. Same TARGET_LOUDNESS_DB either way, so a
+ * capture lands in the same place whether you preview it or play through it — previously live ran
+ * at unity while preview normalized, which is why one was far louder than the other.
+ *
+ * Clamped hard: `loudness` comes from the file, and a wrong value must not be able to produce a
+ * damaging level in a path that is going straight to headphones with no limiter after it.
+ */
+export function computeLiveNormalizeGain(loudnessDb: number | null): number {
+  if (loudnessDb === null || !Number.isFinite(loudnessDb)) return 1
+  const gain = Math.pow(10, (TARGET_LOUDNESS_DB - loudnessDb) * 0.05)
+  return Math.max(0.02, Math.min(4, gain))
 }
 
 /**
