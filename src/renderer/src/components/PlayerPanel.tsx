@@ -325,17 +325,37 @@ const TAPE_CAP_BARS: Record<'neutral' | 'play' | 'stop' | 'loop', [string, strin
 }
 const TAPE_CAP_SIZE = 78
 const TAPE_CAP_GAP = 8
+/** The faceplate's own padding, both sides, in artwork pixels. */
+const TAPE_FACEPLATE_PAD = 14
+
+/**
+ * How large the transport renders against the natural size of its artwork.
+ *
+ * The faceplate is one photographed device, so its caps, counter, meter and lettering have to
+ * shrink together — metal that shrank while its labels stayed put would stop reading as a
+ * photograph. Hence `zoom` on the faceplate rather than a scale factor sprinkled across a dozen
+ * constants: Chromium reflows layout for `zoom`, so the sections below close up on their own and
+ * hit-testing still lands where the caps look.
+ *
+ * Pulling this down is what buys room for a second device beside this one — PLAYER_MIN_WIDTH is
+ * derived from it, so the panel's drag floor follows instead of reserving width for artwork that
+ * is no longer that big.
+ */
+export const TRANSPORT_SCALE = 0.7
 
 /**
  * Narrowest the player panel may be dragged.
  *
  * Derived from the transport rather than picked by eye, so resizing the caps cannot silently
- * reintroduce the overflow: four caps plus their gaps, the faceplate's own padding (p-3.5), the
- * section padding (px-4), and a margin so they sit comfortably inside the metal rather than
- * touching its edges.
+ * reintroduce the overflow: four caps, their gaps and the faceplate's own padding — all at
+ * TRANSPORT_SCALE, because they live inside the zoomed faceplate — then the section padding
+ * (px-4) and a margin, both outside the zoom, so the metal sits comfortably inside the panel
+ * rather than touching its edges.
  */
 export const PLAYER_MIN_WIDTH =
-  TAPE_CAP_SIZE * 4 + TAPE_CAP_GAP * 3 + 14 * 2 + 16 * 2 + 24
+  Math.ceil((TAPE_CAP_SIZE * 4 + TAPE_CAP_GAP * 3 + TAPE_FACEPLATE_PAD * 2) * TRANSPORT_SCALE) +
+  16 * 2 +
+  24
 const TAPE_CAP_FLASH_MS = 180
 
 function TapeCap({
@@ -2360,8 +2380,11 @@ export function PlayerPanel({
                 </span>
               </div>
               <div
-                className="rounded-xl p-3.5"
+                className="rounded-xl"
                 style={{
+                  // Scales the whole device — caps, counter, meter, lettering — as one piece.
+                  zoom: TRANSPORT_SCALE,
+                  padding: TAPE_FACEPLATE_PAD,
                   backgroundImage: `url(${transportPanelBg})`,
                   backgroundSize: 'cover',
                   backgroundPosition: 'center',
@@ -2388,7 +2411,7 @@ export function PlayerPanel({
                 </div>
 
                 {/* caps */}
-                <div className="flex gap-2 justify-center">
+                <div className="flex justify-center" style={{ gap: TAPE_CAP_GAP }}>
                   <TapeCap
                     label="RESTART"
                     variant="neutral"
@@ -2533,7 +2556,7 @@ export function PlayerPanel({
 /**
  * Full-width rig view.
  *
- * The player panel is a side panel with a 420px floor, which is why the FX controls have to
+ * The player panel is a side panel with a ~311px floor, which is why the FX controls have to
  * compress so hard. This is the same controls with room to breathe: cover and metadata across the
  * top, then the arm control, then the effects laid side by side rather than stacked.
  *
@@ -2612,7 +2635,7 @@ function PlayerPopout({
               once, with the room to state it properly. */}
           <div className="flex flex-wrap gap-5 px-5 py-5 border-b border-gray-200 dark:border-[var(--border-soft)]">
             {/* Same 2.2:1 crop the side panel uses, just at pop-out scale — the panel caps at
-                232 * 2.2 (~510px) because that's all a 420px-floor side panel can spare; the
+                232 * 2.2 (~510px) because that's all a narrow-floor side panel can spare; the
                 pop-out's whole point is having a wide canvas, so it gets a wider cap instead of
                 the same fixed pixel box stretched across all that extra room. */}
             <div className="flex-none rounded-lg overflow-hidden bg-gray-100 dark:bg-[var(--field)]" style={{ width: 460, aspectRatio: '2.2 / 1' }}>

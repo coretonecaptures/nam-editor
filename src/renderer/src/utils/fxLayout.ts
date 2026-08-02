@@ -1,7 +1,7 @@
 /**
  * How the FX controls arrange themselves at a given panel width.
  *
- * The player is a panel the user drags, with a hard floor of PLAYER_MIN_WIDTH (420px, set by the
+ * The player is a panel the user drags, with a hard floor of PLAYER_MIN_WIDTH (~311px, set by the
  * transport caps in Preview). Sixteen controls stacked one per row is roughly 750px of scrolling,
  * so the layout has to earn back space as the panel widens rather than staying in one column.
  *

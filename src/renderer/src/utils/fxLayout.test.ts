@@ -1,8 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import { fxGridTemplate, fxLayoutFor } from './fxLayout'
 
-/** The panel's hard floor, set by the transport caps. Nothing may break at this width. */
-const PLAYER_MIN = 420
+/**
+ * The panel's hard floor, set by the transport caps at TRANSPORT_SCALE. Nothing may break here.
+ *
+ * Kept as a literal rather than imported: pulling it from PlayerPanel would drag the whole
+ * component — and every transport image it imports — into a test about arithmetic.
+ */
+const PLAYER_MIN = 311
 
 describe('fxLayoutFor', () => {
   it('stays single-column and compact at the panel minimum', () => {
@@ -34,7 +39,7 @@ describe('fxLayoutFor', () => {
   })
 
   it('gives the full-width reverb card at least as many columns as a half-width card', () => {
-    for (let width = 420; width <= 1600; width += 13) {
+    for (let width = PLAYER_MIN; width <= 1600; width += 13) {
       const layout = fxLayoutFor(width)
       expect(layout.reverbControls, `${width}px`).toBeGreaterThanOrEqual(layout.cardControls)
     }
@@ -42,7 +47,7 @@ describe('fxLayoutFor', () => {
 
   it('never adds reverb columns and then takes them away', () => {
     let last = 0
-    for (let width = 420; width <= 1600; width += 7) {
+    for (let width = PLAYER_MIN; width <= 1600; width += 7) {
       const columns = fxLayoutFor(width).reverbControls
       expect(columns, `${width}px`).toBeGreaterThanOrEqual(last)
       last = columns

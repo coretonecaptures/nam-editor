@@ -9,7 +9,7 @@ import { describe, it, expect } from 'vitest'
 import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
 import type { NamFile } from '../types/nam'
-import { PLAYER_MIN_WIDTH, PlayerPanel } from './PlayerPanel'
+import { PLAYER_MIN_WIDTH, TRANSPORT_SCALE, PlayerPanel } from './PlayerPanel'
 
 let counter = 0
 function capture(meta: Partial<NamFile['metadata']> = {}, config: unknown = {}): NamFile {
@@ -128,18 +128,29 @@ describe('PLAYER_MIN_WIDTH', () => {
   // narrow, because the layout reserved 300px while the caps needed ~360.
   const CAP_SIZE = 78
   const CAP_GAP = 8
-  const capsRow = CAP_SIZE * 4 + CAP_GAP * 3
+  const FACEPLATE_PAD = 14
+  // Caps and faceplate padding are artwork pixels living inside the zoomed faceplate, so the
+  // width they actually claim is scaled. The section padding sits outside the zoom and is not.
+  const faceplate = (CAP_SIZE * 4 + CAP_GAP * 3 + FACEPLATE_PAD * 2) * TRANSPORT_SCALE
 
   it('leaves the four caps comfortably inside the faceplate', () => {
-    // Caps plus the faceplate's own padding and the section padding, with room to spare.
-    expect(PLAYER_MIN_WIDTH).toBeGreaterThan(capsRow + 14 * 2 + 16 * 2)
+    expect(PLAYER_MIN_WIDTH).toBeGreaterThan(faceplate + 16 * 2)
   })
 
-  it('is wider than the 300px the layout used to reserve', () => {
-    expect(PLAYER_MIN_WIDTH).toBeGreaterThan(300)
+  it('reserves enough for the caps at whatever scale the transport renders', () => {
+    // The old bug was a floor picked independently of the artwork. Guard the relationship, not
+    // the number: the floor has to track TRANSPORT_SCALE, not a constant someone typed once.
+    expect(PLAYER_MIN_WIDTH).toBeGreaterThan(faceplate)
+    expect(PLAYER_MIN_WIDTH).toBeLessThan(faceplate * 2)
   })
 
   it('stays a sane panel width rather than dominating the window', () => {
     expect(PLAYER_MIN_WIDTH).toBeLessThan(600)
+  })
+
+  it('lets two players sit side by side in an ordinary window', () => {
+    // The point of shrinking the transport: two devices, plus a drag handle and a file list,
+    // inside a 1280px window.
+    expect(PLAYER_MIN_WIDTH * 2).toBeLessThan(1280)
   })
 })
