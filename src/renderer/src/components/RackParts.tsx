@@ -48,9 +48,11 @@ export function RackLed({
         background: active
           ? `radial-gradient(circle at 38% 34%, #fff6df 0%, ${colour} 42%, #a3560a 100%)`
           : 'radial-gradient(circle at 38% 34%, #4a4741 0%, #22201d 55%, #100f0d 100%)',
+        // No outer light ring when dark — it read as a pale halo against the navy and purple
+        // faceplates. Unlit is pure recess; only the lit state emits.
         boxShadow: active
-          ? `0 0 4px 1px ${colour}cc, 0 0 10px 3px ${colour}66, inset 0 0 2px rgba(0,0,0,0.5)`
-          : 'inset 0 1px 2px rgba(0,0,0,0.9), 0 0 1px rgba(255,255,255,0.18)',
+          ? `0 0 4px 1px ${colour}cc, 0 0 10px 3px ${colour}66, inset 0 0 2px rgba(0,0,0,0.55)`
+          : 'inset 0 1px 2px rgba(0,0,0,0.85)',
         transition: 'background 0.12s, box-shadow 0.12s',
         pointerEvents: 'none'
       }}

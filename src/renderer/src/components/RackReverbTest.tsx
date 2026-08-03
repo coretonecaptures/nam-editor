@@ -23,7 +23,7 @@ const MODE_SW_Y = py(515)
 const MODE_LED_Y = py(422)
 const BTN_W = px(85)
 const BTN_H = py(85)
-const LED_W = px(26)
+const LED_W = px(30)
 
 const BYPASS_X = px(1941)
 const BYPASS_Y = py(232)

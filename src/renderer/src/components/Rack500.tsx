@@ -1,7 +1,7 @@
 import rack500Panel from '../assets/fx/v3e-rack-panel.png'
-import knobEq from '../assets/fx/v3f-knob-eq.png'
-import knobGate from '../assets/fx/v3f-knob-gate.png'
-import knobMod from '../assets/fx/v3f-knob-mod.png'
+import knobEq from '../assets/fx/v5-knob-eq.png'
+import knobGate from '../assets/fx/v5-knob-gate.png'
+import knobMod from '../assets/fx/v5-knob-mod.png'
 import powerOn from '../assets/fx/v3-power-on.png'
 import { RackKnob } from './RackKnob'
 import { RackButton, RackDisplay, RackLed } from './RackParts'
@@ -30,15 +30,15 @@ const P = { w: 1774, h: 887 }
 const pctX = (v: number): number => (v / P.w) * 100
 const pctY = (v: number): number => (v / P.h) * 100
 
-const EQ_X = pctX(316)
-const GATE_X = pctX(581)
-const EQ_KNOB_YS = [356, 494, 633].map(pctY)
-const GATE_KNOB_YS = [461, 571, 683].map(pctY)
-const MOD_KNOB_XS = [800, 957, 1114, 1269].map(pctX)
-const MOD_KNOB_Y = pctY(592)
-const EQ_KNOB_D = pctX(100)
-const GATE_KNOB_D = pctX(88)
-const MOD_KNOB_D = pctX(116)
+const EQ_X = pctX(310)
+const GATE_X = pctX(580)
+const EQ_KNOB_YS = [348, 488, 628].map(pctY)
+const GATE_KNOB_YS = [454, 565, 676].map(pctY)
+const MOD_KNOB_XS = [800, 954, 1112, 1267].map(pctX)
+const MOD_KNOB_Y = pctY(584)
+const EQ_KNOB_D = pctX(94)
+const GATE_KNOB_D = pctX(82)
+const MOD_KNOB_D = pctX(112)
 
 const EQ_LED_X = pctX(312)
 const EQ_LED_Y = pctY(210)
@@ -54,7 +54,7 @@ const MOD_ROW_LED_Y = pctY(355)
 const MOD_ROW_BTN_Y = pctY(400)
 const BTN_W = pctX(70)
 const BTN_H = pctY(55)
-const LED_W = pctX(19)
+const LED_W = pctX(25)
 
 const GATE_LCD = { x: GATE_X, y: pctY(350), w: pctX(200), h: pctY(80) }
 const POWER = { x: pctX(1493), y: pctY(254), w: pctX(144) }

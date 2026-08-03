@@ -36,7 +36,7 @@ const ENGINE_XS = [1554, 1678].map(px)
 const STEREO_XS = [1818, 1919, 2021].map(px)
 const BTN_W = px(75)
 const BTN_H = py(79)
-const LED_W = px(26)
+const LED_W = px(30)
 
 const BYPASS_X = px(1940)
 const BYPASS_Y = py(240)
