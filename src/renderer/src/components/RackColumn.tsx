@@ -1,16 +1,19 @@
-import { useLayoutEffect, useRef, useState } from 'react'
-
 /**
- * Keeps a unit's header and IR row the same width as the panel above them.
+ * Keeps a unit's header and IR row the same width as the panel above them — pure CSS, no
+ * measurement.
  *
- * Since the panels became height-driven, a panel is usually NARROWER than the column it sits in —
- * its width falls out of the available height and its aspect ratio. A header stretched to the
- * full column then runs past the metal, so its preset dropdown floats out in space to the right
- * of the unit instead of sitting flush with it.
+ * The previous version measured the panel's rendered width with a ResizeObserver and copied it
+ * onto the header/footer. That broke as soon as two units (Delay, Reverb) sat in the same flex
+ * column: both observers fired and pushed state independently, so header widths lagged a frame
+ * behind the panel they were supposed to match, and the two units' heights could momentarily
+ * disagree enough to overlap.
  *
- * The width cannot be derived in CSS: it comes from the panel's height, and the surrounding rows
- * would in turn affect that height, which is circular. So it is measured instead. A
- * ResizeObserver is the honest tool for "however wide that ended up being".
+ * CSS Grid solves the same problem without JS. A `1fr` row is sized first, from the space left
+ * over after the `auto` header/footer rows. Once that row's height is known, the panel's
+ * `aspect-ratio` gives it a concrete preferred WIDTH — and because grid resolves column width
+ * from the widest cell in ANY row of that column, the header and footer (placed in the same
+ * single-column grid) are stretched to that same width automatically. This is deterministic:
+ * there is no observer, no re-render, no race between siblings.
  */
 export function RackColumn({
   panel,
@@ -18,38 +21,33 @@ export function RackColumn({
   footer,
   align = 'stretch'
 }: {
-  /** The RackCrop. Its rendered width sets the width of everything else. */
+  /** The RackCrop. Its aspect-ratio sets the width of the whole column. */
   panel: React.ReactNode
   header?: React.ReactNode
   footer?: React.ReactNode
   /** How the unit sits in a column wider than itself. */
   align?: 'stretch' | 'flex-start' | 'flex-end'
 }) {
-  const ref = useRef<HTMLDivElement>(null)
-  const [width, setWidth] = useState<number | null>(null)
-
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const ro = new ResizeObserver(([entry]) => {
-      const w = entry.contentRect.width
-      // Ignore sub-pixel noise; re-rendering on every fractional change causes a feedback loop
-      // with the flex layout that produced the width in the first place.
-      setWidth((prev) => (prev === null || Math.abs(prev - w) > 1 ? w : prev))
-    })
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
-
-  const matched: React.CSSProperties = width ? { width, maxWidth: '100%' } : {}
-
+  const justify = align === 'flex-end' ? 'end' : align === 'flex-start' ? 'start' : 'stretch'
   return (
-    <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8, alignItems: align }}>
-      {header && <div style={{ ...matched, flex: 'none' }}>{header}</div>}
-      <div ref={ref} style={{ flex: '1 1 0', minHeight: 0, display: 'flex' }}>
-        {panel}
-      </div>
-      {footer && <div style={{ ...matched, flex: 'none' }}>{footer}</div>}
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateRows: `${header ? 'auto ' : ''}1fr${footer ? ' auto' : ''}`,
+        gridTemplateColumns: 'auto',
+        justifyContent: justify,
+        rowGap: 8,
+        flex: '1 1 0',
+        minHeight: 0,
+        minWidth: 0
+      }}
+    >
+      {header && <div style={{ minWidth: 0 }}>{header}</div>}
+      {/* minHeight:0 defeats the automatic minimum size a grid item otherwise takes from its
+          own content (here, the aspect-ratio box), which would refuse to shrink below that and
+          push the row taller than the 1fr track actually has room for. */}
+      <div style={{ minHeight: 0, minWidth: 0, display: 'flex' }}>{panel}</div>
+      {footer && <div style={{ minWidth: 0 }}>{footer}</div>}
     </div>
   )
 }

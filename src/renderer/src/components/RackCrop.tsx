@@ -72,7 +72,10 @@ export function RackCrop({
 export const RACK_CROP: Record<'rack500' | 'delay' | 'reverb', MetalBounds> = {
   // t is the FACEPLATE top, not the chassis top — a naive scan caught the silver rail screws
   // above the modules and framed 60px of chassis into the box, which broke the alignment.
-  rack500: { l: 0.1015, t: 0.1533, r: 0.9064, b: 0.8568, aspect: 2.288 },
+  // The CHASSIS, not the faceplates: the rack frame, handle, rails and screws are part of the
+  // object and worth keeping — it is only the empty void around the enclosure that wastes space.
+  // (Faceplate-only would be { l: 0.1015, t: 0.1533, r: 0.9064, b: 0.8568, aspect: 2.288 }.)
+  rack500: { l: 0.0169, t: 0.0507, r: 0.982, b: 0.9053, aspect: 2.259 },
   delay: { l: 0.0134, t: 0.1326, r: 0.9807, b: 0.8591, aspect: 3.994 },
   reverb: { l: 0.0143, t: 0.1271, r: 0.982, b: 0.8605, aspect: 3.959 }
 }

@@ -2476,7 +2476,7 @@ export function PlayerPanel({
       </div>
 
       {/* ── D. Rack wall */}
-      <div style={{ ...wellStyle, flex: '1 1 0', minHeight: 0, display: 'flex', gap: 14, alignItems: 'stretch' }}>
+      <div style={{ ...wellStyle, flex: '1 1 0', minHeight: 0, display: 'flex', gap: 22, alignItems: 'stretch' }}>
         <div style={{ flex: '1 1 0', minWidth: 0, minHeight: 0, display: 'flex' }}>
           <RackColumn
             align="flex-start"
