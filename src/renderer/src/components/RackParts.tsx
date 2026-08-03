@@ -115,11 +115,13 @@ export function RackDisplay({
   heightPct: number
   colour?: string
 }) {
-  const shown = text.length > 18 ? `${text.slice(0, 17)}…` : text
+  // These displays are wide — half the panel on Delay and Reverb — so the budget is generous.
+  // Truncating at 18 was wasting most of the glass; a preset name plus a value now fits.
+  const shown = text.length > 40 ? `${text.slice(0, 39)}…` : text
   // Fit to the GLASS, not to the panel. Displays differ wildly in size between units — the
   // Gate's little value window is a fraction of the Delay's — so a shared font size overflowed
-  // the small ones. Doto is near-monospace at ~0.62em per character; 0.88 leaves a margin.
-  const fontCqw = Math.min(3.0, (widthPct * 0.88) / (Math.max(shown.length, 1) * 0.62))
+  // the small ones. Doto is near-monospace at ~0.62em per character; 0.9 leaves a margin.
+  const fontCqw = Math.min(2.6, (widthPct * 0.9) / (Math.max(shown.length, 1) * 0.62))
   return (
     <div
       style={{

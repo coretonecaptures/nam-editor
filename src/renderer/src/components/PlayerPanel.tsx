@@ -511,6 +511,9 @@ export function PlayerPanel({
   // Prototype toggle only — proving out the rack-photo knob interaction. Defaults on so it's
   // immediately visible when popped out; the button below switches back to the normal FX grid.
   const [rackTest, setRackTest] = useState(true)
+  // Master power for the whole FX rig — the rack's illuminated blue button. Prototype-local for
+  // now; it will need to actually gate the chain once the layout is settled.
+  const [fxPower, setFxPower] = useState(true)
   const volumeGain = volumeDb <= VOLUME_MIN_DB ? 0 : Math.pow(10, volumeDb * 0.05)
 
   const [diPrefs, setDiPrefs] = useState<DiPrefs>(loadDiPrefs)
@@ -2322,22 +2325,70 @@ export function PlayerPanel({
                 // Two units side by side, stacking only when the window is too narrow to give
                 // each one a usable width. Padding is deliberately tight — the panels are the
                 // content here, and every pixel of margin comes off their readable size.
-                <div className="px-1 pb-2 flex flex-col gap-4 items-center overflow-visible">
-                  {/* Rig snapshots every block at once, so it sits above all three units. */}
-                  <div className="w-full flex items-center gap-2">
-                    <TapeLabel>Rig</TapeLabel>
-                    <div className="flex-1 min-w-0">
-                      <FxPresetBar
-                        presets={rigPresets.map((p) => ({ id: p.id, name: p.name, settings: p.settings }))}
-                        onApply={applyRigPreset}
-                        onSave={saveRigPreset}
-                        onDelete={deleteRigPreset}
-                      />
+                <div className="px-1 pb-2 flex flex-col gap-3 overflow-visible">
+                  {/* Every preset list and impulse picker on one line above the hardware, so the
+                      panels below are uninterrupted. Layout below is provisional — the point is
+                      to judge relative size before wiring the real page. */}
+                  <div className="w-full grid gap-x-4 gap-y-1.5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
+                    <div className="flex items-center gap-2">
+                      <TapeLabel>Rig</TapeLabel>
+                      <div className="flex-1 min-w-0">
+                        <FxPresetBar
+                          presets={rigPresets.map((p) => ({ id: p.id, name: p.name, settings: p.settings }))}
+                          onApply={applyRigPreset}
+                          onSave={saveRigPreset}
+                          onDelete={deleteRigPreset}
+                        />
+                      </div>
                     </div>
+                    <div className="flex items-center gap-2">
+                      <TapeLabel>Mod</TapeLabel>
+                      <div className="flex-1 min-w-0">
+                        <FxPresetBar presets={chorusPresets} onApply={applyChorusPreset} onSave={saveChorusPreset} onDelete={deleteChorusPreset} />
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <TapeLabel>Delay</TapeLabel>
+                      <div className="flex-1 min-w-0">
+                        <FxPresetBar presets={delayPresets} onApply={applyDelayPreset} onSave={saveDelayPreset} onDelete={deleteDelayPreset} />
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <TapeLabel>Reverb</TapeLabel>
+                      <div className="flex-1 min-w-0">
+                        <FxPresetBar presets={reverbPresets} onApply={applyReverbPreset} onSave={saveReverbPreset} onDelete={deleteReverbPreset} />
+                      </div>
+                    </div>
+                    {delay.mode === 'convolution' && (
+                      <div className="flex items-center gap-2">
+                        <TapeLabel>Delay IR</TapeLabel>
+                        <div className="flex-1 min-w-0">
+                          <IrPicker libraryPath={delayLibraryPath ?? ''} value={delayIrPath} allowNone
+                            placeholder={`Choose from ${delayIrCount.toLocaleString()} delay impulses…`}
+                            onChange={(ref) => { setDelayIrPath(ref.path); try { localStorage.setItem(DELAY_IR_PREF_KEY, ref.path) } catch { /* non-fatal */ } }}
+                            onClear={() => { setDelayIrPath(null); try { localStorage.removeItem(DELAY_IR_PREF_KEY) } catch { /* non-fatal */ } }} />
+                        </div>
+                      </div>
+                    )}
+                    {reverb.mode === 'convolution' && (
+                      <div className="flex items-center gap-2">
+                        <TapeLabel>Reverb IR</TapeLabel>
+                        <div className="flex-1 min-w-0">
+                          <IrPicker libraryPath={reverbLibraryPath ?? ''} value={reverbPath} allowNone
+                            placeholder={`Choose from ${reverbCount.toLocaleString()} impulses…`}
+                            onChange={(ref) => { setReverbPath(ref.path); try { localStorage.setItem(REVERB_PREF_KEY, ref.path) } catch { /* non-fatal */ } }}
+                            onClear={() => { setReverbPath(null); try { localStorage.removeItem(REVERB_PREF_KEY) } catch { /* non-fatal */ } }} />
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  {/* Capped rather than full-bleed: this panel is 1.8:1 where Delay and Reverb
-                      are 2:1 and 2.7:1, so at a shared width it towers over them. */}
-                  <div style={{ width: '100%', maxWidth: 820 }}>
+
+                  {/* Rack left, Delay over Reverb right. The 4:3 split is chosen so the two
+                      columns end up roughly the same HEIGHT: the rack is 2:1 and each of the
+                      other two is 3:1, so 4/3 the width makes one 2:1 panel as tall as two
+                      stacked 3:1 panels. */}
+                  <div className="w-full flex gap-3 items-start">
+                  <div style={{ flex: '4 1 0', minWidth: 0 }}>
                   <Rack500
                     gate={gate}
                     eq={eq}
@@ -2345,96 +2396,24 @@ export function PlayerPanel({
                     onGate={(patch) => setGateState((g) => ({ ...g, ...patch }))}
                     onEq={(patch) => setEqState((e) => ({ ...e, ...patch }))}
                     onChorus={(patch) => setChorusState((c) => ({ ...c, ...patch }))}
-                    modPresetBar={
-                      <FxPresetBar
-                        presets={chorusPresets}
-                        onApply={applyChorusPreset}
-                        onSave={saveChorusPreset}
-                        onDelete={deleteChorusPreset}
-                      />
-                    }
+                    power={fxPower}
+                    onTogglePower={() => setFxPower((v) => !v)}
                   />
                   </div>
-                  {/* Slightly wider than the pop-out's own 1400 column: at two-up these panels
-                      are the thing you are reading, and 7% is the difference between the LCD
-                      being legible and not. */}
-                  <div style={{ width: '107%', maxWidth: '107%', display: 'grid', gap: 14, gridTemplateColumns: 'repeat(auto-fit, minmax(560px, 1fr))', alignItems: 'start' }}>
+                  <div style={{ flex: '3 1 0', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
                   <RackDelay
                     delay={delay}
                     onChange={(patch) => setDelayState((d) => ({ ...d, ...patch }))}
                     delayPresets={delayPresets}
                     irName={delayIrPath ? (delayIrPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null}
-                    presetBar={
-                      <FxPresetBar
-                        presets={delayPresets}
-                        onApply={applyDelayPreset}
-                        onSave={saveDelayPreset}
-                        onDelete={deleteDelayPreset}
-                      />
-                    }
-                    irPicker={
-                      <IrPicker
-                        libraryPath={delayLibraryPath ?? ''}
-                        value={delayIrPath}
-                        allowNone
-                        placeholder={`Choose from ${delayIrCount.toLocaleString()} delay impulses…`}
-                        onChange={(ref) => {
-                          setDelayIrPath(ref.path)
-                          try {
-                            localStorage.setItem(DELAY_IR_PREF_KEY, ref.path)
-                          } catch {
-                            // Non-fatal.
-                          }
-                        }}
-                        onClear={() => {
-                          setDelayIrPath(null)
-                          try {
-                            localStorage.removeItem(DELAY_IR_PREF_KEY)
-                          } catch {
-                            // Non-fatal.
-                          }
-                        }}
-                      />
-                    }
                   />
                   <RackReverbTest
                     reverb={reverb}
                     onChange={(patch) => setReverbState((r) => ({ ...r, ...patch }))}
                     reverbPresets={reverbPresets}
                     irName={reverbPath ? (reverbPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null}
-                    presetBar={
-                      <FxPresetBar
-                        presets={reverbPresets}
-                        onApply={applyReverbPreset}
-                        onSave={saveReverbPreset}
-                        onDelete={deleteReverbPreset}
-                      />
-                    }
-                    irPicker={
-                      <IrPicker
-                        libraryPath={reverbLibraryPath ?? ''}
-                        value={reverbPath}
-                        allowNone
-                        placeholder={`Choose from ${reverbCount.toLocaleString()} impulses…`}
-                        onChange={(ref) => {
-                          setReverbPath(ref.path)
-                          try {
-                            localStorage.setItem(REVERB_PREF_KEY, ref.path)
-                          } catch {
-                            // Non-fatal.
-                          }
-                        }}
-                        onClear={() => {
-                          setReverbPath(null)
-                          try {
-                            localStorage.removeItem(REVERB_PREF_KEY)
-                          } catch {
-                            // Non-fatal.
-                          }
-                        }}
-                      />
-                    }
                   />
+                  </div>
                   </div>
                 </div>
               ) : (
@@ -2790,7 +2769,10 @@ function PlayerPopout({
 
   return (
     <div className="fixed inset-0 z-[300] flex flex-col bg-white dark:bg-[var(--panel)] text-gray-900 dark:text-gray-100 select-none">
-      <div className="flex items-center gap-3 px-5 py-3 border-b border-gray-200 dark:border-[var(--border-soft)] flex-shrink-0">
+      <div
+        className="flex items-center gap-3 py-3 border-b border-gray-200 dark:border-[var(--border-soft)] flex-shrink-0"
+        style={{ paddingLeft: window.api.platform === 'darwin' ? 88 : 20, paddingRight: 20 }}
+      >
         <div className="uppercase text-amber-500 dark:text-amber-400" style={{ font: "700 10.5px 'IBM Plex Sans', sans-serif", letterSpacing: '.1em' }}>
           Live Rig
         </div>
@@ -2810,7 +2792,9 @@ function PlayerPopout({
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="mx-auto w-full" style={{ maxWidth: 1400 }}>
+        {/* Was capped at 1400, which wasted most of a wide display. The rack view is the widest
+            thing in the app, so it gets the room; 2400 still keeps text from sprawling. */}
+        <div className="mx-auto w-full" style={{ maxWidth: 2400 }}>
           {/* Cover and metadata share the top row — the capture you are playing through, stated
               once, with the room to state it properly. */}
           <div className="flex flex-wrap gap-5 px-5 py-5 border-b border-gray-200 dark:border-[var(--border-soft)]">

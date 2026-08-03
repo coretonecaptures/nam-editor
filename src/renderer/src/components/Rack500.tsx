@@ -1,13 +1,12 @@
-import rack500Panel from '../assets/fx/rack500-panel.png'
-import ledOffNavy from '../assets/fx/rack500-led-off-navy.png'
-import ledOffPurple from '../assets/fx/rack500-led-off-purple.png'
-import ledOffSilver from '../assets/fx/rack500-led-off-silver.png'
-import knobConsoleEq from '../assets/fx/knob-console-eq.png'
-import knobStrymonCream from '../assets/fx/knob-strymon-cream.png'
-import knobNeveRed from '../assets/fx/knob-neve-red.png'
-import knobNeveGrey from '../assets/fx/knob-neve-grey.png'
+import rack500Panel from '../assets/fx/v3b-rack-panel.png'
+import ledOn from '../assets/fx/v3c-led-on.png'
+import ledOff from '../assets/fx/v3c-led-off.png'
+import knobEq from '../assets/fx/v3b-knob-eq.png'
+import knobGate from '../assets/fx/v3b-knob-gate.png'
+import knobMod from '../assets/fx/v3b-knob-mod.png'
+import powerOn from '../assets/fx/v3-power-on.png'
 import { RackKnob } from './RackKnob'
-import { RackButton, RackDisplay } from './RackParts'
+import { RackButton, RackDisplay, RackLed } from './RackParts'
 import {
   EQ_MAX_DB,
   type ChorusSettings,
@@ -29,53 +28,39 @@ import {
  * own faceplate colour, so the sprite's few background pixels always match what is behind them.
  */
 
-const P = { w: 1693, h: 929 }
-const pctX = (px: number): number => (px / P.w) * 100
-const pctY = (px: number): number => (px / P.h) * 100
+const P = { w: 1774, h: 887 }
+const pctX = (v: number): number => (v / P.w) * 100
+const pctY = (v: number): number => (v / P.h) * 100
 
-const KNOB_D = pctX(92)
-const BTN_W = pctX(46)
-const BTN_H = pctY(28)
-const LED_W = pctX(26)
+const EQ_X = pctX(309)
+const GATE_X = pctX(579)
+const EQ_KNOB_YS = [357, 496, 637].map(pctY)
+const GATE_KNOB_YS = [462, 572, 684].map(pctY)
+const MOD_KNOB_XS = [800, 955, 1111, 1267].map(pctX)
+const MOD_KNOB_Y = pctY(593)
+const EQ_KNOB_D = pctX(104)
+const GATE_KNOB_D = pctX(88)
+const MOD_KNOB_D = pctX(126)
 
-const EQ_X = pctX(347)
-const GATE_X = pctX(639)
-const MOD_X = pctX(996)
+const EQ_LED_Y = pctY(211)
+const GATE_LED_Y = pctY(203)
+const MOD_LED_Y = pctY(216)
+const EQ_BYPASS_BTN_Y = pctY(253)
+const MOD_BYPASS_X = pctX(1042)
+const MOD_BYPASS_BTN_Y = pctY(258)
+const MOD_ROW_XS = [861, 1041, 1222].map(pctX)
+const MOD_ROW_LED_Y = pctY(348)
+const MOD_ROW_BTN_Y = pctY(400)
+const BTN_W = pctX(70)
+const BTN_H = pctY(55)
+const LED_W = pctX(24)
 
-const EQ_KNOB_YS = [pctY(358), pctY(497), pctY(642)]
-const GATE_KNOB_YS = [pctY(429), pctY(556), pctY(686)]
-const MOD_KNOB_YS = [pctY(378), pctY(489), pctY(598), pctY(707)]
-
-const BYPASS_LED_Y = pctY(216)
-const BYPASS_BTN_Y = pctY(253)
-const MOD_LED_Y = pctY(247)
-const MOD_BTN_Y = pctY(278)
-const MOD_BTN_XS = [pctX(857), pctX(947), pctX(1037), pctX(1146)]
+const GATE_LCD = { x: GATE_X, y: pctY(350), w: pctX(200), h: pctY(80) }
+const POWER = { x: pctX(1493), y: pctY(254), w: pctX(144) }
 
 const pct = (v: number): string => `${Math.round(v * 100)}%`
 const db = (v: number): string => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`
 const ms = (v: number): string => `${Math.round(v * 1000)} ms`
-
-/** Overlaid only to turn a lit LED OFF — see the note above on why this is inverted. */
-function OffLed({ hidden, src, centerXPct, centerYPct }: { hidden: boolean; src: string; centerXPct: number; centerYPct: number }) {
-  if (hidden) return null
-  return (
-    <img
-      src={src}
-      alt=""
-      draggable={false}
-      style={{
-        position: 'absolute',
-        left: `${centerXPct}%`,
-        top: `${centerYPct}%`,
-        width: `${LED_W}%`,
-        transform: 'translate(-50%, -50%)',
-        pointerEvents: 'none',
-        userSelect: 'none'
-      }}
-    />
-  )
-}
 
 export function Rack500({
   gate,
@@ -84,7 +69,9 @@ export function Rack500({
   onGate,
   onEq,
   onChorus,
-  modPresetBar
+  modPresetBar,
+  power,
+  onTogglePower
 }: {
   gate: GateSettings
   eq: EqSettings
@@ -95,6 +82,9 @@ export function Rack500({
   /** Modulation's preset controls. EQ and Gate have no preset lists — only Chorus/Modulation,
    *  Delay and Reverb do — so this strip carries one bar rather than three. */
   modPresetBar?: React.ReactNode
+  /** Master power for the whole FX rig — the blue bay's illuminated button. */
+  power: boolean
+  onTogglePower: () => void
 }) {
   const trem = chorus.type === 'tremolo'
   const setType = (type: ModulationType) => onChorus({ type })
@@ -105,52 +95,74 @@ export function Rack500({
       <img src={rack500Panel} alt="EQ, Gate and Modulation" draggable={false} style={{ width: '100%', display: 'block', userSelect: 'none' }} />
 
       {/* ── EQ */}
-      <RackKnob image={knobConsoleEq} label="Bass" value={eq.bassDb} min={-EQ_MAX_DB} max={EQ_MAX_DB} format={db}
-        onChange={(v) => onEq({ bassDb: v })} centerXPct={EQ_X} centerYPct={EQ_KNOB_YS[0]} diameterPct={KNOB_D} />
-      <RackKnob image={knobConsoleEq} label="Middle" value={eq.midDb} min={-EQ_MAX_DB} max={EQ_MAX_DB} format={db}
-        onChange={(v) => onEq({ midDb: v })} centerXPct={EQ_X} centerYPct={EQ_KNOB_YS[1]} diameterPct={KNOB_D} />
-      <RackKnob image={knobConsoleEq} label="Treble" value={eq.trebleDb} min={-EQ_MAX_DB} max={EQ_MAX_DB} format={db}
-        onChange={(v) => onEq({ trebleDb: v })} centerXPct={EQ_X} centerYPct={EQ_KNOB_YS[2]} diameterPct={KNOB_D} />
-      <RackButton label="EQ on/off" centerXPct={EQ_X} centerYPct={BYPASS_BTN_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onEq({ enabled: !eq.enabled })} />
-      <OffLed hidden={eq.enabled} src={ledOffNavy} centerXPct={EQ_X} centerYPct={BYPASS_LED_Y} />
+      <RackKnob image={knobEq} label="Bass" value={eq.bassDb} min={-EQ_MAX_DB} max={EQ_MAX_DB} format={db}
+        onChange={(v) => onEq({ bassDb: v })} centerXPct={EQ_X} centerYPct={EQ_KNOB_YS[0]} diameterPct={EQ_KNOB_D} />
+      <RackKnob image={knobEq} label="Middle" value={eq.midDb} min={-EQ_MAX_DB} max={EQ_MAX_DB} format={db}
+        onChange={(v) => onEq({ midDb: v })} centerXPct={EQ_X} centerYPct={EQ_KNOB_YS[1]} diameterPct={EQ_KNOB_D} />
+      <RackKnob image={knobEq} label="Treble" value={eq.trebleDb} min={-EQ_MAX_DB} max={EQ_MAX_DB} format={db}
+        onChange={(v) => onEq({ trebleDb: v })} centerXPct={EQ_X} centerYPct={EQ_KNOB_YS[2]} diameterPct={EQ_KNOB_D} />
+      <RackButton label="EQ on/off" centerXPct={EQ_X} centerYPct={EQ_BYPASS_BTN_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onEq({ enabled: !eq.enabled })} />
+      <RackLed on={ledOn} off={ledOff} active={eq.enabled} centerXPct={EQ_X} centerYPct={EQ_LED_Y} widthPct={LED_W} />
 
       {/* ── Gate. Hold and Release are seconds internally; the panel speaks milliseconds. */}
-      <RackKnob image={knobStrymonCream} label="Threshold" value={gate.threshold} min={-100} max={0} format={(v) => `${v.toFixed(0)} dB`}
-        onChange={(v) => onGate({ threshold: v })} centerXPct={GATE_X} centerYPct={GATE_KNOB_YS[0]} diameterPct={KNOB_D} />
-      <RackKnob image={knobStrymonCream} label="Hold" value={gate.holdTime} min={0} max={0.5} format={ms}
-        onChange={(v) => onGate({ holdTime: v })} centerXPct={GATE_X} centerYPct={GATE_KNOB_YS[1]} diameterPct={KNOB_D} />
-      <RackKnob image={knobStrymonCream} label="Release" value={gate.closeTime} min={0.001} max={0.5} format={ms}
-        onChange={(v) => onGate({ closeTime: v })} centerXPct={GATE_X} centerYPct={GATE_KNOB_YS[2]} diameterPct={KNOB_D} />
-      <RackButton label="Gate on/off" centerXPct={GATE_X} centerYPct={BYPASS_BTN_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onGate({ enabled: !gate.enabled })} />
-      <OffLed hidden={gate.enabled} src={ledOffPurple} centerXPct={GATE_X} centerYPct={BYPASS_LED_Y} />
-      {/* The Gate's display shows a live value rather than a preset name — it has no preset
-          system, and the threshold is the one number worth reading while you set it. */}
-      <RackDisplay text={`${gate.threshold.toFixed(0)}dB`} centerXPct={GATE_X} centerYPct={pctY(318)} widthPct={pctX(165)} heightPct={pctY(58)} />
+      <RackKnob image={knobGate} label="Threshold" value={gate.threshold} min={-100} max={0} format={(v) => `${v.toFixed(0)} dB`}
+        onChange={(v) => onGate({ threshold: v })} centerXPct={GATE_X} centerYPct={GATE_KNOB_YS[0]} diameterPct={GATE_KNOB_D} />
+      <RackKnob image={knobGate} label="Hold" value={gate.holdTime} min={0} max={0.5} format={ms}
+        onChange={(v) => onGate({ holdTime: v })} centerXPct={GATE_X} centerYPct={GATE_KNOB_YS[1]} diameterPct={GATE_KNOB_D} />
+      <RackKnob image={knobGate} label="Release" value={gate.closeTime} min={0.001} max={0.5} format={ms}
+        onChange={(v) => onGate({ closeTime: v })} centerXPct={GATE_X} centerYPct={GATE_KNOB_YS[2]} diameterPct={GATE_KNOB_D} />
+      <RackButton label="Gate on/off" centerXPct={GATE_X} centerYPct={EQ_BYPASS_BTN_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onGate({ enabled: !gate.enabled })} />
+      <RackLed on={ledOn} off={ledOff} active={gate.enabled} centerXPct={GATE_X} centerYPct={GATE_LED_Y} widthPct={LED_W} />
+      {/* The Gate's display shows a live value, not a preset name — it has no preset system, and
+          the threshold is the one number worth reading while you set it. */}
+      <RackDisplay text={`${gate.threshold.toFixed(0)}dB`} centerXPct={GATE_LCD.x} centerYPct={GATE_LCD.y} widthPct={GATE_LCD.w} heightPct={GATE_LCD.h} />
 
       {/* ── Modulation. Mix and Width are chorus-only; a Fender tremolo has neither, so those
           two knobs are simply inert in Tremolo mode, as they would be on real hardware. */}
-      <RackKnob image={knobNeveRed} label="Mix" value={chorus.mix} min={0} max={1} format={pct}
-        onChange={(v) => onChorus({ mix: v })} centerXPct={MOD_X} centerYPct={MOD_KNOB_YS[0]} diameterPct={KNOB_D} />
-      <RackKnob image={knobNeveGrey} label="Depth"
+      <RackKnob image={knobMod} label="Mix" value={chorus.mix} min={0} max={1} format={pct}
+        onChange={(v) => onChorus({ mix: v })} centerXPct={MOD_KNOB_XS[0]} centerYPct={MOD_KNOB_Y} diameterPct={MOD_KNOB_D} />
+      <RackKnob image={knobMod} label="Depth"
         value={trem ? chorus.tremoloDepth : chorus.depthMs}
         min={0} max={trem ? 1 : 12}
         format={trem ? pct : (v) => `${v.toFixed(1)} ms`}
         onChange={(v) => onChorus(trem ? { tremoloDepth: v } : { depthMs: v })}
-        centerXPct={MOD_X} centerYPct={MOD_KNOB_YS[1]} diameterPct={KNOB_D} />
-      <RackKnob image={knobNeveGrey} label="Rate" value={chorus.rateHz} min={0.05} max={6} format={(v) => `${v.toFixed(2)} Hz`}
-        onChange={(v) => onChorus({ rateHz: v })} centerXPct={MOD_X} centerYPct={MOD_KNOB_YS[2]} diameterPct={KNOB_D} />
-      <RackKnob image={knobNeveGrey} label="Width" value={chorus.width} min={0} max={1} format={pct}
-        onChange={(v) => onChorus({ width: v })} centerXPct={MOD_X} centerYPct={MOD_KNOB_YS[3]} diameterPct={KNOB_D} />
+        centerXPct={MOD_KNOB_XS[1]} centerYPct={MOD_KNOB_Y} diameterPct={MOD_KNOB_D} />
+      <RackKnob image={knobMod} label="Rate" value={chorus.rateHz} min={0.05} max={6} format={(v) => `${v.toFixed(2)} Hz`}
+        onChange={(v) => onChorus({ rateHz: v })} centerXPct={MOD_KNOB_XS[2]} centerYPct={MOD_KNOB_Y} diameterPct={MOD_KNOB_D} />
+      <RackKnob image={knobMod} label="Width" value={chorus.width} min={0} max={1} format={pct}
+        onChange={(v) => onChorus({ width: v })} centerXPct={MOD_KNOB_XS[3]} centerYPct={MOD_KNOB_Y} diameterPct={MOD_KNOB_D} />
 
-      <RackButton label="Chorus" centerXPct={MOD_BTN_XS[0]} centerYPct={MOD_BTN_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => setType('chorus')} />
-      <RackButton label="Tremolo" centerXPct={MOD_BTN_XS[1]} centerYPct={MOD_BTN_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => setType('tremolo')} />
-      <RackButton label="Harmonic" centerXPct={MOD_BTN_XS[2]} centerYPct={MOD_BTN_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onChorus({ harmonic: !chorus.harmonic })} />
-      <RackButton label="Modulation on/off" centerXPct={MOD_BTN_XS[3]} centerYPct={MOD_BTN_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onChorus({ enabled: !chorus.enabled })} />
-      <OffLed hidden={!trem} src={ledOffSilver} centerXPct={MOD_BTN_XS[0]} centerYPct={MOD_LED_Y} />
-      <OffLed hidden={trem} src={ledOffSilver} centerXPct={MOD_BTN_XS[1]} centerYPct={MOD_LED_Y} />
+      <RackButton label="Modulation on/off" centerXPct={MOD_BYPASS_X} centerYPct={MOD_BYPASS_BTN_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onChorus({ enabled: !chorus.enabled })} />
+      <RackLed on={ledOn} off={ledOff} active={chorus.enabled} centerXPct={MOD_BYPASS_X} centerYPct={MOD_LED_Y} widthPct={LED_W} />
+
+      <RackButton label="Chorus" centerXPct={MOD_ROW_XS[0]} centerYPct={MOD_ROW_BTN_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => setType('chorus')} />
+      <RackButton label="Tremolo" centerXPct={MOD_ROW_XS[1]} centerYPct={MOD_ROW_BTN_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => setType('tremolo')} />
+      <RackButton label="Harmonic" centerXPct={MOD_ROW_XS[2]} centerYPct={MOD_ROW_BTN_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onChorus({ harmonic: !chorus.harmonic })} />
+      <RackLed on={ledOn} off={ledOff} active={!trem} centerXPct={MOD_ROW_XS[0]} centerYPct={MOD_ROW_LED_Y} widthPct={LED_W} />
+      <RackLed on={ledOn} off={ledOff} active={trem} centerXPct={MOD_ROW_XS[1]} centerYPct={MOD_ROW_LED_Y} widthPct={LED_W} />
       {/* Harmonic only means anything in Tremolo, so it reads unlit in Chorus regardless. */}
-      <OffLed hidden={trem && chorus.harmonic} src={ledOffSilver} centerXPct={MOD_BTN_XS[2]} centerYPct={MOD_LED_Y} />
-      <OffLed hidden={chorus.enabled} src={ledOffSilver} centerXPct={MOD_BTN_XS[3]} centerYPct={MOD_LED_Y} />
+      <RackLed on={ledOn} off={ledOff} active={trem && chorus.harmonic} centerXPct={MOD_ROW_XS[2]} centerYPct={MOD_ROW_LED_Y} widthPct={LED_W} />
+
+      {/* Master power for the whole FX rig. The panel's own grey ring IS the off state, so the
+          lit sprite (cut from the earlier render, where the ring glows orange) is overlaid only
+          when on — no filter trickery, both states are real photographed hardware. */}
+      <button
+        onClick={onTogglePower}
+        title="FX rig power"
+        aria-label="FX rig power"
+        style={{
+          position: 'absolute', left: `${POWER.x}%`, top: `${POWER.y}%`, width: `${POWER.w}%`,
+          aspectRatio: '1 / 1', transform: 'translate(-50%, -50%)',
+          background: 'none', border: 'none', padding: 0, cursor: 'pointer'
+        }}
+      >
+        <img src={powerOn} alt="" draggable={false}
+          style={{
+            width: '100%', height: '100%', display: 'block',
+            opacity: power ? 1 : 0, transition: 'opacity 0.18s',
+            pointerEvents: 'none', userSelect: 'none'
+          }} />
+      </button>
     </div>
     {modPresetBar && (
       <div className="w-full flex items-center gap-2">

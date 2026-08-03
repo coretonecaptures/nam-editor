@@ -1,9 +1,9 @@
-import rackReverbPanel from '../assets/fx/rack-reverb-panel.png'
-import ledOn from '../assets/fx/rack-led-on.png'
-import ledOff from '../assets/fx/rack-led-off.png'
+import rackReverbPanel from '../assets/fx/v2-reverb-panel.png'
+import ledOn from '../assets/fx/v2-led-blue-on.png'
+import ledOff from '../assets/fx/v2-led-blue-off.png'
 import { RackKnob } from './RackKnob'
 import { RackButton, RackDisplay, RackLed } from './RackParts'
-import { RackPower, rackDimStyle } from './RackPower'
+import { rackDimStyle } from './RackPower'
 import { REVERB_EQ_MAX_DB, type ReverbMode, type ReverbSettings } from '../utils/liveEngine'
 import type { ReverbPreset } from '../types/settings'
 
@@ -12,9 +12,27 @@ import type { ReverbPreset } from '../types/settings'
  * rack-reverb-panel.png at 2076x758; everything below is a percentage of that box.
  */
 
-const KNOB_XS = [10.62, 20.55, 30.47, 40.34, 50.17, 60.02]
-const KNOB_Y = 54.7
-const KNOB_D = 7.5
+const P = { w: 2172, h: 724 }
+const px = (v: number): number => (v / P.w) * 100
+const py = (v: number): number => (v / P.h) * 100
+
+const KNOB_XS = [175, 375, 575, 774, 976, 1176].map(px)
+const KNOB_Y = py(457)
+const KNOB_D = px(139)
+
+const MODE_XS = [1785, 1928].map(px)
+const MODE_SW_Y = py(515)
+const MODE_LED_Y = py(422)
+const BTN_W = px(85)
+const BTN_H = py(85)
+const LED_W = px(44)
+
+const BYPASS_X = px(1941)
+const BYPASS_Y = py(232)
+const BYPASS_LED_X = px(2023)
+const BYPASS_LED_Y = py(212)
+
+const LCD = { x: px(948), y: py(218), w: px(1130), h: py(152) }
 
 const pct = (v: number): string => `${Math.round(v * 100)}%`
 const db = (v: number): string => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`
@@ -24,15 +42,11 @@ export function RackReverbTest({
   onChange,
   reverbPresets,
   irName,
-  presetBar,
-  irPicker
 }: {
   reverb: ReverbSettings
   onChange: (patch: Partial<ReverbSettings>) => void
   reverbPresets: ReverbPreset[]
   irName: string | null
-  presetBar: React.ReactNode
-  irPicker: React.ReactNode
 }) {
   // A loaded preset names itself and nothing else — the mode is already shown by the lit LED,
   // so prefixing it would spend glass on something the panel already says. With no preset
@@ -71,24 +85,20 @@ export function RackReverbTest({
           onChange={(v) => onChange({ highDb: v })}
           centerXPct={KNOB_XS[5]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
 
-        <RackButton label="Plate" centerXPct={76.68} centerYPct={31.53} widthPct={6.45} heightPct={10.03} onClick={() => setMode('plate')} />
-        <RackButton label="Convolution" centerXPct={86.95} centerYPct={31.53} widthPct={6.45} heightPct={10.03} onClick={() => setMode('convolution')} />
-        <RackLed on={ledOn} off={ledOff} active={reverb.mode === 'plate'} centerXPct={76.64} centerYPct={19.13} widthPct={1.93} />
-        <RackLed on={ledOn} off={ledOff} active={reverb.mode === 'convolution'} centerXPct={86.90} centerYPct={19.13} widthPct={1.93} />
+        <RackButton label="Plate" centerXPct={MODE_XS[0]} centerYPct={MODE_SW_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => setMode('plate')} />
+        <RackButton label="Convolution" centerXPct={MODE_XS[1]} centerYPct={MODE_SW_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => setMode('convolution')} />
+        <RackLed on={ledOn} off={ledOff} active={reverb.mode === 'plate'} centerXPct={MODE_XS[0]} centerYPct={MODE_LED_Y} widthPct={LED_W} />
+        <RackLed on={ledOn} off={ledOff} active={reverb.mode === 'convolution'} centerXPct={MODE_XS[1]} centerYPct={MODE_LED_Y} widthPct={LED_W} />
 
-        <RackDisplay text={lcd} centerXPct={80.32} centerYPct={56.53} widthPct={26.73} heightPct={22.56} />
+        <RackButton label="Reverb on/off" centerXPct={BYPASS_X} centerYPct={BYPASS_Y} widthPct={px(94)} heightPct={py(64)} onClick={() => onChange({ enabled: !reverb.enabled })} />
+        <RackLed on={ledOn} off={ledOff} active={reverb.enabled} centerXPct={BYPASS_LED_X} centerYPct={BYPASS_LED_Y} widthPct={LED_W} />
+
+        <RackDisplay text={lcd} centerXPct={LCD.x} centerYPct={LCD.y} widthPct={LCD.w} heightPct={LCD.h} />
       </div>
 
       {/* Librarian strip — deliberately BELOW the unit and deliberately not skeuomorphic. The
           panel's own upper-right is already busy, and presets are app state rather than
           something the hardware would carry. */}
-      <div className="w-full flex flex-col gap-1.5">
-        <div className="flex items-center gap-2">
-          <RackPower label="Reverb" on={reverb.enabled} onToggle={() => onChange({ enabled: !reverb.enabled })} />
-          <div className="flex-1 min-w-0">{presetBar}</div>
-        </div>
-        {reverb.mode === 'convolution' && irPicker}
-      </div>
     </div>
   )
 }

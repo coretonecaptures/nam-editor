@@ -1,10 +1,10 @@
-import rackDelayPanel from '../assets/fx/rack-delay-panel.png'
-import ledOn from '../assets/fx/rack-led-amber-on.png'
-import ledOff from '../assets/fx/rack-led-amber-off.png'
+import rackDelayPanel from '../assets/fx/v2-delay-panel.png'
+import ledOn from '../assets/fx/v2-led-orange-on.png'
+import ledOff from '../assets/fx/v2-led-orange-off.png'
 import { RackKnob } from './RackKnob'
 import { RackFader } from './RackFader'
 import { RackButton, RackDisplay, RackLed } from './RackParts'
-import { RackPower, rackDimStyle } from './RackPower'
+import { rackDimStyle } from './RackPower'
 import {
   MAX_FEEDBACK,
   MAX_MOD_DEPTH_MS,
@@ -24,25 +24,34 @@ import type { DelayPreset } from '../types/settings'
  * as lens-only sprites with the panel's own LEDs erased.
  */
 
-const KNOB_XS = [13.08, 27.40, 41.83, 56.31, 70.80, 85.74]
-const KNOB_Y = 46.56
-const KNOB_D = 8.45
+const P = { w: 2172, h: 724 }
+const px = (v: number): number => (v / P.w) * 100
+const py = (v: number): number => (v / P.h) * 100
 
-const ENGINE_Y_LED = 11.16
-const ENGINE_Y_BTN = 15.39
-const STEREO_Y_LED = 26.83
-const STEREO_Y_BTN = 31.00
-const ENGINE_XS = [76.78, 85.23]
-const STEREO_XS = [72.21, 80.95, 89.68]
-const BTN_W = 4.45
-const BTN_H = 4.74
-const LED_W = 2.25
+const KNOB_XS = [173, 362, 554, 738, 922, 1096].map(px)
+const KNOB_Y = py(462)
+const KNOB_D = px(132)
+
+const SW_Y = py(515)
+const LED_Y = py(428)
+const ENGINE_XS = [1555, 1678].map(px)
+const STEREO_XS = [1818, 1919, 2021].map(px)
+const BTN_W = px(75)
+const BTN_H = py(79)
+const LED_W = px(44)
+
+const BYPASS_X = px(1940)
+const BYPASS_Y = py(240)
+const BYPASS_LED_X = px(2023)
+const BYPASS_LED_Y = py(212)
 
 /** The two cut channels: Mod Rate on the left, Pan Speed on the right. */
-const FADER_XS = [32.50, 39.91]
-const TRACK_TOP = 66.5
-const TRACK_BOTTOM = 85.5
-const FADER_CAP_W = 2.6
+const FADER_XS = [1256, 1388].map(px)
+const TRACK_TOP = py(410)
+const TRACK_BOTTOM = py(640)
+const FADER_CAP_W = px(52)
+
+const LCD = { x: px(937), y: py(220), w: px(1160), h: py(152) }
 
 const pct = (v: number): string => `${Math.round(v * 100)}%`
 const hz = (v: number): string => `${v.toFixed(2)} Hz`
@@ -62,15 +71,11 @@ export function RackDelay({
   onChange,
   delayPresets,
   irName,
-  presetBar,
-  irPicker
 }: {
   delay: DelaySettings
   onChange: (patch: Partial<DelaySettings>) => void
   delayPresets: DelayPreset[]
   irName: string | null
-  presetBar: React.ReactNode
-  irPicker: React.ReactNode
 }) {
   // A loaded preset names itself and nothing else — the mode is already shown by the lit LED,
   // so prefixing it would spend glass on something the panel already says. With no preset
@@ -121,28 +126,24 @@ export function RackDelay({
           onChange={(v) => onChange({ panRateHz: v })}
           centerXPct={FADER_XS[1]} trackTopPct={TRACK_TOP} trackBottomPct={TRACK_BOTTOM} capWidthPct={FADER_CAP_W} />
 
-        <RackButton label="Algorithmic" centerXPct={ENGINE_XS[0]} centerYPct={ENGINE_Y_BTN} widthPct={BTN_W} heightPct={BTN_H} onClick={() => setEngine('algorithmic')} />
-        <RackButton label="Convolution" centerXPct={ENGINE_XS[1]} centerYPct={ENGINE_Y_BTN} widthPct={BTN_W} heightPct={BTN_H} onClick={() => setEngine('convolution')} />
-        <RackLed on={ledOn} off={ledOff} active={delay.mode === 'algorithmic'} centerXPct={ENGINE_XS[0]} centerYPct={ENGINE_Y_LED} widthPct={LED_W} />
-        <RackLed on={ledOn} off={ledOff} active={delay.mode === 'convolution'} centerXPct={ENGINE_XS[1]} centerYPct={ENGINE_Y_LED} widthPct={LED_W} />
+        <RackButton label="Algorithmic" centerXPct={ENGINE_XS[0]} centerYPct={SW_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => setEngine('algorithmic')} />
+        <RackButton label="Convolution" centerXPct={ENGINE_XS[1]} centerYPct={SW_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => setEngine('convolution')} />
+        <RackLed on={ledOn} off={ledOff} active={delay.mode === 'algorithmic'} centerXPct={ENGINE_XS[0]} centerYPct={LED_Y} widthPct={LED_W} />
+        <RackLed on={ledOn} off={ledOff} active={delay.mode === 'convolution'} centerXPct={ENGINE_XS[1]} centerYPct={LED_Y} widthPct={LED_W} />
 
-        <RackButton label="Center" centerXPct={STEREO_XS[0]} centerYPct={STEREO_Y_BTN} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onChange({ pingPong: false })} />
-        <RackButton label="Ping-Pong" centerXPct={STEREO_XS[1]} centerYPct={STEREO_Y_BTN} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onChange({ pingPong: true })} />
-        <RackButton label="Pan" centerXPct={STEREO_XS[2]} centerYPct={STEREO_Y_BTN} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onChange({ panEnabled: !delay.panEnabled })} />
-        <RackLed on={ledOn} off={ledOff} active={!delay.pingPong} centerXPct={STEREO_XS[0]} centerYPct={STEREO_Y_LED} widthPct={LED_W} />
-        <RackLed on={ledOn} off={ledOff} active={delay.pingPong} centerXPct={STEREO_XS[1]} centerYPct={STEREO_Y_LED} widthPct={LED_W} />
-        <RackLed on={ledOn} off={ledOff} active={delay.panEnabled} centerXPct={STEREO_XS[2]} centerYPct={STEREO_Y_LED} widthPct={LED_W} />
+        <RackButton label="Center" centerXPct={STEREO_XS[0]} centerYPct={SW_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onChange({ pingPong: false })} />
+        <RackButton label="Ping-Pong" centerXPct={STEREO_XS[1]} centerYPct={SW_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onChange({ pingPong: true })} />
+        <RackButton label="Pan" centerXPct={STEREO_XS[2]} centerYPct={SW_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onChange({ panEnabled: !delay.panEnabled })} />
+        <RackLed on={ledOn} off={ledOff} active={!delay.pingPong} centerXPct={STEREO_XS[0]} centerYPct={LED_Y} widthPct={LED_W} />
+        <RackLed on={ledOn} off={ledOff} active={delay.pingPong} centerXPct={STEREO_XS[1]} centerYPct={LED_Y} widthPct={LED_W} />
+        <RackLed on={ledOn} off={ledOff} active={delay.panEnabled} centerXPct={STEREO_XS[2]} centerYPct={LED_Y} widthPct={LED_W} />
 
-        <RackDisplay text={lcd} centerXPct={70.07} centerYPct={75.71} widthPct={35.85} heightPct={23.34} />
+        <RackButton label="Delay on/off" centerXPct={BYPASS_X} centerYPct={BYPASS_Y} widthPct={px(80)} heightPct={py(64)} onClick={() => onChange({ enabled: !delay.enabled })} />
+        <RackLed on={ledOn} off={ledOff} active={delay.enabled} centerXPct={BYPASS_LED_X} centerYPct={BYPASS_LED_Y} widthPct={LED_W} />
+
+        <RackDisplay text={lcd} centerXPct={LCD.x} centerYPct={LCD.y} widthPct={LCD.w} heightPct={LCD.h} />
       </div>
 
-      <div className="w-full flex flex-col gap-1.5">
-        <div className="flex items-center gap-2">
-          <RackPower label="Delay" on={delay.enabled} onToggle={() => onChange({ enabled: !delay.enabled })} />
-          <div className="flex-1 min-w-0">{presetBar}</div>
-        </div>
-        {delay.mode === 'convolution' && irPicker}
-      </div>
     </div>
   )
 }
