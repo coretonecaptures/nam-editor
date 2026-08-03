@@ -1,50 +1,64 @@
 /**
- * Trims the black chassis margin off a rack panel so the metal fills its box.
+ * Shows only the coloured faceplate of a rack panel, trimming the black chassis around it.
  *
- * Each panel PNG is photographed with rails and chassis around the faceplate. Showing the whole
- * image leaves black bands top and bottom, which wastes the very space the panels need. So the
- * box is given the METAL's aspect ratio, clips overflow, and holds an oversized, offset inner
- * layer — only the metal lands inside the box.
+ * The bounds below are MEASURED off the shipped art, not derived by eye. That matters: the design
+ * mock cropped 4.5% off the reverb's left edge when only 1.4% of it is chassis, which is what was
+ * slicing the panel. Measuring also makes the faceplate tops line up across units, because every
+ * crop starts exactly at its own metal.
  *
- * Why the children go INSIDE the scaler rather than the box: every rack control is positioned as
- * a percentage of the panel image. Put them on the box and they would drift the moment the crop
- * changed. On the scaler they stay locked to the artwork, and the existing percent geometry in
- * Rack500 / RackDelay / RackReverbTest keeps working untouched.
+ * Offsets use `transform: translate(%)` rather than `top/left: %`. A percentage in `top` resolves
+ * against the containing block's HEIGHT, which here is itself derived from `aspect-ratio` — an
+ * ordering the browser can resolve inconsistently. A translate percentage resolves against the
+ * element's own size, which is always known.
  *
- * Nothing is enlarged past its source here — the panels are 1774–2172px wide and render at
- * roughly a third of that, so this is still downscaling.
+ * Children mount INSIDE the scaler, so the percent geometry in Rack500 / RackDelay /
+ * RackReverbTest keeps working untouched no matter how the crop changes.
  */
+
+export interface MetalBounds {
+  /** Faceplate edges as a fraction of the source image. */
+  l: number
+  t: number
+  r: number
+  b: number
+  /** Faceplate width ÷ height, in pixels. */
+  aspect: number
+}
+
 export function RackCrop({
-  aspect,
-  left,
-  top,
-  width,
+  metal,
+  fitHeight = false,
   children
 }: {
-  /** Box aspect ratio — the METAL's, not the whole image's. */
-  aspect: number
-  /** Inner scaler offsets and width, as percentages of the box. */
-  left: number
-  top: number
-  width: number
+  metal: MetalBounds
+  /**
+   * Size from the available HEIGHT rather than width.
+   *
+   * Width-driven sizing is what makes a rig overflow a short screen: panels grow to fill the
+   * window horizontally and their height follows, so a 1080p display ends up scrolling. Driving
+   * from height means the whole rig fits the viewport and simply gets narrower.
+   */
+  fitHeight?: boolean
   children: React.ReactNode
 }) {
+  const scale = 100 / (metal.r - metal.l)
   return (
     <div
       style={{
         position: 'relative',
-        width: '100%',
         overflow: 'hidden',
         borderRadius: 6,
-        aspectRatio: String(aspect)
+        aspectRatio: String(metal.aspect),
+        ...(fitHeight ? { height: '100%', width: 'auto', maxWidth: '100%' } : { width: '100%' })
       }}
     >
       <div
         style={{
           position: 'absolute',
-          left: `${left}%`,
-          top: `${top}%`,
-          width: `${width}%`,
+          left: 0,
+          top: 0,
+          width: `${scale}%`,
+          transform: `translate(${-metal.l * 100}%, ${-metal.t * 100}%)`,
           containerType: 'inline-size'
         }}
       >
@@ -54,12 +68,11 @@ export function RackCrop({
   )
 }
 
-/** Measured against the shipped panel art — see the design handoff README. */
-export const RACK_CROP = {
-  rack500: { aspect: 2.072, left: -11.68, top: -10.95, width: 123.36 },
-  delay: { aspect: 3.974, left: -1.385, top: -17.76, width: 103.34 },
-  // Reverb shares Delay's crop, not the different numbers the design mock used. Both panels are
-  // the same 2172x724 art with the same layout, so a different crop could only ever mis-frame
-  // one of them — which is exactly what clipped the reverb's left edge and bottom.
-  reverb: { aspect: 3.974, left: -1.385, top: -17.76, width: 103.34 }
-} as const
+/** Measured off the shipped panel art, not taken from the design mock. */
+export const RACK_CROP: Record<'rack500' | 'delay' | 'reverb', MetalBounds> = {
+  // t is the FACEPLATE top, not the chassis top — a naive scan caught the silver rail screws
+  // above the modules and framed 60px of chassis into the box, which broke the alignment.
+  rack500: { l: 0.1015, t: 0.1533, r: 0.9064, b: 0.8568, aspect: 2.288 },
+  delay: { l: 0.0134, t: 0.1326, r: 0.9807, b: 0.8591, aspect: 3.994 },
+  reverb: { l: 0.0143, t: 0.1271, r: 0.982, b: 0.8605, aspect: 3.959 }
+}

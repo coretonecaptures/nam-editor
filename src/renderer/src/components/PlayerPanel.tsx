@@ -2356,12 +2356,12 @@ export function PlayerPanel({
   )
 
   const rigView = (
-    <div className="flex flex-col gap-3.5" style={{ padding: '0 9px 12px' }}>
+    <div className="flex flex-col gap-3.5 h-full min-h-0" style={{ padding: '0 9px 12px' }}>
       {/* ── A. Identity band */}
-      <div style={{ ...wellStyle, display: 'flex', gap: 14, alignItems: 'stretch', flexWrap: 'wrap' }}>
+      <div style={{ ...wellStyle, flex: 'none', display: 'flex', gap: 14, alignItems: 'stretch', flexWrap: 'wrap' }}>
         {/* Amp image, hard left. object-fit:contain so the whole amp is visible — cover was
             silently cropping the top and bottom off every photo. */}
-        <div style={{ width: 372, flex: 'none', borderRadius: 11, border: '1px solid var(--border)', background: 'var(--field)', overflow: 'hidden', minHeight: 190, display: 'flex' }}>
+        <div style={{ width: 372, flex: 'none', borderRadius: 11, border: '1px solid var(--border)', background: 'var(--field)', overflow: 'hidden', minHeight: 150, maxHeight: 210, display: 'flex' }}>
           <img src={coverSrc} alt="Amp" onError={onCoverError} style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
         </div>
 
@@ -2453,7 +2453,7 @@ export function PlayerPanel({
       </div>
 
       {/* ── C. Rig preset bar */}
-      <div style={{ ...wellStyle, padding: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+      <div style={{ ...wellStyle, flex: 'none', padding: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <span style={{ ...monoLabel, color: RIG_GOLD, letterSpacing: '.14em' }}>Rig Preset</span>
         <PresetMenu
           options={rigPresets.map((r) => ({ id: r.id, name: r.name }))}
@@ -2476,8 +2476,8 @@ export function PlayerPanel({
       </div>
 
       {/* ── D. Rack wall */}
-      <div style={{ ...wellStyle, display: 'flex', gap: 14, alignItems: 'stretch', flexWrap: 'wrap' }}>
-        <div style={{ flex: '1 1 460px', minWidth: 0, maxWidth: 720, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ ...wellStyle, flex: '1 1 0', minHeight: 0, display: 'flex', gap: 14, alignItems: 'stretch' }}>
+        <div style={{ flex: '1 1 0', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <span style={{ ...monoLabel, color: 'var(--text-2)' }}>EQ · Gate · Modulation</span>
             <PresetMenu
@@ -2496,8 +2496,10 @@ export function PlayerPanel({
               }}
             />
           </div>
-          <div style={{ margin: 'auto 0' }}>
-            <RackCrop {...RACK_CROP.rack500}>
+          {/* Top-aligned so its faceplate lines up with the Delay above it, and height-driven
+              so the pair shrink together rather than pushing the page taller. */}
+          <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', alignItems: 'flex-start' }}>
+            <RackCrop metal={RACK_CROP.rack500} fitHeight>
               <Rack500
                 gate={gate}
                 eq={eq}
@@ -2512,9 +2514,9 @@ export function PlayerPanel({
           </div>
         </div>
 
-        <div style={{ flex: '1 1 380px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ flex: '1 1 0', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
           {/* Delay */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <span style={{ ...monoLabel }}>Delay</span>
               <PresetMenu
@@ -2533,10 +2535,12 @@ export function PlayerPanel({
                 }}
               />
             </div>
-            <RackCrop {...RACK_CROP.delay}>
+            <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex' }}>
+              <RackCrop metal={RACK_CROP.delay} fitHeight>
               <RackDelay delay={delay} onChange={(patch) => setDelayState((d) => ({ ...d, ...patch }))} delayPresets={delayPresets}
                 irName={delayIrPath ? (delayIrPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null} />
-            </RackCrop>
+              </RackCrop>
+            </div>
             {/* Dimmed unless the unit is in convolution — the IR is loaded either way, but it
                 only affects what you hear in that mode, and the mode lives on the panel face. */}
             <div className="flex items-center gap-2" style={{ opacity: delay.mode === 'convolution' ? 1 : 0.45, transition: 'opacity .15s' }}>
@@ -2551,7 +2555,7 @@ export function PlayerPanel({
           </div>
 
           {/* Reverb */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <span style={{ ...monoLabel }}>Reverb</span>
               <PresetMenu
@@ -2570,10 +2574,12 @@ export function PlayerPanel({
                 }}
               />
             </div>
-            <RackCrop {...RACK_CROP.reverb}>
+            <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex' }}>
+              <RackCrop metal={RACK_CROP.reverb} fitHeight>
               <RackReverbTest reverb={reverb} onChange={(patch) => setReverbState((r) => ({ ...r, ...patch }))} reverbPresets={reverbPresets}
                 irName={reverbPath ? (reverbPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null} />
-            </RackCrop>
+              </RackCrop>
+            </div>
             <div className="flex items-center gap-2" style={{ opacity: reverb.mode === 'convolution' ? 1 : 0.45, transition: 'opacity .15s' }}>
               <span style={{ ...monoLabel, flexShrink: 0 }}>Reverb IR</span>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -2588,7 +2594,7 @@ export function PlayerPanel({
       </div>
 
       {/* ── E. Master dock */}
-      <div style={{ ...wellStyle, display: 'flex', gap: 16, alignItems: 'stretch', flexWrap: 'wrap' }}>
+      <div style={{ ...wellStyle, flex: 'none', display: 'flex', gap: 16, alignItems: 'stretch', flexWrap: 'wrap' }}>
         <JogWheel label="Input Gain" value={liveInputGainDb} min={-24} max={24} onChange={setLiveInputGainDb}
           level={liveInputMeter} format={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`} />
 
@@ -2801,7 +2807,9 @@ export function PlayerPanel({
 
           {/* Minimal side margins on purpose — the panels are the content, and every pixel of
               margin comes off how large and readable they are. */}
-          <div className="flex-1 min-h-0 overflow-y-auto" style={{ paddingTop: 12 }}>
+          {/* No scrolling: the rig sizes itself to the window. overflow-auto is a safety net for
+              very small windows, not the normal path. */}
+          <div className="flex-1 min-h-0 overflow-auto" style={{ paddingTop: 12 }}>
             {rigView}
           </div>
         </div>
