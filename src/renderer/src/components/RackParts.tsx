@@ -7,40 +7,52 @@
  */
 
 /**
- * A mode indicator. Both states are real photographed lenses cut from the panel render, with no
- * CSS glow layered on: the render's own glow is already correct, and adding a drop-shadow to it
- * reads as a blown-out halo. The panel art has its LEDs erased, so these sprites are lens-only
- * and the metal behind them is the panel's own — which is what keeps a patch square from
- * showing at positions with a different shadow gradient.
+ * A mode indicator, DRAWN rather than photographed.
+ *
+ * Photo sprites were tried and cannot work here. The rack has three faceplate colours but only
+ * the silver bay carries both a lit and an unlit LED, so the missing states had to be borrowed
+ * from silver — which pasted a pale ring onto the navy and purple modules. Cropping tighter did
+ * not help, because the lens's own bezel highlight is part of what mismatches.
+ *
+ * Drawing it also removes a second bug class: a photographed pair whose lenses sit at different
+ * offsets inside their own crops makes the light visibly jump as you toggle it. A drawn circle
+ * is centred by construction.
+ *
+ * The panels have their LEDs erased to bare metal, so this supplies the housing as well as the
+ * light: a dark recessed bezel always, plus emission and glow only when lit.
  */
 export function RackLed({
-  on,
-  off,
   active,
   centerXPct,
   centerYPct,
-  widthPct
+  widthPct,
+  colour = '#ffae2e'
 }: {
-  on: string
-  off: string
   active: boolean
   centerXPct: number
   centerYPct: number
+  /** Lens diameter as a percentage of panel width. */
   widthPct: number
+  colour?: string
 }) {
   return (
-    <img
-      src={active ? on : off}
-      alt=""
-      draggable={false}
+    <span
       style={{
         position: 'absolute',
         left: `${centerXPct}%`,
         top: `${centerYPct}%`,
         width: `${widthPct}%`,
+        aspectRatio: '1 / 1',
         transform: 'translate(-50%, -50%)',
-        pointerEvents: 'none',
-        userSelect: 'none'
+        borderRadius: '50%',
+        background: active
+          ? `radial-gradient(circle at 38% 34%, #fff6df 0%, ${colour} 42%, #a3560a 100%)`
+          : 'radial-gradient(circle at 38% 34%, #4a4741 0%, #22201d 55%, #100f0d 100%)',
+        boxShadow: active
+          ? `0 0 4px 1px ${colour}cc, 0 0 10px 3px ${colour}66, inset 0 0 2px rgba(0,0,0,0.5)`
+          : 'inset 0 1px 2px rgba(0,0,0,0.9), 0 0 1px rgba(255,255,255,0.18)',
+        transition: 'background 0.12s, box-shadow 0.12s',
+        pointerEvents: 'none'
       }}
     />
   )

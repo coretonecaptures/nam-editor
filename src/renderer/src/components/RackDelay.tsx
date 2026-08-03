@@ -1,6 +1,4 @@
-import rackDelayPanel from '../assets/fx/v2-delay-panel.png'
-import ledOn from '../assets/fx/v2b-led-orange-on.png'
-import ledOff from '../assets/fx/v2b-led-orange-off.png'
+import rackDelayPanel from '../assets/fx/v2c-delay-panel.png'
 import { RackKnob } from './RackKnob'
 import { RackFader } from './RackFader'
 import { RackButton, RackDisplay, RackLed } from './RackParts'
@@ -38,7 +36,7 @@ const ENGINE_XS = [1554, 1678].map(px)
 const STEREO_XS = [1818, 1919, 2021].map(px)
 const BTN_W = px(75)
 const BTN_H = py(79)
-const LED_W = px(44)
+const LED_W = px(26)
 
 const BYPASS_X = px(1940)
 const BYPASS_Y = py(240)
@@ -128,18 +126,18 @@ export function RackDelay({
 
         <RackButton label="Algorithmic" centerXPct={ENGINE_XS[0]} centerYPct={SW_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => setEngine('algorithmic')} />
         <RackButton label="Convolution" centerXPct={ENGINE_XS[1]} centerYPct={SW_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => setEngine('convolution')} />
-        <RackLed on={ledOn} off={ledOff} active={delay.mode === 'algorithmic'} centerXPct={ENGINE_XS[0]} centerYPct={LED_Y} widthPct={LED_W} />
-        <RackLed on={ledOn} off={ledOff} active={delay.mode === 'convolution'} centerXPct={ENGINE_XS[1]} centerYPct={LED_Y} widthPct={LED_W} />
+        <RackLed active={delay.mode === 'algorithmic'} centerXPct={ENGINE_XS[0]} centerYPct={LED_Y} widthPct={LED_W} />
+        <RackLed active={delay.mode === 'convolution'} centerXPct={ENGINE_XS[1]} centerYPct={LED_Y} widthPct={LED_W} />
 
         <RackButton label="Center" centerXPct={STEREO_XS[0]} centerYPct={SW_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onChange({ pingPong: false })} />
         <RackButton label="Ping-Pong" centerXPct={STEREO_XS[1]} centerYPct={SW_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onChange({ pingPong: true })} />
         <RackButton label="Pan" centerXPct={STEREO_XS[2]} centerYPct={SW_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onChange({ panEnabled: !delay.panEnabled })} />
-        <RackLed on={ledOn} off={ledOff} active={!delay.pingPong} centerXPct={STEREO_XS[0]} centerYPct={LED_Y} widthPct={LED_W} />
-        <RackLed on={ledOn} off={ledOff} active={delay.pingPong} centerXPct={STEREO_XS[1]} centerYPct={LED_Y} widthPct={LED_W} />
-        <RackLed on={ledOn} off={ledOff} active={delay.panEnabled} centerXPct={STEREO_XS[2]} centerYPct={LED_Y} widthPct={LED_W} />
+        <RackLed active={!delay.pingPong} centerXPct={STEREO_XS[0]} centerYPct={LED_Y} widthPct={LED_W} />
+        <RackLed active={delay.pingPong} centerXPct={STEREO_XS[1]} centerYPct={LED_Y} widthPct={LED_W} />
+        <RackLed active={delay.panEnabled} centerXPct={STEREO_XS[2]} centerYPct={LED_Y} widthPct={LED_W} />
 
         <RackButton label="Delay on/off" centerXPct={BYPASS_X} centerYPct={BYPASS_Y} widthPct={px(80)} heightPct={py(64)} onClick={() => onChange({ enabled: !delay.enabled })} />
-        <RackLed on={ledOn} off={ledOff} active={delay.enabled} centerXPct={BYPASS_LED_X} centerYPct={BYPASS_LED_Y} widthPct={LED_W} />
+        <RackLed active={delay.enabled} centerXPct={BYPASS_LED_X} centerYPct={BYPASS_LED_Y} widthPct={LED_W} />
 
         <RackDisplay text={lcd} centerXPct={LCD.x} centerYPct={LCD.y} widthPct={LCD.w} heightPct={LCD.h} />
       </div>

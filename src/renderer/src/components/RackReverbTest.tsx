@@ -1,6 +1,4 @@
-import rackReverbPanel from '../assets/fx/v2-reverb-panel.png'
-import ledOn from '../assets/fx/v2b-led-blue-on.png'
-import ledOff from '../assets/fx/v2b-led-blue-off.png'
+import rackReverbPanel from '../assets/fx/v2c-reverb-panel.png'
 import { RackKnob } from './RackKnob'
 import { RackButton, RackDisplay, RackLed } from './RackParts'
 import { rackDimStyle } from './RackPower'
@@ -25,7 +23,7 @@ const MODE_SW_Y = py(515)
 const MODE_LED_Y = py(422)
 const BTN_W = px(85)
 const BTN_H = py(85)
-const LED_W = px(44)
+const LED_W = px(26)
 
 const BYPASS_X = px(1941)
 const BYPASS_Y = py(232)
@@ -87,11 +85,11 @@ export function RackReverbTest({
 
         <RackButton label="Plate" centerXPct={MODE_XS[0]} centerYPct={MODE_SW_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => setMode('plate')} />
         <RackButton label="Convolution" centerXPct={MODE_XS[1]} centerYPct={MODE_SW_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => setMode('convolution')} />
-        <RackLed on={ledOn} off={ledOff} active={reverb.mode === 'plate'} centerXPct={MODE_XS[0]} centerYPct={MODE_LED_Y} widthPct={LED_W} />
-        <RackLed on={ledOn} off={ledOff} active={reverb.mode === 'convolution'} centerXPct={MODE_XS[1]} centerYPct={MODE_LED_Y} widthPct={LED_W} />
+        <RackLed active={reverb.mode === 'plate'} centerXPct={MODE_XS[0]} centerYPct={MODE_LED_Y} widthPct={LED_W} />
+        <RackLed active={reverb.mode === 'convolution'} centerXPct={MODE_XS[1]} centerYPct={MODE_LED_Y} widthPct={LED_W} />
 
         <RackButton label="Reverb on/off" centerXPct={BYPASS_X} centerYPct={BYPASS_Y} widthPct={px(94)} heightPct={py(64)} onClick={() => onChange({ enabled: !reverb.enabled })} />
-        <RackLed on={ledOn} off={ledOff} active={reverb.enabled} centerXPct={BYPASS_LED_X} centerYPct={BYPASS_LED_Y} widthPct={LED_W} />
+        <RackLed active={reverb.enabled} centerXPct={BYPASS_LED_X} centerYPct={BYPASS_LED_Y} widthPct={LED_W} />
 
         <RackDisplay text={lcd} centerXPct={LCD.x} centerYPct={LCD.y} widthPct={LCD.w} heightPct={LCD.h} />
       </div>
