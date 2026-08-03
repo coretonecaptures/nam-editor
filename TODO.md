@@ -176,6 +176,26 @@ Open questions:
 
 ---
 
+## Play a DI clip THROUGH the live FX rig (not just a live guitar)
+
+Today the two modes are separate: Preview renders a DI clip offline through the model, and Live
+plays your guitar through the model plus the whole FX rack. There is no way to hear a **DI clip**
+running through the live rack — which is what you want when you have no guitar to hand, or when
+you want the exact same performance while you dial delay and reverb by ear.
+
+Noted while building the redesigned player: the Setup drawer originally carried a DI-source
+picker, which was cut because in Live you are playing a guitar and the DI is irrelevant. But if
+this feature is built, the DI picker stops being drawer clutter and becomes a primary control —
+it belongs **front and centre**, near the transport, not hidden behind a gear icon.
+
+Sketch: feed the decoded DI buffer into the live graph in place of the mic input
+(`AudioBufferSourceNode` -> the same node the mic source feeds), loop it, and leave the rest of
+the chain untouched. The engine already normalises and resamples DI clips for Preview
+(`playerAudio.ts`), so most of the loading work exists. The open question is transport — a
+looping clip needs play/stop/scrub, which the Live view currently has no room for.
+
+---
+
 ## Live recorder — DI to mono, post-FX to stereo
 
 Record what's actually happening in Live mode to disk, not just monitor it. Two independent
