@@ -1,5 +1,152 @@
 # TODO
 
+## macOS code signing + notarization — unblocks reliable safeStorage (keychain)
+
+**`safeStorage` is already built and working** — this is not new code, it is a *release
+engineering* problem. Two things already use it (`src/main/index.ts`):
+
+| What | File in userData | Function |
+|---|---|---|
+| Tone3000 OAuth tokens | `tone3000-tokens.bin` | `loadTone3kTokens` / `saveTone3kTokens` |
+| AI provider keys (Anthropic/OpenAI) | `ai-key-{provider}.bin` | `storeAiKey` / `readAiKey` / `clearAiKey` |
+
+### Why an Apple Developer account is genuinely required
+
+On macOS, `safeStorage` encrypts with an AES key it stores in the **login Keychain**. Keychain
+ACLs are bound to the app's **code signing identity** — not its path or bundle ID. Today CI does
+an **ad-hoc signature** (`.github/workflows/release.yml`: `codesign --deep --force --sign -`),
+which has no Team ID and produces a *different* identity on every single build.
+
+Consequence: to macOS, each NAM Lab update is a different app. After updating, the new build
+cannot read the keychain entry the old one created, so **users silently lose their Tone3000
+login and AI keys on every update** (the code catches the failure and falls through to "no saved
+tokens", so it looks like being logged out rather than an error). A Developer ID certificate
+gives one stable identity across all builds, which is what makes stored secrets survive updates.
+
+Same account also fixes Gatekeeper: unsigned/ad-hoc DMGs currently need right-click → Open or
+`xattr -d com.apple.quarantine`. Notarization removes that.
+
+### What to obtain (user)
+
+1. **Apple Developer Program** membership — $99/yr, can take a day or two to approve.
+2. **Developer ID Application** certificate (NOT "Mac App Distribution" — that is for the App
+   Store). Export as `.p12` with a password. Developer ID *Installer* is not needed, since we
+   ship a DMG rather than a `.pkg`.
+3. **App-specific password** (appleid.apple.com) or an **App Store Connect API key** for
+   notarization. API key is preferable for CI — it does not break when the Apple ID password
+   changes.
+4. Note the **Team ID** (10-character string, visible in the developer portal).
+
+### Work to do (code/config)
+
+1. **New `build/entitlements.mac.plist`** — Hardened Runtime is mandatory for notarization, and
+   Electron does not run under it without these:
+   - `com.apple.security.cs.allow-jit` — V8.
+   - `com.apple.security.cs.allow-unsigned-executable-memory` — V8 again.
+   - `com.apple.security.device.audio-input` — **required or Live mode's mic breaks entirely.**
+   - `com.apple.security.cs.disable-library-validation` — probably unnecessary (no native deps;
+     `dependencies` is pure JS) but standard for Electron; try without it first.
+2. **`package.json` build.mac additions**: `hardenedRuntime: true`, `gatekeeperAssess: false`,
+   `entitlements` + `entitlementsInherit` pointing at the plist above, and `notarize: { teamId }`.
+3. **Rewrite the mac CI job** — delete the ad-hoc `codesign --sign -` step and the
+   `--prepackaged` DMG dance it forces; with a real certificate, electron-builder signs and
+   notarizes in one normal `--mac dmg --universal` run. Drop `CSC_IDENTITY_AUTO_DISCOVERY: false`
+   from the mac job (keep it on Windows/Linux).
+4. **GitHub secrets**: `CSC_LINK` (base64 of the `.p12`), `CSC_KEY_PASSWORD`, plus either
+   `APPLE_API_KEY`/`APPLE_API_KEY_ID`/`APPLE_API_ISSUER` or
+   `APPLE_ID`/`APPLE_APP_SPECIFIC_PASSWORD`/`APPLE_TEAM_ID`.
+5. **Verify** on a real download (not a local build): `codesign --verify --deep --strict`,
+   `spctl -a -vvv -t install`, then confirm Tone3000 login survives installing a *newer* build
+   over an older one — that last one is the actual point of the exercise.
+
+### Related problems found while planning (worth fixing at the same time)
+
+- **Plaintext fallback is a real security hole.** `storeAiKey` and `saveTone3kTokens` both fall
+  back to writing the secret **unencrypted** when `safeStorage.isEncryptionAvailable()` is false.
+  An API key sitting in cleartext in userData is worse than refusing to save. Should either
+  refuse and tell the user, or at minimum surface a warning — silently writing plaintext is the
+  wrong default. Most likely to bite Linux AppImage users with no libsecret/gnome-keyring.
+- **Microphone purpose string is Electron's placeholder.** There is no `extendInfo` in the build
+  config, so the packaged app inherits Electron's generic
+  `"This app needs access to the microphone"`. Should be a real sentence explaining Live mode.
+  Cheap to fix via `build.mac.extendInfo.NSMicrophoneUsageDescription`.
+- **One-time migration cost.** The first properly-signed build is a new identity, so existing
+  users lose stored tokens/keys *once* and must re-authenticate. Unavoidable, and it fixes
+  itself forever after. Worth a line in the release notes rather than letting it look like a bug.
+- **Windows and Linux need nothing here.** Windows `safeStorage` uses DPAPI (tied to the user
+  account, no signing involved); Linux uses libsecret. Only macOS binds to code identity.
+
+---
+
+## DONE (2026-08-02): Chorus -> Modulation with Tremolo + Harmonic Tremolo
+
+Rename the Chorus block to **Modulation** and add a mode switch between **Chorus** (existing) and
+**Tremolo** (new), rather than a separate FX block — both are "vary something about the note over
+time" effects sharing the same rate/depth/LFO-shape territory, not unrelated effects that happen to
+sit next to each other. Also good timing: the rack UI work already means this module needs a
+mode-selector switch like Delay/Reverb have, so this is the moment to fold tremolo in rather than
+treat Chorus as a single-purpose block forever.
+
+**Tremolo, standard**: amplitude modulation via an LFO-driven `GainNode`, the same
+oscillator -> depth-gain -> target pattern already used for the chorus LFO and the delay's auto-pan
+in `liveEngine.ts` — just targeting an output gain stage instead of delay time or pan. Depth and
+Rate are the two controls a real Fender tremolo circuit exposes (labeled "Intensity" and "Speed"
+on the amp panel).
+
+**Harmonic tremolo, if feasible**: the real trick behind the "vibrato channel" on silverface Fender
+amps (Twin Reverb, Deluxe Reverb, etc.) — Fender's own panel calls it "Vibrato" but it's actually
+harmonic tremolo, not pitch vibrato, a naming mix-up worth getting right in our own UI. It splits
+the signal into low and high bands through a crossover filter pair, then tremolo-modulates each
+band with LFOs 180° out of phase — as the low band swells the high band dips and vice versa. That
+phase relationship is what gives it the shimmer/coloring plain tremolo doesn't have. More DSP than
+standard tremolo (two filters, two gain stages, a summing mixer) but nothing novel relative to
+what's already in the engine.
+
+**Architecture note**: build both tremolo variants (and chorus) as parallel branches selected by
+gain, matching the established pattern already in this codebase (ping-pong/mono, plate/convolution
+reverb) rather than reconnecting the live graph, which clicks.
+
+**Open**: knob labels. Real hardware can't relabel a knob's silkscreen text depending on mode, but
+Mix/Depth/Rate apply to both Chorus and Tremolo, while Chorus's Width knob has no Tremolo
+equivalent (classic Fender tremolo is mono/uniform, not stereo). Either drop to 3 knobs that work
+in both modes, or accept the 4th knob's *function* changes by mode and give it a code-rendered
+label instead of baked silkscreen text — same principle already established for LCD/preset text
+living outside the panel image rather than baked into it. See the rack-prompt mapping below.
+
+**Rack panel impact** (for whenever the Modulation module's prompt gets regenerated):
+1. Rename the engraved label from "CHORUS" to "MODULATION".
+2. Add a 2-way switch group — "TYPE": CHORUS / TREMOLO — with an LED per option, grouped the same
+   way Delay's ENGINE/STEREO switch rows are (small group label above a row of small switches).
+3. Add one more small toggle+LED, "HARMONIC", meaningful only in Tremolo mode (dim/inert in
+   Chorus mode, same as Delay's Ratio knob going inert outside Ping-Pong).
+4. Keep Mix/Depth/Rate baked as knob labels (valid in both modes); drop Width or leave that 4th
+   knob's printed label blank/neutral and render its live name in code, matching the LCD/preset
+   text convention.
+5. Space: this pushes Modulation from the simplest module in the strip to the second-busiest
+   after Gate — it now needs two switch groups plus a toggle+LED, so it may need to be a touch
+   wider than EQ's slot rather than forcing everything into the same narrow column.
+
+**Built.** Both circuits ship: standard amplitude tremolo and harmonic (brownface) tremolo, with
+a Chorus/Tremolo type switch and a Harmonic toggle. Rate is shared between chorus and tremolo —
+both are just an LFO frequency, and the real Fender circuit has one Speed knob driving both
+variants — while depth is separate (`depthMs` in milliseconds for chorus, `tremoloDepth` 0..1 for
+tremolo). The UI label is "Modulation"; the internal type stays `ChorusSettings`, since renaming
+it would churn the FX-preset system and a persisted localStorage key for no functional gain.
+
+**One DSP correction worth recording.** The first version routed standard tremolo through the
+harmonic crossover with both bands modulated in phase, on the assumption that a lowpass and
+highpass at the same corner sum back to flat. They do not — the phase relationship digs a notch
+at the crossover, so plain tremolo came out tone-coloured. Standard now modulates the full-band
+signal on its own path and the crossover is harmonic-only. The crossover Q was also dropped below
+Butterworth on purpose: the overlap is not a defect to minimise, it is what produces harmonic
+tremolo's phasing character.
+
+Resolved along the way: the knob-label mismatch is handled by Mix and Width simply going inert in
+Tremolo mode, exactly as a mode-specific knob does on real hardware. Width is exposed in both the
+flat slider UI and the rack panel.
+
+---
+
 ## Play groups — save a shortlist of captures and audition just those, back and forth
 
 Comparing a handful of captures today means finding them again by scrolling/searching the tree or

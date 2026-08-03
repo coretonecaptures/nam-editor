@@ -12,6 +12,9 @@
    skeuomorphic showpiece, so it keeps its own face. Engraved transport labels use IBM Plex with
    wide tracking instead, so the panel stays typographically part of the app. */
 @import '@fontsource/barlow-semi-condensed/700.css';
+/* Player only: Doto is the rack units' segmented LCD readout — a real dot-matrix face rather
+   than a monospace approximation, matching the display glass in the panel artwork. */
+@import '@fontsource/doto/500.css';
 
 @tailwind base;
 @tailwind components;

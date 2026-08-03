@@ -19,6 +19,9 @@ import loopBarLit from '../assets/transport/loop-bar-lit.png'
 import transportPanelBg from '../assets/transport/panel-bg.jpg'
 import { NamFile } from '../types/nam'
 import type { ChorusPreset, DelayPreset, PlayGroup, ReverbPreset, RigPreset, RigSnapshot } from '../types/settings'
+import { RackReverbTest } from './RackReverbTest'
+import { RackDelay } from './RackDelay'
+import { Rack500 } from './Rack500'
 import { detectPreset } from '../utils/detectPreset'
 import { getCaptureBestEsr, getEsrTone } from '../utils/esr'
 import {
@@ -505,6 +508,9 @@ export function PlayerPanel({
   const [fxWidth, setFxWidth] = useState(0)
   const [devicesOpen, setDevicesOpen] = useState<boolean>(() => loadDevicesOpen())
   const [poppedOut, setPoppedOut] = useState(false)
+  // Prototype toggle only — proving out the rack-photo knob interaction. Defaults on so it's
+  // immediately visible when popped out; the button below switches back to the normal FX grid.
+  const [rackTest, setRackTest] = useState(true)
   const volumeGain = volumeDb <= VOLUME_MIN_DB ? 0 : Math.pow(10, volumeDb * 0.05)
 
   const [diPrefs, setDiPrefs] = useState<DiPrefs>(loadDiPrefs)
@@ -1164,7 +1170,12 @@ export function PlayerPanel({
     return existingId ? list.map((p) => (p.id === existingId ? preset : p)) : [...list, preset]
   }
 
-  const applyChorusPreset = useCallback((settings: ChorusSettings) => setChorusState({ ...settings }), [])
+  // Merged over the default rather than applied bare: a preset saved before Tremolo existed has
+  // no type/tremoloDepth/harmonic fields, and applying it directly would leave those undefined.
+  const applyChorusPreset = useCallback(
+    (settings: ChorusSettings) => setChorusState({ ...DEFAULT_CHORUS, ...settings }),
+    []
+  )
   const saveChorusPreset = useCallback(
     (name: string) => {
       onChorusPresetsChange?.(
@@ -1656,10 +1667,50 @@ export function PlayerPanel({
         </FxCard>
 
         <FxCard
-          label="Chorus"
+          label="Modulation"
           enabled={chorus.enabled}
           onToggle={(v) => setChorusState((c) => ({ ...c, enabled: v }))}
-          summary={chorus.enabled ? `${Math.round(chorus.mix * 100)}%` : 'off'}
+          summary={
+            chorus.enabled
+              ? chorus.type === 'chorus'
+                ? `${Math.round(chorus.mix * 100)}%`
+                : `${Math.round(chorus.tremoloDepth * 100)}%`
+              : 'off'
+          }
+          header={
+            <div className="flex items-center gap-1.5">
+              <div className="flex rounded-md bg-gray-100 dark:bg-[var(--field)] border border-gray-200 dark:border-[var(--border)] p-0.5">
+                {([['chorus', 'Chorus'], ['tremolo', 'Tremolo']] as const).map(([type, typeLabel]) => (
+                  <button
+                    key={type}
+                    onClick={() => setChorusState((c) => ({ ...c, type }))}
+                    className={`h-[22px] px-2 rounded text-[11px] font-medium transition-colors ${
+                      chorus.type === type
+                        ? 'bg-white dark:bg-[#232c36] text-gray-900 dark:text-gray-100 shadow-sm'
+                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                    }`}
+                  >
+                    {typeLabel}
+                  </button>
+                ))}
+              </div>
+              {chorus.type === 'tremolo' && (
+                <button
+                  onClick={() => setChorusState((c) => ({ ...c, harmonic: !c.harmonic }))}
+                  className={`h-[22px] px-2.5 rounded text-[11px] font-medium border transition-colors ${
+                    chorus.harmonic
+                      ? 'bg-[var(--active)] border-[var(--accent)] text-gray-900 dark:text-gray-100'
+                      : 'border-gray-200 dark:border-[var(--border)] text-gray-500 dark:text-gray-400'
+                  }`}
+                  title={chorus.harmonic
+                    ? 'Harmonic: low and high bands swell and dip in opposition (silverface Fender vibrato channel)'
+                    : 'Standard: the whole signal’s level moves together'}
+                >
+                  Harmonic
+                </button>
+              )}
+            </div>
+          }
         >
           <FxPresetBar
             presets={chorusPresets}
@@ -1667,17 +1718,36 @@ export function PlayerPanel({
             onSave={saveChorusPreset}
             onDelete={deleteChorusPreset}
           />
-          <div style={fxCardGrid}>
-            <FxSlider compact={fxCompact} label="Mix" value={chorus.mix} min={0} max={1} step={0.01}
-              format={(v) => `${Math.round(v * 100)}%`}
-              onChange={(v) => setChorusState((c) => ({ ...c, mix: v }))} />
-            <FxSlider compact={fxCompact} label="Depth" value={chorus.depthMs} min={0.2} max={12} step={0.1}
-              format={(v) => `${v.toFixed(1)} ms`}
-              onChange={(v) => setChorusState((c) => ({ ...c, depthMs: v }))} />
-            <FxSlider compact={fxCompact} label="Rate" value={chorus.rateHz} min={0.05} max={6} step={0.05}
-              format={(v) => `${v.toFixed(2)} Hz`}
-              onChange={(v) => setChorusState((c) => ({ ...c, rateHz: v }))} />
-          </div>
+          {chorus.type === 'chorus' ? (
+            <div style={fxCardGrid}>
+              <FxSlider compact={fxCompact} label="Mix" value={chorus.mix} min={0} max={1} step={0.01}
+                format={(v) => `${Math.round(v * 100)}%`}
+                onChange={(v) => setChorusState((c) => ({ ...c, mix: v }))} />
+              <FxSlider compact={fxCompact} label="Depth" value={chorus.depthMs} min={0.2} max={12} step={0.1}
+                format={(v) => `${v.toFixed(1)} ms`}
+                onChange={(v) => setChorusState((c) => ({ ...c, depthMs: v }))} />
+              <FxSlider compact={fxCompact} label="Rate" value={chorus.rateHz} min={0.05} max={6} step={0.05}
+                format={(v) => `${v.toFixed(2)} Hz`}
+                onChange={(v) => setChorusState((c) => ({ ...c, rateHz: v }))} />
+              {/* Chorus-only, and the chain's mono-to-stereo conversion point — at 0 the two
+                  swept voices average into both sides, at 1 each keeps its own. Tremolo has no
+                  equivalent, so it does not appear in that mode. */}
+              <FxSlider compact={fxCompact} label="Width" hint="stereo spread" value={chorus.width} min={0} max={1} step={0.01}
+                format={(v) => `${Math.round(v * 100)}%`}
+                onChange={(v) => setChorusState((c) => ({ ...c, width: v }))} />
+            </div>
+          ) : (
+            <div style={fxCardGrid}>
+              {/* No Mix here on purpose — a real Fender tremolo has no wet/dry knob either,
+                  just Speed and Intensity; `enabled` fully engages the circuit. */}
+              <FxSlider compact={fxCompact} label="Depth" value={chorus.tremoloDepth} min={0} max={1} step={0.01}
+                format={(v) => `${Math.round(v * 100)}%`}
+                onChange={(v) => setChorusState((c) => ({ ...c, tremoloDepth: v }))} />
+              <FxSlider compact={fxCompact} label="Rate" value={chorus.rateHz} min={0.05} max={6} step={0.05}
+                format={(v) => `${v.toFixed(2)} Hz`}
+                onChange={(v) => setChorusState((c) => ({ ...c, rateHz: v }))} />
+            </div>
+          )}
         </FxCard>
 
         <FxCard
@@ -2238,7 +2308,140 @@ export function PlayerPanel({
           stepper={stepper}
           groupControl={groupControl}
           recording={recordingSection}
-          fx={fxSection}
+          fx={
+            <div>
+              <div className="flex justify-end px-1 pb-2">
+                <button
+                  onClick={() => setRackTest((v) => !v)}
+                  className="h-[22px] px-2.5 rounded text-[11px] font-medium border border-gray-200 dark:border-[var(--border)] text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[var(--hover)] transition-colors"
+                >
+                  {rackTest ? 'Back to normal FX' : 'Try rack view (prototype)'}
+                </button>
+              </div>
+              {rackTest ? (
+                // Two units side by side, stacking only when the window is too narrow to give
+                // each one a usable width. Padding is deliberately tight — the panels are the
+                // content here, and every pixel of margin comes off their readable size.
+                <div className="px-1 pb-2 flex flex-col gap-4 items-center overflow-visible">
+                  {/* Rig snapshots every block at once, so it sits above all three units. */}
+                  <div className="w-full flex items-center gap-2">
+                    <TapeLabel>Rig</TapeLabel>
+                    <div className="flex-1 min-w-0">
+                      <FxPresetBar
+                        presets={rigPresets.map((p) => ({ id: p.id, name: p.name, settings: p.settings }))}
+                        onApply={applyRigPreset}
+                        onSave={saveRigPreset}
+                        onDelete={deleteRigPreset}
+                      />
+                    </div>
+                  </div>
+                  {/* Capped rather than full-bleed: this panel is 1.8:1 where Delay and Reverb
+                      are 2:1 and 2.7:1, so at a shared width it towers over them. */}
+                  <div style={{ width: '100%', maxWidth: 820 }}>
+                  <Rack500
+                    gate={gate}
+                    eq={eq}
+                    chorus={chorus}
+                    onGate={(patch) => setGateState((g) => ({ ...g, ...patch }))}
+                    onEq={(patch) => setEqState((e) => ({ ...e, ...patch }))}
+                    onChorus={(patch) => setChorusState((c) => ({ ...c, ...patch }))}
+                    modPresetBar={
+                      <FxPresetBar
+                        presets={chorusPresets}
+                        onApply={applyChorusPreset}
+                        onSave={saveChorusPreset}
+                        onDelete={deleteChorusPreset}
+                      />
+                    }
+                  />
+                  </div>
+                  {/* Slightly wider than the pop-out's own 1400 column: at two-up these panels
+                      are the thing you are reading, and 7% is the difference between the LCD
+                      being legible and not. */}
+                  <div style={{ width: '107%', maxWidth: '107%', display: 'grid', gap: 14, gridTemplateColumns: 'repeat(auto-fit, minmax(560px, 1fr))', alignItems: 'start' }}>
+                  <RackDelay
+                    delay={delay}
+                    onChange={(patch) => setDelayState((d) => ({ ...d, ...patch }))}
+                    delayPresets={delayPresets}
+                    irName={delayIrPath ? (delayIrPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null}
+                    presetBar={
+                      <FxPresetBar
+                        presets={delayPresets}
+                        onApply={applyDelayPreset}
+                        onSave={saveDelayPreset}
+                        onDelete={deleteDelayPreset}
+                      />
+                    }
+                    irPicker={
+                      <IrPicker
+                        libraryPath={delayLibraryPath ?? ''}
+                        value={delayIrPath}
+                        allowNone
+                        placeholder={`Choose from ${delayIrCount.toLocaleString()} delay impulses…`}
+                        onChange={(ref) => {
+                          setDelayIrPath(ref.path)
+                          try {
+                            localStorage.setItem(DELAY_IR_PREF_KEY, ref.path)
+                          } catch {
+                            // Non-fatal.
+                          }
+                        }}
+                        onClear={() => {
+                          setDelayIrPath(null)
+                          try {
+                            localStorage.removeItem(DELAY_IR_PREF_KEY)
+                          } catch {
+                            // Non-fatal.
+                          }
+                        }}
+                      />
+                    }
+                  />
+                  <RackReverbTest
+                    reverb={reverb}
+                    onChange={(patch) => setReverbState((r) => ({ ...r, ...patch }))}
+                    reverbPresets={reverbPresets}
+                    irName={reverbPath ? (reverbPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null}
+                    presetBar={
+                      <FxPresetBar
+                        presets={reverbPresets}
+                        onApply={applyReverbPreset}
+                        onSave={saveReverbPreset}
+                        onDelete={deleteReverbPreset}
+                      />
+                    }
+                    irPicker={
+                      <IrPicker
+                        libraryPath={reverbLibraryPath ?? ''}
+                        value={reverbPath}
+                        allowNone
+                        placeholder={`Choose from ${reverbCount.toLocaleString()} impulses…`}
+                        onChange={(ref) => {
+                          setReverbPath(ref.path)
+                          try {
+                            localStorage.setItem(REVERB_PREF_KEY, ref.path)
+                          } catch {
+                            // Non-fatal.
+                          }
+                        }}
+                        onClear={() => {
+                          setReverbPath(null)
+                          try {
+                            localStorage.removeItem(REVERB_PREF_KEY)
+                          } catch {
+                            // Non-fatal.
+                          }
+                        }}
+                      />
+                    }
+                  />
+                  </div>
+                </div>
+              ) : (
+                fxSection
+              )}
+            </div>
+          }
           tuner={tunerSection}
           meters={metersSection}
           cabIr={cabIrSection}

@@ -152,6 +152,27 @@ describe('setChorus', () => {
     e.setChorus({ mix: 5 })
     expect(e.chorus.mix).toBe(1)
   })
+
+  it('defaults to chorus, not tremolo, so existing rigs sound unchanged', () => {
+    expect(DEFAULT_CHORUS.type).toBe('chorus')
+    expect(DEFAULT_CHORUS.harmonic).toBe(false)
+  })
+
+  it('clamps tremolo depth to 0..1', () => {
+    const e = engine()
+    e.setChorus({ tremoloDepth: -5 })
+    expect(e.chorus.tremoloDepth).toBe(0)
+    e.setChorus({ tremoloDepth: 5 })
+    expect(e.chorus.tremoloDepth).toBe(1)
+  })
+
+  it('switches type and toggles harmonic without throwing', () => {
+    const e = engine()
+    expect(() => e.setChorus({ type: 'tremolo' })).not.toThrow()
+    expect(e.chorus.type).toBe('tremolo')
+    expect(() => e.setChorus({ harmonic: true })).not.toThrow()
+    expect(e.chorus.harmonic).toBe(true)
+  })
 })
 
 describe('delay enable', () => {
