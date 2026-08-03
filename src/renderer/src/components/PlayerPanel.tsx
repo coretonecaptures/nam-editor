@@ -2480,6 +2480,8 @@ export function PlayerPanel({
         <div style={{ flex: '1 1 0', minWidth: 0, minHeight: 0, display: 'flex' }}>
           <RackColumn
             align="flex-start"
+            aspect={RACK_CROP.rack500.aspect}
+            headerPx={32}
             header={
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <span style={{ ...monoLabel, color: 'var(--text-2)' }}>EQ · Gate · Modulation</span>
@@ -2523,6 +2525,7 @@ export function PlayerPanel({
           {/* Delay */}
           <RackColumn
             align="flex-end"
+            aspect={RACK_CROP.delay.aspect}
             header={
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <span style={{ ...monoLabel }}>Delay</span>
@@ -2567,6 +2570,7 @@ export function PlayerPanel({
           {/* Reverb */}
           <RackColumn
             align="flex-end"
+            aspect={RACK_CROP.reverb.aspect}
             header={
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <span style={{ ...monoLabel }}>Reverb</span>
