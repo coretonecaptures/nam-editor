@@ -2365,6 +2365,44 @@ export function PlayerPanel({
           <img src={coverSrc} alt="Amp" onError={onCoverError} style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
         </div>
 
+        {/* Centre: title, metadata grid, signal chain */}
+        <div style={{ flex: 1, minWidth: 360, display: 'flex', flexDirection: 'column', gap: 13 }}>
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <span style={{ font: "600 22px 'IBM Plex Sans', sans-serif", color: 'var(--text)' }}>{captureLabel}</span>
+            {m.tone_type && (
+              <span className={`nam-chip ${namToneChipClass(m.tone_type)}`}><span className="nam-dot" />{TONE_LABELS[m.tone_type] ?? m.tone_type}</span>
+            )}
+          </div>
+          {summaryRows.length > 0 && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '14px 18px' }}>
+              {summaryRows.map((row) => (
+                <div key={row.label} style={{ minWidth: 0 }}>
+                  <div style={monoLabel}>{row.label}</div>
+                  <div
+                    className={row.tone}
+                    style={{ font: "500 12.5px 'IBM Plex Sans', sans-serif", color: row.tone ? undefined : 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    title={row.value}
+                  >
+                    {row.value}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-2 flex-wrap">
+            {chainChip('DI IN')}
+            <span style={{ color: 'var(--text-3)' }}>→</span>
+            {SHOW_PEDAL_SLOT && (<>{chainChip('+ PEDAL CAPTURE', 'optional')}<span style={{ color: 'var(--text-3)' }}>→</span></>)}
+            {chainChip('AMP CAPTURE', 'active')}
+            <span style={{ color: 'var(--text-3)' }}>→</span>
+            {chainChip('CAB IR')}
+            <span style={{ color: 'var(--text-3)' }}>→</span>
+            {chainChip('FX RACK')}
+            <span style={{ color: 'var(--text-3)' }}>→</span>
+            {chainChip('OUT')}
+          </div>
+        </div>
+
         {/* Record light, hard right. Fixed aspect so the sign can never distort as the box resizes — that
             distortion was the complaint, and it came from re-rendering TEXT into a flexible box.
             Swapping in a real sign image later is a one-line change to the inner element. */}
@@ -2411,45 +2449,6 @@ export function PlayerPanel({
             {liveRunning ? 'Monitoring live — tap to stop' : 'Tap the sign to play through this capture'}
           </div>
         </div>
-
-        {/* Centre: title, metadata grid, signal chain */}
-        <div style={{ flex: 1, minWidth: 360, display: 'flex', flexDirection: 'column', gap: 13 }}>
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <span style={{ font: "600 22px 'IBM Plex Sans', sans-serif", color: 'var(--text)' }}>{captureLabel}</span>
-            {m.tone_type && (
-              <span className={`nam-chip ${namToneChipClass(m.tone_type)}`}><span className="nam-dot" />{TONE_LABELS[m.tone_type] ?? m.tone_type}</span>
-            )}
-          </div>
-          {summaryRows.length > 0 && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '14px 18px' }}>
-              {summaryRows.map((row) => (
-                <div key={row.label} style={{ minWidth: 0 }}>
-                  <div style={monoLabel}>{row.label}</div>
-                  <div
-                    className={row.tone}
-                    style={{ font: "500 12.5px 'IBM Plex Sans', sans-serif", color: row.tone ? undefined : 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                    title={row.value}
-                  >
-                    {row.value}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="flex items-center gap-2 flex-wrap">
-            {chainChip('DI IN')}
-            <span style={{ color: 'var(--text-3)' }}>→</span>
-            {SHOW_PEDAL_SLOT && (<>{chainChip('+ PEDAL CAPTURE', 'optional')}<span style={{ color: 'var(--text-3)' }}>→</span></>)}
-            {chainChip('AMP CAPTURE', 'active')}
-            <span style={{ color: 'var(--text-3)' }}>→</span>
-            {chainChip('CAB IR')}
-            <span style={{ color: 'var(--text-3)' }}>→</span>
-            {chainChip('FX RACK')}
-            <span style={{ color: 'var(--text-3)' }}>→</span>
-            {chainChip('OUT')}
-          </div>
-        </div>
-
       </div>
 
       {/* ── C. Rig preset bar */}

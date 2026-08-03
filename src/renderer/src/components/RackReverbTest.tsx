@@ -77,10 +77,10 @@ export function RackReverbTest({
           onChange={(v) => onChange({ width: v })}
           centerXPct={KNOB_XS[3]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
         <RackKnob label="Low" value={reverb.lowDb} min={-REVERB_EQ_MAX_DB} max={REVERB_EQ_MAX_DB} format={db}
-          onChange={(v) => onChange({ lowDb: v })}
+          resetTo={0} onChange={(v) => onChange({ lowDb: v })}
           centerXPct={KNOB_XS[4]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
         <RackKnob label="High" value={reverb.highDb} min={-REVERB_EQ_MAX_DB} max={REVERB_EQ_MAX_DB} format={db}
-          onChange={(v) => onChange({ highDb: v })}
+          resetTo={0} onChange={(v) => onChange({ highDb: v })}
           centerXPct={KNOB_XS[5]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
 
         <RackButton label="Plate" centerXPct={MODE_XS[0]} centerYPct={MODE_SW_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => setMode('plate')} />

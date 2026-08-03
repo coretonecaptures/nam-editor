@@ -21,7 +21,8 @@ export function RackKnob({
   diameterPct,
   label,
   format,
-  image = rackKnobBlack
+  image = rackKnobBlack,
+  resetTo
 }: {
   /** Current value, in the knob's own units (caller's min..max). */
   value: number
@@ -38,6 +39,12 @@ export function RackKnob({
   format?: (value: number) => string
   /** Knob face art. Must be flat and non-directionally lit so it survives rotation. */
   image?: string
+  /**
+   * Value a double-click snaps to. Only meaningful for controls with a neutral position — a
+   * cut/boost EQ band is flat at 0, so getting back there should not mean nudging by hand.
+   * Omit on knobs where no value is more "correct" than another, like Mix or Rate.
+   */
+  resetTo?: number
 }) {
   const dragRef = useRef<{ startY: number; startValue: number } | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -86,6 +93,8 @@ export function RackKnob({
       onPointerUp={handlePointerUp}
       onPointerEnter={() => setHover(true)}
       onPointerLeave={() => setHover(false)}
+      onDoubleClick={resetTo === undefined ? undefined : () => onChange(resetTo)}
+      title={resetTo === undefined ? undefined : 'Double-click to reset'}
       aria-label={label}
       style={{
         position: 'absolute',

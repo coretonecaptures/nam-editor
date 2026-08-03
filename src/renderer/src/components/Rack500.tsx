@@ -98,11 +98,11 @@ export function Rack500({
 
       {/* ── EQ */}
       <RackKnob image={knobEq} label="Bass" value={eq.bassDb} min={-EQ_MAX_DB} max={EQ_MAX_DB} format={db}
-        onChange={(v) => onEq({ bassDb: v })} centerXPct={EQ_X} centerYPct={EQ_KNOB_YS[0]} diameterPct={EQ_KNOB_D} />
+        resetTo={0} onChange={(v) => onEq({ bassDb: v })} centerXPct={EQ_X} centerYPct={EQ_KNOB_YS[0]} diameterPct={EQ_KNOB_D} />
       <RackKnob image={knobEq} label="Middle" value={eq.midDb} min={-EQ_MAX_DB} max={EQ_MAX_DB} format={db}
-        onChange={(v) => onEq({ midDb: v })} centerXPct={EQ_X} centerYPct={EQ_KNOB_YS[1]} diameterPct={EQ_KNOB_D} />
+        resetTo={0} onChange={(v) => onEq({ midDb: v })} centerXPct={EQ_X} centerYPct={EQ_KNOB_YS[1]} diameterPct={EQ_KNOB_D} />
       <RackKnob image={knobEq} label="Treble" value={eq.trebleDb} min={-EQ_MAX_DB} max={EQ_MAX_DB} format={db}
-        onChange={(v) => onEq({ trebleDb: v })} centerXPct={EQ_X} centerYPct={EQ_KNOB_YS[2]} diameterPct={EQ_KNOB_D} />
+        resetTo={0} onChange={(v) => onEq({ trebleDb: v })} centerXPct={EQ_X} centerYPct={EQ_KNOB_YS[2]} diameterPct={EQ_KNOB_D} />
       <RackButton label="EQ on/off" centerXPct={EQ_X} centerYPct={EQ_BYPASS_BTN_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onEq({ enabled: !eq.enabled })} />
       <RackLed active={eq.enabled} centerXPct={EQ_LED_X} centerYPct={EQ_LED_Y} widthPct={LED_W} />
 
