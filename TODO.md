@@ -187,17 +187,54 @@ tracks, each optional:
 - **Post-FX track**: everything after `outputGain` — stereo, capturing the model plus the whole FX
   chain (gate/EQ/chorus/delay/reverb) as actually heard.
 
-Renderer can't touch the filesystem directly (see CLAUDE.md), so this needs a new IPC write path
-alongside the existing `file:*` channels, plus a way to get audio out of the graph in the first
-place — most likely a `MediaStreamAudioDestinationNode` tapped off the two points above and
-recorded with `MediaRecorder`, or manual buffer accumulation via a `ScriptProcessorNode`/worklet
-if sample-accurate WAV (not container-compressed) output matters more than convenience.
+**Scoped 2026-08-02 — roughly a day. Not conceptually hard, but five separate pieces, two with
+real gotchas.**
 
-- WAV first — no encoder dependency, exact match to what NAM captures themselves ship as.
-- **MP3 explicitly deferred** ("future option") — needs an actual encoder (e.g. `lamejs`), which
-  is new dependency weight for a compression step nobody's asked to have today.
-- Where files land, and naming — probably alongside the capture being played, or a dedicated
-  recordings folder set in Settings → Player.
+### The decided approach
+
+**`MediaRecorder` is the obvious route and it is the wrong one.** It only emits compressed
+container formats (webm/opus in Chromium) — there is no way to get WAV out of it. For a NAM tool
+whose whole point is that the DI track is re-ampable reference material, lossy is disqualifying.
+So recording has to be an **AudioWorklet that accumulates raw Float32 and posts blocks to the
+main thread**. That single decision is the difference between an afternoon and a day, and it is
+worth writing down because `MediaRecorder` will keep looking tempting.
+
+### What already exists
+
+- **Both tap points are in place and named**: `this.splitter` (raw input, pre-gate, mono) and
+  `outputGain` (post-everything, stereo) in `liveEngine.ts`. Both are read-only branches, so
+  nothing here can break existing playback.
+- **Worklet infrastructure is well-trodden** — `public/` already holds four (`nam`, `nam-offline`,
+  `reverb`, `gate`), so a fifth follows a known path.
+- **Settings pattern is copy-paste**: a `recordingsPath` alongside `diPreviewLibraryPath` /
+  `irLibraryPath` / `reverbLibraryPath`, with a folder picker in Settings → Player.
+- `LiveEngine.latencyMs` is already exposed (see the alignment question below).
+
+### What does not exist yet
+
+- **There is no binary-write IPC channel at all.** `file:writeMetadata` is the surgical text
+  patcher, not a general writer. This needs a new channel plus a main-process handler, following
+  the existing `file:*` convention.
+- WAV encoding — about 50 lines, no dependency. RIFF header plus interleaved PCM.
+
+### The two real gotchas
+
+1. **Memory and IPC payload size.** Stereo 48k float32 is ~23 MB per minute, so a ten-minute take
+   is ~230 MB sitting in the renderer and then crossing IPC in one shot. Converting to 24-bit PCM
+   before sending roughly halves it. For v1: accumulate and send on stop, with a length cap and a
+   warning. Incremental streaming to the main process is the follow-up, not the starting point.
+2. **DI and post-FX are tapped at different points, so the post-FX track lags by the model's
+   latency.** `latencyMs` makes compensating easy *if we decide to* — and that is a product call,
+   not a technical one. Aligning them makes the pair usable for re-amping; leaving them raw is
+   more honest about what actually happened. Decide before building, not after.
+
+### Format
+
+- WAV first — no encoder dependency, and an exact match for what NAM captures ship as.
+- **MP3 explicitly deferred** ("future option") — needs a real encoder (e.g. `lamejs`), which is
+  new dependency weight for a compression step nobody has asked for.
+- Where files land and how they are named: a dedicated recordings folder in Settings → Player,
+  most likely, rather than alongside the capture being played.
 
 Open questions: start/stop tied to transport play/stop, or an independent record-arm toggle?
 Does starting the DI/post-FX record together make sense as one button, or should they be
