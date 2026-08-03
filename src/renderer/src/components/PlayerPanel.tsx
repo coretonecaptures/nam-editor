@@ -23,6 +23,7 @@ import type { ChorusPreset, DelayPreset, PlayGroup, ReverbPreset, RigPreset, Rig
 import { RackReverbTest } from './RackReverbTest'
 import { RackDelay } from './RackDelay'
 import { RackCrop, RACK_CROP } from './RackCrop'
+import { RackColumn } from './RackColumn'
 import { PresetMenu } from './PresetMenu'
 import { JogWheel } from './JogWheel'
 import { Rack500 } from './Rack500'
@@ -2476,7 +2477,10 @@ export function PlayerPanel({
 
       {/* ── D. Rack wall */}
       <div style={{ ...wellStyle, flex: '1 1 0', minHeight: 0, display: 'flex', gap: 14, alignItems: 'stretch' }}>
-        <div style={{ flex: '1 1 0', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ flex: '1 1 0', minWidth: 0, minHeight: 0, display: 'flex' }}>
+          <RackColumn
+            align="flex-start"
+            header={
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <span style={{ ...monoLabel, color: 'var(--text-2)' }}>EQ · Gate · Modulation</span>
             <PresetMenu
@@ -2495,9 +2499,10 @@ export function PlayerPanel({
               }}
             />
           </div>
-          {/* Top-aligned so its faceplate lines up with the Delay above it, and height-driven
-              so the pair shrink together rather than pushing the page taller. */}
-          <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', alignItems: 'flex-start' }}>
+            }
+            /* Top-aligned so its faceplate lines up with the Delay beside it, and height-driven
+               so the pair shrink together rather than pushing the page taller. */
+            panel={
             <RackCrop metal={RACK_CROP.rack500} fitHeight>
               <Rack500
                 gate={gate}
@@ -2510,12 +2515,15 @@ export function PlayerPanel({
                 onTogglePower={() => setFxPower((v) => !v)}
               />
             </RackCrop>
-          </div>
+            }
+          />
         </div>
 
         <div style={{ flex: '1 1 0', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
           {/* Delay */}
-          <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <RackColumn
+            align="flex-end"
+            header={
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <span style={{ ...monoLabel }}>Delay</span>
               <PresetMenu
@@ -2534,14 +2542,16 @@ export function PlayerPanel({
                 }}
               />
             </div>
-            <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex' }}>
+            }
+            panel={
               <RackCrop metal={RACK_CROP.delay} fitHeight>
-              <RackDelay delay={delay} onChange={(patch) => setDelayState((d) => ({ ...d, ...patch }))} delayPresets={delayPresets}
-                irName={delayIrPath ? (delayIrPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null} />
+                <RackDelay delay={delay} onChange={(patch) => setDelayState((d) => ({ ...d, ...patch }))} delayPresets={delayPresets}
+                  irName={delayIrPath ? (delayIrPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null} />
               </RackCrop>
-            </div>
-            {/* Dimmed unless the unit is in convolution — the IR is loaded either way, but it
-                only affects what you hear in that mode, and the mode lives on the panel face. */}
+            }
+            footer={
+            /* Dimmed unless the unit is in convolution — the IR is loaded either way, but it
+               only affects what you hear in that mode, and the mode lives on the panel face. */
             <div className="flex items-center gap-2" style={{ opacity: delay.mode === 'convolution' ? 1 : 0.45, transition: 'opacity .15s' }}>
               <span style={{ ...monoLabel, flexShrink: 0 }}>Delay IR</span>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -2551,10 +2561,13 @@ export function PlayerPanel({
                   onClear={() => { setDelayIrPath(null); try { localStorage.removeItem(DELAY_IR_PREF_KEY) } catch { /* non-fatal */ } }} />
               </div>
             </div>
-          </div>
+            }
+          />
 
           {/* Reverb */}
-          <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <RackColumn
+            align="flex-end"
+            header={
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <span style={{ ...monoLabel }}>Reverb</span>
               <PresetMenu
@@ -2573,12 +2586,14 @@ export function PlayerPanel({
                 }}
               />
             </div>
-            <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex' }}>
+            }
+            panel={
               <RackCrop metal={RACK_CROP.reverb} fitHeight>
-              <RackReverbTest reverb={reverb} onChange={(patch) => setReverbState((r) => ({ ...r, ...patch }))} reverbPresets={reverbPresets}
-                irName={reverbPath ? (reverbPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null} />
+                <RackReverbTest reverb={reverb} onChange={(patch) => setReverbState((r) => ({ ...r, ...patch }))} reverbPresets={reverbPresets}
+                  irName={reverbPath ? (reverbPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null} />
               </RackCrop>
-            </div>
+            }
+            footer={
             <div className="flex items-center gap-2" style={{ opacity: reverb.mode === 'convolution' ? 1 : 0.45, transition: 'opacity .15s' }}>
               <span style={{ ...monoLabel, flexShrink: 0 }}>Reverb IR</span>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -2588,7 +2603,8 @@ export function PlayerPanel({
                   onClear={() => { setReverbPath(null); try { localStorage.removeItem(REVERB_PREF_KEY) } catch { /* non-fatal */ } }} />
               </div>
             </div>
-          </div>
+            }
+          />
         </div>
       </div>
 
