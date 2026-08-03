@@ -1,6 +1,6 @@
 import rackDelayPanel from '../assets/fx/v2-delay-panel.png'
-import ledOn from '../assets/fx/v2-led-orange-on.png'
-import ledOff from '../assets/fx/v2-led-orange-off.png'
+import ledOn from '../assets/fx/v2b-led-orange-on.png'
+import ledOff from '../assets/fx/v2b-led-orange-off.png'
 import { RackKnob } from './RackKnob'
 import { RackFader } from './RackFader'
 import { RackButton, RackDisplay, RackLed } from './RackParts'
@@ -30,11 +30,11 @@ const py = (v: number): number => (v / P.h) * 100
 
 const KNOB_XS = [173, 362, 554, 738, 922, 1096].map(px)
 const KNOB_Y = py(462)
-const KNOB_D = px(132)
+const KNOB_D = px(142)
 
 const SW_Y = py(515)
-const LED_Y = py(428)
-const ENGINE_XS = [1555, 1678].map(px)
+const LED_Y = py(426)
+const ENGINE_XS = [1554, 1678].map(px)
 const STEREO_XS = [1818, 1919, 2021].map(px)
 const BTN_W = px(75)
 const BTN_H = py(79)
@@ -46,9 +46,9 @@ const BYPASS_LED_X = px(2023)
 const BYPASS_LED_Y = py(212)
 
 /** The two cut channels: Mod Rate on the left, Pan Speed on the right. */
-const FADER_XS = [1256, 1388].map(px)
-const TRACK_TOP = py(410)
-const TRACK_BOTTOM = py(640)
+const FADER_XS = [1258, 1388].map(px)
+const TRACK_TOP = py(402)
+const TRACK_BOTTOM = py(539)
 const FADER_CAP_W = px(52)
 
 const LCD = { x: px(937), y: py(220), w: px(1160), h: py(152) }

@@ -1,6 +1,6 @@
 import rackReverbPanel from '../assets/fx/v2-reverb-panel.png'
-import ledOn from '../assets/fx/v2-led-blue-on.png'
-import ledOff from '../assets/fx/v2-led-blue-off.png'
+import ledOn from '../assets/fx/v2b-led-blue-on.png'
+import ledOff from '../assets/fx/v2b-led-blue-off.png'
 import { RackKnob } from './RackKnob'
 import { RackButton, RackDisplay, RackLed } from './RackParts'
 import { rackDimStyle } from './RackPower'
@@ -18,7 +18,7 @@ const py = (v: number): number => (v / P.h) * 100
 
 const KNOB_XS = [175, 375, 575, 774, 976, 1176].map(px)
 const KNOB_Y = py(457)
-const KNOB_D = px(139)
+const KNOB_D = px(149)
 
 const MODE_XS = [1785, 1928].map(px)
 const MODE_SW_Y = py(515)
