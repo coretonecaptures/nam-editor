@@ -18,9 +18,13 @@ import loopBarUnlit from '../assets/transport/loop-bar-unlit.png'
 import loopBarLit from '../assets/transport/loop-bar-lit.png'
 import transportPanelBg from '../assets/transport/panel-bg.jpg'
 import { NamFile } from '../types/nam'
+import { namToneChipClass } from '../assets/gear'
 import type { ChorusPreset, DelayPreset, PlayGroup, ReverbPreset, RigPreset, RigSnapshot } from '../types/settings'
 import { RackReverbTest } from './RackReverbTest'
 import { RackDelay } from './RackDelay'
+import { RackCrop, RACK_CROP } from './RackCrop'
+import { PresetMenu } from './PresetMenu'
+import { JogWheel } from './JogWheel'
 import { Rack500 } from './Rack500'
 import { detectPreset } from '../utils/detectPreset'
 import { getCaptureBestEsr, getEsrTone } from '../utils/esr'
@@ -86,6 +90,14 @@ import type { NamRenderRequest, NamRenderResponse } from '../workers/namRender.w
  */
 
 const MAX_PREVIEW_SECONDS = 12
+
+/** Fixed brand/hardware colours — deliberately NOT theme tokens. These are physical objects
+ *  (a painted sign, an LED, a meter lamp), so they must not recolour with the UI theme. */
+const RIG_GOLD = '#e8b04a'
+const TUNER_GREEN = '#2dd48a'
+/** The second-capture slot (an overdrive pedal in front of the amp) is designed but not built —
+ *  see TODO.md "Chain two NAM captures live". Flip this on when the engine can load two models. */
+const SHOW_PEDAL_SLOT = false
 
 type PlayerStatus = 'idle' | 'loading-di' | 'rendering' | 'ready' | 'error'
 
@@ -508,12 +520,10 @@ export function PlayerPanel({
   const [fxWidth, setFxWidth] = useState(0)
   const [devicesOpen, setDevicesOpen] = useState<boolean>(() => loadDevicesOpen())
   const [poppedOut, setPoppedOut] = useState(false)
-  // Prototype toggle only — proving out the rack-photo knob interaction. Defaults on so it's
-  // immediately visible when popped out; the button below switches back to the normal FX grid.
-  const [rackTest, setRackTest] = useState(true)
   // Master power for the whole FX rig — the rack's illuminated blue button. Prototype-local for
   // now; it will need to actually gate the chain once the layout is settled.
   const [fxPower, setFxPower] = useState(true)
+  const [drawerOpen, setDrawerOpen] = useState(false)
   const volumeGain = volumeDb <= VOLUME_MIN_DB ? 0 : Math.pow(10, volumeDb * 0.05)
 
   const [diPrefs, setDiPrefs] = useState<DiPrefs>(loadDiPrefs)
@@ -1175,6 +1185,13 @@ export function PlayerPanel({
 
   // Merged over the default rather than applied bare: a preset saved before Tremolo existed has
   // no type/tremoloDepth/harmonic fields, and applying it directly would leave those undefined.
+  const sameSettings = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b)
+  const activeRigPresetId = rigPresets.find((p) =>
+    sameSettings(p.settings, { gate, eq, chorus, delay, delayIrPath, reverb, reverbIrPath: reverbPath }))?.id ?? null
+  const activeChorusPresetId = chorusPresets.find((p) => sameSettings(p.settings, chorus))?.id ?? null
+  const activeDelayPresetId = delayPresets.find((p) => sameSettings(p.settings, delay) && p.irPath === delayIrPath)?.id ?? null
+  const activeReverbPresetId = reverbPresets.find((p) => sameSettings(p.settings, reverb) && p.irPath === reverbPath)?.id ?? null
+
   const applyChorusPreset = useCallback(
     (settings: ChorusSettings) => setChorusState({ ...DEFAULT_CHORUS, ...settings }),
     []
@@ -2293,6 +2310,445 @@ export function PlayerPanel({
     </>
   )
 
+  /**
+   * ── Redesigned full-screen Live rig (design_handoff_player_redesign).
+   *
+   * Three stacked wells: identity band, rack wall, master dock. Every surface, border and text
+   * colour is a theme token so it recolours across dark / midnight / blue / charcoal / light.
+   * The only intentionally theme-independent things are the physical hardware — panel art,
+   * knobs, LEDs, LCD, record sign, meter gradient — which are photographs of objects and should
+   * not follow a UI theme.
+   *
+   * Readability rule from the handoff: no label below 10px, and nothing dimmer than --text-2.
+   */
+  const wellStyle: React.CSSProperties = {
+    background: 'var(--panel)',
+    border: '1px solid var(--border-soft)',
+    borderRadius: 14,
+    padding: 16
+  }
+  const monoLabel: React.CSSProperties = {
+    font: "600 10px 'IBM Plex Mono', monospace",
+    letterSpacing: '.13em',
+    color: 'var(--text-2)',
+    textTransform: 'uppercase'
+  }
+
+  const chainChip = (text: string, kind: 'normal' | 'active' | 'optional' = 'normal'): React.ReactNode => (
+    <span
+      key={text}
+      style={{
+        height: 40,
+        display: 'inline-flex',
+        alignItems: 'center',
+        padding: '0 12px',
+        borderRadius: 8,
+        whiteSpace: 'nowrap',
+        font: "600 10.5px 'IBM Plex Mono', monospace",
+        letterSpacing: '.08em',
+        background: kind === 'active' ? RIG_GOLD : 'var(--field)',
+        border: kind === 'optional' ? '1px dashed #2e7d54' : `1px solid ${kind === 'active' ? RIG_GOLD : 'var(--field-border)'}`,
+        color: kind === 'active' ? '#2a1e08' : kind === 'optional' ? '#4fbf87' : 'var(--text-2)'
+      }}
+    >
+      {text}
+    </span>
+  )
+
+  const rigView = (
+    <div className="flex flex-col gap-3.5" style={{ padding: '0 9px 12px' }}>
+      {/* ── A. Identity band */}
+      <div style={{ ...wellStyle, display: 'flex', gap: 14, alignItems: 'stretch', flexWrap: 'wrap' }}>
+        {/* Record light. Fixed aspect so the sign can never distort as the box resizes — that
+            distortion was the complaint, and it came from re-rendering TEXT into a flexible box.
+            Swapping in a real sign image later is a one-line change to the inner element. */}
+        <div style={{ width: 244, flex: 'none', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <button
+            onClick={() => (liveRunning ? void stopLive() : void startLive())}
+            disabled={liveStarting}
+            title={liveRunning ? 'Stop live input' : 'Start live input'}
+            className="transition-transform active:scale-[.99] disabled:opacity-70"
+            style={{
+              padding: 9,
+              borderRadius: 10,
+              border: 'none',
+              cursor: 'pointer',
+              background: 'linear-gradient(180deg,#4a3320,#2c1d10)',
+              boxShadow: liveRunning ? '0 0 40px 6px rgba(255,72,48,.42)' : '0 10px 26px rgba(0,0,0,.45)',
+              transition: 'box-shadow .25s'
+            }}
+          >
+            <div
+              style={{
+                aspectRatio: '2.05 / 1',
+                borderRadius: 5,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 5,
+                background: liveRunning ? 'linear-gradient(180deg,#fbefc7,#f2db9a)' : 'linear-gradient(180deg,#4a4436,#3a3428)',
+                boxShadow: liveRunning ? 'inset 0 0 34px rgba(255,185,125,.45)' : 'inset 0 0 20px rgba(0,0,0,.4)',
+                transition: 'background .25s, box-shadow .25s'
+              }}
+            >
+              <div style={{ font: "700 30px/0.92 'Barlow Semi Condensed', sans-serif", textTransform: 'uppercase', color: liveRunning ? '#d8352a' : '#6b5a3e' }}>
+                Recording
+              </div>
+              <div style={{ height: 2, width: '58%', background: liveRunning ? '#d8352a' : '#6b5a3e' }} />
+              <div style={{ font: "700 12px 'Barlow Semi Condensed', sans-serif", letterSpacing: '.12em', textTransform: 'uppercase', color: liveRunning ? '#4a3a1e' : '#5a4f3a' }}>
+                {liveStarting ? 'Starting…' : liveRunning ? 'On Air' : 'Studio in Use'}
+              </div>
+            </div>
+          </button>
+          <div style={{ textAlign: 'center', font: "500 10.5px 'IBM Plex Sans', sans-serif", color: 'var(--text-2)' }}>
+            {liveRunning ? 'Monitoring live — tap to stop' : 'Tap the sign to play through this capture'}
+          </div>
+        </div>
+
+        {/* Centre: title, metadata grid, signal chain */}
+        <div style={{ flex: 1, minWidth: 360, display: 'flex', flexDirection: 'column', gap: 13 }}>
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <span style={{ font: "600 22px 'IBM Plex Sans', sans-serif", color: 'var(--text)' }}>{captureLabel}</span>
+            {m.tone_type && (
+              <span className={`nam-chip ${namToneChipClass(m.tone_type)}`}><span className="nam-dot" />{TONE_LABELS[m.tone_type] ?? m.tone_type}</span>
+            )}
+          </div>
+          {summaryRows.length > 0 && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '14px 18px' }}>
+              {summaryRows.map((row) => (
+                <div key={row.label} style={{ minWidth: 0 }}>
+                  <div style={monoLabel}>{row.label}</div>
+                  <div
+                    className={row.tone}
+                    style={{ font: "500 12.5px 'IBM Plex Sans', sans-serif", color: row.tone ? undefined : 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    title={row.value}
+                  >
+                    {row.value}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-2 flex-wrap">
+            {chainChip('DI IN')}
+            <span style={{ color: 'var(--text-3)' }}>→</span>
+            {SHOW_PEDAL_SLOT && (<>{chainChip('+ PEDAL CAPTURE', 'optional')}<span style={{ color: 'var(--text-3)' }}>→</span></>)}
+            {chainChip('AMP CAPTURE', 'active')}
+            <span style={{ color: 'var(--text-3)' }}>→</span>
+            {chainChip('CAB IR')}
+            <span style={{ color: 'var(--text-3)' }}>→</span>
+            {chainChip('FX RACK')}
+            <span style={{ color: 'var(--text-3)' }}>→</span>
+            {chainChip('OUT')}
+          </div>
+        </div>
+
+        {/* Amp image */}
+        <div style={{ width: 372, flex: 'none', borderRadius: 11, border: '1px solid var(--border)', background: 'var(--field)', overflow: 'hidden', minHeight: 190 }}>
+          <img src={coverSrc} alt="Amp" onError={onCoverError} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+        </div>
+      </div>
+
+      {/* ── C. Rig preset bar */}
+      <div style={{ ...wellStyle, padding: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <span style={{ ...monoLabel, color: RIG_GOLD, letterSpacing: '.14em' }}>Rig Preset</span>
+        <PresetMenu
+          options={rigPresets.map((r) => ({ id: r.id, name: r.name }))}
+          activeId={activeRigPresetId}
+          placeholder="No rig loaded"
+          searchable
+          width={260}
+          onRecall={(id) => {
+            const found = rigPresets.find((r) => r.id === id)
+            if (found) applyRigPreset(found.settings)
+          }}
+          onSaveAs={() => {
+            const name = window.prompt('Save current rig as…')
+            if (name?.trim()) saveRigPreset(name.trim())
+          }}
+        />
+        <span style={{ font: "500 10.5px 'IBM Plex Sans', sans-serif", color: 'var(--text-2)' }}>
+          Recalls every panel at once — EQ · gate · mod · delay · reverb
+        </span>
+      </div>
+
+      {/* ── D. Rack wall */}
+      <div style={{ ...wellStyle, display: 'flex', gap: 14, alignItems: 'stretch', flexWrap: 'wrap' }}>
+        <div style={{ flex: '1.5 1 460px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span style={{ ...monoLabel, color: 'var(--text-2)' }}>EQ · Gate · Modulation</span>
+            <PresetMenu
+              label="Mod Preset"
+              options={chorusPresets.map((c) => ({ id: c.id, name: c.name }))}
+              activeId={activeChorusPresetId}
+              placeholder="No preset"
+              width={158}
+              onRecall={(id) => {
+                const found = chorusPresets.find((c) => c.id === id)
+                if (found) applyChorusPreset(found.settings)
+              }}
+              onSaveAs={() => {
+                const name = window.prompt('Save modulation preset as…')
+                if (name?.trim()) saveChorusPreset(name.trim())
+              }}
+            />
+          </div>
+          <div style={{ margin: 'auto 0' }}>
+            <RackCrop {...RACK_CROP.rack500}>
+              <Rack500
+                gate={gate}
+                eq={eq}
+                chorus={chorus}
+                onGate={(patch) => setGateState((g) => ({ ...g, ...patch }))}
+                onEq={(patch) => setEqState((e) => ({ ...e, ...patch }))}
+                onChorus={(patch) => setChorusState((c) => ({ ...c, ...patch }))}
+                power={fxPower}
+                onTogglePower={() => setFxPower((v) => !v)}
+              />
+            </RackCrop>
+          </div>
+        </div>
+
+        <div style={{ flex: '1 1 380px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* Delay */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <span style={{ ...monoLabel }}>Delay</span>
+              <PresetMenu
+                label="Preset"
+                options={delayPresets.map((d) => ({ id: d.id, name: d.name }))}
+                activeId={activeDelayPresetId}
+                placeholder="No preset"
+                width={150}
+                onRecall={(id) => {
+                  const found = delayPresets.find((d) => d.id === id)
+                  if (found) applyDelayPreset(found.settings, found.irPath)
+                }}
+                onSaveAs={() => {
+                  const name = window.prompt('Save delay preset as…')
+                  if (name?.trim()) saveDelayPreset(name.trim())
+                }}
+              />
+            </div>
+            <RackCrop {...RACK_CROP.delay}>
+              <RackDelay delay={delay} onChange={(patch) => setDelayState((d) => ({ ...d, ...patch }))} delayPresets={delayPresets}
+                irName={delayIrPath ? (delayIrPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null} />
+            </RackCrop>
+            <div className="flex items-center gap-2">
+              <span style={{ ...monoLabel, flexShrink: 0 }}>Delay IR</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <IrPicker libraryPath={delayLibraryPath ?? ''} value={delayIrPath} allowNone
+                  placeholder={`Choose from ${delayIrCount.toLocaleString()} delay impulses…`}
+                  onChange={(ref) => { setDelayIrPath(ref.path); try { localStorage.setItem(DELAY_IR_PREF_KEY, ref.path) } catch { /* non-fatal */ } }}
+                  onClear={() => { setDelayIrPath(null); try { localStorage.removeItem(DELAY_IR_PREF_KEY) } catch { /* non-fatal */ } }} />
+              </div>
+            </div>
+          </div>
+
+          {/* Reverb */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <span style={{ ...monoLabel }}>Reverb</span>
+              <PresetMenu
+                label="Preset"
+                options={reverbPresets.map((r) => ({ id: r.id, name: r.name }))}
+                activeId={activeReverbPresetId}
+                placeholder="No preset"
+                width={150}
+                onRecall={(id) => {
+                  const found = reverbPresets.find((r) => r.id === id)
+                  if (found) applyReverbPreset(found.settings, found.irPath)
+                }}
+                onSaveAs={() => {
+                  const name = window.prompt('Save reverb preset as…')
+                  if (name?.trim()) saveReverbPreset(name.trim())
+                }}
+              />
+            </div>
+            <RackCrop {...RACK_CROP.reverb}>
+              <RackReverbTest reverb={reverb} onChange={(patch) => setReverbState((r) => ({ ...r, ...patch }))} reverbPresets={reverbPresets}
+                irName={reverbPath ? (reverbPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null} />
+            </RackCrop>
+            <div className="flex items-center gap-2">
+              <span style={{ ...monoLabel, flexShrink: 0 }}>Reverb IR</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <IrPicker libraryPath={reverbLibraryPath ?? ''} value={reverbPath} allowNone
+                  placeholder={`Choose from ${reverbCount.toLocaleString()} impulses…`}
+                  onChange={(ref) => { setReverbPath(ref.path); try { localStorage.setItem(REVERB_PREF_KEY, ref.path) } catch { /* non-fatal */ } }}
+                  onClear={() => { setReverbPath(null); try { localStorage.removeItem(REVERB_PREF_KEY) } catch { /* non-fatal */ } }} />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── E. Master dock */}
+      <div style={{ ...wellStyle, display: 'flex', gap: 16, alignItems: 'stretch', flexWrap: 'wrap' }}>
+        <JogWheel label="Input Gain" value={liveInputGainDb} min={-24} max={24} onChange={setLiveInputGainDb}
+          level={liveInputMeter} format={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`} />
+
+        <div style={{ width: 300, minWidth: 240, flex: '1 1 260px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div className="flex items-center gap-2.5">
+            {/* concentric cone so it reads as a cabinet, not a generic circle */}
+            <div style={{ width: 46, height: 46, borderRadius: '50%', flexShrink: 0,
+              background: 'radial-gradient(circle at 50% 50%, #2b3038 0 18%, #171b21 18% 30%, #262c34 30% 62%, #12161b 62% 78%, #2a313a 78% 100%)',
+              border: '1px solid var(--border)' }} />
+            <div style={{ minWidth: 0 }}>
+              <div style={monoLabel}>Cab IR</div>
+              <button onClick={() => { irManuallySetRef.current = true; setIrEnabled((v) => !v) }}
+                disabled={irCount === 0}
+                style={{ marginTop: 3, height: 22, padding: '0 10px', borderRadius: 6, cursor: 'pointer',
+                  background: irEnabled ? 'var(--active)' : 'var(--field)',
+                  border: `1px solid ${irEnabled ? 'var(--accent)' : 'var(--field-border)'}`,
+                  color: irEnabled ? 'var(--accent-text)' : 'var(--text-2)',
+                  font: "600 10px 'IBM Plex Mono', monospace", letterSpacing: '.1em' }}>
+                {irEnabled ? 'ON' : 'OFF'}
+              </button>
+            </div>
+          </div>
+          <IrPicker libraryPath={irLibraryPath ?? ''} value={irPath} allowNone
+            placeholder={`Choose from ${irCount.toLocaleString()} cab impulses…`}
+            onChange={(ref) => { irManuallySetRef.current = true; setIrPath(ref.path); saveIrPath(ref.path) }}
+            onClear={() => setIrPath(null)} />
+        </div>
+
+        {/* Tuner — deliberately large; this is the one control you read from across a room. */}
+        <div style={{ flex: '1 1 260px', minWidth: 240, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div className="flex items-center justify-between">
+            <span style={monoLabel}>Tuner</span>
+            <span style={{ font: "600 11px 'IBM Plex Mono', monospace",
+              color: liveTuner?.inTune ? TUNER_GREEN : 'var(--text-2)' }}>
+              {liveTuner?.note ? (liveTuner.inTune ? 'in tune' : liveTuner.cents > 0 ? 'sharp' : 'flat') : '—'}
+            </span>
+          </div>
+          <div className="flex items-center gap-4">
+            <div style={{ font: "600 46px/1 'IBM Plex Sans', sans-serif", color: 'var(--text)', minWidth: 62 }}>
+              {liveTuner?.note ?? '—'}
+              {liveTuner?.octave != null && <span style={{ fontSize: 18, color: 'var(--text-2)', verticalAlign: 'super' }}>{liveTuner.octave}</span>}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ position: 'relative', height: 30 }}>
+                <div style={{ position: 'absolute', left: 0, right: 0, top: '50%', height: 2, background: 'var(--border)' }} />
+                <div style={{ position: 'absolute', left: '50%', top: 2, bottom: 2, width: 2, marginLeft: -1, background: TUNER_GREEN }} />
+                <div style={{ position: 'absolute', top: '50%', width: 16, height: 16, marginTop: -8, marginLeft: -8, borderRadius: '50%',
+                  left: `${50 + Math.max(-50, Math.min(50, liveTuner?.cents ?? 0))}%`,
+                  background: liveTuner?.inTune ? TUNER_GREEN : '#f0b84a',
+                  boxShadow: `0 0 12px ${liveTuner?.inTune ? 'rgba(45,212,138,.6)' : 'rgba(240,184,74,.5)'}`,
+                  transition: 'left .09s linear' }} />
+              </div>
+              <div className="flex justify-between" style={{ font: "500 10px 'IBM Plex Mono', monospace", color: 'var(--text-2)', marginTop: 3 }}>
+                <span>♭ flat</span>
+                <span>{liveTuner?.note ? `${liveTuner.cents > 0 ? '+' : ''}${liveTuner.cents}¢` : 'play a note'}</span>
+                <span>sharp ♯</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Stereo out meters — bottom-up */}
+        <div style={{ width: 78, flex: 'none', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <span style={monoLabel}>Out L·R</span>
+          <div className="flex gap-2" style={{ flex: 1, minHeight: 84 }}>
+            {[liveMeter, liveMeter].map((lv, i) => (
+              <div key={i} style={{ flex: 1, position: 'relative', background: 'var(--field)', border: '1px solid var(--field-border)', borderRadius: 4, overflow: 'hidden' }}>
+                <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: `${Math.min(100, lv * 100)}%`,
+                  background: 'linear-gradient(180deg,#e2483a 0%,#f0b84a 22%,#3ddc9a 55%,#17a86f 100%)',
+                  transition: 'height .07s linear' }} />
+              </div>
+            ))}
+          </div>
+          <span style={{ font: "500 10px 'IBM Plex Mono', monospace", color: 'var(--text-2)', textAlign: 'center' }}>
+            {liveMeter > 0 ? `${(20 * Math.log10(liveMeter)).toFixed(0)} dB` : '—'}
+          </span>
+        </div>
+
+        <JogWheel label="Output" value={volumeDb} min={-40} max={12} onChange={setVolumeDb}
+          level={liveMeter} format={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`} />
+
+        <div style={{ width: 52, flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', borderLeft: '1px solid var(--border-soft)' }}>
+          <button onClick={() => setDrawerOpen(true)} title="Setup"
+            style={{ width: 38, height: 38, borderRadius: 9, cursor: 'pointer',
+              background: 'var(--raised)', border: '1px solid var(--border)', color: 'var(--text-2)', fontSize: 17 }}>
+            ⚙
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+
+  /**
+   * ── F. Setup drawer. Everything that should not stay pinned to the main surface.
+   *
+   * The DI-source picker the design originally placed here has been cut: in Live you are playing
+   * a guitar, so the DI clip is Preview-mode machinery and only added clutter. If "play a DI clip
+   * through the live rack" is ever built (see TODO.md) the picker becomes a primary control and
+   * belongs on the main surface, not in here.
+   */
+  const setupDrawer = drawerOpen ? (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 400 }}>
+      <div onClick={() => setDrawerOpen(false)} style={{ position: 'absolute', inset: 0, background: 'rgba(6,8,11,.6)' }} />
+      <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 340, overflowY: 'auto',
+        background: 'var(--panel)', borderLeft: '1px solid var(--border)', boxShadow: '-18px 0 40px rgba(0,0,0,.45)' }}>
+        <div className="flex items-center justify-between" style={{ padding: '14px 16px', borderBottom: '1px solid var(--border-soft)' }}>
+          <span style={{ font: "600 11px 'IBM Plex Mono', monospace", letterSpacing: '.14em', color: 'var(--text-2)', textTransform: 'uppercase' }}>Setup</span>
+          <button onClick={() => setDrawerOpen(false)} style={{ width: 28, height: 28, borderRadius: 7, cursor: 'pointer',
+            background: 'var(--raised)', border: '1px solid var(--border)', color: 'var(--text-2)' }}>✕</button>
+        </div>
+        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div>
+            <div style={{ font: "600 10px 'IBM Plex Mono', monospace", letterSpacing: '.12em', color: 'var(--text-2)', textTransform: 'uppercase', marginBottom: 6 }}>Input device</div>
+            <select value={inputDeviceId ?? ''} onChange={(e) => setInputDeviceId(e.target.value || null)}
+              style={{ width: '100%', height: 32, borderRadius: 8, padding: '0 10px', background: 'var(--field)',
+                border: '1px solid var(--field-border)', color: 'var(--text)', font: "500 11.5px 'IBM Plex Sans', sans-serif" }}>
+              <option value="">System default</option>
+              {inputDevices.map((d) => (<option key={d.deviceId} value={d.deviceId}>{d.label}</option>))}
+            </select>
+          </div>
+          {/* Only worth showing on a multi-channel interface — a mono input has nothing to pick. */}
+          {channelPeaks.length > 1 && (
+          <div>
+            <div style={{ font: "600 10px 'IBM Plex Mono', monospace", letterSpacing: '.12em', color: 'var(--text-2)', textTransform: 'uppercase', marginBottom: 6 }}>Input channel</div>
+            <div className="flex gap-2">
+              {channelPeaks.map((lv, i) => (
+                <button key={i} onClick={() => setInputChannel(i)}
+                  style={{ flex: 1, height: 34, borderRadius: 7, cursor: 'pointer', position: 'relative', overflow: 'hidden',
+                    background: inputChannel === i ? 'var(--active)' : 'var(--field)',
+                    border: `1px solid ${inputChannel === i ? 'var(--accent)' : 'var(--field-border)'}`,
+                    color: inputChannel === i ? 'var(--accent-text)' : 'var(--text-2)',
+                    font: "600 10px 'IBM Plex Mono', monospace", opacity: inputChannel === i ? 1 : 0.75 }}>
+                  <span style={{ position: 'relative', zIndex: 1 }}>CH {i + 1}</span>
+                  <span style={{ position: 'absolute', left: 0, bottom: 0, height: 3, width: `${Math.min(100, lv * 100)}%`, background: TUNER_GREEN }} />
+                </button>
+              ))}
+            </div>
+          </div>
+          )}
+          <div>
+            <div style={{ font: "600 10px 'IBM Plex Mono', monospace", letterSpacing: '.12em', color: 'var(--text-2)', textTransform: 'uppercase', marginBottom: 6 }}>Output device</div>
+            <select value={outputDeviceId ?? ''} onChange={(e) => setOutputDeviceId(e.target.value || null)}
+              style={{ width: '100%', height: 32, borderRadius: 8, padding: '0 10px', background: 'var(--field)',
+                border: '1px solid var(--field-border)', color: 'var(--text)', font: "500 11.5px 'IBM Plex Sans', sans-serif" }}>
+              <option value="">System default</option>
+              {outputDevices.map((d) => (<option key={d.deviceId} value={d.deviceId}>{d.label}</option>))}
+            </select>
+          </div>
+          <div style={{ borderTop: '1px solid var(--border-soft)', paddingTop: 14 }}>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={liveBypass} onChange={(e) => setLiveBypass(e.target.checked)} className="w-3.5 h-3.5 rounded accent-[var(--accent)]" />
+              <span style={{ font: "500 11.5px 'IBM Plex Sans', sans-serif", color: 'var(--text)' }}>Bypass model (hear the dry input)</span>
+            </label>
+          </div>
+          {liveLatencyMs !== null && (
+            <div style={{ font: "500 10.5px 'IBM Plex Sans', sans-serif", color: 'var(--text-2)' }}>
+              Round-trip latency ≈ {liveLatencyMs.toFixed(0)} ms
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  ) : null
+
   if (poppedOut) {
     return (
       <>
@@ -2301,132 +2757,51 @@ export function PlayerPanel({
         <div ref={panelRef} className="flex flex-col h-full bg-white dark:bg-[var(--panel)] text-gray-900 dark:text-gray-100 select-none opacity-40 pointer-events-none">
           <div className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">Expanded &mdash; see the rig view.</div>
         </div>
-        <PlayerPopout
-          captureLabel={captureLabel}
-          gearLine={[m.gear_make, m.gear_model].filter(Boolean).join(' ')}
-          coverSrc={coverSrc}
-          onCoverError={onCoverError}
-          summaryRows={summaryRows}
-          onClose={() => setPoppedOut(false)}
-          stepper={stepper}
-          groupControl={groupControl}
-          recording={recordingSection}
-          fx={
-            <div>
-              <div className="flex justify-end px-1 pb-2">
-                <button
-                  onClick={() => setRackTest((v) => !v)}
-                  className="h-[22px] px-2.5 rounded text-[11px] font-medium border border-gray-200 dark:border-[var(--border)] text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[var(--hover)] transition-colors"
-                >
-                  {rackTest ? 'Back to normal FX' : 'Try rack view (prototype)'}
-                </button>
-              </div>
-              {rackTest ? (
-                // Two units side by side, stacking only when the window is too narrow to give
-                // each one a usable width. Padding is deliberately tight — the panels are the
-                // content here, and every pixel of margin comes off their readable size.
-                <div className="px-1 pb-2 flex flex-col gap-3 overflow-visible">
-                  {/* Every preset list and impulse picker on one line above the hardware, so the
-                      panels below are uninterrupted. Layout below is provisional — the point is
-                      to judge relative size before wiring the real page. */}
-                  <div className="w-full grid gap-x-4 gap-y-1.5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
-                    <div className="flex items-center gap-2">
-                      <TapeLabel>Rig</TapeLabel>
-                      <div className="flex-1 min-w-0">
-                        <FxPresetBar
-                          presets={rigPresets.map((p) => ({ id: p.id, name: p.name, settings: p.settings }))}
-                          onApply={applyRigPreset}
-                          onSave={saveRigPreset}
-                          onDelete={deleteRigPreset}
-                        />
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <TapeLabel>Mod</TapeLabel>
-                      <div className="flex-1 min-w-0">
-                        <FxPresetBar presets={chorusPresets} onApply={applyChorusPreset} onSave={saveChorusPreset} onDelete={deleteChorusPreset} />
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <TapeLabel>Delay</TapeLabel>
-                      <div className="flex-1 min-w-0">
-                        <FxPresetBar presets={delayPresets} onApply={applyDelayPreset} onSave={saveDelayPreset} onDelete={deleteDelayPreset} />
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <TapeLabel>Reverb</TapeLabel>
-                      <div className="flex-1 min-w-0">
-                        <FxPresetBar presets={reverbPresets} onApply={applyReverbPreset} onSave={saveReverbPreset} onDelete={deleteReverbPreset} />
-                      </div>
-                    </div>
-                    {delay.mode === 'convolution' && (
-                      <div className="flex items-center gap-2">
-                        <TapeLabel>Delay IR</TapeLabel>
-                        <div className="flex-1 min-w-0">
-                          <IrPicker libraryPath={delayLibraryPath ?? ''} value={delayIrPath} allowNone
-                            placeholder={`Choose from ${delayIrCount.toLocaleString()} delay impulses…`}
-                            onChange={(ref) => { setDelayIrPath(ref.path); try { localStorage.setItem(DELAY_IR_PREF_KEY, ref.path) } catch { /* non-fatal */ } }}
-                            onClear={() => { setDelayIrPath(null); try { localStorage.removeItem(DELAY_IR_PREF_KEY) } catch { /* non-fatal */ } }} />
-                        </div>
-                      </div>
-                    )}
-                    {reverb.mode === 'convolution' && (
-                      <div className="flex items-center gap-2">
-                        <TapeLabel>Reverb IR</TapeLabel>
-                        <div className="flex-1 min-w-0">
-                          <IrPicker libraryPath={reverbLibraryPath ?? ''} value={reverbPath} allowNone
-                            placeholder={`Choose from ${reverbCount.toLocaleString()} impulses…`}
-                            onChange={(ref) => { setReverbPath(ref.path); try { localStorage.setItem(REVERB_PREF_KEY, ref.path) } catch { /* non-fatal */ } }}
-                            onClear={() => { setReverbPath(null); try { localStorage.removeItem(REVERB_PREF_KEY) } catch { /* non-fatal */ } }} />
-                        </div>
-                      </div>
-                    )}
-                  </div>
+        <div
+          className="fixed inset-0 z-[300] flex flex-col select-none"
+          style={{ background: 'var(--app-bg)', color: 'var(--text)' }}
+        >
+          {/* ── A. Title bar */}
+          <div
+            className="flex items-center gap-3 flex-shrink-0"
+            style={{
+              height: 40,
+              // Clears the macOS window buttons, exactly as Toolbar.tsx does.
+              paddingLeft: window.api.platform === 'darwin' ? 88 : 16,
+              paddingRight: 16,
+              borderBottom: '1px solid var(--border-soft)'
+            }}
+          >
+            <span style={{ font: "600 10px 'IBM Plex Mono', monospace", letterSpacing: '.18em', color: RIG_GOLD }}>LIVE RIG</span>
+            <span style={{ font: "600 13px 'IBM Plex Sans', sans-serif", color: 'var(--text)' }}>{captureLabel}</span>
+            {(m.gear_make || m.gear_model) && (
+              <span style={{ font: "500 12px 'IBM Plex Sans', sans-serif", color: 'var(--text-2)' }}>
+                {[m.gear_make, m.gear_model].filter(Boolean).join(' ')}
+              </span>
+            )}
+            <div className="flex-1" />
+            {groupControl}
+            {stepper}
+            <button
+              onClick={() => setPoppedOut(false)}
+              title="Back to the panel (Esc)"
+              style={{
+                height: 26, padding: '0 12px', borderRadius: 8, cursor: 'pointer',
+                background: 'var(--raised)', border: '1px solid var(--border)', color: 'var(--text-2)',
+                font: "600 10px 'IBM Plex Mono', monospace", letterSpacing: '.08em', textTransform: 'uppercase'
+              }}
+            >
+              Collapse
+            </button>
+          </div>
 
-                  {/* Rack left, Delay over Reverb right. The 4:3 split is chosen so the two
-                      columns end up roughly the same HEIGHT: the rack is 2:1 and each of the
-                      other two is 3:1, so 4/3 the width makes one 2:1 panel as tall as two
-                      stacked 3:1 panels. */}
-                  <div className="w-full flex gap-3 items-start">
-                  <div style={{ flex: '4 1 0', minWidth: 0 }}>
-                  <Rack500
-                    gate={gate}
-                    eq={eq}
-                    chorus={chorus}
-                    onGate={(patch) => setGateState((g) => ({ ...g, ...patch }))}
-                    onEq={(patch) => setEqState((e) => ({ ...e, ...patch }))}
-                    onChorus={(patch) => setChorusState((c) => ({ ...c, ...patch }))}
-                    power={fxPower}
-                    onTogglePower={() => setFxPower((v) => !v)}
-                  />
-                  </div>
-                  <div style={{ flex: '3 1 0', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  <RackDelay
-                    delay={delay}
-                    onChange={(patch) => setDelayState((d) => ({ ...d, ...patch }))}
-                    delayPresets={delayPresets}
-                    irName={delayIrPath ? (delayIrPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null}
-                  />
-                  <RackReverbTest
-                    reverb={reverb}
-                    onChange={(patch) => setReverbState((r) => ({ ...r, ...patch }))}
-                    reverbPresets={reverbPresets}
-                    irName={reverbPath ? (reverbPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null}
-                  />
-                  </div>
-                  </div>
-                </div>
-              ) : (
-                fxSection
-              )}
-            </div>
-          }
-          tuner={tunerSection}
-          meters={metersSection}
-          cabIr={cabIrSection}
-          volume={volumeSection}
-          setup={setupSection}
-        />
+          {/* Minimal side margins on purpose — the panels are the content, and every pixel of
+              margin comes off how large and readable they are. */}
+          <div className="flex-1 min-h-0 overflow-y-auto" style={{ paddingTop: 12 }}>
+            {rigView}
+          </div>
+        </div>
+        {setupDrawer}
       </>
     )
   }
@@ -2711,128 +3086,6 @@ export function PlayerPanel({
   )
 }
 
-/** ── Slim horizontal level meter (Live mode). */
-/**
- * Full-width rig view.
- *
- * The player panel is a side panel with a 420px floor, which is why the FX controls have to
- * compress so hard. This is the same controls with room to breathe: cover and metadata across the
- * top, then the arm control, then the effects laid side by side rather than stacked.
- *
- * It takes the panel's own sections as props rather than rebuilding them. Two copies of sixteen
- * controls would drift apart the first time one was edited, and every one of these is already
- * bound to the same state and the same engine.
- */
-function PlayerPopout({
-  captureLabel,
-  gearLine,
-  coverSrc,
-  onCoverError,
-  summaryRows,
-  onClose,
-  stepper,
-  groupControl,
-  recording,
-  tuner,
-  meters,
-  fx,
-  cabIr,
-  volume,
-  setup
-}: {
-  captureLabel: string
-  gearLine: string
-  coverSrc: string
-  onCoverError: (e: React.SyntheticEvent<HTMLImageElement>) => void
-  summaryRows: Array<{ label: string; value: string; tone?: string }>
-  onClose: () => void
-  stepper: React.ReactNode
-  groupControl: React.ReactNode
-  recording: React.ReactNode
-  tuner: React.ReactNode
-  meters: React.ReactNode
-  fx: React.ReactNode
-  cabIr: React.ReactNode
-  volume: React.ReactNode
-  setup: React.ReactNode
-}) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
-        e.stopPropagation()
-        onClose()
-      }
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [onClose])
-
-  return (
-    <div className="fixed inset-0 z-[300] flex flex-col bg-white dark:bg-[var(--panel)] text-gray-900 dark:text-gray-100 select-none">
-      <div
-        className="flex items-center gap-3 py-3 border-b border-gray-200 dark:border-[var(--border-soft)] flex-shrink-0"
-        style={{ paddingLeft: window.api.platform === 'darwin' ? 88 : 20, paddingRight: 20 }}
-      >
-        <div className="uppercase text-amber-500 dark:text-amber-400" style={{ font: "700 10.5px 'IBM Plex Sans', sans-serif", letterSpacing: '.1em' }}>
-          Live Rig
-        </div>
-        <div className="flex-1 min-w-0">
-          <span className="text-sm font-semibold truncate">{captureLabel}</span>
-          {gearLine && <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">{gearLine}</span>}
-        </div>
-        {groupControl}
-        {stepper}
-        <button
-          onClick={onClose}
-          className="flex-shrink-0 h-7 px-3 rounded-md text-[11px] font-medium border border-gray-200 dark:border-[var(--border)] text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[var(--hover)] transition-colors"
-          title="Back to the panel (Esc)"
-        >
-          Collapse
-        </button>
-      </div>
-
-      <div className="flex-1 min-h-0 overflow-y-auto">
-        {/* Was capped at 1400, which wasted most of a wide display. The rack view is the widest
-            thing in the app, so it gets the room; 2400 still keeps text from sprawling. */}
-        <div className="mx-auto w-full" style={{ maxWidth: 2400 }}>
-          {/* Cover and metadata share the top row — the capture you are playing through, stated
-              once, with the room to state it properly. */}
-          <div className="flex flex-wrap gap-5 px-5 py-5 border-b border-gray-200 dark:border-[var(--border-soft)]">
-            {/* Same 2.2:1 crop the side panel uses, just at pop-out scale — the panel caps at
-                232 * 2.2 (~510px) because that's all a 420px-floor side panel can spare; the
-                pop-out's whole point is having a wide canvas, so it gets a wider cap instead of
-                the same fixed pixel box stretched across all that extra room. */}
-            <div className="flex-none rounded-lg overflow-hidden bg-gray-100 dark:bg-[var(--field)]" style={{ width: 460, aspectRatio: '2.2 / 1' }}>
-              <img src={coverSrc} alt="Amp cover" className="w-full h-full object-cover block" onError={onCoverError} />
-            </div>
-            {summaryRows.length > 0 && (
-              <div className="flex-1 min-w-[280px] grid gap-x-6 gap-y-3 content-start"
-                   style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
-                {summaryRows.map((row) => (
-                  <MetaCell key={row.label} label={row.label} value={row.value} tone={row.tone} />
-                ))}
-              </div>
-            )}
-            <div className="flex-none w-[260px]">{recording}</div>
-          </div>
-
-          {/* Effects side by side. Each card already re-grids itself to the width it is given, so
-              a third of a wide screen is plenty for any of them. */}
-          <div className="px-1">{fx}</div>
-
-          <div className="grid gap-x-5 border-t border-gray-200 dark:border-[var(--border-soft)]"
-               style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
-            <div>{tuner}</div>
-            <div>{meters}</div>
-            <div>{cabIr}</div>
-            <div>{volume}</div>
-            <div>{setup}</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 /**
  * \u2500\u2500 One effect: a bordered card with its name, on/off switch and controls.
