@@ -2357,7 +2357,7 @@ export function PlayerPanel({
   )
 
   const rigView = (
-    <div className="flex flex-col gap-3.5 h-full min-h-0" style={{ padding: '0 9px 12px' }}>
+    <div className="flex flex-col gap-3.5" style={{ padding: '0 9px 12px' }}>
       {/* ── A. Identity band */}
       <div style={{ ...wellStyle, flex: 'none', display: 'flex', gap: 14, alignItems: 'stretch', flexWrap: 'wrap' }}>
         {/* Amp image, hard left. object-fit:contain so the whole amp is visible — cover was
@@ -2475,13 +2475,18 @@ export function PlayerPanel({
         </span>
       </div>
 
-      {/* ── D. Rack wall */}
-      <div style={{ ...wellStyle, flex: '1 1 0', minHeight: 0, display: 'flex', gap: 22, alignItems: 'stretch' }}>
-        <div style={{ flex: '1 1 0', minWidth: 0, minHeight: 0, display: 'flex' }}>
+      {/* ── D. Rack wall
+           Column widths are 1.5 : 1 (500-strip : delay/reverb), matching the original design
+           handoff, not an even 50/50 split. The 500 unit's aspect ratio (~2.3) is much less wide
+           relative to its height than Delay/Reverb's (~4), so an even split would leave it
+           visibly shorter than its neighbour; the wider share is what makes the two sides land at
+           roughly the same height once each fills its column via width:100% (see RackCrop). This
+           well is NOT flex:1 — it takes its natural, content-driven height like every other well
+           in the rig, exactly like the design handoff. If that runs taller than the window, the
+           rig scrolls a little, which is the correct fallback, not something to engineer around. */}
+      <div style={{ ...wellStyle, display: 'flex', gap: 14, alignItems: 'stretch' }}>
+        <div style={{ flex: '1.5 1 0', minWidth: 0, display: 'flex' }}>
           <RackColumn
-            align="flex-start"
-            aspect={RACK_CROP.rack500.aspect}
-            headerPx={32}
             header={
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <span style={{ ...monoLabel, color: 'var(--text-2)' }}>EQ · Gate · Modulation</span>
@@ -2502,10 +2507,8 @@ export function PlayerPanel({
             />
           </div>
             }
-            /* Top-aligned so its faceplate lines up with the Delay beside it, and height-driven
-               so the pair shrink together rather than pushing the page taller. */
             panel={
-            <RackCrop metal={RACK_CROP.rack500} fitHeight>
+            <RackCrop metal={RACK_CROP.rack500}>
               <Rack500
                 gate={gate}
                 eq={eq}
@@ -2521,11 +2524,9 @@ export function PlayerPanel({
           />
         </div>
 
-        <div style={{ flex: '1 1 0', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ flex: '1 1 0', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
           {/* Delay */}
           <RackColumn
-            align="flex-end"
-            aspect={RACK_CROP.delay.aspect}
             header={
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <span style={{ ...monoLabel }}>Delay</span>
@@ -2547,7 +2548,7 @@ export function PlayerPanel({
             </div>
             }
             panel={
-              <RackCrop metal={RACK_CROP.delay} fitHeight>
+              <RackCrop metal={RACK_CROP.delay}>
                 <RackDelay delay={delay} onChange={(patch) => setDelayState((d) => ({ ...d, ...patch }))} delayPresets={delayPresets}
                   irName={delayIrPath ? (delayIrPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null} />
               </RackCrop>
@@ -2569,8 +2570,6 @@ export function PlayerPanel({
 
           {/* Reverb */}
           <RackColumn
-            align="flex-end"
-            aspect={RACK_CROP.reverb.aspect}
             header={
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <span style={{ ...monoLabel }}>Reverb</span>
@@ -2592,7 +2591,7 @@ export function PlayerPanel({
             </div>
             }
             panel={
-              <RackCrop metal={RACK_CROP.reverb} fitHeight>
+              <RackCrop metal={RACK_CROP.reverb}>
                 <RackReverbTest reverb={reverb} onChange={(patch) => setReverbState((r) => ({ ...r, ...patch }))} reverbPresets={reverbPresets}
                   irName={reverbPath ? (reverbPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null} />
               </RackCrop>
@@ -2825,9 +2824,10 @@ export function PlayerPanel({
           </div>
 
           {/* Minimal side margins on purpose — the panels are the content, and every pixel of
-              margin comes off how large and readable they are. */}
-          {/* No scrolling: the rig sizes itself to the window. overflow-auto is a safety net for
-              very small windows, not the normal path. */}
+              margin comes off how large and readable they are.
+              The rig takes its natural, content-driven height (see the Rack wall comment below);
+              on a window shorter than that, this scrolls. That is the correct, boring fallback —
+              not something to design around by starving every control to fit. */}
           <div className="flex-1 min-h-0 overflow-auto" style={{ paddingTop: 12 }}>
             {rigView}
           </div>
