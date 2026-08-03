@@ -58,7 +58,8 @@ export function RackCrop({
 export const RACK_CROP = {
   rack500: { aspect: 2.072, left: -11.68, top: -10.95, width: 123.36 },
   delay: { aspect: 3.974, left: -1.385, top: -17.76, width: 103.34 },
-  // Left/bottom clip here is known and intentional for now; vertical framing gets re-tuned once
-  // it can be judged in the running app.
-  reverb: { aspect: 4.217, left: -5.59, top: -19.21, width: 107.53 }
+  // Reverb shares Delay's crop, not the different numbers the design mock used. Both panels are
+  // the same 2172x724 art with the same layout, so a different crop could only ever mis-frame
+  // one of them — which is exactly what clipped the reverb's left edge and bottom.
+  reverb: { aspect: 3.974, left: -1.385, top: -17.76, width: 103.34 }
 } as const

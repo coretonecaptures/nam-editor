@@ -46,8 +46,9 @@ export function RackPower({ label, on, onToggle }: { label: string; on: boolean;
 /** Dims a unit's panel when it is switched off, so "off" reads at a glance from across the rig. */
 export function rackDimStyle(on: boolean): React.CSSProperties {
   return {
-    opacity: on ? 1 : 0.42,
-    filter: on ? 'none' : 'saturate(0.35)',
+    // Readable when off, not obliterated — you still need to see where the controls are.
+    opacity: on ? 1 : 0.62,
+    filter: on ? 'none' : 'saturate(0.55)',
     transition: 'opacity 0.18s, filter 0.18s'
   }
 }

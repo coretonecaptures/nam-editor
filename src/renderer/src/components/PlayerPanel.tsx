@@ -2359,7 +2359,13 @@ export function PlayerPanel({
     <div className="flex flex-col gap-3.5" style={{ padding: '0 9px 12px' }}>
       {/* ── A. Identity band */}
       <div style={{ ...wellStyle, display: 'flex', gap: 14, alignItems: 'stretch', flexWrap: 'wrap' }}>
-        {/* Record light. Fixed aspect so the sign can never distort as the box resizes — that
+        {/* Amp image, hard left. object-fit:contain so the whole amp is visible — cover was
+            silently cropping the top and bottom off every photo. */}
+        <div style={{ width: 372, flex: 'none', borderRadius: 11, border: '1px solid var(--border)', background: 'var(--field)', overflow: 'hidden', minHeight: 190, display: 'flex' }}>
+          <img src={coverSrc} alt="Amp" onError={onCoverError} style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
+        </div>
+
+        {/* Record light, hard right. Fixed aspect so the sign can never distort as the box resizes — that
             distortion was the complaint, and it came from re-rendering TEXT into a flexible box.
             Swapping in a real sign image later is a one-line change to the inner element. */}
         <div style={{ width: 244, flex: 'none', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -2444,10 +2450,6 @@ export function PlayerPanel({
           </div>
         </div>
 
-        {/* Amp image */}
-        <div style={{ width: 372, flex: 'none', borderRadius: 11, border: '1px solid var(--border)', background: 'var(--field)', overflow: 'hidden', minHeight: 190 }}>
-          <img src={coverSrc} alt="Amp" onError={onCoverError} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-        </div>
       </div>
 
       {/* ── C. Rig preset bar */}
@@ -2475,7 +2477,7 @@ export function PlayerPanel({
 
       {/* ── D. Rack wall */}
       <div style={{ ...wellStyle, display: 'flex', gap: 14, alignItems: 'stretch', flexWrap: 'wrap' }}>
-        <div style={{ flex: '1.5 1 460px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ flex: '1 1 460px', minWidth: 0, maxWidth: 720, display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <span style={{ ...monoLabel, color: 'var(--text-2)' }}>EQ · Gate · Modulation</span>
             <PresetMenu
@@ -2535,7 +2537,9 @@ export function PlayerPanel({
               <RackDelay delay={delay} onChange={(patch) => setDelayState((d) => ({ ...d, ...patch }))} delayPresets={delayPresets}
                 irName={delayIrPath ? (delayIrPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null} />
             </RackCrop>
-            <div className="flex items-center gap-2">
+            {/* Dimmed unless the unit is in convolution — the IR is loaded either way, but it
+                only affects what you hear in that mode, and the mode lives on the panel face. */}
+            <div className="flex items-center gap-2" style={{ opacity: delay.mode === 'convolution' ? 1 : 0.45, transition: 'opacity .15s' }}>
               <span style={{ ...monoLabel, flexShrink: 0 }}>Delay IR</span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <IrPicker libraryPath={delayLibraryPath ?? ''} value={delayIrPath} allowNone
@@ -2570,7 +2574,7 @@ export function PlayerPanel({
               <RackReverbTest reverb={reverb} onChange={(patch) => setReverbState((r) => ({ ...r, ...patch }))} reverbPresets={reverbPresets}
                 irName={reverbPath ? (reverbPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null} />
             </RackCrop>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2" style={{ opacity: reverb.mode === 'convolution' ? 1 : 0.45, transition: 'opacity .15s' }}>
               <span style={{ ...monoLabel, flexShrink: 0 }}>Reverb IR</span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <IrPicker libraryPath={reverbLibraryPath ?? ''} value={reverbPath} allowNone
@@ -2614,7 +2618,7 @@ export function PlayerPanel({
         </div>
 
         {/* Tuner — deliberately large; this is the one control you read from across a room. */}
-        <div style={{ flex: '1 1 260px', minWidth: 240, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ flex: '1 1 260px', minWidth: 240, display: 'flex', flexDirection: 'column', gap: 8, justifyContent: 'center' }}>
           <div className="flex items-center justify-between">
             <span style={monoLabel}>Tuner</span>
             <span style={{ font: "600 11px 'IBM Plex Mono', monospace",

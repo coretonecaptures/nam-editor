@@ -4,10 +4,10 @@ import jogKnob from '../assets/fx/jog-knob.png'
 /**
  * Input / output gain control: a metal wheel ringed by an LED arc.
  *
- * The wheel deliberately has NO printed indicator and never rotates — the ring carries the
- * value instead. That is not just a style choice: a knob that rotates has to be cut exactly on
- * its own centre or it visibly orbits, which is the failure mode that plagued the rack knobs.
- * A static face cannot have that bug at all.
+ * The wheel has no printed indicator, so the ring carries the value. It DOES rotate, but only so
+ * the brushed-metal shine sweeps as you turn — it is not an indicator and nothing has to line up
+ * with it. That distinction matters: because nothing reads position off the face, being a degree
+ * or two out is invisible, unlike the rack knobs where a mis-centred pivot was glaring.
  *
  * The ring shows two things at once, which is why it earns its space:
  *  - the SET value, as a bright arc from the minimum up to where the control is dialled
@@ -116,8 +116,9 @@ export function JogWheel({
             width: '72%',
             height: '72%',
             display: 'block',
+            transform: `rotate(${frac * 300}deg)`,
             filter: dragging ? 'brightness(1.08)' : 'none',
-            transition: 'filter .12s',
+            transition: 'filter .12s, transform .06s linear',
             pointerEvents: 'none',
             userSelect: 'none'
           }}

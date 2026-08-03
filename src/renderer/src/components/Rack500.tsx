@@ -5,6 +5,7 @@ import knobMod from '../assets/fx/v5-knob-mod.png'
 import powerOn from '../assets/fx/v3-power-on.png'
 import { RackKnob } from './RackKnob'
 import { RackButton, RackDisplay, RackLed } from './RackParts'
+import { rackDimStyle } from './RackPower'
 import {
   EQ_MAX_DB,
   type ChorusSettings,
@@ -92,7 +93,7 @@ export function Rack500({
 
   return (
     <div className="flex flex-col gap-3 w-full">
-    <div style={{ position: 'relative', width: '100%', containerType: 'inline-size' }}>
+    <div style={{ position: 'relative', width: '100%', containerType: 'inline-size', ...rackDimStyle(power) }}>
       <img src={rack500Panel} alt="EQ, Gate and Modulation" draggable={false} style={{ width: '100%', display: 'block', userSelect: 'none' }} />
 
       {/* ── EQ */}
