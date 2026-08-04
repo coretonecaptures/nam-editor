@@ -75,6 +75,11 @@ export function RackKnob({
       // Vertical drag, not rotational — dragging in a circle around a small knob feels wrong
       // and is imprecise. 200px of drag covers the full range, as most DAW knobs do.
       const deltaY = drag.startY - e.clientY
+      // Dead zone: a trackpad's tap-to-click / pressure sensitivity can occasionally register a
+      // light graze as a real pointerdown+move, which reads as "the knob grabbed itself" since
+      // no deliberate click was involved. A few px of tolerance absorbs that without being
+      // perceptible on an actual intentional drag.
+      if (Math.abs(deltaY) < 3) return
       const next = Math.max(min, Math.min(max, drag.startValue + (deltaY / 200) * (max - min)))
       onChange(next)
     },

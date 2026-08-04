@@ -1,5 +1,14 @@
 # TODO
 
+## Swap Bass and Treble on the 500-strip EQ
+
+Currently top-to-bottom: Bass, Middle, Treble (`Rack500.tsx`, `EQ_KNOB_YS` indices 0/1/2, each
+knob's own `label`). Most real rack EQ units run the other way — Treble on top, Bass on bottom.
+Not just a label swap: the knob at `EQ_KNOB_YS[0]` (top position) needs to become Treble's
+`onChange`/`value` (currently Bass's), and vice versa for `EQ_KNOB_YS[2]` — the position on the
+panel and which parameter it controls have to move together, or the labels would say one thing
+and the knob would adjust another.
+
 ## macOS code signing + notarization — unblocks reliable safeStorage (keychain)
 
 **`safeStorage` is already built and working** — this is not new code, it is a *release
