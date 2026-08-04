@@ -550,6 +550,12 @@ export function PlayerPanel({
   // now; it will need to actually gate the chain once the layout is settled.
   const [fxPower, setFxPower] = useState(true)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  // Electron does not implement window.prompt() — alert/confirm show a native dialog, but prompt
+  // silently returns null with no UI at all. That is why every "Save as" looked like it did
+  // nothing: the four onSaveAs handlers below were calling into a browser API that never fires
+  // here. This is the themed replacement.
+  const [saveAsPrompt, setSaveAsPrompt] = useState<{ title: string; onSave: (name: string) => void } | null>(null)
+  const [saveAsValue, setSaveAsValue] = useState('')
   const volumeGain = volumeDb <= VOLUME_MIN_DB ? 0 : Math.pow(10, volumeDb * 0.05)
 
   const [diPrefs, setDiPrefs] = useState<DiPrefs>(loadDiPrefs)
@@ -2584,10 +2590,7 @@ export function PlayerPanel({
             const found = rigPresets.find((r) => r.id === id)
             if (found) applyRigPreset(found.settings)
           }}
-          onSaveAs={() => {
-            const name = window.prompt('Save current rig as…')
-            if (name?.trim()) saveRigPreset(name.trim())
-          }}
+          onSaveAs={() => setSaveAsPrompt({ title: 'Save current rig as…', onSave: saveRigPreset })}
         />
         <span style={{ font: "500 10.5px 'IBM Plex Sans', sans-serif", color: 'var(--text-2)' }}>
           Recalls every panel at once — EQ · gate · mod · delay · reverb
@@ -2619,10 +2622,7 @@ export function PlayerPanel({
                 const found = chorusPresets.find((c) => c.id === id)
                 if (found) applyChorusPreset(found.settings)
               }}
-              onSaveAs={() => {
-                const name = window.prompt('Save modulation preset as…')
-                if (name?.trim()) saveChorusPreset(name.trim())
-              }}
+              onSaveAs={() => setSaveAsPrompt({ title: 'Save modulation preset as…', onSave: saveChorusPreset })}
             />
           </div>
             }
@@ -2659,10 +2659,7 @@ export function PlayerPanel({
                   const found = delayPresets.find((d) => d.id === id)
                   if (found) applyDelayPreset(found.settings, found.irPath)
                 }}
-                onSaveAs={() => {
-                  const name = window.prompt('Save delay preset as…')
-                  if (name?.trim()) saveDelayPreset(name.trim())
-                }}
+                onSaveAs={() => setSaveAsPrompt({ title: 'Save delay preset as…', onSave: saveDelayPreset })}
               />
             </div>
             }
@@ -2702,10 +2699,7 @@ export function PlayerPanel({
                   const found = reverbPresets.find((r) => r.id === id)
                   if (found) applyReverbPreset(found.settings, found.irPath)
                 }}
-                onSaveAs={() => {
-                  const name = window.prompt('Save reverb preset as…')
-                  if (name?.trim()) saveReverbPreset(name.trim())
-                }}
+                onSaveAs={() => setSaveAsPrompt({ title: 'Save reverb preset as…', onSave: saveReverbPreset })}
               />
             </div>
             }
@@ -2909,6 +2903,54 @@ export function PlayerPanel({
     </div>
   ) : null
 
+  const saveAsModal = saveAsPrompt ? (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 500, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div onClick={() => setSaveAsPrompt(null)} style={{ position: 'absolute', inset: 0, background: 'rgba(6,8,11,.6)' }} />
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          const name = saveAsValue.trim()
+          if (name) saveAsPrompt.onSave(name)
+          setSaveAsPrompt(null)
+          setSaveAsValue('')
+        }}
+        style={{
+          position: 'relative', width: 340, background: 'var(--panel)', border: '1px solid var(--border)',
+          borderRadius: 12, boxShadow: '0 20px 50px rgba(0,0,0,.5)', padding: 18, display: 'flex', flexDirection: 'column', gap: 12
+        }}
+      >
+        <span style={{ font: "600 12px 'IBM Plex Sans', sans-serif", color: 'var(--text)' }}>{saveAsPrompt.title}</span>
+        <input
+          autoFocus
+          value={saveAsValue}
+          onChange={(e) => setSaveAsValue(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Escape') { setSaveAsPrompt(null); setSaveAsValue('') } }}
+          placeholder="Preset name…"
+          style={{
+            height: 36, borderRadius: 8, padding: '0 12px', background: 'var(--field)',
+            border: '1px solid var(--field-border)', color: 'var(--text)', font: "500 12.5px 'IBM Plex Sans', sans-serif", outline: 'none'
+          }}
+        />
+        <div className="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => { setSaveAsPrompt(null); setSaveAsValue('') }}
+            style={{ height: 32, padding: '0 14px', borderRadius: 8, cursor: 'pointer', background: 'var(--raised)', border: '1px solid var(--border)', color: 'var(--text-2)', font: "600 11px 'IBM Plex Sans', sans-serif" }}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={!saveAsValue.trim()}
+            style={{ height: 32, padding: '0 14px', borderRadius: 8, cursor: 'pointer', background: 'var(--accent)', border: '1px solid var(--accent)', color: 'var(--accent-fg, #fff)', font: "600 11px 'IBM Plex Sans', sans-serif", opacity: saveAsValue.trim() ? 1 : 0.5 }}
+          >
+            Save
+          </button>
+        </div>
+      </form>
+    </div>
+  ) : null
+
   if (poppedOut) {
     return (
       <>
@@ -2965,6 +3007,7 @@ export function PlayerPanel({
           </div>
         </div>
         {setupDrawer}
+        {saveAsModal}
       </>
     )
   }
