@@ -12,15 +12,20 @@ import { loadFavorites, loadRecents, pushRecent, toggleFavorite, type FavRef } f
  * <select>. A native select does not fire onChange when you re-pick the option already selected,
  * so "load the preset I just saved" silently does nothing. Choosing a row here always recalls.
  *
- * Favourites/recents (`favoritesKind`) mirror the Cab IR picker's own — a star per row, favourites
- * pinned to the top, a small recent strip when you haven't typed a search yet. Own localStorage
- * side-table (favoritesRecents.ts), not a field on the preset objects: this is a per-device
- * convenience, not something that belongs in exported settings.
+ * Favourites/recents (`favoritesKind`) mirror the Cab IR picker's own idea — three small tabs
+ * (All / Fav / Recent), NOT Cab IR's full-screen search-and-browse dialog: that dialog earns its
+ * size searching a library of hundreds of thousands of files, but a preset list here is a handful
+ * of items a user made themselves, and blowing that up full-screen would be solving a problem
+ * this list doesn't have. Own localStorage side-table (favoritesRecents.ts), not a field on the
+ * preset objects — favouriting is a per-device convenience, not something that belongs in
+ * exported settings.
  */
 export interface PresetOption {
   id: string
   name: string
 }
+
+type Tab = 'all' | 'favorites' | 'recent'
 
 export function PresetMenu({
   label,
@@ -31,6 +36,7 @@ export function PresetMenu({
   width = 158,
   onRecall,
   onSaveAs,
+  onDelete,
   favoritesKind
 }: {
   /** Small mono caption to the left. Omit for the bare control. */
@@ -42,15 +48,19 @@ export function PresetMenu({
   width?: number | string
   onRecall: (id: string) => void
   onSaveAs: () => void
+  /** Omit to leave a row with no delete affordance at all. */
+  onDelete?: (id: string) => void
   /** Enables the star/favourites/recent UI, keyed to its own localStorage namespace — pass a
-   *  stable, unique string per picker (e.g. "rig-preset", "delay-preset"). Omit to leave this
-   *  picker exactly as it was, no star column, no recent strip. */
+   *  stable, unique string per picker (e.g. "rig-preset", "delay-preset"). Omit to fall back to a
+   *  single flat list with no tabs, no star, no recent tracking. */
   favoritesKind?: string
 }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
+  const [tab, setTab] = useState<Tab>('all')
   const [favorites, setFavorites] = useState<FavRef[]>(() => (favoritesKind ? loadFavorites(favoritesKind) : []))
   const [recents, setRecents] = useState<FavRef[]>(() => (favoritesKind ? loadRecents(favoritesKind) : []))
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const wrap = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -69,23 +79,29 @@ export function PresetMenu({
     }
   }, [open])
 
+  // Reset to a clean slate every time the menu opens, so a stale search/tab/pending-delete from
+  // last time you had this open doesn't greet you.
+  useEffect(() => {
+    if (open) {
+      setQuery('')
+      setTab('all')
+      setConfirmDeleteId(null)
+    }
+  }, [open])
+
   const active = options.find((o) => o.id === activeId) ?? null
   const favoriteIds = useMemo(() => new Set(favorites.map((f) => f.id)), [favorites])
   const recentIds = useMemo(() => new Set(recents.map((f) => f.id)), [recents])
 
-  const shown = query.trim()
-    ? options.filter((o) => o.name.toLowerCase().includes(query.trim().toLowerCase()))
-    : options
+  const tabFiltered = useMemo(() => {
+    if (tab === 'favorites') return options.filter((o) => favoriteIds.has(o.id))
+    if (tab === 'recent') return recents.map((r) => options.find((o) => o.id === r.id)).filter((o): o is PresetOption => Boolean(o))
+    return options
+  }, [tab, options, favoriteIds, recents])
 
-  // Favourites first, then everything else in its original order — recents get their own compact
-  // strip above this list instead of a third section, since "recent" and "the rest" would
-  // otherwise be the same list with an arbitrary line through it.
-  const ordered = favoritesKind
-    ? [...shown].sort((a, b) => Number(favoriteIds.has(b.id)) - Number(favoriteIds.has(a.id)))
-    : shown
-  const recentOptions = favoritesKind && !query.trim()
-    ? recents.map((r) => options.find((o) => o.id === r.id)).filter((o): o is PresetOption => Boolean(o))
-    : []
+  const shown = query.trim()
+    ? tabFiltered.filter((o) => o.name.toLowerCase().includes(query.trim().toLowerCase()))
+    : tabFiltered
 
   const recall = (id: string): void => {
     if (favoritesKind) {
@@ -94,23 +110,7 @@ export function PresetMenu({
     }
     onRecall(id)
     setOpen(false)
-    setQuery('')
   }
-
-  const star = (opt: PresetOption): React.ReactNode =>
-    favoritesKind && (
-      <span
-        role="button"
-        onClick={(e) => {
-          e.stopPropagation()
-          setFavorites(toggleFavorite(favoritesKind, { id: opt.id, label: opt.name }))
-        }}
-        title={favoriteIds.has(opt.id) ? 'Remove from favorites' : 'Add to favorites'}
-        style={{ flexShrink: 0, color: favoriteIds.has(opt.id) ? '#e8b04a' : 'var(--text-3)', fontSize: 12, lineHeight: 1, padding: 2 }}
-      >
-        {favoriteIds.has(opt.id) ? '★' : '☆'}
-      </span>
-    )
 
   return (
     <div ref={wrap} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -150,7 +150,7 @@ export function PresetMenu({
             position: 'absolute',
             top: 36,
             right: 0,
-            minWidth: typeof width === 'number' ? width : 200,
+            width: typeof width === 'number' ? Math.max(width, 220) : 220,
             background: 'var(--panel)',
             border: '1px solid var(--border)',
             borderRadius: 9,
@@ -159,6 +159,35 @@ export function PresetMenu({
             zIndex: 60
           }}
         >
+          {favoritesKind && (
+            <div style={{ display: 'flex', gap: 4, padding: '8px 8px 0' }}>
+              {(
+                [
+                  ['all', 'All'],
+                  ['favorites', `Fav${favorites.length ? ` (${favorites.length})` : ''}`],
+                  ['recent', `Recent${recents.length ? ` (${recents.length})` : ''}`]
+                ] as [Tab, string][]
+              ).map(([t, tabLabel]) => (
+                <button
+                  key={t}
+                  onClick={() => setTab(t)}
+                  style={{
+                    flex: 1,
+                    height: 24,
+                    borderRadius: 6,
+                    border: 'none',
+                    cursor: 'pointer',
+                    background: tab === t ? 'var(--active)' : 'transparent',
+                    color: tab === t ? 'var(--accent-text)' : 'var(--text-2)',
+                    font: "600 10px 'IBM Plex Sans', sans-serif"
+                  }}
+                >
+                  {tabLabel}
+                </button>
+              ))}
+            </div>
+          )}
+
           {searchable && (
             <input
               autoFocus
@@ -179,72 +208,100 @@ export function PresetMenu({
               }}
             />
           )}
-          {recentOptions.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, padding: '8px 10px', borderBottom: '1px solid var(--border-soft)' }}>
-              <span style={{ width: '100%', font: "600 9px 'IBM Plex Mono', monospace", letterSpacing: '.08em', color: 'var(--text-3)', textTransform: 'uppercase' }}>
-                Recent
-              </span>
-              {recentOptions.map((o) => (
-                <button
-                  key={o.id}
-                  onClick={() => recall(o.id)}
-                  style={{
-                    padding: '3px 9px', borderRadius: 12, border: '1px solid var(--field-border)',
-                    background: o.id === activeId ? 'var(--active)' : 'var(--field)',
-                    color: o.id === activeId ? 'var(--accent-text)' : 'var(--text-2)',
-                    font: "500 10px 'IBM Plex Sans', sans-serif", cursor: 'pointer', maxWidth: 140,
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
-                  }}
-                >
-                  {o.name}
-                </button>
-              ))}
-            </div>
-          )}
+
           <div style={{ maxHeight: 260, overflowY: 'auto' }}>
-            {ordered.length === 0 && (
+            {shown.length === 0 && (
               <div style={{ padding: '10px 12px', color: 'var(--text-2)', font: "500 11px 'IBM Plex Sans', sans-serif" }}>
-                {options.length === 0 ? 'No presets saved' : 'No match'}
+                {tab === 'favorites' ? 'No favorites yet — tap the star on a preset to keep it here.'
+                  : tab === 'recent' ? 'Nothing recalled yet.'
+                  : options.length === 0 ? 'No presets saved' : 'No match'}
               </div>
             )}
-            {ordered.map((o, i) => {
+            {shown.map((o) => {
               const isActive = o.id === activeId
-              // A rule between the favourited run and the rest, so pinning to the top doesn't
-              // read as "the list got reordered for no reason."
-              const isDividerBefore = favoritesKind && i > 0 && favoriteIds.has(ordered[i - 1].id) && !favoriteIds.has(o.id)
+              const isFav = favoriteIds.has(o.id)
+              const confirming = confirmDeleteId === o.id
               return (
-                <button
+                <div
                   key={o.id}
-                  onClick={() => recall(o.id)}
+                  onClick={() => { if (!confirming) recall(o.id) }}
+                  role="button"
+                  tabIndex={0}
                   style={{
                     width: '100%',
-                    textAlign: 'left',
                     padding: '9px 12px',
-                    background: isActive ? 'var(--active)' : 'transparent',
+                    borderTop: '1px solid var(--border-soft)',
+                    background: confirming ? 'rgba(220,80,60,.12)' : isActive ? 'var(--active)' : 'transparent',
                     color: isActive ? 'var(--accent-text)' : 'var(--text)',
                     font: `${isActive ? 600 : 500} 11px 'IBM Plex Sans', sans-serif`,
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
                     gap: 8,
-                    cursor: 'pointer',
-                    border: 'none',
-                    borderTopWidth: 1,
-                    borderTopStyle: 'solid',
-                    borderTopColor: isDividerBefore ? 'var(--border)' : 'var(--border-soft)'
+                    cursor: confirming ? 'default' : 'pointer'
                   }}
                 >
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
-                    {star(o)}
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.name}</span>
-                  </span>
-                  {isActive && (
-                    <span style={{ color: 'var(--text-2)', font: "500 10px 'IBM Plex Mono', monospace", flexShrink: 0 }}>recall ↺</span>
+                  {confirming ? (
+                    <>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text)' }}>
+                        Delete "{o.name}"?
+                      </span>
+                      <span style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                        <span
+                          role="button"
+                          onClick={(e) => { e.stopPropagation(); onDelete?.(o.id); setConfirmDeleteId(null) }}
+                          style={{ padding: '3px 8px', borderRadius: 6, background: '#dc4c3c', color: '#fff', font: "600 10px 'IBM Plex Sans', sans-serif", cursor: 'pointer' }}
+                        >
+                          Delete
+                        </span>
+                        <span
+                          role="button"
+                          onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(null) }}
+                          style={{ padding: '3px 8px', borderRadius: 6, background: 'var(--raised)', color: 'var(--text-2)', font: "600 10px 'IBM Plex Sans', sans-serif", cursor: 'pointer' }}
+                        >
+                          Cancel
+                        </span>
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+                        {favoritesKind && (
+                          <span
+                            role="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setFavorites(toggleFavorite(favoritesKind, { id: o.id, label: o.name }))
+                            }}
+                            title={isFav ? 'Remove from favorites' : 'Add to favorites'}
+                            style={{ flexShrink: 0, color: isFav ? '#e8b04a' : 'var(--text-3)', fontSize: 12, lineHeight: 1, padding: 2, cursor: 'pointer' }}
+                          >
+                            {isFav ? '★' : '☆'}
+                          </span>
+                        )}
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.name}</span>
+                        {!isActive && favoritesKind && recentIds.has(o.id) && tab !== 'recent' && (
+                          <span style={{ color: 'var(--text-3)', font: "500 9px 'IBM Plex Mono', monospace", flexShrink: 0 }}>recent</span>
+                        )}
+                      </span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0 }}>
+                        {isActive && (
+                          <span style={{ color: 'var(--text-2)', font: "500 10px 'IBM Plex Mono', monospace" }}>recall ↺</span>
+                        )}
+                        {onDelete && (
+                          <span
+                            role="button"
+                            onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(o.id) }}
+                            title="Delete this preset"
+                            style={{ color: 'var(--text-3)', fontSize: 13, lineHeight: 1, padding: '2px 3px', cursor: 'pointer' }}
+                          >
+                            ×
+                          </span>
+                        )}
+                      </span>
+                    </>
                   )}
-                  {!isActive && favoritesKind && recentIds.has(o.id) && (
-                    <span style={{ color: 'var(--text-3)', font: "500 9px 'IBM Plex Mono', monospace", flexShrink: 0 }}>recent</span>
-                  )}
-                </button>
+                </div>
               )
             })}
           </div>

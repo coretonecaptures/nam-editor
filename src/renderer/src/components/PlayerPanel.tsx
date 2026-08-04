@@ -2741,6 +2741,7 @@ export function PlayerPanel({
             if (found) applyRigPreset(found.settings)
           }}
           onSaveAs={() => setSaveAsPrompt({ title: 'Save current rig as…', onSave: saveRigPreset })}
+          onDelete={deleteRigPreset}
           favoritesKind="rig-preset"
         />
         <span style={{ font: "500 10.5px 'IBM Plex Sans', sans-serif", color: 'var(--text-2)' }}>
@@ -2774,6 +2775,7 @@ export function PlayerPanel({
                 if (found) applyChorusPreset(found.settings)
               }}
               onSaveAs={() => setSaveAsPrompt({ title: 'Save modulation preset as…', onSave: saveChorusPreset })}
+              onDelete={deleteChorusPreset}
               favoritesKind="chorus-preset"
             />
           </div>
@@ -2812,6 +2814,7 @@ export function PlayerPanel({
                   if (found) applyDelayPreset(found.settings, found.irPath)
                 }}
                 onSaveAs={() => setSaveAsPrompt({ title: 'Save delay preset as…', onSave: saveDelayPreset })}
+                onDelete={deleteDelayPreset}
                 favoritesKind="delay-preset"
               />
             </div>
@@ -2861,6 +2864,7 @@ export function PlayerPanel({
                   if (found) applyReverbPreset(found.settings, found.irPath)
                 }}
                 onSaveAs={() => setSaveAsPrompt({ title: 'Save reverb preset as…', onSave: saveReverbPreset })}
+                onDelete={deleteReverbPreset}
                 favoritesKind="reverb-preset"
               />
             </div>
