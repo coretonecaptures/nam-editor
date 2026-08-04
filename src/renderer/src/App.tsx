@@ -5254,6 +5254,7 @@ INSTRUCTIONS:
               autoStartLiveOnPopout={settings.autoStartLiveOnPopout}
               onAutoStartLiveOnPopoutChange={(value) => handleSaveSettings({ ...settings, autoStartLiveOnPopout: value })}
               liveJumpToken={liveJumpToken}
+              libraryFiles={files}
             />
           ) : showGroupsAdmin ? (
             <GroupsAdminPage

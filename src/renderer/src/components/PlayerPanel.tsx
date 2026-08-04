@@ -25,6 +25,7 @@ import { RackDelay } from './RackDelay'
 import { RackCrop, RACK_CROP } from './RackCrop'
 import { RackColumn } from './RackColumn'
 import { PresetMenu } from './PresetMenu'
+import { CapturePicker } from './CapturePicker'
 import { JogWheel } from './JogWheel'
 import { Rack500 } from './Rack500'
 import { detectPreset } from '../utils/detectPreset'
@@ -96,6 +97,10 @@ const MAX_PREVIEW_SECONDS = 12
  *  (a painted sign, an LED, a meter lamp), so they must not recolour with the UI theme. */
 const RIG_GOLD = '#e8b04a'
 const TUNER_GREEN = '#2dd48a'
+/** Same convention App.tsx uses for the main capture's cover — kept local rather than exported,
+ *  since the pedal-capture cover lookup below deliberately does NOT replicate App's folder
+ *  walk-up-to-library-root search, just the picked file's own folder. */
+const AMPCOVER_PATTERN = /^ampcover\.(png|jpe?g|webp|gif|avif)$/i
 
 type PlayerStatus = 'idle' | 'loading-di' | 'rendering' | 'ready' | 'error'
 
@@ -272,6 +277,9 @@ interface PlayerPanelProps {
   /** Bumped by the list view's "Play Live" action to jump straight past Preview to the popped-out
    *  rig, instead of the three-click Live tab → tiny expand-arrow path. */
   liveJumpToken?: number
+  /** The in-memory library, for picking a pedal capture by searching what's already loaded
+   *  instead of dropping into a bare OS file dialog with no context. */
+  libraryFiles?: NamFile[]
 }
 
 function toFileUrl(p: string): string {
@@ -460,7 +468,8 @@ export function PlayerPanel({
   onExitGroup,
   autoStartLiveOnPopout = false,
   onAutoStartLiveOnPopoutChange,
-  liveJumpToken = 0
+  liveJumpToken = 0,
+  libraryFiles = []
 }: PlayerPanelProps & { onClose: () => void }) {
   const [status, setStatus] = useState<PlayerStatus>('idle')
   const [errorMsg, setErrorMsg] = useState('')
@@ -492,6 +501,7 @@ export function PlayerPanel({
   // first simple build to find out whether it sounds like anything, per the TODO note on it.
   const [preCapturePath, setPreCapturePath] = useState<string | null>(null)
   const [preCaptureName, setPreCaptureName] = useState<string | null>(null)
+  const [preCaptureCoverSrc, setPreCaptureCoverSrc] = useState<string | null>(null)
   const [preGainDb, setPreGainDb] = useState(0)
   const [liveBypass, setLiveBypass] = useState(false)
   const [liveLatencyMs, setLiveLatencyMs] = useState<number | null>(null)
@@ -1032,18 +1042,53 @@ export function PlayerPanel({
     []
   )
 
-  const pickPedalCapture = useCallback(async () => {
+  const pickPedalCaptureFromLibrary = useCallback(
+    (filePath: string) => {
+      const found = libraryFiles.find((f) => f.filePath === filePath)
+      setPreCapturePath(filePath)
+      setPreCaptureName(found?.metadata.name || (filePath.split(/[\\/]/).pop() ?? filePath).replace(/\.nam$/i, ''))
+    },
+    [libraryFiles]
+  )
+
+  const browsePedalCapture = useCallback(async () => {
     const paths = await window.api.openFiles()
     const path = paths[0]
     if (!path) return
     setPreCapturePath(path)
+    // Not in the library, so there is no metadata to pull a name from — the filename is all there is.
     setPreCaptureName((path.split(/[\\/]/).pop() ?? path).replace(/\.nam$/i, ''))
   }, [])
 
   const clearPedalCapture = useCallback(() => {
     setPreCapturePath(null)
     setPreCaptureName(null)
+    setPreCaptureCoverSrc(null)
   }, [])
+
+  // Cover art for the pedal capture, shown next to the amp's own cover once one is picked.
+  // Deliberately simpler than App.tsx's main-cover resolution: just the picked file's own folder,
+  // not a walk up to the library root — a pedal capture's cover, if it has one, lives right next
+  // to the .nam file itself.
+  useEffect(() => {
+    if (!preCapturePath) {
+      setPreCaptureCoverSrc(null)
+      return
+    }
+    let cancelled = false
+    const folder = preCapturePath.replace(/\\/g, '/').split('/').slice(0, -1).join('/')
+    void window.api.scanImages(folder).then((result) => {
+      if (cancelled || !result.success) return
+      const match = result.images.find((imagePath) => {
+        const name = imagePath.replace(/\\/g, '/').split('/').pop() ?? ''
+        return AMPCOVER_PATTERN.test(name)
+      })
+      setPreCaptureCoverSrc(match ? toFileUrl(match) : null)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [preCapturePath])
 
   const startLive = useCallback(async () => {
     setLiveError('')
@@ -2467,51 +2512,80 @@ export function PlayerPanel({
     </span>
   )
 
-  // The reserved "+ PEDAL CAPTURE" slot, now a real control: click to pick a second .nam capture
-  // to chain ahead of this one (pedal into amp, the way people cascade two NAM/Gateway plugin
-  // instances). Untested territory sonically — see the TODO note on this feature — so it starts
-  // completely out of the way and only grows a Drive knob in the master dock once something is
-  // actually loaded.
-  const pedalChip = preCapturePath ? (
-    <button
+  // The reserved "+ PEDAL CAPTURE" slot, now a real control: search the library (or fall back to
+  // an OS file dialog for a capture not yet loaded) to chain a second capture ahead of this one —
+  // pedal into amp, the way people cascade two NAM/Gateway plugin instances. Untested territory
+  // sonically, see the TODO note on this feature, so it starts completely out of the way and only
+  // grows a Drive knob in the master dock once something is actually loaded.
+  const pedalOptions = useMemo(
+    () =>
+      libraryFiles.map((f) => ({
+        filePath: f.filePath,
+        label: f.metadata.name || f.fileName,
+        sublabel: [f.metadata.gear_make, f.metadata.gear_model].filter(Boolean).join(' ') || undefined
+      })),
+    [libraryFiles]
+  )
+  const pedalChip = (
+    <CapturePicker
       key="pedal-chip"
-      onClick={pickPedalCapture}
-      title={`${preCaptureName} — click to change, or clear with the ×`}
-      style={{
-        height: 40, display: 'inline-flex', alignItems: 'center', gap: 8, padding: '0 6px 0 12px',
-        borderRadius: 8, whiteSpace: 'nowrap', cursor: 'pointer', border: `1px solid ${RIG_GOLD}`,
-        background: RIG_GOLD, color: '#2a1e08', font: "600 10.5px 'IBM Plex Mono', monospace", letterSpacing: '.08em'
-      }}
-    >
-      <span style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis' }}>{preCaptureName}</span>
-      <span
-        role="button"
-        onClick={(e) => { e.stopPropagation(); clearPedalCapture() }}
-        title="Remove the pedal capture"
-        style={{ width: 18, height: 18, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,.15)' }}
-      >
-        ×
-      </span>
-    </button>
-  ) : (
-    <button
-      key="pedal-chip"
-      onClick={pickPedalCapture}
-      title="Chain a pedal capture ahead of this amp capture"
-      style={{
-        height: 40, display: 'inline-flex', alignItems: 'center', padding: '0 12px', borderRadius: 8,
-        whiteSpace: 'nowrap', cursor: 'pointer', font: "600 10.5px 'IBM Plex Mono', monospace", letterSpacing: '.08em',
-        background: 'var(--field)', border: '1px dashed #2e7d54', color: '#4fbf87'
-      }}
-    >
-      + PEDAL CAPTURE
-    </button>
+      options={pedalOptions}
+      activePath={preCapturePath}
+      placeholder="+ PEDAL CAPTURE"
+      onPick={pickPedalCaptureFromLibrary}
+      onBrowse={browsePedalCapture}
+      renderTrigger={({ onClick }) =>
+        preCapturePath ? (
+          <button
+            onClick={onClick}
+            title={`${preCaptureName} — click to change, or clear with the ×`}
+            style={{
+              height: 40, display: 'inline-flex', alignItems: 'center', gap: 8, padding: '0 6px 0 12px',
+              borderRadius: 8, whiteSpace: 'nowrap', cursor: 'pointer', border: `1px solid ${RIG_GOLD}`,
+              background: RIG_GOLD, color: '#2a1e08', font: "600 10.5px 'IBM Plex Mono', monospace", letterSpacing: '.08em'
+            }}
+          >
+            <span style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis' }}>{preCaptureName}</span>
+            <span
+              role="button"
+              onClick={(e) => { e.stopPropagation(); clearPedalCapture() }}
+              title="Remove the pedal capture"
+              style={{ width: 18, height: 18, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,.15)' }}
+            >
+              ×
+            </span>
+          </button>
+        ) : (
+          <button
+            onClick={onClick}
+            title="Chain a pedal capture ahead of this amp capture"
+            style={{
+              height: 40, display: 'inline-flex', alignItems: 'center', padding: '0 12px', borderRadius: 8,
+              whiteSpace: 'nowrap', cursor: 'pointer', font: "600 10.5px 'IBM Plex Mono', monospace", letterSpacing: '.08em',
+              background: 'var(--field)', border: '1px dashed #2e7d54', color: '#4fbf87'
+            }}
+          >
+            + PEDAL CAPTURE
+          </button>
+        )
+      }
+    />
   )
 
   const rigView = (
     <div className="flex flex-col gap-3.5" style={{ padding: '0 9px 12px' }}>
       {/* ── A. Identity band */}
       <div style={{ ...wellStyle, flex: 'none', display: 'flex', gap: 14, alignItems: 'stretch', flexWrap: 'wrap' }}>
+        {/* Pedal cover, LEFT of the amp — only once a pedal capture is both picked AND has a
+            resolvable ampcover.* next to it (a raw-browsed file with no library metadata often
+            won't). No placeholder shown for "picked but no cover": an empty box here would read
+            as a loading/broken state rather than "this one just has no picture." Smaller than the
+            amp box on purpose — the amp stays the visual lead, this is a secondary identity. */}
+        {preCapturePath && preCaptureCoverSrc && (
+          <div style={{ width: 160, flex: 'none', borderRadius: 11, border: `1px solid ${RIG_GOLD}`, background: 'var(--field)', overflow: 'hidden', minHeight: 150, maxHeight: 210, display: 'flex' }}>
+            <img src={preCaptureCoverSrc} alt="Pedal capture" style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
+          </div>
+        )}
         {/* Amp image, hard left. object-fit:contain so the whole amp is visible — cover was
             silently cropping the top and bottom off every photo. */}
         <div style={{ width: 372, flex: 'none', borderRadius: 11, border: '1px solid var(--border)', background: 'var(--field)', overflow: 'hidden', minHeight: 150, maxHeight: 210, display: 'flex' }}>
