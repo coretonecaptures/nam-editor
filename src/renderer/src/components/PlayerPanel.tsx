@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import ampPlaceholder from '../assets/images/amp_placeholder.png'
 import restartUnlit from '../assets/transport/restart-unlit.png'
 import restartLit from '../assets/transport/restart-lit.png'
@@ -2515,17 +2515,28 @@ export function PlayerPanel({
             </div>
           )}
           <div className="flex items-center gap-2 flex-wrap">
-            {chainChip('DI IN')}
-            <span style={{ color: 'var(--text-3)' }}>→</span>
-            {pedalChip}
-            <span style={{ color: 'var(--text-3)' }}>→</span>
-            {chainChip('AMP CAPTURE', 'active')}
-            <span style={{ color: 'var(--text-3)' }}>→</span>
-            {chainChip('CAB IR')}
-            <span style={{ color: 'var(--text-3)' }}>→</span>
-            {chainChip('FX RACK')}
-            <span style={{ color: 'var(--text-3)' }}>→</span>
-            {chainChip('OUT')}
+            {/* Reflects what is actually in the signal path, not a fixed diagram — each FX block
+                and Cab IR appear only while their own bypass is off, so the rail always shows
+                what you'd actually hear right now, not what could theoretically be turned on. */}
+            {[
+              chainChip('DI IN'),
+              pedalChip,
+              chainChip('AMP CAPTURE', 'active'),
+              irEnabled && chainChip('CAB IR'),
+              eq.enabled && chainChip('EQ'),
+              gate.enabled && chainChip('GATE'),
+              chorus.enabled && chainChip('MOD'),
+              delay.enabled && chainChip('DELAY'),
+              reverb.enabled && chainChip('REVERB'),
+              chainChip('OUT')
+            ]
+              .filter((chip): chip is React.ReactNode => Boolean(chip))
+              .map((chip, i) => (
+                <Fragment key={i}>
+                  {i > 0 && <span style={{ color: 'var(--text-3)' }}>→</span>}
+                  {chip}
+                </Fragment>
+              ))}
           </div>
         </div>
 
