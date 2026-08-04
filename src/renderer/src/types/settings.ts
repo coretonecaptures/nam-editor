@@ -275,6 +275,17 @@ export interface RigSnapshot {
   delayIrPath: string | null
   reverb: ReverbSettings
   reverbIrPath: string | null
+  /** Cab IR — optional so a rig preset saved before this existed still applies cleanly, just
+   *  without touching the cabinet. */
+  cabIrPath?: string | null
+  cabIrEnabled?: boolean
+  /** The amp capture itself, absolute path. Recalling a rig switches to this capture if it isn't
+   *  already the one open — a "rig" is the whole signal path, not just the FX behind the amp. */
+  ampCapturePath?: string | null
+  /** Pedal-into-amp chain, if one was set when this rig was saved. */
+  pedalCapturePath?: string | null
+  pedalGainDb?: number
+  pedalEnabled?: boolean
 }
 export interface RigPreset {
   id: string

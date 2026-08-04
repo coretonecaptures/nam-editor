@@ -285,9 +285,6 @@ export function PresetMenu({
                         )}
                       </span>
                       <span style={{ display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0 }}>
-                        {isActive && (
-                          <span style={{ color: 'var(--text-2)', font: "500 10px 'IBM Plex Mono', monospace" }}>recall ↺</span>
-                        )}
                         {onDelete && (
                           <span
                             role="button"

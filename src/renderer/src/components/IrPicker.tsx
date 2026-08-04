@@ -56,6 +56,10 @@ interface IrPickerProps {
   /** Offer a "None (dry)" entry — the Tone Map allows no cab, the player uses its own toggle. */
   allowNone?: boolean
   onClear?: () => void
+  /** Which favourites/recents namespace this picker owns — 'cab' | 'delay' | 'reverb'. Required,
+   *  not defaulted: these three pickers used to share one global list regardless of which was
+   *  open, so favouriting a delay impulse made it show up under Cab IR too. */
+  favoritesKind: string
 }
 
 export function IrPicker({
@@ -66,7 +70,8 @@ export function IrPicker({
   placeholder = 'Choose a cabinet IR…',
   variant = 'field',
   allowNone = false,
-  onClear
+  onClear,
+  favoritesKind
 }: IrPickerProps): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<Tab>('search')
@@ -76,8 +81,8 @@ export function IrPicker({
   const [indexCount, setIndexCount] = useState<number | null>(null)
   const [indexing, setIndexing] = useState(false)
   const [indexError, setIndexError] = useState('')
-  const [favorites, setFavorites] = useState<IrRef[]>(() => loadIrFavorites())
-  const [recents, setRecents] = useState<IrRef[]>(() => loadIrRecents())
+  const [favorites, setFavorites] = useState<IrRef[]>(() => loadIrFavorites(favoritesKind))
+  const [recents, setRecents] = useState<IrRef[]>(() => loadIrRecents(favoritesKind))
 
   // Browse state: the folder trail from the library root, plus that folder's contents.
   const [trail, setTrail] = useState<string[]>([])
@@ -188,16 +193,16 @@ export function IrPicker({
 
   const choose = useCallback(
     (ref: IrRef) => {
-      setRecents(pushIrRecent(ref))
+      setRecents(pushIrRecent(favoritesKind, ref))
       onChange(ref)
       setOpen(false)
     },
-    [onChange]
+    [onChange, favoritesKind]
   )
 
   const onToggleFavorite = useCallback((ref: IrRef) => {
-    setFavorites(toggleIrFavorite(ref))
-  }, [])
+    setFavorites(toggleIrFavorite(favoritesKind, ref))
+  }, [favoritesKind])
 
   const rescan = useCallback(async () => {
     if (!libraryPath) return

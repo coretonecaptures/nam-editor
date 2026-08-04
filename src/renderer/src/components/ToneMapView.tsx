@@ -773,7 +773,7 @@ export function ToneMapView({
       setIrPath(null)
       return
     }
-    setIrPath(resolveRememberedIr(loadIrFavorites()))
+    setIrPath(resolveRememberedIr(loadIrFavorites('cab')))
   }, [irLibraryPath])
 
   /** Plot geometry must match ToneGrid's own padding for cursor->value maths to line up. */
@@ -1266,6 +1266,7 @@ export function ToneMapView({
                 <IrPicker
                   variant="inline"
                   allowNone
+                  favoritesKind="cab"
                   libraryPath={irLibraryPath ?? ''}
                   value={irPath}
                   onChange={(ref) => {

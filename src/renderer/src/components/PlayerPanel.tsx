@@ -282,6 +282,9 @@ interface PlayerPanelProps {
   /** The in-memory library, for picking a pedal capture by searching what's already loaded
    *  instead of dropping into a bare OS file dialog with no context. */
   libraryFiles?: NamFile[]
+  /** A rig preset can carry its own amp capture — recalling one switches to it if it isn't
+   *  already open. PlayerPanel doesn't own file-loading itself, so this delegates up. */
+  onOpenAmpCapture?: (filePath: string) => void
 }
 
 function toFileUrl(p: string): string {
@@ -472,7 +475,8 @@ export function PlayerPanel({
   onAutoStartLiveOnPopoutChange,
   liveJumpRequest = null,
   onLiveJumpHandled,
-  libraryFiles = []
+  libraryFiles = [],
+  onOpenAmpCapture
 }: PlayerPanelProps & { onClose: () => void }) {
   const [status, setStatus] = useState<PlayerStatus>('idle')
   const [errorMsg, setErrorMsg] = useState('')
@@ -809,7 +813,7 @@ export function PlayerPanel({
       setIrCount(result.count)
       if (result.count === 0) return
       // Persisted and shared, so the Tone Map's auditioning applies the same cab.
-      setIrPath(lastIrPath ?? resolveRememberedIr(loadIrFavorites()))
+      setIrPath(lastIrPath ?? resolveRememberedIr(loadIrFavorites('cab')))
     })()
     return () => {
       cancelled = true
@@ -1424,7 +1428,30 @@ export function PlayerPanel({
     applyChorusPreset(snap.chorus)
     applyDelayPreset(snap.delay, snap.delayIrPath)
     applyReverbPreset(snap.reverb, snap.reverbIrPath)
-  }, [applyChorusPreset, applyDelayPreset, applyReverbPreset])
+    // Optional fields: a rig saved before these existed just leaves that aspect alone.
+    if (snap.cabIrPath !== undefined) {
+      irManuallySetRef.current = true
+      setIrPath(snap.cabIrPath)
+      if (snap.cabIrPath) saveIrPath(snap.cabIrPath)
+    }
+    if (snap.cabIrEnabled !== undefined) setIrEnabled(snap.cabIrEnabled)
+    if (snap.pedalCapturePath !== undefined) {
+      setPreCapturePath(snap.pedalCapturePath)
+      setPreCaptureName(
+        snap.pedalCapturePath
+          ? libraryFiles.find((f) => f.filePath === snap.pedalCapturePath)?.metadata.name ||
+            (snap.pedalCapturePath.split(/[\\/]/).pop() ?? snap.pedalCapturePath).replace(/\.nam$/i, '')
+          : null
+      )
+    }
+    if (snap.pedalGainDb !== undefined) setPreGainDb(snap.pedalGainDb)
+    if (snap.pedalEnabled !== undefined) setPreEnabled(snap.pedalEnabled)
+    // Switch the amp capture itself only if the rig actually names one AND it differs from what's
+    // already open — recalling a rig on the same amp you're already on should not reload anything.
+    if (snap.ampCapturePath && snap.ampCapturePath !== file.filePath) {
+      onOpenAmpCapture?.(snap.ampCapturePath)
+    }
+  }, [applyChorusPreset, applyDelayPreset, applyReverbPreset, libraryFiles, file.filePath, onOpenAmpCapture])
   const saveRigPreset = useCallback(
     (name: string) => {
       const snapshot: RigSnapshot = {
@@ -1434,11 +1461,17 @@ export function PlayerPanel({
         delay,
         delayIrPath,
         reverb,
-        reverbIrPath: reverbPath
+        reverbIrPath: reverbPath,
+        cabIrPath: irPath,
+        cabIrEnabled: irEnabled,
+        ampCapturePath: file.filePath,
+        pedalCapturePath: preCapturePath,
+        pedalGainDb: preGainDb,
+        pedalEnabled: preEnabled
       }
       onRigPresetsChange?.(upsertPreset(rigPresets, name, (id) => ({ id, name, settings: snapshot })))
     },
-    [rigPresets, gate, eq, chorus, delay, delayIrPath, reverb, reverbPath, onRigPresetsChange]
+    [rigPresets, gate, eq, chorus, delay, delayIrPath, reverb, reverbPath, irPath, irEnabled, file.filePath, preCapturePath, preGainDb, preEnabled, onRigPresetsChange]
   )
   const deleteRigPreset = useCallback(
     (id: string) => onRigPresetsChange?.(rigPresets.filter((p) => p.id !== id)),
@@ -2060,6 +2093,7 @@ export function PlayerPanel({
                     libraryPath={delayLibraryPath ?? ''}
                     value={delayIrPath}
                     allowNone
+                    favoritesKind="delay"
                     placeholder={`Choose from ${delayIrCount.toLocaleString()} delay impulses\u2026`}
                     onChange={(ref) => {
                       setDelayIrPath(ref.path)
@@ -2159,6 +2193,7 @@ export function PlayerPanel({
                     libraryPath={reverbLibraryPath ?? ''}
                     value={reverbPath}
                     allowNone
+                    favoritesKind="reverb"
                     placeholder={`Choose from ${reverbCount.toLocaleString()} impulses\u2026`}
                     onChange={(ref) => {
                       setReverbPath(ref.path)
@@ -2223,6 +2258,7 @@ export function PlayerPanel({
             libraryPath={irLibraryPath ?? ''}
             value={irPath}
             disabled={busy}
+            favoritesKind="cab"
             onChange={(ref) => { setIrPath(ref.path); lastIrPath = ref.path; saveIrPath(ref.path) }}
           />
           {!irPath && (
@@ -2831,7 +2867,7 @@ export function PlayerPanel({
             <div className="flex items-center gap-2" style={{ opacity: delay.mode === 'convolution' ? 1 : 0.45, transition: 'opacity .15s' }}>
               <span style={{ ...monoLabel, flexShrink: 0 }}>Delay IR</span>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <IrPicker libraryPath={delayLibraryPath ?? ''} value={delayIrPath} allowNone
+                <IrPicker libraryPath={delayLibraryPath ?? ''} value={delayIrPath} allowNone favoritesKind="delay"
                   placeholder={`Choose from ${delayIrCount.toLocaleString()} delay impulses…`}
                   onChange={(ref) => { setDelayIrPath(ref.path); try { localStorage.setItem(DELAY_IR_PREF_KEY, ref.path) } catch { /* non-fatal */ } }}
                   onClear={() => { setDelayIrPath(null); try { localStorage.removeItem(DELAY_IR_PREF_KEY) } catch { /* non-fatal */ } }} />
@@ -2879,7 +2915,7 @@ export function PlayerPanel({
             <div className="flex items-center gap-2" style={{ opacity: reverb.mode === 'convolution' ? 1 : 0.45, transition: 'opacity .15s' }}>
               <span style={{ ...monoLabel, flexShrink: 0 }}>Reverb IR</span>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <IrPicker libraryPath={reverbLibraryPath ?? ''} value={reverbPath} allowNone
+                <IrPicker libraryPath={reverbLibraryPath ?? ''} value={reverbPath} allowNone favoritesKind="reverb"
                   placeholder={`Choose from ${reverbCount.toLocaleString()} impulses…`}
                   onChange={(ref) => { setReverbPath(ref.path); try { localStorage.setItem(REVERB_PREF_KEY, ref.path) } catch { /* non-fatal */ } }}
                   onClear={() => { setReverbPath(null); try { localStorage.removeItem(REVERB_PREF_KEY) } catch { /* non-fatal */ } }} />
@@ -2927,7 +2963,7 @@ export function PlayerPanel({
               </button>
             </div>
           </div>
-          <IrPicker libraryPath={irLibraryPath ?? ''} value={irPath} allowNone
+          <IrPicker libraryPath={irLibraryPath ?? ''} value={irPath} allowNone favoritesKind="cab"
             placeholder={`Choose from ${irCount.toLocaleString()} cab impulses…`}
             onChange={(ref) => { irManuallySetRef.current = true; setIrPath(ref.path); saveIrPath(ref.path) }}
             onClear={() => setIrPath(null)} />

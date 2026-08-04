@@ -818,7 +818,7 @@ export default function App() {
   const [toneStoreQueueJob, setToneStoreQueueJob] = useState<ToneStoreDownloadQueueJob | null>(null)
   const toneStoreQueueRunningRef = useRef(false)
   const toneStoreQueueAbortRef = useRef(0)
-  const loadFilesRef = useRef<null | ((paths: string[], mode: 'replace' | 'append' | 'append-passive', genToken?: number) => Promise<void>)>(null)
+  const loadFilesRef = useRef<null | ((paths: string[], mode: 'replace' | 'append' | 'append-passive', genToken?: number) => Promise<NamFile[]>)>(null)
   const refreshFolderTreeRef = useRef<null | (() => Promise<void>)>(null)
   const [directFilesOnly, setDirectFilesOnly] = useState(false)
   const [toneStoreSearchRequest, setToneStoreSearchRequest] = useState<{ key: number; query: string } | null>(null)
@@ -1834,6 +1834,7 @@ export default function App() {
     } else {
       setStatus({ message: `Loaded ${loaded.length} file(s)`, type: 'success' })
     }
+    return loaded
   }, [settings])
 
   // mode='append': dedup against current files (drag & drop)
@@ -1842,7 +1843,7 @@ export default function App() {
     const CONCURRENCY = 50
     const results: Awaited<ReturnType<typeof window.api.readFile>>[] = []
     for (let i = 0; i < paths.length; i += CONCURRENCY) {
-      if (genToken !== undefined && genToken !== loadGenRef.current) return
+      if (genToken !== undefined && genToken !== loadGenRef.current) return []
       const batch = paths.slice(i, i + CONCURRENCY)
       const batchResults = await Promise.all(batch.map((p) => window.api.readFile(p)))
       results.push(...batchResults)
@@ -1850,8 +1851,8 @@ export default function App() {
         setStatus({ message: `Loading files... ${Math.min(i + CONCURRENCY, paths.length)} / ${paths.length}`, type: 'info' })
       }
     }
-    if (genToken !== undefined && genToken !== loadGenRef.current) return
-    await applyParsedResults(results, mode)
+    if (genToken !== undefined && genToken !== loadGenRef.current) return []
+    return applyParsedResults(results, mode)
   }, [applyParsedResults]) // no longer depends on files or selectedIds
 
   useEffect(() => {
@@ -4560,6 +4561,27 @@ INSTRUCTIONS:
     [activeGroup, files]
   )
 
+  // Recalling a rig preset can carry its own amp capture — a "rig" is the whole signal path, not
+  // just the FX behind whatever's currently open. loadFiles now returns what it loaded directly
+  // (see applyParsedResults), so this doesn't need playGroup's effect-based workaround for state
+  // updates landing after the async call returns — the freshly-loaded NamFile is right here.
+  const openRigAmpCapture = useCallback(async (filePath: string) => {
+    const existing = files.find((f) => f.filePath === filePath)
+    if (existing) {
+      setPlayerFile(existing)
+      setSelectedIds(new Set([existing.filePath]))
+      return
+    }
+    const loaded = await loadFiles([filePath], 'append')
+    const found = loaded.find((f) => f.filePath === filePath)
+    if (found) {
+      setPlayerFile(found)
+      setSelectedIds(new Set([found.filePath]))
+    } else {
+      setStatus({ message: 'Could not open this rig’s amp capture — it may have been moved or deleted.', type: 'error' })
+    }
+  }, [files, loadFiles])
+
   const playGroup = useCallback((group: PlayGroup | null | undefined) => {
     if (!group) return
     const missing = group.filePaths.filter((p) => !files.some((f) => f.filePath === p))
@@ -5259,6 +5281,7 @@ INSTRUCTIONS:
               liveJumpRequest={liveJumpRequest}
               onLiveJumpHandled={() => setLiveJumpRequest(null)}
               libraryFiles={files}
+              onOpenAmpCapture={(filePath) => void openRigAmpCapture(filePath)}
             />
           ) : showGroupsAdmin ? (
             <GroupsAdminPage
