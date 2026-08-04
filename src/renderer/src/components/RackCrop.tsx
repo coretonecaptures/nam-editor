@@ -54,7 +54,9 @@ export function RackCrop({ metal, children }: { metal: MetalBounds; children: Re
 export const RACK_CROP: Record<'rack500' | 'delay' | 'reverb', MetalBounds> = {
   // The CHASSIS, not the faceplates: the rack frame, handle, rails and screws are part of the
   // object and worth keeping — it is only the empty void around the enclosure that wastes space.
-  rack500: { l: 0.0169, t: 0.0507, r: 0.982, b: 0.9053, aspect: 2.259 },
+  // t trims just above the mounting-screw row, cutting the vented top bezel above it — the screws
+  // stay (they read as "rack hardware"), the vent slats don't add anything and just ate height.
+  rack500: { l: 0.0169, t: 0.0846, r: 0.982, b: 0.9053, aspect: 2.352 },
   delay: { l: 0.0134, t: 0.1326, r: 0.9807, b: 0.8591, aspect: 3.994 },
   // Reverb shares Delay's crop rather than the design mock's numbers, since both panels are the
   // same 2172x724 art with the same layout — a different crop could only mis-frame one of them.
