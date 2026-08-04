@@ -500,6 +500,10 @@ export function PlayerPanel({
   // way people cascade two NAM/Gateway plugin instances. Session-only, not persisted: this is a
   // first simple build to find out whether it sounds like anything, per the TODO note on it.
   const [preCapturePath, setPreCapturePath] = useState<string | null>(null)
+  // Clicking the loaded chip toggles this without forgetting which capture is chosen — matches
+  // Gate/EQ/Mod/Delay/Reverb's own on/off convention, so you can A/B the pedal stage without
+  // losing your pick and having to re-browse for it.
+  const [preEnabled, setPreEnabled] = useState(true)
   const [preCaptureName, setPreCaptureName] = useState<string | null>(null)
   const [preCaptureCoverSrc, setPreCaptureCoverSrc] = useState<string | null>(null)
   const [preGainDb, setPreGainDb] = useState(0)
@@ -1047,6 +1051,8 @@ export function PlayerPanel({
       const found = libraryFiles.find((f) => f.filePath === filePath)
       setPreCapturePath(filePath)
       setPreCaptureName(found?.metadata.name || (filePath.split(/[\\/]/).pop() ?? filePath).replace(/\.nam$/i, ''))
+      // A freshly-picked capture should be audible, not silently inherit an earlier off toggle.
+      setPreEnabled(true)
     },
     [libraryFiles]
   )
@@ -1058,12 +1064,14 @@ export function PlayerPanel({
     setPreCapturePath(path)
     // Not in the library, so there is no metadata to pull a name from — the filename is all there is.
     setPreCaptureName((path.split(/[\\/]/).pop() ?? path).replace(/\.nam$/i, ''))
+    setPreEnabled(true)
   }, [])
 
   const clearPedalCapture = useCallback(() => {
     setPreCapturePath(null)
     setPreCaptureName(null)
     setPreCaptureCoverSrc(null)
+    setPreEnabled(true)
   }, [])
 
   // Cover art for the pedal capture, shown next to the amp's own cover once one is picked.
@@ -1103,7 +1111,7 @@ export function PlayerPanel({
       const modelJson = new TextDecoder().decode(base64ToArrayBuffer(modelResult.data))
 
       let preModelJson: string | null = null
-      if (preCapturePath) {
+      if (preCapturePath && preEnabled) {
         const preResult = await window.api.readFileBinary(preCapturePath)
         if (preResult.data) {
           preModelJson = new TextDecoder().decode(base64ToArrayBuffer(preResult.data))
@@ -1185,7 +1193,7 @@ export function PlayerPanel({
     } finally {
       setLiveStarting(false)
     }
-  }, [file.filePath, inputDeviceId, irMix, liveInputGainDb, liveBypass, loadLiveIr, stopLive, preCapturePath, preGainDb, fxPower])
+  }, [file.filePath, inputDeviceId, irMix, liveInputGainDb, liveBypass, loadLiveIr, stopLive, preCapturePath, preEnabled, preGainDb, fxPower])
 
   // Auto-start monitoring the moment the popped-out Live rig is entered, if the user has opted
   // in — skips the manual click on the record sign every single time. Fires once per arrival
@@ -1504,14 +1512,14 @@ export function PlayerPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file.filePath])
 
-  // Picking/clearing the pedal capture changes what the second worklet is loaded with, which
-  // needs a fresh engine.start() rather than a live message — a restart, same cost as switching
-  // the main capture. Drive (preGainDb) is deliberately NOT a dependency here: it ramps live via
-  // setPreGain below instead of restarting on every knob tick.
+  // Picking/clearing the pedal capture, or toggling it on/off, changes what the second worklet is
+  // loaded with, which needs a fresh engine.start() rather than a live message — a restart, same
+  // cost as switching the main capture. Drive (preGainDb) is deliberately NOT a dependency here:
+  // it ramps live via setPreGain below instead of restarting on every knob tick.
   useEffect(() => {
     if (liveRunning) void startLive()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preCapturePath])
+  }, [preCapturePath, preEnabled])
 
   useEffect(() => {
     liveEngineRef.current?.setPreGain(Math.pow(10, preGainDb * 0.05))
@@ -2534,30 +2542,47 @@ export function PlayerPanel({
       placeholder="+ PEDAL CAPTURE"
       onPick={pickPedalCaptureFromLibrary}
       onBrowse={browsePedalCapture}
-      renderTrigger={({ onClick }) =>
+      renderTrigger={({ onClick: openPicker }) =>
         preCapturePath ? (
+          // The pill itself toggles on/off — matches Gate/EQ/Mod/Delay/Reverb's own convention,
+          // and is what lets you A/B the pedal stage without losing the pick. Changing WHICH
+          // capture is loaded, or removing it, are deliberately smaller side actions so a stray
+          // click doesn't accidentally lose your choice while you're just trying to bypass it.
           <button
-            onClick={onClick}
-            title={`${preCaptureName} — click to change, or clear with the ×`}
+            onClick={() => setPreEnabled((v) => !v)}
+            title={preEnabled ? `${preCaptureName} — click to bypass` : `${preCaptureName} — bypassed, click to re-engage`}
             style={{
-              height: 40, display: 'inline-flex', alignItems: 'center', gap: 8, padding: '0 6px 0 12px',
-              borderRadius: 8, whiteSpace: 'nowrap', cursor: 'pointer', border: `1px solid ${RIG_GOLD}`,
-              background: RIG_GOLD, color: '#2a1e08', font: "600 10.5px 'IBM Plex Mono', monospace", letterSpacing: '.08em'
+              height: 40, display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0 6px 0 12px',
+              borderRadius: 8, whiteSpace: 'nowrap', cursor: 'pointer', transition: 'background .12s, border-color .12s, color .12s',
+              border: `1px solid ${preEnabled ? RIG_GOLD : 'var(--field-border)'}`,
+              background: preEnabled ? RIG_GOLD : 'var(--field)',
+              color: preEnabled ? '#2a1e08' : 'var(--text-2)',
+              font: "600 10.5px 'IBM Plex Mono', monospace", letterSpacing: '.08em'
             }}
           >
-            <span style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis' }}>{preCaptureName}</span>
+            <span style={{ maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', textDecoration: preEnabled ? 'none' : 'line-through', opacity: preEnabled ? 1 : 0.7 }}>
+              {preCaptureName}
+            </span>
+            <span
+              role="button"
+              onClick={(e) => { e.stopPropagation(); openPicker() }}
+              title="Change the pedal capture"
+              style={{ width: 18, height: 18, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, background: preEnabled ? 'rgba(0,0,0,.15)' : 'var(--raised)' }}
+            >
+              ✎
+            </span>
             <span
               role="button"
               onClick={(e) => { e.stopPropagation(); clearPedalCapture() }}
               title="Remove the pedal capture"
-              style={{ width: 18, height: 18, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,.15)' }}
+              style={{ width: 18, height: 18, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: preEnabled ? 'rgba(0,0,0,.15)' : 'var(--raised)' }}
             >
               ×
             </span>
           </button>
         ) : (
           <button
-            onClick={onClick}
+            onClick={openPicker}
             title="Chain a pedal capture ahead of this amp capture"
             style={{
               height: 40, display: 'inline-flex', alignItems: 'center', padding: '0 12px', borderRadius: 8,

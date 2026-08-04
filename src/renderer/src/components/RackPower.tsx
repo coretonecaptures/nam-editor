@@ -43,12 +43,15 @@ export function RackPower({ label, on, onToggle }: { label: string; on: boolean;
   )
 }
 
-/** Dims a unit's panel when it is switched off, so "off" reads at a glance from across the rig. */
+/**
+ * A faint hint that a unit is off, not the primary tell — the power button's own lit/unlit state
+ * is what's supposed to carry that, this is just enough of a nudge to notice at a glance without
+ * having to look at the switch.
+ */
 export function rackDimStyle(on: boolean): React.CSSProperties {
   return {
-    // Readable when off, not obliterated — you still need to see where the controls are.
-    opacity: on ? 1 : 0.62,
-    filter: on ? 'none' : 'saturate(0.55)',
+    opacity: on ? 1 : 0.85,
+    filter: on ? 'none' : 'saturate(0.8)',
     transition: 'opacity 0.18s, filter 0.18s'
   }
 }

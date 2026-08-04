@@ -2,6 +2,7 @@ import { useRef, useState, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
 import { NamFile, GEAR_TYPES, TONE_TYPES } from '../types/nam'
+import guitarJackIcon from '../assets/icons/guitar-jack.png'
 import { gearChipClass, toneChipClass, getGearImageSrc, namGearChipClass, namToneChipClass, namCreatorChipClass } from '../assets/gear'
 import { detectPreset } from '../utils/detectPreset'
 import { getCaptureBestEsr, getEsrTone } from '../utils/esr'
@@ -1824,11 +1825,16 @@ function GridView({
                             onClick={(e) => { e.stopPropagation(); onPlayLive(file) }}
                             title="Play Live — open straight to the full-screen rig"
                           >
-                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <circle cx="12" cy="18.5" r="1.4" fill="currentColor" stroke="none" />
-                              <path strokeLinecap="round" strokeWidth={2} d="M8.8 15.3a4.6 4.6 0 016.4 0" />
-                              <path strokeLinecap="round" strokeWidth={2} d="M5.6 12.1a9 9 0 0112.8 0" />
-                            </svg>
+                            <span
+                              className="block w-3.5 h-3.5"
+                              style={{
+                                backgroundColor: 'currentColor',
+                                WebkitMaskImage: `url(${guitarJackIcon})`, maskImage: `url(${guitarJackIcon})`,
+                                WebkitMaskSize: 'contain', maskSize: 'contain',
+                                WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
+                                WebkitMaskPosition: 'center', maskPosition: 'center'
+                              }}
+                            />
                           </button>
                         )}
                         {onAddToGroup && (
@@ -2060,7 +2066,7 @@ function FileItem({
           at opacity-0, and grows into a solid filled circle on hover. */}
       {onPlay && (
         <button
-          className="flex-shrink-0 self-center w-9 h-9 rounded-full flex items-center justify-center opacity-40 group-hover:opacity-100 text-green-500 dark:text-green-400 group-hover:bg-green-500 group-hover:text-white dark:group-hover:bg-green-500 dark:group-hover:text-white group-hover:shadow-md hover:!bg-green-600 transition-all duration-150 group-hover:scale-110"
+          className="flex-shrink-0 self-center w-9 h-9 rounded-full flex items-center justify-center opacity-40 group-hover:opacity-100 text-green-500 dark:text-green-400 hover:bg-green-500 hover:text-white dark:hover:bg-green-500 dark:hover:text-white hover:!bg-green-600 transition-all duration-150"
           onClick={(e) => { e.stopPropagation(); onPlay() }}
           title="Play capture"
         >
@@ -2076,11 +2082,16 @@ function FileItem({
           onClick={(e) => { e.stopPropagation(); onPlayLive() }}
           title="Play Live — open straight to the full-screen rig"
         >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <circle cx="12" cy="18.5" r="1.4" fill="currentColor" stroke="none" />
-            <path strokeLinecap="round" strokeWidth={2} d="M8.8 15.3a4.6 4.6 0 016.4 0" />
-            <path strokeLinecap="round" strokeWidth={2} d="M5.6 12.1a9 9 0 0112.8 0" />
-          </svg>
+          <span
+            className="block w-4 h-4"
+            style={{
+              backgroundColor: 'currentColor',
+              WebkitMaskImage: `url(${guitarJackIcon})`, maskImage: `url(${guitarJackIcon})`,
+              WebkitMaskSize: 'contain', maskSize: 'contain',
+              WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
+              WebkitMaskPosition: 'center', maskPosition: 'center'
+            }}
+          />
         </button>
       )}
 
