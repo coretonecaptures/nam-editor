@@ -263,27 +263,31 @@ that just sound")?
 
 ---
 
-## Chain two NAM captures live — "pedal into amp"
+## DONE (first simple build, 2026-08-03): Chain two NAM captures live — "pedal into amp"
 
 Feed one capture's output into a second capture's input, live — e.g. an overdrive/fuzz pedal
-capture feeding an amp capture, both being NAM models. Live-mode-only, since Preview renders
-offline through a Worker with its own single-model path.
+capture feeding an amp capture, both being NAM models. Live-mode-only; Preview still renders
+offline through a Worker with its own single-model path, untouched.
 
-**Architecturally plausible, not yet attempted.** `liveEngine.ts` currently loads exactly one
-model into one `AudioWorkletNode(ctx, 'nam-processor', ...)` (`public/nam-worklet.js`). Chaining
-is, on paper, "instantiate a second `nam-processor` node, load a second model into it, wire
-`gate -> worklet A -> worklet B -> fxInput` instead of `gate -> worklet -> fxInput`" — the graph
-is already linear, so there's no topology fight.
+Built: `liveEngine.ts` takes an optional `preModelJson` + `preGain`, instantiates a second
+`nam-processor` `AudioWorkletNode` ahead of the main one, and wires
+`gate -> preWorklet -> preGainNode -> worklet -> fxInput`. `preGainNode` is a plain GainNode, not
+inside either model, specifically so the drive into stage two can be ramped from a knob live
+without reloading anything. UI: the identity band's "+ PEDAL CAPTURE" chip is now a real file
+picker (`window.api.openFiles`, `.nam` filter); once something is loaded it shows the capture's
+name with a × to clear, and a "Drive" JogWheel appears in the master dock (only then — no point
+showing a knob for a stage that isn't loaded). Picking/clearing restarts the engine like switching
+the main capture does; the drive knob itself does not restart anything.
 
-**The real unknown is whether it sounds like anything usable, not whether it's wireable.** A NAM
-capture is trained to reproduce one specific analog gain stage's response to *its own reference
-DI* — clean guitar in, that stage's output out. Chaining two captures means feeding model A's
-*output* into model B as if it were guitar-level input, which is nothing like what model B was
-trained on. Real pedal-into-amp works because both stages tolerate a continuous range of input
-levels by nature; two neural models chained is a genuinely different, untested thing — worth
-prototyping with one clearly-clean capture into one clearly-driven capture before assuming the
-feature is worth the UI (second file picker, per-stage gain staging, roughly double the CPU/
-latency of today's single-model path).
+**Still the open question, unchanged from before, and now testable:** whether this sounds like
+anything usable. A NAM capture is trained on clean guitar in, not on another model's output —
+that mismatch is exactly why the drive trim exists, so you can find out by ear whether some
+setting makes it work. No gain-staging heuristics or auto-leveling were added; this is
+deliberately just "wire it up and listen," per the plan to prototype before investing further.
+
+Not done: no persistence (pedal-capture choice resets each session), no indicator in the
+signal-chain rail beyond the chip itself, no live model-swap without a restart (mirrors the
+existing single-capture behavior, not a regression).
 
 ---
 

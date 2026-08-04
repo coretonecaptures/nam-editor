@@ -313,6 +313,16 @@ export interface LiveStartOptions {
   normalizeGain?: number
   /** Listener volume trim, 0..1. */
   volume?: number
+  /**
+   * Second NAM model chained BEFORE the main one — e.g. an overdrive/fuzz pedal capture feeding
+   * an amp capture, the way people cascade two NAM/Gateway plugin instances. A capture is trained
+   * on clean guitar in, not on another model's output, so this is genuinely untested territory
+   * sonically; the drive trim below exists because of that, not as a nice-to-have.
+   */
+  preModelJson?: string | null
+  /** Linear drive into the second stage, applied on a plain GainNode so it can be ramped live
+   *  without reloading either model. 1 = unity. */
+  preGain?: number
 }
 
 /**
@@ -355,6 +365,9 @@ export class LiveEngine {
   private source: MediaStreamAudioSourceNode | null = null
   private splitter: ChannelSplitterNode | null = null
   private worklet: AudioWorkletNode | null = null
+  /** Optional pedal-capture stage chained ahead of `worklet`. See LiveStartOptions.preModelJson. */
+  private preWorklet: AudioWorkletNode | null = null
+  private preGainNode: GainNode | null = null
   /** One analyser per input channel, so the UI can show which one has signal. */
   private channelAnalysers: AnalyserNode[] = []
   private channelBuffer: Float32Array<ArrayBuffer> = new Float32Array(1024)
@@ -635,7 +648,37 @@ export class LiveEngine {
       this.inputAnalyser.fftSize = 4096
       this.splitter.connect(this.inputAnalyser, this.inputChannel, 0)
 
-      // Gate on the RAW input, ahead of the model — gating a high-gain model's output means
+      // Optional pedal-capture stage, chained ahead of the main model — built before the gate
+      // wiring below so the gate can point at whichever node is actually first in the chain.
+      // Reuses the same compiled WASM module: a second AudioWorkletNode is a fully separate
+      // instance with its own memory, the normal way to run two of one processor.
+      let namInput: AudioNode = this.worklet
+      if (options.preModelJson) {
+        this.preWorklet = new AudioWorkletNode(ctx, 'nam-processor', {
+          numberOfInputs: 1,
+          numberOfOutputs: 1,
+          outputChannelCount: [1],
+          processorOptions: { wasmModule: module, manifest }
+        })
+        this.preWorklet.port.onmessage = (event: MessageEvent) => {
+          const data = event.data as { type?: string; error?: string; stage?: string }
+          if (data.type === 'error') {
+            this.onError(`pedal stage ${data.stage ?? 'worklet'}: ${data.error ?? 'unknown error'}`)
+          }
+        }
+        const preModelBytes = new TextEncoder().encode(options.preModelJson)
+        this.preWorklet.port.postMessage({ type: 'loadModel', modelBytes: preModelBytes }, [preModelBytes.buffer])
+        this.preWorklet.port.postMessage({ type: 'setGain', inputGain: 1, outputGain: 1 })
+        // The drive into stage two lives on a plain GainNode, not inside either worklet, so it
+        // can be ramped from a knob without touching either model.
+        this.preGainNode = ctx.createGain()
+        this.preGainNode.gain.value = Math.max(0, options.preGain ?? 1)
+        this.preWorklet.connect(this.preGainNode)
+        this.preGainNode.connect(this.worklet)
+        namInput = this.preWorklet
+      }
+
+      // Gate on the RAW input, ahead of the model(s) — gating a high-gain model's output means
       // gating noise it has already amplified, which chatters. The tuner tap is deliberately
       // BEFORE the gate, so a gated-out note does not make the tuner go blank mid-adjustment.
       if (this.gateAvailable) {
@@ -646,13 +689,13 @@ export class LiveEngine {
             outputChannelCount: [1]
           })
           this.splitter.connect(this.gate, this.inputChannel, 0)
-          this.gate.connect(this.worklet)
+          this.gate.connect(namInput)
         } catch (error) {
           this.gate = null
           this.onError(`Noise gate failed to start: ${error instanceof Error ? error.message : String(error)}`)
         }
       }
-      if (!this.gate) this.splitter.connect(this.worklet, this.inputChannel, 0)
+      if (!this.gate) this.splitter.connect(namInput, this.inputChannel, 0)
 
       this.buildFxChain(ctx)
       this.buildPlate(ctx)
@@ -1586,6 +1629,19 @@ export class LiveEngine {
     this.worklet?.port.postMessage({ type: 'setGain', inputGain, outputGain })
   }
 
+  /** Drive trim feeding the pedal stage into the amp stage. No-op if no pre-stage is loaded. */
+  setPreGain(gain: number): void {
+    if (!this.preGainNode || !this.ctx) return
+    const now = this.ctx.currentTime
+    this.preGainNode.gain.cancelScheduledValues(now)
+    this.preGainNode.gain.setValueAtTime(this.preGainNode.gain.value, now)
+    this.preGainNode.gain.linearRampToValueAtTime(Math.max(0, gain), now + 0.015)
+  }
+
+  hasPreStage(): boolean {
+    return this.preWorklet !== null
+  }
+
   /**
    * Player volume, applied at the very end of the chain.
    *
@@ -1623,12 +1679,19 @@ export class LiveEngine {
     } catch {
       // Port already closed.
     }
+    try {
+      this.preWorklet?.port.postMessage({ type: 'unloadModel' })
+    } catch {
+      // Port already closed.
+    }
 
     for (const node of [
       this.source,
       this.splitter,
       ...this.channelAnalysers,
       this.worklet,
+      this.preWorklet,
+      this.preGainNode,
       this.gate,
       this.fxInput,
       this.fxMid,
@@ -1706,6 +1769,8 @@ export class LiveEngine {
     this.gate = null
     this.gateSettings = { ...DEFAULT_GATE }
     this.worklet = null
+    this.preWorklet = null
+    this.preGainNode = null
     this.convolver = null
     this.wetGain = null
     this.dryGain = null

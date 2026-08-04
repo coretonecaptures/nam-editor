@@ -96,9 +96,6 @@ const MAX_PREVIEW_SECONDS = 12
  *  (a painted sign, an LED, a meter lamp), so they must not recolour with the UI theme. */
 const RIG_GOLD = '#e8b04a'
 const TUNER_GREEN = '#2dd48a'
-/** The second-capture slot (an overdrive pedal in front of the amp) is designed but not built —
- *  see TODO.md "Chain two NAM captures live". Flip this on when the engine can load two models. */
-const SHOW_PEDAL_SLOT = false
 
 type PlayerStatus = 'idle' | 'loading-di' | 'rendering' | 'ready' | 'error'
 
@@ -490,6 +487,12 @@ export function PlayerPanel({
   const [inputDevices, setInputDevices] = useState<LiveDeviceInfo[]>([])
   const [inputDeviceId, setInputDeviceId] = useState<string | null>(null)
   const [liveInputGainDb, setLiveInputGainDb] = useState(0)
+  // Chain a second capture ahead of this one — e.g. a pedal capture feeding the amp capture, the
+  // way people cascade two NAM/Gateway plugin instances. Session-only, not persisted: this is a
+  // first simple build to find out whether it sounds like anything, per the TODO note on it.
+  const [preCapturePath, setPreCapturePath] = useState<string | null>(null)
+  const [preCaptureName, setPreCaptureName] = useState<string | null>(null)
+  const [preGainDb, setPreGainDb] = useState(0)
   const [liveBypass, setLiveBypass] = useState(false)
   const [liveLatencyMs, setLiveLatencyMs] = useState<number | null>(null)
   const [liveMeter, setLiveMeter] = useState(0)
@@ -995,6 +998,19 @@ export function PlayerPanel({
     return { samples: mono, sampleRate: decoded.sampleRate }
   }, [irEnabled, irPath, getAudioContext])
 
+  const pickPedalCapture = useCallback(async () => {
+    const paths = await window.api.openFiles()
+    const path = paths[0]
+    if (!path) return
+    setPreCapturePath(path)
+    setPreCaptureName((path.split(/[\\/]/).pop() ?? path).replace(/\.nam$/i, ''))
+  }, [])
+
+  const clearPedalCapture = useCallback(() => {
+    setPreCapturePath(null)
+    setPreCaptureName(null)
+  }, [])
+
   const startLive = useCallback(async () => {
     setLiveError('')
     setLiveStarting(true)
@@ -1007,6 +1023,17 @@ export function PlayerPanel({
       }
       const modelJson = new TextDecoder().decode(base64ToArrayBuffer(modelResult.data))
 
+      let preModelJson: string | null = null
+      if (preCapturePath) {
+        const preResult = await window.api.readFileBinary(preCapturePath)
+        if (preResult.data) {
+          preModelJson = new TextDecoder().decode(base64ToArrayBuffer(preResult.data))
+        } else {
+          // Don't fail the whole rig over the pedal stage — fall back to the amp alone and say why.
+          setLiveError(`Could not read the pedal capture, continuing without it: ${preResult.error ?? 'no data'}`)
+        }
+      }
+
       const ir = await loadLiveIr()
 
       const engine = new LiveEngine((message) => setLiveError(message))
@@ -1014,6 +1041,8 @@ export function PlayerPanel({
       await engine.start({
         deviceId: inputDeviceId,
         modelJson,
+        preModelJson,
+        preGain: Math.pow(10, preGainDb * 0.05),
         ir,
         irMix,
         inputGain: Math.pow(10, liveInputGainDb * 0.05),
@@ -1077,7 +1106,7 @@ export function PlayerPanel({
     } finally {
       setLiveStarting(false)
     }
-  }, [file.filePath, inputDeviceId, irMix, liveInputGainDb, liveBypass, loadLiveIr, stopLive])
+  }, [file.filePath, inputDeviceId, irMix, liveInputGainDb, liveBypass, loadLiveIr, stopLive, preCapturePath, preGainDb])
 
   // Auto-start monitoring the moment the popped-out Live rig is entered, if the user has opted
   // in — skips the manual click on the record sign every single time. Fires once per arrival
@@ -1395,6 +1424,19 @@ export function PlayerPanel({
     if (liveRunning) void startLive()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file.filePath])
+
+  // Picking/clearing the pedal capture changes what the second worklet is loaded with, which
+  // needs a fresh engine.start() rather than a live message — a restart, same cost as switching
+  // the main capture. Drive (preGainDb) is deliberately NOT a dependency here: it ramps live via
+  // setPreGain below instead of restarting on every knob tick.
+  useEffect(() => {
+    if (liveRunning) void startLive()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preCapturePath])
+
+  useEffect(() => {
+    liveEngineRef.current?.setPreGain(Math.pow(10, preGainDb * 0.05))
+  }, [preGainDb])
 
   const diLabel = useMemo(() => {
     if (!diPath) return null
@@ -2391,6 +2433,47 @@ export function PlayerPanel({
     </span>
   )
 
+  // The reserved "+ PEDAL CAPTURE" slot, now a real control: click to pick a second .nam capture
+  // to chain ahead of this one (pedal into amp, the way people cascade two NAM/Gateway plugin
+  // instances). Untested territory sonically — see the TODO note on this feature — so it starts
+  // completely out of the way and only grows a Drive knob in the master dock once something is
+  // actually loaded.
+  const pedalChip = preCapturePath ? (
+    <button
+      key="pedal-chip"
+      onClick={pickPedalCapture}
+      title={`${preCaptureName} — click to change, or clear with the ×`}
+      style={{
+        height: 40, display: 'inline-flex', alignItems: 'center', gap: 8, padding: '0 6px 0 12px',
+        borderRadius: 8, whiteSpace: 'nowrap', cursor: 'pointer', border: `1px solid ${RIG_GOLD}`,
+        background: RIG_GOLD, color: '#2a1e08', font: "600 10.5px 'IBM Plex Mono', monospace", letterSpacing: '.08em'
+      }}
+    >
+      <span style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis' }}>{preCaptureName}</span>
+      <span
+        role="button"
+        onClick={(e) => { e.stopPropagation(); clearPedalCapture() }}
+        title="Remove the pedal capture"
+        style={{ width: 18, height: 18, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,.15)' }}
+      >
+        ×
+      </span>
+    </button>
+  ) : (
+    <button
+      key="pedal-chip"
+      onClick={pickPedalCapture}
+      title="Chain a pedal capture ahead of this amp capture"
+      style={{
+        height: 40, display: 'inline-flex', alignItems: 'center', padding: '0 12px', borderRadius: 8,
+        whiteSpace: 'nowrap', cursor: 'pointer', font: "600 10.5px 'IBM Plex Mono', monospace", letterSpacing: '.08em',
+        background: 'var(--field)', border: '1px dashed #2e7d54', color: '#4fbf87'
+      }}
+    >
+      + PEDAL CAPTURE
+    </button>
+  )
+
   const rigView = (
     <div className="flex flex-col gap-3.5" style={{ padding: '0 9px 12px' }}>
       {/* ── A. Identity band */}
@@ -2428,7 +2511,8 @@ export function PlayerPanel({
           <div className="flex items-center gap-2 flex-wrap">
             {chainChip('DI IN')}
             <span style={{ color: 'var(--text-3)' }}>→</span>
-            {SHOW_PEDAL_SLOT && (<>{chainChip('+ PEDAL CAPTURE', 'optional')}<span style={{ color: 'var(--text-3)' }}>→</span></>)}
+            {pedalChip}
+            <span style={{ color: 'var(--text-3)' }}>→</span>
             {chainChip('AMP CAPTURE', 'active')}
             <span style={{ color: 'var(--text-3)' }}>→</span>
             {chainChip('CAB IR')}
@@ -2650,6 +2734,13 @@ export function PlayerPanel({
       <div style={{ ...wellStyle, flex: 'none', display: 'flex', gap: 16, alignItems: 'stretch', flexWrap: 'wrap' }}>
         <JogWheel label="Input Gain" value={liveInputGainDb} min={-24} max={24} onChange={setLiveInputGainDb}
           level={liveInputMeter} format={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`} resetTo={0} />
+
+        {/* Only shown once a pedal capture is actually chained — no point cluttering the dock
+            with a knob for a stage that isn't loaded. */}
+        {preCapturePath && (
+          <JogWheel label="Drive" value={preGainDb} min={-24} max={24} onChange={setPreGainDb}
+            format={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`} resetTo={0} />
+        )}
 
         <div style={{ width: 300, minWidth: 240, flex: '1 1 260px', display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div className="flex items-center gap-2.5">
