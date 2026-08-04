@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { loadFavorites, loadRecents, pushRecent, toggleFavorite, type FavRef } from '../utils/favoritesRecents'
 
 /**
  * Searchable picker for choosing a capture already in the library — used by the pedal-capture
@@ -8,6 +9,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
  * Deliberately a separate component from PresetMenu rather than a reuse of it: PresetMenu's
  * bottom row is "save the CURRENT settings as a new preset," which has no equivalent here — there
  * is no "current" capture to save, only a library to search and, failing that, browse to.
+ *
+ * Favourites/recents (`favoritesKind`) mirror the Cab IR picker's own — see PresetMenu.tsx and
+ * utils/favoritesRecents.ts for the shared mechanism.
  */
 export interface CaptureOption {
   filePath: string
@@ -22,7 +26,8 @@ export function CapturePicker({
   onPick,
   onBrowse,
   width = 220,
-  renderTrigger
+  renderTrigger,
+  favoritesKind
 }: {
   options: CaptureOption[]
   activePath: string | null
@@ -35,9 +40,14 @@ export function CapturePicker({
    *  surrounding UI it doesn't otherwise resemble (a pill chip in a signal-chain rail, say)
    *  while still reusing the search/browse dropdown underneath. */
   renderTrigger?: (props: { onClick: () => void; open: boolean }) => React.ReactNode
+  /** Enables the star/favourites/recent UI. Pass a stable, unique string. Omit to leave this
+   *  picker as a plain search list, no star column, no recent strip. */
+  favoritesKind?: string
 }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
+  const [favorites, setFavorites] = useState<FavRef[]>(() => (favoritesKind ? loadFavorites(favoritesKind) : []))
+  const [recents, setRecents] = useState<FavRef[]>(() => (favoritesKind ? loadRecents(favoritesKind) : []))
   const wrap = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -57,11 +67,29 @@ export function CapturePicker({
   }, [open])
 
   const active = options.find((o) => o.filePath === activePath) ?? null
+  const favoriteIds = useMemo(() => new Set(favorites.map((f) => f.id)), [favorites])
+  const recentIds = useMemo(() => new Set(recents.map((f) => f.id)), [recents])
+
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return options
-    return options.filter((o) => o.label.toLowerCase().includes(q) || o.sublabel?.toLowerCase().includes(q))
-  }, [options, query])
+    const base = q ? options.filter((o) => o.label.toLowerCase().includes(q) || o.sublabel?.toLowerCase().includes(q)) : options
+    return favoritesKind ? [...base].sort((a, b) => Number(favoriteIds.has(b.filePath)) - Number(favoriteIds.has(a.filePath))) : base
+  }, [options, query, favoritesKind, favoriteIds])
+
+  const recentOptions = useMemo(() => {
+    if (!favoritesKind || query.trim()) return []
+    return recents.map((r) => options.find((o) => o.filePath === r.id)).filter((o): o is CaptureOption => Boolean(o))
+  }, [favoritesKind, query, recents, options])
+
+  const pick = (filePath: string): void => {
+    if (favoritesKind) {
+      const opt = options.find((o) => o.filePath === filePath)
+      if (opt) setRecents(pushRecent(favoritesKind, { id: opt.filePath, label: opt.label }))
+    }
+    onPick(filePath)
+    setOpen(false)
+    setQuery('')
+  }
 
   return (
     <div ref={wrap} style={{ position: 'relative', display: 'inline-flex' }}>
@@ -99,27 +127,74 @@ export function CapturePicker({
               borderRadius: 7, background: 'var(--field)', color: 'var(--text)', font: "500 11px 'IBM Plex Sans', sans-serif", outline: 'none'
             }}
           />
+          {recentOptions.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, padding: '8px 10px', borderBottom: '1px solid var(--border-soft)' }}>
+              <span style={{ width: '100%', font: "600 9px 'IBM Plex Mono', monospace", letterSpacing: '.08em', color: 'var(--text-3)', textTransform: 'uppercase' }}>
+                Recent
+              </span>
+              {recentOptions.map((o) => (
+                <button
+                  key={o.filePath}
+                  onClick={() => pick(o.filePath)}
+                  style={{
+                    padding: '3px 9px', borderRadius: 12, border: '1px solid var(--field-border)',
+                    background: o.filePath === activePath ? 'var(--active)' : 'var(--field)',
+                    color: o.filePath === activePath ? 'var(--accent-text)' : 'var(--text-2)',
+                    font: "500 10px 'IBM Plex Sans', sans-serif", cursor: 'pointer', maxWidth: 150,
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+                  }}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          )}
           <div style={{ maxHeight: 280, overflowY: 'auto' }}>
             {shown.length === 0 && (
               <div style={{ padding: '10px 12px', color: 'var(--text-2)', font: "500 11px 'IBM Plex Sans', sans-serif" }}>No match</div>
             )}
-            {shown.map((o) => (
-              <button
-                key={o.filePath}
-                onClick={() => { onPick(o.filePath); setOpen(false); setQuery('') }}
-                style={{
-                  width: '100%', textAlign: 'left', padding: '8px 12px', borderTop: '1px solid var(--border-soft)',
-                  background: o.filePath === activePath ? 'var(--active)' : 'transparent',
-                  color: o.filePath === activePath ? 'var(--accent-text)' : 'var(--text)',
-                  border: 'none', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 1
-                }}
-              >
-                <span style={{ font: "500 11.5px 'IBM Plex Sans', sans-serif", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.label}</span>
-                {o.sublabel && (
-                  <span style={{ font: "500 10px 'IBM Plex Mono', monospace", color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.sublabel}</span>
-                )}
-              </button>
-            ))}
+            {shown.map((o, i) => {
+              const isDividerBefore = favoritesKind && i > 0 && favoriteIds.has(shown[i - 1].filePath) && !favoriteIds.has(o.filePath)
+              return (
+                <button
+                  key={o.filePath}
+                  onClick={() => pick(o.filePath)}
+                  style={{
+                    width: '100%', textAlign: 'left', padding: '8px 12px',
+                    borderTopWidth: 1, borderTopStyle: 'solid',
+                    borderTopColor: isDividerBefore ? 'var(--border)' : 'var(--border-soft)',
+                    background: o.filePath === activePath ? 'var(--active)' : 'transparent',
+                    color: o.filePath === activePath ? 'var(--accent-text)' : 'var(--text)',
+                    border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'flex-start', gap: 7
+                  }}
+                >
+                  {favoritesKind && (
+                    <span
+                      role="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setFavorites(toggleFavorite(favoritesKind, { id: o.filePath, label: o.label }))
+                      }}
+                      title={favoriteIds.has(o.filePath) ? 'Remove from favorites' : 'Add to favorites'}
+                      style={{ flexShrink: 0, color: favoriteIds.has(o.filePath) ? '#e8b04a' : 'var(--text-3)', fontSize: 12, lineHeight: '18px', padding: 2 }}
+                    >
+                      {favoriteIds.has(o.filePath) ? '★' : '☆'}
+                    </span>
+                  )}
+                  <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0, flex: 1 }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ font: "500 11.5px 'IBM Plex Sans', sans-serif", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.label}</span>
+                      {favoritesKind && recentIds.has(o.filePath) && o.filePath !== activePath && (
+                        <span style={{ color: 'var(--text-3)', font: "500 9px 'IBM Plex Mono', monospace", flexShrink: 0 }}>recent</span>
+                      )}
+                    </span>
+                    {o.sublabel && (
+                      <span style={{ font: "500 10px 'IBM Plex Mono', monospace", color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.sublabel}</span>
+                    )}
+                  </span>
+                </button>
+              )
+            })}
           </div>
           <button
             onClick={() => { onBrowse(); setOpen(false); setQuery('') }}

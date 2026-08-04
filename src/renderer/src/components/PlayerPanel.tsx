@@ -2542,6 +2542,7 @@ export function PlayerPanel({
       placeholder="+ PEDAL CAPTURE"
       onPick={pickPedalCaptureFromLibrary}
       onBrowse={browsePedalCapture}
+      favoritesKind="pedal-capture"
       renderTrigger={({ onClick: openPicker }) =>
         preCapturePath ? (
           // The pill itself toggles on/off — matches Gate/EQ/Mod/Delay/Reverb's own convention,
@@ -2729,6 +2730,7 @@ export function PlayerPanel({
             if (found) applyRigPreset(found.settings)
           }}
           onSaveAs={() => setSaveAsPrompt({ title: 'Save current rig as…', onSave: saveRigPreset })}
+          favoritesKind="rig-preset"
         />
         <span style={{ font: "500 10.5px 'IBM Plex Sans', sans-serif", color: 'var(--text-2)' }}>
           Recalls every panel at once — EQ · gate · mod · delay · reverb
@@ -2761,6 +2763,7 @@ export function PlayerPanel({
                 if (found) applyChorusPreset(found.settings)
               }}
               onSaveAs={() => setSaveAsPrompt({ title: 'Save modulation preset as…', onSave: saveChorusPreset })}
+              favoritesKind="chorus-preset"
             />
           </div>
             }
@@ -2798,6 +2801,7 @@ export function PlayerPanel({
                   if (found) applyDelayPreset(found.settings, found.irPath)
                 }}
                 onSaveAs={() => setSaveAsPrompt({ title: 'Save delay preset as…', onSave: saveDelayPreset })}
+                favoritesKind="delay-preset"
               />
             </div>
             }
@@ -2846,6 +2850,7 @@ export function PlayerPanel({
                   if (found) applyReverbPreset(found.settings, found.irPath)
                 }}
                 onSaveAs={() => setSaveAsPrompt({ title: 'Save reverb preset as…', onSave: saveReverbPreset })}
+                favoritesKind="reverb-preset"
               />
             </div>
             }
