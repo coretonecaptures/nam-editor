@@ -274,9 +274,11 @@ interface PlayerPanelProps {
   /** Skip the manual click on the record sign — start monitoring as soon as the Live rig opens. */
   autoStartLiveOnPopout?: boolean
   onAutoStartLiveOnPopoutChange?: (value: boolean) => void
-  /** Bumped by the list view's "Play Live" action to jump straight past Preview to the popped-out
-   *  rig, instead of the three-click Live tab → tiny expand-arrow path. */
-  liveJumpToken?: number
+  /** Set (to any non-null value) by the list view's "Play Live" action to jump straight past
+   *  Preview to the popped-out rig, instead of the three-click Live tab → tiny expand-arrow path.
+   *  Self-clearing: PlayerPanel calls onLiveJumpHandled once it has acted on it. */
+  liveJumpRequest?: number | null
+  onLiveJumpHandled?: () => void
   /** The in-memory library, for picking a pedal capture by searching what's already loaded
    *  instead of dropping into a bare OS file dialog with no context. */
   libraryFiles?: NamFile[]
@@ -468,7 +470,8 @@ export function PlayerPanel({
   onExitGroup,
   autoStartLiveOnPopout = false,
   onAutoStartLiveOnPopoutChange,
-  liveJumpToken = 0,
+  liveJumpRequest = null,
+  onLiveJumpHandled,
   libraryFiles = []
 }: PlayerPanelProps & { onClose: () => void }) {
   const [status, setStatus] = useState<PlayerStatus>('idle')
@@ -548,18 +551,26 @@ export function PlayerPanel({
   const [devicesOpen, setDevicesOpen] = useState<boolean>(() => loadDevicesOpen())
   const [poppedOut, setPoppedOut] = useState(false)
   // The list view's "Play Live" button jumps straight here instead of Preview + the mode tab +
-  // the tiny expand arrow. PlayerPanel isn't remounted per capture (see the App.tsx call site),
-  // so this can't just be an initial useState — it has to react to the token changing on an
-  // already-open player. Guarded against the token's own mount value so opening the player
-  // normally (via plain "Play") never force-switches into Live.
-  const prevLiveJumpToken = useRef(liveJumpToken)
+  // the tiny expand arrow.
+  //
+  // This is a self-clearing one-shot request (liveJumpRequest / onLiveJumpHandled), not a
+  // monotonic counter compared against a ref snapshot — that was the first version and it had a
+  // real bug: App.tsx mounts PlayerPanel and bumps the counter in the same click when the player
+  // wasn't already open, so the ref's very first read already saw the incremented value and the
+  // "did it change" comparison silently no-opped — the first click landed in Preview, only a
+  // second click (now genuinely already-mounted, ref genuinely stale) worked. A persistent
+  // counter can't tell "this mount was caused by that click" apart from "this mount just happens
+  // to occur while the counter is nonzero" (e.g. closing the player, then later clicking a plain
+  // Play on a different file). Clearing the request immediately after acting on it removes the
+  // ambiguity entirely: a fresh mount only jumps to Live if the request is still non-null, and
+  // it's null again by the time any unrelated later mount happens.
   useEffect(() => {
-    if (liveJumpToken !== prevLiveJumpToken.current) {
-      prevLiveJumpToken.current = liveJumpToken
+    if (liveJumpRequest != null) {
       setMode('live')
       setPoppedOut(true)
+      onLiveJumpHandled?.()
     }
-  }, [liveJumpToken])
+  }, [liveJumpRequest, onLiveJumpHandled])
   // Master power for the 500-strip rack (Gate/EQ/Mod) — the rack's illuminated blue button.
   const [fxPower, setFxPower] = useState(true)
   // Power off silences all three stages without touching their own on/off state or settings, so

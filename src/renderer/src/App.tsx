@@ -801,10 +801,13 @@ export default function App() {
   // Which play group is driving the player's prev/next, if any. Ephemeral — not persisted.
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null)
   const [addToGroupPaths, setAddToGroupPaths] = useState<string[] | null>(null)
-  // Bumped by "Play Live" in the file list to jump PlayerPanel straight to the popped-out Live
-  // rig. A counter, not a boolean — PlayerPanel isn't remounted per capture, so a boolean can't
-  // tell "just requested again" apart from "already handled."
-  const [liveJumpToken, setLiveJumpToken] = useState(0)
+  // Set by "Play Live" in the file list to jump PlayerPanel straight to the popped-out Live rig.
+  // Self-clearing (see PlayerPanel's onLiveJumpHandled) rather than a persistent counter — a
+  // counter that's never reset can't tell "this mount was caused by that click" apart from "this
+  // mount just happens to occur while the counter is nonzero," which was a real bug: the very
+  // first Play Live click both mounted PlayerPanel and bumped the counter in the same update, so
+  // the counter was already "old" by the time PlayerPanel's first render read it.
+  const [liveJumpRequest, setLiveJumpRequest] = useState<number | null>(null)
   const [showTrainingWorkspace, setShowTrainingWorkspace] = useState(false)
   const [showTrainingSetupGuide, setShowTrainingSetupGuide] = useState(false)
   const [settingsInitialTab, setSettingsInitialTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'player' | 'training' | 'ai' | 'companion' | undefined>(undefined)
@@ -5142,7 +5145,7 @@ INSTRUCTIONS:
                 setPlayerFile(file)
                 setSelectedIds(new Set([file.filePath]))
                 setActiveGroupId(null)
-                setLiveJumpToken((t) => t + 1)
+                setLiveJumpRequest(Date.now())
               }}
               onAddToGroup={handleAddToGroup}
               onFindSimilarTone3000={handleFindSimilarTone3000}
@@ -5253,7 +5256,8 @@ INSTRUCTIONS:
               onExitGroup={() => setActiveGroupId(null)}
               autoStartLiveOnPopout={settings.autoStartLiveOnPopout}
               onAutoStartLiveOnPopoutChange={(value) => handleSaveSettings({ ...settings, autoStartLiveOnPopout: value })}
-              liveJumpToken={liveJumpToken}
+              liveJumpRequest={liveJumpRequest}
+              onLiveJumpHandled={() => setLiveJumpRequest(null)}
               libraryFiles={files}
             />
           ) : showGroupsAdmin ? (
