@@ -22,7 +22,8 @@ export function RackKnob({
   label,
   format,
   image = rackKnobBlack,
-  resetTo
+  resetTo,
+  locked = false
 }: {
   /** Current value, in the knob's own units (caller's min..max). */
   value: number
@@ -45,6 +46,10 @@ export function RackKnob({
    * Omit on knobs where no value is more "correct" than another, like Mix or Rate.
    */
   resetTo?: number
+  /** Dims and disables the knob without moving it — for a control that is wired up but does
+   *  nothing in the unit's current mode (e.g. an algorithmic-only knob while Convolution is
+   *  selected), so it stops inviting a turn that has no audible effect. */
+  locked?: boolean
 }) {
   const dragRef = useRef<{ startY: number; startValue: number } | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -88,14 +93,15 @@ export function RackKnob({
 
   return (
     <button
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
+      onPointerDown={locked ? undefined : handlePointerDown}
+      onPointerMove={locked ? undefined : handlePointerMove}
+      onPointerUp={locked ? undefined : handlePointerUp}
       onPointerEnter={() => setHover(true)}
       onPointerLeave={() => setHover(false)}
-      onDoubleClick={resetTo === undefined ? undefined : () => onChange(resetTo)}
-      title={resetTo === undefined ? undefined : 'Double-click to reset'}
+      onDoubleClick={locked || resetTo === undefined ? undefined : () => onChange(resetTo)}
+      title={locked ? 'Inactive in this mode' : resetTo === undefined ? undefined : 'Double-click to reset'}
       aria-label={label}
+      aria-disabled={locked}
       style={{
         position: 'absolute',
         left: `${centerXPct}%`,
@@ -103,11 +109,13 @@ export function RackKnob({
         width: `${diameterPct}%`,
         aspectRatio: '1 / 1',
         transform: 'translate(-50%, -50%)',
-        cursor: 'ns-resize',
+        cursor: locked ? 'default' : 'ns-resize',
         touchAction: 'none',
         background: 'none',
         border: 'none',
-        padding: 0
+        padding: 0,
+        opacity: locked ? 0.4 : 1,
+        transition: 'opacity .15s'
       }}
     >
       <img

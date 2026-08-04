@@ -546,9 +546,14 @@ export function PlayerPanel({
       setPoppedOut(true)
     }
   }, [liveJumpToken])
-  // Master power for the whole FX rig — the rack's illuminated blue button. Prototype-local for
-  // now; it will need to actually gate the chain once the layout is settled.
+  // Master power for the 500-strip rack (Gate/EQ/Mod) — the rack's illuminated blue button.
   const [fxPower, setFxPower] = useState(true)
+  // Power off silences all three stages without touching their own on/off state or settings, so
+  // flipping it back on restores exactly what was dialed in. Delay/Reverb are separate physical
+  // units with their own bypass switches and are deliberately not affected by this button.
+  const effectiveGate: GateSettings = fxPower ? gate : { ...gate, enabled: false }
+  const effectiveEq: EqSettings = fxPower ? eq : { ...eq, enabled: false }
+  const effectiveChorus: ChorusSettings = fxPower ? chorus : { ...chorus, enabled: false }
   const [drawerOpen, setDrawerOpen] = useState(false)
   // Electron does not implement window.prompt() — alert/confirm show a native dialog, but prompt
   // silently returns null with no UI at all. That is why every "Save as" looked like it did
@@ -1004,6 +1009,29 @@ export function PlayerPanel({
     return { samples: mono, sampleRate: decoded.sampleRate }
   }, [irEnabled, irPath, getAudioContext])
 
+  /**
+   * Step to the next or previous impulse in the SAME FOLDER as the one currently loaded — the
+   * arrows next to Delay IR / Reverb IR. Deliberately does nothing if nothing is loaded yet: there
+   * is no "current folder" to cycle within until you have picked a first impulse the normal way.
+   */
+  const cycleIr = useCallback(
+    async (libraryPath: string | null | undefined, currentPath: string | null, direction: 1 | -1, onPick: (path: string) => void) => {
+      if (!libraryPath || !currentPath) return
+      const norm = (p: string): string => p.replace(/\\/g, '/').replace(/\/+$/, '')
+      const lib = norm(libraryPath)
+      const file = norm(currentPath)
+      const relDir = file.startsWith(lib + '/') ? file.slice(lib.length + 1).split('/').slice(0, -1).join('/') : ''
+      const { files } = await window.api.browseIrLibrary(libraryPath, relDir)
+      if (files.length === 0) return
+      const sorted = [...files].sort((a, b) => a.name.localeCompare(b.name))
+      const currentIndex = sorted.findIndex((f) => norm(f.path) === file)
+      if (currentIndex === -1) return
+      const next = sorted[(currentIndex + direction + sorted.length) % sorted.length]
+      onPick(next.path)
+    },
+    []
+  )
+
   const pickPedalCapture = useCallback(async () => {
     const paths = await window.api.openFiles()
     const path = paths[0]
@@ -1054,11 +1082,11 @@ export function PlayerPanel({
         inputGain: Math.pow(10, liveInputGainDb * 0.05),
         inputChannel,
         outputDeviceId,
-        gate,
-        eq,
+        gate: effectiveGate,
+        eq: effectiveEq,
         delay,
         reverb,
-        chorus,
+        chorus: effectiveChorus,
         reverbIr:
           reverbPath && reverb.mode === 'convolution'
             ? await decodeImpulse(reverbPath).catch(() => null)
@@ -1112,7 +1140,7 @@ export function PlayerPanel({
     } finally {
       setLiveStarting(false)
     }
-  }, [file.filePath, inputDeviceId, irMix, liveInputGainDb, liveBypass, loadLiveIr, stopLive, preCapturePath, preGainDb])
+  }, [file.filePath, inputDeviceId, irMix, liveInputGainDb, liveBypass, loadLiveIr, stopLive, preCapturePath, preGainDb, fxPower])
 
   // Auto-start monitoring the moment the popped-out Live rig is entered, if the user has opted
   // in — skips the manual click on the record sign every single time. Fires once per arrival
@@ -1222,19 +1250,19 @@ export function PlayerPanel({
   }, [reverb])
 
   useEffect(() => {
-    liveEngineRef.current?.setChorus(chorus)
+    liveEngineRef.current?.setChorus(effectiveChorus)
     savePref(CHORUS_PREF_KEY, chorus)
-  }, [chorus])
+  }, [chorus, fxPower])
 
   useEffect(() => {
-    liveEngineRef.current?.setEq(eq)
+    liveEngineRef.current?.setEq(effectiveEq)
     savePref(EQ_PREF_KEY, eq)
-  }, [eq])
+  }, [eq, fxPower])
 
   useEffect(() => {
-    liveEngineRef.current?.setGate(gate)
+    liveEngineRef.current?.setGate(effectiveGate)
     savePref(GATE_PREF_KEY, gate)
-  }, [gate])
+  }, [gate, fxPower])
 
   /**
    * FX presets — save/apply/delete for Chorus, Delay, Reverb (independent per block) and Rig
@@ -2523,9 +2551,9 @@ export function PlayerPanel({
               pedalChip,
               chainChip('AMP CAPTURE', 'active'),
               irEnabled && chainChip('CAB IR'),
-              eq.enabled && chainChip('EQ'),
-              gate.enabled && chainChip('GATE'),
-              chorus.enabled && chainChip('MOD'),
+              effectiveEq.enabled && chainChip('EQ'),
+              effectiveGate.enabled && chainChip('GATE'),
+              effectiveChorus.enabled && chainChip('MOD'),
               delay.enabled && chainChip('DELAY'),
               reverb.enabled && chainChip('REVERB'),
               chainChip('OUT')
@@ -2691,6 +2719,14 @@ export function PlayerPanel({
                   onChange={(ref) => { setDelayIrPath(ref.path); try { localStorage.setItem(DELAY_IR_PREF_KEY, ref.path) } catch { /* non-fatal */ } }}
                   onClear={() => { setDelayIrPath(null); try { localStorage.removeItem(DELAY_IR_PREF_KEY) } catch { /* non-fatal */ } }} />
               </div>
+              {/* Steps within the folder the current impulse lives in — not the whole library —
+                  same idea as flipping through one drawer of a cabinet rather than the whole rack. */}
+              <button onClick={() => void cycleIr(delayLibraryPath, delayIrPath, -1, (p) => { setDelayIrPath(p); try { localStorage.setItem(DELAY_IR_PREF_KEY, p) } catch { /* non-fatal */ } })}
+                disabled={!delayIrPath} title="Previous impulse in this folder"
+                style={{ width: 26, height: 26, flexShrink: 0, borderRadius: 6, cursor: delayIrPath ? 'pointer' : 'default', background: 'var(--field)', border: '1px solid var(--field-border)', color: 'var(--text-2)', opacity: delayIrPath ? 1 : 0.4 }}>‹</button>
+              <button onClick={() => void cycleIr(delayLibraryPath, delayIrPath, 1, (p) => { setDelayIrPath(p); try { localStorage.setItem(DELAY_IR_PREF_KEY, p) } catch { /* non-fatal */ } })}
+                disabled={!delayIrPath} title="Next impulse in this folder"
+                style={{ width: 26, height: 26, flexShrink: 0, borderRadius: 6, cursor: delayIrPath ? 'pointer' : 'default', background: 'var(--field)', border: '1px solid var(--field-border)', color: 'var(--text-2)', opacity: delayIrPath ? 1 : 0.4 }}>›</button>
             </div>
             }
           />
@@ -2729,6 +2765,12 @@ export function PlayerPanel({
                   onChange={(ref) => { setReverbPath(ref.path); try { localStorage.setItem(REVERB_PREF_KEY, ref.path) } catch { /* non-fatal */ } }}
                   onClear={() => { setReverbPath(null); try { localStorage.removeItem(REVERB_PREF_KEY) } catch { /* non-fatal */ } }} />
               </div>
+              <button onClick={() => void cycleIr(reverbLibraryPath, reverbPath, -1, (p) => { setReverbPath(p); try { localStorage.setItem(REVERB_PREF_KEY, p) } catch { /* non-fatal */ } })}
+                disabled={!reverbPath} title="Previous impulse in this folder"
+                style={{ width: 26, height: 26, flexShrink: 0, borderRadius: 6, cursor: reverbPath ? 'pointer' : 'default', background: 'var(--field)', border: '1px solid var(--field-border)', color: 'var(--text-2)', opacity: reverbPath ? 1 : 0.4 }}>‹</button>
+              <button onClick={() => void cycleIr(reverbLibraryPath, reverbPath, 1, (p) => { setReverbPath(p); try { localStorage.setItem(REVERB_PREF_KEY, p) } catch { /* non-fatal */ } })}
+                disabled={!reverbPath} title="Next impulse in this folder"
+                style={{ width: 26, height: 26, flexShrink: 0, borderRadius: 6, cursor: reverbPath ? 'pointer' : 'default', background: 'var(--field)', border: '1px solid var(--field-border)', color: 'var(--text-2)', opacity: reverbPath ? 1 : 0.4 }}>›</button>
             </div>
             }
           />

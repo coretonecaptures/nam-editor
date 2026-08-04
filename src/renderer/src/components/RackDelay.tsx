@@ -96,27 +96,38 @@ export function RackDelay({
         <RackKnob label="Mix" value={delay.mix} min={0} max={1} format={pct}
           onChange={(v) => onChange({ mix: v })}
           centerXPct={KNOB_XS[0]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
+        {/* Time/Ratio/Feedback/Tone/Mod all drive the algorithmic delay line — convolution
+            replaces that line with a captured impulse, so these do nothing while it's selected.
+            Pan speed and the Pan switch are NOT in this set: the convolution wet signal still
+            runs through the auto-pan stage (see liveEngine's delayConvWet -> delayPanIn), so pan
+            keeps working in either mode. */}
         <RackKnob label="Time" value={delay.timeMs} min={20} max={1200} format={(v) => `${Math.round(v)} ms`}
+          locked={delay.mode === 'convolution'}
           onChange={(v) => onChange({ timeMs: v })}
           centerXPct={KNOB_XS[1]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
         <RackKnob label="Ratio" value={delay.ratio} min={0.25} max={2} format={(v) => `${v.toFixed(2)}x`}
+          locked={delay.mode === 'convolution'}
           onChange={(v) => onChange({ ratio: v })}
           centerXPct={KNOB_XS[2]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
         <RackKnob label="Feedback" value={delay.feedback} min={0} max={MAX_FEEDBACK} format={pct}
+          locked={delay.mode === 'convolution'}
           onChange={(v) => onChange({ feedback: v })}
           centerXPct={KNOB_XS[3]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
         <RackKnob label="Tone" value={delay.toneHz} min={500} max={12000} format={(v) => `${(v / 1000).toFixed(1)} kHz`}
+          locked={delay.mode === 'convolution'}
           onChange={(v) => onChange({ toneHz: v })}
           centerXPct={KNOB_XS[4]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
         <RackKnob label="Mod" value={delay.modDepthMs} min={0} max={MAX_MOD_DEPTH_MS} format={(v) => (v === 0 ? "off" : `${v.toFixed(2)} ms`)}
+          locked={delay.mode === 'convolution'}
           onChange={(v) => onChange({ modDepthMs: v })}
           centerXPct={KNOB_XS[5]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
 
         {/* Both caps stay fitted whatever the settings — an empty channel just looks broken, and
             gives no clue what the slot is for. They dim instead when the parameter is inert:
-            Mod Rate until Mod depth is up, Pan Speed until Pan is engaged. */}
+            Mod Rate until Mod depth is up (or convolution makes Mod depth moot entirely), Pan
+            Speed until Pan is engaged. */}
         <RackFader label="Mod rate" value={delay.modRateHz} min={0.05} max={8} format={hz}
-          inert={delay.modDepthMs === 0}
+          inert={delay.modDepthMs === 0 || delay.mode === 'convolution'}
           onChange={(v) => onChange({ modRateHz: v })}
           centerXPct={FADER_XS[0]} trackTopPct={TRACK_TOP} trackBottomPct={TRACK_BOTTOM} capWidthPct={FADER_CAP_W} />
         <RackFader label="Pan speed" value={delay.panRateHz} min={MIN_PAN_RATE_HZ} max={MAX_PAN_RATE_HZ} format={hz}
@@ -129,8 +140,10 @@ export function RackDelay({
         <RackLed active={delay.mode === 'algorithmic'} centerXPct={ENGINE_XS[0]} centerYPct={LED_Y} widthPct={LED_W} />
         <RackLed active={delay.mode === 'convolution'} centerXPct={ENGINE_XS[1]} centerYPct={LED_Y} widthPct={LED_W} />
 
-        <RackButton label="Center" centerXPct={STEREO_XS[0]} centerYPct={SW_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onChange({ pingPong: false })} />
-        <RackButton label="Ping-Pong" centerXPct={STEREO_XS[1]} centerYPct={SW_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onChange({ pingPong: true })} />
+        {/* Center/Ping-Pong pick the ALGORITHMIC tap topology specifically — convolution's wet
+            signal never touches delayL/delayR, so choosing between them is moot in that mode. */}
+        <RackButton label="Center" locked={delay.mode === 'convolution'} centerXPct={STEREO_XS[0]} centerYPct={SW_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onChange({ pingPong: false })} />
+        <RackButton label="Ping-Pong" locked={delay.mode === 'convolution'} centerXPct={STEREO_XS[1]} centerYPct={SW_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onChange({ pingPong: true })} />
         <RackButton label="Pan" centerXPct={STEREO_XS[2]} centerYPct={SW_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onChange({ panEnabled: !delay.panEnabled })} />
         <RackLed active={!delay.pingPong} centerXPct={STEREO_XS[0]} centerYPct={LED_Y} widthPct={LED_W} />
         <RackLed active={delay.pingPong} centerXPct={STEREO_XS[1]} centerYPct={LED_Y} widthPct={LED_W} />

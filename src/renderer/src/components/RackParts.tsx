@@ -71,7 +71,8 @@ export function RackButton({
   centerYPct,
   widthPct,
   heightPct,
-  onClick
+  onClick,
+  locked = false
 }: {
   label: string
   centerXPct: number
@@ -79,12 +80,16 @@ export function RackButton({
   widthPct: number
   heightPct: number
   onClick: () => void
+  /** Dims and disables the button without hiding it — for a switch that is wired up but does
+   *  nothing in the unit's current mode. */
+  locked?: boolean
 }) {
   return (
     <button
-      onClick={onClick}
-      title={label}
+      onClick={locked ? undefined : onClick}
+      title={locked ? 'Inactive in this mode' : label}
       aria-label={label}
+      aria-disabled={locked}
       className="group"
       style={{
         position: 'absolute',
@@ -96,7 +101,10 @@ export function RackButton({
         background: 'transparent',
         border: 'none',
         padding: 0,
-        cursor: 'pointer'
+        cursor: locked ? 'default' : 'pointer',
+        pointerEvents: locked ? 'none' : 'auto',
+        opacity: locked ? 0.4 : 1,
+        transition: 'opacity .15s'
       }}
     >
       <span
