@@ -801,6 +801,10 @@ export default function App() {
   // Which play group is driving the player's prev/next, if any. Ephemeral — not persisted.
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null)
   const [addToGroupPaths, setAddToGroupPaths] = useState<string[] | null>(null)
+  // Bumped by "Play Live" in the file list to jump PlayerPanel straight to the popped-out Live
+  // rig. A counter, not a boolean — PlayerPanel isn't remounted per capture, so a boolean can't
+  // tell "just requested again" apart from "already handled."
+  const [liveJumpToken, setLiveJumpToken] = useState(0)
   const [showTrainingWorkspace, setShowTrainingWorkspace] = useState(false)
   const [showTrainingSetupGuide, setShowTrainingSetupGuide] = useState(false)
   const [settingsInitialTab, setSettingsInitialTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'player' | 'training' | 'ai' | 'companion' | undefined>(undefined)
@@ -5134,6 +5138,12 @@ INSTRUCTIONS:
                 setSelectedIds(new Set([file.filePath]))
                 setActiveGroupId(null)
               }}
+              onPlayLive={(file) => {
+                setPlayerFile(file)
+                setSelectedIds(new Set([file.filePath]))
+                setActiveGroupId(null)
+                setLiveJumpToken((t) => t + 1)
+              }}
               onAddToGroup={handleAddToGroup}
               onFindSimilarTone3000={handleFindSimilarTone3000}
               defaultSearch={creatorFilter ?? undefined}
@@ -5241,6 +5251,9 @@ INSTRUCTIONS:
               activeGroupName={activeGroup?.name ?? null}
               onLoadGroup={(groupId) => playGroup(settings.playGroups.find((g) => g.id === groupId) ?? null)}
               onExitGroup={() => setActiveGroupId(null)}
+              autoStartLiveOnPopout={settings.autoStartLiveOnPopout}
+              onAutoStartLiveOnPopoutChange={(value) => handleSaveSettings({ ...settings, autoStartLiveOnPopout: value })}
+              liveJumpToken={liveJumpToken}
             />
           ) : showGroupsAdmin ? (
             <GroupsAdminPage

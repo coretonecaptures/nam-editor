@@ -269,6 +269,12 @@ interface PlayerPanelProps {
   activeGroupName?: string | null
   onLoadGroup?: (groupId: string) => void
   onExitGroup?: () => void
+  /** Skip the manual click on the record sign — start monitoring as soon as the Live rig opens. */
+  autoStartLiveOnPopout?: boolean
+  onAutoStartLiveOnPopoutChange?: (value: boolean) => void
+  /** Bumped by the list view's "Play Live" action to jump straight past Preview to the popped-out
+   *  rig, instead of the three-click Live tab → tiny expand-arrow path. */
+  liveJumpToken?: number
 }
 
 function toFileUrl(p: string): string {
@@ -454,7 +460,10 @@ export function PlayerPanel({
   playGroups = [],
   activeGroupName = null,
   onLoadGroup,
-  onExitGroup
+  onExitGroup,
+  autoStartLiveOnPopout = false,
+  onAutoStartLiveOnPopoutChange,
+  liveJumpToken = 0
 }: PlayerPanelProps & { onClose: () => void }) {
   const [status, setStatus] = useState<PlayerStatus>('idle')
   const [errorMsg, setErrorMsg] = useState('')
@@ -521,6 +530,19 @@ export function PlayerPanel({
   const [fxWidth, setFxWidth] = useState(0)
   const [devicesOpen, setDevicesOpen] = useState<boolean>(() => loadDevicesOpen())
   const [poppedOut, setPoppedOut] = useState(false)
+  // The list view's "Play Live" button jumps straight here instead of Preview + the mode tab +
+  // the tiny expand arrow. PlayerPanel isn't remounted per capture (see the App.tsx call site),
+  // so this can't just be an initial useState — it has to react to the token changing on an
+  // already-open player. Guarded against the token's own mount value so opening the player
+  // normally (via plain "Play") never force-switches into Live.
+  const prevLiveJumpToken = useRef(liveJumpToken)
+  useEffect(() => {
+    if (liveJumpToken !== prevLiveJumpToken.current) {
+      prevLiveJumpToken.current = liveJumpToken
+      setMode('live')
+      setPoppedOut(true)
+    }
+  }, [liveJumpToken])
   // Master power for the whole FX rig — the rack's illuminated blue button. Prototype-local for
   // now; it will need to actually gate the chain once the layout is settled.
   const [fxPower, setFxPower] = useState(true)
@@ -1056,6 +1078,19 @@ export function PlayerPanel({
       setLiveStarting(false)
     }
   }, [file.filePath, inputDeviceId, irMix, liveInputGainDb, liveBypass, loadLiveIr, stopLive])
+
+  // Auto-start monitoring the moment the popped-out Live rig is entered, if the user has opted
+  // in — skips the manual click on the record sign every single time. Fires once per arrival
+  // (poppedOut+live going from false to true), not on every render while already there, so it
+  // doesn't fight someone who deliberately stopped monitoring while still on this page.
+  const wasLiveVisible = useRef(false)
+  useEffect(() => {
+    const liveVisible = poppedOut && mode === 'live'
+    if (liveVisible && !wasLiveVisible.current && autoStartLiveOnPopout && !liveRunning && !liveStarting) {
+      void startLive()
+    }
+    wasLiveVisible.current = liveVisible
+  }, [poppedOut, mode, autoStartLiveOnPopout, liveRunning, liveStarting, startLive])
 
   // Swap the cabinet on the running engine rather than restarting it — restarting would drop the
   // mic and reload the model, so you could never hear two cabs back to back.
@@ -2460,7 +2495,7 @@ export function PlayerPanel({
           activeId={activeRigPresetId}
           placeholder="No rig loaded"
           searchable
-          width={260}
+          width={420}
           onRecall={(id) => {
             const found = rigPresets.find((r) => r.id === id)
             if (found) applyRigPreset(found.settings)
@@ -2495,7 +2530,7 @@ export function PlayerPanel({
               options={chorusPresets.map((c) => ({ id: c.id, name: c.name }))}
               activeId={activeChorusPresetId}
               placeholder="No preset"
-              width={158}
+              width={220}
               onRecall={(id) => {
                 const found = chorusPresets.find((c) => c.id === id)
                 if (found) applyChorusPreset(found.settings)
@@ -2535,7 +2570,7 @@ export function PlayerPanel({
                 options={delayPresets.map((d) => ({ id: d.id, name: d.name }))}
                 activeId={activeDelayPresetId}
                 placeholder="No preset"
-                width={150}
+                width={210}
                 onRecall={(id) => {
                   const found = delayPresets.find((d) => d.id === id)
                   if (found) applyDelayPreset(found.settings, found.irPath)
@@ -2578,7 +2613,7 @@ export function PlayerPanel({
                 options={reverbPresets.map((r) => ({ id: r.id, name: r.name }))}
                 activeId={activeReverbPresetId}
                 placeholder="No preset"
-                width={150}
+                width={210}
                 onRecall={(id) => {
                   const found = reverbPresets.find((r) => r.id === id)
                   if (found) applyReverbPreset(found.settings, found.irPath)
@@ -2614,7 +2649,7 @@ export function PlayerPanel({
       {/* ── E. Master dock */}
       <div style={{ ...wellStyle, flex: 'none', display: 'flex', gap: 16, alignItems: 'stretch', flexWrap: 'wrap' }}>
         <JogWheel label="Input Gain" value={liveInputGainDb} min={-24} max={24} onChange={setLiveInputGainDb}
-          level={liveInputMeter} format={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`} />
+          level={liveInputMeter} format={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`} resetTo={0} />
 
         <div style={{ width: 300, minWidth: 240, flex: '1 1 260px', display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div className="flex items-center gap-2.5">
@@ -2692,7 +2727,7 @@ export function PlayerPanel({
         </div>
 
         <JogWheel label="Output" value={volumeDb} min={-40} max={12} onChange={setVolumeDb}
-          level={liveMeter} format={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`} />
+          level={liveMeter} format={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`} resetTo={0} />
 
         <div style={{ width: 52, flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', borderLeft: '1px solid var(--border-soft)' }}>
           <button onClick={() => setDrawerOpen(true)} title="Setup"
@@ -2761,10 +2796,16 @@ export function PlayerPanel({
               {outputDevices.map((d) => (<option key={d.deviceId} value={d.deviceId}>{d.label}</option>))}
             </select>
           </div>
-          <div style={{ borderTop: '1px solid var(--border-soft)', paddingTop: 14 }}>
+          <div style={{ borderTop: '1px solid var(--border-soft)', paddingTop: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={liveBypass} onChange={(e) => setLiveBypass(e.target.checked)} className="w-3.5 h-3.5 rounded accent-[var(--accent)]" />
               <span style={{ font: "500 11.5px 'IBM Plex Sans', sans-serif", color: 'var(--text)' }}>Bypass model (hear the dry input)</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={autoStartLiveOnPopout}
+                onChange={(e) => onAutoStartLiveOnPopoutChange?.(e.target.checked)}
+                className="w-3.5 h-3.5 rounded accent-[var(--accent)]" />
+              <span style={{ font: "500 11.5px 'IBM Plex Sans', sans-serif", color: 'var(--text)' }}>Start recording automatically when this page opens</span>
             </label>
           </div>
           {liveLatencyMs !== null && (

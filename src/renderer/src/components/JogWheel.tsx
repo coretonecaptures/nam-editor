@@ -28,7 +28,8 @@ export function JogWheel({
   onChange,
   level = 0,
   format,
-  size = 132
+  size = 132,
+  resetTo
 }: {
   label: string
   value: number
@@ -39,6 +40,9 @@ export function JogWheel({
   level?: number
   format: (v: number) => string
   size?: number
+  /** Value a double-click snaps to — both jog wheels use this for 0 dB (unity), the "no change"
+   *  position, matching RackKnob's own double-click-to-flat convention. */
+  resetTo?: number
 }) {
   const drag = useRef<{ y: number; v: number } | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -83,6 +87,8 @@ export function JogWheel({
         onPointerDown={onDown}
         onPointerMove={onMove}
         onPointerUp={onUp}
+        onDoubleClick={resetTo === undefined ? undefined : () => onChange(resetTo)}
+        title={resetTo === undefined ? undefined : 'Double-click to reset'}
         role="slider"
         aria-label={label}
         aria-valuenow={Math.round(value * 10) / 10}

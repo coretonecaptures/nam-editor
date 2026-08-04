@@ -465,6 +465,9 @@ export interface AppSettings {
   // Named, cross-folder shortlists of captures for A/B comparison in the player
   playGroups: PlayGroup[]
 
+  // Skip the manual click on the record sign — start monitoring as soon as the Live rig view opens
+  autoStartLiveOnPopout: boolean
+
   // AI enrichment (keys stored in main via safeStorage — never in settings JSON)
   hasAnthropicKey: boolean
   hasOpenAiKey: boolean
@@ -564,6 +567,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   reverbPresets: [],
   rigPresets: [],
   playGroups: [],
+  autoStartLiveOnPopout: false,
   hasAnthropicKey: false,
   hasOpenAiKey: false,
   aiProvider: 'anthropic',
