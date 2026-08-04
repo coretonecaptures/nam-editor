@@ -1821,7 +1821,7 @@ function GridView({
                         )}
                         {onPlayLive && (
                           <button
-                            className="flex-shrink-0 p-1 rounded text-gray-500 hover:bg-gray-300 dark:hover:bg-gray-700 hover:text-red-400 transition-colors"
+                            className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-pink-500 dark:text-pink-400 hover:bg-pink-500 hover:text-white dark:hover:bg-pink-500 dark:hover:text-white transition-colors"
                             onClick={(e) => { e.stopPropagation(); onPlayLive(file) }}
                             title="Play Live — open straight to the full-screen rig"
                           >
@@ -1839,7 +1839,7 @@ function GridView({
                         )}
                         {onAddToGroup && (
                           <button
-                            className="flex-shrink-0 p-1 rounded text-gray-500 hover:bg-gray-300 dark:hover:bg-gray-700 hover:text-indigo-400 transition-colors"
+                            className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-indigo-500 dark:text-indigo-400 hover:bg-indigo-500 hover:text-white dark:hover:bg-indigo-500 dark:hover:text-white transition-colors"
                             onClick={(e) => { e.stopPropagation(); onAddToGroup([file.filePath]) }}
                             title="Add to group"
                           >
@@ -2078,7 +2078,7 @@ function FileItem({
 
       {onPlayLive && (
         <button
-          className="flex-shrink-0 self-center opacity-0 group-hover:opacity-100 p-1.5 rounded hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-500 hover:text-red-400 transition-all"
+          className="flex-shrink-0 self-center w-9 h-9 rounded-full flex items-center justify-center opacity-40 group-hover:opacity-100 text-pink-500 dark:text-pink-400 hover:bg-pink-500 hover:text-white dark:hover:bg-pink-500 dark:hover:text-white transition-all duration-150"
           onClick={(e) => { e.stopPropagation(); onPlayLive() }}
           title="Play Live — open straight to the full-screen rig"
         >
@@ -2097,7 +2097,7 @@ function FileItem({
 
       {onAddToGroup && (
         <button
-          className="flex-shrink-0 self-center opacity-0 group-hover:opacity-100 p-1.5 rounded hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-500 hover:text-indigo-400 transition-all"
+          className="flex-shrink-0 self-center w-9 h-9 rounded-full flex items-center justify-center opacity-40 group-hover:opacity-100 text-indigo-500 dark:text-indigo-400 hover:bg-indigo-500 hover:text-white dark:hover:bg-indigo-500 dark:hover:text-white transition-all duration-150"
           onClick={(e) => { e.stopPropagation(); onAddToGroup() }}
           title="Add to group"
         >
