@@ -1,6 +1,6 @@
 import { GEAR_TYPES, TONE_TYPES } from './nam'
 import type { WaveNetConfig } from './trainer'
-import type { ChorusSettings, DelaySettings, EqSettings, GateSettings, ReverbSettings } from '../utils/liveEngine'
+import type { ChorusSettings, DelaySettings, EchoLabSettings, EqSettings, GateSettings, ReverbSettings } from '../utils/liveEngine'
 
 export interface FolderOverride {
   manufacturer?: string
@@ -259,6 +259,13 @@ export interface ReverbPreset {
   /** Convolution IR, absolute path. Unused (but harmless) when settings.mode is 'plate'. */
   irPath: string | null
 }
+/** No IR concept — Echo Lab has no convolution mode, so this mirrors ChorusPreset's shape
+ *  exactly rather than DelayPreset/ReverbPreset's irPath field. */
+export interface EchoLabPreset {
+  id: string
+  name: string
+  settings: EchoLabSettings
+}
 
 /**
  * A full-rig snapshot — all five FX blocks at once, for instant recall.
@@ -467,10 +474,11 @@ export interface AppSettings {
   // User-defined capture profiles (custom WaveNet architectures)
   userCaptureProfiles: UserCaptureProfile[]
 
-  // Live player FX presets — per-block (chorus/delay/reverb) and whole-rig snapshots
+  // Live player FX presets — per-block (chorus/delay/reverb/echo lab) and whole-rig snapshots
   chorusPresets: ChorusPreset[]
   delayPresets: DelayPreset[]
   reverbPresets: ReverbPreset[]
+  echoLabPresets: EchoLabPreset[]
   rigPresets: RigPreset[]
 
   // Named, cross-folder shortlists of captures for A/B comparison in the player
@@ -576,6 +584,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   chorusPresets: [],
   delayPresets: [],
   reverbPresets: [],
+  echoLabPresets: [],
   rigPresets: [],
   playGroups: [],
   autoStartLiveOnPopout: false,
@@ -744,6 +753,7 @@ function normalizeSettingsMetadataRules(settings: AppSettings): AppSettings {
     chorusPresets: normalizePresetList<ChorusPreset>(settings.chorusPresets),
     delayPresets: normalizePresetList<DelayPreset>(settings.delayPresets),
     reverbPresets: normalizePresetList<ReverbPreset>(settings.reverbPresets),
+    echoLabPresets: normalizePresetList<EchoLabPreset>(settings.echoLabPresets),
     rigPresets: normalizePresetList<RigPreset>(settings.rigPresets),
     playGroups: (settings.playGroups ?? []).filter(
       (g): g is PlayGroup => Boolean(g && typeof g.id === 'string' && typeof g.name === 'string' && Array.isArray(g.filePaths))

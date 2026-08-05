@@ -283,6 +283,121 @@ export const DEFAULT_DELAY: DelaySettings = {
 export const MIN_PAN_RATE_HZ = 0.05
 export const MAX_PAN_RATE_HZ = 5
 
+/**
+ * Echo Lab — a second, swappable delay unit sharing the orange Delay's rack slot (a view toggle,
+ * not a mode switch; see EchoLabViewState below — both units keep processing audio regardless of
+ * which panel is currently drawn). Research/design doc: docs/echo-lab-plan.md.
+ *
+ * DSP for this unit is NOT YET BUILT — this type only exists so the settings/UI/persistence layer
+ * has something concrete to wire against ahead of the actual audio graph. `enabled` defaults to
+ * false and nothing in buildFxChain reads these fields yet.
+ *
+ * Single is the only topology with real fields modeled so far. `leftTimeMs`/`rightTimeMs`/
+ * `leftFeedback`/`rightFeedback`/`spread` are placeholders for Dual, which needs genuinely
+ * independent delay lines (not just a ratio off one line, the way the orange Delay's Ratio knob
+ * works) — real scope, not yet designed at the DSP level.
+ */
+export type EchoLabTopology = 'single' | 'dual'
+export type EchoLabCharacter = 'digital' | 'tape' | 'memoryman'
+
+export interface EchoLabSettings {
+  enabled: boolean
+  mix: number
+  topology: EchoLabTopology
+  character: EchoLabCharacter
+
+  // Single-topology fields (Row 1, knobs 2-3 when Mode=Single).
+  timeMs: number
+  feedback: number
+  /**
+   * Row 1, knob 6 when Mode=Single — how much of Echo Lab's Right line crosses in to alternate
+   * repeats across the stereo field, 0..1. 0 is indistinguishable from mono (R silent, matching
+   * this unit's behaviour before Ping-Pong existed); 1 is full hard alternation. Continuous, same
+   * "one knob, not a toggle" idea as the orange Delay's own ping-pong-width fader. Only meaningful
+   * in Single — Dual already gets real stereo from its two independent lines, so this slot
+   * relabels to Spread there instead; see RackEchoLab.
+   */
+  pingPongWidth: number
+
+  // Dual-topology fields (Row 1, knobs 2-6 when Mode=Dual).
+  leftTimeMs: number
+  rightTimeMs: number
+  leftFeedback: number
+  rightFeedback: number
+  spread: number
+
+  /**
+   * Row 2, knob 1 — meaning depends on `character`: Tape = Wow/Flutter depth (ms, reuses the same
+   * modDepthMs-style LFO-on-delay-time trick the orange Delay's Mod knob already uses), Memory Man
+   * = Tone/bandwidth (Hz, a lowpass in the feedback loop). Unused for Digital.
+   */
+  char1: number
+  /**
+   * Row 2, knob 2 — Tape = Tape Age (0..1, simulated wear: more darkening/noise at higher values),
+   * Memory Man = Chorus depth (reuses the same LFO mechanism as char1, slower/subtler than Tape's
+   * wow/flutter — the real Deluxe Memory Man's built-in chorus circuit). Unused for Digital.
+   */
+  char2: number
+  /** Row 2, knob 3 — saturation amount, all characters. */
+  colorDrive: number
+  /** Row 2, knob 4 — stereo widening on the wet output, all characters. */
+  width: number
+
+  /** Row 3 — always active regardless of topology/character. */
+  eqLowDb: number
+  eqHighDb: number
+  duckEnabled: boolean
+  duckDepth: number
+  duckReleaseMs: number
+
+  /** Button row — Pan on/off (fixed rate, no dedicated knob, matching the orange Delay's own Pan). */
+  panEnabled: boolean
+  /** Fader — Pan sweep rate. Inert (dimmed) while panEnabled is off. */
+  panRateHz: number
+  /** Fader — modulation rate for whichever char1/char2 LFO is active. Inert while Character is
+   *  Digital, since Digital has no modulation-flavored character knob. */
+  modRateHz: number
+
+  /**
+   * Where the orange Delay sits relative to Echo Lab when BOTH are enabled — series routing:
+   * dry hits one, its wet output feeds the other. 'before' (the default): Delay -> Echo Lab, the
+   * confirmed default order. 'after': Echo Lab -> Delay instead.
+   */
+  secondaryDelayPosition: 'before' | 'after'
+}
+
+export const DEFAULT_ECHO_LAB: EchoLabSettings = {
+  enabled: false,
+  mix: 0,
+  topology: 'single',
+  character: 'digital',
+  timeMs: 380,
+  feedback: 0.35,
+  pingPongWidth: 0,
+  leftTimeMs: 380,
+  rightTimeMs: 500,
+  leftFeedback: 0.35,
+  rightFeedback: 0.35,
+  spread: 0,
+  char1: 0,
+  char2: 0,
+  colorDrive: 0,
+  width: 0.5,
+  eqLowDb: 0,
+  eqHighDb: 0,
+  duckEnabled: false,
+  duckDepth: 0.5,
+  duckReleaseMs: 300,
+  panEnabled: false,
+  panRateHz: 0.5,
+  modRateHz: 0.6,
+  secondaryDelayPosition: 'before'
+}
+
+/** Which panel is currently drawn in the shared Delay/Echo Lab rack slot — display only, both
+ *  units keep processing audio regardless of which one is showing. */
+export type DelaySlotView = 'delay' | 'echo-lab'
+
 /** Highest feedback allowed. Above this the loop gains more than it loses and never decays. */
 export const MAX_FEEDBACK = 0.9
 /** Longest tap the delay lines are allocated for. */
@@ -317,6 +432,7 @@ export interface LiveStartOptions {
   delay?: DelaySettings
   /** Decoded delay impulse for convolution mode. Stereo and 4-channel true-stereo both work. */
   delayIr?: ImpulseResponse | null
+  echoLab?: EchoLabSettings
   reverb?: ReverbSettings
   chorus?: ChorusSettings
   /** Decoded reverb impulse, or null for none. Stereo is preserved. */
@@ -347,6 +463,22 @@ export interface LiveStartOptions {
  * first and immediately discards it — the standard workaround, and harmless because the live
  * player is about to want that permission anyway.
  */
+/**
+ * A tanh soft-clip curve for Echo Lab's Color/Drive knob, normalized so 0 drive is the identity
+ * line (transparent) and higher drive compresses peaks progressively harder without ever hard
+ * clipping — the standard, cheap way to get "grit that builds" out of a WaveShaperNode.
+ */
+function makeSoftClipCurve(amount: number): Float32Array<ArrayBuffer> {
+  const n = 256
+  const curve = new Float32Array(new ArrayBuffer(n * Float32Array.BYTES_PER_ELEMENT))
+  const k = amount * 18
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1
+    curve[i] = k === 0 ? x : Math.tanh(k * x) / Math.tanh(k)
+  }
+  return curve
+}
+
 export async function listAudioOutputs(): Promise<LiveDeviceInfo[]> {
   const devices = await navigator.mediaDevices.enumerateDevices()
   return devices
@@ -439,6 +571,94 @@ export class LiveEngine {
   private modDepthL: GainNode | null = null
   private modDepthR: GainNode | null = null
   private delaySettings: DelaySettings = { ...DEFAULT_DELAY }
+  /** Junction nodes so Delay's position relative to Echo Lab can be swapped without rebuilding
+   *  the graph — see reconcileChainOrder. Everything else about Delay is unchanged. */
+  private delayIn: GainNode | null = null
+  private delayOut: GainNode | null = null
+
+  /**
+   * Echo Lab — second delay unit sharing the orange Delay's rack slot. See docs/echo-lab-plan.md.
+   *
+   *   echoLabIn -+-> echoLabDry ------------------------------------+-> echoLabMerger
+   *              +-> echoLabDelayL -> [tone -> sat] -+-> (ch0) ------+
+   *              |         ^                          +-> monoTap --+ (ch1, Single only)
+   *              |         +--------- feedbackL <------+
+   *              +-> echoLabDelayR -> [tone -> sat] -+-> rGain ------+ (ch1, Dual only)
+   *                        ^                          |
+   *                        +--------- feedbackR <------+
+   *
+   *   echoLabMerger -> widen(direct/cross, reused chorus technique) -> eqLow -> eqHigh -> wet
+   *     -> panIn -> panner -> echoLabOut  (echoLabDry also sums into echoLabOut)
+   *
+   * L is always live (both Single and Dual); R only contributes once rGain is up (Dual only).
+   * Tone/saturation sit INSIDE each line's own feedback loop so darkening/grit compounds on
+   * repeats, same reasoning as the orange Delay's toneHz — but each line gets its own filter
+   * since a shared post-merge filter would not be a real feedback loop for either line.
+   */
+  private echoLabIn: GainNode | null = null
+  private echoLabDry: GainNode | null = null
+  private echoLabDelayL: DelayNode | null = null
+  private echoLabDelayR: DelayNode | null = null
+  /** Gates echoLabIn -> echoLabDelayR: 1 in Dual (R is independently fed), 0 in Single (R's input
+   *  instead comes from echoLabPpSend, or nothing at all when Ping-Pong is off). Needed because a
+   *  DelayNode input SUMS whatever is connected to it — without this gate, Single mode would leak
+   *  the dry input into R at the same time as L's ping-pong signal, muddying both. */
+  private echoLabDualRGain: GainNode | null = null
+  /** Gates echoLabSatL -> echoLabDelayR: Single-mode Ping-Pong's own "L feeds R" tap, 0..pingPongWidth. */
+  private echoLabPpSend: GainNode | null = null
+  private echoLabFeedbackL: GainNode | null = null
+  private echoLabFeedbackR: GainNode | null = null
+  /** Feedback-source crossfade: each line's feedback is a blend of its OWN processed output
+   *  (Self) and the OTHER line's (Cross). Dual keeps Self=1/Cross=0 on both — fully independent
+   *  lines, unchanged from before Ping-Pong existed. Single crossfades by pingPongWidth: 0 is
+   *  each line feeding only itself (R has no input anyway, so this is silent/unchanged), 1 is
+   *  each line's repeats built entirely from the OTHER line's output — genuine alternation. */
+  private echoLabFbLSelf: GainNode | null = null
+  private echoLabFbLCross: GainNode | null = null
+  private echoLabFbRSelf: GainNode | null = null
+  private echoLabFbRCross: GainNode | null = null
+  private echoLabToneL: BiquadFilterNode | null = null
+  private echoLabToneR: BiquadFilterNode | null = null
+  private echoLabSatL: WaveShaperNode | null = null
+  private echoLabSatR: WaveShaperNode | null = null
+  private echoLabModOsc: OscillatorNode | null = null
+  private echoLabModDepthL: GainNode | null = null
+  private echoLabModDepthR: GainNode | null = null
+  /** 0 in Single (R line's own contribution muted), 1 in Dual. */
+  private echoLabRGain: GainNode | null = null
+  /** L duplicated onto channel 1 in Single mode — same convention as Delay's monoTap/monoOut. */
+  private echoLabMonoTap: GainNode | null = null
+  private echoLabMerger: ChannelMergerNode | null = null
+  /** Width matrix — identical direct/cross-gain technique already proven on Chorus's width knob. */
+  private echoLabSplitter: ChannelSplitterNode | null = null
+  private echoLabWidenDirectL: GainNode | null = null
+  private echoLabWidenDirectR: GainNode | null = null
+  private echoLabWidenCrossL: GainNode | null = null
+  private echoLabWidenCrossR: GainNode | null = null
+  private echoLabWidenMerger: ChannelMergerNode | null = null
+  private echoLabEqLow: BiquadFilterNode | null = null
+  private echoLabEqHigh: BiquadFilterNode | null = null
+  private echoLabWet: GainNode | null = null
+  private echoLabPanIn: GainNode | null = null
+  private echoLabPanner: StereoPannerNode | null = null
+  private echoLabPanOsc: OscillatorNode | null = null
+  private echoLabPanDepth: GainNode | null = null
+  private echoLabOut: GainNode | null = null
+  /** Ducking envelope follower — see the buildFxChain comment by echoLabDuckAnalyser. */
+  private echoLabDuckAnalyser: AnalyserNode | null = null
+  private echoLabDuckGain: GainNode | null = null
+  private echoLabDuckBuffer: Float32Array<ArrayBuffer> = new Float32Array(new ArrayBuffer(512 * Float32Array.BYTES_PER_ELEMENT))
+  /** Smoothed 0..~0.3 "how loud is the dry signal right now", NOT the gain itself — the gain is
+   *  a separate setTargetAtTime ramp computed off this each poll. */
+  private echoLabDuckEnvelope = 0
+  private echoLabDuckTimerId: ReturnType<typeof setInterval> | null = null
+  private echoLabSettings: EchoLabSettings = { ...DEFAULT_ECHO_LAB }
+  /** Last colorDrive a WaveShaper curve was actually built for — regenerating a 256-sample curve
+   *  on every unrelated knob tweak would be wasteful, so setEchoLab only rebuilds it on change. */
+  private echoLabColorDriveApplied = -1
+  /** The dynamic pair of connections reconcileChainOrder last made, so they can be torn down
+   *  cleanly before making a new pair rather than guessing what is currently wired. */
+  private chainOrderConnected: { from: AudioNode; to: AudioNode }[] = []
   private reverbConvolver: ConvolverNode | null = null
   private reverbWet: GainNode | null = null
   private reverbDry: GainNode | null = null
@@ -720,6 +940,7 @@ export class LiveEngine {
       this.setEq(options.eq ?? DEFAULT_EQ)
       this.setDelay(options.delay ?? DEFAULT_DELAY)
       if (options.delayIr) await this.setDelayIr(options.delayIr)
+      this.setEchoLab(options.echoLab ?? DEFAULT_ECHO_LAB)
       this.setChorus(options.chorus ?? DEFAULT_CHORUS)
       this.setReverb(options.reverb ?? DEFAULT_REVERB)
       if (options.reverbIr) await this.setReverbIr(options.reverbIr)
@@ -734,6 +955,10 @@ export class LiveEngine {
       this.outputGain.connect(ctx.destination)
 
       if (options.outputDeviceId) await this.setOutputDevice(options.outputDeviceId)
+
+      // ~33Hz poll for Echo Lab's ducking envelope follower — see the buildFxChain comment by
+      // echoLabDuckAnalyser for why this is a plain timer rather than a worklet.
+      this.echoLabDuckTimerId = setInterval(() => this.updateEchoLabDuck(), 30)
 
       await ctx.resume()
     } catch (error) {
@@ -957,7 +1182,10 @@ export class LiveEngine {
     this.monoTap = ctx.createGain()
     this.monoOut = ctx.createGain()
 
-    this.tremOut.connect(this.delayL)
+    // Junction, not a direct tremOut connection — see reconcileChainOrder. Whatever feeds Delay
+    // (tremOut, or Echo Lab's output when Echo Lab comes first) connects to delayIn instead.
+    this.delayIn = ctx.createGain()
+    this.delayIn.connect(this.delayL)
     this.delayL.connect(this.ppSend)
     this.ppSend.connect(this.delayR)
 
@@ -996,10 +1224,14 @@ export class LiveEngine {
     this.delayMerger.connect(this.delayWet)
     this.delayWet.connect(this.delayPanIn)
     this.delayPanIn.connect(this.delayPanner)
-    this.delayPanner.connect(this.fxMid)
 
-    this.tremOut.connect(this.delayDry)
-    this.delayDry.connect(this.fxMid)
+    this.delayIn.connect(this.delayDry)
+
+    // Combined dry+wet tap — the reroutable "output" of the whole Delay unit. What it connects TO
+    // (fxMid directly, or into Echo Lab) is decided by reconcileChainOrder, not fixed here.
+    this.delayOut = ctx.createGain()
+    this.delayPanner.connect(this.delayOut)
+    this.delayDry.connect(this.delayOut)
 
     // Convolution branch. Built empty; setDelayIr adds the convolver once an impulse is chosen,
     // because unlike a delay line a convolver costs real CPU per block even with nothing to do.
@@ -1018,6 +1250,161 @@ export class LiveEngine {
     this.modDepthL.connect(this.delayL.delayTime)
     this.modDepthR.connect(this.delayR.delayTime)
     this.modOsc.start()
+
+    // ── Echo Lab (shares Delay's rack slot; see the class-field comment above for the topology
+    // diagram). Junction in (echoLabIn) and out (echoLabOut) so reconcileChainOrder can splice
+    // this in before or after Delay without rebuilding anything.
+    this.echoLabIn = ctx.createGain()
+    this.echoLabDry = ctx.createGain()
+    this.echoLabDelayL = ctx.createDelay(MAX_DELAY_SECONDS)
+    this.echoLabDelayR = ctx.createDelay(MAX_DELAY_SECONDS)
+    this.echoLabFeedbackL = ctx.createGain()
+    this.echoLabFeedbackR = ctx.createGain()
+    this.echoLabToneL = ctx.createBiquadFilter()
+    this.echoLabToneL.type = 'lowpass'
+    this.echoLabToneR = ctx.createBiquadFilter()
+    this.echoLabToneR.type = 'lowpass'
+    this.echoLabSatL = ctx.createWaveShaper()
+    this.echoLabSatR = ctx.createWaveShaper()
+
+    this.echoLabIn.connect(this.echoLabDry)
+    this.echoLabIn.connect(this.echoLabDelayL)
+
+    // R's input is gated, not direct — see the field comments on echoLabDualRGain/echoLabPpSend
+    // for why a DelayNode input can't just have two unconditional sources connected to it.
+    this.echoLabDualRGain = ctx.createGain()
+    this.echoLabDualRGain.gain.value = 0
+    this.echoLabIn.connect(this.echoLabDualRGain)
+    this.echoLabDualRGain.connect(this.echoLabDelayR)
+    this.echoLabPpSend = ctx.createGain()
+    this.echoLabPpSend.gain.value = 0
+
+    this.echoLabDelayL.connect(this.echoLabToneL)
+    this.echoLabToneL.connect(this.echoLabSatL)
+    this.echoLabSatL.connect(this.echoLabPpSend)
+    this.echoLabPpSend.connect(this.echoLabDelayR)
+
+    this.echoLabDelayR.connect(this.echoLabToneR)
+    this.echoLabToneR.connect(this.echoLabSatR)
+
+    // Feedback source crossfade — see the field comment on echoLabFbLSelf for the reasoning.
+    this.echoLabFbLSelf = ctx.createGain()
+    this.echoLabFbLSelf.gain.value = 1
+    this.echoLabFbLCross = ctx.createGain()
+    this.echoLabFbLCross.gain.value = 0
+    this.echoLabFbRSelf = ctx.createGain()
+    this.echoLabFbRSelf.gain.value = 1
+    this.echoLabFbRCross = ctx.createGain()
+    this.echoLabFbRCross.gain.value = 0
+
+    this.echoLabSatL.connect(this.echoLabFbLSelf)
+    this.echoLabSatR.connect(this.echoLabFbLCross)
+    this.echoLabFbLSelf.connect(this.echoLabFeedbackL)
+    this.echoLabFbLCross.connect(this.echoLabFeedbackL)
+    this.echoLabFeedbackL.connect(this.echoLabDelayL)
+
+    this.echoLabSatR.connect(this.echoLabFbRSelf)
+    this.echoLabSatL.connect(this.echoLabFbRCross)
+    this.echoLabFbRSelf.connect(this.echoLabFeedbackR)
+    this.echoLabFbRCross.connect(this.echoLabFeedbackR)
+    this.echoLabFeedbackR.connect(this.echoLabDelayR)
+
+    // Merge: L always on ch0. Ch1 crossfades between a mono duplicate of L (Single) and R's own
+    // output (Dual) — same "both paths always wired, selected by gain" convention as Delay's own
+    // ping-pong/mono crossfade, so switching Mode live doesn't click or rebuild anything.
+    this.echoLabRGain = ctx.createGain()
+    this.echoLabRGain.gain.value = 0
+    this.echoLabMonoTap = ctx.createGain()
+    this.echoLabMonoTap.gain.value = 1
+    this.echoLabMerger = ctx.createChannelMerger(2)
+    this.echoLabSatL.connect(this.echoLabMerger, 0, 0)
+    this.echoLabSatL.connect(this.echoLabMonoTap)
+    this.echoLabMonoTap.connect(this.echoLabMerger, 0, 1)
+    this.echoLabSatR.connect(this.echoLabRGain)
+    this.echoLabRGain.connect(this.echoLabMerger, 0, 1)
+
+    // Width — the exact direct/cross gain matrix already proven on Chorus's Width knob, just
+    // applied to Echo Lab's own L/R instead of the two chorus voices.
+    this.echoLabSplitter = ctx.createChannelSplitter(2)
+    this.echoLabMerger.connect(this.echoLabSplitter)
+    this.echoLabWidenDirectL = ctx.createGain()
+    this.echoLabWidenDirectR = ctx.createGain()
+    this.echoLabWidenCrossL = ctx.createGain()
+    this.echoLabWidenCrossR = ctx.createGain()
+    this.echoLabWidenMerger = ctx.createChannelMerger(2)
+    this.echoLabSplitter.connect(this.echoLabWidenDirectL, 0)
+    this.echoLabSplitter.connect(this.echoLabWidenCrossL, 0)
+    this.echoLabSplitter.connect(this.echoLabWidenDirectR, 1)
+    this.echoLabSplitter.connect(this.echoLabWidenCrossR, 1)
+    this.echoLabWidenDirectL.connect(this.echoLabWidenMerger, 0, 0)
+    this.echoLabWidenCrossR.connect(this.echoLabWidenMerger, 0, 0)
+    this.echoLabWidenDirectR.connect(this.echoLabWidenMerger, 0, 1)
+    this.echoLabWidenCrossL.connect(this.echoLabWidenMerger, 0, 1)
+
+    // EQ Low/High — wet-only, mirroring Reverb's own lowDb/highDb shelving exactly (same corner
+    // frequencies): it shapes the OVERALL effect, separate from the Character-driven tone filter
+    // living inside each feedback loop above, which shapes the repeats themselves.
+    this.echoLabEqLow = ctx.createBiquadFilter()
+    this.echoLabEqLow.type = 'lowshelf'
+    this.echoLabEqLow.frequency.value = REVERB_LOW_SHELF_HZ
+    this.echoLabEqHigh = ctx.createBiquadFilter()
+    this.echoLabEqHigh.type = 'highshelf'
+    this.echoLabEqHigh.frequency.value = REVERB_HIGH_SHELF_HZ
+    this.echoLabWidenMerger.connect(this.echoLabEqLow)
+    this.echoLabEqLow.connect(this.echoLabEqHigh)
+
+    this.echoLabWet = ctx.createGain()
+    this.echoLabWet.gain.value = 0
+    this.echoLabEqHigh.connect(this.echoLabWet)
+
+    // Ducking — an envelope follower reading the DRY signal feeding this unit (echoLabIn, tapped
+    // passively via an AnalyserNode so it does not affect the audio) drives echoLabDuckGain down
+    // while you play and lets it back up in the gaps. No AudioWorklet: a plain setInterval poll
+    // (see updateEchoLabDuck) is simple, doesn't need a new processor module, and 30ms resolution
+    // is plenty for something that is meant to breathe with playing dynamics, not track sample-
+    // accurately — this is the first envelope follower anywhere in this engine.
+    this.echoLabDuckAnalyser = ctx.createAnalyser()
+    this.echoLabDuckAnalyser.fftSize = 512
+    this.echoLabIn.connect(this.echoLabDuckAnalyser)
+    this.echoLabDuckGain = ctx.createGain()
+    this.echoLabDuckGain.gain.value = 1
+    this.echoLabWet.connect(this.echoLabDuckGain)
+
+    // Auto-pan — Echo Lab's own sweep, independent of Delay's, same mechanism.
+    this.echoLabPanIn = ctx.createGain()
+    this.echoLabPanIn.channelCount = 2
+    this.echoLabPanIn.channelCountMode = 'explicit'
+    this.echoLabPanIn.channelInterpretation = 'speakers'
+    this.echoLabPanner = ctx.createStereoPanner()
+    this.echoLabPanOsc = ctx.createOscillator()
+    this.echoLabPanOsc.type = 'sine'
+    this.echoLabPanOsc.frequency.value = this.echoLabSettings.panRateHz
+    this.echoLabPanDepth = ctx.createGain()
+    this.echoLabPanDepth.gain.value = 0
+    this.echoLabPanOsc.connect(this.echoLabPanDepth)
+    this.echoLabPanDepth.connect(this.echoLabPanner.pan)
+    this.echoLabPanOsc.start()
+    this.echoLabDuckGain.connect(this.echoLabPanIn)
+    this.echoLabPanIn.connect(this.echoLabPanner)
+
+    this.echoLabOut = ctx.createGain()
+    this.echoLabPanner.connect(this.echoLabOut)
+    this.echoLabDry.connect(this.echoLabOut)
+
+    // Modulation LFO — wow/flutter (Tape) or the Deluxe Memory Man's own built-in chorus
+    // (Memory Man), same delayTime-modulation trick as Delay's Mod knob. Silent under Digital,
+    // which has no modulation-flavored Character knob at all; see setEchoLab.
+    this.echoLabModOsc = ctx.createOscillator()
+    this.echoLabModOsc.type = 'sine'
+    this.echoLabModDepthL = ctx.createGain()
+    this.echoLabModDepthR = ctx.createGain()
+    this.echoLabModDepthL.gain.value = 0
+    this.echoLabModDepthR.gain.value = 0
+    this.echoLabModOsc.connect(this.echoLabModDepthL)
+    this.echoLabModOsc.connect(this.echoLabModDepthR)
+    this.echoLabModDepthL.connect(this.echoLabDelayL.delayTime)
+    this.echoLabModDepthR.connect(this.echoLabDelayR.delayTime)
+    this.echoLabModOsc.start()
 
     // ── Reverb tone (third), on the WET path only.
     //
@@ -1041,6 +1428,47 @@ export class LiveEngine {
     this.reverbDry.gain.value = 1
     this.fxMid.connect(this.reverbDry)
     this.reverbDry.connect(this.outputGain)
+
+    // tremOut -> {Delay, Echo Lab in some order} -> fxMid — see reconcileChainOrder.
+    this.reconcileChainOrder()
+  }
+
+  /**
+   * Splices Delay and Echo Lab into series in whichever order Echo Lab's own
+   * secondaryDelayPosition asks for, by connecting/disconnecting exactly the two dynamic hops
+   * (tremOut -> first unit's *In, last unit's *Out -> fxMid) rather than rebuilding either unit's
+   * internal graph. Called once at startup and again only when that setting actually changes —
+   * this is a deliberate, infrequent settings change, not a per-note hot path, so a couple of
+   * disconnect/reconnect calls are fine even though they are not click-free the way a gain ramp is.
+   */
+  private reconcileChainOrder(): void {
+    if (!this.tremOut || !this.delayIn || !this.delayOut || !this.echoLabIn || !this.echoLabOut || !this.fxMid) return
+
+    for (const { from, to } of this.chainOrderConnected) {
+      try {
+        from.disconnect(to)
+      } catch {
+        // Already disconnected.
+      }
+    }
+    this.chainOrderConnected = []
+
+    const connect = (from: AudioNode, to: AudioNode): void => {
+      from.connect(to)
+      this.chainOrderConnected.push({ from, to })
+    }
+
+    if (this.echoLabSettings.secondaryDelayPosition === 'before') {
+      // Delay -> Echo Lab -> fxMid (the confirmed default order).
+      connect(this.tremOut, this.delayIn)
+      connect(this.delayOut, this.echoLabIn)
+      connect(this.echoLabOut, this.fxMid)
+    } else {
+      // Echo Lab -> Delay -> fxMid.
+      connect(this.tremOut, this.echoLabIn)
+      connect(this.echoLabOut, this.delayIn)
+      connect(this.delayOut, this.fxMid)
+    }
   }
 
   get gateConfig(): GateSettings {
@@ -1371,6 +1799,182 @@ export class LiveEngine {
     if (this.delayPanDepth) {
       this.delayPanDepth.gain.linearRampToValueAtTime(next.panEnabled ? 1 : 0, now + RAMP)
     }
+  }
+
+  get echoLab(): EchoLabSettings {
+    return { ...this.echoLabSettings }
+  }
+
+  /**
+   * Apply Echo Lab settings. Ducking's own knobs (duckEnabled/duckDepth/duckReleaseMs) are
+   * accepted and clamped here but not yet READ by any node — no envelope follower exists in this
+   * engine yet. Everything else is fully live: Single/Dual topology, all three Characters, EQ,
+   * Color/Drive, Width, Pan, and the series position relative to the orange Delay.
+   */
+  setEchoLab(settings: Partial<EchoLabSettings>): void {
+    const prevOrder = this.echoLabSettings.secondaryDelayPosition
+    const next: EchoLabSettings = { ...this.echoLabSettings, ...settings }
+    next.mix = Math.max(0, Math.min(1, next.mix))
+    next.timeMs = Math.max(1, Math.min(MAX_DELAY_SECONDS * 1000, next.timeMs))
+    next.feedback = Math.max(0, Math.min(MAX_FEEDBACK, next.feedback))
+    // Number.isFinite guard, not just clamping — same defensive reasoning as the orange Delay's
+    // own pingPongWidth: a settings object missing this field (an old preset) would otherwise
+    // propagate NaN into the crossfade gains below.
+    next.pingPongWidth = Number.isFinite(next.pingPongWidth) ? Math.max(0, Math.min(1, next.pingPongWidth)) : 0
+    next.leftTimeMs = Math.max(1, Math.min(MAX_DELAY_SECONDS * 1000, next.leftTimeMs))
+    next.rightTimeMs = Math.max(1, Math.min(MAX_DELAY_SECONDS * 1000, next.rightTimeMs))
+    next.leftFeedback = Math.max(0, Math.min(MAX_FEEDBACK, next.leftFeedback))
+    next.rightFeedback = Math.max(0, Math.min(MAX_FEEDBACK, next.rightFeedback))
+    next.spread = Math.max(0, Math.min(1, next.spread))
+    next.colorDrive = Math.max(0, Math.min(1, next.colorDrive))
+    next.width = Math.max(0, Math.min(1, next.width))
+    next.eqLowDb = Math.max(-REVERB_EQ_MAX_DB, Math.min(REVERB_EQ_MAX_DB, next.eqLowDb))
+    next.eqHighDb = Math.max(-REVERB_EQ_MAX_DB, Math.min(REVERB_EQ_MAX_DB, next.eqHighDb))
+    next.duckDepth = Math.max(0, Math.min(1, next.duckDepth))
+    next.duckReleaseMs = Math.max(20, Math.min(2000, next.duckReleaseMs))
+    next.panRateHz = Math.max(MIN_PAN_RATE_HZ, Math.min(MAX_PAN_RATE_HZ, next.panRateHz))
+    next.modRateHz = Math.max(MIN_PAN_RATE_HZ, Math.min(MAX_PAN_RATE_HZ, next.modRateHz))
+    // char1/char2's valid range depends on which Character is selected — same knob, different
+    // meaning, so the clamp has to be looked up rather than fixed. Mirrors RackEchoLab's own
+    // CHAR1_RANGE/CHAR2_RANGE tables; keep the two in sync if either changes.
+    const char1Range: [number, number] =
+      next.character === 'tape' ? [0, MAX_MOD_DEPTH_MS] : next.character === 'memoryman' ? [500, 8000] : [-12, 12]
+    const char2Range: [number, number] = next.character === 'memoryman' ? [0, MAX_MOD_DEPTH_MS] : [0, 1]
+    next.char1 = Math.max(char1Range[0], Math.min(char1Range[1], next.char1))
+    next.char2 = Math.max(char2Range[0], Math.min(char2Range[1], next.char2))
+    this.echoLabSettings = next
+
+    const ctx = this.ctx
+    if (!ctx) return
+    const now = ctx.currentTime
+    const RAMP = 0.05
+    const single = next.topology === 'single'
+
+    const leftSec = (single ? next.timeMs : next.leftTimeMs) / 1000
+    // Spread pulls Right away from Left's own time, symmetrically — the same "one knob instead of
+    // two independent numbers" idea as the orange Delay's ping-pong-width fader.
+    const rightSec = single
+      ? leftSec
+      : Math.max(0.001, Math.min(MAX_DELAY_SECONDS, (next.rightTimeMs / 1000) * (1 + next.spread)))
+
+    this.echoLabDelayL?.delayTime.linearRampToValueAtTime(Math.min(leftSec, MAX_DELAY_SECONDS), now + RAMP)
+    this.echoLabDelayR?.delayTime.linearRampToValueAtTime(rightSec, now + RAMP)
+    this.echoLabFeedbackL?.gain.linearRampToValueAtTime(single ? next.feedback : next.leftFeedback, now + RAMP)
+    this.echoLabFeedbackR?.gain.linearRampToValueAtTime(single ? next.feedback : next.rightFeedback, now + RAMP)
+
+    // Ping-Pong (Single) vs independent Dual — both topologies stay wired, selected entirely by
+    // gain, same convention as everywhere else in this file. pp is 0 in Dual (meaningless there,
+    // Spread already provides real stereo) and next.pingPongWidth in Single.
+    const pp = single ? next.pingPongWidth : 0
+    this.echoLabDualRGain?.gain.linearRampToValueAtTime(single ? 0 : 1, now + RAMP)
+    this.echoLabPpSend?.gain.linearRampToValueAtTime(pp, now + RAMP)
+    this.echoLabFbLSelf?.gain.linearRampToValueAtTime(single ? 1 - pp : 1, now + RAMP)
+    this.echoLabFbLCross?.gain.linearRampToValueAtTime(single ? pp : 0, now + RAMP)
+    this.echoLabFbRSelf?.gain.linearRampToValueAtTime(single ? 1 - pp : 1, now + RAMP)
+    this.echoLabFbRCross?.gain.linearRampToValueAtTime(single ? pp : 0, now + RAMP)
+    // R's contribution to the stereo merge now reflects Ping-Pong being engaged, not just Dual.
+    this.echoLabRGain?.gain.linearRampToValueAtTime(single ? pp : 1, now + RAMP)
+    this.echoLabMonoTap?.gain.linearRampToValueAtTime(single ? 1 - pp : 0, now + RAMP)
+
+    // Character drives the feedback-loop tone filter, and which char1/char2 knob (if either)
+    // feeds the modulation LFO. Digital stays effectively transparent regardless of char1's Tilt
+    // value living in a wide, near-inaudible range rather than a separate filter node.
+    let toneHz: number
+    let modDepthMsL: number
+    if (next.character === 'tape') {
+      toneHz = 8000 - next.char2 * 6000
+      modDepthMsL = next.char1
+    } else if (next.character === 'memoryman') {
+      toneHz = next.char1
+      modDepthMsL = next.char2
+    } else {
+      toneHz = 6000 + ((next.char1 + 12) / 24) * 12000
+      modDepthMsL = 0
+    }
+    const toneClamped = Math.max(200, Math.min(18000, toneHz))
+    this.echoLabToneL?.frequency.linearRampToValueAtTime(toneClamped, now + RAMP)
+    this.echoLabToneR?.frequency.linearRampToValueAtTime(toneClamped, now + RAMP)
+
+    const modDepthSec = (next.character === 'digital' ? 0 : modDepthMsL) / 1000
+    if (this.echoLabModOsc) this.echoLabModOsc.frequency.linearRampToValueAtTime(next.modRateHz, now + RAMP)
+    this.echoLabModDepthL?.gain.linearRampToValueAtTime(modDepthSec, now + RAMP)
+    this.echoLabModDepthR?.gain.linearRampToValueAtTime(-modDepthSec, now + RAMP)
+
+    // A WaveShaper curve isn't an AudioParam — only rebuild it when Color/Drive actually changed.
+    if (next.colorDrive !== this.echoLabColorDriveApplied) {
+      const curve = makeSoftClipCurve(next.colorDrive)
+      if (this.echoLabSatL) this.echoLabSatL.curve = curve
+      if (this.echoLabSatR) this.echoLabSatR.curve = curve
+      this.echoLabColorDriveApplied = next.colorDrive
+    }
+
+    const wet = next.enabled ? next.mix : 0
+    if (this.echoLabWet) {
+      this.echoLabWet.gain.setValueAtTime(this.echoLabWet.gain.value, now)
+      this.echoLabWet.gain.linearRampToValueAtTime(wet, now + RAMP)
+    }
+    if (this.echoLabDry) this.echoLabDry.gain.linearRampToValueAtTime(1, now + RAMP)
+
+    const direct = 0.5 + next.width / 2
+    const cross = 0.5 - next.width / 2
+    this.echoLabWidenDirectL?.gain.linearRampToValueAtTime(direct, now + RAMP)
+    this.echoLabWidenDirectR?.gain.linearRampToValueAtTime(direct, now + RAMP)
+    this.echoLabWidenCrossL?.gain.linearRampToValueAtTime(cross, now + RAMP)
+    this.echoLabWidenCrossR?.gain.linearRampToValueAtTime(cross, now + RAMP)
+
+    this.echoLabEqLow?.gain.linearRampToValueAtTime(next.eqLowDb, now + RAMP)
+    this.echoLabEqHigh?.gain.linearRampToValueAtTime(next.eqHighDb, now + RAMP)
+
+    if (this.echoLabPanOsc) this.echoLabPanOsc.frequency.linearRampToValueAtTime(next.panRateHz, now + RAMP)
+    this.echoLabPanDepth?.gain.linearRampToValueAtTime(next.panEnabled ? 1 : 0, now + RAMP)
+
+    if (next.secondaryDelayPosition !== prevOrder) this.reconcileChainOrder()
+  }
+
+  /**
+   * Ducking's envelope follower, polled from a setInterval (see start()) rather than driven by
+   * onaudioprocess/AudioWorklet — this only needs to breathe with playing dynamics, not track
+   * sample-accurately, so a ~33Hz JS poll is the simplest thing that is actually correct.
+   *
+   * Two time constants smoothed separately: the ENVELOPE itself (how "loud right now" is tracked
+   * off the raw RMS, fast attack / user's Release on the way down) and the GAIN ramp applied to
+   * the wet signal (a short fixed setTargetAtTime, just enough to avoid zipper noise) — conflating
+   * these into one smoothing stage would make Release also control how fast ducking ENGAGES, which
+   * is backwards from how a real ducker's attack/release knobs behave.
+   */
+  private updateEchoLabDuck(): void {
+    const ctx = this.ctx
+    if (!ctx || !this.echoLabDuckAnalyser || !this.echoLabDuckGain) return
+    const settings = this.echoLabSettings
+    const now = ctx.currentTime
+
+    if (!settings.duckEnabled) {
+      this.echoLabDuckGain.gain.setTargetAtTime(1, now, 0.05)
+      this.echoLabDuckEnvelope = 0
+      return
+    }
+
+    this.echoLabDuckAnalyser.getFloatTimeDomainData(this.echoLabDuckBuffer)
+    let sumSq = 0
+    for (let i = 0; i < this.echoLabDuckBuffer.length; i++) {
+      const v = this.echoLabDuckBuffer[i]
+      sumSq += v * v
+    }
+    const rms = Math.sqrt(sumSq / this.echoLabDuckBuffer.length)
+
+    const POLL_SEC = 0.03
+    const ATTACK_TC = 0.01
+    const releaseTc = Math.max(0.02, settings.duckReleaseMs / 1000)
+    const tc = rms > this.echoLabDuckEnvelope ? ATTACK_TC : releaseTc
+    const alpha = 1 - Math.exp(-POLL_SEC / tc)
+    this.echoLabDuckEnvelope += (rms - this.echoLabDuckEnvelope) * alpha
+
+    // Linear map off RMS rather than a hard threshold/gate, so the duck breathes with playing
+    // dynamics instead of snapping — 0.15 is comfortably inside normal playing level, chosen so
+    // full duckDepth is reached on ordinary playing rather than only on a hard-picked peak.
+    const drive = Math.min(1, this.echoLabDuckEnvelope / 0.15)
+    const targetGain = 1 - drive * settings.duckDepth
+    this.echoLabDuckGain.gain.setTargetAtTime(targetGain, now, 0.02)
   }
 
   get reverbMixValue(): number {
@@ -1727,6 +2331,11 @@ export class LiveEngine {
   }
 
   async stop(): Promise<void> {
+    if (this.echoLabDuckTimerId) {
+      clearInterval(this.echoLabDuckTimerId)
+      this.echoLabDuckTimerId = null
+    }
+
     // Release the mic promptly — an open input device is user-visible (OS indicators) and can
     // block other apps from grabbing the interface.
     this.stream?.getTracks().forEach((track) => track.stop())
@@ -1882,6 +2491,62 @@ export class LiveEngine {
     this.modDepthL = null
     this.modDepthR = null
     this.delaySettings = { ...DEFAULT_DELAY }
+    this.delayIn = null
+    this.delayOut = null
+    this.echoLabIn = null
+    this.echoLabDry = null
+    this.echoLabDelayL = null
+    this.echoLabDelayR = null
+    this.echoLabDualRGain = null
+    this.echoLabPpSend = null
+    this.echoLabFeedbackL = null
+    this.echoLabFeedbackR = null
+    this.echoLabFbLSelf = null
+    this.echoLabFbLCross = null
+    this.echoLabFbRSelf = null
+    this.echoLabFbRCross = null
+    this.echoLabToneL = null
+    this.echoLabToneR = null
+    this.echoLabSatL = null
+    this.echoLabSatR = null
+    try {
+      this.echoLabModOsc?.stop()
+      this.echoLabModOsc?.disconnect()
+    } catch {
+      // Never started, or already stopped.
+    }
+    this.echoLabModOsc = null
+    this.echoLabModDepthL = null
+    this.echoLabModDepthR = null
+    this.echoLabRGain = null
+    this.echoLabMonoTap = null
+    this.echoLabMerger = null
+    this.echoLabSplitter = null
+    this.echoLabWidenDirectL = null
+    this.echoLabWidenDirectR = null
+    this.echoLabWidenCrossL = null
+    this.echoLabWidenCrossR = null
+    this.echoLabWidenMerger = null
+    this.echoLabEqLow = null
+    this.echoLabEqHigh = null
+    this.echoLabWet = null
+    this.echoLabPanIn = null
+    this.echoLabPanner = null
+    try {
+      this.echoLabPanOsc?.stop()
+      this.echoLabPanOsc?.disconnect()
+    } catch {
+      // Never started, or already stopped.
+    }
+    this.echoLabPanOsc = null
+    this.echoLabPanDepth = null
+    this.echoLabOut = null
+    this.echoLabDuckAnalyser = null
+    this.echoLabDuckGain = null
+    this.echoLabDuckEnvelope = 0
+    this.echoLabSettings = { ...DEFAULT_ECHO_LAB }
+    this.echoLabColorDriveApplied = -1
+    this.chainOrderConnected = []
     this.reverbConvolver = null
     this.reverbWet = null
     this.reverbDry = null

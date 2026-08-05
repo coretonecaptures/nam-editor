@@ -72,7 +72,8 @@ export function RackButton({
   widthPct,
   heightPct,
   onClick,
-  locked = false
+  locked = false,
+  pressed
 }: {
   label: string
   centerXPct: number
@@ -83,6 +84,15 @@ export function RackButton({
   /** Dims and disables the button without hiding it — for a switch that is wired up but does
    *  nothing in the unit's current mode. */
   locked?: boolean
+  /**
+   * CSS-only stand-in for a rocker physically tilting between up (off) and down (on) — there is
+   * no second photographed switch position to composite in, so this is a shadow/highlight shift
+   * on top of the single static photo, not a real tilt. Omit (undefined) to keep every other
+   * unit's switches exactly as before: no overlay at all, LED-only state, same as always. Pass
+   * true/false only where a rocker's own on/off state should read on the switch body itself, not
+   * just its LED.
+   */
+  pressed?: boolean
 }) {
   return (
     <button
@@ -107,6 +117,21 @@ export function RackButton({
         transition: 'opacity .15s'
       }}
     >
+      {pressed !== undefined && (
+        <span
+          className="pointer-events-none block w-full h-full rounded-[3px] absolute inset-0"
+          style={{
+            // Up (off): faint top highlight, as if catching light from above. Down (on): the
+            // shadow flips to the top edge instead, as if the rocker tipped away from the light
+            // toward the viewer at its bottom edge — cheap, but reads as a state change at a
+            // glance without needing a second photographed switch position.
+            boxShadow: pressed
+              ? 'inset 0 3px 5px rgba(0,0,0,0.55), inset 0 -1px 0 rgba(255,255,255,0.08)'
+              : 'inset 0 -2px 4px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.12)',
+            transition: 'box-shadow 0.15s'
+          }}
+        />
+      )}
       <span
         className="block w-full h-full rounded-[3px] opacity-0 group-active:opacity-100 group-active:translate-y-[1px] transition-[opacity,transform] duration-75"
         style={{ background: 'rgba(0,0,0,0.55)', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.8)' }}

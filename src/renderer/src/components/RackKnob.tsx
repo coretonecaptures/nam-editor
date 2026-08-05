@@ -23,7 +23,8 @@ export function RackKnob({
   format,
   image = rackKnobBlack,
   resetTo,
-  locked = false
+  locked = false,
+  raised = false
 }: {
   /** Current value, in the knob's own units (caller's min..max). */
   value: number
@@ -50,6 +51,10 @@ export function RackKnob({
    *  nothing in the unit's current mode (e.g. an algorithmic-only knob while Convolution is
    *  selected), so it stops inviting a turn that has no audible effect. */
   locked?: boolean
+  /** Adds a drop-shadow so the knob reads as sitting proud of the plate rather than flush/sunk
+   *  into it. Off by default — Delay/Reverb's existing knob art already reads correctly without
+   *  it, and adding it there would be an unrequested visual change. */
+  raised?: boolean
 }) {
   const dragRef = useRef<{ startY: number; startValue: number } | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -118,9 +123,7 @@ export function RackKnob({
         touchAction: 'none',
         background: 'none',
         border: 'none',
-        padding: 0,
-        opacity: locked ? 0.4 : 1,
-        transition: 'opacity .15s'
+        padding: 0
       }}
     >
       <img
@@ -132,6 +135,14 @@ export function RackKnob({
           height: '100%',
           display: 'block',
           transform: `rotate(${angle}deg)`,
+          // Solid but desaturated/darkened, not faded — an inert control still needs to read as
+          // a real physical knob sitting on the panel, not a translucent ghost of one. Raised
+          // shadow layers on top when both apply (a locked knob is still a raised knob).
+          filter: [
+            raised ? 'drop-shadow(0 3px 3px rgba(0,0,0,0.65))' : '',
+            locked ? 'grayscale(1) brightness(0.55)' : ''
+          ].filter(Boolean).join(' ') || 'none',
+          transition: 'filter .15s',
           pointerEvents: 'none',
           userSelect: 'none'
         }}

@@ -19,9 +19,10 @@ import loopBarLit from '../assets/transport/loop-bar-lit.png'
 import transportPanelBg from '../assets/transport/panel-bg.jpg'
 import { NamFile } from '../types/nam'
 import { namToneChipClass } from '../assets/gear'
-import type { ChorusPreset, DelayPreset, PlayGroup, ReverbPreset, RigPreset, RigSnapshot } from '../types/settings'
+import type { ChorusPreset, DelayPreset, EchoLabPreset, PlayGroup, ReverbPreset, RigPreset, RigSnapshot } from '../types/settings'
 import { RackReverbTest } from './RackReverbTest'
 import { RackDelay } from './RackDelay'
+import { RackEchoLab, CHAR1_RANGE, CHAR2_RANGE, DEFAULT_CHAR1, DEFAULT_CHAR2, pingPongFormat } from './RackEchoLab'
 import { RackCrop, RACK_CROP } from './RackCrop'
 import { RackColumn } from './RackColumn'
 import { PresetMenu } from './PresetMenu'
@@ -33,6 +34,7 @@ import { getCaptureBestEsr, getEsrTone } from '../utils/esr'
 import {
   DEFAULT_CHORUS,
   DEFAULT_DELAY,
+  DEFAULT_ECHO_LAB,
   DEFAULT_EQ,
   DEFAULT_GATE,
   DEFAULT_REVERB,
@@ -52,6 +54,8 @@ import {
   listAudioOutputs,
   type ChorusSettings,
   type DelaySettings,
+  type DelaySlotView,
+  type EchoLabSettings,
   type EqSettings,
   type GateSettings,
   type LiveDeviceInfo,
@@ -154,6 +158,8 @@ const DELAY_PREF_KEY = 'nam-player-delay'
 const REVERB_PREF_KEY = 'nam-player-reverb'
 const DELAY_IR_PREF_KEY = 'nam-player-delay-ir'
 const REVERB_SETTINGS_PREF_KEY = 'nam-player-reverb-settings'
+const ECHO_LAB_PREF_KEY = 'nam-player-echo-lab'
+const DELAY_SLOT_VIEW_PREF_KEY = 'nam-player-delay-slot-view'
 const CHORUS_PREF_KEY = 'nam-player-chorus'
 const EQ_PREF_KEY = 'nam-player-eq'
 const GATE_PREF_KEY = 'nam-player-gate'
@@ -261,10 +267,12 @@ interface PlayerPanelProps {
   chorusPresets?: ChorusPreset[]
   delayPresets?: DelayPreset[]
   reverbPresets?: ReverbPreset[]
+  echoLabPresets?: EchoLabPreset[]
   rigPresets?: RigPreset[]
   onChorusPresetsChange?: (presets: ChorusPreset[]) => void
   onDelayPresetsChange?: (presets: DelayPreset[]) => void
   onReverbPresetsChange?: (presets: ReverbPreset[]) => void
+  onEchoLabPresetsChange?: (presets: EchoLabPreset[]) => void
   onRigPresetsChange?: (presets: RigPreset[]) => void
   /** Play groups — a hand-picked scope the stepper can drive from instead of the current folder. */
   playGroups?: PlayGroup[]
@@ -462,10 +470,12 @@ export function PlayerPanel({
   chorusPresets = [],
   delayPresets = [],
   reverbPresets = [],
+  echoLabPresets = [],
   rigPresets = [],
   onChorusPresetsChange,
   onDelayPresetsChange,
   onReverbPresetsChange,
+  onEchoLabPresetsChange,
   onRigPresetsChange,
   playGroups = [],
   activeGroupName = null,
@@ -535,6 +545,10 @@ export function PlayerPanel({
   const [inputChannel, setInputChannel] = useState<number>(() => loadStoredNumber(INPUT_CHANNEL_PREF_KEY, 0))
   const [channelPeaks, setChannelPeaks] = useState<number[]>([])
   const [delay, setDelayState] = useState<DelaySettings>(() => loadPref(DELAY_PREF_KEY, DEFAULT_DELAY))
+  // Echo Lab shares Delay's rack slot — settings persist and both units keep running regardless
+  // of which panel is currently drawn; delaySlotView controls ONLY which panel is shown.
+  const [echoLab, setEchoLabState] = useState<EchoLabSettings>(() => loadPref(ECHO_LAB_PREF_KEY, DEFAULT_ECHO_LAB))
+  const [delaySlotView, setDelaySlotView] = useState<DelaySlotView>(() => loadPref(DELAY_SLOT_VIEW_PREF_KEY, 'echo-lab' as DelaySlotView))
   const [reverb, setReverbState] = useState<ReverbSettings>(() => loadPref(REVERB_SETTINGS_PREF_KEY, DEFAULT_REVERB))
   const [chorus, setChorusState] = useState<ChorusSettings>(() => loadPref(CHORUS_PREF_KEY, DEFAULT_CHORUS))
   const [eq, setEqState] = useState<EqSettings>(() => loadPref(EQ_PREF_KEY, DEFAULT_EQ))
@@ -1153,6 +1167,7 @@ export function PlayerPanel({
         gate: effectiveGate,
         eq: effectiveEq,
         delay,
+        echoLab,
         reverb,
         chorus: effectiveChorus,
         reverbIr:
@@ -1313,6 +1328,15 @@ export function PlayerPanel({
   }, [delay])
 
   useEffect(() => {
+    liveEngineRef.current?.setEchoLab(echoLab)
+    savePref(ECHO_LAB_PREF_KEY, echoLab)
+  }, [echoLab])
+
+  useEffect(() => {
+    savePref(DELAY_SLOT_VIEW_PREF_KEY, delaySlotView)
+  }, [delaySlotView])
+
+  useEffect(() => {
     liveEngineRef.current?.setReverb(reverb)
     savePref(REVERB_SETTINGS_PREF_KEY, reverb)
   }, [reverb])
@@ -1375,6 +1399,7 @@ export function PlayerPanel({
       pedalEnabled: preEnabled
     }))?.id ?? null
   const activeChorusPresetId = chorusPresets.find((p) => sameSettings(p.settings, chorus))?.id ?? null
+  const activeEchoLabPresetId = echoLabPresets.find((p) => sameSettings(p.settings, echoLab))?.id ?? null
   const activeDelayPresetId = delayPresets.find((p) => sameSettings(p.settings, delay) && p.irPath === delayIrPath)?.id ?? null
   const activeReverbPresetId = reverbPresets.find((p) => sameSettings(p.settings, reverb) && p.irPath === reverbPath)?.id ?? null
 
@@ -1393,6 +1418,25 @@ export function PlayerPanel({
   const deleteChorusPreset = useCallback(
     (id: string) => onChorusPresetsChange?.(chorusPresets.filter((p) => p.id !== id)),
     [chorusPresets, onChorusPresetsChange]
+  )
+
+  const applyEchoLabPreset = useCallback(
+    // Merged over the default, same reasoning as every other applyXPreset here — protects a
+    // preset saved before some future field existed from leaking undefined into the engine.
+    (settings: EchoLabSettings) => setEchoLabState({ ...DEFAULT_ECHO_LAB, ...settings }),
+    []
+  )
+  const saveEchoLabPreset = useCallback(
+    (name: string) => {
+      onEchoLabPresetsChange?.(
+        upsertPreset(echoLabPresets, name, (id) => ({ id, name, settings: { ...echoLab } }))
+      )
+    },
+    [echoLabPresets, echoLab, onEchoLabPresetsChange]
+  )
+  const deleteEchoLabPreset = useCallback(
+    (id: string) => onEchoLabPresetsChange?.(echoLabPresets.filter((p) => p.id !== id)),
+    [echoLabPresets, onEchoLabPresetsChange]
   )
 
   const applyDelayPreset = useCallback((settings: DelaySettings, irPath?: string | null) => {
@@ -2153,6 +2197,166 @@ export function PlayerPanel({
         </FxCard>
       </div>
 
+      {/* Echo Lab — full width, same footing as Reverb below it: this has the most controls of
+          any block here (Single/Dual topology, three Characters, Ducking), so it needs the room.
+          Shares no state with the orange Delay above other than the series-routing order the rack
+          view's toggle also controls; both are independent FX blocks in this simple view, not a
+          view-swap like the rack panel. */}
+      <div className="mt-3">
+        <FxCard
+          label="Echo Lab"
+          enabled={echoLab.enabled}
+          onToggle={(v) => setEchoLabState((e) => ({ ...e, enabled: v }))}
+          summary={echoLab.enabled ? `${Math.round(echoLab.mix * 100)}% · ${echoLab.character}` : 'off'}
+          header={
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <div className="flex rounded-md bg-gray-100 dark:bg-[var(--field)] border border-gray-200 dark:border-[var(--border)] p-0.5">
+                {(['single', 'dual'] as const).map((topology) => (
+                  <button
+                    key={topology}
+                    onClick={() => setEchoLabState((e) => ({ ...e, topology }))}
+                    className={`h-[22px] px-2 rounded text-[11px] font-medium capitalize transition-colors ${
+                      echoLab.topology === topology
+                        ? 'bg-white dark:bg-[#232c36] text-gray-900 dark:text-gray-100 shadow-sm'
+                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                    }`}
+                  >
+                    {topology}
+                  </button>
+                ))}
+              </div>
+              <div className="flex rounded-md bg-gray-100 dark:bg-[var(--field)] border border-gray-200 dark:border-[var(--border)] p-0.5">
+                {([['digital', 'Digital'], ['tape', 'Tape'], ['memoryman', 'Memory Man']] as const).map(([character, characterLabel]) => (
+                  <button
+                    key={character}
+                    onClick={() => setEchoLabState((e) => ({ ...e, character, char1: DEFAULT_CHAR1[character], char2: DEFAULT_CHAR2[character] }))}
+                    className={`h-[22px] px-2 rounded text-[11px] font-medium transition-colors ${
+                      echoLab.character === character
+                        ? 'bg-white dark:bg-[#232c36] text-gray-900 dark:text-gray-100 shadow-sm'
+                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                    }`}
+                  >
+                    {characterLabel}
+                  </button>
+                ))}
+              </div>
+            </div>
+          }
+        >
+          <FxPresetBar
+            presets={echoLabPresets}
+            onApply={applyEchoLabPreset}
+            onSave={saveEchoLabPreset}
+            onDelete={deleteEchoLabPreset}
+          />
+          <div style={fxCardGrid}>
+            <FxSlider compact={fxCompact} label="Mix" value={echoLab.mix} min={0} max={1} step={0.01}
+              format={(v) => `${Math.round(v * 100)}%`}
+              onChange={(v) => setEchoLabState((e) => ({ ...e, mix: v }))} />
+            <FxSlider compact={fxCompact} label={echoLab.topology === 'single' ? 'Time' : 'L Delay'}
+              value={echoLab.topology === 'single' ? echoLab.timeMs : echoLab.leftTimeMs} min={20} max={1200} step={5}
+              format={(v) => `${Math.round(v)} ms`}
+              onChange={(v) => setEchoLabState((e) => (e.topology === 'single' ? { ...e, timeMs: v } : { ...e, leftTimeMs: v }))} />
+            <FxSlider compact={fxCompact} label={echoLab.topology === 'single' ? 'Feedback' : 'L Feedback'}
+              value={echoLab.topology === 'single' ? echoLab.feedback : echoLab.leftFeedback} min={0} max={MAX_FEEDBACK} step={0.01}
+              format={(v) => `${Math.round(v * 100)}%`}
+              onChange={(v) => setEchoLabState((e) => (e.topology === 'single' ? { ...e, feedback: v } : { ...e, leftFeedback: v }))} />
+            {echoLab.topology === 'dual' && (
+              <>
+                <FxSlider compact={fxCompact} label="R Delay" value={echoLab.rightTimeMs} min={20} max={1200} step={5}
+                  format={(v) => `${Math.round(v)} ms`}
+                  onChange={(v) => setEchoLabState((e) => ({ ...e, rightTimeMs: v }))} />
+                <FxSlider compact={fxCompact} label="R Feedback" value={echoLab.rightFeedback} min={0} max={MAX_FEEDBACK} step={0.01}
+                  format={(v) => `${Math.round(v * 100)}%`}
+                  onChange={(v) => setEchoLabState((e) => ({ ...e, rightFeedback: v }))} />
+              </>
+            )}
+            {/* Ping Pong (Single) and Spread (Dual) share the same physical role Echo Lab's Row 1
+                slot 6 knob plays on the rack panel — only one is ever relevant at a time. */}
+            {echoLab.topology === 'single' ? (
+              <FxSlider compact={fxCompact} label="Ping Pong" hint="0 mono, 1 full alternation" value={echoLab.pingPongWidth} min={0} max={1} step={0.01}
+                format={pingPongFormat}
+                onChange={(v) => setEchoLabState((e) => ({ ...e, pingPongWidth: v }))} />
+            ) : (
+              <FxSlider compact={fxCompact} label="Spread" value={echoLab.spread} min={0} max={1} step={0.01}
+                format={(v) => `${Math.round(v * 100)}%`}
+                onChange={(v) => setEchoLabState((e) => ({ ...e, spread: v }))} />
+            )}
+            <FxSlider compact={fxCompact} label={CHAR1_RANGE[echoLab.character].label} value={echoLab.char1}
+              min={CHAR1_RANGE[echoLab.character].min} max={CHAR1_RANGE[echoLab.character].max} step={(CHAR1_RANGE[echoLab.character].max - CHAR1_RANGE[echoLab.character].min) / 200}
+              format={CHAR1_RANGE[echoLab.character].format}
+              onChange={(v) => setEchoLabState((e) => ({ ...e, char1: v }))} />
+            {echoLab.character !== 'digital' && (
+              <FxSlider compact={fxCompact} label={CHAR2_RANGE[echoLab.character].label} value={echoLab.char2}
+                min={CHAR2_RANGE[echoLab.character].min} max={CHAR2_RANGE[echoLab.character].max} step={(CHAR2_RANGE[echoLab.character].max - CHAR2_RANGE[echoLab.character].min) / 200}
+                format={CHAR2_RANGE[echoLab.character].format}
+                onChange={(v) => setEchoLabState((e) => ({ ...e, char2: v }))} />
+            )}
+            <FxSlider compact={fxCompact} label="Color/Drive" value={echoLab.colorDrive} min={0} max={1} step={0.01}
+              format={(v) => `${Math.round(v * 100)}%`}
+              onChange={(v) => setEchoLabState((e) => ({ ...e, colorDrive: v }))} />
+            <FxSlider compact={fxCompact} label="Width" value={echoLab.width} min={0} max={1} step={0.01}
+              format={(v) => `${Math.round(v * 100)}%`}
+              onChange={(v) => setEchoLabState((e) => ({ ...e, width: v }))} />
+            <FxSlider compact={fxCompact} label="EQ Low" value={echoLab.eqLowDb} min={-REVERB_EQ_MAX_DB} max={REVERB_EQ_MAX_DB} step={0.5}
+              format={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`}
+              onChange={(v) => setEchoLabState((e) => ({ ...e, eqLowDb: v }))} />
+            <FxSlider compact={fxCompact} label="EQ High" value={echoLab.eqHighDb} min={-REVERB_EQ_MAX_DB} max={REVERB_EQ_MAX_DB} step={0.5}
+              format={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`}
+              onChange={(v) => setEchoLabState((e) => ({ ...e, eqHighDb: v }))} />
+            {echoLab.character !== 'digital' && (
+              <FxSlider compact={fxCompact} label="Mod Rate" value={echoLab.modRateHz} min={MIN_PAN_RATE_HZ} max={MAX_PAN_RATE_HZ} step={0.05}
+                format={(v) => `${v.toFixed(2)} Hz`}
+                onChange={(v) => setEchoLabState((e) => ({ ...e, modRateHz: v }))} />
+            )}
+          </div>
+
+          <div className="mt-2.5 flex items-center gap-1.5">
+            <button
+              onClick={() => setEchoLabState((e) => ({ ...e, panEnabled: !e.panEnabled }))}
+              className={`h-[22px] px-2.5 rounded text-[11px] font-medium border transition-colors ${
+                echoLab.panEnabled
+                  ? 'bg-[var(--active)] border-[var(--accent)] text-gray-900 dark:text-gray-100'
+                  : 'border-gray-200 dark:border-[var(--border)] text-gray-500 dark:text-gray-400'
+              }`}
+              title={echoLab.panEnabled ? 'Auto-pan: repeats sweep continuously left to right' : 'Auto-pan off'}
+            >
+              Pan
+            </button>
+            <button
+              onClick={() => setEchoLabState((e) => ({ ...e, duckEnabled: !e.duckEnabled }))}
+              className={`h-[22px] px-2.5 rounded text-[11px] font-medium border transition-colors ${
+                echoLab.duckEnabled
+                  ? 'bg-[var(--active)] border-[var(--accent)] text-gray-900 dark:text-gray-100'
+                  : 'border-gray-200 dark:border-[var(--border)] text-gray-500 dark:text-gray-400'
+              }`}
+              title={echoLab.duckEnabled ? 'Ducking: repeats duck under playing, swell back in the gaps' : 'Ducking off'}
+            >
+              Duck
+            </button>
+          </div>
+          {(echoLab.panEnabled || echoLab.duckEnabled) && (
+            <div style={fxCardGrid} className="mt-2">
+              {echoLab.panEnabled && (
+                <FxSlider compact={fxCompact} label="Pan Speed" value={echoLab.panRateHz} min={MIN_PAN_RATE_HZ} max={MAX_PAN_RATE_HZ} step={0.05}
+                  format={(v) => `${v.toFixed(2)} Hz`}
+                  onChange={(v) => setEchoLabState((e) => ({ ...e, panRateHz: v }))} />
+              )}
+              {echoLab.duckEnabled && (
+                <>
+                  <FxSlider compact={fxCompact} label="Duck Depth" value={echoLab.duckDepth} min={0} max={1} step={0.01}
+                    format={(v) => `${Math.round(v * 100)}%`}
+                    onChange={(v) => setEchoLabState((e) => ({ ...e, duckDepth: v }))} />
+                  <FxSlider compact={fxCompact} label="Duck Release" value={echoLab.duckReleaseMs} min={50} max={1000} step={10}
+                    format={(v) => `${Math.round(v)} ms`}
+                    onChange={(v) => setEchoLabState((e) => ({ ...e, duckReleaseMs: v }))} />
+                </>
+              )}
+            </div>
+          )}
+        </FxCard>
+      </div>
+
       {/* Reverb takes the full width in both layouts: it has the most controls, and in
           Convolution mode it also has to house the impulse picker. */}
       <div className="mt-3">
@@ -2728,7 +2932,14 @@ export function PlayerPanel({
               effectiveEq.enabled && chainChip('EQ'),
               effectiveGate.enabled && chainChip('GATE'),
               effectiveChorus.enabled && chainChip('MOD'),
-              delay.enabled && chainChip('DELAY'),
+              // Order in the rail follows actual signal flow: Echo Lab's own secondaryDelayPosition
+              // decides whether the orange Delay's wet feeds INTO Echo Lab or comes AFTER it. Shows
+              // regardless of which panel (delaySlotView) is currently drawn below — the rail
+              // reflects what's in the signal path, not what's on screen.
+              echoLab.enabled && delay.enabled && echoLab.secondaryDelayPosition === 'before' && chainChip('DELAY'),
+              echoLab.enabled && chainChip('ECHO LAB'),
+              echoLab.enabled && delay.enabled && echoLab.secondaryDelayPosition === 'after' && chainChip('DELAY'),
+              !echoLab.enabled && delay.enabled && chainChip('DELAY'),
               reverb.enabled && chainChip('REVERB'),
               chainChip('OUT')
             ]
@@ -2863,11 +3074,34 @@ export function PlayerPanel({
         </div>
 
         <div style={{ flex: '1 1 0', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {/* Delay */}
+          {/* Delay / Echo Lab — share one rack slot. Both keep processing audio regardless of
+              which panel delaySlotView picks; this is a view toggle, not a mode switch. */}
           <RackColumn
             header={
             <div className="flex items-center justify-between gap-3 flex-wrap">
-              <span style={{ ...monoLabel }}>Delay</span>
+              <div className="flex items-center gap-2">
+                <span style={{ ...monoLabel }}>{delaySlotView === 'echo-lab' ? 'Echo Lab' : 'Delay'}</span>
+                <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' }}>
+                  {(['echo-lab', 'delay'] as const).map((v) => (
+                    <button
+                      key={v}
+                      onClick={() => setDelaySlotView(v)}
+                      style={{
+                        font: "600 10.5px 'IBM Plex Mono', monospace",
+                        letterSpacing: '0.04em',
+                        padding: '4px 9px',
+                        border: 'none',
+                        cursor: 'pointer',
+                        background: delaySlotView === v ? 'var(--accent)' : 'var(--field)',
+                        color: delaySlotView === v ? '#fff' : 'var(--text-2)'
+                      }}
+                    >
+                      {v === 'echo-lab' ? 'ECHO LAB' : 'DELAY'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {delaySlotView === 'delay' && (
               <PresetMenu
                 label="Preset"
                 options={delayPresets.map((d) => ({ id: d.id, name: d.name }))}
@@ -2883,13 +3117,35 @@ export function PlayerPanel({
                 onDelete={deleteDelayPreset}
                 favoritesKind="delay-preset"
               />
+              )}
+              {delaySlotView === 'echo-lab' && (
+              <PresetMenu
+                label="Preset"
+                options={echoLabPresets.map((d) => ({ id: d.id, name: d.name }))}
+                activeId={activeEchoLabPresetId}
+                placeholder="No preset"
+                width={210}
+                onRecall={(id) => {
+                  const found = echoLabPresets.find((d) => d.id === id)
+                  if (found) applyEchoLabPreset(found.settings)
+                }}
+                onSaveAs={() => setSaveAsPrompt({ title: 'Save Echo Lab preset as…', onSave: saveEchoLabPreset })}
+                onUpdate={(id) => { const found = echoLabPresets.find((p) => p.id === id); if (found) saveEchoLabPreset(found.name) }}
+                onDelete={deleteEchoLabPreset}
+                favoritesKind="echo-lab-preset"
+              />
+              )}
             </div>
             }
             panel={
+              delaySlotView === 'delay' ? (
               <RackCrop metal={RACK_CROP.delay}>
                 <RackDelay delay={delay} onChange={(patch) => setDelayState((d) => ({ ...d, ...patch }))} delayPresets={delayPresets}
                   irName={delayIrPath ? (delayIrPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null} irPath={delayIrPath} />
               </RackCrop>
+              ) : (
+                <RackEchoLab echoLab={echoLab} onChange={(patch) => setEchoLabState((e) => ({ ...e, ...patch }))} />
+              )
             }
             footer={
             /* Dimmed unless the unit is in convolution — the IR is loaded either way, but it

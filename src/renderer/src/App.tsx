@@ -5281,10 +5281,12 @@ INSTRUCTIONS:
               chorusPresets={settings.chorusPresets}
               delayPresets={settings.delayPresets}
               reverbPresets={settings.reverbPresets}
+              echoLabPresets={settings.echoLabPresets}
               rigPresets={settings.rigPresets}
               onChorusPresetsChange={(list) => handleSaveSettings({ ...settings, chorusPresets: list })}
               onDelayPresetsChange={(list) => handleSaveSettings({ ...settings, delayPresets: list })}
               onReverbPresetsChange={(list) => handleSaveSettings({ ...settings, reverbPresets: list })}
+              onEchoLabPresetsChange={(list) => handleSaveSettings({ ...settings, echoLabPresets: list })}
               onRigPresetsChange={(list) => handleSaveSettings({ ...settings, rigPresets: list })}
               playGroups={settings.playGroups}
               activeGroupName={activeGroup?.name ?? null}

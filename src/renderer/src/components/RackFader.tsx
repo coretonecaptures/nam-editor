@@ -115,9 +115,7 @@ export function RackFader({
           background: 'none',
           border: 'none',
           padding: 0,
-          pointerEvents: inert ? 'none' : 'auto',
-          opacity: inert ? 0.35 : 1,
-          transition: 'opacity 0.15s'
+          pointerEvents: inert ? 'none' : 'auto'
         }}
       >
         <img
@@ -128,7 +126,11 @@ export function RackFader({
             width: '100%',
             height: '100%',
             display: 'block',
-            filter: 'drop-shadow(0 2px 3px rgba(0,0,0,0.55))',
+            // Solid but desaturated/darkened, not faded — matches RackKnob's locked treatment.
+            filter: inert
+              ? 'grayscale(1) brightness(0.6) drop-shadow(0 2px 3px rgba(0,0,0,0.55))'
+              : 'drop-shadow(0 2px 3px rgba(0,0,0,0.55))',
+            transition: 'filter 0.15s',
             pointerEvents: 'none',
             userSelect: 'none'
           }}

@@ -1,12 +1,14 @@
 # TODO
 
-## Super Delay — second delay unit, hot-swaps into the Reverb slot
+## Echo Lab — second delay unit, hot-swaps into the Reverb slot
 
-Research/design doc only, not built: `docs/super-delay-plan.md`. Mix, Dual/Single mode with
-independent Left/Right Delay + Feedback, Mode (Tape/Digital/Analog-BBD/Lo-Fi — BBD and Analog are
-almost certainly the same mode written twice, see the doc), the existing Panner, modulation
-(wow/flutter reuse), Width, Tape age, EQ High/Low, Dual-mode Spread, Color/Drive, and Ducking.
-Needs its own brushed-metal forest-green panel art before it's a real rack unit, not attempted yet.
+Research/design doc only, not built: `docs/echo-lab-plan.md`. Orthogonal controls, not a flat mode
+list: Topology (Single/Dual), Character (Digital/Tape/Memory Man), Duck on/off, Pan on/off (fixed
+rate, no dedicated knob). Three knob rows — Topology-relabeled, Character-relabeled, and an
+always-on Utility row (EQ Low/High, Duck Depth/Release). A full panel-art generation prompt is
+written and ready in the doc (dark forest green brushed metal, "ECHO LAB" engraved, blank
+label-free plates on the two relabeling rows since text can't be baked into a photo and swap per
+mode). Not attempted yet — art needs generating, then the panel component built.
 
 ## Tape-echo character for the algorithmic Delay (Strymon El Capistan territory)
 
