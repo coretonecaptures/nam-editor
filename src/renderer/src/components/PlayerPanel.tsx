@@ -3091,11 +3091,22 @@ export function PlayerPanel({
               <div className="flex items-center gap-2">
                 <span style={{ ...monoLabel }}>{delaySlotView === 'echo-lab' ? 'Echo Lab' : 'Delay'}</span>
                 <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' }}>
-                  {(['echo-lab', 'delay'] as const).map((v) => (
+                  {(['echo-lab', 'delay'] as const).map((v) => {
+                    // Both units keep processing audio regardless of which panel is showing, so
+                    // whichever one you're NOT looking at needs its on/off state visible some
+                    // other way — otherwise a unit can sit enabled-but-hidden (or disabled-but-
+                    // hidden) with no indication at all. A small dot on each toggle, independent
+                    // of which one is currently selected/displayed.
+                    const on = v === 'echo-lab' ? echoLab.enabled : delay.enabled
+                    return (
                     <button
                       key={v}
                       onClick={() => setDelaySlotView(v)}
+                      title={`${v === 'echo-lab' ? 'Echo Lab' : 'Delay'} is currently ${on ? 'ON' : 'bypassed'}`}
                       style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 5,
                         font: "600 10.5px 'IBM Plex Mono', monospace",
                         letterSpacing: '0.04em',
                         padding: '4px 9px',
@@ -3105,9 +3116,21 @@ export function PlayerPanel({
                         color: delaySlotView === v ? '#fff' : 'var(--text-2)'
                       }}
                     >
+                      <span
+                        style={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: '50%',
+                          flexShrink: 0,
+                          background: on ? '#ffae2e' : 'currentColor',
+                          opacity: on ? 1 : 0.35,
+                          boxShadow: on ? '0 0 4px 1px #ffae2e99' : 'none'
+                        }}
+                      />
                       {v === 'echo-lab' ? 'ECHO LAB' : 'DELAY'}
                     </button>
-                  ))}
+                    )
+                  })}
                 </div>
                 {/* Series order between Delay and Echo Lab when both are enabled — the chain rail
                     up top already reflects this, but until now nothing let you actually change

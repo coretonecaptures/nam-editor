@@ -599,24 +599,38 @@ export class LiveEngine {
   private echoLabDry: GainNode | null = null
   private echoLabDelayL: DelayNode | null = null
   private echoLabDelayR: DelayNode | null = null
-  /** Gates echoLabIn -> echoLabDelayR: 1 in Dual (R is independently fed), 0 in Single (R's input
-   *  instead comes from echoLabPpSend, or nothing at all when Ping-Pong is off). Needed because a
-   *  DelayNode input SUMS whatever is connected to it — without this gate, Single mode would leak
-   *  the dry input into R at the same time as L's ping-pong signal, muddying both. */
+  /** Gates echoLabIn -> echoLabDelayR: 1 in Dual (R is independently fed), 0 in Single (R only
+   *  ever receives L's hop via echoLabPpSend — never its own direct input in Single mode). */
   private echoLabDualRGain: GainNode | null = null
-  /** Gates echoLabSatL -> echoLabDelayR: Single-mode Ping-Pong's own "L feeds R" tap, 0..pingPongWidth. */
+  /**
+   * Single-mode Ping-Pong topology, rebuilt to exactly mirror the orange Delay's own proven
+   * ppSend/ppTap/monoTap/delayFeedback shape (see buildFxChain's ping-pong section) after the
+   * first version of this caused runaway/aliasing feedback — traced to two bugs at once: an
+   * extra echoLabPpSend path that injected a FULL-STRENGTH, feedback-knob-bypassing copy of L
+   * into R on top of an already-independent R feedback loop (effective gain > 1 regardless of
+   * the Feedback knob), and scaling the L<->R hop itself by the feedback amount, which made a
+   * "full" Ping-Pong sound weak/uneven rather than a true hard alternation.
+   *
+   * Correct shape: the hop between lines is undiminished (gain = pp only, matching Delay's own
+   * ppSend/ppTap), and there is exactly ONE feedback re-entry point per full round trip — a
+   * pp-weighted convex combination (weights sum to 1) of "L's own tap" and "R's tap" feeds back
+   * into L through echoLabFeedbackL, which is what actually decays the signal. A convex
+   * combination scaled by feedback<1 is provably contracting every cycle, which is what makes
+   * this stable where the additive version wasn't.
+   *
+   * echoLabPpSend: echoLabSatL -> echoLabDelayR, the undiminished L->R hop (0 in Dual).
+   * echoLabFbPpTap / echoLabFbMonoTap: R's tap / L's tap, feeding the SAME echoLabFeedbackL —
+   *   pp / (1-pp) in Single, both 0 in Dual (Dual uses the *Self nodes below instead).
+   * echoLabFbLSelfDual / echoLabFbRSelfDual: each line feeding its OWN feedback node directly —
+   *   1 in Dual (fully independent lines, unchanged from before Ping-Pong existed), 0 in Single.
+   */
   private echoLabPpSend: GainNode | null = null
+  private echoLabFbPpTap: GainNode | null = null
+  private echoLabFbMonoTap: GainNode | null = null
+  private echoLabFbLSelfDual: GainNode | null = null
+  private echoLabFbRSelfDual: GainNode | null = null
   private echoLabFeedbackL: GainNode | null = null
   private echoLabFeedbackR: GainNode | null = null
-  /** Feedback-source crossfade: each line's feedback is a blend of its OWN processed output
-   *  (Self) and the OTHER line's (Cross). Dual keeps Self=1/Cross=0 on both — fully independent
-   *  lines, unchanged from before Ping-Pong existed. Single crossfades by pingPongWidth: 0 is
-   *  each line feeding only itself (R has no input anyway, so this is silent/unchanged), 1 is
-   *  each line's repeats built entirely from the OTHER line's output — genuine alternation. */
-  private echoLabFbLSelf: GainNode | null = null
-  private echoLabFbLCross: GainNode | null = null
-  private echoLabFbRSelf: GainNode | null = null
-  private echoLabFbRCross: GainNode | null = null
   private echoLabToneL: BiquadFilterNode | null = null
   private echoLabToneR: BiquadFilterNode | null = null
   private echoLabSatL: WaveShaperNode | null = null
@@ -1276,6 +1290,9 @@ export class LiveEngine {
     this.echoLabDualRGain.gain.value = 0
     this.echoLabIn.connect(this.echoLabDualRGain)
     this.echoLabDualRGain.connect(this.echoLabDelayR)
+    // Undiminished L->R hop — matches the orange Delay's own ppSend exactly (gain = pp, not
+    // scaled by feedback), so a "full" Ping-Pong actually alternates at full strength rather
+    // than the opposite side always sounding attenuated relative to the source.
     this.echoLabPpSend = ctx.createGain()
     this.echoLabPpSend.gain.value = 0
 
@@ -1287,26 +1304,31 @@ export class LiveEngine {
     this.echoLabDelayR.connect(this.echoLabToneR)
     this.echoLabToneR.connect(this.echoLabSatR)
 
-    // Feedback source crossfade — see the field comment on echoLabFbLSelf for the reasoning.
-    this.echoLabFbLSelf = ctx.createGain()
-    this.echoLabFbLSelf.gain.value = 1
-    this.echoLabFbLCross = ctx.createGain()
-    this.echoLabFbLCross.gain.value = 0
-    this.echoLabFbRSelf = ctx.createGain()
-    this.echoLabFbRSelf.gain.value = 1
-    this.echoLabFbRCross = ctx.createGain()
-    this.echoLabFbRCross.gain.value = 0
+    // ONE feedback re-entry point for Single mode (mirrors Delay's ppTap/monoTap -> delayFeedback
+    // exactly): a pp-weighted convex combination of R's tap and L's tap feeds echoLabFeedbackL.
+    // Weights sum to 1, so this is provably contracting each round trip once feedback<1 — see the
+    // class-field comment for why the earlier per-line-additive version wasn't.
+    this.echoLabFbPpTap = ctx.createGain()
+    this.echoLabFbPpTap.gain.value = 0
+    this.echoLabFbMonoTap = ctx.createGain()
+    this.echoLabFbMonoTap.gain.value = 0
+    this.echoLabSatR.connect(this.echoLabFbPpTap)
+    this.echoLabSatL.connect(this.echoLabFbMonoTap)
+    this.echoLabFbPpTap.connect(this.echoLabFeedbackL)
+    this.echoLabFbMonoTap.connect(this.echoLabFeedbackL)
 
-    this.echoLabSatL.connect(this.echoLabFbLSelf)
-    this.echoLabSatR.connect(this.echoLabFbLCross)
-    this.echoLabFbLSelf.connect(this.echoLabFeedbackL)
-    this.echoLabFbLCross.connect(this.echoLabFeedbackL)
+    // Dual mode's independent lines — each feeds only its own feedback node, at full strength,
+    // gated to 0 in Single (where the shared path above is used instead).
+    this.echoLabFbLSelfDual = ctx.createGain()
+    this.echoLabFbLSelfDual.gain.value = 0
+    this.echoLabFbRSelfDual = ctx.createGain()
+    this.echoLabFbRSelfDual.gain.value = 0
+    this.echoLabSatL.connect(this.echoLabFbLSelfDual)
+    this.echoLabFbLSelfDual.connect(this.echoLabFeedbackL)
+    this.echoLabSatR.connect(this.echoLabFbRSelfDual)
+    this.echoLabFbRSelfDual.connect(this.echoLabFeedbackR)
+
     this.echoLabFeedbackL.connect(this.echoLabDelayL)
-
-    this.echoLabSatR.connect(this.echoLabFbRSelf)
-    this.echoLabSatL.connect(this.echoLabFbRCross)
-    this.echoLabFbRSelf.connect(this.echoLabFeedbackR)
-    this.echoLabFbRCross.connect(this.echoLabFeedbackR)
     this.echoLabFeedbackR.connect(this.echoLabDelayR)
 
     // Merge: L always on ch0. Ch1 crossfades between a mono duplicate of L (Single) and R's own
@@ -1859,19 +1881,25 @@ export class LiveEngine {
 
     this.echoLabDelayL?.delayTime.linearRampToValueAtTime(Math.min(leftSec, MAX_DELAY_SECONDS), now + RAMP)
     this.echoLabDelayR?.delayTime.linearRampToValueAtTime(rightSec, now + RAMP)
+    // In Single, echoLabFeedbackL is the ONE shared re-entry point (fed by echoLabFbPpTap/
+    // echoLabFbMonoTap below) and carries `feedback`; echoLabFeedbackR gets nothing to amplify
+    // (echoLabFbRSelfDual is 0 there) so its own value is moot, but rightFeedback is still the
+    // semantically correct thing to park it at for when Dual re-engages.
     this.echoLabFeedbackL?.gain.linearRampToValueAtTime(single ? next.feedback : next.leftFeedback, now + RAMP)
-    this.echoLabFeedbackR?.gain.linearRampToValueAtTime(single ? next.feedback : next.rightFeedback, now + RAMP)
+    this.echoLabFeedbackR?.gain.linearRampToValueAtTime(single ? 0 : next.rightFeedback, now + RAMP)
 
     // Ping-Pong (Single) vs independent Dual — both topologies stay wired, selected entirely by
     // gain, same convention as everywhere else in this file. pp is 0 in Dual (meaningless there,
-    // Spread already provides real stereo) and next.pingPongWidth in Single.
+    // Spread already provides real stereo) and next.pingPongWidth in Single. See the
+    // echoLabPpSend/echoLabFbPpTap field comments for why this shape (undiminished hop, ONE
+    // feedback-scaled re-entry) replaced the earlier per-line-additive version.
     const pp = single ? next.pingPongWidth : 0
     this.echoLabDualRGain?.gain.linearRampToValueAtTime(single ? 0 : 1, now + RAMP)
     this.echoLabPpSend?.gain.linearRampToValueAtTime(pp, now + RAMP)
-    this.echoLabFbLSelf?.gain.linearRampToValueAtTime(single ? 1 - pp : 1, now + RAMP)
-    this.echoLabFbLCross?.gain.linearRampToValueAtTime(single ? pp : 0, now + RAMP)
-    this.echoLabFbRSelf?.gain.linearRampToValueAtTime(single ? 1 - pp : 1, now + RAMP)
-    this.echoLabFbRCross?.gain.linearRampToValueAtTime(single ? pp : 0, now + RAMP)
+    this.echoLabFbPpTap?.gain.linearRampToValueAtTime(single ? pp : 0, now + RAMP)
+    this.echoLabFbMonoTap?.gain.linearRampToValueAtTime(single ? 1 - pp : 0, now + RAMP)
+    this.echoLabFbLSelfDual?.gain.linearRampToValueAtTime(single ? 0 : 1, now + RAMP)
+    this.echoLabFbRSelfDual?.gain.linearRampToValueAtTime(single ? 0 : 1, now + RAMP)
     // R's contribution to the stereo merge now reflects Ping-Pong being engaged, not just Dual.
     this.echoLabRGain?.gain.linearRampToValueAtTime(single ? pp : 1, now + RAMP)
     this.echoLabMonoTap?.gain.linearRampToValueAtTime(single ? 1 - pp : 0, now + RAMP)
@@ -2501,10 +2529,10 @@ export class LiveEngine {
     this.echoLabPpSend = null
     this.echoLabFeedbackL = null
     this.echoLabFeedbackR = null
-    this.echoLabFbLSelf = null
-    this.echoLabFbLCross = null
-    this.echoLabFbRSelf = null
-    this.echoLabFbRCross = null
+    this.echoLabFbPpTap = null
+    this.echoLabFbMonoTap = null
+    this.echoLabFbLSelfDual = null
+    this.echoLabFbRSelfDual = null
     this.echoLabToneL = null
     this.echoLabToneR = null
     this.echoLabSatL = null
