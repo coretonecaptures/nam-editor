@@ -125,6 +125,13 @@ export interface DelaySettings {
    */
   pingPong: boolean
   /**
+   * How much of the ping-pong separation actually comes through, 0..1 — only meaningful while
+   * pingPong is on; Center always sits at 0 regardless of this. 0 sounds essentially like Center
+   * (repeats centred), 1 is full hard-alternating stereo. Lets the effect sit anywhere between
+   * "basically mono, slightly wider" and full ping-pong instead of only ever being either.
+   */
+  pingPongWidth: number
+  /**
    * Auto-pan the repeats across the stereo field, independent of ping-pong.
    *
    * Ping-pong alternates taps discretely, left-right-left; this sweeps continuously, so it reads
@@ -266,6 +273,7 @@ export const DEFAULT_DELAY: DelaySettings = {
   modRateHz: 0.6,
   enabled: false,
   pingPong: true,
+  pingPongWidth: 1,
   panEnabled: false,
   panRateHz: 0.5,
   mode: 'algorithmic'
@@ -1304,6 +1312,7 @@ export class LiveEngine {
     next.modDepthMs = Math.max(0, Math.min(MAX_MOD_DEPTH_MS, next.modDepthMs))
     next.modRateHz = Math.max(0.05, Math.min(12, next.modRateHz))
     next.panRateHz = Math.max(MIN_PAN_RATE_HZ, Math.min(MAX_PAN_RATE_HZ, next.panRateHz))
+    next.pingPongWidth = Math.max(0, Math.min(1, next.pingPongWidth))
     this.delaySettings = next
 
     const ctx = this.ctx
@@ -1338,7 +1347,10 @@ export class LiveEngine {
     // you add ambience makes the amp sound like it is losing level rather than gaining space.
     if (this.delayDry) this.delayDry.gain.linearRampToValueAtTime(1, now + RAMP)
 
-    const pp = next.pingPong ? 1 : 0
+    // The crossfade between the two topologies (see buildFxChain) now takes a continuous amount
+    // instead of a hard 0/1 — that IS the whole feature: 0 sounds like Center even with
+    // Ping-Pong selected, 1 is full hard-alternating stereo, everywhere between is in between.
+    const pp = next.pingPong ? next.pingPongWidth : 0
     this.ppSend?.gain.linearRampToValueAtTime(pp, now + RAMP)
     this.ppTap?.gain.linearRampToValueAtTime(pp, now + RAMP)
     this.ppOut?.gain.linearRampToValueAtTime(pp, now + RAMP)

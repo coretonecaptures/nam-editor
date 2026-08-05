@@ -6,8 +6,6 @@ import { rackDimStyle } from './RackPower'
 import {
   MAX_FEEDBACK,
   MAX_MOD_DEPTH_MS,
-  MAX_PAN_RATE_HZ,
-  MIN_PAN_RATE_HZ,
   type DelayMode,
   type DelaySettings
 } from '../utils/liveEngine'
@@ -130,16 +128,19 @@ export function RackDelay({
           centerXPct={KNOB_XS[5]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
 
         {/* Both caps stay fitted whatever the settings — an empty channel just looks broken, and
-            gives no clue what the slot is for. They dim instead when the parameter is inert:
-            Mod Rate until Mod depth is up (or convolution makes Mod depth moot entirely), Pan
-            Speed until Pan is engaged. */}
+            gives no clue what the slot is for. Left dims when the parameter is inert: Mod Rate
+            until Mod depth is up (or convolution makes it moot entirely). The right fader used to
+            be Pan Speed; it's now Ping-Pong Width, a continuous 0..1 instead of the Center/
+            Ping-Pong buttons' old hard on/off — 0 sounds like Center even with Ping-Pong selected,
+            1 is full hard-alternating stereo. Pan Speed lost its dedicated control in the swap;
+            Pan (the auto-sweep toggle) still works, just at a fixed rate now. */}
         <RackFader label="Mod rate" value={delay.modRateHz} min={0.05} max={8} format={hz}
           inert={delay.modDepthMs === 0 || delay.mode === 'convolution'}
           onChange={(v) => onChange({ modRateHz: v })}
           centerXPct={FADER_XS[0]} trackTopPct={TRACK_TOP} trackBottomPct={TRACK_BOTTOM} capWidthPct={FADER_CAP_W} />
-        <RackFader label="Pan speed" value={delay.panRateHz} min={MIN_PAN_RATE_HZ} max={MAX_PAN_RATE_HZ} format={hz}
-          inert={!delay.panEnabled}
-          onChange={(v) => onChange({ panRateHz: v })}
+        <RackFader label="PP width" value={delay.pingPongWidth} min={0} max={1} format={pct}
+          inert={!delay.pingPong || delay.mode === 'convolution'}
+          onChange={(v) => onChange({ pingPongWidth: v })}
           centerXPct={FADER_XS[1]} trackTopPct={TRACK_TOP} trackBottomPct={TRACK_BOTTOM} capWidthPct={FADER_CAP_W} />
 
         <RackButton label="Algorithmic" centerXPct={ENGINE_XS[0]} centerYPct={SW_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => setEngine('algorithmic')} />
