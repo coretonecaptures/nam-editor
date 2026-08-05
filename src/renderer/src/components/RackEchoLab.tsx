@@ -95,7 +95,7 @@ const hzWhole = (v: number): string => `${Math.round(v)} Hz`
  *  code-drawn Row 1/2 labels read as the same ink, not a mismatched web font pasted on top. */
 const ENGRAVED_LABEL_COLOR = '#f6f4e8'
 
-function KnobLabel({ xPct, yPct, text }: { xPct: number; yPct: number; text: string }): React.ReactNode {
+function KnobLabel({ xPct, yPct, text, dim = false }: { xPct: number; yPct: number; text: string; dim?: boolean }): React.ReactNode {
   return (
     <div
       style={{
@@ -118,8 +118,11 @@ function KnobLabel({ xPct, yPct, text }: { xPct: number; yPct: number; text: str
           fontSize: '0.85cqw',
           letterSpacing: '0.06em',
           textTransform: 'uppercase',
-          color: ENGRAVED_LABEL_COLOR,
-          textShadow: '0 1px 0 rgba(0,0,0,0.55), 0 0 1px rgba(0,0,0,0.35)'
+          // Dimmed text pairs with the knob's own lock scrim — the whole control (art + label)
+          // recedes together, rather than a grayscale knob under a still-bright caption.
+          color: dim ? '#8a8778' : ENGRAVED_LABEL_COLOR,
+          textShadow: dim ? 'none' : '0 1px 0 rgba(0,0,0,0.55), 0 0 1px rgba(0,0,0,0.35)',
+          transition: 'color .15s'
         }}
       >
         {text}
@@ -198,16 +201,16 @@ export function RackEchoLab({
         <KnobLabel xPct={ROW1_XS[2]} yPct={ROW1_Y + LABEL_OFFSET_Y} text={single ? 'Feedback' : 'L Feedback'} />
 
         <RackKnob label="R Delay" value={echoLab.rightTimeMs} min={20} max={1200} format={ms} raised
-          locked={single}
+          locked={single} lockScrim
           onChange={(v) => onChange({ rightTimeMs: v })}
           centerXPct={ROW1_XS[3]} centerYPct={ROW1_Y} diameterPct={KNOB_D} />
-        <KnobLabel xPct={ROW1_XS[3]} yPct={ROW1_Y + LABEL_OFFSET_Y} text="R Delay" />
+        <KnobLabel xPct={ROW1_XS[3]} yPct={ROW1_Y + LABEL_OFFSET_Y} text="R Delay" dim={single} />
 
         <RackKnob label="R Feedback" value={echoLab.rightFeedback} min={0} max={MAX_FEEDBACK} format={pct} raised
-          locked={single}
+          locked={single} lockScrim
           onChange={(v) => onChange({ rightFeedback: v })}
           centerXPct={ROW1_XS[4]} centerYPct={ROW1_Y} diameterPct={KNOB_D} />
-        <KnobLabel xPct={ROW1_XS[4]} yPct={ROW1_Y + LABEL_OFFSET_Y} text="R Feedback" />
+        <KnobLabel xPct={ROW1_XS[4]} yPct={ROW1_Y + LABEL_OFFSET_Y} text="R Feedback" dim={single} />
 
         <RackKnob label={single ? 'Ping Pong' : 'Spread'} value={single ? echoLab.pingPongWidth : echoLab.spread}
           min={0} max={1} format={single ? pingPongFormat : pct} raised
@@ -223,10 +226,10 @@ export function RackEchoLab({
         <KnobLabel xPct={MID_XS[0]} yPct={ROW2_Y + LABEL_OFFSET_Y} text={char1.label} />
 
         <RackKnob label={char2.label} value={echoLab.char2} min={char2.min} max={char2.max} format={char2.format} raised
-          locked={echoLab.character === 'digital'}
+          locked={echoLab.character === 'digital'} lockScrim
           onChange={(v) => onChange({ char2: v })}
           centerXPct={MID_XS[1]} centerYPct={ROW2_Y} diameterPct={KNOB_D} />
-        <KnobLabel xPct={MID_XS[1]} yPct={ROW2_Y + LABEL_OFFSET_Y} text={char2.label} />
+        <KnobLabel xPct={MID_XS[1]} yPct={ROW2_Y + LABEL_OFFSET_Y} text={char2.label} dim={echoLab.character === 'digital'} />
 
         <RackKnob label="Color/Drive" value={echoLab.colorDrive} min={0} max={1} format={pct} raised
           onChange={(v) => onChange({ colorDrive: v })}
@@ -249,11 +252,11 @@ export function RackEchoLab({
           onChange={(v) => onChange({ eqHighDb: v })}
           centerXPct={MID_XS[1]} centerYPct={ROW3_Y} diameterPct={KNOB_D} />
         <RackKnob label="Duck Depth" value={echoLab.duckDepth} min={0} max={1} format={pct} raised
-          locked={!echoLab.duckEnabled}
+          locked={!echoLab.duckEnabled} lockScrim
           onChange={(v) => onChange({ duckDepth: v })}
           centerXPct={MID_XS[2]} centerYPct={ROW3_Y} diameterPct={KNOB_D} />
         <RackKnob label="Duck Release" value={echoLab.duckReleaseMs} min={50} max={1000} format={ms} raised
-          locked={!echoLab.duckEnabled}
+          locked={!echoLab.duckEnabled} lockScrim
           onChange={(v) => onChange({ duckReleaseMs: v })}
           centerXPct={MID_XS[3]} centerYPct={ROW3_Y} diameterPct={KNOB_D} />
 

@@ -24,7 +24,8 @@ export function RackKnob({
   image = rackKnobBlack,
   resetTo,
   locked = false,
-  raised = false
+  raised = false,
+  lockScrim = false
 }: {
   /** Current value, in the knob's own units (caller's min..max). */
   value: number
@@ -55,6 +56,13 @@ export function RackKnob({
    *  into it. Off by default — Delay/Reverb's existing knob art already reads correctly without
    *  it, and adding it there would be an unrequested visual change. */
   raised?: boolean
+  /**
+   * Layers a dark scrim over the whole knob (not just a filter on the image) when locked — a
+   * filter alone reads as "slightly different color," an added shape reads as "this is off" at
+   * a glance. Trying this on Echo Lab first rather than everywhere at once; off by default so
+   * Delay/Reverb's existing locked-knob look is unchanged until/unless it's rolled out there too.
+   */
+  lockScrim?: boolean
 }) {
   const dragRef = useRef<{ startY: number; startValue: number } | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -147,6 +155,17 @@ export function RackKnob({
           userSelect: 'none'
         }}
       />
+      {locked && lockScrim && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            borderRadius: '50%',
+            background: 'rgba(10,10,10,0.5)',
+            pointerEvents: 'none'
+          }}
+        />
+      )}
       {label && format && (
         <RackValueTip label={label} value={format(value)} visible={hover || dragging} />
       )}

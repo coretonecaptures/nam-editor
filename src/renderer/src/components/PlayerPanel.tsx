@@ -2785,7 +2785,24 @@ export function PlayerPanel({
     textTransform: 'uppercase'
   }
 
-  const chainChip = (text: string, kind: 'normal' | 'active' | 'optional' = 'normal'): React.ReactNode => (
+  // Outline-tinted rather than solid-filled: a colored border+text on the existing neutral chip
+  // background reads clearly in both light and dark theme without needing a separate contrast
+  // check per color (a silver chip with white text would vanish in light mode; an orange one
+  // would need dark text — outline sidesteps all of that). Sampled from each unit's own panel
+  // art where one exists; EQ/Gate/Mod share one physical strip with no distinct per-module
+  // chassis color, so those three are assigned rather than sampled.
+  const CHAIN_UNIT_COLORS: Record<string, string> = {
+    'EQ': '#4a90c4',
+    'GATE': '#9163d1',
+    'MOD': '#9a9a92',
+    'DELAY': '#d97b3f',
+    'ECHO LAB': '#7a7a4f',
+    'REVERB': '#3b7ec9'
+  }
+
+  const chainChip = (text: string, kind: 'normal' | 'active' | 'optional' = 'normal'): React.ReactNode => {
+    const unitColor = kind === 'normal' ? CHAIN_UNIT_COLORS[text] : undefined
+    return (
     <span
       key={text}
       style={{
@@ -2798,13 +2815,14 @@ export function PlayerPanel({
         font: "600 10.5px 'IBM Plex Mono', monospace",
         letterSpacing: '.08em',
         background: kind === 'active' ? RIG_GOLD : 'var(--field)',
-        border: kind === 'optional' ? '1px dashed #2e7d54' : `1px solid ${kind === 'active' ? RIG_GOLD : 'var(--field-border)'}`,
-        color: kind === 'active' ? '#2a1e08' : kind === 'optional' ? '#4fbf87' : 'var(--text-2)'
+        border: kind === 'optional' ? '1px dashed #2e7d54' : `1px solid ${kind === 'active' ? RIG_GOLD : unitColor ?? 'var(--field-border)'}`,
+        color: kind === 'active' ? '#2a1e08' : kind === 'optional' ? '#4fbf87' : unitColor ?? 'var(--text-2)'
       }}
     >
       {text}
     </span>
-  )
+    )
+  }
 
   // The reserved "+ PEDAL CAPTURE" slot, now a real control: search the library (or fall back to
   // an OS file dialog for a capture not yet loaded) to chain a second capture ahead of this one —
