@@ -1,5 +1,14 @@
 # TODO
 
+## Future project: real VST3 plugin (presets + all FX)
+
+Feasibility assessment only, not started: `docs/vst3-plugin-assessment.md`. Verdict: a multi-month
+native C++ project, not a packaging job — Web Audio nodes (all of `liveEngine.ts`) don't exist
+outside a browser, so every effect (Gate/EQ/Modulation/Delay/Echo Lab/Reverb) needs reimplementing
+in real-time-safe C++. The NAM inference core has a real head start (already vendored C++, and
+Steven Atkinson's own official plugin is built in iPlug2 on this same DSP core) — that's the
+one piece worth treating as "mostly transfers." Framework leaning: iPlug2, given that lineage.
+
 ## Echo Lab — second delay unit, shares the orange Delay's rack slot
 
 Built and shipped: full DSP (Single/Dual topology, Digital/Tape/Memory Man Character, EQ, Ducking,
