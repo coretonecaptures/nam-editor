@@ -182,13 +182,25 @@ function loadDevicesOpen(): boolean {
  * so a settings file written before a control existed still loads.
  */
 function loadPref<T>(key: string, fallback: T): T {
+  // Object-spread merging only makes sense for object fallbacks (DEFAULT_DELAY etc.) — it's what
+  // lets a settings blob saved before a field existed still load with that field defaulted.
+  // Spreading a PRIMITIVE fallback (a plain string like delaySlotView's 'echo-lab') does not
+  // preserve it: `{...'echo-lab'}` silently produces a character-indexed object
+  // ({0:'e',1:'c',...}), not the string — which is never === 'echo-lab' or 'delay' again, and
+  // self-perpetuates once that corrupted shape gets saved back to localStorage. Real bug found
+  // via a user report that Echo Lab's preset menu "just doesn't exist": traced to exactly this.
+  const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+    typeof v === 'object' && v !== null && !Array.isArray(v)
   try {
     const raw = localStorage.getItem(key)
-    if (raw) return { ...fallback, ...(JSON.parse(raw) as Partial<T>) }
+    if (raw) {
+      const parsed = JSON.parse(raw) as T
+      return isPlainObject(fallback) ? { ...fallback, ...(parsed as Partial<T>) } : parsed
+    }
   } catch {
     // Non-fatal.
   }
-  return { ...fallback }
+  return isPlainObject(fallback) ? { ...fallback } : fallback
 }
 
 function savePref(key: string, value: unknown): void {
@@ -548,7 +560,14 @@ export function PlayerPanel({
   // Echo Lab shares Delay's rack slot — settings persist and both units keep running regardless
   // of which panel is currently drawn; delaySlotView controls ONLY which panel is shown.
   const [echoLab, setEchoLabState] = useState<EchoLabSettings>(() => loadPref(ECHO_LAB_PREF_KEY, DEFAULT_ECHO_LAB))
-  const [delaySlotView, setDelaySlotView] = useState<DelaySlotView>(() => loadPref(DELAY_SLOT_VIEW_PREF_KEY, 'echo-lab' as DelaySlotView))
+  const [delaySlotView, setDelaySlotView] = useState<DelaySlotView>(() => {
+    // Validated, not just loaded: a session that ran before the loadPref fix above may already
+    // have a corrupted character-indexed object saved under this key, which the fix alone can't
+    // retroactively repair — reading it back would just return that same corrupted shape as-is.
+    // This self-heals it the next time the app starts, rather than requiring a manual localStorage clear.
+    const loaded = loadPref(DELAY_SLOT_VIEW_PREF_KEY, 'echo-lab' as DelaySlotView)
+    return loaded === 'delay' || loaded === 'echo-lab' ? loaded : 'echo-lab'
+  })
   const [reverb, setReverbState] = useState<ReverbSettings>(() => loadPref(REVERB_SETTINGS_PREF_KEY, DEFAULT_REVERB))
   const [chorus, setChorusState] = useState<ChorusSettings>(() => loadPref(CHORUS_PREF_KEY, DEFAULT_CHORUS))
   const [eq, setEqState] = useState<EqSettings>(() => loadPref(EQ_PREF_KEY, DEFAULT_EQ))
