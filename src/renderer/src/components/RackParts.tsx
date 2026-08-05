@@ -153,7 +153,8 @@ export function RackDisplay({
   centerYPct,
   widthPct,
   heightPct,
-  colour = '#ffa41f'
+  colour = '#ffa41f',
+  maxFontCqw = 2.6
 }: {
   text: string
   centerXPct: number
@@ -161,6 +162,12 @@ export function RackDisplay({
   widthPct: number
   heightPct: number
   colour?: string
+  /** Caps how large the text is ever allowed to render, independent of how much the length-based
+   *  formula below would otherwise want. Default (2.6) is what Delay/Reverb have always used —
+   *  unchanged for them. Echo Lab's LCD is proportionally wider than either, so the same formula
+   *  hit this cap regardless of text length and always rendered at maximum size; a smaller
+   *  override there fixes that without touching the other units at all. */
+  maxFontCqw?: number
 }) {
   // These displays are wide — half the panel on Delay and Reverb — so the budget is generous.
   // Truncating at 18 was wasting most of the glass; a preset name plus a value now fits.
@@ -168,7 +175,7 @@ export function RackDisplay({
   // Fit to the GLASS, not to the panel. Displays differ wildly in size between units — the
   // Gate's little value window is a fraction of the Delay's — so a shared font size overflowed
   // the small ones. Doto is near-monospace at ~0.62em per character; 0.9 leaves a margin.
-  const fontCqw = Math.min(2.6, (widthPct * 0.9) / (Math.max(shown.length, 1) * 0.62))
+  const fontCqw = Math.min(maxFontCqw, (widthPct * 0.9) / (Math.max(shown.length, 1) * 0.62))
   return (
     <div
       style={{

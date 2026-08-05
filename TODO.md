@@ -15,6 +15,12 @@ Built and shipped: full DSP (Single/Dual topology, Digital/Tape/Memory Man Chara
 Ping-Pong, series routing with Delay), photoreal panel (`RackEchoLab.tsx`), presets in both the
 popout and non-popout views. Design doc: `docs/echo-lab-plan.md`. Remaining open items:
 
+- **Cut the stem out of the fader track (Pan Speed/Mod Rate).** The printed channel groove has a
+  visible mechanical "stem"/rail running down its center; worth an image-editing pass to erase it
+  (same horizontal-interpolation technique used for LED/pointer-notch removal elsewhere in this
+  line) so the cap sits in a clean track rather than visually competing with a baked-in rail.
+  Related to, but separate from, the cap-size/track-clearance fix already applied in code — this
+  one needs the art touched, not just coordinates.
 - ~~Floating view.~~ Done — `EchoLabFloatingWindow.tsx` (avoid "pop out/pop-out" in any UI text for
   this feature, per explicit direction — "Float" instead). Built as an in-page draggable floating
   panel rather than a blocking modal or a second OS window: sized to the panel's own native pixel

@@ -67,13 +67,23 @@ const KNOB_D = px(68)
 const LABEL_OFFSET_Y_ROW1 = py((282 - 187) / 2)
 const LABEL_OFFSET_Y_ROW2 = py((362 - 282) / 2)
 
-const FADER_XS = [1103, 1263].map(px)
+// Mod Rate's x was off by 7.5px (1263 vs the channel groove's actual measured centre, 1270.5) —
+// re-measured by profiling the persistent dark groove directly rather than trusting the earlier
+// eyeballed grid read; Pan Speed's own 1103 was already correct (measured centre 1101, 2px is
+// noise). Real, visible off-centering, not a rounding nitpick.
+const FADER_XS = [1103, 1270].map(px)
 const FADER_TRACK_TOP = py(35)
-const FADER_TRACK_BOTTOM = py(205)
-// The channel groove itself is ~16px, but the printed tick marks flanking it spread to ~65-70px
-// — a 25px cap sat inside the groove but read as a small pill floating in a much wider printed
-// mechanism, which is the "hole in the middle" gap. 46px bridges most of that spread.
-const FADER_CAP_W = px(46)
+// Pulled up from 205: the printed "PAN SPEED"/"MOD RATE" labels start at y≈207 (confirmed with a
+// grid crop against the actual asset), and the cap's own height — which scales with its width —
+// reached well past that at low fader values once the cap was widened to fix the "hole in the
+// middle" gap, fully covering the text. 180 keeps the cap's bottom edge clear of the label even
+// at the fader's minimum, at the cost of ~15% less physical travel distance.
+const FADER_TRACK_BOTTOM = py(180)
+// Also reduced from 46 to 32 as part of the same fix — a narrower cap needs less vertical
+// clearance for the same reason (height scales with width), so this and the track-bottom pull-up
+// share the fix between them rather than asking the track alone to buy back all the clearance.
+// Still meaningfully wider than the original 25px "hole in the middle" cap.
+const FADER_CAP_W = px(32)
 
 const SW_LED_Y = py(277)
 const SW_Y = py(327)
@@ -121,10 +131,11 @@ function KnobLabel({ xPct, yPct, text, dim = false }: { xPct: number; yPct: numb
           // against); IBM Plex Sans as the cross-platform fallback where neither exists.
           fontFamily: "'DIN Alternate', 'Bahnschrift', 'IBM Plex Sans', sans-serif",
           fontWeight: 600,
-          // Shaved down from 0.85cqw alongside the knob-size/offset fix above — a bit more
-          // headroom against the two knob edges it now sits centred between.
-          fontSize: '0.76cqw',
-          letterSpacing: '0.06em',
+          // Shaved down again (0.85 -> 0.76 -> 0.68cqw) per direction to fit more text
+          // comfortably — the longest labels ("Memory Man", "R Feedback") were running close to
+          // their neighbours at the larger sizes.
+          fontSize: '0.68cqw',
+          letterSpacing: '0.05em',
           textTransform: 'uppercase',
           // Dimmed text pairs with the knob's own lock scrim — the whole control (art + label)
           // recedes together, rather than a grayscale knob under a still-bright caption.
@@ -226,16 +237,13 @@ export function RackEchoLab({
           centerXPct={ROW1_XS[4]} centerYPct={ROW1_Y} diameterPct={KNOB_D} />
         <KnobLabel xPct={ROW1_XS[4]} yPct={ROW1_Y + LABEL_OFFSET_Y_ROW1} text="R Feedback" dim={single} />
 
-        {/* Ping Pong uses the same squared-taper trick as the Chorus Depth knob: the knob's own
-            position is sqrt(pingPongWidth), and onChange squares it back. Low knob travel then
-            barely moves the real value (near-off stays near-off for longer), and the back half
-            of the travel is where it actually opens up toward full hard alternation — matching
-            "1% should be basically nothing, 50% shouldn't be super wide yet" directly, as a
-            presentation-layer curve rather than a DSP change. */}
+        {/* Plain linear — a squared taper was tried here (knob position = sqrt(value)) and
+            reverted per direction: straight-up reading 25% instead of 50% was confusing on its
+            own, independent of the hard-pan question. Knob position now IS the value, 1:1. */}
         <RackKnob label={single ? 'Ping Pong' : 'Spread'}
-          value={single ? Math.sqrt(echoLab.pingPongWidth) : echoLab.spread}
-          min={0} max={1} format={single ? (v) => pingPongFormat(v * v) : pct} raised
-          onChange={(v) => onChange(single ? { pingPongWidth: v * v } : { spread: v })}
+          value={single ? echoLab.pingPongWidth : echoLab.spread}
+          min={0} max={1} format={single ? pingPongFormat : pct} raised
+          onChange={(v) => onChange(single ? { pingPongWidth: v } : { spread: v })}
           centerXPct={ROW1_XS[5]} centerYPct={ROW1_Y} diameterPct={KNOB_D} />
         <KnobLabel xPct={ROW1_XS[5]} yPct={ROW1_Y + LABEL_OFFSET_Y_ROW1} text={single ? 'Ping Pong' : 'Spread'} />
 
@@ -317,7 +325,7 @@ export function RackEchoLab({
         <RackButton label="Echo Lab on/off" pressed={echoLab.enabled} centerXPct={BYPASS_X} centerYPct={BYPASS_Y} widthPct={BYPASS_W} heightPct={BYPASS_H} onClick={() => onChange({ enabled: !echoLab.enabled })} />
         <RackLed active={echoLab.enabled} centerXPct={BYPASS_X} centerYPct={BYPASS_LED_Y} widthPct={LED_W} />
 
-        <RackDisplay text={lcd} centerXPct={LCD.x} centerYPct={LCD.y} widthPct={LCD.w} heightPct={LCD.h} />
+        <RackDisplay text={lcd} centerXPct={LCD.x} centerYPct={LCD.y} widthPct={LCD.w} heightPct={LCD.h} maxFontCqw={1.7} />
       </div>
     </div>
   )

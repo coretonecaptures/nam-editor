@@ -560,7 +560,17 @@ export function PlayerPanel({
   const [delay, setDelayState] = useState<DelaySettings>(() => loadPref(DELAY_PREF_KEY, DEFAULT_DELAY))
   // Echo Lab shares Delay's rack slot — settings persist and both units keep running regardless
   // of which panel is currently drawn; delaySlotView controls ONLY which panel is shown.
-  const [echoLab, setEchoLabState] = useState<EchoLabSettings>(() => loadPref(ECHO_LAB_PREF_KEY, DEFAULT_ECHO_LAB))
+  const [echoLab, setEchoLabState] = useState<EchoLabSettings>(() => {
+    const loaded = loadPref(ECHO_LAB_PREF_KEY, DEFAULT_ECHO_LAB)
+    // One-time self-heal: DEFAULT_ECHO_LAB.width was 0.5 (25% cross-bleed in the width matrix,
+    // diluting Ping Pong's hard pan) until that default was corrected to 1. Anyone who used Echo
+    // Lab before that fix has 0.5 persisted, which silently overrides the corrected default on
+    // every load (loadPref merges saved values OVER the default) — so the code fix alone never
+    // reaches an existing session. Echo Lab is new enough this session that a saved value of
+    // EXACTLY the old broken default is overwhelmingly more likely to be inherited than a
+    // deliberate choice, so it's corrected here rather than left to require a manual re-set.
+    return loaded.width === 0.5 ? { ...loaded, width: 1 } : loaded
+  })
   const [delaySlotView, setDelaySlotView] = useState<DelaySlotView>(() => {
     // Validated, not just loaded: a session that ran before the loadPref fix above may already
     // have a corrupted character-indexed object saved under this key, which the fix alone can't
@@ -2295,13 +2305,12 @@ export function PlayerPanel({
               </>
             )}
             {/* Ping Pong (Single) and Spread (Dual) share the same physical role Echo Lab's Row 1
-                slot 6 knob plays on the rack panel — only one is ever relevant at a time. Same
-                squared taper as the rack knob (slider position = sqrt(pingPongWidth)) so both
-                UIs feel identical: gentle for most of the travel, opens up toward the end. */}
+                slot 6 knob plays on the rack panel — only one is ever relevant at a time. Plain
+                linear, matching the rack knob (a squared taper was tried and reverted). */}
             {echoLab.topology === 'single' ? (
-              <FxSlider compact={fxCompact} label="Ping Pong" hint="0 mono, 1 full alternation" value={Math.sqrt(echoLab.pingPongWidth)} min={0} max={1} step={0.01}
-                format={(v) => pingPongFormat(v * v)}
-                onChange={(v) => setEchoLabState((e) => ({ ...e, pingPongWidth: v * v }))} />
+              <FxSlider compact={fxCompact} label="Ping Pong" hint="0 mono, 1 full alternation" value={echoLab.pingPongWidth} min={0} max={1} step={0.01}
+                format={pingPongFormat}
+                onChange={(v) => setEchoLabState((e) => ({ ...e, pingPongWidth: v }))} />
             ) : (
               <FxSlider compact={fxCompact} label="Spread" value={echoLab.spread} min={0} max={1} step={0.01}
                 format={(v) => `${Math.round(v * 100)}%`}

@@ -426,12 +426,19 @@ this unit's iterations) and gives perfectly crisp, consistent, editable labels i
 raster text. Worth folding into `rack-ui-lessons.md` §8's template as a standing rule, not just an
 Echo Lab note — not done yet, flagging for whoever next touches that doc.
 
-**Next milestone — deferred, not urgent:**
-- **Rocker switches don't visually rock.** `RackButton` is a static hit-region across the whole
-  rack line (Delay/Reverb's switches don't tip either) — only the LED changes state, the switch
-  art itself never moves. Real physical rockers alternate position. User supplied a reference photo
-  of the switch in something closer to its other resting angle, and a version of the panel with a
-  longer LCD window, for whenever this gets picked up — would mean either photographing/rendering
-  both rocker positions per switch (more art, more compositing) or accepting the current
-  LED-only convention as this whole product line's style. Worth deciding deliberately, not by
-  default, since it's a line-wide look, not Echo Lab-specific.
+**Rocker switches don't visually rock — settled, not pursuing real photographed art.** `RackButton`
+is a static hit-region across the whole rack line (Delay/Reverb's switches don't tip either) — only
+the LED changes state, the switch art itself never moves. Real physical rockers alternate position,
+and several rounds of AI-generated attempts at a genuine "pressed down" second state (isolated
+close-up, explicit hinge/tilt mechanics, wall-switch/see-saw framing, no baked text) all failed to
+produce a usable or even identifiable result. Given up on the photographed version — `RackButton`'s
+CSS-only `pressed` treatment (a directional inset-shadow shift, see its doc comment) is the
+permanent solution: it's a real, validated, working visual difference on its own, and the LED
+remains the primary, unambiguous state indicator regardless. Not worth more generation attempts
+unless someone hand-illustrates or photographs a real second position later.
+
+**If this panel is ever fully regenerated:** use press buttons (matching Delay/Reverb's own
+switches) instead of rockers. The rocker choice is what created this whole rabbit hole in the
+first place — a press button's on/off state is a solid-vs-inset look, not a physical tilt, so it
+doesn't have this problem at all. Not worth redoing the current panel over, per explicit direction
+("too late now") — logged only so the next full regen doesn't repeat the same mistake.

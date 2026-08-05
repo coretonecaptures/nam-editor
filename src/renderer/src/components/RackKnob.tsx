@@ -90,9 +90,9 @@ export function RackKnob({
       const deltaY = drag.startY - e.clientY
       // Dead zone: a trackpad's tap-to-click / pressure sensitivity can occasionally register a
       // light graze as a real pointerdown+move, which reads as "the knob grabbed itself" since
-      // no deliberate click was involved. A few px of tolerance absorbs that without being
-      // perceptible on an actual intentional drag.
-      if (Math.abs(deltaY) < 3) return
+      // no deliberate click was involved. Widened from 3px after that continued to happen —
+      // still small enough to be imperceptible on an actual intentional drag.
+      if (Math.abs(deltaY) < 8) return
       const next = Math.max(min, Math.min(max, drag.startValue + (deltaY / 200) * (max - min)))
       onChange(next)
     },
@@ -109,13 +109,23 @@ export function RackKnob({
     }
   }, [])
 
+  // Safety net, not the normal path: a captured pointer keeps routing to this element regardless
+  // of where the cursor physically is, so a legitimate drag never fires Leave mid-drag. If capture
+  // ever silently failed to take, though, a stale dragRef could persist and make a LATER hover
+  // (no click at all) look like it's still dragging — clearing here guarantees that can't happen.
+  const handlePointerLeave = useCallback(() => {
+    dragRef.current = null
+    setDragging(false)
+    setHover(false)
+  }, [])
+
   return (
     <button
       onPointerDown={locked ? undefined : handlePointerDown}
       onPointerMove={locked ? undefined : handlePointerMove}
       onPointerUp={locked ? undefined : handlePointerUp}
       onPointerEnter={() => setHover(true)}
-      onPointerLeave={() => setHover(false)}
+      onPointerLeave={handlePointerLeave}
       onDoubleClick={locked || resetTo === undefined ? undefined : () => onChange(resetTo)}
       title={locked ? 'Inactive in this mode' : resetTo === undefined ? undefined : 'Double-click to reset'}
       aria-label={label}
