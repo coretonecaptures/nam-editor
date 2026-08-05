@@ -937,7 +937,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab, onOpenTra
           <div>
             <div className="flex items-center gap-2 mb-4">
               <span className="text-sm">DI</span>
-              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">DI Clip Library</h3>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Clip Library</h3>
               <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
             </div>
             <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-3 space-y-3">

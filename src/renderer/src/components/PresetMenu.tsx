@@ -36,6 +36,7 @@ export function PresetMenu({
   width = 158,
   onRecall,
   onSaveAs,
+  onUpdate,
   onDelete,
   favoritesKind
 }: {
@@ -48,6 +49,9 @@ export function PresetMenu({
   width?: number | string
   onRecall: (id: string) => void
   onSaveAs: () => void
+  /** Overwrites this preset's saved settings with whatever is dialed in right now. Omit to leave
+   *  no "Update" affordance — only Save-as-new. */
+  onUpdate?: (id: string) => void
   /** Omit to leave a row with no delete affordance at all. */
   onDelete?: (id: string) => void
   /** Enables the star/favourites/recent UI, keyed to its own localStorage namespace — pass a
@@ -61,6 +65,12 @@ export function PresetMenu({
   const [favorites, setFavorites] = useState<FavRef[]>(() => (favoritesKind ? loadFavorites(favoritesKind) : []))
   const [recents, setRecents] = useState<FavRef[]>(() => (favoritesKind ? loadRecents(favoritesKind) : []))
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  // The preset last explicitly recalled from this menu — stays set even after you've since
+  // tweaked a knob and activeId (settings-match) has gone null, which is exactly the case this
+  // exists for: "I loaded X, changed some things, now I want to update X" needs to remember X
+  // independent of whether the CURRENT settings still equal it.
+  const [lastRecalledId, setLastRecalledId] = useState<string | null>(activeId)
+  const [confirmUpdate, setConfirmUpdate] = useState(false)
   const wrap = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -86,8 +96,18 @@ export function PresetMenu({
       setQuery('')
       setTab('all')
       setConfirmDeleteId(null)
+      setConfirmUpdate(false)
     }
   }, [open])
+
+  // Keeps lastRecalledId in sync with whatever the live settings currently exactly match — not
+  // just clicks inside this menu. A Rig preset recall, for instance, can make a block's own
+  // activeId change without that block's own menu ever being clicked. Never clears it back to
+  // null on its own: once something has been recalled, "Update" should keep pointing at it even
+  // after a knob tweak makes activeId go null.
+  useEffect(() => {
+    if (activeId) setLastRecalledId(activeId)
+  }, [activeId])
 
   const active = options.find((o) => o.id === activeId) ?? null
   const favoriteIds = useMemo(() => new Set(favorites.map((f) => f.id)), [favorites])
@@ -108,9 +128,12 @@ export function PresetMenu({
       const opt = options.find((o) => o.id === id)
       if (opt) setRecents(pushRecent(favoritesKind, { id: opt.id, label: opt.name }))
     }
+    setLastRecalledId(id)
     onRecall(id)
     setOpen(false)
   }
+
+  const lastRecalled = lastRecalledId ? options.find((o) => o.id === lastRecalledId) ?? null : null
 
   return (
     <div ref={wrap} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -302,6 +325,47 @@ export function PresetMenu({
               )
             })}
           </div>
+          {/* Only appears once something has actually been recalled — there is nothing to
+              "update" otherwise. A separate, clearly-labelled row rather than folding this into
+              Save-as, and its own confirm step before it touches anything: this overwrites a
+              preset in place, which Save-as's normal "type a name" flow never risks doing by
+              accident. */}
+          {onUpdate && lastRecalled && (
+            confirmUpdate ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '9px 12px', borderTop: '1px solid var(--border-soft)', background: 'rgba(232,176,74,.12)' }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', font: "500 11px 'IBM Plex Sans', sans-serif", color: 'var(--text)' }}>
+                  Overwrite "{lastRecalled.name}"?
+                </span>
+                <span style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                  <span
+                    role="button"
+                    onClick={() => { onUpdate(lastRecalled.id); setConfirmUpdate(false); setOpen(false) }}
+                    style={{ padding: '3px 8px', borderRadius: 6, background: '#e8b04a', color: '#2a1e08', font: "600 10px 'IBM Plex Sans', sans-serif", cursor: 'pointer' }}
+                  >
+                    Update
+                  </span>
+                  <span
+                    role="button"
+                    onClick={() => setConfirmUpdate(false)}
+                    style={{ padding: '3px 8px', borderRadius: 6, background: 'var(--raised)', color: 'var(--text-2)', font: "600 10px 'IBM Plex Sans', sans-serif", cursor: 'pointer' }}
+                  >
+                    Cancel
+                  </span>
+                </span>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmUpdate(true)}
+                style={{
+                  width: '100%', textAlign: 'left', padding: '9px 12px', borderTop: '1px solid var(--border-soft)',
+                  background: 'transparent', color: '#e8b04a', font: "600 11px 'IBM Plex Sans', sans-serif", cursor: 'pointer', border: 'none',
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+                }}
+              >
+                ⟳ Update "{lastRecalled.name}" with current settings
+              </button>
+            )
+          )}
           <button
             onClick={() => {
               onSaveAs()

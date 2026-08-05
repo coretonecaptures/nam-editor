@@ -2672,6 +2672,7 @@ export function PlayerPanel({
             {m.tone_type && (
               <span className={`nam-chip ${namToneChipClass(m.tone_type)}`}><span className="nam-dot" />{TONE_LABELS[m.tone_type] ?? m.tone_type}</span>
             )}
+            {stepper}
           </div>
           {summaryRows.length > 0 && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '14px 18px' }}>
@@ -2777,6 +2778,7 @@ export function PlayerPanel({
             if (found) applyRigPreset(found.settings)
           }}
           onSaveAs={() => setSaveAsPrompt({ title: 'Save current rig as…', onSave: saveRigPreset })}
+          onUpdate={(id) => { const found = rigPresets.find((p) => p.id === id); if (found) saveRigPreset(found.name) }}
           onDelete={deleteRigPreset}
           favoritesKind="rig-preset"
         />
@@ -2811,6 +2813,7 @@ export function PlayerPanel({
                 if (found) applyChorusPreset(found.settings)
               }}
               onSaveAs={() => setSaveAsPrompt({ title: 'Save modulation preset as…', onSave: saveChorusPreset })}
+              onUpdate={(id) => { const found = chorusPresets.find((p) => p.id === id); if (found) saveChorusPreset(found.name) }}
               onDelete={deleteChorusPreset}
               favoritesKind="chorus-preset"
             />
@@ -2850,6 +2853,7 @@ export function PlayerPanel({
                   if (found) applyDelayPreset(found.settings, found.irPath)
                 }}
                 onSaveAs={() => setSaveAsPrompt({ title: 'Save delay preset as…', onSave: saveDelayPreset })}
+                onUpdate={(id) => { const found = delayPresets.find((p) => p.id === id); if (found) saveDelayPreset(found.name) }}
                 onDelete={deleteDelayPreset}
                 favoritesKind="delay-preset"
               />
@@ -2900,6 +2904,7 @@ export function PlayerPanel({
                   if (found) applyReverbPreset(found.settings, found.irPath)
                 }}
                 onSaveAs={() => setSaveAsPrompt({ title: 'Save reverb preset as…', onSave: saveReverbPreset })}
+                onUpdate={(id) => { const found = reverbPresets.find((p) => p.id === id); if (found) saveReverbPreset(found.name) }}
                 onDelete={deleteReverbPreset}
                 favoritesKind="reverb-preset"
               />
@@ -3191,7 +3196,6 @@ export function PlayerPanel({
             )}
             <div className="flex-1" />
             {groupControl}
-            {stepper}
             <button
               onClick={() => setPoppedOut(false)}
               title="Back to the panel (Esc)"

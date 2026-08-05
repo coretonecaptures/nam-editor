@@ -810,6 +810,20 @@ export default function App() {
   const [liveJumpRequest, setLiveJumpRequest] = useState<number | null>(null)
   const [showTrainingWorkspace, setShowTrainingWorkspace] = useState(false)
   const [showTrainingSetupGuide, setShowTrainingSetupGuide] = useState(false)
+
+  // The main content area shows, in order of precedence: Settings, Tone Store, Training, the
+  // Companion inbox, THEN the player. That precedence is deliberate — opening any of those
+  // should replace the player, not be blocked by it. But it cuts both ways: if one of them was
+  // already open and the user then explicitly plays a capture, setting playerFile alone doesn't
+  // make the player visible, since whichever overlay was open still wins. Call this instead of
+  // bare setPlayerFile anywhere the user is explicitly asking to see the player right now.
+  const showPlayer = useCallback((file: NamFile) => {
+    setShowSettings(false)
+    setShowToneStore(false)
+    setShowTrainingWorkspace(false)
+    setCompanionInboxOpen(false)
+    setPlayerFile(file)
+  }, [])
   const [settingsInitialTab, setSettingsInitialTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'player' | 'training' | 'ai' | 'companion' | undefined>(undefined)
   const [trainingWorkspaceMode, setTrainingWorkspaceMode] = useState<'files' | 'folder' | 'queue' | 'history' | 'presets'>('files')
   const [globalTrainerState, setGlobalTrainerState] = useState<TrainerStateSnapshot>(IDLE_TRAINER_STATE)
@@ -4522,8 +4536,8 @@ INSTRUCTIONS:
     if (playerFile === null) return
     if (selectedFiles.length !== 1) return
     const selected = selectedFiles[0]
-    if (selected.filePath !== playerFile.filePath) setPlayerFile(selected)
-  }, [playerFile, selectedFiles])
+    if (selected.filePath !== playerFile.filePath) showPlayer(selected)
+  }, [playerFile, selectedFiles, showPlayer])
 
   /**
    * Step the player to the previous/next capture in the folder currently in scope.
@@ -4888,7 +4902,7 @@ INSTRUCTIONS:
             // incidental: metadataCoverPath derives from the single selection, so a click that
             // only set playerFile would open the player with no cover art.
             onPlay={(file) => {
-              setPlayerFile(file)
+              showPlayer(file)
               setSelectedIds(new Set([file.filePath]))
               setActiveGroupId(null)
             }}
@@ -5159,12 +5173,12 @@ INSTRUCTIONS:
                 if (!result.success) setStatus({ message: `Could not open in NAM: ${result.error}`, type: 'error' })
               }}
               onPlay={(file) => {
-                setPlayerFile(file)
+                showPlayer(file)
                 setSelectedIds(new Set([file.filePath]))
                 setActiveGroupId(null)
               }}
               onPlayLive={(file) => {
-                setPlayerFile(file)
+                showPlayer(file)
                 setSelectedIds(new Set([file.filePath]))
                 setActiveGroupId(null)
                 setLiveJumpRequest(Date.now())
