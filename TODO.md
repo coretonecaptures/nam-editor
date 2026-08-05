@@ -1,14 +1,25 @@
 # TODO
 
-## Echo Lab — second delay unit, hot-swaps into the Reverb slot
+## Echo Lab — second delay unit, shares the orange Delay's rack slot
 
-Research/design doc only, not built: `docs/echo-lab-plan.md`. Orthogonal controls, not a flat mode
-list: Topology (Single/Dual), Character (Digital/Tape/Memory Man), Duck on/off, Pan on/off (fixed
-rate, no dedicated knob). Three knob rows — Topology-relabeled, Character-relabeled, and an
-always-on Utility row (EQ Low/High, Duck Depth/Release). A full panel-art generation prompt is
-written and ready in the doc (dark forest green brushed metal, "ECHO LAB" engraved, blank
-label-free plates on the two relabeling rows since text can't be baked into a photo and swap per
-mode). Not attempted yet — art needs generating, then the panel component built.
+Built and shipped: full DSP (Single/Dual topology, Digital/Tape/Memory Man Character, EQ, Ducking,
+Ping-Pong, series routing with Delay), photoreal panel (`RackEchoLab.tsx`), presets in both the
+popout and non-popout views. Design doc: `docs/echo-lab-plan.md`. Remaining open items:
+
+- **Pop-out/modal view at native resolution.** The panel currently only ever renders scaled to
+  whatever width the rack column happens to be — a dedicated pop-out (a centered modal showing the
+  unit at its own native pixel resolution) would make the smaller text/knob detail actually
+  readable instead of always being a scaled-down fit. Not started.
+- **A genuinely different (skinny) fader cap for Pan Speed/Mod Rate.** The current cap
+  (`rack-fader-cap.png`, shared with Delay/Reverb) was widened to fix a "hole in the middle" gap
+  against the channel's printed tick marks — but since the cap's height scales with its width
+  (fixed aspect ratio), the wider cap now reaches down far enough to cover the printed "PAN
+  SPEED"/"MOD RATE" labels at some fader positions. Needs a genuinely different, narrower cap
+  shape (closer to a real channel-strip EQ slider) rather than further resizing the current wide
+  one — new art, not a CSS tweak.
+- Real alternate up/down rocker-switch art (see the "Next milestone" note in
+  `docs/echo-lab-plan.md`) — still only the CSS-only `pressed` stand-in, no photographed second
+  switch position exists yet.
 
 ## Tape-echo character for the algorithmic Delay (Strymon El Capistan territory)
 
