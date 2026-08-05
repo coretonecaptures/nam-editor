@@ -80,15 +80,15 @@ export function RackReverbTest({
             Convolution is selected. Low/High stay active either way: liveEngine applies them
             after BOTH wet paths, as a shelf EQ on the tail regardless of which one made it. */}
         <RackKnob label="Size" value={reverb.roomSize} min={0} max={1} format={pct}
-          locked={reverb.mode === 'convolution'}
+          locked={reverb.mode === 'convolution'} lockScrim
           onChange={(v) => onChange({ roomSize: v })}
           centerXPct={KNOB_XS[1]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
         <RackKnob label="Damping" value={reverb.damping} min={0} max={1} format={pct}
-          locked={reverb.mode === 'convolution'}
+          locked={reverb.mode === 'convolution'} lockScrim
           onChange={(v) => onChange({ damping: v })}
           centerXPct={KNOB_XS[2]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
         <RackKnob label="Width" value={reverb.width} min={0} max={1} format={pct}
-          locked={reverb.mode === 'convolution'}
+          locked={reverb.mode === 'convolution'} lockScrim
           onChange={(v) => onChange({ width: v })}
           centerXPct={KNOB_XS[3]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
         <RackKnob label="Low" value={reverb.lowDb} min={-REVERB_EQ_MAX_DB} max={REVERB_EQ_MAX_DB} format={db}

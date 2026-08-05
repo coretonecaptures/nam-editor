@@ -107,23 +107,23 @@ export function RackDelay({
             runs through the auto-pan stage (see liveEngine's delayConvWet -> delayPanIn), so pan
             keeps working in either mode. */}
         <RackKnob label="Time" value={delay.timeMs} min={20} max={1200} format={(v) => `${Math.round(v)} ms`}
-          locked={delay.mode === 'convolution'}
+          locked={delay.mode === 'convolution'} lockScrim
           onChange={(v) => onChange({ timeMs: v })}
           centerXPct={KNOB_XS[1]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
         <RackKnob label="Ratio" value={delay.ratio} min={0.25} max={2} format={(v) => `${v.toFixed(2)}x`}
-          locked={delay.mode === 'convolution'}
+          locked={delay.mode === 'convolution'} lockScrim
           onChange={(v) => onChange({ ratio: v })}
           centerXPct={KNOB_XS[2]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
         <RackKnob label="Feedback" value={delay.feedback} min={0} max={MAX_FEEDBACK} format={pct}
-          locked={delay.mode === 'convolution'}
+          locked={delay.mode === 'convolution'} lockScrim
           onChange={(v) => onChange({ feedback: v })}
           centerXPct={KNOB_XS[3]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
         <RackKnob label="Tone" value={delay.toneHz} min={500} max={12000} format={(v) => `${(v / 1000).toFixed(1)} kHz`}
-          locked={delay.mode === 'convolution'}
+          locked={delay.mode === 'convolution'} lockScrim
           onChange={(v) => onChange({ toneHz: v })}
           centerXPct={KNOB_XS[4]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
         <RackKnob label="Mod" value={delay.modDepthMs} min={0} max={MAX_MOD_DEPTH_MS} format={(v) => (v === 0 ? "off" : `${v.toFixed(2)} ms`)}
-          locked={delay.mode === 'convolution'}
+          locked={delay.mode === 'convolution'} lockScrim
           onChange={(v) => onChange({ modDepthMs: v })}
           centerXPct={KNOB_XS[5]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
 

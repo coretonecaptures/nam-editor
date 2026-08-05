@@ -55,11 +55,17 @@ const ROW1_Y = py(187)
 const MID_XS = ROW1_XS.slice(1, 5)
 const ROW2_Y = py(282)
 const ROW3_Y = py(362)
-// Measured mounting-plate diameter is ~78px — the original 50px badly undersized every knob
-// relative to its own plate. 74 sits just inside the plate's rim with a hair of clearance.
-const KNOB_D = px(74)
-/** CSS label sits at the same offset below a knob that the art's own baked Band-3 labels use. */
-const LABEL_OFFSET_Y = py(40)
+// Measured mounting-plate diameter is ~78px. 74 (radius 37) left almost no room for a CSS label
+// between two knob edges 95px apart (Row1->Row2) or 80px apart (Row2->Row3) — the label text was
+// visibly clipped by the knob above and/or below it. 68 buys back clearance on both sides while
+// staying well above the original undersized 50.
+const KNOB_D = px(68)
+// Each row's own label sits centred in the GAP to the row below it, not at a fixed offset from
+// its own knob — the two gaps aren't equal (95px vs 80px), so a single shared constant left Row
+// 1's labels too close to both the knob above them and the knob below. Half of each gap centres
+// the label with equal clearance on both sides.
+const LABEL_OFFSET_Y_ROW1 = py((282 - 187) / 2)
+const LABEL_OFFSET_Y_ROW2 = py((362 - 282) / 2)
 
 const FADER_XS = [1103, 1263].map(px)
 const FADER_TRACK_TOP = py(35)
@@ -115,7 +121,9 @@ function KnobLabel({ xPct, yPct, text, dim = false }: { xPct: number; yPct: numb
           // against); IBM Plex Sans as the cross-platform fallback where neither exists.
           fontFamily: "'DIN Alternate', 'Bahnschrift', 'IBM Plex Sans', sans-serif",
           fontWeight: 600,
-          fontSize: '0.85cqw',
+          // Shaved down from 0.85cqw alongside the knob-size/offset fix above — a bit more
+          // headroom against the two knob edges it now sits centred between.
+          fontSize: '0.76cqw',
           letterSpacing: '0.06em',
           textTransform: 'uppercase',
           // Dimmed text pairs with the knob's own lock scrim — the whole control (art + label)
@@ -186,60 +194,60 @@ export function RackEchoLab({
         <RackKnob label="Mix" value={echoLab.mix} min={0} max={1} format={pct} raised
           onChange={(v) => onChange({ mix: v })}
           centerXPct={ROW1_XS[0]} centerYPct={ROW1_Y} diameterPct={KNOB_D} />
-        <KnobLabel xPct={ROW1_XS[0]} yPct={ROW1_Y + LABEL_OFFSET_Y} text="Mix" />
+        <KnobLabel xPct={ROW1_XS[0]} yPct={ROW1_Y + LABEL_OFFSET_Y_ROW1} text="Mix" />
 
         <RackKnob label={single ? 'Time' : 'L Delay'} value={single ? echoLab.timeMs : echoLab.leftTimeMs}
           min={20} max={1200} format={ms} raised
           onChange={(v) => onChange(single ? { timeMs: v } : { leftTimeMs: v })}
           centerXPct={ROW1_XS[1]} centerYPct={ROW1_Y} diameterPct={KNOB_D} />
-        <KnobLabel xPct={ROW1_XS[1]} yPct={ROW1_Y + LABEL_OFFSET_Y} text={single ? 'Time' : 'L Delay'} />
+        <KnobLabel xPct={ROW1_XS[1]} yPct={ROW1_Y + LABEL_OFFSET_Y_ROW1} text={single ? 'Time' : 'L Delay'} />
 
         <RackKnob label={single ? 'Feedback' : 'L Feedback'} value={single ? echoLab.feedback : echoLab.leftFeedback}
           min={0} max={MAX_FEEDBACK} format={pct} raised
           onChange={(v) => onChange(single ? { feedback: v } : { leftFeedback: v })}
           centerXPct={ROW1_XS[2]} centerYPct={ROW1_Y} diameterPct={KNOB_D} />
-        <KnobLabel xPct={ROW1_XS[2]} yPct={ROW1_Y + LABEL_OFFSET_Y} text={single ? 'Feedback' : 'L Feedback'} />
+        <KnobLabel xPct={ROW1_XS[2]} yPct={ROW1_Y + LABEL_OFFSET_Y_ROW1} text={single ? 'Feedback' : 'L Feedback'} />
 
         <RackKnob label="R Delay" value={echoLab.rightTimeMs} min={20} max={1200} format={ms} raised
           locked={single} lockScrim
           onChange={(v) => onChange({ rightTimeMs: v })}
           centerXPct={ROW1_XS[3]} centerYPct={ROW1_Y} diameterPct={KNOB_D} />
-        <KnobLabel xPct={ROW1_XS[3]} yPct={ROW1_Y + LABEL_OFFSET_Y} text="R Delay" dim={single} />
+        <KnobLabel xPct={ROW1_XS[3]} yPct={ROW1_Y + LABEL_OFFSET_Y_ROW1} text="R Delay" dim={single} />
 
         <RackKnob label="R Feedback" value={echoLab.rightFeedback} min={0} max={MAX_FEEDBACK} format={pct} raised
           locked={single} lockScrim
           onChange={(v) => onChange({ rightFeedback: v })}
           centerXPct={ROW1_XS[4]} centerYPct={ROW1_Y} diameterPct={KNOB_D} />
-        <KnobLabel xPct={ROW1_XS[4]} yPct={ROW1_Y + LABEL_OFFSET_Y} text="R Feedback" dim={single} />
+        <KnobLabel xPct={ROW1_XS[4]} yPct={ROW1_Y + LABEL_OFFSET_Y_ROW1} text="R Feedback" dim={single} />
 
         <RackKnob label={single ? 'Ping Pong' : 'Spread'} value={single ? echoLab.pingPongWidth : echoLab.spread}
           min={0} max={1} format={single ? pingPongFormat : pct} raised
           onChange={(v) => onChange(single ? { pingPongWidth: v } : { spread: v })}
           centerXPct={ROW1_XS[5]} centerYPct={ROW1_Y} diameterPct={KNOB_D} />
-        <KnobLabel xPct={ROW1_XS[5]} yPct={ROW1_Y + LABEL_OFFSET_Y} text={single ? 'Ping Pong' : 'Spread'} />
+        <KnobLabel xPct={ROW1_XS[5]} yPct={ROW1_Y + LABEL_OFFSET_Y_ROW1} text={single ? 'Ping Pong' : 'Spread'} />
 
         {/* Row 2 — Character relabel. Digital's second slot is unused: it has no character
             knob the way Tape's Age or Memory Man's Chorus do. */}
         <RackKnob label={char1.label} value={echoLab.char1} min={char1.min} max={char1.max} format={char1.format} raised
           onChange={(v) => onChange({ char1: v })}
           centerXPct={MID_XS[0]} centerYPct={ROW2_Y} diameterPct={KNOB_D} />
-        <KnobLabel xPct={MID_XS[0]} yPct={ROW2_Y + LABEL_OFFSET_Y} text={char1.label} />
+        <KnobLabel xPct={MID_XS[0]} yPct={ROW2_Y + LABEL_OFFSET_Y_ROW2} text={char1.label} />
 
         <RackKnob label={char2.label} value={echoLab.char2} min={char2.min} max={char2.max} format={char2.format} raised
           locked={echoLab.character === 'digital'} lockScrim
           onChange={(v) => onChange({ char2: v })}
           centerXPct={MID_XS[1]} centerYPct={ROW2_Y} diameterPct={KNOB_D} />
-        <KnobLabel xPct={MID_XS[1]} yPct={ROW2_Y + LABEL_OFFSET_Y} text={char2.label} dim={echoLab.character === 'digital'} />
+        <KnobLabel xPct={MID_XS[1]} yPct={ROW2_Y + LABEL_OFFSET_Y_ROW2} text={char2.label} dim={echoLab.character === 'digital'} />
 
         <RackKnob label="Color/Drive" value={echoLab.colorDrive} min={0} max={1} format={pct} raised
           onChange={(v) => onChange({ colorDrive: v })}
           centerXPct={MID_XS[2]} centerYPct={ROW2_Y} diameterPct={KNOB_D} />
-        <KnobLabel xPct={MID_XS[2]} yPct={ROW2_Y + LABEL_OFFSET_Y} text="Color/Drive" />
+        <KnobLabel xPct={MID_XS[2]} yPct={ROW2_Y + LABEL_OFFSET_Y_ROW2} text="Color/Drive" />
 
         <RackKnob label="Width" value={echoLab.width} min={0} max={1} format={pct} raised
           onChange={(v) => onChange({ width: v })}
           centerXPct={MID_XS[3]} centerYPct={ROW2_Y} diameterPct={KNOB_D} />
-        <KnobLabel xPct={MID_XS[3]} yPct={ROW2_Y + LABEL_OFFSET_Y} text="Width" />
+        <KnobLabel xPct={MID_XS[3]} yPct={ROW2_Y + LABEL_OFFSET_Y_ROW2} text="Width" />
 
         {/* Row 3 — always active, printed labels already in the art (EQ LOW/EQ HIGH/DUCK
             DEPTH/DUCK RELEASE), no CSS label needed. */}
