@@ -1095,6 +1095,12 @@ export class LiveEngine {
     const tremActive = next.enabled && next.type === 'tremolo'
     const harmonic = tremActive && next.harmonic
     this.tremOsc?.frequency.linearRampToValueAtTime(next.rateHz, now + RAMP)
+    // Width doubles as the voicing switch in Tremolo mode (it does nothing else there — a real
+    // tremolo has no stereo-width control). Below centre: '63 tube-bias, a harder-edged triangle
+    // ramp closer to how a biased tube's on/off swing actually moves. At or above centre: '65
+    // photocell, sine — the physical lag of a lamp/photoresistor pair rounds the same swing off
+    // smoother than any electronic LFO would left alone. A frequency type change, not a new node.
+    if (this.tremOsc) this.tremOsc.type = next.width < 0.5 ? 'triangle' : 'sine'
     this.tremBypassGain?.gain.linearRampToValueAtTime(tremActive ? 0 : 1, now + RAMP)
     this.tremStdSel?.gain.linearRampToValueAtTime(tremActive && !harmonic ? 1 : 0, now + RAMP)
     this.tremHarmSel?.gain.linearRampToValueAtTime(harmonic ? 1 : 0, now + RAMP)
@@ -1208,8 +1214,15 @@ export class LiveEngine {
     const plateWet = next.mode === 'plate' ? wet : 0
     const convWet = next.mode === 'convolution' ? wet : 0
 
-    this.plateWet?.gain.linearRampToValueAtTime(plateWet, now + RAMP)
-    this.reverbWet?.gain.linearRampToValueAtTime(convWet, now + RAMP)
+    // Anchored before ramping — see the matching comment in setDelay for why.
+    if (this.plateWet) {
+      this.plateWet.gain.setValueAtTime(this.plateWet.gain.value, now)
+      this.plateWet.gain.linearRampToValueAtTime(plateWet, now + RAMP)
+    }
+    if (this.reverbWet) {
+      this.reverbWet.gain.setValueAtTime(this.reverbWet.gain.value, now)
+      this.reverbWet.gain.linearRampToValueAtTime(convWet, now + RAMP)
+    }
     this.reverbDry?.gain.linearRampToValueAtTime(1, now + RAMP)
 
     this.reverbEqLow?.gain.linearRampToValueAtTime(next.lowDb, now + RAMP)
@@ -1287,10 +1300,17 @@ export class LiveEngine {
     if (this.delayFeedback) this.delayFeedback.gain.linearRampToValueAtTime(next.feedback, now + RAMP)
     if (this.delayDamp) this.delayDamp.frequency.linearRampToValueAtTime(next.toneHz, now + RAMP)
     const wet = next.enabled ? next.mix : 0
+    // Anchored with setValueAtTime before ramping: without it, a linearRampToValueAtTime can
+    // start its ramp from whatever value a PREVIOUS ramp was scheduled to end at, rather than
+    // the param's actual current value — usually invisible, but on the very first enable after
+    // sitting at 0 it could mean the new ramp starts from a stale target instead of 0, which
+    // reads as "turned it on, heard nothing" until the next toggle schedules a correct one.
     if (this.delayWet) {
+      this.delayWet.gain.setValueAtTime(this.delayWet.gain.value, now)
       this.delayWet.gain.linearRampToValueAtTime(next.mode === 'algorithmic' ? wet : 0, now + RAMP)
     }
     if (this.delayConvWet) {
+      this.delayConvWet.gain.setValueAtTime(this.delayConvWet.gain.value, now)
       this.delayConvWet.gain.linearRampToValueAtTime(next.mode === 'convolution' ? wet : 0, now + RAMP)
     }
     // Equal-gain rather than equal-power: the dry signal is the capture itself, and dipping it as

@@ -119,8 +119,11 @@ export function Rack500({
           the threshold is the one number worth reading while you set it. */}
       <RackDisplay text={`${gate.threshold.toFixed(0)}dB`} centerXPct={GATE_LCD.x} centerYPct={GATE_LCD.y} widthPct={GATE_LCD.w} heightPct={GATE_LCD.h} />
 
-      {/* ── Modulation. Mix and Width are chorus-only; a Fender tremolo has neither, so those
-          two knobs are simply inert in Tremolo mode, as they would be on real hardware. */}
+      {/* ── Modulation. Mix is chorus-only; a Fender tremolo has no wet/dry knob (Speed and
+          Intensity are the whole story), so it's simply inert in Tremolo mode, as on real
+          hardware. Width is NOT inert in Tremolo — it's repurposed as the voicing switch, left of
+          centre '63 tube-bias, right of centre '65 photocell: an otherwise-dead knob doing real
+          work instead, the way this exact control sometimes doubles up on real multi-mode units. */}
       <RackKnob image={knobMod} label="Mix" value={chorus.mix} min={0} max={1} format={pct}
         onChange={(v) => onChorus({ mix: v })} centerXPct={MOD_KNOB_XS[0]} centerYPct={MOD_KNOB_Y} diameterPct={MOD_KNOB_D} />
       <RackKnob image={knobMod} label="Depth"
@@ -131,7 +134,8 @@ export function Rack500({
         centerXPct={MOD_KNOB_XS[1]} centerYPct={MOD_KNOB_Y} diameterPct={MOD_KNOB_D} />
       <RackKnob image={knobMod} label="Rate" value={chorus.rateHz} min={0.05} max={6} format={(v) => `${v.toFixed(2)} Hz`}
         onChange={(v) => onChorus({ rateHz: v })} centerXPct={MOD_KNOB_XS[2]} centerYPct={MOD_KNOB_Y} diameterPct={MOD_KNOB_D} />
-      <RackKnob image={knobMod} label="Width" value={chorus.width} min={0} max={1} format={pct}
+      <RackKnob image={knobMod} label={trem ? 'Voicing' : 'Width'} value={chorus.width} min={0} max={1}
+        format={trem ? (v) => (v < 0.5 ? "'63 tube" : "'65 photo") : pct}
         onChange={(v) => onChorus({ width: v })} centerXPct={MOD_KNOB_XS[3]} centerYPct={MOD_KNOB_Y} diameterPct={MOD_KNOB_D} />
 
       <RackButton label="Modulation on/off" centerXPct={MOD_BYPASS_X} centerYPct={MOD_BYPASS_BTN_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onChorus({ enabled: !chorus.enabled })} />
