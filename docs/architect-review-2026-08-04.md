@@ -20,7 +20,7 @@ an emergency. Read the Priority list first; the rest is reference detail.
 | 1 | `secondaryDelayPosition` (Echo Lab ↔ Delay routing order) was wired in DSP and shown in the chain rail, but had no UI control to change it | Bug | **Fixed this pass** |
 | 2 | File-management IPC handlers (`file:read`, `file:move`, `file:trash`, `folder:*`, etc.) don't scope paths to the library root the way `isPathWithin()` already does for companion/inbox assets | Medium | Not fixed — see §2 |
 | 3 | `protocol.handle('local-file', ...)` maps any `local-file://` URL straight to `file://` with no validation | Medium | Not fixed — see §2 |
-| 4 | No `LICENSE` file or `license` field in `package.json` for a distributed desktop app | Info | Not fixed — legal/business decision, not a code fix |
+| 4 | No `LICENSE` file or `license` field in `package.json` for a distributed desktop app | Info | **Fixed 2026-08-05** — MIT `LICENSE` + `NOTICE.md` added (see below); TONE3000 in-app branding compliance still unaudited |
 | 5 | `sandbox: false` on the BrowserWindow | Low | Not fixed — see §2 |
 | 6 | Companion HTTP bridge binds `0.0.0.0` over plain HTTP with wide-open CORS | Low–Medium | Not fixed — see §2 |
 | 7 | `PlayerPanel.tsx` is ~4000 lines doing six jobs | Tech debt | Not fixed — flagged for next touch |
@@ -166,9 +166,18 @@ otherwise touch.
 
 ### Licensing / legal posture
 
-- **No `LICENSE` file, no `license` field in `package.json`** — worth flagging for a distributed
-  desktop app; the project's own licensing terms aren't declared anywhere. This is a business/legal
-  decision, not something to silently default.
+- **Fixed 2026-08-05: MIT `LICENSE` added, plus `NOTICE.md`.** The audit at the time this section
+  was first written found no license anywhere; that gap is now closed. `NOTICE.md` documents what
+  turned out to be a bigger finding than "no LICENSE file" alone suggested: this app doesn't just
+  target the `.nam` file format, it **vendors and compiles Steven Atkinson's NAM DSP core to
+  WebAssembly** (`native/nam-wasm/NAM/`, via Tone3000's `neural-amp-modeler-wasm` fork — both MIT,
+  confirmed against the actual upstream `LICENSE`/`LICENSE.upstream` files rather than assumed),
+  plus nlohmann/json (MIT) and Eigen (MPL 2.0, fetched at build time but statically linked into the
+  shipped `.wasm`). All three are now credited with their real copyright lines in `NOTICE.md`.
+  **Still open:** TONE3000's API Terms require specific in-app branding (their logo before any "T3K"
+  shorthand, shown on tone list views and on loaded tones within a signal chain) — confirmed the
+  requirement exists, explicitly **not** audited against the app's actual UI yet per direction to
+  defer that piece. Tracked in `NOTICE.md` so it isn't silently dropped.
 - Bundled fonts (`@fontsource/doto`, `ibm-plex-sans`, `ibm-plex-mono`, `barlow-semi-condensed`) are
   all SIL Open Font License / Apache families redistributed by Fontsource for exactly this use — no
   concern.
@@ -197,6 +206,9 @@ Nothing here blocks anything. In rough order of "worth doing if you're picking o
 
 1. Apply `isPathWithin()` (or equivalent) to the file-management IPC handlers and the
    `local-file://` protocol handler — the primitive already exists, this is wiring, not design.
-2. Decide and declare a license for the repo.
-3. When `PlayerPanel.tsx` next needs a new FX block or a big edit, pull the preset CRUD out into a
+2. ~~Decide and declare a license for the repo.~~ Done 2026-08-05 — `LICENSE` (MIT) + `NOTICE.md`.
+3. Audit the actual TONE3000-integration screens against their published Design Requirements (logo
+   placement, tone-list/loaded-tone/detail-view branding) — deferred by explicit direction when the
+   license work landed, but it's a real open compliance item, not a maybe.
+4. When `PlayerPanel.tsx` next needs a new FX block or a big edit, pull the preset CRUD out into a
    shared hook rather than adding a sixth copy of it.
