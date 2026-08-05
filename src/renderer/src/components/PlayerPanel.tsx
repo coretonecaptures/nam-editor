@@ -23,6 +23,7 @@ import type { ChorusPreset, DelayPreset, EchoLabPreset, PlayGroup, ReverbPreset,
 import { RackReverbTest } from './RackReverbTest'
 import { RackDelay } from './RackDelay'
 import { RackEchoLab, CHAR1_RANGE, CHAR2_RANGE, DEFAULT_CHAR1, DEFAULT_CHAR2, pingPongFormat } from './RackEchoLab'
+import { EchoLabFloatingWindow } from './EchoLabFloatingWindow'
 import { RackCrop, RACK_CROP } from './RackCrop'
 import { RackColumn } from './RackColumn'
 import { PresetMenu } from './PresetMenu'
@@ -568,6 +569,9 @@ export function PlayerPanel({
     const loaded = loadPref(DELAY_SLOT_VIEW_PREF_KEY, 'echo-lab' as DelaySlotView)
     return loaded === 'delay' || loaded === 'echo-lab' ? loaded : 'echo-lab'
   })
+  // Not persisted — a pop-out is a this-session convenience, not a saved layout preference.
+  // Always starts closed/back-in-slot on a fresh player.
+  const [echoLabFloating, setEchoLabFloating] = useState(false)
   const [reverb, setReverbState] = useState<ReverbSettings>(() => loadPref(REVERB_SETTINGS_PREF_KEY, DEFAULT_REVERB))
   const [chorus, setChorusState] = useState<ChorusSettings>(() => loadPref(CHORUS_PREF_KEY, DEFAULT_CHORUS))
   const [eq, setEqState] = useState<EqSettings>(() => loadPref(EQ_PREF_KEY, DEFAULT_EQ))
@@ -3135,11 +3139,15 @@ export function PlayerPanel({
                     // hidden) with no indication at all. A small dot on each toggle, independent
                     // of which one is currently selected/displayed.
                     const on = v === 'echo-lab' ? echoLab.enabled : delay.enabled
+                    // Echo Lab isn't available in the shared slot while it's floating — its own
+                    // toggle option is disabled rather than clickable-but-does-nothing.
+                    const disabled = v === 'echo-lab' && echoLabFloating
                     return (
                     <button
                       key={v}
-                      onClick={() => setDelaySlotView(v)}
-                      title={`${v === 'echo-lab' ? 'Echo Lab' : 'Delay'} is currently ${on ? 'ON' : 'bypassed'}`}
+                      onClick={() => !disabled && setDelaySlotView(v)}
+                      disabled={disabled}
+                      title={disabled ? 'Echo Lab is currently floating — close its window to bring it back here' : `${v === 'echo-lab' ? 'Echo Lab' : 'Delay'} is currently ${on ? 'ON' : 'bypassed'}`}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
@@ -3148,9 +3156,10 @@ export function PlayerPanel({
                         letterSpacing: '0.04em',
                         padding: '4px 9px',
                         border: 'none',
-                        cursor: 'pointer',
-                        background: delaySlotView === v ? 'var(--accent)' : 'var(--field)',
-                        color: delaySlotView === v ? '#fff' : 'var(--text-2)'
+                        cursor: disabled ? 'default' : 'pointer',
+                        opacity: disabled ? 0.4 : 1,
+                        background: delaySlotView === v && !disabled ? 'var(--accent)' : 'var(--field)',
+                        color: delaySlotView === v && !disabled ? '#fff' : 'var(--text-2)'
                       }}
                     >
                       <span
@@ -3169,6 +3178,34 @@ export function PlayerPanel({
                     )
                   })}
                 </div>
+                {/* Pop-out: a movable, non-blocking floating panel (see EchoLabFloatingWindow) —
+                    not a modal, so Delay stays fully editable underneath/beside it at the same
+                    time. Only offered from Echo Lab's own slot view; popping out immediately
+                    frees the shared slot for Delay, closing it returns Echo Lab there. */}
+                {delaySlotView === 'echo-lab' && !echoLabFloating && (
+                  <button
+                    onClick={() => {
+                      setEchoLabFloating(true)
+                      setDelaySlotView('delay')
+                    }}
+                    title="Pop Echo Lab out into its own movable window, larger and easier to read"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 5,
+                      font: "600 10.5px 'IBM Plex Mono', monospace",
+                      letterSpacing: '0.04em',
+                      padding: '4px 9px',
+                      borderRadius: 6,
+                      border: '1px solid var(--border)',
+                      background: 'var(--field)',
+                      color: 'var(--text-2)',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    ⤢ Pop out
+                  </button>
+                )}
                 {/* Series order between Delay and Echo Lab when both are enabled — the chain rail
                     up top already reflects this, but until now nothing let you actually change
                     it. Belongs to neither unit's own panel art, so it lives here instead. */}
@@ -3592,6 +3629,16 @@ export function PlayerPanel({
         </div>
         {setupDrawer}
         {saveAsModal}
+        {echoLabFloating && (
+          <EchoLabFloatingWindow
+            echoLab={echoLab}
+            onChange={(patch) => setEchoLabState((e) => ({ ...e, ...patch }))}
+            onClose={() => {
+              setEchoLabFloating(false)
+              setDelaySlotView('echo-lab')
+            }}
+          />
+        )}
       </>
     )
   }
