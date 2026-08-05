@@ -2334,6 +2334,15 @@ export function PlayerPanel({
             >
               Duck
             </button>
+            {delay.enabled && (
+              <button
+                onClick={() => setEchoLabState((e) => ({ ...e, secondaryDelayPosition: e.secondaryDelayPosition === 'before' ? 'after' : 'before' }))}
+                className="h-[22px] px-2.5 rounded text-[11px] font-medium border border-gray-200 dark:border-[var(--border)] text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[var(--hover)] transition-colors"
+                title="Toggle whether the orange Delay's signal feeds into Echo Lab, or Echo Lab feeds into Delay"
+              >
+                {echoLab.secondaryDelayPosition === 'before' ? 'Delay → Echo Lab' : 'Echo Lab → Delay'}
+              </button>
+            )}
           </div>
           {(echoLab.panEnabled || echoLab.duckEnabled) && (
             <div style={fxCardGrid} className="mt-2">
@@ -3100,6 +3109,27 @@ export function PlayerPanel({
                     </button>
                   ))}
                 </div>
+                {/* Series order between Delay and Echo Lab when both are enabled — the chain rail
+                    up top already reflects this, but until now nothing let you actually change
+                    it. Belongs to neither unit's own panel art, so it lives here instead. */}
+                {delay.enabled && echoLab.enabled && (
+                  <button
+                    onClick={() => setEchoLabState((e) => ({ ...e, secondaryDelayPosition: e.secondaryDelayPosition === 'before' ? 'after' : 'before' }))}
+                    title="Toggle whether the orange Delay's signal feeds into Echo Lab, or Echo Lab feeds into Delay"
+                    style={{
+                      font: "600 10px 'IBM Plex Mono', monospace",
+                      letterSpacing: '0.03em',
+                      padding: '4px 8px',
+                      borderRadius: 6,
+                      border: '1px solid var(--border)',
+                      background: 'var(--field)',
+                      color: 'var(--text-2)',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {echoLab.secondaryDelayPosition === 'before' ? 'DELAY → ECHO LAB' : 'ECHO LAB → DELAY'}
+                  </button>
+                )}
               </div>
               {delaySlotView === 'delay' && (
               <PresetMenu
