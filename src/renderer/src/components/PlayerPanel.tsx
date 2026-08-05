@@ -1396,7 +1396,11 @@ export function PlayerPanel({
   )
 
   const applyDelayPreset = useCallback((settings: DelaySettings, irPath?: string | null) => {
-    setDelayState({ ...settings })
+    // Merged over the default rather than applied bare — same reasoning as applyChorusPreset: a
+    // delay preset saved before pingPongWidth existed has no such field, and applying it directly
+    // left that field undefined, which Math.min(1, undefined) turns into NaN a few lines into
+    // setDelay's clamp — silently breaking the ping-pong crossfade gains rather than throwing.
+    setDelayState({ ...DEFAULT_DELAY, ...settings })
     setDelayIrPath(irPath ?? null)
     try {
       if (irPath) localStorage.setItem(DELAY_IR_PREF_KEY, irPath)
@@ -1419,7 +1423,10 @@ export function PlayerPanel({
   )
 
   const applyReverbPreset = useCallback((settings: ReverbSettings, irPath?: string | null) => {
-    setReverbState({ ...settings })
+    // Merged over the default for the same reason applyDelayPreset now is — protects any future
+    // reverb field addition from the same "old preset, missing field, undefined leaks into the
+    // engine" class of bug, not just a fix for one field that happens to exist today.
+    setReverbState({ ...DEFAULT_REVERB, ...settings })
     setReverbPath(irPath ?? null)
     try {
       if (irPath) localStorage.setItem(REVERB_PREF_KEY, irPath)

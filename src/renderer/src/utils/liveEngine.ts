@@ -1312,7 +1312,12 @@ export class LiveEngine {
     next.modDepthMs = Math.max(0, Math.min(MAX_MOD_DEPTH_MS, next.modDepthMs))
     next.modRateHz = Math.max(0.05, Math.min(12, next.modRateHz))
     next.panRateHz = Math.max(MIN_PAN_RATE_HZ, Math.min(MAX_PAN_RATE_HZ, next.panRateHz))
-    next.pingPongWidth = Math.max(0, Math.min(1, next.pingPongWidth))
+    // Number.isFinite guard, not just clamping: a settings object missing this field entirely
+    // (an old preset predating it) has it as undefined, and Math.min(1, undefined) is NaN — which
+    // would then propagate into the ping-pong crossfade gains below and make them behave
+    // unpredictably instead of throwing anywhere obvious. Falls back to 1 (full ping-pong),
+    // matching what the boolean-only pingPong field meant before this existed.
+    next.pingPongWidth = Number.isFinite(next.pingPongWidth) ? Math.max(0, Math.min(1, next.pingPongWidth)) : 1
     this.delaySettings = next
 
     const ctx = this.ctx
