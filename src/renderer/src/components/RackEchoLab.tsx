@@ -26,7 +26,7 @@ import {
  * changes — see docs/echo-lab-plan.md's "Generation prompt" section for the reasoning.
  */
 
-const P = { w: 1754, h: 428 }
+const P = { w: 1748, h: 430 }
 const px = (v: number): number => (v / P.w) * 100
 const py = (v: number): number => (v / P.h) * 100
 
@@ -36,17 +36,26 @@ const py = (v: number): number => (v / P.h) * 100
  * left the switch LEDs and Duck/Pan buttons visibly off — up to 19px on the LED row, 13px on Duck
  * and Pan specifically). Same lesson as the Delay/Reverb LED-alignment work in
  * rack-ui-lessons.md §4: verify against the real pixels, don't trust a hand-drawn grid by eye.
+ *
+ * Panel art swapped 2026-08-05 for a variant with a genuinely wider LCD (measured ~640px vs the
+ * original ~480px — confirmed by direct measurement, not assumed from the filename, since an
+ * earlier "longer LCD" candidate turned out on inspection to be pixel-identical to the original).
+ * Every other control's position re-verified against the new asset at the same time — small
+ * global registration drift (2-4px) from the independent regeneration, but no layout changes.
+ * The requested alternate (down/up) rocker positions did NOT materialize in this render either —
+ * checked with a pixel diff between the lit/unlit halves' switch bodies, identical shape, only
+ * the LED differs. RackButton's CSS-only `pressed` treatment remains the real mechanism for that.
  */
 
 // Row 1 (Topology-relabeled): six columns, all six knobs live here.
-const ROW1_XS = [127, 266, 405, 547, 687, 833].map(px)
-const ROW1_Y = py(183)
+const ROW1_XS = [127, 265, 404, 545, 686, 834].map(px)
+const ROW1_Y = py(187)
 // Rows 2-3 reuse columns 2-5 of Row 1 (indices 1..4) — columns 1 and 6 stay empty beneath them,
 // matching the generation prompt's explicit column-alignment instruction.
 const MID_XS = ROW1_XS.slice(1, 5)
-const ROW2_Y = py(277)
-const ROW3_Y = py(359)
-// Measured mounting-plate diameter is 79px — the original 50px badly undersized every knob
+const ROW2_Y = py(282)
+const ROW3_Y = py(362)
+// Measured mounting-plate diameter is ~78px — the original 50px badly undersized every knob
 // relative to its own plate. 74 sits just inside the plate's rim with a hair of clearance.
 const KNOB_D = px(74)
 /** CSS label sits at the same offset below a knob that the art's own baked Band-3 labels use. */
@@ -61,19 +70,20 @@ const FADER_TRACK_BOTTOM = py(205)
 const FADER_CAP_W = px(46)
 
 const SW_LED_Y = py(277)
-const SW_Y = py(324)
-const SW_XS = [949, 1039, 1159, 1245, 1336, 1454, 1563].map(px)
+const SW_Y = py(327)
+const SW_XS = [947, 1036, 1156, 1242, 1333, 1451, 1560].map(px)
 const BTN_W = px(57)
-const BTN_H = py(64)
+const BTN_H = py(65)
 const LED_W = px(22)
 
 const BYPASS_X = px(1608)
-const BYPASS_LED_Y = py(69)
-const BYPASS_Y = py(146)
-const BYPASS_W = px(87)
-const BYPASS_H = py(102)
+const BYPASS_LED_Y = py(67)
+const BYPASS_Y = py(145)
+const BYPASS_W = px(89)
+const BYPASS_H = py(99)
 
-const LCD = { x: px(558), y: py(76), w: px(480), h: py(108) }
+// Genuinely wider than before — see the geometry comment above.
+const LCD = { x: px(638), y: py(75), w: px(640), h: py(106) }
 
 const pct = (v: number): string => `${Math.round(v * 100)}%`
 const ms = (v: number): string => `${Math.round(v)} ms`
