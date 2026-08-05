@@ -1353,8 +1353,27 @@ export function PlayerPanel({
   // Merged over the default rather than applied bare: a preset saved before Tremolo existed has
   // no type/tremoloDepth/harmonic fields, and applying it directly would leave those undefined.
   const sameSettings = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b)
+  // Must mirror saveRigPreset's snapshot shape exactly, field-for-field — sameSettings is a
+  // JSON.stringify comparison, so a rig preset with a shape that doesn't match this object's keys
+  // can never match, which is exactly what "loads fine but the picker still says No rig loaded"
+  // turned out to be: cabIrPath/cabIrEnabled/ampCapturePath/pedalCapturePath/pedalGainDb/
+  // pedalEnabled were added to what gets SAVED without being added here too.
   const activeRigPresetId = rigPresets.find((p) =>
-    sameSettings(p.settings, { gate, eq, chorus, delay, delayIrPath, reverb, reverbIrPath: reverbPath }))?.id ?? null
+    sameSettings(p.settings, {
+      gate,
+      eq,
+      chorus,
+      delay,
+      delayIrPath,
+      reverb,
+      reverbIrPath: reverbPath,
+      cabIrPath: irPath,
+      cabIrEnabled: irEnabled,
+      ampCapturePath: file.filePath,
+      pedalCapturePath: preCapturePath,
+      pedalGainDb: preGainDb,
+      pedalEnabled: preEnabled
+    }))?.id ?? null
   const activeChorusPresetId = chorusPresets.find((p) => sameSettings(p.settings, chorus))?.id ?? null
   const activeDelayPresetId = delayPresets.find((p) => sameSettings(p.settings, delay) && p.irPath === delayIrPath)?.id ?? null
   const activeReverbPresetId = reverbPresets.find((p) => sameSettings(p.settings, reverb) && p.irPath === reverbPath)?.id ?? null

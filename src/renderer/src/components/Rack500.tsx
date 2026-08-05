@@ -27,6 +27,10 @@ import {
  * own faceplate colour, so the sprite's few background pixels always match what is behind them.
  */
 
+/** Max total peak-to-peak delay-time swing the Depth knob reaches, in ms — see the knob's own
+ *  comment below for why this is squared rather than linear. */
+const CHORUS_MAX_DEPTH_MS = 6
+
 const P = { w: 1774, h: 887 }
 const pctX = (v: number): number => (v / P.w) * 100
 const pctY = (v: number): number => (v / P.h) * 100
@@ -126,11 +130,19 @@ export function Rack500({
           work instead, the way this exact control sometimes doubles up on real multi-mode units. */}
       <RackKnob image={knobMod} label="Mix" value={chorus.mix} min={0} max={1} format={pct}
         onChange={(v) => onChorus({ mix: v })} centerXPct={MOD_KNOB_XS[0]} centerYPct={MOD_KNOB_Y} diameterPct={MOD_KNOB_D} />
+      {/* Chorus depth is knob-position², not linear — a linear 0-12ms range put an already
+          pronounced, warbly detune within the first quarter-turn, so "subtle" was only reachable
+          right at the bottom of the travel where the knob is hardest to place precisely. Squaring
+          gives the low end of the turn far finer resolution (half the knob only reaches a quarter
+          of the max ms) while still allowing a deep, lush setting near the top — closer to how a
+          vintage analog chorus like a Walrus Julia stays musical across most of its own Depth
+          travel instead of only in a narrow sliver near zero. Max total swing is also down from
+          12ms to 6ms peak-to-peak, since even the old MAXIMUM was past what those pedals reach. */}
       <RackKnob image={knobMod} label="Depth"
-        value={trem ? chorus.tremoloDepth : chorus.depthMs}
-        min={0} max={trem ? 1 : 12}
-        format={trem ? pct : (v) => `${v.toFixed(1)} ms`}
-        onChange={(v) => onChorus(trem ? { tremoloDepth: v } : { depthMs: v })}
+        value={trem ? chorus.tremoloDepth : Math.sqrt(chorus.depthMs / CHORUS_MAX_DEPTH_MS)}
+        min={0} max={1}
+        format={trem ? pct : (v) => `${(v * v * CHORUS_MAX_DEPTH_MS).toFixed(1)} ms`}
+        onChange={(v) => onChorus(trem ? { tremoloDepth: v } : { depthMs: v * v * CHORUS_MAX_DEPTH_MS })}
         centerXPct={MOD_KNOB_XS[1]} centerYPct={MOD_KNOB_Y} diameterPct={MOD_KNOB_D} />
       <RackKnob image={knobMod} label="Rate" value={chorus.rateHz} min={0.05} max={6} format={(v) => `${v.toFixed(2)} Hz`}
         onChange={(v) => onChorus({ rateHz: v })} centerXPct={MOD_KNOB_XS[2]} centerYPct={MOD_KNOB_Y} diameterPct={MOD_KNOB_D} />

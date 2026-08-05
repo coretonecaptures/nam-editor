@@ -235,7 +235,7 @@ export const DEFAULT_CHORUS: ChorusSettings = {
   type: 'chorus',
   mix: 0.35,
   width: 1,
-  depthMs: 2.6,
+  depthMs: 1.5,
   rateHz: 0.5,
   tremoloDepth: 0.6,
   harmonic: false
@@ -244,9 +244,16 @@ export const DEFAULT_CHORUS: ChorusSettings = {
 /** Centre delay a chorus sweeps around. Short enough to fuse with the dry signal. */
 const CHORUS_CENTRE_MS = 18
 
-/** Harmonic tremolo's low/high crossover point — the classic brownface Fender circuit's range. */
-const TREMOLO_CROSSOVER_HZ = 800
-/** Below Butterworth on purpose: a wide, sloppy overlap is what makes harmonic tremolo phase. */
+/**
+ * Harmonic tremolo's low/high crossover point. Documented brownface Fender component values put
+ * the real circuit's corner in the 300-600Hz range, not up at 800Hz — pulled down to sit in that
+ * range: 800Hz was lumping midrange content into the (louder, more prominent) low band, which
+ * likely read as darkness independent of the crossover-summing fix above.
+ */
+const TREMOLO_CROSSOVER_HZ = 450
+/** Below Butterworth on purpose: a wide, sloppy overlap is what makes harmonic tremolo phase.
+ *  Only affects HOW GRADUALLY energy hands off between bands now — see buildFxChain for why the
+ *  static (unmodulated) response no longer depends on this the way two separate filters would. */
 const TREMOLO_CROSSOVER_Q = 0.5
 
 export const DEFAULT_DELAY: DelaySettings = {
@@ -451,7 +458,9 @@ export class LiveEngine {
   /** Tremolo — the Modulation block's other circuit. See buildFxChain for the shared-crossover design. */
   private tremOsc: OscillatorNode | null = null
   private tremLowFilter: BiquadFilterNode | null = null
-  private tremHighFilter: BiquadFilterNode | null = null
+  /** High band = dry − lowpassed, not a separate highpass filter — see buildFxChain. */
+  private tremHighSum: GainNode | null = null
+  private tremLowInvert: GainNode | null = null
   private tremLowGain: GainNode | null = null
   private tremHighGain: GainNode | null = null
   private tremLowDepthGain: GainNode | null = null
@@ -854,17 +863,27 @@ export class LiveEngine {
     this.tremFullGain = ctx.createGain()
     this.tremFullDepthGain = ctx.createGain()
 
-    // HARMONIC keeps the crossover, and its imperfection is the entire point: where the bands
-    // overlap, modulating them in antiphase produces the phasing/Leslie-ish motion the
-    // brownface circuit is known for. Q is deliberately below Butterworth to widen that overlap.
+    // HARMONIC's crossover is deliberately NOT a matched lowpass/highpass pair. Two independent
+    // 2nd-order (biquad) filters at the same corner do not sum back to a flat response — there is
+    // an inherent dip/coloration in the crossover region, and it gets WIDER at the low Q used
+    // here for the wide "sloppy overlap" that makes this phase at all. That non-flat region was
+    // very likely why this sounded dark even at rest: real brownface Fender harmonic vibrato uses
+    // a gentle passive RC network, not sharp filters, and a first-order complementary pair (one
+    // simple lowpass, its complement) reconstructs the original signal exactly when not being
+    // modulated — there is no "crossover coloration" to begin with in the real circuit.
+    //
+    // Reproduced here as a SUBTRACTIVE split instead of two filters: the high band is computed as
+    // dry − lowpassed (tremLowInvert is a gain of -1, summed with the dry signal at tremHighSum).
+    // That is exact by construction, regardless of the lowpass's order or Q — low + high always
+    // reconstructs the dry signal bit-for-bit at rest, so any coloration heard is only ever from
+    // the deliberate antiphase modulation, never from the split itself.
     this.tremLowFilter = ctx.createBiquadFilter()
     this.tremLowFilter.type = 'lowpass'
     this.tremLowFilter.frequency.value = TREMOLO_CROSSOVER_HZ
     this.tremLowFilter.Q.value = TREMOLO_CROSSOVER_Q
-    this.tremHighFilter = ctx.createBiquadFilter()
-    this.tremHighFilter.type = 'highpass'
-    this.tremHighFilter.frequency.value = TREMOLO_CROSSOVER_HZ
-    this.tremHighFilter.Q.value = TREMOLO_CROSSOVER_Q
+    this.tremHighSum = ctx.createGain()
+    this.tremLowInvert = ctx.createGain()
+    this.tremLowInvert.gain.value = -1
     this.tremLowGain = ctx.createGain()
     this.tremHighGain = ctx.createGain()
     this.tremLowDepthGain = ctx.createGain()
@@ -883,11 +902,13 @@ export class LiveEngine {
 
     this.chorusOut.connect(this.tremFullGain)
     this.chorusOut.connect(this.tremLowFilter)
-    this.chorusOut.connect(this.tremHighFilter)
+    this.chorusOut.connect(this.tremHighSum)
+    this.tremLowFilter.connect(this.tremLowInvert)
+    this.tremLowInvert.connect(this.tremHighSum)
     this.chorusOut.connect(this.tremBypassGain)
     this.tremFullGain.connect(this.tremStdSel)
     this.tremLowFilter.connect(this.tremLowGain)
-    this.tremHighFilter.connect(this.tremHighGain)
+    this.tremHighSum.connect(this.tremHighGain)
     this.tremLowGain.connect(this.tremHarmSel)
     this.tremHighGain.connect(this.tremHarmSel)
     this.tremStdSel.connect(this.tremWetGain)
@@ -1757,7 +1778,8 @@ export class LiveEngine {
       this.chorusCrossL,
       this.chorusCrossR,
       this.tremLowFilter,
-      this.tremHighFilter,
+      this.tremHighSum,
+      this.tremLowInvert,
       this.tremLowGain,
       this.tremHighGain,
       this.tremLowDepthGain,
@@ -1884,7 +1906,8 @@ export class LiveEngine {
     }
     this.tremOsc = null
     this.tremLowFilter = null
-    this.tremHighFilter = null
+    this.tremHighSum = null
+    this.tremLowInvert = null
     this.tremLowGain = null
     this.tremHighGain = null
     this.tremLowDepthGain = null
