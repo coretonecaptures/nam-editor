@@ -1,5 +1,61 @@
 # TODO
 
+## Tape-echo character for the algorithmic Delay (Strymon El Capistan territory)
+
+Research pass only — no new knobs, no DSP built yet. El Capistan (and the class of pedal it
+belongs to — Roland Space Echo, EHX Memory Man, Boss RE-2/RE-20/DD-500's tape modes) is not just
+"delay with a lowpass in the feedback loop," which is roughly what `RackDelay`'s existing `toneHz`
+control already gives us. The character comes from several fairly separable pieces, each of which
+is either a real DSP addition or a UI-only reframing of what's already there:
+
+- **Wow & flutter.** Slow (wow) and fast (flutter) pitch instability from the physical tape
+  transport — the read head's speed isn't perfectly constant. This is the single most
+  identifiable "tape" trait and the one thing a plain lowpass can't fake. We already HAVE the
+  mechanism: `modDepthMs`/`modRateHz` (`DelaySettings`) modulate the delay read head exactly the
+  way tape wow does — see the existing doc comment on `modDepthMs`, "the same mechanism as tape
+  wow or a BBD chorus." A tape-flavoured preset is mostly a matter of a small `modDepthMs` at a
+  slow `modRateHz` (wow) — genuinely close to already-buildable with a good default, not a new
+  feature. True flutter (faster, more irregular) would want a second, quicker modulation layered
+  on top rather than reusing the same single LFO — that part IS new.
+
+- **Repeats darken AND compress with each pass.** `toneHz` already darkens progressively (it's
+  inside the feedback loop, so each repeat passes through it again). What's missing is the
+  SATURATION side — real tape compresses and adds harmonic distortion as it's driven, and that
+  compounds through repeats the same way the tone filter does. A soft-clip `WaveShaperNode`
+  inside the feedback loop (same position as `delayDamp`) would give this; needs its own amount
+  control (this is what El Capistan's "Bias" knob does — a clean-to-heavily-saturated range) and
+  careful gain-staging so it makes repeats characterful rather than just loud/harsh.
+
+- **Multi-head mode.** The real hardware's biggest structural feature: multiple physical
+  playback heads at different tap positions along the tape, so one input produces several
+  differently-timed, differently-weighted repeats at once — rhythmically far more interesting
+  than a single feedback tap. `pingPongWidth` (just built) proves the "more than one simple
+  on/off" pattern works well as a fader; a proper multi-tap mode would need actual new delay taps
+  (more `DelayNode`s at fixed ratios of the main time, individually leveled), not a repurposed
+  existing control — this is the biggest single piece of new engine work in this list.
+
+- **Sound-on-sound / looping mode.** Feedback pushed toward and effectively AT unity, turning the
+  delay into an overdub loop rather than a decaying echo. `MAX_FEEDBACK` (`liveEngine.ts`) is
+  deliberately clamped to 0.9 specifically to prevent runaway buildup — a real "sound on sound"
+  mode is a different, deliberate contract (accept that it doesn't decay, or decays extremely
+  slowly) rather than just raising that ceiling, which would also make the ordinary feedback knob
+  dangerous to over-turn.
+
+- **Tap tempo.** Not tape-specific, but the kind of thing you'd expect on any delay in this class
+  and we don't have it — dialing `timeMs` by ear via the knob works but is nothing like tapping a
+  rhythm. Would need a footswitch-equivalent (spacebar? a UI tap target?) measuring interval
+  between taps and writing it to `timeMs`. Independent of everything else on this list.
+
+- **Built-in spring reverb tail.** El Capistan bundles a spring reverb specifically for blending
+  with the echo (not a general-purpose reverb unit). We already have a full separate Reverb rack
+  unit, so this is really "can Delay's wet output feed Reverb's input for this one use case," not
+  a new reverb implementation — lower priority since the two units already coexist in the same
+  rig and can already be used together, just not pre-blended into one control.
+
+Priority if this gets picked up: wow/flutter first (cheapest, reuses existing modulation
+machinery, and is the most identifiable trait), tape saturation second (one new node, clear
+payoff), multi-head last (genuinely new topology, biggest scope).
+
 ## Swap Bass and Treble on the 500-strip EQ
 
 Currently top-to-bottom: Bass, Middle, Treble (`Rack500.tsx`, `EQ_KNOB_YS` indices 0/1/2, each
