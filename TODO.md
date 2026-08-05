@@ -1,5 +1,13 @@
 # TODO
 
+## Super Delay — second delay unit, hot-swaps into the Reverb slot
+
+Research/design doc only, not built: `docs/super-delay-plan.md`. Mix, Dual/Single mode with
+independent Left/Right Delay + Feedback, Mode (Tape/Digital/Analog-BBD/Lo-Fi — BBD and Analog are
+almost certainly the same mode written twice, see the doc), the existing Panner, modulation
+(wow/flutter reuse), Width, Tape age, EQ High/Low, Dual-mode Spread, Color/Drive, and Ducking.
+Needs its own brushed-metal forest-green panel art before it's a real rack unit, not attempted yet.
+
 ## Tape-echo character for the algorithmic Delay (Strymon El Capistan territory)
 
 Research pass only — no new knobs, no DSP built yet. El Capistan (and the class of pedal it
