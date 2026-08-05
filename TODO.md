@@ -15,12 +15,14 @@ Built and shipped: full DSP (Single/Dual topology, Digital/Tape/Memory Man Chara
 Ping-Pong, series routing with Delay), photoreal panel (`RackEchoLab.tsx`), presets in both the
 popout and non-popout views. Design doc: `docs/echo-lab-plan.md`. Remaining open items:
 
-- ~~Pop-out view.~~ Done — `EchoLabFloatingWindow.tsx`. Built as an in-page draggable floating
-  panel rather than a blocking modal or a second OS window, per explicit direction: renders at a
-  fixed generous width (900px, well above the cramped rack-column scale) with its own drag handle
-  and close button, no backdrop, so Delay stays fully visible and editable in the shared slot at
-  the same time. Popping out auto-switches the shared slot to Delay; closing switches it back to
-  Echo Lab. Position isn't persisted (resets each time it's reopened) — not asked for, easy to add
+- ~~Floating view.~~ Done — `EchoLabFloatingWindow.tsx` (avoid "pop out/pop-out" in any UI text for
+  this feature, per explicit direction — "Float" instead). Built as an in-page draggable floating
+  panel rather than a blocking modal or a second OS window: sized to the panel's own native pixel
+  width (capped to the viewport), not a smaller fixed constant — an earlier 900px version was
+  actually smaller than the inline rendering already got on a wide window. Own drag handle and
+  close button, no backdrop, so Delay stays fully visible and editable in the shared slot at the
+  same time. Floating auto-switches the shared slot to Delay; closing switches it back to Echo
+  Lab. Position isn't persisted (resets each time it's reopened) — not asked for, easy to add
   later if wanted.
 - **A genuinely different (skinny) fader cap for Pan Speed/Mod Rate.** The current cap
   (`rack-fader-cap.png`, shared with Delay/Reverb) was widened to fix a "hole in the middle" gap

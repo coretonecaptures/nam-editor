@@ -3,7 +3,7 @@ import { RackEchoLab } from './RackEchoLab'
 import type { EchoLabSettings } from '../utils/liveEngine'
 
 /**
- * Echo Lab's "pop out" — an in-page floating panel, not a modal and not a separate OS window.
+ * Echo Lab's floating view — an in-page floating panel, not a modal and not a separate OS window.
  *
  * Deliberately not a real second BrowserWindow: that would need IPC state-syncing between two
  * renderer processes editing the same live EchoLabSettings object, with all the desync risk that
@@ -12,10 +12,12 @@ import type { EchoLabSettings } from '../utils/liveEngine'
  * everything via z-index with no backdrop, and everything outside its own bounds stays fully
  * interactive since there is no full-screen click-catcher behind it like a real modal has.
  *
- * Rendered at a fixed, generous width rather than the cramped scale it gets sharing a rack column
- * with the 500-strip — that width, not literal 1:1 native pixels, is what "more readable" meant.
+ * Sized to the panel's own NATIVE pixel width (matches RackEchoLab's own P.w) rather than a
+ * smaller fixed constant — an earlier version used 900px, which on any reasonably wide window was
+ * actually SMALLER than the inline rack-column rendering already gets, making "float it for
+ * readability" a downgrade. Capped against the viewport so it still fits on a narrower window.
  */
-const FLOAT_WIDTH = 900
+const NATIVE_WIDTH = 1748
 
 export function EchoLabFloatingWindow({
   echoLab,
@@ -26,8 +28,9 @@ export function EchoLabFloatingWindow({
   onChange: (patch: Partial<EchoLabSettings>) => void
   onClose: () => void
 }) {
+  const [width] = useState(() => Math.min(NATIVE_WIDTH, Math.max(560, window.innerWidth - 60)))
   const [pos, setPos] = useState(() => ({
-    x: Math.max(20, window.innerWidth / 2 - FLOAT_WIDTH / 2),
+    x: Math.max(20, window.innerWidth / 2 - width / 2),
     y: 90
   }))
   const dragRef = useRef<{ startX: number; startY: number; startPosX: number; startPosY: number } | null>(null)
@@ -67,7 +70,7 @@ export function EchoLabFloatingWindow({
         position: 'fixed',
         left: pos.x,
         top: pos.y,
-        width: FLOAT_WIDTH,
+        width,
         zIndex: 450,
         background: 'var(--panel)',
         border: '1px solid var(--border)',
@@ -93,7 +96,7 @@ export function EchoLabFloatingWindow({
         }}
       >
         <span style={{ font: "600 11px 'IBM Plex Mono', monospace", letterSpacing: '.06em', color: 'var(--text-2)' }}>
-          ⠿ ECHO LAB — drag to move
+          ⠿ ECHO LAB — FLOATING · drag to move
         </span>
         <button
           onClick={onClose}

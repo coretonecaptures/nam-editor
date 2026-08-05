@@ -178,9 +178,15 @@ export function RackEchoLab({
   const setCharacter = (character: EchoLabCharacter): void =>
     onChange({ character, char1: DEFAULT_CHAR1[character], char2: DEFAULT_CHAR2[character] })
 
+  // Dual shows BOTH taps (L/R) rather than just leftTimeMs — showing only one number in Dual mode
+  // silently hid that Right runs its own, usually-different time. Tightened separators (no spaces
+  // around the middle dot, a single space instead of an em-dash) to make room for the extra digits.
+  const lcdTime = single
+    ? `${Math.round(echoLab.timeMs)}MS`
+    : `${Math.round(echoLab.leftTimeMs)}/${Math.round(echoLab.rightTimeMs)}MS`
   const lcd = !echoLab.enabled
     ? 'BYPASSED'
-    : `${echoLab.topology.toUpperCase()} · ${echoLab.character.toUpperCase()} — ${Math.round(single ? echoLab.timeMs : echoLab.leftTimeMs)}MS`
+    : `${echoLab.topology.toUpperCase()}·${echoLab.character.toUpperCase()} ${lcdTime}`
 
   return (
     <div className="flex flex-col items-center gap-3 w-full">
@@ -220,9 +226,16 @@ export function RackEchoLab({
           centerXPct={ROW1_XS[4]} centerYPct={ROW1_Y} diameterPct={KNOB_D} />
         <KnobLabel xPct={ROW1_XS[4]} yPct={ROW1_Y + LABEL_OFFSET_Y_ROW1} text="R Feedback" dim={single} />
 
-        <RackKnob label={single ? 'Ping Pong' : 'Spread'} value={single ? echoLab.pingPongWidth : echoLab.spread}
-          min={0} max={1} format={single ? pingPongFormat : pct} raised
-          onChange={(v) => onChange(single ? { pingPongWidth: v } : { spread: v })}
+        {/* Ping Pong uses the same squared-taper trick as the Chorus Depth knob: the knob's own
+            position is sqrt(pingPongWidth), and onChange squares it back. Low knob travel then
+            barely moves the real value (near-off stays near-off for longer), and the back half
+            of the travel is where it actually opens up toward full hard alternation — matching
+            "1% should be basically nothing, 50% shouldn't be super wide yet" directly, as a
+            presentation-layer curve rather than a DSP change. */}
+        <RackKnob label={single ? 'Ping Pong' : 'Spread'}
+          value={single ? Math.sqrt(echoLab.pingPongWidth) : echoLab.spread}
+          min={0} max={1} format={single ? (v) => pingPongFormat(v * v) : pct} raised
+          onChange={(v) => onChange(single ? { pingPongWidth: v * v } : { spread: v })}
           centerXPct={ROW1_XS[5]} centerYPct={ROW1_Y} diameterPct={KNOB_D} />
         <KnobLabel xPct={ROW1_XS[5]} yPct={ROW1_Y + LABEL_OFFSET_Y_ROW1} text={single ? 'Ping Pong' : 'Spread'} />
 

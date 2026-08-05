@@ -2295,11 +2295,13 @@ export function PlayerPanel({
               </>
             )}
             {/* Ping Pong (Single) and Spread (Dual) share the same physical role Echo Lab's Row 1
-                slot 6 knob plays on the rack panel — only one is ever relevant at a time. */}
+                slot 6 knob plays on the rack panel — only one is ever relevant at a time. Same
+                squared taper as the rack knob (slider position = sqrt(pingPongWidth)) so both
+                UIs feel identical: gentle for most of the travel, opens up toward the end. */}
             {echoLab.topology === 'single' ? (
-              <FxSlider compact={fxCompact} label="Ping Pong" hint="0 mono, 1 full alternation" value={echoLab.pingPongWidth} min={0} max={1} step={0.01}
-                format={pingPongFormat}
-                onChange={(v) => setEchoLabState((e) => ({ ...e, pingPongWidth: v }))} />
+              <FxSlider compact={fxCompact} label="Ping Pong" hint="0 mono, 1 full alternation" value={Math.sqrt(echoLab.pingPongWidth)} min={0} max={1} step={0.01}
+                format={(v) => pingPongFormat(v * v)}
+                onChange={(v) => setEchoLabState((e) => ({ ...e, pingPongWidth: v * v }))} />
             ) : (
               <FxSlider compact={fxCompact} label="Spread" value={echoLab.spread} min={0} max={1} step={0.01}
                 format={(v) => `${Math.round(v * 100)}%`}
@@ -3178,17 +3180,17 @@ export function PlayerPanel({
                     )
                   })}
                 </div>
-                {/* Pop-out: a movable, non-blocking floating panel (see EchoLabFloatingWindow) —
+                {/* Float: a movable, non-blocking floating panel (see EchoLabFloatingWindow) —
                     not a modal, so Delay stays fully editable underneath/beside it at the same
-                    time. Only offered from Echo Lab's own slot view; popping out immediately
-                    frees the shared slot for Delay, closing it returns Echo Lab there. */}
+                    time. Only offered from Echo Lab's own slot view; floating immediately frees
+                    the shared slot for Delay, closing the floating window returns Echo Lab there. */}
                 {delaySlotView === 'echo-lab' && !echoLabFloating && (
                   <button
                     onClick={() => {
                       setEchoLabFloating(true)
                       setDelaySlotView('delay')
                     }}
-                    title="Pop Echo Lab out into its own movable window, larger and easier to read"
+                    title="Float Echo Lab in its own movable window, larger and easier to read"
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -3203,7 +3205,7 @@ export function PlayerPanel({
                       cursor: 'pointer'
                     }}
                   >
-                    ⤢ Pop out
+                    ⤢ Float
                   </button>
                 )}
                 {/* Series order between Delay and Echo Lab when both are enabled — the chain rail

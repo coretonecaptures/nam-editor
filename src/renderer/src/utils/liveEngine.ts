@@ -464,17 +464,31 @@ export interface LiveStartOptions {
  * player is about to want that permission anyway.
  */
 /**
- * A tanh soft-clip curve for Echo Lab's Color/Drive knob, normalized so 0 drive is the identity
- * line (transparent) and higher drive compresses peaks progressively harder without ever hard
- * clipping — the standard, cheap way to get "grit that builds" out of a WaveShaperNode.
+ * A tanh soft-clip curve for Echo Lab's Color/Drive knob AND its always-on feedback-loop safety
+ * limiter (see echoLabLimiterL/R in buildFxChain) — same function, different fixed `amount` for
+ * the latter.
+ *
+ * The ORIGINAL version of this normalized by `Math.tanh(k)` (mapping x=1 to y=1 exactly at every
+ * drive amount). That is the wrong normalization for anything sitting inside a feedback loop:
+ * `d/dx[tanh(kx)/tanh(k)]` at x=0 is `k/tanh(k)`, which is GREATER than 1 for every k>0 and grows
+ * with k — meaning higher Color/Drive did not just compress peaks, it added small-signal GAIN,
+ * compounding every pass through the loop. Traced from a user report of "infinite feedback into
+ * white noise" that persisted after the ping-pong topology itself was independently verified
+ * stable (by hand, tracing a single impulse through the corrected graph) — the coupling to
+ * Color/Drive specifically, not ping-pong, was the actual cause.
+ *
+ * Correct normalization: `tanh(kx)/k`. Its derivative at x=0 is `sech²(0) = 1` for EVERY k — unity
+ * small-signal gain always, so this can never itself be the source of runaway. Higher k still
+ * compresses progressively harder (lower ceiling as k grows), which is the "drive gets more
+ * squashed/dark" character Color/Drive is supposed to have, just without the instability.
  */
 function makeSoftClipCurve(amount: number): Float32Array<ArrayBuffer> {
   const n = 256
   const curve = new Float32Array(new ArrayBuffer(n * Float32Array.BYTES_PER_ELEMENT))
-  const k = amount * 18
+  const k = amount * 4
   for (let i = 0; i < n; i++) {
     const x = (i / (n - 1)) * 2 - 1
-    curve[i] = k === 0 ? x : Math.tanh(k * x) / Math.tanh(k)
+    curve[i] = k === 0 ? x : Math.tanh(k * x) / k
   }
   return curve
 }
@@ -635,6 +649,9 @@ export class LiveEngine {
   private echoLabToneR: BiquadFilterNode | null = null
   private echoLabSatL: WaveShaperNode | null = null
   private echoLabSatR: WaveShaperNode | null = null
+  /** Fixed, always-on safety limiter at the feedback re-entry point — see buildFxChain. */
+  private echoLabLimiterL: WaveShaperNode | null = null
+  private echoLabLimiterR: WaveShaperNode | null = null
   private echoLabModOsc: OscillatorNode | null = null
   private echoLabModDepthL: GainNode | null = null
   private echoLabModDepthR: GainNode | null = null
@@ -1280,6 +1297,12 @@ export class LiveEngine {
     this.echoLabToneR.type = 'lowpass'
     this.echoLabSatL = ctx.createWaveShaper()
     this.echoLabSatR = ctx.createWaveShaper()
+    // 4x oversampling: a WaveShaper applied at the plain sample rate can generate harmonics above
+    // Nyquist, which fold back down as inharmonic aliasing noise — the textbook cause of a
+    // distortion stage sounding like "white noise/aliasing" under heavy drive, independent of any
+    // gain issue. Oversampling is the standard fix; costs some CPU, not correctness.
+    this.echoLabSatL.oversample = '4x'
+    this.echoLabSatR.oversample = '4x'
 
     this.echoLabIn.connect(this.echoLabDry)
     this.echoLabIn.connect(this.echoLabDelayL)
@@ -1328,8 +1351,24 @@ export class LiveEngine {
     this.echoLabSatR.connect(this.echoLabFbRSelfDual)
     this.echoLabFbRSelfDual.connect(this.echoLabFeedbackR)
 
-    this.echoLabFeedbackL.connect(this.echoLabDelayL)
-    this.echoLabFeedbackR.connect(this.echoLabDelayR)
+    // Defense-in-depth: a fixed, always-on safety limiter right at the feedback re-entry point,
+    // independent of the Color/Drive curve fix above. Unity small-signal gain (same safe
+    // normalization, transparent at normal playing levels) with a firm, permanent ceiling — so
+    // this loop is stable BY CONSTRUCTION even against a bug neither the math proof nor this
+    // review caught, not just stable because the proof says so. Standard practice for anything
+    // with regenerative feedback; cheap insurance for something a user can drive hard by ear.
+    this.echoLabLimiterL = ctx.createWaveShaper()
+    this.echoLabLimiterR = ctx.createWaveShaper()
+    this.echoLabLimiterL.oversample = '4x'
+    this.echoLabLimiterR.oversample = '4x'
+    const limiterCurve = makeSoftClipCurve(0.5)
+    this.echoLabLimiterL.curve = limiterCurve
+    this.echoLabLimiterR.curve = limiterCurve
+
+    this.echoLabFeedbackL.connect(this.echoLabLimiterL)
+    this.echoLabLimiterL.connect(this.echoLabDelayL)
+    this.echoLabFeedbackR.connect(this.echoLabLimiterR)
+    this.echoLabLimiterR.connect(this.echoLabDelayR)
 
     // Merge: L always on ch0. Ch1 crossfades between a mono duplicate of L (Single) and R's own
     // output (Dual) — same "both paths always wired, selected by gain" convention as Delay's own
@@ -2537,6 +2576,8 @@ export class LiveEngine {
     this.echoLabToneR = null
     this.echoLabSatL = null
     this.echoLabSatR = null
+    this.echoLabLimiterL = null
+    this.echoLabLimiterR = null
     try {
       this.echoLabModOsc?.stop()
       this.echoLabModOsc?.disconnect()
