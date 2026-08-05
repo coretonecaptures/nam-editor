@@ -162,7 +162,19 @@ export function PresetMenu({
       >
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 5 }}>
           {favoritesKind && active && favoriteIds.has(active.id) && <span style={{ color: '#e8b04a' }}>★</span>}
-          {active ? active.name : placeholder}
+          {active ? (
+            active.name
+          ) : lastRecalled ? (
+            // Settings have drifted from lastRecalled's saved values (no exact match, so
+            // `active` above is null) — still show what's loaded rather than falling back to the
+            // placeholder, since "no preset" reads as "you have nothing dialed in," not "you have
+            // unsaved changes." Amber + italic marks it as edited rather than exactly-as-saved.
+            <span style={{ color: '#e8b04a', fontStyle: 'italic' }} title={`${lastRecalled.name} (edited)`}>
+              {lastRecalled.name} (edited)
+            </span>
+          ) : (
+            placeholder
+          )}
         </span>
         <span style={{ color: 'var(--text-2)', flexShrink: 0 }}>{open ? '▴' : '▾'}</span>
       </button>
@@ -325,6 +337,23 @@ export function PresetMenu({
               )
             })}
           </div>
+          {/* Only appears once settings have actually drifted from lastRecalled's saved values
+              (active is null but lastRecalled isn't — the same condition the amber "(edited)"
+              trigger label uses). Re-recalling the same id is all reverting is: it just discards
+              whatever's been tweaked since, so unlike Update this needs no confirm step — nothing
+              is lost that couldn't be re-tweaked right back. */}
+          {!active && lastRecalled && (
+            <button
+              onClick={() => recall(lastRecalled.id)}
+              style={{
+                width: '100%', textAlign: 'left', padding: '9px 12px', borderTop: '1px solid var(--border-soft)',
+                background: 'transparent', color: 'var(--text-2)', font: "600 11px 'IBM Plex Sans', sans-serif", cursor: 'pointer', border: 'none',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+              }}
+            >
+              ↺ Revert to "{lastRecalled.name}"
+            </button>
+          )}
           {/* Only appears once something has actually been recalled — there is nothing to
               "update" otherwise. A separate, clearly-labelled row rather than folding this into
               Save-as, and its own confirm step before it touches anything: this overwrites a
