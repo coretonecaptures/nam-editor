@@ -40,17 +40,25 @@ export function RackReverbTest({
   onChange,
   reverbPresets,
   irName,
+  irPath,
 }: {
   reverb: ReverbSettings
   onChange: (patch: Partial<ReverbSettings>) => void
   reverbPresets: ReverbPreset[]
   irName: string | null
+  /** Currently loaded impulse, for matching against a preset's OWN irPath below. Without this,
+   *  a preset stayed "loaded" in the display forever after swapping IRs — its `settings` object
+   *  doesn't include which impulse is playing, only mix/EQ/mode, so changing just the IR left
+   *  the knob-values comparison still matching and the LCD stuck on the old preset's name. */
+  irPath: string | null
 }) {
   // A loaded preset names itself and nothing else — the mode is already shown by the lit LED,
   // so prefixing it would spend glass on something the panel already says. With no preset
   // loaded the display falls back to whatever identifies the sound: the impulse in convolution,
   // and the headline parameter in plate.
-  const activePreset = reverbPresets.find((p) => JSON.stringify(p.settings) === JSON.stringify(reverb))
+  const activePreset = reverbPresets.find(
+    (p) => JSON.stringify(p.settings) === JSON.stringify(reverb) && p.irPath === irPath
+  )
   const lcd = activePreset
     ? activePreset.name.toUpperCase()
     : reverb.mode === 'convolution'

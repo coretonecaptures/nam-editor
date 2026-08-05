@@ -2862,7 +2862,7 @@ export function PlayerPanel({
             panel={
               <RackCrop metal={RACK_CROP.delay}>
                 <RackDelay delay={delay} onChange={(patch) => setDelayState((d) => ({ ...d, ...patch }))} delayPresets={delayPresets}
-                  irName={delayIrPath ? (delayIrPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null} />
+                  irName={delayIrPath ? (delayIrPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null} irPath={delayIrPath} />
               </RackCrop>
             }
             footer={
@@ -2913,7 +2913,7 @@ export function PlayerPanel({
             panel={
               <RackCrop metal={RACK_CROP.reverb}>
                 <RackReverbTest reverb={reverb} onChange={(patch) => setReverbState((r) => ({ ...r, ...patch }))} reverbPresets={reverbPresets}
-                  irName={reverbPath ? (reverbPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null} />
+                  irName={reverbPath ? (reverbPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null} irPath={reverbPath} />
               </RackCrop>
             }
             footer={

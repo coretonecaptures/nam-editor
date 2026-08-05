@@ -69,17 +69,24 @@ export function RackDelay({
   onChange,
   delayPresets,
   irName,
+  irPath,
 }: {
   delay: DelaySettings
   onChange: (patch: Partial<DelaySettings>) => void
   delayPresets: DelayPreset[]
   irName: string | null
+  /** Currently loaded impulse, for matching against a preset's OWN irPath below — see the matching
+   *  comment in RackReverbTest for why this is needed (settings alone don't capture which IR is
+   *  loaded, so swapping the IR without touching a knob left the LCD stuck on the old preset). */
+  irPath: string | null
 }) {
   // A loaded preset names itself and nothing else — the mode is already shown by the lit LED,
   // so prefixing it would spend glass on something the panel already says. With no preset
   // loaded the display falls back to whatever identifies the sound: the impulse in convolution,
   // and the one number you actually dial by ear in algorithmic.
-  const activePreset = delayPresets.find((p) => JSON.stringify(p.settings) === JSON.stringify(delay))
+  const activePreset = delayPresets.find(
+    (p) => JSON.stringify(p.settings) === JSON.stringify(delay) && p.irPath === irPath
+  )
   const lcd = activePreset
     ? activePreset.name.toUpperCase()
     : delay.mode === 'convolution'
