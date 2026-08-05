@@ -382,7 +382,12 @@ export const DEFAULT_ECHO_LAB: EchoLabSettings = {
   char1: 0,
   char2: 0,
   colorDrive: 0,
-  width: 0.5,
+  // 1 = no cross-bleed (direct=1, cross=0 in the width matrix) — matches DEFAULT_CHORUS/
+  // DEFAULT_REVERB's own convention exactly. This was 0.5 (25% cross-bleed each way, EVEN AT
+  // DEFAULT) until traced from a report that Ping-Pong "at FULL still doesn't sound hard
+  // panned" — the width matrix was diluting the hard L/R split before it ever reached the
+  // output, regardless of the ping-pong topology itself being correct.
+  width: 1,
   eqLowDb: 0,
   eqHighDb: 0,
   duckEnabled: false,
