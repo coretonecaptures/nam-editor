@@ -1,4 +1,5 @@
 import echoLabPanel from '../assets/fx/echo-lab-panel.png'
+import rackKnobTestFluted from '../assets/fx/rack-knob-test-fluted.png'
 import { RackKnob } from './RackKnob'
 import { RackFader } from './RackFader'
 import { RackButton, RackDisplay, RackLed } from './RackParts'
@@ -208,7 +209,9 @@ export function RackEchoLab({
             something in Dual. Slot 6 is meaningful in BOTH: Ping Pong in Single (0 off/mono, 1
             full alternation, continuous — the "single open knob" this repurposes), Spread in
             Dual (already real stereo from two independent lines, so Ping Pong doesn't apply). */}
-        <RackKnob label="Mix" value={echoLab.mix} min={0} max={1} format={pct} raised
+        {/* TEST: comparing a candidate knob image against the current one, Mix knob only on Echo
+            Lab and Reverb — see rack-knob-test-fluted.png prep notes. Not a final choice. */}
+        <RackKnob label="Mix" value={echoLab.mix} min={0} max={1} format={pct} raised image={rackKnobTestFluted}
           onChange={(v) => onChange({ mix: v })}
           centerXPct={ROW1_XS[0]} centerYPct={ROW1_Y} diameterPct={KNOB_D} />
         <KnobLabel xPct={ROW1_XS[0]} yPct={ROW1_Y + LABEL_OFFSET_Y_ROW1} text="Mix" />

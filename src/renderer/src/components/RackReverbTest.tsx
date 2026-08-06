@@ -1,4 +1,5 @@
 import rackReverbPanel from '../assets/fx/v2c-reverb-panel.png'
+import rackKnobTestStrymon from '../assets/fx/rack-knob-test-strymon.png'
 import { RackKnob } from './RackKnob'
 import { RackButton, RackDisplay, RackLed } from './RackParts'
 import { rackDimStyle } from './RackPower'
@@ -72,7 +73,9 @@ export function RackReverbTest({
       <div style={{ position: 'relative', width: '100%', containerType: 'inline-size', ...rackDimStyle(reverb.enabled) }}>
         <img src={rackReverbPanel} alt="Reverb" draggable={false} style={{ width: '100%', display: 'block', userSelect: 'none' }} />
 
-        <RackKnob label="Mix" value={reverb.mix} min={0} max={1} format={pct}
+        {/* TEST: comparing a candidate knob image against the current one, Mix knob only on
+            Reverb and Echo Lab — see rack-knob-test-strymon.png prep notes. Not a final choice. */}
+        <RackKnob label="Mix" value={reverb.mix} min={0} max={1} format={pct} image={rackKnobTestStrymon}
           onChange={(v) => onChange({ mix: v })}
           centerXPct={KNOB_XS[0]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
         {/* Size/Damping/Width shape the algorithmic plate's own tail — a convolution impulse
