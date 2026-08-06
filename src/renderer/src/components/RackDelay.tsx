@@ -20,6 +20,20 @@ import type { DelayPreset } from '../types/settings'
  * as lens-only sprites with the panel's own LEDs erased.
  */
 
+// Ratio is a multiplier of the Time knob, read as a note value once Time is tapped/typed in as a
+// quarter note. Spans the knob's full 0.25-2 range with the divisions a tap-tempo delay pedal
+// actually offers, not just the dotted-eighth trick that started this.
+const RATIO_PRESETS = [
+  { label: '1/16', value: 0.25 },
+  { label: '1/8 Trip', value: 0.3333 },
+  { label: '1/8', value: 0.5 },
+  { label: '1/4 Trip', value: 0.6667 },
+  { label: '1/8 Dot', value: 0.75 },
+  { label: '1/4', value: 1 },
+  { label: '1/4 Dot', value: 1.5 },
+  { label: '1/2', value: 2 }
+]
+
 const P = { w: 2172, h: 724 }
 const px = (v: number): number => (v / P.w) * 100
 const py = (v: number): number => (v / P.h) * 100
@@ -107,11 +121,11 @@ export function RackDelay({
             runs through the auto-pan stage (see liveEngine's delayConvWet -> delayPanIn), so pan
             keeps working in either mode. */}
         <RackKnob label="Time" value={delay.timeMs} min={20} max={1200} format={(v) => `${Math.round(v)} ms`}
-          locked={delay.mode === 'convolution'} lockScrim typeable
+          locked={delay.mode === 'convolution'} lockScrim typeable tapTempo
           onChange={(v) => onChange({ timeMs: v })}
           centerXPct={KNOB_XS[1]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
         <RackKnob label="Ratio" value={delay.ratio} min={0.25} max={2} format={(v) => `${v.toFixed(2)}x`}
-          locked={delay.mode === 'convolution'} lockScrim
+          locked={delay.mode === 'convolution'} lockScrim typeable presets={RATIO_PRESETS}
           onChange={(v) => onChange({ ratio: v })}
           centerXPct={KNOB_XS[2]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
         <RackKnob label="Feedback" value={delay.feedback} min={0} max={MAX_FEEDBACK} format={pct}

@@ -26,7 +26,9 @@ export function RackKnob({
   locked = false,
   raised = false,
   lockScrim = false,
-  typeable = false
+  typeable = false,
+  tapTempo = false,
+  presets
 }: {
   /** Current value, in the knob's own units (caller's min..max). */
   value: number
@@ -71,6 +73,19 @@ export function RackKnob({
    * orange Delay's Time knob first before rolling it out further.
    */
   typeable?: boolean
+  /**
+   * Adds a TAP button to the same right-click popover — tapping it a few times averages the
+   * interval between taps into a millisecond value and applies it live, the way a hardware delay
+   * pedal's footswitch does. Only meaningful alongside `typeable`, and only on a knob whose value
+   * is itself a time in ms (the orange Delay's Time, Echo Lab's Time/L Delay/R Delay).
+   */
+  tapTempo?: boolean
+  /**
+   * Quick-pick buttons shown in the same popover — for a knob like Ratio where a handful of exact
+   * values (dotted-eighth, triplet, ...) are what people actually want rather than an arbitrary
+   * drag position. Only meaningful alongside `typeable`.
+   */
+  presets?: { label: string; value: number }[]
 }) {
   const dragRef = useRef<{
     startX: number
@@ -187,6 +202,35 @@ export function RackKnob({
     if (editing) editInputRef.current?.select()
   }, [editing])
 
+  // Ring buffer of tap timestamps, not component state — a tap needs to feel instantaneous, and
+  // there's nothing here worth a re-render on its own (the resulting value change re-renders via
+  // onChange/editValue anyway). A gap over 2s resets the sequence, same as hardware tap-tempo
+  // footswitches, so an old sequence doesn't quietly average into a new one you meant to start
+  // fresh.
+  const tapTimesRef = useRef<number[]>([])
+  const handleTap = useCallback(() => {
+    const now = performance.now()
+    const times = tapTimesRef.current
+    if (times.length > 0 && now - times[times.length - 1] > 2000) times.length = 0
+    times.push(now)
+    if (times.length > 8) times.shift()
+    if (times.length < 2) {
+      setEditValue(String(Math.round(value)))
+      return
+    }
+    const intervals: number[] = []
+    for (let i = 1; i < times.length; i++) intervals.push(times[i] - times[i - 1])
+    const avgMs = intervals.reduce((a, b) => a + b, 0) / intervals.length
+    const next = Math.max(min, Math.min(max, Math.round(avgMs)))
+    setEditValue(String(next))
+    onChange(next)
+  }, [value, min, max, onChange])
+
+  // Read as "this ms value, as a quarter note, is X BPM" — shown whenever tapTempo is on, not
+  // just right after tapping, so a typed value gets the same feedback as a tapped one.
+  const editValueMs = parseFloat(editValue)
+  const tapBpm = tapTempo && Number.isFinite(editValueMs) && editValueMs > 0 ? 60000 / editValueMs : null
+
   return (
     <>
     <button
@@ -201,7 +245,9 @@ export function RackKnob({
         locked
           ? 'Inactive in this mode'
           : typeable
-            ? 'Right-click to type a value'
+            ? tapTempo
+              ? 'Right-click to type a value or tap tempo'
+              : 'Right-click to type a value'
             : resetTo === undefined
               ? undefined
               : 'Double-click to reset'
@@ -259,34 +305,101 @@ export function RackKnob({
       )}
     </button>
     {editing && (
-      <input
-        ref={editInputRef}
-        type="number"
-        value={editValue}
-        autoFocus
-        onChange={(e) => setEditValue(e.target.value)}
+      <div
         onPointerDown={(e) => e.stopPropagation()}
-        onBlur={commitEdit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') commitEdit()
-          else if (e.key === 'Escape') setEditing(false)
-        }}
         style={{
           position: 'absolute',
           left: `${centerXPct}%`,
-          top: `calc(${centerYPct}% - ${diameterPct / 2}% - 26px)`,
-          transform: 'translateX(-50%)',
-          width: 64,
-          padding: '3px 6px',
-          borderRadius: 4,
+          // Anchored by its BOTTOM edge and growing upward, rather than a fixed subtraction sized
+          // for one line — the popover's height now varies (a bare field vs. field+TAP vs.
+          // field+preset grid), and this way none of those overlap the knob regardless.
+          top: `calc(${centerYPct}% - ${diameterPct / 2}% - 8px)`,
+          transform: 'translate(-50%, -100%)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 6,
+          padding: 8,
+          borderRadius: 6,
           background: 'rgba(0,0,0,0.92)',
           border: '1px solid rgba(255,255,255,0.3)',
-          color: '#f4f4f5',
-          font: "500 12px 'IBM Plex Sans', sans-serif",
-          textAlign: 'center',
+          boxShadow: '0 4px 14px rgba(0,0,0,0.5)',
           zIndex: 30
         }}
-      />
+      >
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input
+            ref={editInputRef}
+            type="number"
+            value={editValue}
+            autoFocus
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={commitEdit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitEdit()
+              else if (e.key === 'Escape') setEditing(false)
+            }}
+            style={{
+              width: 64,
+              padding: '3px 6px',
+              borderRadius: 4,
+              background: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.25)',
+              color: '#f4f4f5',
+              font: "500 12px 'IBM Plex Sans', sans-serif",
+              textAlign: 'center'
+            }}
+          />
+          {tapTempo && (
+            <button
+              type="button"
+              onClick={handleTap}
+              style={{
+                padding: '3px 10px',
+                borderRadius: 4,
+                background: 'rgba(255,174,46,0.16)',
+                border: '1px solid rgba(255,174,46,0.5)',
+                color: '#ffae2e',
+                font: "600 11px 'IBM Plex Sans', sans-serif",
+                letterSpacing: '0.03em',
+                cursor: 'pointer'
+              }}
+            >
+              TAP
+            </button>
+          )}
+        </div>
+        {tapBpm !== null && (
+          <div style={{ fontSize: 10, color: '#a1a1aa', textAlign: 'center' }}>
+            &asymp; {Math.round(tapBpm)} BPM (as 1/4)
+          </div>
+        )}
+        {presets && presets.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxWidth: 148 }}>
+            {presets.map((p) => (
+              <button
+                key={p.label}
+                type="button"
+                onClick={() => {
+                  const next = Math.max(min, Math.min(max, p.value))
+                  setEditValue(String(next))
+                  onChange(next)
+                }}
+                style={{
+                  padding: '2px 6px',
+                  borderRadius: 3,
+                  background: 'rgba(255,255,255,0.08)',
+                  border: '1px solid rgba(255,255,255,0.2)',
+                  color: '#d4d4d8',
+                  font: "500 10px 'IBM Plex Sans', sans-serif",
+                  cursor: 'pointer'
+                }}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     )}
     </>
   )

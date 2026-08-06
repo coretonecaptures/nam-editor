@@ -214,7 +214,7 @@ export function RackEchoLab({
         <KnobLabel xPct={ROW1_XS[0]} yPct={ROW1_Y + LABEL_OFFSET_Y_ROW1} text="Mix" />
 
         <RackKnob label={single ? 'Time' : 'L Delay'} value={single ? echoLab.timeMs : echoLab.leftTimeMs}
-          min={20} max={1200} format={ms} raised typeable
+          min={20} max={1200} format={ms} raised typeable tapTempo
           onChange={(v) => onChange(single ? { timeMs: v } : { leftTimeMs: v })}
           centerXPct={ROW1_XS[1]} centerYPct={ROW1_Y} diameterPct={KNOB_D} />
         <KnobLabel xPct={ROW1_XS[1]} yPct={ROW1_Y + LABEL_OFFSET_Y_ROW1} text={single ? 'Time' : 'L Delay'} />
@@ -226,7 +226,7 @@ export function RackEchoLab({
         <KnobLabel xPct={ROW1_XS[2]} yPct={ROW1_Y + LABEL_OFFSET_Y_ROW1} text={single ? 'Feedback' : 'L Feedback'} />
 
         <RackKnob label="R Delay" value={echoLab.rightTimeMs} min={20} max={1200} format={ms} raised
-          locked={single} lockScrim typeable
+          locked={single} lockScrim typeable tapTempo
           onChange={(v) => onChange({ rightTimeMs: v })}
           centerXPct={ROW1_XS[3]} centerYPct={ROW1_Y} diameterPct={KNOB_D} />
         <KnobLabel xPct={ROW1_XS[3]} yPct={ROW1_Y + LABEL_OFFSET_Y_ROW1} text="R Delay" dim={single} />
