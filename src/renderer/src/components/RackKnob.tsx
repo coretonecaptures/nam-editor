@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import rackKnobBlack from '../assets/fx/rack-knob-black.png'
 import { RackValueTip } from './RackValueTip'
 
@@ -25,7 +25,8 @@ export function RackKnob({
   resetTo,
   locked = false,
   raised = false,
-  lockScrim = false
+  lockScrim = false,
+  typeable = false
 }: {
   /** Current value, in the knob's own units (caller's min..max). */
   value: number
@@ -63,10 +64,26 @@ export function RackKnob({
    * Delay/Reverb's existing locked-knob look is unchanged until/unless it's rolled out there too.
    */
   lockScrim?: boolean
+  /**
+   * Right-click opens an inline numeric field instead of the usual context menu — for a control
+   * where dragging to an exact value is fiddly (a delay time in ms is the first case). Off by
+   * default so this is opt-in per knob rather than a blanket behaviour change; trying it on the
+   * orange Delay's Time knob first before rolling it out further.
+   */
+  typeable?: boolean
 }) {
-  const dragRef = useRef<{ startY: number; startValue: number } | null>(null)
+  const dragRef = useRef<{
+    startX: number
+    startY: number
+    lastY: number
+    currentValue: number
+    armed: boolean
+  } | null>(null)
   const [dragging, setDragging] = useState(false)
   const [hover, setHover] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [editValue, setEditValue] = useState('')
+  const editInputRef = useRef<HTMLInputElement | null>(null)
 
   const frac = max > min ? (value - min) / (max - min) : 0
   // Standard knob sweep: -135deg (fully counter-clockwise) to +135deg, 270deg of travel.
@@ -75,7 +92,13 @@ export function RackKnob({
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLButtonElement>) => {
       e.currentTarget.setPointerCapture(e.pointerId)
-      dragRef.current = { startY: e.clientY, startValue: value }
+      dragRef.current = {
+        startX: e.clientX,
+        startY: e.clientY,
+        lastY: e.clientY,
+        currentValue: value,
+        armed: false
+      }
       setDragging(true)
     },
     [value]
@@ -85,15 +108,36 @@ export function RackKnob({
     (e: React.PointerEvent<HTMLButtonElement>) => {
       const drag = dragRef.current
       if (!drag) return
-      // Vertical drag, not rotational — dragging in a circle around a small knob feels wrong
-      // and is imprecise. 200px of drag covers the full range, as most DAW knobs do.
-      const deltaY = drag.startY - e.clientY
-      // Dead zone: a trackpad's tap-to-click / pressure sensitivity can occasionally register a
-      // light graze as a real pointerdown+move, which reads as "the knob grabbed itself" since
-      // no deliberate click was involved. Widened from 3px after that continued to happen —
-      // still small enough to be imperceptible on an actual intentional drag.
-      if (Math.abs(deltaY) < 8) return
-      const next = Math.max(min, Math.min(max, drag.startValue + (deltaY / 200) * (max - min)))
+      // Vertical drag, not rotational — dragging in a circle around a small knob feels wrong and
+      // is imprecise. 200px of drag covers the full range at the knob itself, as most DAW knobs
+      // do — but a knob spanning a wide range (an Echo Lab delay time over several seconds) packs
+      // many ms into each of those pixels, which read as "huge gaps" and sudden jumps for exact
+      // values. Real plugin knobs fix this by rewarding a drag that strays sideways away from the
+      // knob with finer resolution — same idea here: the further right/left of where the drag
+      // started, the more pixels it takes to cover the same range, so pulling the mouse out to the
+      // side is how you dial in something precise. Applied to the INCREMENT each move, using the
+      // value already reached rather than the value the drag started at, so moving purely
+      // sideways (no new vertical motion) never changes the value on its own.
+      // Dead zone before the first move: a trackpad's tap-to-click / pressure sensitivity can
+      // occasionally register a light graze as a real pointerdown+move, which reads as "the knob
+      // grabbed itself" since no deliberate click was involved. Gates only the FIRST response —
+      // once a real drag is underway, every subsequent pixel should count, or precise moves would
+      // keep eating their own first few pixels.
+      if (!drag.armed) {
+        if (Math.abs(e.clientY - drag.startY) < 8) return
+        drag.armed = true
+        drag.lastY = e.clientY
+      }
+      const deltaYStep = drag.lastY - e.clientY
+      if (deltaYStep === 0) return
+      const sidewaysPx = Math.abs(e.clientX - drag.startX)
+      const pixelsForFullRange = Math.min(1400, 200 + sidewaysPx * 4)
+      const next = Math.max(
+        min,
+        Math.min(max, drag.currentValue + (deltaYStep / pixelsForFullRange) * (max - min))
+      )
+      drag.lastY = e.clientY
+      drag.currentValue = next
       onChange(next)
     },
     [min, max, onChange]
@@ -119,7 +163,32 @@ export function RackKnob({
     setHover(false)
   }, [])
 
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent<HTMLButtonElement>) => {
+      e.preventDefault()
+      if (locked || !typeable) return
+      dragRef.current = null
+      setDragging(false)
+      setEditValue(String(Math.round(value * 100) / 100))
+      setEditing(true)
+    },
+    [locked, typeable, value]
+  )
+
+  const commitEdit = useCallback(() => {
+    const parsed = parseFloat(editValue)
+    if (Number.isFinite(parsed)) onChange(Math.max(min, Math.min(max, parsed)))
+    setEditing(false)
+  }, [editValue, min, max, onChange])
+
+  // Autofocus + select-all when the field appears, so typing immediately replaces the value
+  // rather than requiring a click first.
+  useEffect(() => {
+    if (editing) editInputRef.current?.select()
+  }, [editing])
+
   return (
+    <>
     <button
       onPointerDown={locked ? undefined : handlePointerDown}
       onPointerMove={locked ? undefined : handlePointerMove}
@@ -127,7 +196,16 @@ export function RackKnob({
       onPointerEnter={() => setHover(true)}
       onPointerLeave={handlePointerLeave}
       onDoubleClick={locked || resetTo === undefined ? undefined : () => onChange(resetTo)}
-      title={locked ? 'Inactive in this mode' : resetTo === undefined ? undefined : 'Double-click to reset'}
+      onContextMenu={handleContextMenu}
+      title={
+        locked
+          ? 'Inactive in this mode'
+          : typeable
+            ? 'Right-click to type a value'
+            : resetTo === undefined
+              ? undefined
+              : 'Double-click to reset'
+      }
       aria-label={label}
       aria-disabled={locked}
       style={{
@@ -176,9 +254,40 @@ export function RackKnob({
           }}
         />
       )}
-      {label && format && (
+      {label && format && !editing && (
         <RackValueTip label={label} value={format(value)} visible={hover || dragging} />
       )}
     </button>
+    {editing && (
+      <input
+        ref={editInputRef}
+        type="number"
+        value={editValue}
+        autoFocus
+        onChange={(e) => setEditValue(e.target.value)}
+        onPointerDown={(e) => e.stopPropagation()}
+        onBlur={commitEdit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commitEdit()
+          else if (e.key === 'Escape') setEditing(false)
+        }}
+        style={{
+          position: 'absolute',
+          left: `${centerXPct}%`,
+          top: `calc(${centerYPct}% - ${diameterPct / 2}% - 26px)`,
+          transform: 'translateX(-50%)',
+          width: 64,
+          padding: '3px 6px',
+          borderRadius: 4,
+          background: 'rgba(0,0,0,0.92)',
+          border: '1px solid rgba(255,255,255,0.3)',
+          color: '#f4f4f5',
+          font: "500 12px 'IBM Plex Sans', sans-serif",
+          textAlign: 'center',
+          zIndex: 30
+        }}
+      />
+    )}
+    </>
   )
 }

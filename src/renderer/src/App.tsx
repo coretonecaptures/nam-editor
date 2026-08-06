@@ -437,6 +437,7 @@ declare global {
         files: Array<{ name: string; path: string; rel: string }>
         indexed: boolean
       }>
+      listWavSiblings: (filePath: string) => Promise<{ files: string[]; error?: string }>
       hashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
       hashFilesWithoutMetadata: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
       revealFile: (filePath: string) => Promise<void>

@@ -107,7 +107,7 @@ export function RackDelay({
             runs through the auto-pan stage (see liveEngine's delayConvWet -> delayPanIn), so pan
             keeps working in either mode. */}
         <RackKnob label="Time" value={delay.timeMs} min={20} max={1200} format={(v) => `${Math.round(v)} ms`}
-          locked={delay.mode === 'convolution'} lockScrim
+          locked={delay.mode === 'convolution'} lockScrim typeable
           onChange={(v) => onChange({ timeMs: v })}
           centerXPct={KNOB_XS[1]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
         <RackKnob label="Ratio" value={delay.ratio} min={0.25} max={2} format={(v) => `${v.toFixed(2)}x`}

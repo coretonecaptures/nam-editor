@@ -6731,6 +6731,32 @@ app.whenReady().then(async () => {
     }
   })
 
+  /**
+   * Live sibling `.wav` files for the Delay/Reverb IR Prev/Next steppers — a plain `fs.readdir`
+   * of whatever folder the given file is actually in, not served from the (possibly stale, and
+   * possibly not even covering this folder at all) library index.
+   *
+   * Two real problems this fixes at once: the "Browse…" escape hatch in IrPicker lets you pick a
+   * file from anywhere on disk, outside the configured library entirely — the index has no entry
+   * for it or its folder, so a step that relied on the index silently found nothing and did
+   * nothing. And even for files INSIDE the library, the index is a cached snapshot from whenever
+   * it was last built, so a file added mid-session wouldn't show up in a step either. A live read
+   * of one folder is cheap (nothing like re-walking a 492k-file library) and always current.
+   */
+  ipcMain.handle('player:listWavSiblings', async (_event, filePath: string) => {
+    try {
+      const dir = dirname(filePath)
+      const dirents = await fs.promises.readdir(dir, { withFileTypes: true })
+      const files = dirents
+        .filter((d) => d.isFile() && d.name.toLowerCase().endsWith('.wav') && !d.name.startsWith('._'))
+        .map((d) => join(dir, d.name))
+        .sort((a, b) => a.localeCompare(b))
+      return { files }
+    } catch (err) {
+      return { files: [], error: String(err) }
+    }
+  })
+
   // IPC: Read any file as base64 (used for xlsx import parsing)
   ipcMain.handle('file:readBinary', async (_event, filePath: string) => {
     try {

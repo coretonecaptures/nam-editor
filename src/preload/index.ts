@@ -50,6 +50,8 @@ const api = {
     files: Array<{ name: string; path: string; rel: string }>
     indexed: boolean
   }> => ipcRenderer.invoke('player:browseIrLibrary', libraryPath, relDir),
+  listWavSiblings: (filePath: string): Promise<{ files: string[]; error?: string }> =>
+    ipcRenderer.invoke('player:listWavSiblings', filePath),
   hashFiles: (filePaths: string[]): Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]> =>
     ipcRenderer.invoke('file:hashMany', filePaths),
   hashFilesWithoutMetadata: (filePaths: string[]): Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]> =>
