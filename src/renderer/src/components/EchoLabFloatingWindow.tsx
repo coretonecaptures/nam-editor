@@ -96,7 +96,7 @@ export function EchoLabFloatingWindow({
         }}
       >
         <span style={{ font: "600 11px 'IBM Plex Mono', monospace", letterSpacing: '.06em', color: 'var(--text-2)' }}>
-          ⠿ ECHO LAB — FLOATING · drag to move
+          ⠿ ECHO LAB
         </span>
         <button
           onClick={onClose}

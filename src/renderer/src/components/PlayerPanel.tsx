@@ -3201,14 +3201,15 @@ export function PlayerPanel({
                       setEchoLabFloating(true)
                       setDelaySlotView('delay')
                     }}
-                    title="Float Echo Lab in its own movable window, larger and easier to read"
+                    aria-label="Pop out Echo Lab into its own movable window"
+                    title="Pop out into its own movable window"
                     style={{
                       display: 'flex',
                       alignItems: 'center',
-                      gap: 5,
-                      font: "600 10.5px 'IBM Plex Mono', monospace",
-                      letterSpacing: '0.04em',
-                      padding: '4px 9px',
+                      justifyContent: 'center',
+                      width: 26,
+                      height: 26,
+                      font: "600 14px 'IBM Plex Mono', monospace",
                       borderRadius: 6,
                       border: '1px solid var(--border)',
                       background: 'var(--field)',
@@ -3216,7 +3217,7 @@ export function PlayerPanel({
                       cursor: 'pointer'
                     }}
                   >
-                    ⤢ Float
+                    ⤢
                   </button>
                 )}
                 {/* Series order between Delay and Echo Lab when both are enabled — the chain rail
