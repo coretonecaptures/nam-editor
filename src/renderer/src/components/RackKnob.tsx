@@ -323,6 +323,10 @@ export function RackKnob({
           background: 'rgba(0,0,0,0.92)',
           border: '1px solid rgba(255,255,255,0.3)',
           boxShadow: '0 4px 14px rgba(0,0,0,0.5)',
+          // Sizes to whatever's widest inside (the BPM readout is usually the widest line) rather
+          // than to the input+TAP row alone — without this the row above set the effective width
+          // and the BPM text wrapped/clipped inside it.
+          width: 'max-content',
           zIndex: 30
         }}
       >
@@ -353,6 +357,13 @@ export function RackKnob({
             <button
               type="button"
               onClick={handleTap}
+              // Clicking a button normally shifts focus to it first, which fires the input's
+              // onBlur -> commitEdit -> closes the whole popover after a single tap, exactly the
+              // "clicking tap closes the window" bug — you'd never get a second tap to average
+              // against. preventDefault on mousedown stops that focus shift without stopping the
+              // click itself (mousedown -> mouseup -> click still fires), the standard fix for
+              // "keep the field focused while clicking a sibling control."
+              onMouseDown={(e) => e.preventDefault()}
               style={{
                 padding: '3px 10px',
                 borderRadius: 4,
@@ -369,7 +380,7 @@ export function RackKnob({
           )}
         </div>
         {tapBpm !== null && (
-          <div style={{ fontSize: 10, color: '#a1a1aa', textAlign: 'center' }}>
+          <div style={{ fontSize: 10, color: '#a1a1aa', textAlign: 'center', whiteSpace: 'nowrap' }}>
             &asymp; {Math.round(tapBpm)} BPM (as 1/4)
           </div>
         )}
@@ -384,6 +395,7 @@ export function RackKnob({
                   setEditValue(String(next))
                   onChange(next)
                 }}
+                onMouseDown={(e) => e.preventDefault()}
                 style={{
                   padding: '2px 6px',
                   borderRadius: 3,
