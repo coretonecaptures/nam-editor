@@ -6010,7 +6010,15 @@ async function loadTone3kTokens(): Promise<void> {
   try {
     const securePath = tone3kSecureTokensPath()
     const buf = await fs.promises.readFile(securePath)
-    const json = safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(buf) : buf.toString('utf-8')
+    // Dev builds skip safeStorage entirely: on macOS it's backed by the Keychain, which gates
+    // access behind a system prompt tied to the calling binary's code signature. The dev
+    // Electron binary (node_modules/electron) is unsigned/ad-hoc, so macOS doesn't reliably
+    // recognize it as already-trusted across launches and re-prompts — and since this used to
+    // run as a blocking `await` in the startup chain before the window existed, an unanswered
+    // prompt (easy to miss, since it has no app window to attach to yet) silently hung the
+    // entire app with no window ever appearing. Production keeps real encryption; dev falls
+    // back to the same plaintext format the legacy path below already handles.
+    const json = !isDev && safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(buf) : buf.toString('utf-8')
     tone3kTokens = JSON.parse(json) as Tone3kTokens
     return
   } catch { /* fall through to legacy */ }
@@ -6027,7 +6035,9 @@ async function saveTone3kTokens(): Promise<void> {
   try {
     const payload = JSON.stringify(tone3kTokens)
     const securePath = tone3kSecureTokensPath()
-    if (safeStorage.isEncryptionAvailable()) {
+    // Kept symmetric with the dev bypass in loadTone3kTokens -- a dev build that encrypted on
+    // save but skipped decryption on load would just fail to parse its own token file.
+    if (!isDev && safeStorage.isEncryptionAvailable()) {
       await fs.promises.writeFile(securePath, safeStorage.encryptString(payload))
     } else {
       await fs.promises.writeFile(securePath, payload, 'utf-8')
@@ -6104,7 +6114,13 @@ app.whenReady().then(async () => {
 
   log('app.whenReady fired')
   switchLogToUserData()
-  await loadTone3kTokens()
+  // Fire-and-forget, not awaited: this reads a saved Tone3000 login and, outside dev, decrypts
+  // it via safeStorage (Keychain-backed on macOS). Keychain access can block on a system
+  // permission prompt, and this used to be a blocking `await` ahead of window creation — an
+  // unanswered prompt (easy to miss with no app window yet to attach it to) silently hung the
+  // whole app with no window ever appearing. Nothing else in this chain depends on the tokens
+  // being loaded yet; the renderer only needs them once it actually opens Tone Map.
+  void loadTone3kTokens()
   companionBridgeConfig = loadCompanionBridgeConfig()
   companionBridgeConfig.enabled = loadEnableCompanionAppSetting()
   saveCompanionBridgeConfig()
