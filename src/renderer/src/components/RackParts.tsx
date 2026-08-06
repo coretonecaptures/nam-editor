@@ -198,6 +198,14 @@ export function RackDisplay({
           fontWeight: 500,
           fontSize: `${fontCqw}cqw`,
           letterSpacing: '0.04em',
+          // letter-spacing adds its gap after EVERY character, including the last one — the
+          // flex container's centering counts that trailing gap as part of the text's width, so
+          // the glyphs themselves sit slightly left of true centre. A fixed-size offset like
+          // that is easy to miss against large text and obvious against small text, which is
+          // why this only became visible after a maxFontCqw override shrank Echo Lab's LCD text
+          // — same bug, more visible. Negative margin equal to one letter-spacing unit cancels
+          // exactly the trailing gap and nothing else.
+          marginRight: '-0.04em',
           color: colour,
           textShadow: `0 0 6px ${colour}d9, 0 0 14px rgba(255,140,0,0.45)`,
           whiteSpace: 'nowrap'
