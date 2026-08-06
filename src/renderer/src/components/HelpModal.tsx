@@ -75,7 +75,7 @@ function renderInline(text: string, onNavigate?: (tab: HelpModalTab) => void): R
   })
 }
 
-function MarkdownViewer({ markdown, onNavigate }: { markdown: string; onNavigate?: (tab: HelpModalTab) => void }) {
+export function MarkdownViewer({ markdown, onNavigate }: { markdown: string; onNavigate?: (tab: HelpModalTab) => void }) {
   const lines = markdown.replace(/\r\n/g, '\n').split('\n')
   const blocks: React.ReactNode[] = []
   let i = 0
@@ -119,6 +119,16 @@ function MarkdownViewer({ markdown, onNavigate }: { markdown: string; onNavigate
         <h3 key={`h3-${i}`} className="text-sm font-semibold text-gray-900 dark:text-gray-100 mt-4 mb-2">
           {line.slice(4)}
         </h3>
+      )
+      i += 1
+      continue
+    }
+
+    if (line.startsWith('#### ')) {
+      blocks.push(
+        <h4 key={`h4-${i}`} className="text-sm font-semibold text-gray-800 dark:text-gray-200 mt-3 mb-1.5">
+          {line.slice(5)}
+        </h4>
       )
       i += 1
       continue
@@ -211,6 +221,18 @@ function MarkdownViewer({ markdown, onNavigate }: { markdown: string; onNavigate
       !lines[i].trim().startsWith('|')
     ) {
       paragraphLines.push(lines[i].trim())
+      i += 1
+    }
+
+    // Safety net: every branch above either matches its prefix and consumes at least one line, or
+    // falls through to here. If NONE of them matched — a line starting with `#` at a depth deeper
+    // than the levels rendered above is exactly how this broke once already — the while loop just
+    // ran never advances `i`, and the outer `while (i < lines.length)` spins forever, growing
+    // `blocks` until the tab's memory use crashes the renderer. Rendering the raw line as a
+    // paragraph guarantees `i` always moves forward by at least one line, no matter what a future
+    // doc edit contains, instead of trusting every edit to only ever use the exact prefixes above.
+    if (paragraphLines.length === 0 && i < lines.length) {
+      paragraphLines.push(lines[i])
       i += 1
     }
 
