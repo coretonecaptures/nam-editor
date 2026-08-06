@@ -202,29 +202,33 @@ export function RackKnob({
     if (editing) editInputRef.current?.select()
   }, [editing])
 
-  // Ring buffer of tap timestamps, not component state — a tap needs to feel instantaneous, and
-  // there's nothing here worth a re-render on its own (the resulting value change re-renders via
+  // Last tap's timestamp, not component state — a tap needs to feel instantaneous, and there's
+  // nothing here worth a re-render on its own (the resulting value change re-renders via
   // onChange/editValue anyway). A gap over 2s resets the sequence, same as hardware tap-tempo
   // footswitches, so an old sequence doesn't quietly average into a new one you meant to start
   // fresh.
-  const tapTimesRef = useRef<number[]>([])
+  //
+  // Weighted toward the JUST-MEASURED interval rather than a flat average over many past taps —
+  // an earlier version kept a buffer of up to 8 timestamps and averaged all 7 intervals evenly,
+  // which meant one imprecise early tap (the usual case: your very first tap before you've
+  // settled into the beat) kept dragging the result until enough later taps pushed it out of the
+  // buffer, in practice taking most of that 8-tap window to converge. Blending 70% new interval
+  // with 30% of the last shown value gets close after the 2nd tap and still damps ordinary human
+  // jitter, without ever waiting on tap history that old.
+  const lastTapRef = useRef<number | null>(null)
   const handleTap = useCallback(() => {
     const now = performance.now()
-    const times = tapTimesRef.current
-    if (times.length > 0 && now - times[times.length - 1] > 2000) times.length = 0
-    times.push(now)
-    if (times.length > 8) times.shift()
-    if (times.length < 2) {
-      setEditValue(String(Math.round(value)))
-      return
-    }
-    const intervals: number[] = []
-    for (let i = 1; i < times.length; i++) intervals.push(times[i] - times[i - 1])
-    const avgMs = intervals.reduce((a, b) => a + b, 0) / intervals.length
-    const next = Math.max(min, Math.min(max, Math.round(avgMs)))
+    const last = lastTapRef.current
+    lastTapRef.current = now
+    if (last === null) return
+    const interval = now - last
+    if (interval > 2000) return // Too long a gap — treat this tap as the start of a new sequence.
+    const prev = parseFloat(editValue)
+    const blended = Number.isFinite(prev) && prev > 0 ? interval * 0.7 + prev * 0.3 : interval
+    const next = Math.max(min, Math.min(max, Math.round(blended)))
     setEditValue(String(next))
     onChange(next)
-  }, [value, min, max, onChange])
+  }, [editValue, min, max, onChange])
 
   // Read as "this ms value, as a quarter note, is X BPM" — shown whenever tapTempo is on, not
   // just right after tapping, so a typed value gets the same feedback as a tapped one.
