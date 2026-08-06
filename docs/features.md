@@ -232,6 +232,192 @@ make it taller; **auto height** puts it back.
 
 ---
 
+## Effects Reference
+
+The Tone Player (Live mode) includes a full effects rig for shaping the amp's tone. Effects are
+applied in a fixed chain: **Input Gain → Gate → EQ → Modulation → Delay → Reverb → Output**.
+Every effect can be individually enabled/disabled via its toggle switch.
+
+### Gate
+
+Dynamic noise reduction. Silences the signal when it falls below the threshold, avoiding low-level
+hum, noise floor, or feedback between passages.
+
+- **Threshold** — the level below which the gate starts to close, in dB. Higher thresholds close
+  faster and cut more; lower values let through quieter material before muting.
+- **Open Time** — how quickly the gate opens when signal crosses the threshold, in seconds. Fast
+  (~5ms) is snappy for aggressive playing; slower (50–100ms) avoids clicks on plucked notes.
+- **Hold Time** — how long the gate stays open after signal drops below threshold, in seconds.
+  Prevents chop on note releases; 50–100ms typical.
+- **Close Time** — how quickly the gate closes once hold expires, in seconds. Fast (50ms) cuts tail
+  cleanly; slower (200ms+) fades out smoothly.
+
+### EQ (Pre-effects Tone Stack)
+
+Three-band shelving EQ applied early in the chain, before effects, so it shapes the tone the
+model sees and how effects respond to it.
+
+- **Bass** — gain/cut at 100 Hz (a fundamental electric guitar frequency).
+- **Mid** — gain/cut at 650 Hz (where guitar sits in a mix).
+- **Treble** — gain/cut at 3200 Hz (articulation and air).
+
+Each knob ranges ±12 dB. Shelving is broad, not narrow: adjust tone stack like a real amp, not
+as a surgical EQ. Flat (all 0) is the default and where the capture's own voice lives.
+
+### Chorus
+
+Stereo chorus using digital delay modulation. Mimics the lush character of built-in amp chorus or
+a standalone pedal.
+
+- **Mix** — dry/wet balance, 0–1. Controls how much chorus is blended with the original signal.
+- **Rate** — LFO speed in Hz. Controls how quickly the delay moves; typical ranges 0.5–3 Hz.
+- **Depth** — modulation amount in milliseconds. Higher depth = wider chorus sweep.
+- **Width** — stereo separation, 0–1. At 1, the two chorus voices sit hard left/right; lower
+  values bring them toward center.
+
+### Delay (Orange Unit)
+
+Tap-tempo-capable stereo ping-pong delay with both algorithmic and convolution modes. Switch
+between them via the **Engine** buttons: **Analog** (algorithmic, BBD-like character) or
+**Convolution** (sampled real delay unit).
+
+#### Algorithmic (native digital delay)
+
+- **Time** — left tap delay in milliseconds, 20–1200 ms. **Right-click to type an exact value or
+  tap a tempo** — tap the button several times and it averages the intervals, converting your
+  taps into milliseconds live, like a hardware delay pedal's footswitch.
+- **Ratio** — right tap as a multiple of the left, 0.25–2x. **Right-click to pick a note value**:
+  1/16, 1/8 triplet, 1/8, 1/4 triplet, dotted 1/8, 1/4, dotted 1/4, 1/2. Tap a quarter note
+  into Time, then click the subdivision for classic syncopated patterns (dotted eighth, triplet,
+  etc.) without eyeballing the multiplier.
+- **Feedback** — regeneration amount, 0–0.9. Clamped below 1 so the loop decays rather than
+  running away. Higher = more repeats before they fade.
+- **Tone** — lowpass filter in the feedback loop, 500 Hz–12 kHz. Higher frequencies = brighter
+  repeats; lower = darker repeats that dull with each pass (tape-like character).
+- **Mod Depth** — LFO modulation of the delay time in milliseconds. Slight modulation adds
+  natural tape wobble; heavy modulation creates rhythmic pitch sweeps.
+- **Mod Rate** — LFO speed in Hz. Controls how fast the pitch sweeps.
+- **Ping Pong** — toggles alternating left/right repeats (stereo spreads) vs. centered mono
+  repeats.
+- **Ping Pong Width** — stereo separation when ping pong is on, 0–1. At 1, repeats alternate
+  hard left/right; lower values blend them toward center.
+- **Pan** — auto-pan toggle; when on, the wet repeats sweep continuously across the stereo field.
+- **Pan Speed** — sweep rate in Hz when auto-pan is active.
+
+#### Convolution (Sampled IR)
+
+Convolution mode replaces the algorithmic delay with a captured real delay unit or effect. Uses
+an impulse response file (`.wav`). Most controls lock (dim) because the character and timing are
+baked into the IR:
+
+- **IR selection** — browse and load a `.wav` file from your delay IR library. Shows how many
+  seconds of delay impulse are loaded (the tail gets automatically trimmed below -72dB to save
+  CPU).
+- **Mix**, **Mod Depth**, **Mod Rate**, **Pan**, **Pan Speed** — still active in convolution mode
+  and work the same way as algorithmic.
+- **Time, Ratio, Feedback, Tone, Ping Pong** — locked (inactive) because the IR bakes in its own
+  timing and regeneration character.
+
+### Echo Lab
+
+Second delay unit sharing the orange Delay's slot in the effects chain. Choose which one to use
+via the toggle: **Delay** (the orange unit) or **Echo Lab** (the newer alternate).
+
+Echo Lab offers two distinct topologies for completely different delay textures:
+
+#### Single Topology
+
+A single mono delay tap with tap-tempo support, similar to the orange Delay but with extra
+character controls and deeper modulation.
+
+- **Time** — delay time in milliseconds, 20–1200 ms. **Right-click to type or tap tempo** like
+  the orange Delay.
+- **Feedback** — regeneration, 0–0.9. Controls repeat decay.
+- **Ping Pong Width** — stereo alternation, 0–1. How hard repeats alternate left/right in the
+  stereo field.
+
+#### Dual Topology
+
+Two independent delay lines (left and right) that can run different times and create a
+wider, less rhythmic spread.
+
+- **L Delay** — left line time in ms, 20–1200. **Right-click to type or tap tempo**.
+- **L Feedback** — left line regeneration.
+- **R Delay** — right line time in ms, 20–1200. **Right-click to type or tap tempo**. In Dual
+  mode, the earlier Ping Pong Width knob relabels to **Spread** here, controlling how the two
+  lines are blended across the stereo field.
+- **R Feedback** — right line regeneration.
+
+#### Both Topologies
+
+- **Character** — three distinct voice shapes (DSP personality):
+  - **Digital** — clean, pristine repeats
+  - **Tape** — introduces wow/flutter (subtle pitch modulation) and tape aging (harmonic saturation
+    and darkening)
+  - **Memory Man** — inspired by the Electro-Harmonix Deluxe Memory Man, with analog-style chorus
+    and tone control in the feedback path
+- **Mod Rate** — LFO speed for Character modulation (wow/flutter on Tape, chorus LFO on Memory Man).
+  Unused for Digital.
+- **Char 1** — on Tape: wow/flutter depth (ms). On Memory Man: bandwidth/tone of the feedback
+  filter (Hz). Unused for Digital.
+- **Char 2** — on Tape: tape age / wear (0–1, adds noise and darkening). On Memory Man: chorus
+  depth. Unused for Digital.
+- **Color / Drive** — saturation and gain shaping on the repeats, 0–1. Adds warmth and
+  compression-like sustain.
+- **Width** — stereo spread of the output, 0–1. At 1, repeats stay hard-panned (full separation);
+  lower values collapse toward center.
+- **EQ Low** — shelving cut/boost at 250 Hz. Tightens the low end (negative = cleaner); boosts
+  warmth (positive).
+- **EQ High** — shelving cut/boost at 4 kHz. Cuts brightness (negative = darker); boosts presence
+  (positive).
+- **Duck** toggle — dynamic ducking: the repeats automatically lower in volume when you are
+  playing, then rise back when you stop. Creates a sense of space without losing clarity.
+- **Duck Depth** — how much ducking happens, 0–1. Higher = more obvious pumping effect.
+- **Duck Release** — how fast the repeats come back after you stop playing, in milliseconds.
+- **Secondary Delay Position** — when the orange Delay is also enabled (series routing): choose
+  whether Delay comes **before** Echo Lab (delay feeds into Echo Lab, creating echoes of delays)
+  or **after** (Echo Lab feeds into Delay, reversing the order).
+
+### Reverb
+
+Convolution-based or algorithmic reverb for ambience and space. Two modes: **Plate** (algorithmic,
+like a spring or plate reverb) or **Convolution** (sampled real reverb, e.g., hall or room).
+
+#### Plate (Algorithmic)
+
+- **Room Size** — decay time and character, 0–1. Lower = tight spaces (small rooms); higher =
+  large halls with long tails.
+- **Damping** — how quickly high frequencies decay in the tail, 0–1. Lower damping = bright
+  sizzling tail; higher = natural room absorption (darker tail).
+- **Width** — stereo spread, 0–1. At 1, full separation; lower values converge toward mono.
+
+#### Convolution (Sampled IR)
+
+Like Delay's convolution mode, replaces the algorithmic reverb with a real captured space. Room
+Size, Damping, and Width lock (lock scrim) because the space is baked into the IR:
+
+- **IR selection** — browse a reverb library and load an impulse response. Shows loaded seconds
+  (tail trimmed below -72 dB).
+- **Mix** — only active control; dry/wet balance.
+
+#### Both Modes
+
+- **Mix** — dry/wet balance, 0–1.
+- **EQ Low** — shelving cut/boost at 250 Hz. A gentle cut is typical (-3 dB default) because
+  reverb buildup in the lows can muddy the tone.
+- **EQ High** — shelving cut/boost at 4 kHz. Boosts presence or cuts harshness in the tail.
+
+### Cabinet IR
+
+Captures of the speaker and microphone placement, applied if the loaded model is raw power-amp
+signal (no cabinet already included). Detected automatically, but can be overridden.
+
+- **IR selection** — browse your cabinet library and load a `.wav` file. Shows loaded seconds.
+- **Mix** — blend between dry (raw power amp) and wet (through the IR cabinet). 0 = pure amp, 1 =
+  full cabinet coloration. Values between let you dial in how much speaker filtering you want.
+
+---
+
 ## Metadata Editing
 
 NAM Lab edits metadata inside the `.nam` file without touching model weights.
