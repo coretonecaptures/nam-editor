@@ -41,6 +41,39 @@ popout and non-popout views. Design doc: `docs/echo-lab-plan.md`. Remaining open
   `docs/echo-lab-plan.md`) — still only the CSS-only `pressed` stand-in, no photographed second
   switch position exists yet.
 
+## Tap tempo for Delay / Echo Lab time knobs
+
+Not started. Came up while explaining that "dotted-eighth" in the Delay's Ratio knob doc comment is
+just descriptive — there's no BPM or note-value math anywhere in the app (confirmed: zero
+references to tempo/BPM/note-value in `liveEngine.ts` or `PlayerPanel.tsx`). Getting a quarter or
+dotted-eighth delay today means dialing Time by ear and guessing at Ratio, which is exactly the
+"huge gaps, can't get precise" complaint that led to knobs gaining a right-click-to-type field
+(`RackKnob`'s new `typeable` prop, currently only on Delay's Time and Echo Lab's L/R Delay).
+
+**Scoped small, per-knob — not a global session BPM.** This app isn't a DAW; there's no transport
+or click track for a global tempo to lock to, and a global BPM would drag in real complexity (where
+does it live, does it persist, what happens when nothing is synced to it) for no payoff over the
+simpler version below. Real hardware delay pedals don't have a "BPM" concept either — their tap
+footswitch sets the delay time directly from the interval between taps, which is all that's needed
+here:
+
+- **Where it lives:** extend the same right-click popover the `typeable` numeric field already
+  opens on a time knob — add a "TAP" button next to the field. No new UI surface, no ambiguity
+  about which knob a tap applies to (you tap the knob you're setting, same as reaching for the
+  field).
+- **Algorithm:** keep a small ring buffer of the last ~4-8 tap timestamps; average the intervals
+  between consecutive taps to get the delay time in ms and call the knob's existing `onChange`.
+  Reset the buffer if the gap since the last tap exceeds ~2s (mimics hardware's tap-timeout, so an
+  old tap sequence doesn't quietly average into a new one). Clamp to the knob's own min/max — note
+  Time's current 1200ms ceiling is only ~50 BPM at a quarter note, worth widening if this ships.
+- **Closes the dotted-eighth loop properly:** add a few Ratio quick-pick buttons (1x even, 0.75x
+  dotted-eighth, 0.667x triplet, 0.5x straight eighth) next to Ratio's own field once it's
+  `typeable` too, so tapping the base quarter into Time/L Delay and clicking "dotted-eighth" gets
+  the classic U2-style pattern exactly, instead of hand-tuning Ratio and eyeballing it.
+- Applies to the orange Delay's Time knob and Echo Lab's Time (Single) / L Delay (Dual) — the ones
+  already `typeable`. R Delay in Dual can either get its own independent tap or, more consistent
+  with how Ratio already works off one base, derive from L Delay's tap the same way.
+
 ## Tape-echo character for the algorithmic Delay (Strymon El Capistan territory)
 
 Research pass only — no new knobs, no DSP built yet. El Capistan (and the class of pedal it
