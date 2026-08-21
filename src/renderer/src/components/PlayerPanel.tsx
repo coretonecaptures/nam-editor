@@ -24,6 +24,8 @@ import { RackReverbTest } from './RackReverbTest'
 import { RackDelay } from './RackDelay'
 import { RackEchoLab, CHAR1_RANGE, CHAR2_RANGE, DEFAULT_CHAR1, DEFAULT_CHAR2, pingPongFormat } from './RackEchoLab'
 import { EchoLabFloatingWindow } from './EchoLabFloatingWindow'
+import { DelayFloatingWindow } from './DelayFloatingWindow'
+import { ReverbFloatingWindow } from './ReverbFloatingWindow'
 import { RackCrop, RACK_CROP } from './RackCrop'
 import { RackColumn } from './RackColumn'
 import { PresetMenu } from './PresetMenu'
@@ -582,6 +584,8 @@ export function PlayerPanel({
   // Not persisted — a pop-out is a this-session convenience, not a saved layout preference.
   // Always starts closed/back-in-slot on a fresh player.
   const [echoLabFloating, setEchoLabFloating] = useState(false)
+  const [delayFloating, setDelayFloating] = useState(false)
+  const [reverbFloating, setReverbFloating] = useState(false)
   const [reverb, setReverbState] = useState<ReverbSettings>(() => loadPref(REVERB_SETTINGS_PREF_KEY, DEFAULT_REVERB))
   const [chorus, setChorusState] = useState<ChorusSettings>(() => loadPref(CHORUS_PREF_KEY, DEFAULT_CHORUS))
   const [eq, setEqState] = useState<EqSettings>(() => loadPref(EQ_PREF_KEY, DEFAULT_EQ))
@@ -3143,7 +3147,9 @@ export function PlayerPanel({
             header={
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="flex items-center gap-2">
-                <span style={{ ...monoLabel }}>{delaySlotView === 'echo-lab' ? 'Echo Lab' : 'Delay'}</span>
+                <span style={{ ...monoLabel }}>
+                  {echoLabFloating && delayFloating ? 'Delay / Echo Lab' : delaySlotView === 'echo-lab' ? 'Echo Lab' : 'Delay'}
+                </span>
                 <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' }}>
                   {(['echo-lab', 'delay'] as const).map((v) => {
                     // Both units keep processing audio regardless of which panel is showing, so
@@ -3152,15 +3158,17 @@ export function PlayerPanel({
                     // hidden) with no indication at all. A small dot on each toggle, independent
                     // of which one is currently selected/displayed.
                     const on = v === 'echo-lab' ? echoLab.enabled : delay.enabled
-                    // Echo Lab isn't available in the shared slot while it's floating — its own
-                    // toggle option is disabled rather than clickable-but-does-nothing.
-                    const disabled = v === 'echo-lab' && echoLabFloating
+                    // Neither unit is available in the shared slot while IT SPECIFICALLY is
+                    // floating — its own toggle option is disabled rather than clickable-but-
+                    // does-nothing. (The other one stays selectable as always — floating one
+                    // doesn't float both.)
+                    const disabled = (v === 'echo-lab' && echoLabFloating) || (v === 'delay' && delayFloating)
                     return (
                     <button
                       key={v}
                       onClick={() => !disabled && setDelaySlotView(v)}
                       disabled={disabled}
-                      title={disabled ? 'Echo Lab is currently floating — close its window to bring it back here' : `${v === 'echo-lab' ? 'Echo Lab' : 'Delay'} is currently ${on ? 'ON' : 'bypassed'}`}
+                      title={disabled ? `${v === 'echo-lab' ? 'Echo Lab' : 'Delay'} is currently floating — close its window to bring it back here` : `${v === 'echo-lab' ? 'Echo Lab' : 'Delay'} is currently ${on ? 'ON' : 'bypassed'}`}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
@@ -3191,17 +3199,24 @@ export function PlayerPanel({
                     )
                   })}
                 </div>
-                {/* Float: a movable, non-blocking floating panel (see EchoLabFloatingWindow) —
-                    not a modal, so Delay stays fully editable underneath/beside it at the same
-                    time. Only offered from Echo Lab's own slot view; floating immediately frees
-                    the shared slot for Delay, closing the floating window returns Echo Lab there. */}
-                {delaySlotView === 'echo-lab' && !echoLabFloating && (
+                {/* Float: a movable, non-blocking floating panel (see RackFloatingWindow) — not a
+                    modal, so whichever unit is NOT floating stays fully editable underneath/
+                    beside it at the same time. Offered from whichever unit currently occupies the
+                    shared slot view; floating it immediately frees the slot for the other one,
+                    closing the floating window returns it here. Works either direction — Echo Lab
+                    can float while Delay sits in the slot, or Delay can float while Echo Lab does. */}
+                {((delaySlotView === 'echo-lab' && !echoLabFloating) || (delaySlotView === 'delay' && !delayFloating)) && (
                   <button
                     onClick={() => {
-                      setEchoLabFloating(true)
-                      setDelaySlotView('delay')
+                      if (delaySlotView === 'echo-lab') {
+                        setEchoLabFloating(true)
+                        setDelaySlotView('delay')
+                      } else {
+                        setDelayFloating(true)
+                        setDelaySlotView('echo-lab')
+                      }
                     }}
-                    aria-label="Pop out Echo Lab into its own movable window"
+                    aria-label={`Pop out ${delaySlotView === 'echo-lab' ? 'Echo Lab' : 'Delay'} into its own movable window`}
                     title="Pop out into its own movable window"
                     style={{
                       display: 'flex',
@@ -3279,7 +3294,29 @@ export function PlayerPanel({
             </div>
             }
             panel={
-              delaySlotView === 'delay' ? (
+              echoLabFloating && delayFloating ? (
+                // Both units can float independently now, and this is the one state the shared
+                // slot has nothing good to show for — whichever one delaySlotView still points at
+                // is ALSO floating, so rendering it here would just duplicate its own floating
+                // window. A plain placeholder beats silently picking one to show inline again.
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    padding: '40px 20px',
+                    border: '1px dashed var(--border)',
+                    borderRadius: 10,
+                    color: 'var(--text-2)',
+                    font: "500 12px 'IBM Plex Sans', sans-serif"
+                  }}
+                >
+                  <span>Delay and Echo Lab are both floating</span>
+                  <span style={{ fontSize: 11, opacity: 0.7 }}>Close either floating window to bring it back here</span>
+                </div>
+              ) : delaySlotView === 'delay' ? (
               <RackCrop metal={RACK_CROP.delay}>
                 <RackDelay delay={delay} onChange={(patch) => setDelayState((d) => ({ ...d, ...patch }))} delayPresets={delayPresets}
                   irName={delayIrPath ? (delayIrPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null} irPath={delayIrPath} />
@@ -3315,7 +3352,38 @@ export function PlayerPanel({
           <RackColumn
             header={
             <div className="flex items-center justify-between gap-3 flex-wrap">
-              <span style={{ ...monoLabel }}>Reverb</span>
+              <div className="flex items-center gap-2">
+                <span style={{ ...monoLabel }}>Reverb</span>
+                {/* Float: unlike Delay/Echo Lab, Reverb doesn't share its slot with anything —
+                    floating it just frees up rack-column width elsewhere, and the panel it leaves
+                    behind gets a "floating" placeholder rather than an empty gap. */}
+                {!reverbFloating ? (
+                  <button
+                    onClick={() => setReverbFloating(true)}
+                    aria-label="Pop out Reverb into its own movable window"
+                    title="Pop out into its own movable window"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: 26,
+                      height: 26,
+                      font: "600 14px 'IBM Plex Mono', monospace",
+                      borderRadius: 6,
+                      border: '1px solid var(--border)',
+                      background: 'var(--field)',
+                      color: 'var(--text-2)',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    ⤢
+                  </button>
+                ) : (
+                  <span style={{ font: "600 10px 'IBM Plex Mono', monospace", letterSpacing: '0.04em', color: 'var(--text-2)', opacity: 0.6 }}>
+                    FLOATING
+                  </span>
+                )}
+              </div>
               <PresetMenu
                 label="Preset"
                 options={reverbPresets.map((r) => ({ id: r.id, name: r.name }))}
@@ -3334,10 +3402,30 @@ export function PlayerPanel({
             </div>
             }
             panel={
+              reverbFloating ? (
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    padding: '40px 20px',
+                    border: '1px dashed var(--border)',
+                    borderRadius: 10,
+                    color: 'var(--text-2)',
+                    font: "500 12px 'IBM Plex Sans', sans-serif"
+                  }}
+                >
+                  <span>Reverb is floating</span>
+                  <span style={{ fontSize: 11, opacity: 0.7 }}>Close its floating window to bring it back here</span>
+                </div>
+              ) : (
               <RackCrop metal={RACK_CROP.reverb}>
                 <RackReverbTest reverb={reverb} onChange={(patch) => setReverbState((r) => ({ ...r, ...patch }))} reverbPresets={reverbPresets}
                   irName={reverbPath ? (reverbPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null} irPath={reverbPath} />
               </RackCrop>
+              )
             }
             footer={
             <div className="flex items-center gap-2" style={{ opacity: reverb.mode === 'convolution' ? 1 : 0.45, transition: 'opacity .15s' }}>
@@ -3651,6 +3739,29 @@ export function PlayerPanel({
               setEchoLabFloating(false)
               setDelaySlotView('echo-lab')
             }}
+          />
+        )}
+        {delayFloating && (
+          <DelayFloatingWindow
+            delay={delay}
+            onChange={(patch) => setDelayState((d) => ({ ...d, ...patch }))}
+            delayPresets={delayPresets}
+            irName={delayIrPath ? (delayIrPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null}
+            irPath={delayIrPath}
+            onClose={() => {
+              setDelayFloating(false)
+              setDelaySlotView('delay')
+            }}
+          />
+        )}
+        {reverbFloating && (
+          <ReverbFloatingWindow
+            reverb={reverb}
+            onChange={(patch) => setReverbState((r) => ({ ...r, ...patch }))}
+            reverbPresets={reverbPresets}
+            irName={reverbPath ? (reverbPath.split(/[\\/]/).pop() ?? '').replace(/\.wav$/i, '') : null}
+            irPath={reverbPath}
+            onClose={() => setReverbFloating(false)}
           />
         )}
       </>
