@@ -17,7 +17,11 @@ const py = (v: number): number => (v / P.h) * 100
 
 const KNOB_XS = [175, 375, 575, 774, 976, 1176].map(px)
 const KNOB_Y = py(457)
-const KNOB_D = px(149)
+// 2026-08-21: settled the flat-art-plus-shadow test that started on Width alone (168 too large,
+// 158 still a touch big, 153 landed right) — rolled out to all six knobs on this panel, replacing
+// the medium/big/small filmstrip comparison that was here. See RackKnob's `raised` prop for the
+// shadow itself.
+const KNOB_D = px(153)
 
 const MODE_XS = [1785, 1928].map(px)
 const MODE_SW_Y = py(515)
@@ -74,31 +78,32 @@ export function RackReverbTest({
         <img src={rackReverbPanel} alt="Reverb" draggable={false} style={{ width: '100%', display: 'block', userSelect: 'none' }} />
 
         {/* Candidate knob image test (rack-knob-test-strymon.png) tried here and paused per
-            feedback: too dull, and read flat rather than 3D despite the top highlight. May
-            revisit with different source photos later. */}
-        <RackKnob label="Mix" value={reverb.mix} min={0} max={1} format={pct}
+            feedback: too dull, and read flat rather than 3D despite the top highlight. Filmstrip
+            knobs (medium/big/small, Analog GUI Kit 02) also tried on Mix/Size/Damping and rolled
+            back — the flat rack-knob-black art, bigger and shadowed (below), won the comparison. */}
+        <RackKnob label="Mix" value={reverb.mix} min={0} max={1} format={pct} raised
           onChange={(v) => onChange({ mix: v })}
           centerXPct={KNOB_XS[0]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
         {/* Size/Damping/Width shape the algorithmic plate's own tail — a convolution impulse
             carries its own room and stereo image baked in, so these three do nothing once
             Convolution is selected. Low/High stay active either way: liveEngine applies them
             after BOTH wet paths, as a shelf EQ on the tail regardless of which one made it. */}
-        <RackKnob label="Size" value={reverb.roomSize} min={0} max={1} format={pct}
+        <RackKnob label="Size" value={reverb.roomSize} min={0} max={1} format={pct} raised
           locked={reverb.mode === 'convolution'} lockScrim
           onChange={(v) => onChange({ roomSize: v })}
           centerXPct={KNOB_XS[1]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
-        <RackKnob label="Damping" value={reverb.damping} min={0} max={1} format={pct}
+        <RackKnob label="Damping" value={reverb.damping} min={0} max={1} format={pct} raised
           locked={reverb.mode === 'convolution'} lockScrim
           onChange={(v) => onChange({ damping: v })}
           centerXPct={KNOB_XS[2]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
-        <RackKnob label="Width" value={reverb.width} min={0} max={1} format={pct}
+        <RackKnob label="Width" value={reverb.width} min={0} max={1} format={pct} raised
           locked={reverb.mode === 'convolution'} lockScrim
           onChange={(v) => onChange({ width: v })}
           centerXPct={KNOB_XS[3]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
-        <RackKnob label="Low" value={reverb.lowDb} min={-REVERB_EQ_MAX_DB} max={REVERB_EQ_MAX_DB} format={db}
+        <RackKnob label="Low" value={reverb.lowDb} min={-REVERB_EQ_MAX_DB} max={REVERB_EQ_MAX_DB} format={db} raised
           resetTo={0} onChange={(v) => onChange({ lowDb: v })}
           centerXPct={KNOB_XS[4]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
-        <RackKnob label="High" value={reverb.highDb} min={-REVERB_EQ_MAX_DB} max={REVERB_EQ_MAX_DB} format={db}
+        <RackKnob label="High" value={reverb.highDb} min={-REVERB_EQ_MAX_DB} max={REVERB_EQ_MAX_DB} format={db} raised
           resetTo={0} onChange={(v) => onChange({ highDb: v })}
           centerXPct={KNOB_XS[5]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
 

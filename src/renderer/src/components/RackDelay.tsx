@@ -40,7 +40,10 @@ const py = (v: number): number => (v / P.h) * 100
 
 const KNOB_XS = [173, 362, 554, 738, 922, 1096].map(px)
 const KNOB_Y = py(462)
-const KNOB_D = px(142)
+// 2026-08-21: same flat-art-plus-shadow treatment settled on Reverb's knobs (see that file's
+// comment) — same proportional bump (142 -> 146, matching Reverb's 149 -> 153) and `raised` on
+// every knob here too.
+const KNOB_D = px(146)
 
 const SW_Y = py(515)
 const LED_Y = py(426)
@@ -112,7 +115,7 @@ export function RackDelay({
       <div style={{ position: 'relative', width: '100%', containerType: 'inline-size', ...rackDimStyle(delay.enabled) }}>
         <img src={rackDelayPanel} alt="Delay" draggable={false} style={{ width: '100%', display: 'block', userSelect: 'none' }} />
 
-        <RackKnob label="Mix" value={delay.mix} min={0} max={1} format={pct}
+        <RackKnob label="Mix" value={delay.mix} min={0} max={1} format={pct} raised
           onChange={(v) => onChange({ mix: v })}
           centerXPct={KNOB_XS[0]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
         {/* Time/Ratio/Feedback/Tone/Mod all drive the algorithmic delay line — convolution
@@ -120,23 +123,23 @@ export function RackDelay({
             Pan speed and the Pan switch are NOT in this set: the convolution wet signal still
             runs through the auto-pan stage (see liveEngine's delayConvWet -> delayPanIn), so pan
             keeps working in either mode. */}
-        <RackKnob label="Time" value={delay.timeMs} min={20} max={1200} format={(v) => `${Math.round(v)} ms`}
+        <RackKnob label="Time" value={delay.timeMs} min={20} max={1200} format={(v) => `${Math.round(v)} ms`} raised
           locked={delay.mode === 'convolution'} lockScrim typeable tapTempo
           onChange={(v) => onChange({ timeMs: v })}
           centerXPct={KNOB_XS[1]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
-        <RackKnob label="Ratio" value={delay.ratio} min={0.25} max={2} format={(v) => `${v.toFixed(2)}x`}
+        <RackKnob label="Ratio" value={delay.ratio} min={0.25} max={2} format={(v) => `${v.toFixed(2)}x`} raised
           locked={delay.mode === 'convolution'} lockScrim typeable presets={RATIO_PRESETS}
           onChange={(v) => onChange({ ratio: v })}
           centerXPct={KNOB_XS[2]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
-        <RackKnob label="Feedback" value={delay.feedback} min={0} max={MAX_FEEDBACK} format={pct}
+        <RackKnob label="Feedback" value={delay.feedback} min={0} max={MAX_FEEDBACK} format={pct} raised
           locked={delay.mode === 'convolution'} lockScrim
           onChange={(v) => onChange({ feedback: v })}
           centerXPct={KNOB_XS[3]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
-        <RackKnob label="Tone" value={delay.toneHz} min={500} max={12000} format={(v) => `${(v / 1000).toFixed(1)} kHz`}
+        <RackKnob label="Tone" value={delay.toneHz} min={500} max={12000} format={(v) => `${(v / 1000).toFixed(1)} kHz`} raised
           locked={delay.mode === 'convolution'} lockScrim
           onChange={(v) => onChange({ toneHz: v })}
           centerXPct={KNOB_XS[4]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
-        <RackKnob label="Mod" value={delay.modDepthMs} min={0} max={MAX_MOD_DEPTH_MS} format={(v) => (v === 0 ? "off" : `${v.toFixed(2)} ms`)}
+        <RackKnob label="Mod" value={delay.modDepthMs} min={0} max={MAX_MOD_DEPTH_MS} format={(v) => (v === 0 ? "off" : `${v.toFixed(2)} ms`)} raised
           locked={delay.mode === 'convolution'} lockScrim
           onChange={(v) => onChange({ modDepthMs: v })}
           centerXPct={KNOB_XS[5]} centerYPct={KNOB_Y} diameterPct={KNOB_D} />
