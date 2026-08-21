@@ -1,6 +1,11 @@
 # TODO
 
-## Play groups — save a shortlist of captures and audition just those, back and forth
+## DONE: Play groups — save a shortlist of captures and audition just those, back and forth
+
+**Implemented** (`b33f432`, commit message: "Add play groups — hand-picked cross-folder shortlists
+for A/B comparison"). `GroupsAdminPage.tsx` and `AddToGroupPopover.tsx` exist, wired into
+`PlayerPanel.tsx`, `App.tsx`, and `types/settings.ts`. Original brainstorm kept below for design
+rationale.
 
 Comparing a handful of captures today means finding them again by scrolling/searching the tree or
 Tone Map each time there's a new one to add to the comparison. **Wanted:** a lightweight, named
@@ -104,7 +109,11 @@ Two things intentionally still vary per capture, and should keep doing so:
 
 ---
 
-## Convolution delay
+## DONE: Convolution delay
+
+**Implemented** (`40b42e1`). `delayConvolver`, `setDelayIr`, and a dedicated delay IR library path
+exist in `liveEngine.ts`, with the delay mode toggle (Algorithmic/Convolution) and IR browse button
+in `PlayerPanel.tsx`/`SettingsPanel.tsx`. Original brainstorm kept below for design rationale.
 
 The reverb can load an impulse; the delay cannot. A convolution delay would cover the things an
 algorithmic line cannot reach — real tape machine repeats with their wow, head bump and saturation
@@ -127,7 +136,11 @@ If it turns out to be worth it, the pieces mostly exist:
 
 ---
 
-## Noise gate
+## DONE: Noise gate
+
+**Implemented** (`40b42e1`). Ported from AudioDSPTools' `NoiseGate.cpp` into `gate-worklet.js`, on
+the raw input before the model, with a full UI card (threshold/hold/release). Original rationale
+kept below.
 
 Wanted at the front of the live chain, before the model — a high-gain capture amplifies room noise
 and single-coil hum along with everything else, and the tuner work already showed how much hum a
@@ -229,7 +242,11 @@ three LEDs. Then:
 
 ---
 
-## Save the player's FX rig as a recallable preset
+## DONE: Save the player's FX rig as a recallable preset
+
+**Implemented** (`40b42e1`). Chorus/Delay/Reverb each got an independent named preset list (settings
++ convolution IR where relevant), plus a separate Rig preset snapshotting all five FX blocks at
+once, stored in `AppSettings`/`settings.json`. Original brainstorm kept below for design rationale.
 
 Every player control now persists — delay, chorus, reverb (mode and per-mode parameters), cab IR,
 reverb impulse, volume, input channel, output device — but there is exactly ONE of each. Dialling
@@ -382,9 +399,16 @@ suggesting an IR from `nl_cabinet` metadata, and IR support in the future tone m
 
 ---
 
-## [HIGH PRIORITY] In-app tone player — offline WASM render (no real-time AudioWorklet)
+## DONE: In-app tone player — offline WASM render (no real-time AudioWorklet)
 
-**Status: IN PROGRESS on `feature/player`.** Prior attempt on this branch (see
+**Implemented.** `native/nam-wasm/` holds the vendored single-threaded WASM module and build
+script; `nam-offline.js` + `namRender.worker.ts` are the offline render worker path; `PlayerPanel.tsx`
+was rewritten to render offline instead of real-time AudioWorklet (`8939932`). Follow-on fixes
+landed after: bounded-block rendering to avoid `std::bad_alloc` (`9735434`), quiet/gainless preview
+fixes (`41991d2`), and Play Live vs. Preview click behavior (`ff96735`). Original plan kept below
+for reference.
+
+**Status (stale): was IN PROGRESS on `feature/player`.** Prior attempt on this branch (see
 `docs/player-investigation.md`, checkpoint `5c84181`) tried to embed Tone3000's
 `neural-amp-modeler-wasm` React player (`T3kPlayer`) for real-time playback via
 `AudioWorkletNode`. That's permanently blocked in Electron: the WASM module is built with
@@ -492,9 +516,12 @@ below are the right-sized next step.
 
 ---
 
-## [HIGH PRIORITY] Scan mode — audition a scoped set by ear, in order
+## DONE: Scan mode — audition a scoped set by ear, in order
 
-**Next thing to build.** The Tone Map's weakness is that every facet it offers is a *name*, and you
+**Implemented** (`f23c722 Scan mode: audition a scoped set of captures by ear`), with help docs
+added in `ae0c49e`. Original brainstorm kept below for design rationale.
+
+**Status (stale): was "next thing to build."** The Tone Map's weakness is that every facet it offers is a *name*, and you
 cannot name a tone you have not heard. Scan mode makes the ear the filter: pick a scope, then sweep
 through it hearing each capture crossfade into the next, radio-tuning style. Stop when something
 catches you.
