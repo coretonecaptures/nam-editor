@@ -1,5 +1,6 @@
 import echoLabPanel from '../assets/fx/echo-lab-panel.png'
 // import rackKnobTestFluted from '../assets/fx/rack-knob-test-fluted.png' — paused, see Mix knob below
+import filmstripBigKnob from '../assets/fx/filmstrip-big-knob.png'
 import { RackKnob } from './RackKnob'
 import { RackFader } from './RackFader'
 import { RackButton, RackDisplay, RackLed } from './RackParts'
@@ -61,6 +62,11 @@ const ROW3_Y = py(362)
 // visibly clipped by the knob above and/or below it. 68 buys back clearance on both sides while
 // staying well above the original undersized 50.
 const KNOB_D = px(68)
+// Mix-only, for the filmstrip test below: its column (Row 1, index 0) has no knob beneath it in
+// Rows 2-3, so it's the one spot on this panel that can grow without eating another knob's label
+// clearance. A filmstrip frame reads worse at small sizes than the flat photographed knob did, so
+// this is compensating for that legibility gap, not a general "make Mix bigger" request.
+const MIX_KNOB_D = px(82)
 // Each row's own label sits centred in the GAP to the row below it, not at a fixed offset from
 // its own knob — the two gaps aren't equal (95px vs 80px), so a single shared constant left Row
 // 1's labels too close to both the knob above them and the knob below. Half of each gap centres
@@ -109,7 +115,10 @@ const db = (v: number): string => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`
 const hzWhole = (v: number): string => `${Math.round(v)} Hz`
 
 /** Colour sampled directly from the panel's own engraved text (Band 3 / switch labels) so the
- *  code-drawn Row 1/2 labels read as the same ink, not a mismatched web font pasted on top. */
+ *  code-drawn Row 1/2 labels read as the same ink, not a mismatched web font pasted on top.
+ *  2026-08-21: tried swapping to a generic "weathered beige" (#CDB896) per an AI font-ID
+ *  suggestion — confirmed too yellow against the real panel once compared live, so reverted to
+ *  the sampled value. The eyedropper beats the guess. */
 const ENGRAVED_LABEL_COLOR = '#f6f4e8'
 
 function KnobLabel({ xPct, yPct, text, dim = false }: { xPct: number; yPct: number; text: string; dim?: boolean }): React.ReactNode {
@@ -130,19 +139,25 @@ function KnobLabel({ xPct, yPct, text, dim = false }: { xPct: number; yPct: numb
           // DIN Alternate ships on macOS, Bahnschrift on Windows — both close matches to the
           // panel's own engraved industrial sans (per the ChatGPT font ID this was checked
           // against); IBM Plex Sans as the cross-platform fallback where neither exists.
-          fontFamily: "'DIN Alternate', 'Bahnschrift', 'IBM Plex Sans', sans-serif",
+          fontFamily: "'DIN Alternate', 'Bahnschrift', 'Inter', 'IBM Plex Sans', sans-serif",
           fontWeight: 600,
           // Shaved down again (0.85 -> 0.76 -> 0.68cqw) per direction to fit more text
           // comfortably — the longest labels ("Memory Man", "R Feedback") were running close to
           // their neighbours at the larger sizes.
           fontSize: '0.68cqw',
-          letterSpacing: '0.05em',
+          // 0.05em -> 0.08em per a font-ID pass recommending DIN 1451/2014-style spacing.
+          letterSpacing: '0.08em',
           textTransform: 'uppercase',
           // Dimmed text pairs with the knob's own lock scrim — the whole control (art + label)
           // recedes together, rather than a grayscale knob under a still-bright caption.
           color: dim ? '#8a8778' : ENGRAVED_LABEL_COLOR,
+          // Full-strength ENGRAVED_LABEL_COLOR read brighter than the panel's own printed labels
+          // (EQ LOW/DUCK DEPTH/MODE/etc.) once compared side by side — those have some wear baked
+          // into the photographed art, which flat CSS text has no equivalent of. Opacity is a
+          // cheap stand-in for that, not a claim it's the same effect.
+          opacity: dim ? 1 : 0.82,
           textShadow: dim ? 'none' : '0 1px 0 rgba(0,0,0,0.55), 0 0 1px rgba(0,0,0,0.35)',
-          transition: 'color .15s'
+          transition: 'color .15s, opacity .15s'
         }}
       >
         {text}
@@ -212,34 +227,43 @@ export function RackEchoLab({
         {/* Candidate knob image test (rack-knob-test-fluted.png) tried here and paused per
             feedback: cut looked off / bottom shadow was distracting, and it read flat rather than
             3D despite the top highlight. May revisit with different source photos later. */}
+        {/* Filmstrip test (2026-08-21): 128-frame photographed/rendered knob from the Analog GUI
+            Kit 02 (Julian Behrens), swapped in on Mix only to see how it reads before touching
+            anything else. Direction unverified — flip `reverse` on RackKnob's filmstrip prop if
+            frame 0 turns out to be clockwise instead of counter-clockwise. */}
         <RackKnob label="Mix" value={echoLab.mix} min={0} max={1} format={pct} raised
           onChange={(v) => onChange({ mix: v })}
-          centerXPct={ROW1_XS[0]} centerYPct={ROW1_Y} diameterPct={KNOB_D} />
+          filmstrip={{ src: filmstripBigKnob, frameCount: 128 }}
+          centerXPct={ROW1_XS[0]} centerYPct={ROW1_Y} diameterPct={MIX_KNOB_D} />
         <KnobLabel xPct={ROW1_XS[0]} yPct={ROW1_Y + LABEL_OFFSET_Y_ROW1} text="Mix" />
 
         <RackKnob label={single ? 'Time' : 'L Delay'} value={single ? echoLab.timeMs : echoLab.leftTimeMs}
           min={20} max={1200} format={ms} raised typeable tapTempo
           onChange={(v) => onChange(single ? { timeMs: v } : { leftTimeMs: v })}
+          filmstrip={{ src: filmstripBigKnob, frameCount: 128 }}
           centerXPct={ROW1_XS[1]} centerYPct={ROW1_Y} diameterPct={KNOB_D} />
         <KnobLabel xPct={ROW1_XS[1]} yPct={ROW1_Y + LABEL_OFFSET_Y_ROW1} text={single ? 'Time' : 'L Delay'} />
 
         <RackKnob label={single ? 'Feedback' : 'L Feedback'} value={single ? echoLab.feedback : echoLab.leftFeedback}
           min={0} max={MAX_FEEDBACK} format={pct} raised
           onChange={(v) => onChange(single ? { feedback: v } : { leftFeedback: v })}
+          filmstrip={{ src: filmstripBigKnob, frameCount: 128 }}
           centerXPct={ROW1_XS[2]} centerYPct={ROW1_Y} diameterPct={KNOB_D} />
         <KnobLabel xPct={ROW1_XS[2]} yPct={ROW1_Y + LABEL_OFFSET_Y_ROW1} text={single ? 'Feedback' : 'L Feedback'} />
 
         <RackKnob label="R Delay" value={echoLab.rightTimeMs} min={20} max={1200} format={ms} raised
-          locked={single} lockScrim typeable tapTempo
+          locked={single} parkWhenLocked dimWhenLocked={false} typeable tapTempo
           onChange={(v) => onChange({ rightTimeMs: v })}
+          filmstrip={{ src: filmstripBigKnob, frameCount: 128 }}
           centerXPct={ROW1_XS[3]} centerYPct={ROW1_Y} diameterPct={KNOB_D} />
-        <KnobLabel xPct={ROW1_XS[3]} yPct={ROW1_Y + LABEL_OFFSET_Y_ROW1} text="R Delay" dim={single} />
+        {!single && <KnobLabel xPct={ROW1_XS[3]} yPct={ROW1_Y + LABEL_OFFSET_Y_ROW1} text="R Delay" />}
 
         <RackKnob label="R Feedback" value={echoLab.rightFeedback} min={0} max={MAX_FEEDBACK} format={pct} raised
-          locked={single} lockScrim
+          locked={single} parkWhenLocked dimWhenLocked={false}
           onChange={(v) => onChange({ rightFeedback: v })}
+          filmstrip={{ src: filmstripBigKnob, frameCount: 128 }}
           centerXPct={ROW1_XS[4]} centerYPct={ROW1_Y} diameterPct={KNOB_D} />
-        <KnobLabel xPct={ROW1_XS[4]} yPct={ROW1_Y + LABEL_OFFSET_Y_ROW1} text="R Feedback" dim={single} />
+        {!single && <KnobLabel xPct={ROW1_XS[4]} yPct={ROW1_Y + LABEL_OFFSET_Y_ROW1} text="R Feedback" />}
 
         {/* Plain linear — a squared taper was tried here (knob position = sqrt(value)) and
             reverted per direction: straight-up reading 25% instead of 50% was confusing on its
@@ -248,6 +272,7 @@ export function RackEchoLab({
           value={single ? echoLab.pingPongWidth : echoLab.spread}
           min={0} max={1} format={single ? pingPongFormat : pct} raised
           onChange={(v) => onChange(single ? { pingPongWidth: v } : { spread: v })}
+          filmstrip={{ src: filmstripBigKnob, frameCount: 128 }}
           centerXPct={ROW1_XS[5]} centerYPct={ROW1_Y} diameterPct={KNOB_D} />
         <KnobLabel xPct={ROW1_XS[5]} yPct={ROW1_Y + LABEL_OFFSET_Y_ROW1} text={single ? 'Ping Pong' : 'Spread'} />
 
@@ -255,22 +280,28 @@ export function RackEchoLab({
             knob the way Tape's Age or Memory Man's Chorus do. */}
         <RackKnob label={char1.label} value={echoLab.char1} min={char1.min} max={char1.max} format={char1.format} raised
           onChange={(v) => onChange({ char1: v })}
+          filmstrip={{ src: filmstripBigKnob, frameCount: 128 }}
           centerXPct={MID_XS[0]} centerYPct={ROW2_Y} diameterPct={KNOB_D} />
         <KnobLabel xPct={MID_XS[0]} yPct={ROW2_Y + LABEL_OFFSET_Y_ROW2} text={char1.label} />
 
         <RackKnob label={char2.label} value={echoLab.char2} min={char2.min} max={char2.max} format={char2.format} raised
-          locked={echoLab.character === 'digital'} lockScrim
+          locked={echoLab.character === 'digital'} parkWhenLocked dimWhenLocked={false}
           onChange={(v) => onChange({ char2: v })}
+          filmstrip={{ src: filmstripBigKnob, frameCount: 128 }}
           centerXPct={MID_XS[1]} centerYPct={ROW2_Y} diameterPct={KNOB_D} />
-        <KnobLabel xPct={MID_XS[1]} yPct={ROW2_Y + LABEL_OFFSET_Y_ROW2} text={char2.label} dim={echoLab.character === 'digital'} />
+        {echoLab.character !== 'digital' && (
+          <KnobLabel xPct={MID_XS[1]} yPct={ROW2_Y + LABEL_OFFSET_Y_ROW2} text={char2.label} />
+        )}
 
         <RackKnob label="Color/Drive" value={echoLab.colorDrive} min={0} max={1} format={pct} raised
           onChange={(v) => onChange({ colorDrive: v })}
+          filmstrip={{ src: filmstripBigKnob, frameCount: 128 }}
           centerXPct={MID_XS[2]} centerYPct={ROW2_Y} diameterPct={KNOB_D} />
         <KnobLabel xPct={MID_XS[2]} yPct={ROW2_Y + LABEL_OFFSET_Y_ROW2} text="Color/Drive" />
 
         <RackKnob label="Width" value={echoLab.width} min={0} max={1} format={pct} raised
           onChange={(v) => onChange({ width: v })}
+          filmstrip={{ src: filmstripBigKnob, frameCount: 128 }}
           centerXPct={MID_XS[3]} centerYPct={ROW2_Y} diameterPct={KNOB_D} />
         <KnobLabel xPct={MID_XS[3]} yPct={ROW2_Y + LABEL_OFFSET_Y_ROW2} text="Width" />
 
@@ -279,18 +310,22 @@ export function RackEchoLab({
         <RackKnob label="EQ Low" value={echoLab.eqLowDb} min={-15} max={15} format={db} raised
           resetTo={0}
           onChange={(v) => onChange({ eqLowDb: v })}
+          filmstrip={{ src: filmstripBigKnob, frameCount: 128 }}
           centerXPct={MID_XS[0]} centerYPct={ROW3_Y} diameterPct={KNOB_D} />
         <RackKnob label="EQ High" value={echoLab.eqHighDb} min={-15} max={15} format={db} raised
           resetTo={0}
           onChange={(v) => onChange({ eqHighDb: v })}
+          filmstrip={{ src: filmstripBigKnob, frameCount: 128 }}
           centerXPct={MID_XS[1]} centerYPct={ROW3_Y} diameterPct={KNOB_D} />
         <RackKnob label="Duck Depth" value={echoLab.duckDepth} min={0} max={1} format={pct} raised
-          locked={!echoLab.duckEnabled} lockScrim
+          locked={!echoLab.duckEnabled} parkWhenLocked dimWhenLocked={false}
           onChange={(v) => onChange({ duckDepth: v })}
+          filmstrip={{ src: filmstripBigKnob, frameCount: 128 }}
           centerXPct={MID_XS[2]} centerYPct={ROW3_Y} diameterPct={KNOB_D} />
         <RackKnob label="Duck Release" value={echoLab.duckReleaseMs} min={50} max={1000} format={ms} raised
-          locked={!echoLab.duckEnabled} lockScrim
+          locked={!echoLab.duckEnabled} parkWhenLocked dimWhenLocked={false}
           onChange={(v) => onChange({ duckReleaseMs: v })}
+          filmstrip={{ src: filmstripBigKnob, frameCount: 128 }}
           centerXPct={MID_XS[3]} centerYPct={ROW3_Y} diameterPct={KNOB_D} />
 
         {/* Faders. Mod Rate drives whichever char1/char2 LFO the current Character actually
