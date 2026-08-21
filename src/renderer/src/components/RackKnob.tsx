@@ -28,7 +28,10 @@ export function RackKnob({
   lockScrim = false,
   typeable = false,
   tapTempo = false,
-  presets
+  presets,
+  filmstrip,
+  parkWhenLocked = false,
+  dimWhenLocked = true
 }: {
   /** Current value, in the knob's own units (caller's min..max). */
   value: number
@@ -86,6 +89,32 @@ export function RackKnob({
    * drag position. Only meaningful alongside `typeable`.
    */
   presets?: { label: string; value: number }[]
+  /**
+   * Swaps the single-photo-plus-CSS-rotate rendering for a real photographed/rendered filmstrip:
+   * a tall strip of square frames, one per rotation step, no CSS rotation involved. Reads as more
+   * three-dimensional than a flat knob spun in software because each frame can carry its own baked
+   * highlight/shadow rather than one static highlight swinging around with the cap.
+   *
+   * Frame 0 is assumed fully counter-clockwise and the last frame fully clockwise, matching the
+   * -135deg..+135deg sweep used everywhere else — flip `reverse` if a given filmstrip runs the
+   * other way.
+   */
+  filmstrip?: { src: string; frameCount: number; reverse?: boolean }
+  /**
+   * Locked-test alternative to the grayscale+scrim treatment (2026-08-21): instead of showing the
+   * real stored value dimmed under glass, the knob visually rests at its floor (fully
+   * counter-clockwise) while locked — same "off" convention as a real pedal knob turned all the
+   * way down. The stored value is untouched; this only changes what's drawn. Off by default so
+   * Delay/Reverb's existing locked-knob look is unchanged.
+   */
+  parkWhenLocked?: boolean
+  /**
+   * Locked-test companion to `parkWhenLocked`: whether locked also darkens/greys the knob. Off
+   * lets the parked position alone carry the "not doing anything" read, per direction to try that
+   * without the grayscale — which was drawing the eye rather than receding. Defaults to true so
+   * Delay/Reverb's existing locked knobs (grayscale, no parking) are unaffected.
+   */
+  dimWhenLocked?: boolean
 }) {
   const dragRef = useRef<{
     startX: number
@@ -100,7 +129,9 @@ export function RackKnob({
   const [editValue, setEditValue] = useState('')
   const editInputRef = useRef<HTMLInputElement | null>(null)
 
-  const frac = max > min ? (value - min) / (max - min) : 0
+  // Parked (locked + parkWhenLocked) draws at the floor regardless of the real stored value —
+  // display only, `value` itself is untouched.
+  const frac = locked && parkWhenLocked ? 0 : max > min ? (value - min) / (max - min) : 0
   // Standard knob sweep: -135deg (fully counter-clockwise) to +135deg, 270deg of travel.
   const angle = -135 + frac * 270
 
@@ -275,27 +306,89 @@ export function RackKnob({
         padding: 0
       }}
     >
-      <img
-        src={image}
-        alt=""
-        draggable={false}
-        style={{
-          width: '100%',
-          height: '100%',
-          display: 'block',
-          transform: `rotate(${angle}deg)`,
-          // Solid but desaturated/darkened, not faded — an inert control still needs to read as
-          // a real physical knob sitting on the panel, not a translucent ghost of one. Raised
-          // shadow layers on top when both apply (a locked knob is still a raised knob).
-          filter: [
-            raised ? 'drop-shadow(0 3px 3px rgba(0,0,0,0.65))' : '',
-            locked ? 'grayscale(1) brightness(0.55)' : ''
-          ].filter(Boolean).join(' ') || 'none',
-          transition: 'filter .15s',
-          pointerEvents: 'none',
-          userSelect: 'none'
-        }}
-      />
+      {filmstrip ? (
+        <div
+          style={{
+            width: '100%',
+            height: '100%',
+            borderRadius: '50%',
+            overflow: 'hidden',
+            filter: [
+              // cqw, not a fixed px — a fixed-pixel shadow tuned against the narrow inline rack
+              // column reads as basically invisible once the same knob renders 3-4x larger in a
+              // floating window (RackFloatingWindow), since the shadow doesn't grow with it. The
+              // panels all set containerType: 'inline-size' on their outer wrapper already (see
+              // RackDisplay's font-sizing for the same technique), so cqw resolves against the
+              // panel's actual rendered width in either context and the shadow stays proportional.
+              raised ? 'drop-shadow(0 0.45cqw 0.45cqw rgba(0,0,0,0.65))' : '',
+              locked && dimWhenLocked ? 'grayscale(1) brightness(0.55)' : ''
+            ].filter(Boolean).join(' ') || 'none',
+            transition: 'filter .15s',
+            pointerEvents: 'none',
+            userSelect: 'none'
+          }}
+        >
+          <img
+            src={filmstrip.src}
+            alt=""
+            draggable={false}
+            style={{
+              width: '100%',
+              display: 'block',
+              // The strip is `frameCount` square frames stacked vertically, so at width:100% its
+              // OWN rendered height is frameCount * (container height) — and CSS's translateY(%)
+              // is relative to THAT full height, not the container/one frame. So one frame-step is
+              // (1 / frameCount) * 100%, not 100% flat — using 100% here originally jumped a full
+              // strip-height (~128 frames) per step, which is why the knob visually vanished off
+              // the crop the instant its value moved off frame 0.
+              transform: `translateY(-${
+                ((filmstrip.reverse
+                  ? filmstrip.frameCount - 1 - Math.round(frac * (filmstrip.frameCount - 1))
+                  : Math.round(frac * (filmstrip.frameCount - 1))) *
+                  100) /
+                filmstrip.frameCount
+              }%)`
+            }}
+          />
+        </div>
+      ) : (
+        // Shadow lives on this non-rotating wrapper, not the spinning <img> below: filter and
+        // transform on the SAME element render as one rigid unit — the drop-shadow would swing
+        // around with the knob instead of staying anchored at the bottom. Grayscale/brightness
+        // don't have this problem (orientation-independent), but keeping the whole filter here
+        // rather than splitting it further matches the filmstrip branch's structure above.
+        <div
+          style={{
+            width: '100%',
+            height: '100%',
+            filter: [
+              // cqw, not a fixed px — a fixed-pixel shadow tuned against the narrow inline rack
+              // column reads as basically invisible once the same knob renders 3-4x larger in a
+              // floating window (RackFloatingWindow), since the shadow doesn't grow with it. The
+              // panels all set containerType: 'inline-size' on their outer wrapper already (see
+              // RackDisplay's font-sizing for the same technique), so cqw resolves against the
+              // panel's actual rendered width in either context and the shadow stays proportional.
+              raised ? 'drop-shadow(0 0.45cqw 0.45cqw rgba(0,0,0,0.65))' : '',
+              locked && dimWhenLocked ? 'grayscale(1) brightness(0.55)' : ''
+            ].filter(Boolean).join(' ') || 'none',
+            transition: 'filter .15s',
+            pointerEvents: 'none',
+            userSelect: 'none'
+          }}
+        >
+          <img
+            src={image}
+            alt=""
+            draggable={false}
+            style={{
+              width: '100%',
+              height: '100%',
+              display: 'block',
+              transform: `rotate(${angle}deg)`
+            }}
+          />
+        </div>
+      )}
       {locked && lockScrim && (
         <div
           style={{
