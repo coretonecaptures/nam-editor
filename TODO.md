@@ -1446,3 +1446,26 @@ Regression check: `grep -rn '="[^{][^"]*\\u[0-9a-fA-F]\{4\}' src --include="*.ts
 - Design a safe explicit-source workflow to collect `.nam` files from user-chosen intake folders into a working folder, without trying to automatically infer which existing folders are "loose" versus valid staging/archive/release locations.
 - Investigate a safe "build logical folder structure from existing metadata" helper: preview-only first, because auto-restructuring by amp / cab / combo / settings could be powerful but dangerous if metadata is incomplete or wrong.
 - AI-assisted suggestion rule discovery: explore sending a sample of a folder's filenames and existing metadata values to the AI and asking it to identify meaningful token patterns worth turning into suggestion rules â€” e.g. it notices `G5.5` / `G1.2` prefixes map to `input_level_dbu`, or that a filename segment always matches `gear_model`. Would need a clear review/confirm step before any rules are committed.
+
+## Future: read IR Lab's embedded WAV metadata, IR library management
+
+Not started -- came up 2026-08-21 discussing whether cab-IR organization belongs in an app or in
+Finder/Explorer folders. IR Lab (sibling native app, same author, `Documents/GitHub/ir-lab`) already
+collects real capture metadata per IR at capture time (cabinet, speaker, microphone, position,
+notes) but today only bakes it into the exported filename, not into the WAV file itself. IR Lab has
+a planned to-do to start writing that metadata into the WAV's own BWF `bext` chunk (and/or a
+LIST/INFO chunk) on export, the same mechanism field recorders use for scene/take/mic-position data
+-- see that repo's own tracker for status before starting this.
+
+Once IR Lab writes that metadata, this app could read it back out and offer real IR library
+features that plain folder browsing can't: faceted search/filter (cabinet x speaker x mic x
+position, cutting across folders rather than needing pre-sorted directories), audition-in-place,
+waveform preview, and duplicate/near-duplicate detection. Two Notes Wall of Sound and TONE3000
+(formerly ToneHunt, the actual `.nam` community library) are the closest existing references for
+what this kind of browser should feel like -- TONE3000 in particular is the direct analog for a
+`.nam`-and-IR library UI, since it already solves tag search + in-browser preview + community
+sharing for exactly this file-type pairing.
+
+Scope this as its own project once IR Lab's write side exists, not before -- there is nothing to
+read yet, and the metadata schema (which fields, what they're called) should be decided jointly
+with IR Lab so both apps agree on one taxonomy rather than inventing two.
