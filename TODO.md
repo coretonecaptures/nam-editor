@@ -139,7 +139,24 @@ Not just a label swap: the knob at `EQ_KNOB_YS[0]` (top position) needs to becom
 panel and which parameter it controls have to move together, or the labels would say one thing
 and the knob would adjust another.
 
-## macOS code signing + notarization — unblocks reliable safeStorage (keychain)
+## DONE (2026-08-21): macOS code signing + notarization — unblocks reliable safeStorage (keychain)
+
+**Status**: Developer ID Application certificate obtained and installed (Team ID `G72M3ADC6N`),
+App Store Connect API key generated for notarization, all six values (`CSC_LINK`,
+`CSC_KEY_PASSWORD`, `APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`, `APPLE_TEAM_ID`) set
+as GitHub Actions secrets. `build/entitlements.mac.plist` added; `package.json` `build.mac` now
+sets `hardenedRuntime`/`entitlements`/`entitlementsInherit`/`extendInfo.NSMicrophoneUsageDescription`.
+`.github/workflows/release.yml`'s `build-mac` job rewritten to sign + notarize for real (dropped
+the old ad-hoc `codesign --sign -` + `--prepackaged` two-pass dance) with a
+`codesign --verify` + `spctl -a -t install` check. Not yet verified against a real tagged release
+build — that's the next step (see "What to obtain" section below for the original plan, kept for
+reference).
+
+Also fixed alongside this, from "Related problems found while planning" below: `storeAiKey` now
+refuses (throws, surfaced to the user via the existing save-key error UI) rather than silently
+writing an unencrypted key when `safeStorage` is unavailable; `saveTone3kTokens` keeps its
+plaintext fallback (background OAuth flow, no UI to report through) but now logs a loud warning;
+`NSMicrophoneUsageDescription` got a real sentence instead of Electron's placeholder.
 
 **`safeStorage` is already built and working** — this is not new code, it is a *release
 engineering* problem. Two things already use it (`src/main/index.ts`):
@@ -1267,15 +1284,15 @@ Regression check: `grep -rn '="[^{][^"]*\\u[0-9a-fA-F]\{4\}' src --include="*.ts
 ## Packaging and release
 
 - App icon files for Windows and macOS (`.ico` / `.icns`)
-- Code signing and notarization
+- ~~Code signing and notarization~~ — Done, see "macOS code signing + notarization" above.
 
 ## Security and hardening
 
-- **[SUPER HIGH PRIORITY] macOS safeStorage Keychain prompt on every launch** — Users on unsigned macOS builds get a Keychain access dialog (sometimes multiple times) each time the app starts. Root cause: unsigned apps can't bind a keychain item to a stable code signature, so macOS re-prompts on every session. `loadTone3kTokens()` triggers it at `app.whenReady`; each `readAiKey(provider)` call is a separate potential prompt.
-  - **Immediate mitigation**: move `loadTone3kTokens()` out of `app.whenReady` — lazy-load it on first use. Same for AI keys — read from disk only when the renderer requests them, not eagerly. Fewer startup calls = fewer prompts.
-  - **Proper fix**: code-sign the app (Apple Developer Program, $99/yr). A signed build stores the keychain item tied to the code signature; macOS stops prompting after the first "Always Allow". Required before any Mac distribution.
-  - **Fallback for dev / unsigned builds**: detect `app.isPackaged === false` or check `safeStorage.getSelectedStorageBackend()`. If the backend isn't 'basic_text' (which means the OS is using a secure backend that might prompt), offer to fall back to plaintext JSON with a one-time warning to the user. This is a security regression but better UX for dev.
-  - Until code signing is in place, document the workaround: in Keychain Access on macOS, find the NAM Lab entry and set it to "Always Allow" to silence future prompts.
+- ~~**macOS safeStorage Keychain prompt on every launch**~~ — Done, proper fix landed: see "macOS
+  code signing + notarization" above. Real Developer ID signing gives builds a stable code
+  identity across updates, which is what stops the repeated Keychain prompt (and stops
+  Tone3000/AI-key data from being orphaned on every update). Not yet verified against a real
+  tagged release build.
 
 - ~~Move Tone3000 OAuth token storage from plain `userData/tone3000-tokens.json` to `safeStorage` with migration from the old plain JSON file.~~ â€” Done. `tone3000-tokens.bin` written via `safeStorage.encryptString`; legacy `.json` is auto-migrated and unlinked on next save (`loadTone3kTokens` / `saveTone3kTokens` in `main/index.ts`).
 - ~~Move AI provider keys (OpenAI, Anthropic, etc.) to `safeStorage`.~~ â€” Done. Per-provider `ai-key-{provider}.bin` files via `storeAiKey` / `readAiKey`. Keys never travel back to the renderer (saved by name; never re-emitted).

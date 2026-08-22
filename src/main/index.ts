@@ -6040,6 +6040,11 @@ async function saveTone3kTokens(): Promise<void> {
     if (!isDev && safeStorage.isEncryptionAvailable()) {
       await fs.promises.writeFile(securePath, safeStorage.encryptString(payload))
     } else {
+      // Unlike storeAiKey, this can't just refuse — it runs from background OAuth/refresh flows
+      // with no UI round-trip to report an error through, and refusing here would silently break
+      // login instead of silently weakening it. Still worth a loud log line so it shows up in the
+      // error log rather than passing for normal behavior.
+      if (!isDev) log('WARNING: secure storage unavailable — writing Tone3000 tokens in plaintext')
       await fs.promises.writeFile(securePath, payload, 'utf-8')
     }
     try { await fs.promises.unlink(tone3kLegacyTokensPath()) } catch { /* ok */ }
@@ -6238,12 +6243,13 @@ app.whenReady().then(async () => {
   }
 
   function storeAiKey(provider: string, key: string): void {
-    const p = aiKeyPath(provider)
-    if (safeStorage.isEncryptionAvailable()) {
-      fs.writeFileSync(p, safeStorage.encryptString(key))
-    } else {
-      fs.writeFileSync(p, key, 'utf-8')
+    if (!safeStorage.isEncryptionAvailable()) {
+      // Writing the key in plaintext would be worse than refusing outright — an API key sitting
+      // unencrypted in userData is a real exposure, not a graceful degradation. Most likely to
+      // bite Linux users with no libsecret/gnome-keyring available.
+      throw new Error('Secure storage is unavailable on this system, so the key was not saved (refusing to store it unencrypted).')
     }
+    fs.writeFileSync(aiKeyPath(provider), safeStorage.encryptString(key))
   }
 
   function readAiKey(provider: string): string | null {

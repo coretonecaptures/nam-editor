@@ -1,5 +1,13 @@
 # CLAUDE.md — NAM Lab
 
+## SECURITY — NEVER COMMIT SECRETS
+**Under absolutely no circumstances check in any private keys, certificates, API keys, tokens, or
+passwords** (e.g. `.p12`/`.p8` files, `CSC_KEY_PASSWORD`, Apple API keys, AI provider keys, OAuth
+tokens). These belong in GitHub Actions secrets or the user's local keychain/env, never in the
+repo, never in a commit, never pasted into a tracked file. If a secret is ever handed over in
+conversation, treat it as ephemeral — use it to set the remote secret, do not write it to disk
+inside this repo.
+
 ## Project
 Electron + React + TypeScript + Tailwind CSS desktop metadata editor for `.nam` files (Neural Amp Modeler captures). Built with `electron-vite`, packaged with `electron-builder`. Runs on Windows, macOS, Linux. Current version in `package.json`.
 
