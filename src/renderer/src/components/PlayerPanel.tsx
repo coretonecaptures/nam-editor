@@ -3257,7 +3257,12 @@ export function PlayerPanel({
                   </button>
                 )}
               </div>
-              {delaySlotView === 'delay' && (
+              {/* Hidden while floating: DelayFloatingWindow/EchoLabFloatingWindow carry their own
+                  PresetMenu now, right next to the controls actually being edited. Without this
+                  guard, this stale header copy stays visible and bound to delaySlotView regardless
+                  of which unit is floating — the exact bug that let a preset saved while playing
+                  Echo Lab in its floating window land in the Delay's preset list instead. */}
+              {delaySlotView === 'delay' && !delayFloating && (
               <PresetMenu
                 label="Preset"
                 options={delayPresets.map((d) => ({ id: d.id, name: d.name }))}
@@ -3274,7 +3279,7 @@ export function PlayerPanel({
                 favoritesKind="delay-preset"
               />
               )}
-              {delaySlotView === 'echo-lab' && (
+              {delaySlotView === 'echo-lab' && !echoLabFloating && (
               <PresetMenu
                 label="Preset"
                 options={echoLabPresets.map((d) => ({ id: d.id, name: d.name }))}
@@ -3739,6 +3744,15 @@ export function PlayerPanel({
               setEchoLabFloating(false)
               setDelaySlotView('echo-lab')
             }}
+            presets={echoLabPresets.map((d) => ({ id: d.id, name: d.name }))}
+            activePresetId={activeEchoLabPresetId}
+            onRecall={(id) => {
+              const found = echoLabPresets.find((d) => d.id === id)
+              if (found) applyEchoLabPreset(found.settings)
+            }}
+            onSaveAs={() => setSaveAsPrompt({ title: 'Save Echo Lab preset as…', onSave: saveEchoLabPreset })}
+            onUpdate={(id) => { const found = echoLabPresets.find((p) => p.id === id); if (found) saveEchoLabPreset(found.name) }}
+            onDelete={deleteEchoLabPreset}
           />
         )}
         {delayFloating && (
@@ -3752,6 +3766,14 @@ export function PlayerPanel({
               setDelayFloating(false)
               setDelaySlotView('delay')
             }}
+            activePresetId={activeDelayPresetId}
+            onRecall={(id) => {
+              const found = delayPresets.find((d) => d.id === id)
+              if (found) applyDelayPreset(found.settings, found.irPath)
+            }}
+            onSaveAs={() => setSaveAsPrompt({ title: 'Save delay preset as…', onSave: saveDelayPreset })}
+            onUpdate={(id) => { const found = delayPresets.find((p) => p.id === id); if (found) saveDelayPreset(found.name) }}
+            onDelete={deleteDelayPreset}
           />
         )}
         {reverbFloating && (
