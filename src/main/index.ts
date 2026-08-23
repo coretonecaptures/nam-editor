@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net, Menu, safeStorage, session } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net, Menu, safeStorage, session, nativeImage } from 'electron'
 import { join, dirname, basename, extname, normalize as normalizePath, relative, resolve, sep } from 'path'
 import fs from 'fs'
 import os from 'os'
@@ -5961,6 +5961,35 @@ async function ensureValidToken(): Promise<boolean> {
 }
 
 app.whenReady().then(async () => {
+  // Dev-only Dock icon. macOS has no per-window icon (BrowserWindow's `icon` option is a no-op
+  // here) — the Dock icon normally comes from the packaged .app bundle's Info.plist, which
+  // electron-builder generates from build/icon.icns. Running unpackaged straight out of
+  // node_modules/electron during `npm run dev` has no such bundle, so without this the Dock
+  // shows Electron's own generic icon instead of NAM Lab's. Packaged builds already get the
+  // real icon for free from the bundle itself, so this only needs to run in dev.
+  if (isDev && process.platform === 'darwin') {
+    try {
+      // Uses NamLab.DockIconDev.png, NOT NamLab.Transparent.png — the latter's artwork fills its
+      // 1024x1024 canvas edge-to-edge (99.9%) with no margin, which is fine for e.g. an About
+      // dialog but reads as oversized next to every other Dock icon once resized: real .icns
+      // assets (and this one, checked against build/icon.icns) leave ~10-15% padding around the
+      // art by convention, and the Dock has no way to add that back in for you. It also has a
+      // thin white keyline stroke baked in right at its own rounded corners — invisible at
+      // edge-to-edge scale because the Dock's own corner mask clips it off, but clearly visible
+      // once real padding is added and that stroke lands inside the visible frame instead of at
+      // its very edge. DockIconDev.png is a one-time offline transform of the same source: a
+      // 100px crop from each side to remove the corner stroke first (producing a plain square —
+      // correct, not a bug, since the Dock applies its own corner rounding and a source shouldn't
+      // pre-round itself), then that square centered with padding to ~80% art-to-canvas. Resize
+      // is still needed on top of that: a plain PNG has no scale metadata, so createFromPath's
+      // NativeImage reports its full pixel size as 1x rather than an already-Dock-sized image.
+      const icon = nativeImage.createFromPath(join(__dirname, '../renderer/NamLab.DockIconDev.png'))
+      app.dock?.setIcon(icon.resize({ width: 128, height: 128 }))
+    } catch {
+      // Cosmetic only — never worth failing startup over.
+    }
+  }
+
   // NOTE: COOP/COEP header injection was removed here. It was added to try to make
   // `crossOriginIsolated` true so the real-time WASM AudioWorklet player could transfer a
   // SharedArrayBuffer into the worklet thread. It never worked in Electron (see

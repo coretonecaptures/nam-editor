@@ -574,6 +574,12 @@ export function PlayerPanel({
     return loaded.width === 0.5 ? { ...loaded, width: 1 } : loaded
   })
   const [delaySlotView, setDelaySlotView] = useState<DelaySlotView>(() => {
+    // Whichever unit is actually engaged wins on load, regardless of which was last viewed —
+    // opening on a silent/disabled unit while the other is actively processing audio is more
+    // confusing than useful. Only falls through to the persisted last-viewed pref when both or
+    // neither are enabled, where there's no "correct" unit to prefer.
+    if (echoLab.enabled && !delay.enabled) return 'echo-lab'
+    if (delay.enabled && !echoLab.enabled) return 'delay'
     // Validated, not just loaded: a session that ran before the loadPref fix above may already
     // have a corrupted character-indexed object saved under this key, which the fix alone can't
     // retroactively repair — reading it back would just return that same corrupted shape as-is.

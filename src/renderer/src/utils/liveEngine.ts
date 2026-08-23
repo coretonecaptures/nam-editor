@@ -410,6 +410,22 @@ export const MAX_DELAY_SECONDS = 2
 /** Deepest modulation offered. Beyond this the repeats warble rather than shimmer. */
 export const MAX_MOD_DEPTH_MS = 8
 
+// Tape-character-only constants — see tape-delay-engineering skill (ir-lab repo) for the
+// research behind each of these, and the class-field comments on the nodes they drive.
+/** Tape "wow" depth as a fraction of the existing char1 Wow/Flutter knob's ms value — a slower,
+ *  correlated-L/R component layered under the existing (faster, decorrelated) flutter oscillator
+ *  rather than a separate knob, so Tape Age's neighbor knob gets richer without adding a control. */
+const TAPE_WOW_FRACTION = 0.35
+/** Peak linear gain of the tape-hiss noise floor at Tape Age = 1. Deliberately conservative — a
+ *  starting point to dial by ear, not a measured value. */
+const TAPE_NOISE_MAX_GAIN = 0.035
+/** How much Tape Age alone can add to the saturation curve's effective drive, on top of
+ *  whatever Color/Drive is dialed to — keeps Color/Drive as the primary saturation control while
+ *  still coupling "worn" to "dirtier", not just "worn" to "darker". */
+const TAPE_AGE_DRIVE_MAX = 0.35
+/** Head-bump boost at Tape Age = 1, in dB. 0 dB at Age 0 (transparent). */
+const TAPE_HEAD_BUMP_MAX_DB = 4
+
 export interface LiveStartOptions {
   /** Input device to capture from; omit for the system default. */
   deviceId?: string | null
@@ -660,6 +676,32 @@ export class LiveEngine {
   private echoLabModOsc: OscillatorNode | null = null
   private echoLabModDepthL: GainNode | null = null
   private echoLabModDepthR: GainNode | null = null
+  /** Tape only: a second, much slower LFO summed into the same delayTime target as the main
+   *  flutter oscillator above. A single clean sine reads as regular/chorus-y "modulation" rather
+   *  than mechanical wobble — real tape wow/flutter is several independent quasi-periodic
+   *  components at unrelated rates (see tape-delay-engineering skill). This is a cheap two-LFU
+   *  approximation, not a full mechanical model: one slow "wow" (transport speed drift) on top of
+   *  the existing faster "flutter". Fixed, non-round rate so it never phase-locks with modRateHz. */
+  private echoLabWowOsc: OscillatorNode | null = null
+  private echoLabWowDepthL: GainNode | null = null
+  private echoLabWowDepthR: GainNode | null = null
+  /** Tape only: hiss injected inside the feedback loop (right at the delay-line output, same
+   *  point the tone filter and saturation sit) so each repeat compounds a bit more noise on top
+   *  of the last, same as a real feedback loop compounding tone/level degradation. Filtered
+   *  toward the high end — tape hiss isn't flat white noise. Gain scales with Tape Age; silent
+   *  for Digital/Memory Man. One shared mono source feeding both channels: tape hiss reads as
+   *  centered, not stereo-recorded material. */
+  private echoLabNoiseSource: AudioBufferSourceNode | null = null
+  private echoLabNoiseFilter: BiquadFilterNode | null = null
+  private echoLabNoiseGainL: GainNode | null = null
+  private echoLabNoiseGainR: GainNode | null = null
+  /** Tape only: a low-shelf boost chained ahead of the existing highcut, approximating tape
+   *  "head bump" — real tape playback response isn't a monotonic lowpass, it has a resonant
+   *  low-frequency boost before the high end rolls off. Gain scales with Tape Age (0 dB at
+   *  Age 0); 0 dB (transparent) for Digital/Memory Man rather than a separate parallel path,
+   *  since a lowshelf at 0 dB gain is a no-op regardless of frequency. */
+  private echoLabHeadBumpL: BiquadFilterNode | null = null
+  private echoLabHeadBumpR: BiquadFilterNode | null = null
   /** 0 in Single (R line's own contribution muted), 1 in Dual. */
   private echoLabRGain: GainNode | null = null
   /** L duplicated onto channel 1 in Single mode — same convention as Delay's monoTap/monoOut. */
@@ -1296,6 +1338,14 @@ export class LiveEngine {
     this.echoLabDelayR = ctx.createDelay(MAX_DELAY_SECONDS)
     this.echoLabFeedbackL = ctx.createGain()
     this.echoLabFeedbackR = ctx.createGain()
+    // Head bump — chained ahead of the highcut below, 0 dB (no-op) outside Tape. See the class-
+    // field comment for why this sits here rather than as a separate parallel path.
+    this.echoLabHeadBumpL = ctx.createBiquadFilter()
+    this.echoLabHeadBumpL.type = 'lowshelf'
+    this.echoLabHeadBumpL.frequency.value = 200
+    this.echoLabHeadBumpR = ctx.createBiquadFilter()
+    this.echoLabHeadBumpR.type = 'lowshelf'
+    this.echoLabHeadBumpR.frequency.value = 200
     this.echoLabToneL = ctx.createBiquadFilter()
     this.echoLabToneL.type = 'lowpass'
     this.echoLabToneR = ctx.createBiquadFilter()
@@ -1324,13 +1374,39 @@ export class LiveEngine {
     this.echoLabPpSend = ctx.createGain()
     this.echoLabPpSend.gain.value = 0
 
-    this.echoLabDelayL.connect(this.echoLabToneL)
+    this.echoLabDelayL.connect(this.echoLabHeadBumpL)
+    this.echoLabHeadBumpL.connect(this.echoLabToneL)
     this.echoLabToneL.connect(this.echoLabSatL)
     this.echoLabSatL.connect(this.echoLabPpSend)
     this.echoLabPpSend.connect(this.echoLabDelayR)
 
-    this.echoLabDelayR.connect(this.echoLabToneR)
+    this.echoLabDelayR.connect(this.echoLabHeadBumpR)
+    this.echoLabHeadBumpR.connect(this.echoLabToneR)
     this.echoLabToneR.connect(this.echoLabSatR)
+
+    // Tape hiss — injected right where the tone filter reads, so it rides through the same
+    // feedback loop as the signal and compounds per repeat. One noise source, filtered once,
+    // split to both channels (see class-field comment for why mono is correct here). 2 seconds
+    // of looped noise is long enough that the loop point is inaudible under any filtering.
+    this.echoLabNoiseSource = ctx.createBufferSource()
+    const noiseBuffer = ctx.createBuffer(1, Math.round(ctx.sampleRate * 2), ctx.sampleRate)
+    const noiseData = noiseBuffer.getChannelData(0)
+    for (let i = 0; i < noiseData.length; i++) noiseData[i] = Math.random() * 2 - 1
+    this.echoLabNoiseSource.buffer = noiseBuffer
+    this.echoLabNoiseSource.loop = true
+    this.echoLabNoiseFilter = ctx.createBiquadFilter()
+    this.echoLabNoiseFilter.type = 'highpass'
+    this.echoLabNoiseFilter.frequency.value = 3000
+    this.echoLabNoiseGainL = ctx.createGain()
+    this.echoLabNoiseGainR = ctx.createGain()
+    this.echoLabNoiseGainL.gain.value = 0
+    this.echoLabNoiseGainR.gain.value = 0
+    this.echoLabNoiseSource.connect(this.echoLabNoiseFilter)
+    this.echoLabNoiseFilter.connect(this.echoLabNoiseGainL)
+    this.echoLabNoiseFilter.connect(this.echoLabNoiseGainR)
+    this.echoLabNoiseGainL.connect(this.echoLabToneL)
+    this.echoLabNoiseGainR.connect(this.echoLabToneR)
+    this.echoLabNoiseSource.start()
 
     // ONE feedback re-entry point for Single mode (mirrors Delay's ppTap/monoTap -> delayFeedback
     // exactly): a pp-weighted convex combination of R's tap and L's tap feeds echoLabFeedbackL.
@@ -1471,6 +1547,22 @@ export class LiveEngine {
     this.echoLabModDepthL.connect(this.echoLabDelayL.delayTime)
     this.echoLabModDepthR.connect(this.echoLabDelayR.delayTime)
     this.echoLabModOsc.start()
+
+    // Tape-only "wow" — a second, slower LFO summed into the same delayTime targets as the
+    // flutter oscillator above. Fixed non-round rate (0.37 Hz) so it never phase-locks with
+    // modRateHz at any setting. See class-field comment.
+    this.echoLabWowOsc = ctx.createOscillator()
+    this.echoLabWowOsc.type = 'sine'
+    this.echoLabWowOsc.frequency.value = 0.37
+    this.echoLabWowDepthL = ctx.createGain()
+    this.echoLabWowDepthR = ctx.createGain()
+    this.echoLabWowDepthL.gain.value = 0
+    this.echoLabWowDepthR.gain.value = 0
+    this.echoLabWowOsc.connect(this.echoLabWowDepthL)
+    this.echoLabWowOsc.connect(this.echoLabWowDepthR)
+    this.echoLabWowDepthL.connect(this.echoLabDelayL.delayTime)
+    this.echoLabWowDepthR.connect(this.echoLabDelayR.delayTime)
+    this.echoLabWowOsc.start()
 
     // ── Reverb tone (third), on the WET path only.
     //
@@ -1954,8 +2046,21 @@ export class LiveEngine {
     let toneHz: number
     let modDepthMsL: number
     if (next.character === 'tape') {
-      toneHz = 8000 - next.char2 * 6000
-      modDepthMsL = next.char1
+      // Exponential (log-frequency), not linear-Hz: hearing perceives frequency in octaves, so a
+      // straight 8000->2000 Hz linear sweep spends the first ~75% of the knob cutting content
+      // above where guitar/bass brightness actually lives, then darkens fast in the last stretch
+      // — reads as "nothing happens until 80-100%" even though the Hz value is moving the whole
+      // time. This keeps the same 8000/2000 Hz endpoints but makes the darkening feel even across
+      // the knob's full travel, matching how real tone pots (often log-taper for this exact
+      // reason) and virtually every plugin frequency control are mapped.
+      toneHz = 8000 * (2000 / 8000) ** next.char2
+      // Squared, not linear: the opposite mismatch from Tone above — a linear ms depth means even
+      // a small knob movement produces an audible, borderline-warbly pitch wobble almost
+      // immediately, with no usable middle ground before it's "over the top." Squaring the
+      // 0..1 fraction compresses low-end sensitivity so the first chunk of travel stays subtle,
+      // while the top of the range still reaches the exact same MAX_MOD_DEPTH_MS ceiling as
+      // before — the safe max this knob was already designed around, unchanged.
+      modDepthMsL = (next.char1 / MAX_MOD_DEPTH_MS) ** 2 * MAX_MOD_DEPTH_MS
     } else if (next.character === 'memoryman') {
       toneHz = next.char1
       modDepthMsL = next.char2
@@ -1972,12 +2077,38 @@ export class LiveEngine {
     this.echoLabModDepthL?.gain.linearRampToValueAtTime(modDepthSec, now + RAMP)
     this.echoLabModDepthR?.gain.linearRampToValueAtTime(-modDepthSec, now + RAMP)
 
-    // A WaveShaper curve isn't an AudioParam — only rebuild it when Color/Drive actually changed.
-    if (next.colorDrive !== this.echoLabColorDriveApplied) {
-      const curve = makeSoftClipCurve(next.colorDrive)
+    // Tape-only mechanisms — see tape-delay-engineering skill (ir-lab repo). All four are no-ops
+    // (0 gain / 0 dB) outside Tape, so Digital/Memory Man are unaffected.
+    const isTape = next.character === 'tape'
+    const tapeAge = isTape ? next.char2 : 0
+    // Wow: correlated L/R (unlike flutter's decorrelated modDepthR above) — a real transport's
+    // slow speed drift is one shared mechanical fact, not a per-channel one.
+    // Derived from modDepthMsL (already curved above), not raw char1 — keeps wow scaling
+    // consistently with flutter's own corrected curve instead of reintroducing the same
+    // too-fast-linear problem in its own separate component.
+    const wowDepthSec = isTape ? (modDepthMsL * TAPE_WOW_FRACTION) / 1000 : 0
+    this.echoLabWowDepthL?.gain.linearRampToValueAtTime(wowDepthSec, now + RAMP)
+    this.echoLabWowDepthR?.gain.linearRampToValueAtTime(wowDepthSec, now + RAMP)
+
+    const noiseGain = tapeAge * TAPE_NOISE_MAX_GAIN
+    this.echoLabNoiseGainL?.gain.linearRampToValueAtTime(noiseGain, now + RAMP)
+    this.echoLabNoiseGainR?.gain.linearRampToValueAtTime(noiseGain, now + RAMP)
+
+    const headBumpDb = tapeAge * TAPE_HEAD_BUMP_MAX_DB
+    this.echoLabHeadBumpL?.gain.linearRampToValueAtTime(headBumpDb, now + RAMP)
+    this.echoLabHeadBumpR?.gain.linearRampToValueAtTime(headBumpDb, now + RAMP)
+
+    // A WaveShaper curve isn't an AudioParam — only rebuild it when the EFFECTIVE drive actually
+    // changed. Age contributes on top of Color/Drive rather than replacing it, so a fresh
+    // (Age=0) tape at Color/Drive=0 still saturates as cleanly as Digital, but a worn one has
+    // some grit even before Color/Drive is touched — coupling "worn" to "dirtier", not just
+    // "worn" to "darker" (see tape-delay-engineering skill).
+    const effectiveDrive = Math.min(1, next.colorDrive + tapeAge * TAPE_AGE_DRIVE_MAX)
+    if (effectiveDrive !== this.echoLabColorDriveApplied) {
+      const curve = makeSoftClipCurve(effectiveDrive)
       if (this.echoLabSatL) this.echoLabSatL.curve = curve
       if (this.echoLabSatR) this.echoLabSatR.curve = curve
-      this.echoLabColorDriveApplied = next.colorDrive
+      this.echoLabColorDriveApplied = effectiveDrive
     }
 
     const wet = next.enabled ? next.mix : 0
@@ -2579,6 +2710,8 @@ export class LiveEngine {
     this.echoLabFbRSelfDual = null
     this.echoLabToneL = null
     this.echoLabToneR = null
+    this.echoLabHeadBumpL = null
+    this.echoLabHeadBumpR = null
     this.echoLabSatL = null
     this.echoLabSatR = null
     this.echoLabLimiterL = null
@@ -2592,6 +2725,25 @@ export class LiveEngine {
     this.echoLabModOsc = null
     this.echoLabModDepthL = null
     this.echoLabModDepthR = null
+    try {
+      this.echoLabWowOsc?.stop()
+      this.echoLabWowOsc?.disconnect()
+    } catch {
+      // Never started, or already stopped.
+    }
+    this.echoLabWowOsc = null
+    this.echoLabWowDepthL = null
+    this.echoLabWowDepthR = null
+    try {
+      this.echoLabNoiseSource?.stop()
+      this.echoLabNoiseSource?.disconnect()
+    } catch {
+      // Never started, or already stopped.
+    }
+    this.echoLabNoiseSource = null
+    this.echoLabNoiseFilter = null
+    this.echoLabNoiseGainL = null
+    this.echoLabNoiseGainR = null
     this.echoLabRGain = null
     this.echoLabMonoTap = null
     this.echoLabMerger = null
