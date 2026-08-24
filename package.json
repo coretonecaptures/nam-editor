@@ -8,6 +8,7 @@
     "dev": "electron-vite dev",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:electron": "node scripts/test-electron.js",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "package:win": "npm run build && electron-builder --win --publish never",

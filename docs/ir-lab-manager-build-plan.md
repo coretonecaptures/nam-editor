@@ -415,6 +415,24 @@ packaging changes. **This is the default storage engine for the whole plan.**
 concrete need `node:sqlite` can't meet — none is anticipated, but it's a
 fallback, not a coin flip.
 
+**Dev-environment caveat, found building Phase 1's harness:** FTS5 support is
+not guaranteed by `node:sqlite` generally — it depends on how that particular
+Node build's SQLite amalgamation was compiled. Electron 41.10.3's embedded
+build has it (SQLite 3.53.1, verified above). The plain Node.js this repo's
+own `devDependencies.electron`-adjacent tooling runs under for `vitest`
+(Node 22.13.0, SQLite 3.47.2) does **not** compile FTS5 in — `CREATE VIRTUAL
+TABLE ... USING fts5(...)` fails there with `no such module: fts5`. This
+doesn't affect production (the catalog only ever runs inside Electron's main
+process, per this section's single-writer design), but it means any
+standalone script or test touching this schema must run under Electron's own
+Node build, not plain `node`/`tsx`/default `vitest`. The fix used throughout
+this codebase from here on: `ELECTRON_RUN_AS_NODE=1` runs a plain script
+under Electron's Node/V8/SQLite without opening an app window — see
+`scripts/test-electron.js` (`npm run test:electron`) and the usage comment at
+the top of `src/main/irCatalog/benchmark.ts`. FTS5-dependent specs
+self-detect this (`src/main/irCatalog/sqliteCapabilities.ts`) and skip with a
+pointer to `test:electron` rather than failing `npm test` for everyone.
+
 ## 2c. FTS5 bulk-load correction
 
 The original text called `INSERT INTO item_search(item_search) VALUES('rebuild')`
