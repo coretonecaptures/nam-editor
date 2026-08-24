@@ -613,6 +613,42 @@ ear-fatigue reasoning already agreed on.
    - How far the background `content_hash` queue (section 4) lags behind a huge import, and whether `quick_hash` alone (available immediately) is sufficient for Phase 2/5's needs in the meantime.
    
    This is the one genuinely unproven risk — everything else in this plan is proven-elsewhere or straightforward. Do not proceed past this until it holds up.
+
+   **Results, measured against the real ~525K-file library — Phase 1 does NOT yet hold up.**
+   The harness (`src/main/irCatalog/`) was built and run for real. Two things it proved cleanly,
+   and one it disproved:
+
+   - **Query latency is a non-issue.** Against a partial catalog of 109,343 already-imported
+     items: paginated browse 0.4–10.5ms, FTS5 search 0.9–1.2ms, all well under anything a UI
+     needs to feel instant. `catalog.db` sized at ~936 bytes/item including the FTS5 index
+     (89.0MB + 13.8MB WAL for 109,343 items), projecting to roughly ~480MB for the full library —
+     entirely reasonable. This part of the plan is validated and needs no rework.
+   - **Import throughput collapses at real scale, and it is not `quick_hash`'s fault.** The first
+     ~2,600-file batch ran at ~1,600 items/sec; by 20 minutes in (109,343 of ~525,000 files, ~21%)
+     the sustained rate had fallen to ~47–100 items/sec and was still dropping — a run stopped
+     early rather than let it continue for a projected 2–3+ hours, since the deceleration itself
+     was the more actionable thing to understand, not the wall-clock total. CPU usage over that
+     window was ~7% of one core — this is I/O-wait-bound, not hash-compute-bound. Isolating
+     `quick_hash`'s own cost on a smaller folder (Choptones, 7,640 files) confirms it: 1,641
+     items/sec walking+stat-only vs. 1,344 items/sec with `quick_hash` computed inline — an ~18%
+     hit, nowhere near the ~16x collapse seen at full-library scale.
+   - **Root cause, not yet fixed:** `importLibrary.ts`'s scan loop does every file's I/O
+     (`realpath`, `readdir`, `stat`, `open`, two positional `read`s, `close`) **fully serially,
+     one file at a time, with zero concurrency** — nothing pipelines while one file's syscalls are
+     in flight. At small/cached scale (Choptones) that's masked by the OS page cache and short
+     total runtime. At real scale, real per-syscall latency through the Windows filesystem stack
+     — plausibly compounded by realtime antivirus scanning intercepting each newly-opened file —
+     pays its full round-trip cost per file with nothing overlapped, and the effect compounds as
+     the unique-file working set grows past whatever stays cheap. 7% CPU utilization means there
+     is enormous room to parallelize I/O-bound work that today runs with none.
+
+   **Before Phase 1 can be marked done:** add bounded concurrency to the scan loop — a worker
+   pool or a simple semaphore-limited `Promise.all` over N files in flight (start around 16–64
+   concurrent, tune against measurement, not guesswork) — for the `stat`+`quick_hash` work per
+   batch, not just the already-planned background pool for `content_hash`. Re-run the full
+   ~525K-file import after that change and confirm the rate stays roughly flat rather than
+   decelerating, before treating Phase 1's throughput question as answered. Query latency and
+   catalog size are already answered and don't need re-measuring.
 2. **Read-only virtualized browse + search**, no organization features yet. List/grid over the catalog, FTS5 search, confidence badges, favorite/rating working. This alone should already feel better than Explorer for a big library — validate that claim here before building more.
 3. **Vendor parsers**: generic filename-vocabulary fallback first (broadest coverage, least code), then Ownhammer, then RedWirez.
 4. **Quick audition**, ported from NAM Lab per section 8.
