@@ -8,6 +8,14 @@ repo, never in a commit, never pasted into a tracked file. If a secret is ever h
 conversation, treat it as ephemeral — use it to set the remote secret, do not write it to disk
 inside this repo.
 
+**This guard also covers the user's real machine**, not just credentials: never commit a real
+local filesystem path (drive letters, home directory paths, personal library/media locations),
+real personal filenames, or any other detail specific to the user's own computer or accounts.
+Scripts, fixtures, tests, and stress-test harnesses that need a real local path (e.g. a large
+library to benchmark against) must take it from an environment variable, a CLI argument, or a
+`.gitignore`d local config file — never hardcoded in a tracked file. When in doubt, treat "would
+this reveal something about the user's specific machine" the same as "is this a secret."
+
 ## Project
 Electron + React + TypeScript + Tailwind CSS desktop metadata editor for `.nam` files (Neural Amp Modeler captures). Built with `electron-vite`, packaged with `electron-builder`. Runs on Windows, macOS, Linux. Current version in `package.json`.
 
