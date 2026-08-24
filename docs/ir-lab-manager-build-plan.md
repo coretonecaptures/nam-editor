@@ -1,13 +1,31 @@
 # IR Lab Manager — build plan
 
 Supersedes `docs/ir-lab-manager-shared-catalog-schema.md` (kept for history; this
-doc is the authoritative one going forward). Written 2026-08-24, revised
-2026-08-24 after a design review surfaced a real cross-app database coupling
-problem (section 0/2) plus several underspecified pieces (folder inheritance
-cost, reconciliation, FTS5 bulk-load overhead, hash-queue strategy) — all
-resolved below, not just noted. Planning only — nothing here has been
-implemented. This same file lives in both `ir-lab` and `nam-editor`, since the
-two repos build different halves of one system.
+doc is the authoritative one going forward). This same file lives in both
+`ir-lab` and `nam-editor`, since the two repos build different halves of one
+system.
+
+**Revision history.** Written 2026-08-24. Revised the same day after a design
+review surfaced a cross-app database coupling problem (section 0/2) plus
+several underspecified pieces (folder inheritance cost, reconciliation, FTS5
+bulk-load overhead, hash-queue strategy). Revised again after a review that
+checked the plan **against the actual `nam-editor` codebase** rather than on
+its own terms, which changed several load-bearing assumptions:
+
+- A production IR indexer for this exact scale **already ships** in
+  `src/main/index.ts` — the original Phase 1 was aimed at a risk that was
+  already retired. See section 2a and the rewritten section 13.
+- SQLite needs **no new dependency and no packaging change**: `node:sqlite`
+  with FTS5 and WAL is built into the Electron version this app already uses.
+  Verified, not assumed — see section 2b.
+- The stated FTS5 bulk-load mechanism did not do what it claimed (section 2c).
+- Folder-metadata inheritance was ambiguous between snapshot-at-ingest and
+  resolve-at-query in a way that reintroduced the O(items) cost it was meant
+  to remove; now decided (section 2d).
+- A favourites system already exists and the plan silently replaced it;
+  now has a migration (section 2e).
+
+Planning only — nothing here has been implemented.
 
 ## 0. Repo split — who builds what
 
@@ -138,16 +156,19 @@ CREATE TABLE item (
   indexed_at       TEXT NOT NULL,
   last_seen_at     TEXT NOT NULL,
   missing_since    TEXT,                -- NULL while resolvable
-  content_hash     TEXT,                -- NULL until the background hash queue reaches it; see section 4
+  file_size        INTEGER,             -- read at scan time, free; also gates reconciliation tier 2 (section 5)
+  quick_hash       TEXT,                -- size + first/last 64KB, computed inline at scan time; see section 4
+  content_hash     TEXT,                -- full-file hash, background queue, NULL until reached; see section 4
   rating           INTEGER,             -- 1-5, independent of...
   is_favorite      INTEGER NOT NULL DEFAULT 0,  -- ...this: a binary flag, different concept
   notes            TEXT,
   UNIQUE (library_root_id, relative_path)
 );
-CREATE INDEX idx_item_kind    ON item(kind);
-CREATE INDEX idx_item_folder  ON item(folder_id);
-CREATE INDEX idx_item_missing ON item(missing_since) WHERE missing_since IS NOT NULL;
-CREATE INDEX idx_item_hash    ON item(content_hash) WHERE content_hash IS NOT NULL;
+CREATE INDEX idx_item_kind       ON item(kind);
+CREATE INDEX idx_item_folder     ON item(folder_id);
+CREATE INDEX idx_item_missing    ON item(missing_since) WHERE missing_since IS NOT NULL;
+CREATE INDEX idx_item_quickhash  ON item(quick_hash) WHERE quick_hash IS NOT NULL;
+CREATE INDEX idx_item_hash       ON item(content_hash) WHERE content_hash IS NOT NULL;
 
 CREATE TABLE nam_capture_item (
   item_id           TEXT PRIMARY KEY REFERENCES item(id) ON DELETE CASCADE,
@@ -301,12 +322,13 @@ CREATE INDEX idx_asset_folder     ON asset_file(folder_id);
 
 -- Populated by triggers on item/nam_capture_item/ir_item insert/update
 -- ONLY outside of bulk import. During a batched import, triggers are
--- disabled and this is populated in one pass afterward via
--- INSERT INTO item_search(item_search) VALUES('rebuild') -- FTS5's own
--- documented bulk-load path. Per-row triggers during a 200K+-row import
--- would triple write volume (three source tables, one search index write
--- each) at exactly the moment throughput is being stress-tested; see
--- section 11 Phase 1, where this gets measured, not assumed.
+-- disabled and rows are inserted directly into item_search inside the same
+-- batch transactions instead (see section 2c -- 'rebuild' does NOT work
+-- here, since this is a standalone table, not an external-content one).
+-- Per-row triggers during a 200K+-row import would triple write volume
+-- (three source tables, one search index write each) at exactly the moment
+-- throughput is being stress-tested; see section 12 Phase 1, where this
+-- gets measured, not assumed.
 CREATE VIRTUAL TABLE item_search USING fts5(
   item_id UNINDEXED,
   display_name, notes, manufacturer, cabinet, speaker, microphone,
@@ -324,6 +346,142 @@ schema-version-skew, concurrent-writer, and cross-app-sandbox-path questions
 a shared-write design would otherwise require answering. The DB is
 authoritative for IR Lab Manager's own data, disposable and rebuildable by
 rescan, never the only copy of anything.
+
+## 2a. There is already a production traversal/index for this exact scale
+
+`src/main/index.ts` (~line 6332, "Cabinet IR index") already walks and indexes
+IR libraries at the scale this plan targets, and its own comments carry real
+measurements against your library:
+
+- Recursive walk (not the 2-level `scanWavLibrary`, which "reached 198 of
+  492,718 files" on a real vendor library) — symlink-cycle guarded via
+  `realpath` + a `seen` set, skips `__MACOSX`/dotfiles/`._` resource forks.
+- **492,718 files**, indexed as one concatenated UTF-8 byte buffer plus a
+  `Uint32Array` offset table. The obvious shape — one JS object per entry with
+  `{name, path, rel, haystack}` string fields — was tried and **measured at
+  443MB of heap** on that library; that's why it isn't objects.
+- AND-of-substrings search across whitespace-separated tokens, filename-match
+  outranks folder-match, monotonic result-narrowing cache (a longer query
+  reuses the previous query's matches instead of rescanning), byte-level
+  case-insensitive substring search with no per-search lowercase copy.
+- Shipping end to end: IPC (`player:indexIrLibrary`, `player:searchIrLibrary`,
+  `player:browseIrLibrary`) → preload → `IrPicker.tsx` (493 lines), used today
+  by the Cab/Delay/Reverb IR pickers.
+
+This means the traversal risk the original Phase 1 was written to de-risk is
+already retired in production. What is genuinely unproven — and what the
+revised Phase 1 (section 13) now targets instead — is the half this index
+doesn't do at all: **persisting** ~500K rows in SQLite and querying them
+through FTS5 + facets at interactive speed. The 443MB datapoint above is a
+warning about that, not reassurance: naive per-row overhead bites in SQLite
+too if row/column choices are careless, even though SQLite's on-disk B-tree
+storage doesn't carry V8's per-string object header cost.
+
+**Open decision, must be made before Phase 1 code:** does `catalog.db`
+*replace* the in-memory `IrIndex` for the pickers (one index to maintain,
+`IrPicker.tsx` re-pointed at `irLibrary:query`), or do the two coexist
+(catalog for the new IR mode, existing index left alone for the pickers)?
+Coexistence means two independent full traversals of the same half-million
+files living in the same process — the worst outcome — so the default
+assumption going in is **replace**, with `IrPicker.tsx`'s existing UX and
+ranking behavior preserved by having `irLibrary:query` implement equivalent
+ranking, not by keeping the byte-index around as a second source of truth.
+
+## 2b. Storage engine: `node:sqlite`, not `better-sqlite3` — no new native dependency
+
+Checked, not assumed, against this app's actual Electron build:
+
+```
+NODE 24.18.0  ELECTRON 41.10.3
+node:sqlite AVAILABLE -> DatabaseSync, StatementSync, Session, constants, backup
+SQLITE 3.53.1
+FTS5 OK
+WAL OK
+```
+
+Every runtime dependency this app ships today is pure JS — there are no
+native modules anywhere in the current dependency tree. CI builds a
+`--universal` (arm64+x64 merged) macOS DMG under `hardenedRuntime: true` with
+notarization (`.github/workflows/release.yml`). Introducing `better-sqlite3`
+would mean per-architecture native binaries inside that universal merge,
+individually signed under hardened runtime, plus `electron-rebuild` in local
+dev, plus a new failure surface across all three CI platforms — at v1.0.0,
+for a feature this large.
+
+`node:sqlite` is built into the Node version Electron 41 embeds, includes
+FTS5 and WAL as verified above, and requires zero new dependencies or
+packaging changes. **This is the default storage engine for the whole plan.**
+`better-sqlite3` is not adopted unless Phase 1 (section 13) measures a
+concrete need `node:sqlite` can't meet — none is anticipated, but it's a
+fallback, not a coin flip.
+
+## 2c. FTS5 bulk-load correction
+
+The original text called `INSERT INTO item_search(item_search) VALUES('rebuild')`
+the bulk-load path. That doesn't work as described: `rebuild` re-derives an
+FTS5 index from a linked table's *content* (an `external content` table) — it
+has nothing to rebuild *from* when `item_search` is a standalone table sourced
+by triggers from three separate tables, which is what section 2's schema
+declares. `rebuild` after the fact re-indexes rows already inserted; it does
+not populate them.
+
+Actual bulk-load approach: keep the standalone `item_search` table, **disable
+its triggers during batched import**, insert directly into `item_search`
+inside the same 2,000–5,000-row transactions as `item`/`nam_capture_item`/
+`ir_item`, then re-enable triggers for live single-item edits afterward. This
+is one extra insert per batch, not a magic rebuild — Phase 1 measures its
+actual cost (section 13).
+
+## 2d. Folder-metadata inheritance: resolve-at-query, not snapshot-at-ingest
+
+`folder_metadata_effective` fixed the *cost* of inheritance (O(folders), not
+O(items)) but left the *semantics* ambiguous: does an item's row in `ir_item`
+get inherited values copied in at ingest time, or does a query join out to
+`folder_metadata_effective` live? Copy-at-ingest silently reintroduces the
+O(items) problem through the back door — a user tagging a vendor pack's
+folder *after* import (the single most common real workflow: import first,
+label the pack once, in bulk) would require rewriting every item row under
+that folder to pick up the new value.
+
+**Decision: resolve-at-query.** `ir_item`/`nam_capture_item` never store
+inherited values. A query that needs a field checks its own row first
+(non-null wins — this is where `user_entered`/`vendor_parser`/etc. at the
+item level already live), and only falls back to a join against
+`folder_metadata_effective` on `item.folder_id` when the item-level field is
+null. `folder_metadata_effective` being pre-resolved per folder (section 2,
+already fixed) is what keeps this join O(1) per row instead of a walk.
+
+Cascade invalidation, previously unstated: when a folder's own
+`folder_metadata` changes, `folder_metadata_effective` must be recomputed for
+that folder **and every descendant** (a folder's effective value can override
+what it inherits, but only for fields it doesn't declare itself — a
+descendant with no override needs its cache refreshed too). This is a
+recursive walk over `folder.parent_id` scoped to the changed folder's subtree
+— cheap at folder-count scale (hundreds, even under a 226K-file pack), same
+reasoning as the original per-folder fix, just applied on write instead of
+assumed to be a single row.
+
+## 2e. Existing favourites/recents system — migrate, don't orphan
+
+`src/renderer/src/utils/irLibrary.ts` already implements favourites and
+recents for the Cab/Delay/Reverb IR pickers, in `localStorage`, keyed by
+**absolute path**, namespaced per picker `kind`. It already carries a
+one-time migration (`migrateLegacyOnce`) from an earlier bug where all three
+pickers shared one unnamespaced list. The original plan's `item.is_favorite`
+/ `item.rating` columns, keyed by UUID, would silently strand every favourite
+a user has already set — either a duplicate, disconnected favourites system
+per picker, or (worse) an apparent data loss on upgrade.
+
+**Decision:** on first scan of a library root, for each `localStorage` entry
+under `nam-player-ir-favorites-{kind}` / `nam-player-ir-recents-{kind}` whose
+`path` resolves to an indexed `item.relative_path` under that root, set
+`item.is_favorite = 1` (favourites) and seed `last_seen_at`-adjacent recency
+(recents) on the matching row, then leave the `localStorage` keys in place
+(read-only, unmigrated-away) rather than deleting them — the existing Cab/
+Delay/Reverb pickers keep working unchanged against `localStorage` either way,
+since they aren't being rewritten to read from `catalog.db` in this plan.
+This is one-directional (localStorage → catalog) and per-root, run once per
+root at first scan, not a live sync.
 
 ## 3. Confidence ladder (drives both ingestion and the UI)
 
@@ -344,17 +502,18 @@ and is permanent until the user changes it again — rescans never clobber it.
 - **Opt-in only.** Adding a `library_root` is an explicit action ("Add a folder to your library"). No unprompted scanning of `~/Documents` or anywhere else.
 - **Multi-root, no canonical parent.** Any number of `library_root` rows, each independent — the Plex model. A root can be a whole vendor library (`Impulse Responses/Ownhammer`) or a narrow "just my finished exports" folder.
 - **IR Lab's own root(s) are `watch_mode = 'watched'`**, pointed at finished-output locations only (a Project's `outputRoot`, "Named Exports") — never IR Lab's internal `.SessionData`/staging tree. IR Lab Manager's scanner treats a discovered session exactly like any other WAV, then additionally reads its neighboring `analysis.json` (when present) to populate `ir_item`/`ir_derivative_variant` at `ir_lab_native` confidence. **IR Lab never writes any of this itself** — see section 2's revised design principles.
-- **Scanner is batched and resumable.** Transactions of ~2,000-5,000 rows, progress reported to the UI, cancelable mid-scan. FTS5 triggers are disabled for the duration and rebuilt in one pass afterward (see the `item_search` comment above). This is non-negotiable at the scale a real vendor pack represents (Ownhammer alone: 226K files in one import) — validate this in isolation before any UI work (see Phase 1 below).
-- **Folder metadata inheritance resolves once per folder, not per item.** When a folder's own `folder_metadata` changes (or a new folder is created), recompute `folder_metadata_effective` for that folder by walking `parent_id` to the root (nearest ancestor wins) — a cheap operation at folder-count scale (hundreds, even under a huge pack). Every item then reads its own `folder_id`'s already-resolved row directly; no per-item ancestor walk, ever.
-- **`content_hash` is computed by a background worker pool, not inline with scanning.** Reuse `nam-editor`'s existing `scanRenderPool.ts` pattern rather than building a second one. This is best-effort and explicitly allowed to lag behind a huge import by a long time — nothing in browse, search, or audition depends on it being complete, only duplicate detection and hash-based relink do (see reconciliation below). Show a plain progress counter ("342,000 / 495,000 hashed"), not a completion promise.
+- **Scanner is batched and resumable.** Transactions of ~2,000-5,000 rows, progress reported to the UI, cancelable mid-scan. FTS5 triggers are disabled for the duration; `item_search` rows are inserted directly inside the same batch transactions instead (section 2c), not rebuilt afterward. This is non-negotiable at the scale a real vendor pack represents (Ownhammer alone: 226K files in one import) — validate this in isolation before any UI work (see Phase 1, section 12, below).
+- **Folder metadata inheritance resolves once per folder, not per item — and at query time, not ingest time.** When a folder's own `folder_metadata` changes (or a new folder is created), recompute `folder_metadata_effective` for that folder **and its whole descendant subtree** by walking `parent_id` (nearest ancestor wins) — a cheap operation at folder-count scale (hundreds, even under a huge pack). Items never store inherited values (section 2d) — a query falls back from its own row to a join against its `folder_id`'s already-resolved `folder_metadata_effective` row; no per-item ancestor walk, ever, and no per-item rewrite when a folder gets tagged after import.
+- **Two-tier hashing: cheap at scan time, expensive in the background.** `file_size` and `quick_hash` (size + a hash of the first and last 64KB — enough to distinguish files without reading the whole thing) are computed **inline during the scan itself**; this is a handful of small reads per file, not the hundreds of GB a full-content hash of a 500K-file library would mean, and it's what makes reconciliation tier 2 (section 5) precise instead of a coincidence-of-size guess. `content_hash` (full-file) is the expensive one and stays a background job, queued after `quick_hash` narrows candidates, explicitly allowed to lag behind a huge import indefinitely — nothing in browse, search, or audition depends on it being complete, only exact-duplicate detection and the highest-confidence relink tier do (see reconciliation below). Show a plain progress counter ("342,000 / 495,000 fully hashed"), not a completion promise. Runs on a background worker pool in the main process, following the existing `scanRenderPool.ts` pattern (renderer-side today, for render-ahead audio work) as a model to imitate — not code to import as-is, since this pool does main-process file I/O, not renderer audio rendering.
 
 ## 5. Reconciliation & move detection
 
 - A scan that can't resolve a previously-indexed `relative_path` sets `missing_since`; the row is never deleted.
 - A scan that finds a file it hasn't indexed before, before creating a new `item` row, checks it against currently-missing items in this order:
-  1. **Exact `content_hash` match** (only possible once the hash queue has reached that item) → silently relink: update the existing row's `relative_path`/`folder_id`, clear `missing_since`, keep the same `item.id` — every rating/tag/collection membership survives untouched.
-  2. **Same filename + same file size, different folder, no hash yet** → surfaced to the user as a suggested relink, never auto-merged at this confidence level.
-  3. **No match** → genuinely new item; the old row stays `missing_since`-flagged, waiting for the bulk reconcile/repair UI (Lightroom-style "N items missing, relink or remove?") already scoped for later.
+  1. **Exact `content_hash` match** (only possible once the background hash queue has reached that item) → silently relink: update the existing row's `relative_path`/`folder_id`, clear `missing_since`, keep the same `item.id` — every rating/tag/collection membership survives untouched.
+  2. **Exact `quick_hash` match** (size + first/last-64KB hash, computed inline at scan time — available immediately, no queue wait) → silently relink, same as tier 1. A `quick_hash` collision on real audio content is vanishingly unlikely; this is not the weak signal filename+size is.
+  3. **Same filename + same file size, different folder, no `quick_hash` match** → surfaced to the user as a suggested relink, never auto-merged. This tier exists for the case a file's bytes actually changed (re-exported, re-rendered) but a human would still recognize it as "the same IR." **Gated on parent-folder-name similarity** (e.g. Jaro-Winkler or a shared-token check against the old and new immediate parent folder names) before surfacing at all — plain filename+size alone is not a usable signal at vendor-pack scale, where thousands of files across a library are named e.g. `SM57.wav` at byte-identical sizes (same sample rate, same length) with no relationship to each other. Without this gate, tier 3 is a flood of meaningless suggestions, not a feature.
+  4. **No match** → genuinely new item; the old row stays `missing_since`-flagged, waiting for the bulk reconcile/repair UI (Lightroom-style "N items missing, relink or remove?") already scoped for later.
 - Two apps running at once was a real question worth asking, and the answer falls out of section 2's single-writer fix: there is no shared write target anymore. IR Lab writing its own `analysis.json` while IR Lab Manager's watcher independently notices and re-scans that one file is the only interaction between the two processes, and IR Lab already writes that file, not IR Lab Manager.
 
 ## 6. Vendor parsers
@@ -427,7 +586,15 @@ ear-fatigue reasoning already agreed on.
 
 ## 12. Phased build order
 
-1. **Bulk-import stress test, standalone, no UI.** Point the batched scanner at a real large library (your own ~525K-file `Impulse Responses` folder is the actual test fixture). Measure wall-clock, memory, resumability, FTS5 rebuild-pass cost, and how far behind the content-hash queue falls. This is the one genuinely unproven risk — everything else in this plan is proven-elsewhere or straightforward. Do not proceed past this until it holds up.
+1. **SQLite persistence + query stress test, standalone, no UI.** The traversal half of this is already proven in production (section 2a) — `buildIrIndex`'s walk already handles a 492,718-file library. Phase 1 does **not** rebuild that; it reuses the same traversal (refactored to a shared function if needed) and feeds it into `node:sqlite` (section 2b) instead of the byte-buffer index, resolving the section 2a open decision (replace vs. coexist — default is replace) as part of doing this. What actually gets measured, against the real ~525K-file `Impulse Responses` folder:
+   - Insert throughput in batched transactions (2,000–5,000 rows), including `quick_hash` computed inline per file (section 4).
+   - `item_search` FTS5 insert cost per batch with triggers disabled (section 2c's corrected bulk-load approach) vs. the same import with triggers left on — is disabling them worth the added code path, or is the difference noise at this scale?
+   - Resulting `catalog.db` file size on disk.
+   - Paginated, faceted query latency against the finished catalog (the thing Phase 2 depends on) — not just import speed.
+   - Resumability: cancel mid-import, restart, confirm no duplicate/corrupt rows.
+   - How far the background `content_hash` queue (section 4) lags behind a huge import, and whether `quick_hash` alone (available immediately) is sufficient for Phase 2/5's needs in the meantime.
+   
+   This is the one genuinely unproven risk — everything else in this plan is proven-elsewhere or straightforward. Do not proceed past this until it holds up.
 2. **Read-only virtualized browse + search**, no organization features yet. List/grid over the catalog, FTS5 search, confidence badges, favorite/rating working. This alone should already feel better than Explorer for a big library — validate that claim here before building more.
 3. **Vendor parsers**: generic filename-vocabulary fallback first (broadest coverage, least code), then Ownhammer, then RedWirez.
 4. **Quick audition**, ported from NAM Lab per section 8.
