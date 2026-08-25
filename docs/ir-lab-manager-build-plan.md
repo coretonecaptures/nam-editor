@@ -133,6 +133,26 @@ CREATE TABLE folder_metadata_effective (
 -- app-support storage (not left depending on the vendor's folder staying
 -- put) -- this is the one place IR Lab Manager DOES own a copy of a file,
 -- because it's documentation about the library, not the audio content itself.
+--
+-- TODO, raised checking a real example (F:\...\Ownhammer\Basketweave GNR\docs\
+-- 412-MRBW_GNR-M25_MMMC.pdf): this table is currently store-only -- nothing
+-- extracts structured fields FROM the document, so importing one does
+-- nothing but keep it handy for a human to read while typing folder_metadata
+-- by hand. Two paths, not mutually exclusive:
+--   1. Filename-based inference on the document's own filename, reusing the
+--      Phase 3 generic-vocabulary pass (genericVocabulary.ts) -- vendor doc
+--      filenames encode the same facts WAV filenames do ("412-MRBW_GNR-M25_
+--      MMMC.pdf" = cab config/pack/mic codes), no PDF text extraction
+--      needed. Cheap, consistent with what's already built.
+--   2. Actual PDF content extraction via a vision/document-capable model
+--      call (Claude has native PDF support) for prose a filename can't
+--      capture ("all cabs miked with an SM57 and R-121..."). Same shape of
+--      feature as the Gear Locker project's AI image/PDF spec-extraction
+--      TODO -- same solution, reusable pattern. Real dependency: an AI
+--      provider key, per-document cost, prompt design. NOT to be built
+--      silently inside this backend pass -- an explicit, opt-in feature,
+--      most likely built after (1) exists and after the folder-notes UI
+--      below gives it somewhere to run from.
 CREATE TABLE folder_document (
   id                 INTEGER PRIMARY KEY,
   folder_id          INTEGER NOT NULL REFERENCES folder(id) ON DELETE CASCADE,
@@ -845,7 +865,8 @@ ear-fatigue reasoning already agreed on.
 
    **Not done, and this is the part the phase name actually promised:** folder notes editing UI,
    vendor document (PDF/CSV) import UI (`folder_document`, untouched — no table writes, no
-   storage-copy logic, no upload UI). These are real UI-design work, not backend logic with a
+   storage-copy logic, no upload UI, and no field-extraction plan yet either — see the TODO on
+   `folder_document` in section 2). These are real UI-design work, not backend logic with a
    clear existing spec to implement the way the four pieces above had — tracked here as the
    actual remaining Phase 5 scope, not silently folded into "done."
 6. **Tray + IR Lab handoff** (sections 9 and 11, built together since they're two halves of one feature) — this is the point where the private connector piece is actually needed; everything before it ships fully functional without it.
