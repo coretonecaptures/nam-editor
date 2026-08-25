@@ -124,7 +124,7 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
 
   ipcMain.handle(
     'irLibrary:query',
-    (_event, options: { libraryRootId?: number | null; search?: string; offset: number; limit: number }) => {
+    (_event, options: { libraryRootId?: number | null; folderId?: number | null; search?: string; offset: number; limit: number }) => {
       const database = getDb()
       const rows = queryItems(database, options).map((row) => ({
         ...row,

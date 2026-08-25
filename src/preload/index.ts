@@ -337,6 +337,7 @@ const api = {
   },
   irLibraryQuery: (options: {
     libraryRootId?: number | null
+    folderId?: number | null
     search?: string
     offset: number
     limit: number

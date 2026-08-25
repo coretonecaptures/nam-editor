@@ -38,6 +38,28 @@ function buildTree(rows: FolderRow[]): TreeNode[] {
   return topLevel
 }
 
+/** Same path/convention as NAM Lab's own FolderTree.tsx (~line 828): outline when closed, filled
+ * when expanded — "open = solid, closed = outline" per that component's existing icon language,
+ * reused here rather than inventing a second visual convention for what's conceptually the same
+ * kind of row. */
+function FolderIcon({ expanded, isSelected }: { expanded: boolean; isSelected: boolean }): React.ReactElement {
+  return (
+    <svg
+      className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? 'text-indigo-500' : 'text-gray-500 dark:text-gray-400'}`}
+      fill={expanded ? 'currentColor' : 'none'}
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.5}
+        d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+      />
+    </svg>
+  )
+}
+
 function TreeRow({
   node,
   depth,
@@ -47,17 +69,18 @@ function TreeRow({
   node: TreeNode
   depth: number
   selectedId: number | null
-  onSelect: (id: number) => void
+  onSelect: (id: number, name: string) => void
 }): React.ReactElement {
   const [expanded, setExpanded] = useState(depth < 1)
   const hasChildren = node.children.length > 0
+  const isSelected = selectedId === node.id
   return (
     <div>
       <div
-        onClick={() => onSelect(node.id)}
+        onClick={() => onSelect(node.id, node.name)}
         style={{ paddingLeft: `${depth * 14 + 6}px` }}
-        className={`flex items-center gap-1 py-0.5 pr-2 text-xs cursor-pointer rounded ${
-          selectedId === node.id ? 'bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300' : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+        className={`flex items-center gap-1.5 py-0.5 pr-2 text-xs cursor-pointer rounded ${
+          isSelected ? 'bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300' : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
         }`}
       >
         {hasChildren ? (
@@ -73,6 +96,7 @@ function TreeRow({
         ) : (
           <span className="w-3 flex-shrink-0" />
         )}
+        <FolderIcon expanded={expanded && hasChildren} isSelected={isSelected} />
         <span className="truncate">{node.name}</span>
       </div>
       {hasChildren && expanded && (
@@ -91,8 +115,9 @@ function TreeRow({
  * folder-tree open decision, resolved: build it, as a side panel alongside search — not instead
  * of it). Deliberately much simpler than NAM Lab's own FolderTree.tsx (1241 lines: drag-drop,
  * rename, move, context menus) — a vendor IR library is read-only from this app's perspective,
- * the folder structure comes from disk, not from user reorganization. This tree exists to give
- * folder-metadata editing (FolderPanel.tsx) somewhere to select a folder from, nothing more.
+ * the folder structure comes from disk, not from user reorganization. Selecting a folder both
+ * opens its metadata panel (IrFolderPanel.tsx) and filters IrModeShell's item list to that
+ * folder's subtree.
  */
 export function IrFolderTree({
   libraryRootId,
@@ -101,7 +126,7 @@ export function IrFolderTree({
 }: {
   libraryRootId: number | null
   selectedFolderId: number | null
-  onSelectFolder: (folderId: number) => void
+  onSelectFolder: (folderId: number, name: string) => void
 }): React.ReactElement {
   const [rows, setRows] = useState<FolderRow[]>([])
 

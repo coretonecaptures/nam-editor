@@ -79,4 +79,46 @@ describe.skipIf(!hasFts5())('queryLibrary', () => {
 
     db.close()
   })
+
+  it('folderId scopes results to that folder and its descendants, not siblings', () => {
+    const db = new DatabaseSync(':memory:')
+    createSchema(db)
+    const now = new Date().toISOString()
+    const rootId = (
+      db
+        .prepare(`INSERT INTO library_root (path, label, watch_mode, created_at) VALUES ('/lib2','Lib2','manual',?) RETURNING id`)
+        .get(now) as { id: number }
+    ).id
+    const pack = (
+      db.prepare(`INSERT INTO folder (library_root_id, parent_id, relative_path) VALUES (?, NULL, 'Pack') RETURNING id`).get(rootId) as {
+        id: number
+      }
+    ).id
+    const sub = (
+      db
+        .prepare(`INSERT INTO folder (library_root_id, parent_id, relative_path) VALUES (?, ?, 'Pack/Sub') RETURNING id`)
+        .get(rootId, pack) as { id: number }
+    ).id
+    const other = (
+      db.prepare(`INSERT INTO folder (library_root_id, parent_id, relative_path) VALUES (?, NULL, 'Other') RETURNING id`).get(rootId) as {
+        id: number
+      }
+    ).id
+
+    const insertItem = (folderId: number, relPath: string): void => {
+      db.prepare(
+        `INSERT INTO item (id, kind, library_root_id, folder_id, relative_path, display_name, indexed_at, last_seen_at)
+         VALUES (?, 'ir', ?, ?, ?, ?, ?, ?)`
+      ).run(`id-${relPath}`, rootId, folderId, relPath, relPath, now, now)
+    }
+    insertItem(pack, 'Pack/direct.wav')
+    insertItem(sub, 'Pack/Sub/nested.wav')
+    insertItem(other, 'Other/unrelated.wav')
+
+    const scoped = queryItems(db, { folderId: pack, offset: 0, limit: 10 })
+    expect(scoped.map((r) => r.relative_path).sort()).toEqual(['Pack/Sub/nested.wav', 'Pack/direct.wav'])
+    expect(countItems(db, { folderId: pack })).toBe(2)
+
+    db.close()
+  })
 })

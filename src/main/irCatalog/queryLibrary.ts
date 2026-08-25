@@ -32,10 +32,32 @@ export interface ItemRow {
 export interface QueryOptions {
   /** Omit (or null) to browse across every library_root at once. */
   libraryRootId?: number | null
+  /** Scopes to this folder AND every descendant (clicking a pack folder should show everything
+   * nested under it, not just files directly inside it) — resolved once per call via
+   * `resolveFolderScopeIds`, not a nested WITH RECURSIVE inside this query. */
+  folderId?: number | null
   /** Free-text query; empty/omitted means "no filter" (plain paginated browse). */
   search?: string
   offset: number
   limit: number
+}
+
+/** `folderId` and every one of its descendants, via the same recursive-CTE shape used
+ * elsewhere (folderMetadata.ts) — resolved as a single small array (folder count stays in the
+ * hundreds even under a huge pack) so the main query's WHERE can do a plain indexed `IN (...)`
+ * rather than nesting a recursive CTE inside another statement. */
+function resolveFolderScopeIds(db: DatabaseSync, folderId: number): number[] {
+  const rows = db
+    .prepare(
+      `WITH RECURSIVE d(id) AS (
+         SELECT id FROM folder WHERE id = ?
+         UNION ALL
+         SELECT folder.id FROM folder JOIN d ON folder.parent_id = d.id
+       )
+       SELECT id FROM d`
+    )
+    .all(folderId) as Array<{ id: number }>
+  return rows.map((r) => r.id)
 }
 
 /**
@@ -54,12 +76,27 @@ function toFts5MatchExpression(rawQuery: string): string | null {
   return tokens.length > 0 ? tokens.join(' ') : null
 }
 
-function buildWhereAndParams(options: QueryOptions, matchExpr: string | null): { where: string; params: SQLInputValue[] } {
+function buildWhereAndParams(
+  db: DatabaseSync,
+  options: QueryOptions,
+  matchExpr: string | null
+): { where: string; params: SQLInputValue[] } {
   const clauses: string[] = []
   const params: SQLInputValue[] = []
   if (options.libraryRootId != null) {
     clauses.push('item.library_root_id = ?')
     params.push(options.libraryRootId)
+  }
+  if (options.folderId != null) {
+    const ids = resolveFolderScopeIds(db, options.folderId)
+    // An empty result (folderId doesn't exist) must still filter to nothing, not fall through to
+    // "no folder filter" — `IN ()` is invalid SQL, so guard it explicitly.
+    if (ids.length === 0) {
+      clauses.push('0 = 1')
+    } else {
+      clauses.push(`item.folder_id IN (${ids.map(() => '?').join(',')})`)
+      params.push(...ids)
+    }
   }
   if (matchExpr !== null) {
     clauses.push('item.id IN (SELECT item_id FROM item_search WHERE item_search MATCH ?)')
@@ -70,7 +107,7 @@ function buildWhereAndParams(options: QueryOptions, matchExpr: string | null): {
 
 export function queryItems(db: DatabaseSync, options: QueryOptions): ItemRow[] {
   const matchExpr = options.search ? toFts5MatchExpression(options.search) : null
-  const { where, params } = buildWhereAndParams(options, matchExpr)
+  const { where, params } = buildWhereAndParams(db, options, matchExpr)
   return db
     .prepare(
       `SELECT item.id as id, item.relative_path as relative_path, item.display_name as display_name,
@@ -106,7 +143,7 @@ export function queryItems(db: DatabaseSync, options: QueryOptions): ItemRow[] {
 
 export function countItems(db: DatabaseSync, options: Omit<QueryOptions, 'offset' | 'limit'>): number {
   const matchExpr = options.search ? toFts5MatchExpression(options.search) : null
-  const { where, params } = buildWhereAndParams(options as QueryOptions, matchExpr)
+  const { where, params } = buildWhereAndParams(db, options as QueryOptions, matchExpr)
   const row = db.prepare(`SELECT COUNT(*) as c FROM item ${where}`).get(...params) as { c: number }
   return row.c
 }

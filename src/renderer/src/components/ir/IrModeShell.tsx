@@ -90,10 +90,20 @@ export function IrModeShell(): React.ReactElement {
   const [total, setTotal] = useState(0)
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null)
   // Folder tree/panel — scoped to the first root for now (no root switcher yet; a second "Add
-  // Library Folder" click adds another root but the tree only ever shows the first one). Folder
-  // selection opens the metadata panel; it deliberately does NOT filter the item list below —
-  // that's a related but separate enhancement, noted rather than silently bundled in.
+  // Library Folder" click adds another root but the tree only ever shows the first one). Selecting
+  // a folder both opens its metadata panel AND filters the item list to that folder's subtree
+  // (queryLibrary.ts's folderId option) — these were briefly separate (panel-only) and merged
+  // after user testing showed the unfiltered list reading as broken.
   const [selectedFolderId, setSelectedFolderId] = useState<number | null>(null)
+  const [selectedFolderName, setSelectedFolderName] = useState<string | null>(null)
+  const [treeWidth, setTreeWidth] = useState(() => {
+    const saved = Number(localStorage.getItem('nam-lab-ir-tree-width'))
+    return Number.isFinite(saved) && saved > 0 ? saved : 200
+  })
+  // Bumped on every filter/search change so a query response that resolves AFTER a newer filter
+  // was already selected gets thrown away instead of populating the cache with stale-context rows
+  // (e.g. a slow "all IRs" query resolving after the user already clicked into a folder).
+  const requestEpochRef = useRef(0)
 
   const audition = useIrAudition()
 
@@ -125,9 +135,10 @@ export function IrModeShell(): React.ReactElement {
     })
   }, [])
 
-  // New search (or a completed scan) invalidates every cached index — the same offset can now
-  // point at a different row.
+  // New search, folder filter, or a completed scan invalidates every cached index — the same
+  // offset can now point at a different row.
   useEffect(() => {
+    requestEpochRef.current++
     cacheRef.current = new Map()
     pendingRef.current = new Set()
     setFocusedIndex(null)
@@ -137,7 +148,7 @@ export function IrModeShell(): React.ReactElement {
     // fixed dependency set) — omitted from deps so a play/stop state change doesn't itself
     // re-trigger a cache wipe.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, roots.length])
+  }, [search, roots.length, selectedFolderId])
 
   // Arrow-key navigation through the current filtered list (plan section 8), plus Escape to stop.
   // Ignored while a text input has focus so this doesn't fight the search box's own cursor keys.
@@ -204,9 +215,11 @@ export function IrModeShell(): React.ReactElement {
       if (pendingRef.current.has(key)) return
       pendingRef.current.add(key)
 
+      const epoch = requestEpochRef.current
       window.api
-        .irLibraryQuery({ search: search || undefined, offset: pageStart, limit: pageEnd - pageStart })
+        .irLibraryQuery({ search: search || undefined, folderId: selectedFolderId, offset: pageStart, limit: pageEnd - pageStart })
         .then((res) => {
+          if (requestEpochRef.current !== epoch) return // a newer filter/search superseded this
           setTotal(res.total)
           res.rows.forEach((row, i) => cacheRef.current.set(pageStart + i, row))
           forceRerender((n) => n + 1)
@@ -215,19 +228,21 @@ export function IrModeShell(): React.ReactElement {
           pendingRef.current.delete(key)
         })
     },
-    [search, total]
+    [search, total, selectedFolderId]
   )
 
-  // Fires once per search change to establish `total` even before the list scrolls (VirtualList's
-  // own effect also triggers a range fetch, but that only runs once `total` — and thus a
-  // non-zero row count to scroll through — is already known).
+  // Fires once per search/folder change to establish `total` even before the list scrolls
+  // (VirtualList's own effect also triggers a range fetch, but that only runs once `total` — and
+  // thus a non-zero row count to scroll through — is already known).
   useEffect(() => {
-    window.api.irLibraryQuery({ search: search || undefined, offset: 0, limit: PAGE_SIZE }).then((res) => {
+    const epoch = requestEpochRef.current
+    window.api.irLibraryQuery({ search: search || undefined, folderId: selectedFolderId, offset: 0, limit: PAGE_SIZE }).then((res) => {
+      if (requestEpochRef.current !== epoch) return
       setTotal(res.total)
       res.rows.forEach((row, i) => cacheRef.current.set(i, row))
       forceRerender((n) => n + 1)
     })
-  }, [search, roots.length])
+  }, [search, roots.length, selectedFolderId])
 
   const toggleFavorite = useCallback((row: IrItemRow, index: number) => {
     const next = row.is_favorite ? 0 : 1
@@ -244,6 +259,38 @@ export function IrModeShell(): React.ReactElement {
   }, [])
 
   const hasAnyRoot = roots.length > 0
+
+  const handleSelectFolder = useCallback((id: number, name: string) => {
+    setSelectedFolderId(id)
+    setSelectedFolderName(name)
+  }, [])
+
+  const clearFolderFilter = useCallback(() => {
+    setSelectedFolderId(null)
+    setSelectedFolderName(null)
+  }, [])
+
+  const onTreeDragStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      const startX = e.clientX
+      const startWidth = treeWidth
+      let latest = treeWidth
+      const onMove = (ev: MouseEvent): void => {
+        const next = Math.min(480, Math.max(140, startWidth + (ev.clientX - startX)))
+        latest = next
+        setTreeWidth(next)
+      }
+      const onUp = (): void => {
+        localStorage.setItem('nam-lab-ir-tree-width', String(latest))
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+      }
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
+    },
+    [treeWidth]
+  )
 
   return (
     <div className="flex flex-col h-screen bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 overflow-hidden">
@@ -290,6 +337,16 @@ export function IrModeShell(): React.ReactElement {
       {scanError && (
         <div className="px-4 py-1 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 flex-shrink-0">{scanError}</div>
       )}
+      {selectedFolderId != null && (
+        <div className="flex items-center gap-2 px-4 py-1 text-xs bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
+          <span className="text-gray-500 dark:text-gray-400">
+            Showing: <span className="font-medium text-gray-700 dark:text-gray-300">{selectedFolderName}</span> and its subfolders
+          </span>
+          <button onClick={clearFolderFilter} className="text-indigo-600 dark:text-indigo-400 hover:underline">
+            Clear
+          </button>
+        </div>
+      )}
 
       {!hasAnyRoot && !scanning ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center p-8 text-gray-500 dark:text-gray-500">
@@ -300,13 +357,17 @@ export function IrModeShell(): React.ReactElement {
         </div>
       ) : (
         <div className="flex-1 flex min-h-0">
-          <div className="w-48 flex-shrink-0 border-r border-gray-200 dark:border-gray-800 overflow-y-auto">
+          <div style={{ width: treeWidth }} className="flex-shrink-0 overflow-y-auto">
             <IrFolderTree
               libraryRootId={roots[0]?.id ?? null}
               selectedFolderId={selectedFolderId}
-              onSelectFolder={setSelectedFolderId}
+              onSelectFolder={handleSelectFolder}
             />
           </div>
+          <div
+            onMouseDown={onTreeDragStart}
+            className="w-1 flex-shrink-0 cursor-col-resize hover:bg-indigo-500/40 active:bg-indigo-500/60 transition-colors"
+          />
           <VirtualList
             total={total}
             rowHeight={ROW_HEIGHT}

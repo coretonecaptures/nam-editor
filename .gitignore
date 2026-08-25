@@ -12,6 +12,12 @@ dist/
 design/
 work/
 
+# Local-only env overrides (e.g. IR_LAB_URL_SCHEME for testing the IR Lab connector locally --
+# see src/main/irLabConnector.ts). Never committed: the official value is injected at build time
+# via GitHub Actions secrets, the same pattern already used for CSC_KEY_PASSWORD etc.
+.env
+.env.local
+
 # Native WASM module: fetched deps and build output.
 # These are listed here at the repo root rather than only in native/nam-wasm/.gitignore
 # because that nested file doesn't exist on branches without the native module — checking
