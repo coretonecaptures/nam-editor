@@ -25,6 +25,7 @@ import {
   getFolderDetail
 } from './irCatalog/folderMetadata'
 import { importFolderDocument, listFolderDocuments, deleteFolderDocument } from './irCatalog/folderDocuments'
+import { extractVendorDocumentFields } from './irCatalog/vendorDocExtraction'
 import { addToTray, removeFromTray, listTray, isInTray } from './irCatalog/tray'
 import { sendToIrLab, irLabConnectorAvailable } from './irLabConnector'
 import { getLibraryOverview } from './irCatalog/libraryOverview'
@@ -228,6 +229,10 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
         favoritesOnly?: boolean
         minRating?: number
         tagId?: number
+        manufacturer?: string
+        cabinet?: string
+        speaker?: string
+        microphone?: string
         offset: number
         limit: number
       }
@@ -296,7 +301,20 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     if (result.canceled || result.filePaths.length === 0) return null
     const database = getDb()
     const storageDir = join(app.getPath('userData'), 'ir-documents')
-    return importFolderDocument(database, folderId, result.filePaths[0], storageDir)
+    const doc = importFolderDocument(database, folderId, result.filePaths[0], storageDir)
+    // Best-effort, synchronous with the import (documents are small, one at a time — no need for
+    // a background queue the way content-hashing needs one for a whole library). A failure here
+    // (corrupt PDF, unsupported encoding) must never fail the import itself.
+    try {
+      await extractVendorDocumentFields(database, folderId)
+    } catch {
+      // Swallowed on purpose — the document is still imported and linked either way.
+    }
+    return doc
+  })
+
+  ipcMain.handle('irLibrary:extractVendorDocumentFields', async (_event, folderId: number) => {
+    return extractVendorDocumentFields(getDb(), folderId)
   })
 
   ipcMain.handle('irLibrary:deleteFolderDocument', (_event, documentId: number) => {

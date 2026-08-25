@@ -469,6 +469,10 @@ declare global {
         favoritesOnly?: boolean
         minRating?: number
         tagId?: number
+        manufacturer?: string
+        cabinet?: string
+        speaker?: string
+        microphone?: string
         offset: number
         limit: number
       }) => Promise<{
@@ -547,6 +551,7 @@ declare global {
         imported_at: string
       } | null>
       irLibraryDeleteFolderDocument: (documentId: number) => Promise<{ success: boolean }>
+      irLibraryExtractVendorDocumentFields: (folderId: number) => Promise<{ documentsProcessed: number; fieldsWritten: number }>
       irLibraryAddToTray: (itemId: string) => Promise<{ success: boolean; reason?: string }>
       irLibraryRemoveFromTray: (itemId: string) => Promise<{ success: boolean }>
       irLibraryListTray: () => Promise<Array<{ id: string; relative_path: string; display_name: string; abs_path: string; position: number }>>

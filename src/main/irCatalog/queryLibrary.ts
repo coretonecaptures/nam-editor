@@ -46,6 +46,15 @@ export interface QueryOptions {
   /** Named group filter (tag.ts) — works across every folder/root, per the group concept: "put a
    * bunch of IRs in a named group for recall/filter later, across anywhere in your library." */
   tagId?: number
+  /** Faceted filter chips — click a row's manufacturer/cabinet/speaker/microphone badge to narrow
+   * to exactly that value. Exact match (not a search token), and matched against the SAME
+   * item-or-inherited-folder-value COALESCE the browse SELECT itself uses (see
+   * facetClause below), so filtering by a folder-inherited badge behaves identically to
+   * filtering by an item-level one. */
+  manufacturer?: string
+  cabinet?: string
+  speaker?: string
+  microphone?: string
   offset: number
   limit: number
 }
@@ -84,6 +93,18 @@ function toFts5MatchExpression(rawQuery: string): string | null {
   return tokens.length > 0 ? tokens.join(' ') : null
 }
 
+/** Mirrors the browse SELECT's own `COALESCE(ir_item.field, folder_metadata_effective.value)`
+ * ladder (queryItems below) as a WHERE-safe expression, so a facet-chip filter on a
+ * folder-inherited badge value matches exactly the rows that badge is actually shown on —
+ * a plain `ir_item.field = ?` would silently miss every item inheriting that value from its
+ * folder rather than having it set directly. */
+function facetClause(field: 'manufacturer' | 'cabinet' | 'speaker' | 'microphone'): string {
+  return `COALESCE(
+    (SELECT ${field} FROM ir_item WHERE ir_item.item_id = item.id),
+    (SELECT value FROM folder_metadata_effective WHERE folder_id = item.folder_id AND field = '${field}')
+  ) = ?`
+}
+
 function buildWhereAndParams(
   db: DatabaseSync,
   options: QueryOptions,
@@ -120,6 +141,13 @@ function buildWhereAndParams(
   if (options.tagId != null) {
     clauses.push('item.id IN (SELECT item_id FROM item_tag WHERE tag_id = ?)')
     params.push(options.tagId)
+  }
+  for (const field of ['manufacturer', 'cabinet', 'speaker', 'microphone'] as const) {
+    const value = options[field]
+    if (value) {
+      clauses.push(facetClause(field))
+      params.push(value)
+    }
   }
   return { where: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '', params }
 }

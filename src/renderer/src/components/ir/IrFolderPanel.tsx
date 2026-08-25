@@ -80,6 +80,25 @@ export function IrFolderPanel({ folderId }: { folderId: number | null }): React.
     [reload]
   )
 
+  const [extracting, setExtracting] = useState(false)
+  const [extractResult, setExtractResult] = useState<string | null>(null)
+  const extractFields = useCallback(async () => {
+    if (folderId == null) return
+    setExtracting(true)
+    setExtractResult(null)
+    try {
+      const stats = await window.api.irLibraryExtractVendorDocumentFields(folderId)
+      setExtractResult(
+        stats.fieldsWritten > 0
+          ? `Found ${stats.fieldsWritten} field${stats.fieldsWritten === 1 ? '' : 's'} in ${stats.documentsProcessed} document${stats.documentsProcessed === 1 ? '' : 's'}.`
+          : `Read ${stats.documentsProcessed} document${stats.documentsProcessed === 1 ? '' : 's'}, nothing recognized.`
+      )
+      reload()
+    } finally {
+      setExtracting(false)
+    }
+  }, [folderId, reload])
+
   if (folderId == null || !detail) {
     return <div className="p-3 text-xs text-nm-text-3">Select a folder to view or edit its metadata.</div>
   }
@@ -149,6 +168,18 @@ export function IrFolderPanel({ folderId }: { folderId: number | null }): React.
               </li>
             ))}
           </ul>
+        )}
+        {detail.documents.length > 0 && (
+          <div className="mt-1.5 flex items-center gap-2">
+            <button
+              onClick={() => void extractFields()}
+              disabled={extracting}
+              className="text-xs text-nm-accent hover:underline disabled:opacity-50"
+            >
+              {extracting ? 'Reading…' : 'Re-extract fields from documents'}
+            </button>
+            {extractResult && <span className="text-xs text-nm-text-3">{extractResult}</span>}
+          </div>
         )}
       </div>
     </div>

@@ -745,9 +745,14 @@ ear-fatigue reasoning already agreed on.
    - **Confidence badges** — deliberate, not an oversight: they show per-field provenance on
      `ir_item` (section 3), and nothing populates `ir_item` until Phase 3's vendor parsers exist.
      Documented inline in `IrModeShell.tsx`.
-   - **Faceted filter chips** (cabinet/speaker/mic/manufacturer, section 7) — same reason as
-     badges (no `ir_item` data yet), but unlike badges this wasn't called out until asked; only
-     free-text search was built. Revisit once Phase 3 lands.
+   - ~~**Faceted filter chips**~~ — **built** (2026-08-25): each row's manufacturer/cabinet/
+     speaker/microphone badge is now a toggle button (`IrModeShell.tsx`'s `FieldBadge`), narrowing
+     the list to exactly that value via new `QueryOptions.manufacturer/cabinet/speaker/microphone`
+     exact-match filters (`queryLibrary.ts`'s `facetClause()` — mirrors the browse SELECT's own
+     `COALESCE(ir_item.field, folder_metadata_effective.value)` ladder, so filtering by a
+     folder-inherited badge matches the same rows that badge is shown on). At most one active
+     value per field (a toggle, not a multi-select facet browser) — active filters show as
+     clearable chips below the header.
    - **Cancelable scan** — section 10's IPC list describes `irLibrary:scan` as
      "progress-reporting, cancelable." Only the progress-reporting half was built; there is no
      cancel button and no cancellation token threaded through `importLibrary()`. A started scan
@@ -799,11 +804,12 @@ ear-fatigue reasoning already agreed on.
    searchable — this also fixed a latent Phase 2 bug where `item_search`'s manufacturer/cabinet/
    speaker/microphone FTS5 columns were declared but never populated by anything, so search never
    actually covered them even before Phase 3. Confidence badges (Phase 2's flagged gap) now show
-   real data in `IrModeShell.tsx`. Faceted filter chips (section 7) remain unbuilt — badges show
-   per-row provenance, but there's still no click-to-narrow-by-field UI.
-4. **Quick audition** — **done**, per section 8's explicit instruction to drop the WASM model
-   worklet entirely for this workflow (`components/ir/useIrAudition.ts`). Reused directly rather
-   than ported: `playerAudio.ts`'s decode/normalize helpers and `audioGraph.ts`'s
+   real data in `IrModeShell.tsx`, and (2026-08-25) are click-to-filter facet chips too — see the
+   "built" note above, this is the same feature, not a separate one.
+4. **Quick audition** — superseded (2026-08-25) by live audition (section 8b) — see that section,
+   not `components/ir/useIrAudition.ts` (deleted). This paragraph is kept for the historical record
+   of Phase 4's original approach. It reused directly rather than ported: `playerAudio.ts`'s
+   decode/normalize helpers and `audioGraph.ts`'s
    `applyCabinetIr` — the same convolution the player and NAM captures' own audition already run
    through, so an IR heard here sounds like it will everywhere else. Also reused: `useAudition.ts`'s
    generation-counter staleness guard, which that file's own header comment documents fixing a
@@ -876,14 +882,30 @@ ear-fatigue reasoning already agreed on.
    DB row and the copied file). Wired into `IrModeShell.tsx` as left (tree) / right (panel)
    sidebars around the existing item list.
 
-   **Scope cuts, noted rather than silently bundled in:**
-   - Selecting a folder opens its metadata panel but does **not** filter the item list to that
-     folder's contents — a related, natural-feeling enhancement, but a separate one (would need
-     `queryItems` to support recursive folder-subtree scoping, not built here).
-   - The tree only shows the **first** `library_root` — no root switcher yet. A second "Add
-     Library Folder" click adds another root to the query/browse scope but not to the tree.
-   - `folder_document` still doesn't extract any fields from what it imports (see the TODO on
-     that table in section 2) — this phase only closes the storage/linking half.
+   **Scope cuts at the time, since closed:**
+   - ~~Selecting a folder does not filter the item list~~ — fixed later the same phase:
+     `queryItems`/`countItems` take a `folderId` (resolved via `resolveFolderScopeIds`), and
+     `IrModeShell.tsx` wires the tree's selection straight into it.
+   - ~~The tree only shows the first `library_root`, no root switcher~~ — **built** (2026-08-25):
+     a root-select dropdown (`IrModeShell.tsx`, next to Add Library Folder, only shown once a
+     second root exists) scopes both the folder tree and browse/search to one root, or "All
+     roots" (the prior default). Switching roots clears whatever folder was selected under the
+     old one.
+   - ~~`folder_document` doesn't extract any fields~~ — **built** (2026-08-25):
+     `vendorDocExtraction.ts`'s `extractVendorDocumentFields()` runs every imported PDF/CSV/TXT
+     through the SAME `genericVocabularyParser` the filename parser uses (manufacturer/speaker/
+     microphone term lists — no cabinet vocabulary exists, so cabinet is never guessed from a
+     document either, matching the filename parser's own gap), writing hits as folder-level
+     `vendor_documentation`-sourced fields. Runs automatically after every document import, plus a
+     manual "Re-extract fields from documents" button in `IrFolderPanel.tsx`. PDF text extraction
+     uses the `pdf-parse` package (new dependency) — imported via its `lib/pdf-parse.js` path
+     directly, not the package's top-level `index.js`, which has a long-standing bug
+     (`isDebugMode = !module.parent`) that self-runs a fixture-file read the moment it's loaded
+     through anything other than a plain CJS require from a direct parent (ESM interop, bundlers,
+     and test runners all trip it) and throws `ENOENT` immediately — caught by this session's own
+     test run before it shipped. Deliberately NOT an AI/vision extraction pass (Gear Locker's own
+     pending TODO for image/PDF spec sheets is a distinct, heavier dependency this project doesn't
+     have wired up) — plain text extraction plus Phase 3's existing pattern matching, reused.
 6. **Tray + IR Lab handoff — done.** Private connector spec confirmed live against the real
    `ir-lab` repo (2026-08-24/25): `irlab://` scheme, `session`/`blend`/`project` routes, plain
    query params sent via `shell.openExternal` — no socket, no shared database, matching section

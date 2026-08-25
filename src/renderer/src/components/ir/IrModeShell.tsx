@@ -35,6 +35,8 @@ const PAGE_SIZE = 200
  */
 function confidenceDotClass(source: string | null): string {
   switch (source) {
+    case 'ir_lab_native':
+      return 'bg-blue-500'
     case 'vendor_parser':
       return 'bg-nm-accent'
     case 'filename_inferred':
@@ -44,16 +46,37 @@ function confidenceDotClass(source: string | null): string {
   }
 }
 
-function FieldBadge({ label, value, source }: { label: string; value: string | null; source: string | null }): React.ReactElement | null {
+/** Faceted filter chip (plan: "click-to-narrow-by-field UI"). Clicking a badge sets that field as
+ * the ONLY active filter for it (clicking an active badge again clears it) — a plain toggle, not
+ * a multi-select facet browser, matching the scope actually asked for. */
+function FieldBadge({
+  label,
+  value,
+  source,
+  active,
+  onClick
+}: {
+  label: string
+  value: string | null
+  source: string | null
+  active?: boolean
+  onClick?: () => void
+}): React.ReactElement | null {
   if (!value) return null
   return (
-    <span
-      title={`${label}: ${value} (${source === 'vendor_parser' ? 'vendor parser' : source === 'filename_inferred' ? 'filename guess' : 'unknown source'})`}
-      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-panel-2 text-[11px] text-nm-text-2"
+    <button
+      onClick={(e) => {
+        e.stopPropagation()
+        onClick?.()
+      }}
+      title={`${label}: ${value} (${source === 'vendor_parser' ? 'vendor parser' : source === 'filename_inferred' ? 'filename guess' : source === 'ir_lab_native' ? 'IR Lab' : 'unknown source'}) — click to filter`}
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] ${
+        active ? 'bg-active-bg text-nm-accent ring-1 ring-nm-accent' : 'bg-panel-2 text-nm-text-2 hover:bg-hov'
+      }`}
     >
       <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${confidenceDotClass(source)}`} />
       {value}
-    </span>
+    </button>
   )
 }
 
@@ -78,10 +101,11 @@ function splitPath(rel: string): { folder: string; name: string } {
  * cabinet on a real-time NAM-through-LiveEngine session (pick an amp capture once in the Live
  * tab), same mechanism and UI idiom as NAM Lab's own PlayerPanel Live mode, not the earlier
  * DI-render-once mechanism it replaced. Arrow-key navigation through the current filtered list
- * plays live too. No A/B audition yet (Phase 7). No faceted filter chips yet either (section 7) —
- * badges show what's known per row, but there's no click-to-narrow-by-cabinet/speaker/mic UI;
- * that's a distinct feature (needs a distinct-values aggregation query + filter state) still
- * tracked as not done.
+ * plays live too. Faceted filter chips (section 7) — clicking a row's manufacturer/cabinet/
+ * speaker/microphone badge narrows the list to exactly that value (queryLibrary.ts's facet
+ * WHERE clauses); clicking the same badge again clears it. Root switcher — a dropdown next to
+ * search picks one library_root or "All roots" (folder tree only ever shows one root at a time,
+ * but browse/search scope follows the same selection). No A/B audition yet (Phase 7).
  */
 export function IrModeShell(): React.ReactElement {
   const [roots, setRoots] = useState<LibraryRoot[]>([])
@@ -100,6 +124,21 @@ export function IrModeShell(): React.ReactElement {
   // full list for the filter dropdown and the row context menu's "Add to Group" submenu.
   const [tags, setTags] = useState<Array<{ id: number; name: string; itemCount: number }>>([])
   const [tagFilterId, setTagFilterId] = useState<number | null>(null)
+  // Faceted filter chips — at most one active value per field (a plain toggle, not a multi-select
+  // facet browser). Clicking a badge with the same field+value again clears it.
+  const [facets, setFacets] = useState<{ manufacturer?: string; cabinet?: string; speaker?: string; microphone?: string }>({})
+  const toggleFacet = useCallback((field: 'manufacturer' | 'cabinet' | 'speaker' | 'microphone', value: string) => {
+    setFacets((prev) => {
+      if (prev[field] === value) {
+        const next = { ...prev }
+        delete next[field]
+        return next
+      }
+      return { ...prev, [field]: value }
+    })
+  }, [])
+  // Root switcher — null means "All roots" (today's default: browse/search span every root).
+  const [selectedRootId, setSelectedRootId] = useState<number | null>(null)
   const [groupsMenuOpen, setGroupsMenuOpen] = useState(false)
   const [addToGroupRow, setAddToGroupRow] = useState<IrItemRow | null>(null)
   const [newGroupName, setNewGroupName] = useState('')
@@ -264,7 +303,7 @@ export function IrModeShell(): React.ReactElement {
     pendingRef.current = new Set()
     setFocusedIndex(null)
     forceRerender((n) => n + 1)
-  }, [search, roots.length, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId])
+  }, [search, roots.length, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, selectedRootId])
 
   // Arrow-key navigation through the current filtered list (plan section 8), plus Escape to stop.
   // Ignored while a text input has focus so this doesn't fight the search box's own cursor keys.
@@ -356,11 +395,13 @@ export function IrModeShell(): React.ReactElement {
       const epoch = requestEpochRef.current
       window.api
         .irLibraryQuery({
+          libraryRootId: selectedRootId,
           search: search || undefined,
           folderId: selectedFolderId,
           favoritesOnly: favoritesOnly || undefined,
           minRating: ratedOnly ? 1 : undefined,
           tagId: tagFilterId ?? undefined,
+          ...facets,
           offset: pageStart,
           limit: pageEnd - pageStart
         })
@@ -374,7 +415,7 @@ export function IrModeShell(): React.ReactElement {
           pendingRef.current.delete(key)
         })
     },
-    [search, total, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId]
+    [search, total, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, selectedRootId]
   )
 
   // Fires once per search/folder/filter change to establish `total` even before the list scrolls
@@ -384,11 +425,13 @@ export function IrModeShell(): React.ReactElement {
     const epoch = requestEpochRef.current
     window.api
       .irLibraryQuery({
+        libraryRootId: selectedRootId,
         search: search || undefined,
         folderId: selectedFolderId,
         favoritesOnly: favoritesOnly || undefined,
         minRating: ratedOnly ? 1 : undefined,
         tagId: tagFilterId ?? undefined,
+        ...facets,
         offset: 0,
         limit: PAGE_SIZE
       })
@@ -398,7 +441,7 @@ export function IrModeShell(): React.ReactElement {
         res.rows.forEach((row, i) => cacheRef.current.set(i, row))
         forceRerender((n) => n + 1)
       })
-  }, [search, roots.length, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId])
+  }, [search, roots.length, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, selectedRootId])
 
   const toggleFavorite = useCallback((row: IrItemRow, index: number) => {
     const next = row.is_favorite ? 0 : 1
@@ -415,6 +458,18 @@ export function IrModeShell(): React.ReactElement {
   }, [])
 
   const hasAnyRoot = roots.length > 0
+  // "All roots" (selectedRootId === null) still needs ONE root to drive the folder tree (a tree
+  // has no meaning across multiple roots at once) — falls back to the first, same as the
+  // pre-root-switcher behavior, so nothing regresses for the common single-root case.
+  const activeRootId = selectedRootId ?? roots[0]?.id ?? null
+  const activeRoot = roots.find((r) => r.id === activeRootId) ?? roots[0]
+
+  // Switching roots invalidates whatever folder was selected under the previous one.
+  useEffect(() => {
+    setSelectedFolderId(null)
+    setSelectedFolderName(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRootId])
 
   const handleSelectFolder = useCallback((id: number, name: string) => {
     setSelectedFolderId(id)
@@ -484,6 +539,21 @@ export function IrModeShell(): React.ReactElement {
         >
           {scanning ? 'Scanning…' : 'Add Library Folder'}
         </button>
+        {roots.length > 1 && (
+          <select
+            value={selectedRootId ?? ''}
+            onChange={(e) => setSelectedRootId(e.target.value ? Number(e.target.value) : null)}
+            title="Scope browse/search and the folder tree to one library folder, or all of them"
+            className="px-2 py-1 text-xs rounded border border-field-bd bg-field-bg text-nm-text-2 flex-shrink-0 max-w-[180px]"
+          >
+            <option value="">All roots</option>
+            {roots.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.label || r.path.split(/[\\/]/).pop() || r.path}
+              </option>
+            ))}
+          </select>
+        )}
         {hasAnyRoot && (
           <input
             value={searchInput}
@@ -607,6 +677,22 @@ export function IrModeShell(): React.ReactElement {
           </button>
         </div>
       )}
+      {Object.keys(facets).length > 0 && (
+        <div className="flex items-center gap-2 px-4 py-1 text-xs bg-panel-2 border-b border-nm-border flex-shrink-0">
+          <span className="text-nm-text-2">Filtered by:</span>
+          {(Object.entries(facets) as Array<[keyof typeof facets, string]>).map(([field, value]) => (
+            <span key={field} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-active-bg text-nm-accent">
+              {value}
+              <button onClick={() => toggleFacet(field, value)} className="hover:text-red-500" title={`Clear ${field} filter`}>
+                ×
+              </button>
+            </span>
+          ))}
+          <button onClick={() => setFacets({})} className="text-nm-accent hover:underline">
+            Clear all
+          </button>
+        </div>
+      )}
 
       {!hasAnyRoot && !scanning ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center p-8 text-nm-text-2">
@@ -619,7 +705,7 @@ export function IrModeShell(): React.ReactElement {
         <div className="flex-1 flex min-h-0">
           <div style={{ width: treeWidth }} className="flex-shrink-0 overflow-y-auto">
             <IrFolderTree
-              libraryRootId={roots[0]?.id ?? null}
+              libraryRootId={activeRootId}
               selectedFolderId={selectedFolderId}
               onSelectFolder={handleSelectFolder}
             />
@@ -689,10 +775,34 @@ export function IrModeShell(): React.ReactElement {
                   {folder && <div className="text-xs text-nm-text-3 truncate">{folder}</div>}
                   {(row.manufacturer || row.cabinet || row.speaker || row.microphone) && (
                     <div className="flex items-center gap-1 mt-0.5 overflow-hidden">
-                      <FieldBadge label="Manufacturer" value={row.manufacturer} source={row.manufacturer_source} />
-                      <FieldBadge label="Cabinet" value={row.cabinet} source={row.cabinet_source} />
-                      <FieldBadge label="Speaker" value={row.speaker} source={row.speaker_source} />
-                      <FieldBadge label="Microphone" value={row.microphone} source={row.microphone_source} />
+                      <FieldBadge
+                        label="Manufacturer"
+                        value={row.manufacturer}
+                        source={row.manufacturer_source}
+                        active={row.manufacturer != null && facets.manufacturer === row.manufacturer}
+                        onClick={() => row.manufacturer && toggleFacet('manufacturer', row.manufacturer)}
+                      />
+                      <FieldBadge
+                        label="Cabinet"
+                        value={row.cabinet}
+                        source={row.cabinet_source}
+                        active={row.cabinet != null && facets.cabinet === row.cabinet}
+                        onClick={() => row.cabinet && toggleFacet('cabinet', row.cabinet)}
+                      />
+                      <FieldBadge
+                        label="Speaker"
+                        value={row.speaker}
+                        source={row.speaker_source}
+                        active={row.speaker != null && facets.speaker === row.speaker}
+                        onClick={() => row.speaker && toggleFacet('speaker', row.speaker)}
+                      />
+                      <FieldBadge
+                        label="Microphone"
+                        value={row.microphone}
+                        source={row.microphone_source}
+                        active={row.microphone != null && facets.microphone === row.microphone}
+                        onClick={() => row.microphone && toggleFacet('microphone', row.microphone)}
+                      />
                     </div>
                   )}
                 </div>
@@ -718,8 +828,8 @@ export function IrModeShell(): React.ReactElement {
           />
           <div style={{ width: panelWidth }} className="flex-shrink-0 overflow-hidden">
             <IrRightPanel
-              libraryRootId={roots[0]?.id ?? null}
-              libraryRootPath={roots[0]?.path ?? null}
+              libraryRootId={activeRootId}
+              libraryRootPath={activeRoot?.path ?? null}
               folderId={selectedFolderId}
               folderName={selectedFolderName}
               live={live}

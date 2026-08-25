@@ -121,4 +121,50 @@ describe.skipIf(!hasFts5())('queryLibrary', () => {
 
     db.close()
   })
+
+  it('facet filters (manufacturer/cabinet/speaker/microphone) narrow to an exact value, including folder-inherited ones', () => {
+    const db = new DatabaseSync(':memory:')
+    createSchema(db)
+    const now = new Date().toISOString()
+    const rootId = (
+      db
+        .prepare(`INSERT INTO library_root (path, label, watch_mode, created_at) VALUES ('/lib3','Lib3','manual',?) RETURNING id`)
+        .get(now) as { id: number }
+    ).id
+    const folder = (
+      db.prepare(`INSERT INTO folder (library_root_id, parent_id, relative_path) VALUES (?, NULL, 'F') RETURNING id`).get(rootId) as {
+        id: number
+      }
+    ).id
+
+    const insertItem = (id: string, relPath: string): void => {
+      db.prepare(
+        `INSERT INTO item (id, kind, library_root_id, folder_id, relative_path, display_name, indexed_at, last_seen_at)
+         VALUES (?, 'ir', ?, ?, ?, ?, ?, ?)`
+      ).run(id, rootId, folder, relPath, relPath, now, now)
+    }
+    insertItem('item-direct', 'F/marshall.wav')
+    insertItem('item-inherited', 'F/other.wav')
+    insertItem('item-fender', 'F/fender.wav')
+
+    // Item-level manufacturer on one item.
+    db.prepare(`INSERT INTO ir_item (item_id, manufacturer) VALUES ('item-direct', 'Marshall')`).run()
+    db.prepare(`INSERT INTO ir_item (item_id, manufacturer) VALUES ('item-fender', 'Fender')`).run()
+    // Folder-level (inherited) manufacturer for the folder-only item, via folder_metadata_effective
+    // directly — this is the resolved table queryLibrary's COALESCE actually reads, same as the
+    // real setFolderMetadata cascade would populate.
+    db.prepare(`INSERT INTO ir_item (item_id) VALUES ('item-inherited')`).run()
+    db.prepare(
+      `INSERT INTO folder_metadata_effective (folder_id, field, value, source) VALUES (?, 'manufacturer', 'Marshall', 'user_entered')`
+    ).run(folder)
+
+    const marshallOnly = queryItems(db, { manufacturer: 'Marshall', offset: 0, limit: 10 })
+    expect(marshallOnly.map((r) => r.id).sort()).toEqual(['item-direct', 'item-inherited'].sort())
+    expect(countItems(db, { manufacturer: 'Marshall' })).toBe(2)
+
+    const fenderOnly = queryItems(db, { manufacturer: 'Fender', offset: 0, limit: 10 })
+    expect(fenderOnly.map((r) => r.id)).toEqual(['item-fender'])
+
+    db.close()
+  })
 })

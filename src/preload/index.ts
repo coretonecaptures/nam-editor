@@ -355,6 +355,10 @@ const api = {
     favoritesOnly?: boolean
     minRating?: number
     tagId?: number
+    manufacturer?: string
+    cabinet?: string
+    speaker?: string
+    microphone?: string
     offset: number
     limit: number
   }): Promise<{
@@ -439,6 +443,10 @@ const api = {
   } | null> => ipcRenderer.invoke('irLibrary:importFolderDocument', folderId),
   irLibraryDeleteFolderDocument: (documentId: number): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('irLibrary:deleteFolderDocument', documentId),
+  irLibraryExtractVendorDocumentFields: (
+    folderId: number
+  ): Promise<{ documentsProcessed: number; fieldsWritten: number }> =>
+    ipcRenderer.invoke('irLibrary:extractVendorDocumentFields', folderId),
   irLibraryAddToTray: (itemId: string): Promise<{ success: boolean; reason?: string }> =>
     ipcRenderer.invoke('irLibrary:addToTray', itemId),
   irLibraryRemoveFromTray: (itemId: string): Promise<{ success: boolean }> =>
