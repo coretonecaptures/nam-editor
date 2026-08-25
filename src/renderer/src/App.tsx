@@ -479,6 +479,25 @@ declare global {
       }>
       irLibrarySetFavorite: (itemId: string, isFavorite: boolean) => Promise<{ success: boolean }>
       irLibrarySetRating: (itemId: string, rating: number | null) => Promise<{ success: boolean }>
+      irLibraryListFolders: (libraryRootId: number) => Promise<Array<{ id: number; parent_id: number | null; relative_path: string }>>
+      irLibraryGetFolderDetail: (folderId: number) => Promise<{
+        id: number
+        relativePath: string
+        notes: string | null
+        declared: Array<{ field: string; value: string; source: string }>
+        documents: Array<{ id: number; folder_id: number; stored_path: string; original_filename: string | null; imported_at: string }>
+      } | null>
+      irLibrarySetFolderMetadata: (folderId: number, field: string, value: string, source: string) => Promise<{ success: boolean }>
+      irLibraryRemoveFolderMetadata: (folderId: number, field: string) => Promise<{ success: boolean }>
+      irLibrarySetFolderNotes: (folderId: number, notes: string) => Promise<{ success: boolean }>
+      irLibraryImportFolderDocument: (folderId: number) => Promise<{
+        id: number
+        folder_id: number
+        stored_path: string
+        original_filename: string | null
+        imported_at: string
+      } | null>
+      irLibraryDeleteFolderDocument: (documentId: number) => Promise<{ success: boolean }>
       listWavSiblings: (filePath: string) => Promise<{ files: string[]; error?: string }>
       hashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
       hashFilesWithoutMetadata: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>

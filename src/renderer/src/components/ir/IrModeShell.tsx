@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { VirtualList } from './VirtualList'
 import { useIrAudition } from './useIrAudition'
+import { IrFolderTree } from './IrFolderTree'
+import { IrFolderPanel } from './IrFolderPanel'
 
 type IrItemRow = {
   id: string
@@ -87,6 +89,11 @@ export function IrModeShell(): React.ReactElement {
   const [search, setSearch] = useState('')
   const [total, setTotal] = useState(0)
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null)
+  // Folder tree/panel — scoped to the first root for now (no root switcher yet; a second "Add
+  // Library Folder" click adds another root but the tree only ever shows the first one). Folder
+  // selection opens the metadata panel; it deliberately does NOT filter the item list below —
+  // that's a related but separate enhancement, noted rather than silently bundled in.
+  const [selectedFolderId, setSelectedFolderId] = useState<number | null>(null)
 
   const audition = useIrAudition()
 
@@ -292,12 +299,20 @@ export function IrModeShell(): React.ReactElement {
           </button>
         </div>
       ) : (
-        <VirtualList
-          total={total}
-          rowHeight={ROW_HEIGHT}
-          onVisibleRangeChange={onVisibleRangeChange}
-          className="flex-1"
-          renderRow={(index) => {
+        <div className="flex-1 flex min-h-0">
+          <div className="w-48 flex-shrink-0 border-r border-gray-200 dark:border-gray-800 overflow-y-auto">
+            <IrFolderTree
+              libraryRootId={roots[0]?.id ?? null}
+              selectedFolderId={selectedFolderId}
+              onSelectFolder={setSelectedFolderId}
+            />
+          </div>
+          <VirtualList
+            total={total}
+            rowHeight={ROW_HEIGHT}
+            onVisibleRangeChange={onVisibleRangeChange}
+            className="flex-1"
+            renderRow={(index) => {
             const row = cacheRef.current.get(index)
             if (!row) {
               return <div className="h-full border-b border-gray-100 dark:border-gray-900" />
@@ -360,7 +375,13 @@ export function IrModeShell(): React.ReactElement {
               </div>
             )
           }}
-        />
+          />
+          {selectedFolderId != null && (
+            <div className="w-64 flex-shrink-0 border-l border-gray-200 dark:border-gray-800 overflow-y-auto">
+              <IrFolderPanel folderId={selectedFolderId} />
+            </div>
+          )}
+        </div>
       )}
     </div>
   )

@@ -363,7 +363,31 @@ const api = {
   irLibrarySetFavorite: (itemId: string, isFavorite: boolean): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('irLibrary:setFavorite', itemId, isFavorite),
   irLibrarySetRating: (itemId: string, rating: number | null): Promise<{ success: boolean }> =>
-    ipcRenderer.invoke('irLibrary:setRating', itemId, rating)
+    ipcRenderer.invoke('irLibrary:setRating', itemId, rating),
+  irLibraryListFolders: (libraryRootId: number): Promise<Array<{ id: number; parent_id: number | null; relative_path: string }>> =>
+    ipcRenderer.invoke('irLibrary:listFolders', libraryRootId),
+  irLibraryGetFolderDetail: (folderId: number): Promise<{
+    id: number
+    relativePath: string
+    notes: string | null
+    declared: Array<{ field: string; value: string; source: string }>
+    documents: Array<{ id: number; folder_id: number; stored_path: string; original_filename: string | null; imported_at: string }>
+  } | null> => ipcRenderer.invoke('irLibrary:getFolderDetail', folderId),
+  irLibrarySetFolderMetadata: (folderId: number, field: string, value: string, source: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('irLibrary:setFolderMetadata', folderId, field, value, source),
+  irLibraryRemoveFolderMetadata: (folderId: number, field: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('irLibrary:removeFolderMetadata', folderId, field),
+  irLibrarySetFolderNotes: (folderId: number, notes: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('irLibrary:setFolderNotes', folderId, notes),
+  irLibraryImportFolderDocument: (folderId: number): Promise<{
+    id: number
+    folder_id: number
+    stored_path: string
+    original_filename: string | null
+    imported_at: string
+  } | null> => ipcRenderer.invoke('irLibrary:importFolderDocument', folderId),
+  irLibraryDeleteFolderDocument: (documentId: number): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('irLibrary:deleteFolderDocument', documentId)
 }
 
 if (process.contextIsolated) {

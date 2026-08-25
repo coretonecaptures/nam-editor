@@ -104,3 +104,39 @@ export function removeFolderMetadata(db: DatabaseSync, folderId: number, field: 
     recomputeEffectiveForOneFolder(db, id)
   }
 }
+
+/** Freeform notes are a plain column on `folder` itself (not a `folder_metadata` field — they're
+ * prose for a human, not a structured, inheritable, confidence-ranked fact). No cascade needed. */
+export function setFolderNotes(db: DatabaseSync, folderId: number, notes: string): void {
+  db.prepare(`UPDATE folder SET notes = ? WHERE id = ?`).run(notes, folderId)
+}
+
+export interface FolderTreeRow {
+  id: number
+  parent_id: number | null
+  relative_path: string
+}
+
+export function listFolders(db: DatabaseSync, libraryRootId: number): FolderTreeRow[] {
+  return db
+    .prepare(`SELECT id, parent_id, relative_path FROM folder WHERE library_root_id = ? ORDER BY relative_path`)
+    .all(libraryRootId) as unknown as FolderTreeRow[]
+}
+
+export interface FolderDetail {
+  id: number
+  relativePath: string
+  notes: string | null
+  declared: Array<{ field: string; value: string; source: string }>
+}
+
+export function getFolderDetail(db: DatabaseSync, folderId: number): FolderDetail | null {
+  const folder = db.prepare(`SELECT id, relative_path, notes FROM folder WHERE id = ?`).get(folderId) as
+    | { id: number; relative_path: string; notes: string | null }
+    | undefined
+  if (!folder) return null
+  const declared = db
+    .prepare(`SELECT field, value, source FROM folder_metadata WHERE folder_id = ?`)
+    .all(folderId) as Array<{ field: string; value: string; source: string }>
+  return { id: folder.id, relativePath: folder.relative_path, notes: folder.notes, declared }
+}

@@ -859,16 +859,31 @@ ear-fatigue reasoning already agreed on.
      by a test for exactly that case). `queryLibrary.ts`'s `queryItems` now `COALESCE`s each
      descriptive field against the item's folder's effective value, so a folder-level declaration
      actually shows up in browse/search results — item-level (including Phase 3's vendor-parsed)
-     values still always win when present. Wired to IPC (`irLibrary:setFolderMetadata`/
-     `removeFolderMetadata`) but **not exposed through preload/the renderer at all** — no UI
-     calls these yet.
+     values still always win when present.
 
-   **Not done, and this is the part the phase name actually promised:** folder notes editing UI,
-   vendor document (PDF/CSV) import UI (`folder_document`, untouched — no table writes, no
-   storage-copy logic, no upload UI, and no field-extraction plan yet either — see the TODO on
-   `folder_document` in section 2). These are real UI-design work, not backend logic with a
-   clear existing spec to implement the way the four pieces above had — tracked here as the
-   actual remaining Phase 5 scope, not silently folded into "done."
+   **Folder-notes/vendor-document UI — done, resolving section 13's folder-tree open decision.**
+   That decision (raised after Phase 2 shipped flat list/search only) was: build a folder-tree
+   side panel, confirmed with the user rather than assumed — both remaining Phase 5 features
+   needed a way to address "this folder" and none existed. `components/ir/IrFolderTree.tsx`:
+   read-only navigation (a real vendor library's structure comes from disk, not user
+   reorganization — deliberately far simpler than NAM Lab's own 1241-line `FolderTree.tsx`, no
+   drag/rename/move/context-menus). `components/ir/IrFolderPanel.tsx`: notes (a plain `folder`
+   column, separate from the structured/inheritable fields), the four structured fields
+   (manufacturer/cabinet/speaker/microphone, always written `user_entered` — a human declaring a
+   fact here, not a parser guessing one), and vendor document import/removal
+   (`folderDocuments.ts` — copies the source file into `userData/ir-documents`, links it via
+   `folder_document`, collision-proofed with a random filename prefix; deletion removes both the
+   DB row and the copied file). Wired into `IrModeShell.tsx` as left (tree) / right (panel)
+   sidebars around the existing item list.
+
+   **Scope cuts, noted rather than silently bundled in:**
+   - Selecting a folder opens its metadata panel but does **not** filter the item list to that
+     folder's contents — a related, natural-feeling enhancement, but a separate one (would need
+     `queryItems` to support recursive folder-subtree scoping, not built here).
+   - The tree only shows the **first** `library_root` — no root switcher yet. A second "Add
+     Library Folder" click adds another root to the query/browse scope but not to the tree.
+   - `folder_document` still doesn't extract any fields from what it imports (see the TODO on
+     that table in section 2) — this phase only closes the storage/linking half.
 6. **Tray + IR Lab handoff** (sections 9 and 11, built together since they're two halves of one feature) — this is the point where the private connector piece is actually needed; everything before it ships fully functional without it.
 7. **A/B audition, tags, collections beyond the tray** — polish layer, no new architecture.
 

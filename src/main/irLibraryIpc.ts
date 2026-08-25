@@ -7,7 +7,7 @@
  * catalog.db lives at userData/ir-catalog.db, opened lazily on first use — `app.getPath` must
  * never be called at module load time (CLAUDE.md).
  */
-import { ipcMain, app, type BrowserWindow } from 'electron'
+import { ipcMain, app, dialog, type BrowserWindow } from 'electron'
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
 import { createCoreSchema, finalizeIndexes, itemSearchTableExists } from './irCatalog/schema'
@@ -16,7 +16,14 @@ import { queryItems, countItems, setFavorite, setRating } from './irCatalog/quer
 import { applyVendorParsers } from './irCatalog/vendorParsers/applyVendorParsers'
 import { reconcileMissingItems } from './irCatalog/reconciliation'
 import { runContentHashQueue } from './irCatalog/contentHash'
-import { setFolderMetadata, removeFolderMetadata } from './irCatalog/folderMetadata'
+import {
+  setFolderMetadata,
+  removeFolderMetadata,
+  setFolderNotes,
+  listFolders,
+  getFolderDetail
+} from './irCatalog/folderMetadata'
+import { importFolderDocument, listFolderDocuments, deleteFolderDocument } from './irCatalog/folderDocuments'
 
 let db: DatabaseSync | null = null
 // Guards against two overlapping background content_hash runs for the same root — a second
@@ -144,9 +151,6 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     return { success: true }
   })
 
-  // Backend only — no UI panel calls these yet (docs/ir-lab-manager-build-plan.md section 12,
-  // Phase 5 notes: folder notes/vendor-document-import UI is tracked as a separate, not-yet-built
-  // feature; this just makes the already-implemented inheritance backend reachable from IPC).
   ipcMain.handle('irLibrary:setFolderMetadata', (_event, folderId: number, field: string, value: string, source: string) => {
     setFolderMetadata(getDb(), folderId, field, value, source)
     return { success: true }
@@ -154,6 +158,42 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
 
   ipcMain.handle('irLibrary:removeFolderMetadata', (_event, folderId: number, field: string) => {
     removeFolderMetadata(getDb(), folderId, field)
+    return { success: true }
+  })
+
+  ipcMain.handle('irLibrary:setFolderNotes', (_event, folderId: number, notes: string) => {
+    setFolderNotes(getDb(), folderId, notes)
+    return { success: true }
+  })
+
+  ipcMain.handle('irLibrary:listFolders', (_event, libraryRootId: number) => {
+    return listFolders(getDb(), libraryRootId)
+  })
+
+  ipcMain.handle('irLibrary:getFolderDetail', (_event, folderId: number) => {
+    const database = getDb()
+    const detail = getFolderDetail(database, folderId)
+    if (!detail) return null
+    return { ...detail, documents: listFolderDocuments(database, folderId) }
+  })
+
+  // Runs its own file-picker dialog directly (no separate generic dialog:* channel needed — this
+  // handler already runs in the main process) rather than reusing dialog:openImportFile, which is
+  // filtered to xlsx/csv for NAM Lab's own spreadsheet import and shouldn't grow PDF-awareness for
+  // an unrelated feature.
+  ipcMain.handle('irLibrary:importFolderDocument', async (_event, folderId: number) => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: 'Vendor documentation', extensions: ['pdf', 'csv', 'txt'] }]
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    const database = getDb()
+    const storageDir = join(app.getPath('userData'), 'ir-documents')
+    return importFolderDocument(database, folderId, result.filePaths[0], storageDir)
+  })
+
+  ipcMain.handle('irLibrary:deleteFolderDocument', (_event, documentId: number) => {
+    deleteFolderDocument(getDb(), documentId)
     return { success: true }
   })
 }
