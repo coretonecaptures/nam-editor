@@ -11,6 +11,7 @@
  * is where inheritance actually shows up for a browse/search row).
  */
 import type { DatabaseSync } from 'node:sqlite'
+import path from 'node:path'
 
 interface FolderMetadataRow {
   folder_id: number
@@ -141,15 +142,31 @@ export interface FolderDetail {
   relativePath: string
   notes: string | null
   declared: Array<{ field: string; value: string; source: string }>
+  /** library_root.path + relative_path, joined via node:path (not string concat, for correct
+   * separators) — the renderer has no filesystem access under contextIsolation, so any tab that
+   * needs the folder's real on-disk location (Gallery, Read Me — plan section 8a) reads it here
+   * rather than reconstructing it client-side. */
+  absPath: string
 }
 
 export function getFolderDetail(db: DatabaseSync, folderId: number): FolderDetail | null {
-  const folder = db.prepare(`SELECT id, relative_path, notes FROM folder WHERE id = ?`).get(folderId) as
-    | { id: number; relative_path: string; notes: string | null }
-    | undefined
+  const folder = db
+    .prepare(
+      `SELECT folder.id as id, folder.relative_path as relative_path, folder.notes as notes,
+              library_root.path as root_path
+       FROM folder JOIN library_root ON library_root.id = folder.library_root_id
+       WHERE folder.id = ?`
+    )
+    .get(folderId) as { id: number; relative_path: string; notes: string | null; root_path: string } | undefined
   if (!folder) return null
   const declared = db
     .prepare(`SELECT field, value, source FROM folder_metadata WHERE folder_id = ?`)
     .all(folderId) as Array<{ field: string; value: string; source: string }>
-  return { id: folder.id, relativePath: folder.relative_path, notes: folder.notes, declared }
+  return {
+    id: folder.id,
+    relativePath: folder.relative_path,
+    notes: folder.notes,
+    declared,
+    absPath: path.join(folder.root_path, folder.relative_path)
+  }
 }

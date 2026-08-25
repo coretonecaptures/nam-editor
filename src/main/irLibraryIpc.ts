@@ -28,6 +28,15 @@ import { importFolderDocument, listFolderDocuments, deleteFolderDocument } from 
 import { addToTray, removeFromTray, listTray, isInTray } from './irCatalog/tray'
 import { sendToIrLab, irLabConnectorAvailable } from './irLabConnector'
 import { getLibraryOverview } from './irCatalog/libraryOverview'
+import {
+  listTags,
+  getOrCreateTag,
+  renameTag,
+  deleteTag,
+  addItemToTag,
+  removeItemFromTag,
+  listTagsForItem
+} from './irCatalog/tag'
 
 let db: DatabaseSync | null = null
 // Guards against two overlapping background content_hash runs for the same root — a second
@@ -136,6 +145,7 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
         search?: string
         favoritesOnly?: boolean
         minRating?: number
+        tagId?: number
         offset: number
         limit: number
       }
@@ -232,7 +242,30 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
   // rather than a duplicate irLibrary:-prefixed one — it's a plain absolute-path reveal, nothing
   // IR-catalog-specific about it.
 
-  ipcMain.handle('irLibrary:getLibraryOverview', (_event, libraryRootId: number) => {
-    return getLibraryOverview(getDb(), libraryRootId)
+  ipcMain.handle('irLibrary:getLibraryOverview', (_event, libraryRootId: number, folderId?: number | null) => {
+    return getLibraryOverview(getDb(), libraryRootId, folderId ?? null)
   })
+
+  // Groups (plan section 8, item 8) — named, cross-folder tags. "Add to Group..." on an item row
+  // creates-or-reuses a tag by name (getOrCreateTag) rather than requiring a separate "new group"
+  // step; a Groups filter dropdown in the browse bar lists them via listTags.
+  ipcMain.handle('irLibrary:listTags', () => listTags(getDb()))
+  ipcMain.handle('irLibrary:getOrCreateTag', (_event, name: string) => getOrCreateTag(getDb(), name))
+  ipcMain.handle('irLibrary:renameTag', (_event, tagId: number, name: string) => {
+    renameTag(getDb(), tagId, name)
+    return { success: true }
+  })
+  ipcMain.handle('irLibrary:deleteTag', (_event, tagId: number) => {
+    deleteTag(getDb(), tagId)
+    return { success: true }
+  })
+  ipcMain.handle('irLibrary:addItemToTag', (_event, itemId: string, tagId: number) => {
+    addItemToTag(getDb(), itemId, tagId)
+    return { success: true }
+  })
+  ipcMain.handle('irLibrary:removeItemFromTag', (_event, itemId: string, tagId: number) => {
+    removeItemFromTag(getDb(), itemId, tagId)
+    return { success: true }
+  })
+  ipcMain.handle('irLibrary:listTagsForItem', (_event, itemId: string) => listTagsForItem(getDb(), itemId))
 }

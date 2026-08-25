@@ -924,6 +924,143 @@ ear-fatigue reasoning already agreed on.
      further into new IR-mode-specific UI (folder report, live-blend audition) — so those land
      looking like one product with NAM Lab instead of another disjointed pass.
 7. **A/B audition, tags, collections beyond the tray** — polish layer, no new architecture.
+8. **In progress (2026-08-24/25 session), against the same live-feedback list that folded into
+   Phase 6** — a tabbed right panel (Overview/Pack Info/Gallery/Read Me, mirroring NAM Lab's own
+   pack-detail tabs from a supplied screenshot), Overview generalized to work at folder-subtree
+   scope (not just whole-library), a "Groups" feature (named, cross-folder tags — the existing but
+   previously-unused `tag`/`item_tag` schema tables), Gallery/Read Me tabs reusing NAM Lab's
+   already-generic `folder:scanImages`/`scanChildImages`/`readReadme`/`writeReadme` IPC (no new
+   backend needed, just a folder's absolute path — see 8a), a stubbed disabled "Build IR Pack..."
+   entry, a written (not implemented) plan for live-blend cabinet audition (see 8b), and an
+   IR-Lab-Project-vs-vendor-library ingestion design (see 8c). Tray from Phase 6 confirmed still
+   matching the "card locker" ask (right-click add/remove, 8-slot cap, Send to IR Lab) — no
+   redesign requested once described back to the user.
+
+### 8a. Folder absolute path for Gallery/Read Me
+
+`folderMetadata.ts`'s `getFolderDetail()` needs to additionally return
+`absPath` (a `node:path.join(library_root.path, folder.relative_path)`, done
+in the main process — the renderer has no `node:path`/`node:fs` access under
+`contextIsolation`). Once present, `IrGalleryTab`/`IrReadMeTab` call the
+existing generic channels with that path exactly like NAM Lab's own pack
+detail panel does — no IR-specific backend work required for either tab.
+
+### 8b. Live-blend cabinet audition — plan (not implemented)
+
+Today's IR audition (`useIrAudition.ts`, Phase 4) is a separate, simpler
+mechanism: offline-render-once via `applyCabinetIr`, loop a static
+`AudioBuffer`. It deliberately never touches `LiveEngine` or the WASM NAM
+render worker pool. What's being asked for now is different: play a DI file
+(or live guitar input) *through NAM in real time*, and instead of swapping
+which NAM capture is loaded (today's normal live-monitoring flow), clicking
+an IR's play button hot-swaps the **cabinet/IR block only**, leaving the amp
+model in place.
+
+`LiveEngine` (`src/renderer/src/utils/liveEngine.ts`) already has the exact
+mechanism this needs: the signal graph is
+`MediaStreamSource -> [NAM AudioWorklet] -> [ConvolverNode wet] -+-> outputGain -> destination`
+with a parallel `dryGain`, and the private method `wireIr(ir)` (~line 2282)
+already rebuilds just the cabinet stage on demand — disconnects/nulls the old
+`ConvolverNode`/`wetGain`/`dryGain`, creates a fresh `ConvolverNode`
+(`normalize = false`), resamples the IR to the context's sample rate, sets
+`.buffer`, and computes gain-makeup from the IR's L2 energy norm. "Swap IR
+instead of swapping the NAM capture" is calling `wireIr()` with a different
+IR and leaving everything upstream of it untouched.
+
+What the plan adds on top of the existing method:
+
+1. **Two-IR blend.** `wireIr()` currently wires one `ConvolverNode`. Extend
+   the cabinet stage to two parallel convolver branches (IR A, IR B), each
+   with its own gain node, both summed into the existing single `wetGain`
+   bus before `outputGain`. A blend control (0=A, 1=B, crossfade between) is
+   just the two gain nodes' values moving inversely — no new audio nodes
+   needed beyond the second convolver+gain pair. Selecting "just IR A" is the
+   degenerate case (B gain = 0), so this subsumes today's single-IR path
+   rather than branching around it.
+2. **Source: DI file loop vs. live mic/interface input.** These are
+   different `MediaStreamSource` origins already distinguished elsewhere in
+   `LiveEngine` (DI loop uses a decoded-buffer source node in a loop; live
+   input uses `getUserMedia`/interface input). The IR-hot-swap behavior is
+   identical either way since it only touches the cabinet stage — this plan
+   doesn't need to special-case the source, only reuse whichever source
+   `LiveEngine` is already configured with.
+3. **Cross-tree architecture gap (real, unresolved).** `AppRoot.tsx` renders
+   NAM mode (`App.tsx`) and IR mode (`IrModeShell.tsx`) as siblings with no
+   shared state/store. `LiveEngine` today is owned by NAM mode. IR mode
+   hot-swapping cabinet IRs on an existing live NAM signal chain means either
+   (a) IR mode gets its own `LiveEngine` instance (simpler, but two engines
+   means two audio contexts/worklets if both modes are live-monitoring at
+   once — wasteful, possibly audible glitches on device contention), or
+   (b) `LiveEngine` gets lifted to a shared owner both trees can reach
+   (correct long-term, but a real state-lifting refactor, same category as
+   the already-flagged shared-Settings-panel gap). Not solving this tonight;
+   flagging it here so it isn't rediscovered from scratch later. Recommend
+   (b) once this is actually built, given it's the same shape of problem as
+   Settings and doing both refactors together is cheaper than doing them
+   twice.
+4. **UI surface.** Each IR row's existing play button becomes "audition this
+   IR live" instead of (or in addition to) the current offline preview;
+   "add to blend slot A/B" comes from the tray (already selects up to 8 for
+   comparison — two of those slots become the live A/B blend inputs) rather
+   than inventing a second selection mechanism.
+
+Scope explicitly bigger than Phase 4 — treated as its own follow-up phase
+once the tray/groups/tabs work in this batch lands, not attempted in the
+same pass.
+
+### 8c. IR Lab Projects vs. third-party vendor libraries — ingestion design
+
+The schema already anticipated this split (section 2/3): `ir_item.capture_id`
+(IR Lab's own `captureId`, NULL for third-party), `ir_lab_native` sitting
+above `vendor_documentation`/`vendor_parser`/`filename_inferred`/
+`user_entered` on the confidence ladder, `ir_derivative_variant` (mirrors IR
+Lab's `DerivativeVariant`), and `collection(kind='ir_project')`. What's
+missing is the importer that actually populates them — today every folder,
+IR Lab Project or not, only ever goes through the Phase 3 vendor
+filename/folder parsers, which is wrong for a Project: an IR Lab Project has
+real structured metadata sitting right there in `analysis.json` and should
+never be guessed from a filename.
+
+IR Lab's actual `analysis.json` shape (read from the private repo's
+`ir-lab/src/core/Domain.h` / session-write code, not guessed): a top-level
+`session` object (`id`, `displayName`, `createdAt`) and an `analysis` object
+(`captureId`, `createdAt`, `cabinet`, `speaker`, `microphone`, `position`,
+`notes`, `captureType` = `"Hardware"`/`"Software"`, `sampleRate`,
+`isStereo`, `isTrueStereo`, and a `variants` array of
+`{ id, name, analysis (relative path), createdAt }`).
+
+Planned importer (not built tonight):
+
+1. **Detection.** During folder scan, a folder containing an `analysis.json`
+   at its own level is an IR Lab Project folder, full stop — no heuristic
+   needed, IR Lab itself is the only thing that ever writes this file.
+2. **Ingestion.** Parse `analysis.json` directly into `ir_item` (capture_id,
+   manufacturer left NULL — IR Lab doesn't track manufacturer, only
+   cabinet/speaker/mic/position — cabinet, speaker, microphone, position,
+   capture_type, sample_rate, is_stereo, is_true_stereo) with every field
+   written at `ir_lab_native` source — the top of the ladder, so a vendor
+   parser or filename guess can never later downgrade it. `notes` goes to
+   `item.notes` directly (already a plain column, not part of the confidence
+   ladder). Each `variants[]` entry becomes an `ir_derivative_variant` row.
+3. **Grouping.** The owning folder (or the `session.id`/`displayName`) is
+   registered as a `collection` with `kind = 'ir_project'`, exactly the same
+   representation a NAM pack/bundle already uses, so browsing "IR Lab
+   Projects" in the UI is the same collection-listing code path Phase 6's
+   groups/tray work already establishes, not a new special case.
+4. **UI distinction.** Overview/Pack Info tabs should visibly badge an item
+   as "IR Lab Project" vs. vendor library (a small label, similar to the
+   existing confidence-ladder dot convention) so it's clear which items carry
+   trustworthy structured metadata versus filename-guessed metadata — this
+   was the concrete ask ("understand 'Projects' ... vs 3rd party libraries").
+5. **Gallery.** IR Lab Projects are the only IR-side folders where a photo
+   gallery is meaningful in the same sense NAM Lab's pack gallery is (a
+   vendor library folder is just delivered WAVs, no photos) — Gallery tab
+   (8a) should still render for any folder that happens to have images in it
+   (cheap, no harm), but Project folders are the expected/primary case.
+
+None of this is implemented yet — this section exists so the distinction
+the user asked about has an answer on record rather than being re-derived
+from scratch next session.
 
 Deferred, explicitly out of scope until requested: acoustic/fingerprint
 similarity search, non-WAV formats, user-customizable parser definitions.

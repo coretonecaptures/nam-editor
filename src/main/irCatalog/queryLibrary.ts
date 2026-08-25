@@ -43,6 +43,9 @@ export interface QueryOptions {
    * WHERE clauses, not a post-fetch JS filter. */
   favoritesOnly?: boolean
   minRating?: number
+  /** Named group filter (tag.ts) — works across every folder/root, per the group concept: "put a
+   * bunch of IRs in a named group for recall/filter later, across anywhere in your library." */
+  tagId?: number
   offset: number
   limit: number
 }
@@ -51,7 +54,7 @@ export interface QueryOptions {
  * elsewhere (folderMetadata.ts) — resolved as a single small array (folder count stays in the
  * hundreds even under a huge pack) so the main query's WHERE can do a plain indexed `IN (...)`
  * rather than nesting a recursive CTE inside another statement. */
-function resolveFolderScopeIds(db: DatabaseSync, folderId: number): number[] {
+export function resolveFolderScopeIds(db: DatabaseSync, folderId: number): number[] {
   const rows = db
     .prepare(
       `WITH RECURSIVE d(id) AS (
@@ -113,6 +116,10 @@ function buildWhereAndParams(
   if (options.minRating != null) {
     clauses.push('item.rating >= ?')
     params.push(options.minRating)
+  }
+  if (options.tagId != null) {
+    clauses.push('item.id IN (SELECT item_id FROM item_tag WHERE tag_id = ?)')
+    params.push(options.tagId)
   }
   return { where: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '', params }
 }

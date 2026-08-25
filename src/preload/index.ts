@@ -341,6 +341,7 @@ const api = {
     search?: string
     favoritesOnly?: boolean
     minRating?: number
+    tagId?: number
     offset: number
     limit: number
   }): Promise<{
@@ -371,7 +372,7 @@ const api = {
     libraryRootId: number
   ): Promise<Array<{ id: number; parent_id: number | null; relative_path: string; direct_item_count: number }>> =>
     ipcRenderer.invoke('irLibrary:listFolders', libraryRootId),
-  irLibraryGetLibraryOverview: (libraryRootId: number): Promise<{
+  irLibraryGetLibraryOverview: (libraryRootId: number, folderId?: number | null): Promise<{
     totalItems: number
     totalFolders: number
     favoriteCount: number
@@ -380,13 +381,14 @@ const api = {
     taggedCount: number
     manufacturerBreakdown: Array<{ value: string; count: number }>
     microphoneBreakdown: Array<{ value: string; count: number }>
-  }> => ipcRenderer.invoke('irLibrary:getLibraryOverview', libraryRootId),
+  }> => ipcRenderer.invoke('irLibrary:getLibraryOverview', libraryRootId, folderId ?? null),
   irLibraryGetFolderDetail: (folderId: number): Promise<{
     id: number
     relativePath: string
     notes: string | null
     declared: Array<{ field: string; value: string; source: string }>
     documents: Array<{ id: number; folder_id: number; stored_path: string; original_filename: string | null; imported_at: string }>
+    absPath: string
   } | null> => ipcRenderer.invoke('irLibrary:getFolderDetail', folderId),
   irLibrarySetFolderMetadata: (folderId: number, field: string, value: string, source: string): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('irLibrary:setFolderMetadata', folderId, field, value, source),
@@ -412,7 +414,19 @@ const api = {
   irLibraryIsInTray: (itemId: string): Promise<boolean> => ipcRenderer.invoke('irLibrary:isInTray', itemId),
   irLabConnectorAvailable: (): Promise<boolean> => ipcRenderer.invoke('irLibrary:irLabConnectorAvailable'),
   irLibrarySendTrayToIrLab: (): Promise<{ success: boolean; reason?: string }> =>
-    ipcRenderer.invoke('irLibrary:sendTrayToIrLab')
+    ipcRenderer.invoke('irLibrary:sendTrayToIrLab'),
+  irLibraryListTags: (): Promise<Array<{ id: number; name: string; itemCount: number }>> =>
+    ipcRenderer.invoke('irLibrary:listTags'),
+  irLibraryGetOrCreateTag: (name: string): Promise<number> => ipcRenderer.invoke('irLibrary:getOrCreateTag', name),
+  irLibraryRenameTag: (tagId: number, name: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('irLibrary:renameTag', tagId, name),
+  irLibraryDeleteTag: (tagId: number): Promise<{ success: boolean }> => ipcRenderer.invoke('irLibrary:deleteTag', tagId),
+  irLibraryAddItemToTag: (itemId: string, tagId: number): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('irLibrary:addItemToTag', itemId, tagId),
+  irLibraryRemoveItemFromTag: (itemId: string, tagId: number): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('irLibrary:removeItemFromTag', itemId, tagId),
+  irLibraryListTagsForItem: (itemId: string): Promise<Array<{ id: number; name: string; itemCount: number }>> =>
+    ipcRenderer.invoke('irLibrary:listTagsForItem', itemId)
 }
 
 if (process.contextIsolated) {

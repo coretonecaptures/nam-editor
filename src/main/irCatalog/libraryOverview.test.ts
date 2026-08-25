@@ -52,4 +52,32 @@ describe.skipIf(!hasFts5())('getLibraryOverview', () => {
 
     db.close()
   })
+
+  it('scopes every stat to one folder and its subtree when a folderId is given', async () => {
+    const root = makeTmpDir()
+    fs.mkdirSync(join(root, 'Marshall'), { recursive: true })
+    fs.mkdirSync(join(root, 'Marshall', 'Nested'), { recursive: true })
+    fs.mkdirSync(join(root, 'Fender'), { recursive: true })
+    fs.writeFileSync(join(root, 'Marshall', 'Marshall Greenback SM57.wav'), 'a'.repeat(500))
+    fs.writeFileSync(join(root, 'Marshall', 'Nested', 'Marshall V30 SM57.wav'), 'b'.repeat(500))
+    fs.writeFileSync(join(root, 'Fender', 'Fender G12M MD421.wav'), 'c'.repeat(500))
+
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const stats = await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+    finalizeIndexes(db)
+    applyVendorParsers(db, stats.libraryRootId)
+
+    const marshallFolder = db.prepare(`SELECT id FROM folder WHERE relative_path = 'Marshall'`).get() as { id: number }
+
+    const whole = getLibraryOverview(db, stats.libraryRootId)
+    expect(whole.totalItems).toBe(3)
+
+    const scoped = getLibraryOverview(db, stats.libraryRootId, marshallFolder.id)
+    expect(scoped.totalItems).toBe(2) // Marshall + Marshall/Nested, not Fender
+    expect(scoped.manufacturerBreakdown.find((e) => e.value === 'Marshall')?.count).toBe(2)
+    expect(scoped.manufacturerBreakdown.find((e) => e.value === 'Fender')).toBeUndefined()
+
+    db.close()
+  })
 })
