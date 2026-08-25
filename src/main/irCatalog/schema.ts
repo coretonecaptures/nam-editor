@@ -282,9 +282,27 @@ DROP TRIGGER IF EXISTS item_search_au;
 DROP TRIGGER IF EXISTS item_search_ad;
 `
 
+/**
+ * `CREATE TABLE IF NOT EXISTS` (CORE_SCHEMA_SQL, above) only ever creates a table's FIRST version —
+ * an existing catalog.db from before a column was added keeps the old shape forever, silently
+ * throwing "no such column" the first time new code queries it (this broke the folder tree the
+ * first time it ran against a real, already-populated catalog.db: listFolders()'s EXISTS check
+ * against `collection.folder_id` errored on a `collection` table created before that column
+ * existed). Small, additive, `ADD COLUMN`-only migrations belong here, run every time the DB opens
+ * — checked via `PRAGMA table_info` so this is a no-op once a column already exists, cheap even on
+ * a huge catalog since it never touches `item`.
+ */
+function runMigrations(db: DatabaseSync): void {
+  const collectionColumns = db.prepare(`PRAGMA table_info(collection)`).all() as Array<{ name: string }>
+  if (collectionColumns.length > 0 && !collectionColumns.some((c) => c.name === 'folder_id')) {
+    db.exec(`ALTER TABLE collection ADD COLUMN folder_id INTEGER REFERENCES folder(id)`)
+  }
+}
+
 /** Only the tables and the UNIQUE constraints bulk import's ON CONFLICT upserts depend on. */
 export function createCoreSchema(db: DatabaseSync): void {
   db.exec(CORE_SCHEMA_SQL)
+  runMigrations(db)
 }
 
 export function itemSearchTableExists(db: DatabaseSync): boolean {
