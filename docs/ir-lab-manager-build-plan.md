@@ -1042,35 +1042,46 @@ state (`irBPath`/`irBlend`), deliberately not persisted into rig
 presets/snapshots — it's an audition aid layered on top of the saved rig,
 not part of it.
 
-**Still not built, real gaps not oversights:**
+**Live audition follow-ups — all three built (2026-08-25):**
 
-1. **No gate/EQ/delay/reverb/chorus/device picker** in `IrLiveTab.tsx` —
-   `PlayerPanel.tsx`'s full Live mode has all of these; the IR-mode hook
-   passes only `modelJson` to `LiveEngine.start()`, leaving everything else
-   at `LiveEngine`'s own defaults (all off). Shipped this way on purpose to
-   get the core "click an IR, hear it live" loop working first, not because
-   `LiveEngine` can't support them — it already does, for NAM mode.
-2. **Cross-tree architecture gap (still real, still unresolved).**
-   `AppRoot.tsx` renders NAM mode (`App.tsx`) and IR mode (`IrModeShell.tsx`)
-   as siblings with no shared state — each mode still owns its own
-   independent `LiveEngine` instance (NAM mode's inside `PlayerPanel`, IR
-   mode's inside `useIrLiveAudition`). Running both live at once means two
-   separate audio contexts/worklets/mic streams contending for the same
-   input device — not prevented, not tested, likely to misbehave. Lifting
-   `LiveEngine` to a shared owner both trees can reach is the correct
-   long-term fix (same shape of problem as the already-flagged shared-
-   Settings-panel gap) but wasn't attempted here; flagging again so it isn't
-   rediscovered from scratch.
-3. **IR-focused Live tab layout — a future plan, not started.** Raised
-   directly: in `IrLiveTab.tsx` today the amp capture picker is the first,
-   most prominent control and the loaded IR is a small text line below it —
-   backwards for a screen whose whole point is auditioning IRs. Not
-   literally "center" (no specific geometric layout decided) — the point is
-   *emphasis*: the IR (and now the two-slot blend) should read as the focal
-   point, with the amp capture reduced to a small secondary control (e.g. a
-   corner chip). Not implemented yet — noted here as the next design pass
-   on this tab specifically, separate from the functional two-slot work
-   above.
+1. ~~No gate/EQ/delay/reverb/chorus/device picker~~ — **built**.
+   `useIrLiveAudition.ts` now carries input/output device selection
+   (`listAudioInputs`/`listAudioOutputs`, same as NAM mode) and simple on/off
+   toggles for gate/EQ/delay/reverb/chorus — each just flips `enabled` (or,
+   for delay, its `mix` between 0 and a fixed on-value, since `DelaySettings`
+   has no separate enabled flag) at `LiveEngine`'s own default settings,
+   applied live via `engine.setGate/setEq/setDelay/setReverb/setChorus`
+   without a restart. Changing an input/output device DOES restart the
+   engine (a live device switch needs a fresh `getUserMedia` stream, unlike
+   a cabinet or FX toggle) — `restartIfRunning()` tears down and rebuilds,
+   reloading whatever was in both cabinet slots and the blend position
+   first. Deliberately still no fine-grained per-effect controls (delay
+   time, reverb tone, etc.) — that's `PlayerPanel.tsx`'s full knob-by-knob
+   rack, a much larger UI this pass didn't attempt to replicate.
+2. ~~Cross-tree architecture gap~~ — **built, as a mutex, not a shared
+   instance.** New `utils/liveEngineOwner.ts`: a plain module-level
+   singleton (`tryAcquireLiveEngine('nam'|'ir-mode')` /
+   `releaseLiveEngine(...)`), consulted by both `PlayerPanel.tsx`'s
+   `startLive()` and `useIrLiveAudition.ts`'s `start()` before opening a
+   `LiveEngine`. If the other mode already holds it, the caller gets an
+   honest error ("Live monitoring is already running in NAM mode/IR mode —
+   stop it there first") instead of silently opening a second
+   `getUserMedia` stream and contending for the same input device. This is
+   NOT the "lift `LiveEngine` to a shared owner" fix described here
+   previously — that would still need a real state-lifting refactor above
+   `AppRoot.tsx` (same shape as the shared-Settings-panel gap), and wasn't
+   attempted. The mutex only prevents the two from running at once; it
+   doesn't let switching modes keep monitoring uninterrupted the way
+   switching cabinets within one mode does. 7 unit tests
+   (`liveEngineOwner.test.ts`) cover acquire/release/re-acquire/notify
+   semantics directly, no `AudioContext` needed.
+3. ~~IR-focused Live tab layout~~ — **built.** `IrLiveTab.tsx` rewritten:
+   the two cabinet slots + blend slider are now the top section, large,
+   with the play/stop transport and meter directly under them; the amp
+   capture picker, device selects, and FX toggles are pushed into a smaller
+   secondary strip below. Not literally centered (no specific geometric
+   layout rule) — the point was emphasis, and the IR/blend now reads as the
+   focal point instead of the capture picker.
 
 ### 8c. IR Lab Projects vs. third-party vendor libraries — ingestion (built)
 

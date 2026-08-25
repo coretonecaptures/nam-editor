@@ -64,6 +64,7 @@ import {
   type LiveDeviceInfo,
   type ReverbSettings
 } from '../utils/liveEngine'
+import { tryAcquireLiveEngine, releaseLiveEngine, describeLiveEngineOwner, getActiveLiveEngineOwner } from '../utils/liveEngineOwner'
 import { PitchTracker, type PitchReading } from '../utils/tuner'
 import {
   applyDcBlocker,
@@ -1050,6 +1051,7 @@ export function PlayerPanel({
     }
     await liveEngineRef.current?.stop()
     liveEngineRef.current = null
+    releaseLiveEngine('nam')
     tunerTrackerRef.current?.reset()
     tunerTrackerRef.current = null
     setLiveRunning(false)
@@ -1197,6 +1199,13 @@ export function PlayerPanel({
     setLiveStarting(true)
     try {
       await stopLive()
+
+      // Cross-tree mutex (docs/ir-lab-manager-build-plan.md section 8b/2) — IR mode owns its own
+      // independent LiveEngine now too; refuse to open a second one (and a second mic stream)
+      // while IR mode is already live, rather than silently contending for the same input device.
+      if (!tryAcquireLiveEngine('nam')) {
+        throw new Error(`Live monitoring is already running in ${describeLiveEngineOwner(getActiveLiveEngineOwner()!)} — stop it there first.`)
+      }
 
       const modelResult = await window.api.readFileBinary(file.filePath)
       if (modelResult.error || !modelResult.data) {
@@ -1385,6 +1394,7 @@ export function PlayerPanel({
   useEffect(() => {
     return () => {
       void liveEngineRef.current?.stop()
+      releaseLiveEngine('nam')
     }
   }, [])
 
