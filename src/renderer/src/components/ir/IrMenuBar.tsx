@@ -59,7 +59,16 @@ function Menu({ label, items }: { label: string; items: MenuItem[] }): React.Rea
 export function IrMenuBar({ onAddLibraryFolder, scanning }: { onAddLibraryFolder: () => void; scanning: boolean }): React.ReactElement {
   return (
     <div className="flex items-center gap-1 px-2 py-1 border-b border-nm-border-s bg-panel-2 flex-shrink-0">
-      <Menu label="File" items={[{ label: 'Add Library Folder…', onClick: onAddLibraryFolder, disabled: scanning }]} />
+      <Menu
+        label="File"
+        items={[
+          { label: 'Add Library Folder…', onClick: onAddLibraryFolder, disabled: scanning },
+          // Stub per the ask ("build my packs for irs like i do NAM releases") — the `collection`
+          // table already reserves kind='release' for this (plan section 2), but nothing builds a
+          // release/pack-sheet from IR items yet. Honest disabled entry, not a fake button.
+          { label: 'Build IR Pack… (coming soon)', disabled: true }
+        ]}
+      />
       <Menu
         label="Settings"
         items={[

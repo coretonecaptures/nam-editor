@@ -2,8 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { VirtualList } from './VirtualList'
 import { useIrAudition } from './useIrAudition'
 import { IrFolderTree } from './IrFolderTree'
-import { IrFolderPanel } from './IrFolderPanel'
-import { IrLibraryOverview } from './IrLibraryOverview'
+import { IrRightPanel } from './IrRightPanel'
 import { IrMenuBar } from './IrMenuBar'
 
 type IrItemRow = {
@@ -93,6 +92,14 @@ export function IrModeShell(): React.ReactElement {
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null)
   const [favoritesOnly, setFavoritesOnly] = useState(false)
   const [ratedOnly, setRatedOnly] = useState(false)
+  // Groups (plan section 8, item 8) — named, cross-folder tags. tagFilterId narrows the browse
+  // list to one group from anywhere in the library, independent of the folder tree; tags is the
+  // full list for the filter dropdown and the row context menu's "Add to Group" submenu.
+  const [tags, setTags] = useState<Array<{ id: number; name: string; itemCount: number }>>([])
+  const [tagFilterId, setTagFilterId] = useState<number | null>(null)
+  const [groupsMenuOpen, setGroupsMenuOpen] = useState(false)
+  const [addToGroupRow, setAddToGroupRow] = useState<IrItemRow | null>(null)
+  const [newGroupName, setNewGroupName] = useState('')
   // Folder tree/panel — scoped to the first root for now (no root switcher yet; a second "Add
   // Library Folder" click adds another root but the tree only ever shows the first one). Selecting
   // a folder both opens its metadata panel AND filters the item list to that folder's subtree
@@ -165,6 +172,34 @@ export function IrModeShell(): React.ReactElement {
     window.api.irLabConnectorAvailable().then(setConnectorAvailable)
   }, [refreshTray])
 
+  const refreshTags = useCallback(() => {
+    window.api.irLibraryListTags().then(setTags)
+  }, [])
+
+  useEffect(() => {
+    refreshTags()
+  }, [refreshTags])
+
+  const addRowToGroup = useCallback(
+    async (row: IrItemRow, tagId: number) => {
+      await window.api.irLibraryAddItemToTag(row.id, tagId)
+      refreshTags()
+      setAddToGroupRow(null)
+    },
+    [refreshTags]
+  )
+
+  const createGroupAndAddRow = useCallback(
+    async (row: IrItemRow, name: string) => {
+      const trimmed = name.trim()
+      if (!trimmed) return
+      const tagId = await window.api.irLibraryGetOrCreateTag(trimmed)
+      await addRowToGroup(row, tagId)
+      setNewGroupName('')
+    },
+    [addRowToGroup]
+  )
+
   const toggleTray = useCallback(
     async (row: IrItemRow) => {
       if (trayIds.has(row.id)) {
@@ -191,6 +226,14 @@ export function IrModeShell(): React.ReactElement {
       setSendingTray(false)
     }
   }, [])
+
+  // Groups filter dropdown: dismiss on outside click.
+  useEffect(() => {
+    if (!groupsMenuOpen) return
+    const dismiss = (): void => setGroupsMenuOpen(false)
+    window.addEventListener('click', dismiss)
+    return () => window.removeEventListener('click', dismiss)
+  }, [groupsMenuOpen])
 
   // Context menu: dismiss on outside click or Escape.
   useEffect(() => {
@@ -220,7 +263,7 @@ export function IrModeShell(): React.ReactElement {
     // fixed dependency set) — omitted from deps so a play/stop state change doesn't itself
     // re-trigger a cache wipe.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, roots.length, selectedFolderId, favoritesOnly, ratedOnly])
+  }, [search, roots.length, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId])
 
   // Arrow-key navigation through the current filtered list (plan section 8), plus Escape to stop.
   // Ignored while a text input has focus so this doesn't fight the search box's own cursor keys.
@@ -294,6 +337,7 @@ export function IrModeShell(): React.ReactElement {
           folderId: selectedFolderId,
           favoritesOnly: favoritesOnly || undefined,
           minRating: ratedOnly ? 1 : undefined,
+          tagId: tagFilterId ?? undefined,
           offset: pageStart,
           limit: pageEnd - pageStart
         })
@@ -307,7 +351,7 @@ export function IrModeShell(): React.ReactElement {
           pendingRef.current.delete(key)
         })
     },
-    [search, total, selectedFolderId, favoritesOnly, ratedOnly]
+    [search, total, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId]
   )
 
   // Fires once per search/folder/filter change to establish `total` even before the list scrolls
@@ -321,6 +365,7 @@ export function IrModeShell(): React.ReactElement {
         folderId: selectedFolderId,
         favoritesOnly: favoritesOnly || undefined,
         minRating: ratedOnly ? 1 : undefined,
+        tagId: tagFilterId ?? undefined,
         offset: 0,
         limit: PAGE_SIZE
       })
@@ -330,7 +375,7 @@ export function IrModeShell(): React.ReactElement {
         res.rows.forEach((row, i) => cacheRef.current.set(i, row))
         forceRerender((n) => n + 1)
       })
-  }, [search, roots.length, selectedFolderId, favoritesOnly, ratedOnly])
+  }, [search, roots.length, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId])
 
   const toggleFavorite = useCallback((row: IrItemRow, index: number) => {
     const next = row.is_favorite ? 0 : 1
@@ -441,6 +486,53 @@ export function IrModeShell(): React.ReactElement {
           >
             Rated
           </button>
+        )}
+        {hasAnyRoot && tags.length > 0 && (
+          <div className="relative flex-shrink-0">
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                setGroupsMenuOpen((v) => !v)
+              }}
+              title="Filter to one group"
+              className={`px-2 py-1 text-xs rounded border ${
+                tagFilterId != null ? 'bg-active-bg border-nm-accent text-nm-accent' : 'border-field-bd text-nm-text-2 hover:bg-hov'
+              }`}
+            >
+              {tagFilterId != null ? tags.find((t) => t.id === tagFilterId)?.name ?? 'Group' : 'Groups'} ▾
+            </button>
+            {groupsMenuOpen && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="absolute left-0 top-full mt-0.5 min-w-[180px] max-h-72 overflow-y-auto py-1 rounded border border-nm-border bg-panel shadow-lg z-50"
+              >
+                {tagFilterId != null && (
+                  <button
+                    onClick={() => {
+                      setTagFilterId(null)
+                      setGroupsMenuOpen(false)
+                    }}
+                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-hov text-nm-accent"
+                  >
+                    Clear group filter
+                  </button>
+                )}
+                {tags.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => {
+                      setTagFilterId(t.id)
+                      setGroupsMenuOpen(false)
+                    }}
+                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-hov text-nm-text flex items-center justify-between gap-2"
+                  >
+                    <span className="truncate">{t.name}</span>
+                    <span className="text-nm-text-3 flex-shrink-0">{t.itemCount}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         )}
         {hasAnyRoot && <span className="text-xs text-nm-text-3 flex-shrink-0">{total.toLocaleString()} IRs</span>}
         {hasAnyRoot && (
@@ -577,12 +669,13 @@ export function IrModeShell(): React.ReactElement {
             onMouseDown={onPanelDragStart}
             className="w-1 flex-shrink-0 cursor-col-resize hover:bg-nm-accent/40 active:bg-nm-accent/60 transition-colors"
           />
-          <div style={{ width: panelWidth }} className="flex-shrink-0 overflow-y-auto">
-            {selectedFolderId != null ? (
-              <IrFolderPanel folderId={selectedFolderId} />
-            ) : (
-              <IrLibraryOverview libraryRootId={roots[0]?.id ?? null} />
-            )}
+          <div style={{ width: panelWidth }} className="flex-shrink-0 overflow-hidden">
+            <IrRightPanel
+              libraryRootId={roots[0]?.id ?? null}
+              libraryRootPath={roots[0]?.path ?? null}
+              folderId={selectedFolderId}
+              folderName={selectedFolderName}
+            />
           </div>
         </div>
       )}
@@ -645,12 +738,67 @@ export function IrModeShell(): React.ReactElement {
           >
             {trayIds.has(contextMenu.row.id) ? 'Remove from Tray' : 'Add to Tray'}
           </button>
+          <button
+            onClick={() => {
+              setAddToGroupRow(contextMenu.row)
+              setContextMenu(null)
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-hov text-nm-text"
+          >
+            Add to Group…
+          </button>
           <div className="border-t border-nm-border-s my-1" />
-          {/* Placeholder for the rest of section 12's roadmap (tags, collections, IR Lab handoff
-              beyond blend) — a stub row rather than inventing menu items that don't do anything,
-              per the user's own framing ("add a reveal in folder...or add to tray etc until we
-              build it up"). */}
+          {/* Placeholder for the rest of section 12's roadmap (collections beyond tray/groups, IR
+              Lab handoff beyond blend) — a stub row rather than inventing menu items that don't
+              do anything, per the user's own framing ("add a reveal in folder...or add to tray
+              etc until we build it up"). */}
           <div className="px-3 py-1 text-nm-text-3 italic">More actions coming soon</div>
+        </div>
+      )}
+
+      {addToGroupRow && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40" onClick={() => setAddToGroupRow(null)}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-72 rounded border border-nm-border bg-panel shadow-lg p-3 flex flex-col gap-2"
+          >
+            <div className="text-sm font-medium text-nm-text truncate">Add "{addToGroupRow.display_name}" to a group</div>
+            {tags.length > 0 && (
+              <div className="max-h-40 overflow-y-auto flex flex-col gap-0.5">
+                {tags.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => void addRowToGroup(addToGroupRow, t.id)}
+                    className="text-left px-2 py-1 text-xs rounded hover:bg-hov text-nm-text"
+                  >
+                    {t.name} <span className="text-nm-text-3">({t.itemCount})</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center gap-2 pt-1 border-t border-nm-border-s">
+              <input
+                value={newGroupName}
+                onChange={(e) => setNewGroupName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void createGroupAndAddRow(addToGroupRow, newGroupName)
+                }}
+                placeholder="New group name…"
+                autoFocus
+                className="flex-1 px-2 py-1 text-xs rounded border border-field-bd bg-field-bg"
+              />
+              <button
+                onClick={() => void createGroupAndAddRow(addToGroupRow, newGroupName)}
+                disabled={!newGroupName.trim()}
+                className="px-2 py-1 text-xs rounded bg-nm-accent text-accent-fg hover:opacity-90 disabled:opacity-40 flex-shrink-0"
+              >
+                Create
+              </button>
+            </div>
+            <button onClick={() => setAddToGroupRow(null)} className="self-end text-xs text-nm-text-3 hover:text-nm-text">
+              Close
+            </button>
+          </div>
         </div>
       )}
     </div>

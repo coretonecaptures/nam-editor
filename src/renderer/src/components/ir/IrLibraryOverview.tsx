@@ -46,13 +46,21 @@ function BreakdownBars({ title, entries }: { title: string; entries: Array<{ val
 }
 
 /**
- * Library overview — the right panel's default content when no folder is selected, per the
- * user's ask for "just a few graphs for now." Deliberately small: total counts plus two
- * breakdown bars (manufacturer, microphone) from whatever Phase 3's vendor parsers have already
- * populated. Not the same thing as the (not yet built) per-folder Folder Report — this is
- * library-wide, always available, no click-through required.
+ * Overview tab — a rollup report, same concept as NAM Lab's own Overview tab (screenshot supplied
+ * by the user): clicking the root shows the whole library, clicking a folder shows that folder's
+ * subtree scope only, via `libraryOverview.ts`'s now-generalized `folderId` parameter. Total
+ * counts plus two breakdown bars (manufacturer, microphone) from whatever Phase 3's vendor
+ * parsers have already populated — deliberately small, "a few graphs for now."
  */
-export function IrLibraryOverview({ libraryRootId }: { libraryRootId: number | null }): React.ReactElement {
+export function IrLibraryOverview({
+  libraryRootId,
+  folderId,
+  folderName
+}: {
+  libraryRootId: number | null
+  folderId?: number | null
+  folderName?: string | null
+}): React.ReactElement {
   const [overview, setOverview] = useState<Overview | null>(null)
 
   useEffect(() => {
@@ -60,16 +68,18 @@ export function IrLibraryOverview({ libraryRootId }: { libraryRootId: number | n
       setOverview(null)
       return
     }
-    window.api.irLibraryGetLibraryOverview(libraryRootId).then(setOverview)
-  }, [libraryRootId])
+    window.api.irLibraryGetLibraryOverview(libraryRootId, folderId ?? null).then(setOverview)
+  }, [libraryRootId, folderId])
 
   if (libraryRootId == null || !overview) {
     return <div className="p-3 text-xs text-nm-text-3">Add a library folder to see an overview.</div>
   }
 
   return (
-    <div className="p-3 flex flex-col gap-4 overflow-y-auto">
-      <div className="text-sm font-medium text-nm-text">Library Overview</div>
+    <div className="p-3 flex flex-col gap-4 overflow-y-auto h-full">
+      <div className="text-sm font-medium text-nm-text truncate">
+        {folderId != null && folderName ? folderName : 'Library Overview'}
+      </div>
 
       <div className="grid grid-cols-2 gap-3">
         <Stat label="IRs" value={overview.totalItems} />
@@ -85,13 +95,15 @@ export function IrLibraryOverview({ libraryRootId }: { libraryRootId: number | n
 
       {overview.manufacturerBreakdown.length === 0 && overview.microphoneBreakdown.length === 0 && (
         <div className="text-xs text-nm-text-3 italic">
-          No breakdown yet — nothing in this library has been tagged by a vendor parser or hand-entered.
+          No breakdown yet — nothing in this scope has been tagged by a vendor parser or hand-entered.
         </div>
       )}
 
-      <div className="text-xs text-nm-text-3 pt-2 border-t border-nm-border-s">
-        Click a folder in the tree to see its notes, tags, and vendor documents instead.
-      </div>
+      {folderId == null && (
+        <div className="text-xs text-nm-text-3 pt-2 border-t border-nm-border-s">
+          Click a folder in the tree to see that folder's own rollup instead of the whole library.
+        </div>
+      )}
     </div>
   )
 }
