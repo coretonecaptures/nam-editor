@@ -655,6 +655,12 @@ export function PlayerPanel({
   const [irPath, setIrPath] = useState<string | null>(null)
   const [irEnabled, setIrEnabled] = useState(() => captureNeedsCabIr(file.metadata.gear_type))
   const irManuallySetRef = useRef(false)
+  // Second cabinet slot (Live mode only — LiveEngine.setIrSlot/setBlend) for blending two IRs.
+  // Session-only, not persisted with the rig: it's an audition aid, not part of "this capture's
+  // saved cabinet" the way irPath/irEnabled are (rig presets/snapshots below intentionally don't
+  // carry it).
+  const [irBPath, setIrBPath] = useState<string | null>(null)
+  const [irBlend, setIrBlendState] = useState(0)
 
   const renderGenerationRef = useRef(0)
 
@@ -1095,6 +1101,20 @@ export function PlayerPanel({
     return { samples: mono, sampleRate: decoded.sampleRate }
   }, [irEnabled, irPath, getAudioContext])
 
+  /** Same decode, for the second cabinet slot — independent of irEnabled (slot B is its own
+   * on/off state: present iff irBPath is set). */
+  const loadLiveIrB = useCallback(async (): Promise<{ samples: Float32Array; sampleRate: number } | null> => {
+    if (!irBPath) return null
+    const irResult = await window.api.readFileBinary(irBPath)
+    if (irResult.error || !irResult.data) {
+      throw new Error(`Could not read the second cabinet IR: ${irResult.error ?? 'no data'}`)
+    }
+    const decoded = await getAudioContext().decodeAudioData(base64ToArrayBuffer(irResult.data))
+    const mono = new Float32Array(decoded.length)
+    decoded.copyFromChannel(mono, 0, 0)
+    return { samples: mono, sampleRate: decoded.sampleRate }
+  }, [irBPath, getAudioContext])
+
   /**
    * Step to the next or previous impulse in the SAME FOLDER as the one currently loaded — the
    * arrows next to Delay IR / Reverb IR. A live directory read of the current file's own folder,
@@ -1232,6 +1252,12 @@ export function PlayerPanel({
       })
       engine.setBypass(liveBypass)
 
+      // Second cabinet slot (blend) is loaded separately after start() — LiveStartOptions only
+      // wires slot A, matching every other existing caller of engine.start() unchanged.
+      const irB = await loadLiveIrB()
+      if (irB) await engine.setIrSlot('B', irB)
+      engine.setBlend(irBlend)
+
       setLiveRunning(true)
       setLiveLatencyMs(engine.latencyMs)
 
@@ -1268,7 +1294,7 @@ export function PlayerPanel({
     } finally {
       setLiveStarting(false)
     }
-  }, [file.filePath, inputDeviceId, irMix, liveInputGainDb, liveBypass, loadLiveIr, stopLive, preCapturePath, preEnabled, preGainDb, fxPower])
+  }, [file.filePath, inputDeviceId, irMix, liveInputGainDb, liveBypass, loadLiveIr, loadLiveIrB, irBlend, stopLive, preCapturePath, preEnabled, preGainDb, fxPower])
 
   // Auto-start monitoring the moment the popped-out Live rig is entered, if the user has opted
   // in — skips the manual click on the record sign every single time. Fires once per arrival
@@ -1283,8 +1309,9 @@ export function PlayerPanel({
     wasLiveVisible.current = liveVisible
   }, [poppedOut, mode, autoStartLiveOnPopout, liveRunning, liveStarting, startLive])
 
-  // Swap the cabinet on the running engine rather than restarting it — restarting would drop the
-  // mic and reload the model, so you could never hear two cabs back to back.
+  // Swap cabinet slot A on the running engine rather than restarting it — restarting would drop
+  // the mic and reload the model, so you could never hear two cabs back to back. setIrSlot (not
+  // the back-compat setIr) so slot B/blend survive a slot-A change untouched.
   useEffect(() => {
     const engine = liveEngineRef.current
     if (!engine || !liveRunning) return
@@ -1293,7 +1320,7 @@ export function PlayerPanel({
       try {
         const ir = await loadLiveIr()
         if (cancelled) return
-        await engine.setIr(ir)
+        await engine.setIrSlot('A', ir)
       } catch (error) {
         if (!cancelled) setLiveError(formatError(error))
       }
@@ -1302,6 +1329,36 @@ export function PlayerPanel({
       cancelled = true
     }
   }, [irEnabled, irPath, liveRunning, loadLiveIr])
+
+  // Same, for slot B.
+  useEffect(() => {
+    const engine = liveEngineRef.current
+    if (!engine || !liveRunning) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const ir = await loadLiveIrB()
+        if (cancelled) return
+        await engine.setIrSlot('B', ir)
+      } catch (error) {
+        if (!cancelled) setLiveError(formatError(error))
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [irBPath, liveRunning, loadLiveIrB])
+
+  // Blend is a pure gain crossfade (LiveEngine.setBlend), never a rebuild — cheap enough to apply
+  // on every change with no async/cancellation dance needed.
+  useEffect(() => {
+    if (!liveRunning) return
+    liveEngineRef.current?.setBlend(irBlend)
+  }, [irBlend, liveRunning])
+
+  const setIrBlend = useCallback((value: number) => {
+    setIrBlendState(Math.max(0, Math.min(1, value)))
+  }, [])
 
   useEffect(() => {
     if (!liveMode) return
@@ -2554,6 +2611,49 @@ export function PlayerPanel({
                     : 'Set an IR Library folder in Settings, or Browse for a single file.')
                 : `No cabinet chosen yet \u2014 search the ${irCount.toLocaleString()} IRs in your library, or star the ones you use.`}
             </p>
+          )}
+          {/* Second cabinet slot \u2014 Live mode only (LiveEngine.setIrSlot/setBlend); the offline
+              Preview render still only ever uses slot A/irPath, unchanged. Session-only, not part
+              of the saved rig (see irBPath's own declaration comment). */}
+          {liveMode && (
+            <div className="mt-2.5 pt-2.5 border-t border-gray-200 dark:border-[var(--border-soft)]">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500">Second cabinet (blend) \u2014 Live only</span>
+                {irBPath && (
+                  <button
+                    onClick={() => setIrBPath(null)}
+                    className="text-[10px] text-gray-400 hover:text-red-500"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              <IrPicker
+                libraryPath={irLibraryPath ?? ''}
+                value={irBPath}
+                disabled={busy}
+                favoritesKind="cab"
+                placeholder="Choose a second cabinet to blend\u2026"
+                onChange={(ref) => setIrBPath(ref.path)}
+              />
+              {irBPath && (
+                <div className="mt-2">
+                  <div className="flex items-center justify-between text-[10px] text-gray-400 dark:text-gray-500 mb-1">
+                    <span>A</span>
+                    <span>Blend</span>
+                    <span>B</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={Math.round(irBlend * 100)}
+                    onChange={(e) => setIrBlend(Number(e.target.value) / 100)}
+                    className="w-full accent-[var(--accent)]"
+                  />
+                </div>
+              )}
+            </div>
           )}
         </>
       )}

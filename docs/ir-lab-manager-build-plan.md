@@ -945,7 +945,7 @@ in the main process — the renderer has no `node:path`/`node:fs` access under
 existing generic channels with that path exactly like NAM Lab's own pack
 detail panel does — no IR-specific backend work required for either tab.
 
-### 8b. Live cabinet audition (built — single-IR; two-IR blend still a plan)
+### 8b. Live cabinet audition (built — single-IR and two-IR blend, both apps)
 
 The single-IR version of this is now built, replacing the earlier Phase 4
 mechanism entirely (`useIrAudition.ts` — offline-render-once via
@@ -986,21 +986,51 @@ offline-DI mechanism this replaced.
   which was cheap to restart) — live is a continuous session tied to the
   chosen amp capture, independent of the current browse view.
 
-**Deliberately NOT built, real gaps not oversights:**
+**Two-IR blend — now built, in BOTH NAM mode and IR mode:**
 
-1. **Two-IR blend.** `wireIr()`/`setIr()` still wire one cabinet at a time.
-   Blending two IRs (crossfade via two parallel convolver+gain branches
-   summed into the existing wet bus) is unbuilt — the tray's up-to-8
-   selection could supply the two blend slots, but nothing wires that yet.
-2. **No gate/EQ/delay/reverb/chorus/device picker** in `IrLiveTab.tsx` —
-   `PlayerPanel.tsx`'s full Live mode has all of these; the new hook passes
-   only `modelJson` to `LiveEngine.start()`, leaving everything else at
-   `LiveEngine`'s own defaults (all off). Shipped this way on purpose to get
-   the core "click an IR, hear it live" loop working first, not because
+`LiveEngine` (`utils/liveEngine.ts`) gained a second cabinet slot:
+
+- `convolverA/wetGainA` (renamed from the original single `convolver`/
+  `wetGain`) and new `convolverB/wetGainB`, both summed into the same shared
+  `dryGain` — `worklet -> convolverA -> wetGainA -+`, `worklet -> convolverB
+  -> wetGainB -+`, `worklet -> dryGain -+`, all three feeding `fxInput`.
+- `setIrSlot('A'|'B', ir)` — same fade-out/rebuild/fade-in dance the
+  original `setIr()` used, now parameterized by slot; rebuilds both slots
+  from `this.irA`/`this.irB` (`wireCabinets()`) so a slot-A change never
+  disturbs whatever's loaded in slot B.
+- `setBlend(0..1)` — 0 = A only, 1 = B only, in between = crossfaded. A pure
+  gain ramp on `wetGainA`/`wetGainB`, no rebuild, so it's instant and
+  click-free (unlike an actual IR change in either slot).
+- `setIr(ir)` kept as a back-compat alias (`setIrSlot('A', ir)` + blend
+  forced to 0) — every pre-existing caller (both apps, before this change)
+  keeps working completely unchanged.
+
+**IR mode** (`useIrLiveAudition.ts`, `IrLiveTab.tsx`, `IrModeShell.tsx`):
+`playItem(item, slot)` defaults to slot A (a row's plain play button); the
+row context menu gained "Audition Live — Slot A" / "— Slot B (blend)"; the
+Live tab shows both slots' loaded IR name plus an A/B blend slider. Row
+highlighting distinguishes slot A (accent color) from slot B (sky blue).
+
+**NAM mode** (`PlayerPanel.tsx`): a new "Second cabinet (blend) — Live only"
+sub-section under the existing Cab IR picker — a second `IrPicker` for slot
+B plus the same blend slider, visible only in Live mode (the offline
+Preview render still only ever uses slot A/`irPath`, unchanged — blending
+in the offline convolution path is a separate, unbuilt piece). Session-only
+state (`irBPath`/`irBlend`), deliberately not persisted into rig
+presets/snapshots — it's an audition aid layered on top of the saved rig,
+not part of it.
+
+**Still not built, real gaps not oversights:**
+
+1. **No gate/EQ/delay/reverb/chorus/device picker** in `IrLiveTab.tsx` —
+   `PlayerPanel.tsx`'s full Live mode has all of these; the IR-mode hook
+   passes only `modelJson` to `LiveEngine.start()`, leaving everything else
+   at `LiveEngine`'s own defaults (all off). Shipped this way on purpose to
+   get the core "click an IR, hear it live" loop working first, not because
    `LiveEngine` can't support them — it already does, for NAM mode.
-3. **Cross-tree architecture gap (still real, still unresolved).**
+2. **Cross-tree architecture gap (still real, still unresolved).**
    `AppRoot.tsx` renders NAM mode (`App.tsx`) and IR mode (`IrModeShell.tsx`)
-   as siblings with no shared state — each mode now owns its own
+   as siblings with no shared state — each mode still owns its own
    independent `LiveEngine` instance (NAM mode's inside `PlayerPanel`, IR
    mode's inside `useIrLiveAudition`). Running both live at once means two
    separate audio contexts/worklets/mic streams contending for the same
@@ -1009,6 +1039,14 @@ offline-DI mechanism this replaced.
    long-term fix (same shape of problem as the already-flagged shared-
    Settings-panel gap) but wasn't attempted here; flagging again so it isn't
    rediscovered from scratch.
+3. **IR-centric Live tab layout — a future plan, not started.** Raised
+   directly: in `IrLiveTab.tsx` today the amp capture picker is the first,
+   most prominent control and the loaded IR is a small text line below it —
+   backwards for a screen whose whole point is auditioning IRs. The IR (and
+   now the two-slot blend) should be the visually dominant element, with the
+   amp capture reduced to a small secondary control (e.g. a corner chip).
+   Not implemented yet — noted here as the next design pass on this tab
+   specifically, separate from the functional two-slot work above.
 
 ### 8c. IR Lab Projects vs. third-party vendor libraries — ingestion (built)
 

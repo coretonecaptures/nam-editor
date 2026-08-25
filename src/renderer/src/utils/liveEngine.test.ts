@@ -88,6 +88,20 @@ describe('setDelay', () => {
   })
 })
 
+describe('setBlend', () => {
+  it('clamps to 0..1, and is a no-op on gain nodes without a running context', () => {
+    const e = engine()
+    e.setBlend(4)
+    expect(e.blend).toBe(1)
+    e.setBlend(-1)
+    expect(e.blend).toBe(0)
+    // No AudioContext exists on a fresh engine — setBlend must not throw reaching for gain nodes
+    // that don't exist yet (e.g. called before start(), or after stop()).
+    expect(() => e.setBlend(0.5)).not.toThrow()
+    expect(e.blend).toBeCloseTo(0.5)
+  })
+})
+
 describe('setReverbMix', () => {
   it('clamps to 0..1', () => {
     const e = engine()

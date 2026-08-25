@@ -5,9 +5,10 @@
  * one, since it monitors real mic/interface input continuously through LiveEngine. This hook does
  * the same thing IR mode was actually asked for: pick an amp capture once (same flow NAM Lab's
  * own Live mode uses — PlayerPanel.tsx:1175), start real-time monitoring through it via LiveEngine,
- * and let each IR's play button hot-swap the cabinet on the ALREADY-RUNNING engine via
- * `LiveEngine.setIr()` (liveEngine.ts:2348 wireIr()) — the exact mechanism NAM Lab's own player
- * already uses when you change cabs mid-session (PlayerPanel.tsx:1288-1304), not a new one.
+ * and let each IR's play button hot-swap a cabinet slot on the ALREADY-RUNNING engine via
+ * `LiveEngine.setIrSlot()` — the same rebuild-with-fade mechanism NAM Lab's own player already
+ * uses when you change cabs mid-session (PlayerPanel.tsx:1288-1304), extended to two slots (A/B)
+ * with a crossfade blend between them, per the "add a second IR slot" ask.
  *
  * Deliberately minimal versus PlayerPanel's full Live mode: no gate/EQ/delay/reverb/chorus, no
  * device picker (system default input/output) — those are real gaps, not overlooked, kept out to
@@ -18,6 +19,8 @@ import { LiveEngine } from '../../utils/liveEngine'
 import { base64ToArrayBuffer } from '../../utils/playerAudio'
 
 const CAPTURE_PATH_KEY = 'nam-lab-ir-mode-live-capture-path'
+
+export type IrLiveSlot = 'A' | 'B'
 
 export interface IrLiveAuditionItem {
   id: string
@@ -33,11 +36,16 @@ export interface IrLiveAuditionApi {
   starting: boolean
   error: string
   outputMeter: number
-  activeItemId: string | null
-  activeItemName: string | null
-  /** Starts monitoring (if not already running) and swaps to this IR — the one action a row's
-   * play button takes, matching the ask ("auto pick the IR block to whatever you click play on"). */
-  playItem: (item: IrLiveAuditionItem) => Promise<void>
+  /** What's currently loaded in each cabinet slot, or null if empty. */
+  slotA: IrLiveAuditionItem | null
+  slotB: IrLiveAuditionItem | null
+  /** 0 = slot A only, 1 = slot B only, in between = crossfaded. */
+  blend: number
+  setBlend: (value: number) => void
+  /** Starts monitoring (if not already running) and loads this IR into the given slot — a row's
+   * plain play button always targets slot A (matching the ask: "auto pick the IR block to
+   * whatever you click play on"); the tray/context menu can target slot B for blending. */
+  playItem: (item: IrLiveAuditionItem, slot?: IrLiveSlot) => Promise<void>
   stop: () => Promise<void>
 }
 
@@ -53,8 +61,9 @@ export function useIrLiveAudition(): IrLiveAuditionApi {
   const [starting, setStarting] = useState(false)
   const [error, setError] = useState('')
   const [outputMeter, setOutputMeter] = useState(0)
-  const [activeItemId, setActiveItemId] = useState<string | null>(null)
-  const [activeItemName, setActiveItemName] = useState<string | null>(null)
+  const [slotA, setSlotA] = useState<IrLiveAuditionItem | null>(null)
+  const [slotB, setSlotB] = useState<IrLiveAuditionItem | null>(null)
+  const [blend, setBlendState] = useState(0)
 
   const engineRef = useRef<LiveEngine | null>(null)
   const decodeCtxRef = useRef<AudioContext | null>(null)
@@ -91,8 +100,9 @@ export function useIrLiveAudition(): IrLiveAuditionApi {
     engineRef.current = null
     setRunning(false)
     setOutputMeter(0)
-    setActiveItemId(null)
-    setActiveItemName(null)
+    setSlotA(null)
+    setSlotB(null)
+    setBlendState(0)
   }, [stopMeterLoop])
 
   const start = useCallback(async (): Promise<LiveEngine | null> => {
@@ -135,7 +145,7 @@ export function useIrLiveAudition(): IrLiveAuditionApi {
   }, [capturePath])
 
   const playItem = useCallback(
-    async (item: IrLiveAuditionItem) => {
+    async (item: IrLiveAuditionItem, slot: IrLiveSlot = 'A') => {
       setError('')
       let engine = engineRef.current
       if (!engine) {
@@ -148,15 +158,21 @@ export function useIrLiveAudition(): IrLiveAuditionApi {
         const decoded = await getDecodeCtx().decodeAudioData(base64ToArrayBuffer(irRes.data))
         const mono = new Float32Array(decoded.length)
         decoded.copyFromChannel(mono, 0, 0)
-        await engine.setIr({ samples: mono, sampleRate: decoded.sampleRate })
-        setActiveItemId(item.id)
-        setActiveItemName(item.display_name)
+        await engine.setIrSlot(slot, { samples: mono, sampleRate: decoded.sampleRate })
+        if (slot === 'A') setSlotA(item)
+        else setSlotB(item)
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
       }
     },
     [start, getDecodeCtx]
   )
+
+  const setBlend = useCallback((value: number) => {
+    const clamped = Math.max(0, Math.min(1, value))
+    setBlendState(clamped)
+    engineRef.current?.setBlend(clamped)
+  }, [])
 
   useEffect(() => {
     return () => {
@@ -179,8 +195,10 @@ export function useIrLiveAudition(): IrLiveAuditionApi {
     starting,
     error,
     outputMeter,
-    activeItemId,
-    activeItemName,
+    slotA,
+    slotB,
+    blend,
+    setBlend,
     playItem,
     stop
   }

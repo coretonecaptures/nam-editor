@@ -566,7 +566,11 @@ export function IrModeShell(): React.ReactElement {
               live.running ? 'border-nm-accent text-nm-accent bg-active-bg' : 'border-field-bd text-nm-text-2 hover:bg-hov'
             }`}
           >
-            {live.starting ? 'Starting…' : live.running ? `● Live — ${live.activeItemName ?? '…'}` : 'Live: off'}
+            {live.starting
+              ? 'Starting…'
+              : live.running
+                ? `● Live — ${live.slotA?.display_name ?? '…'}${live.slotB ? ` / ${live.slotB.display_name}` : ''}`
+                : 'Live: off'}
           </button>
         )}
       </div>
@@ -635,7 +639,9 @@ export function IrModeShell(): React.ReactElement {
               return <div className="h-full border-b border-nm-border-s" />
             }
             const { folder, name } = splitPath(row.relative_path)
-            const isPlaying = live.running && live.activeItemId === row.id
+            const isSlotA = live.running && live.slotA?.id === row.id
+            const isSlotB = live.running && live.slotB?.id === row.id
+            const isPlaying = isSlotA || isSlotB
             const isFocused = focusedIndex === index
             return (
               <div
@@ -652,11 +658,19 @@ export function IrModeShell(): React.ReactElement {
                     e.stopPropagation()
                     setFocusedIndex(index)
                     if (isPlaying) void live.stop()
-                    else void live.playItem({ id: row.id, abs_path: row.abs_path, display_name: row.display_name })
+                    else void live.playItem({ id: row.id, abs_path: row.abs_path, display_name: row.display_name }, 'A')
                   }}
                   disabled={!live.capturePath}
-                  title={live.capturePath ? (isPlaying ? 'Stop live monitoring' : 'Audition this IR live') : 'Set an amp capture in the Live tab first'}
-                  className={`flex-shrink-0 text-base w-5 text-center ${isPlaying ? 'text-nm-accent' : 'text-nm-text-3 hover:text-nm-accent'} disabled:opacity-30`}
+                  title={
+                    live.capturePath
+                      ? isPlaying
+                        ? 'Stop live monitoring'
+                        : 'Audition this IR live (slot A) — right-click for slot B'
+                      : 'Set an amp capture in the Live tab first'
+                  }
+                  className={`flex-shrink-0 text-base w-5 text-center ${
+                    isSlotB ? 'text-sky-500' : isSlotA ? 'text-nm-accent' : 'text-nm-text-3 hover:text-nm-accent'
+                  } disabled:opacity-30`}
                 >
                   {isPlaying ? '■' : '▶'}
                 </button>
@@ -771,6 +785,30 @@ export function IrModeShell(): React.ReactElement {
             className="w-full text-left px-3 py-1.5 hover:bg-hov text-nm-text"
           >
             {trayIds.has(contextMenu.row.id) ? 'Remove from Tray' : 'Add to Tray'}
+          </button>
+          <button
+            onClick={() => {
+              void live.playItem(
+                { id: contextMenu.row.id, abs_path: contextMenu.row.abs_path, display_name: contextMenu.row.display_name },
+                'A'
+              )
+              setContextMenu(null)
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-hov text-nm-text"
+          >
+            Audition Live — Slot A
+          </button>
+          <button
+            onClick={() => {
+              void live.playItem(
+                { id: contextMenu.row.id, abs_path: contextMenu.row.abs_path, display_name: contextMenu.row.display_name },
+                'B'
+              )
+              setContextMenu(null)
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-hov text-nm-text"
+          >
+            Audition Live — Slot B (blend)
           </button>
           <button
             onClick={() => {

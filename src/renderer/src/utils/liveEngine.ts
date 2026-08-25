@@ -557,8 +557,18 @@ export class LiveEngine {
   private gate: AudioWorkletNode | null = null
   private gateSettings: GateSettings = { ...DEFAULT_GATE }
   private gateAvailable = false
-  private convolver: ConvolverNode | null = null
-  private wetGain: GainNode | null = null
+  // Two cabinet slots (A/B) sharing one dry path, so a blend crossfades A<->B without touching
+  // the dry signal at all. "Slot A" is the original single-cabinet path renamed, not a new
+  // concept — setIr()/wireIr() below stay as thin aliases onto slot A so every existing NAM-mode
+  // caller (single cabinet, irMix wet/dry only) keeps working completely unchanged.
+  private convolverA: ConvolverNode | null = null
+  private wetGainA: GainNode | null = null
+  private irMakeupA = 1
+  private convolverB: ConvolverNode | null = null
+  private wetGainB: GainNode | null = null
+  private irMakeupB = 1
+  /** 0 = slot A only, 1 = slot B only, in between = crossfaded. */
+  private irBlend = 0
   private dryGain: GainNode | null = null
   private outputGain: GainNode | null = null
   private analyser: AnalyserNode | null = null
@@ -797,9 +807,8 @@ export class LiveEngine {
    */
   private inputAnalyser: AnalyserNode | null = null
   private inputBuffer: Float32Array<ArrayBuffer> = new Float32Array(4096)
-  /** Gain compensating the active IR's own level; see where it is computed in wireIr(). */
-  private irMakeup = 1
-  /** Wet/dry blend, kept so a cabinet swap rebuilds at the mix already set. */
+  /** Wet/dry blend (both slots combined vs. dry), kept so a cabinet swap rebuilds at the mix
+   * already set. Independent of irBlend, which is A-vs-B within the wet signal. */
   private irMix = 1
   /**
    * Loudness-normalization gain for this capture, and the listener's volume trim.
@@ -1024,7 +1033,10 @@ export class LiveEngine {
       if (options.reverbIr) await this.setReverbIr(options.reverbIr)
 
       this.irMix = Math.max(0, Math.min(1, options.irMix ?? 1))
-      await this.wireIr(options.ir ?? null)
+      this.irA = options.ir ?? null
+      this.irB = null
+      this.irBlend = 0
+      await this.wireCabinets()
 
       // Post-everything, so the meter shows what actually reaches the speakers.
       this.analyser = ctx.createAnalyser()
@@ -2279,38 +2291,26 @@ export class LiveEngine {
    *
    * Assumes the caller has already disconnected the worklet's outputs.
    */
-  private async wireIr(ir: { samples: Float32Array; sampleRate: number } | null): Promise<void> {
+  /** Decoded IR held per slot — kept so setBlend() alone never needs to touch a convolver, only
+   * the two slots' wetGain values. Rebuilt from these two whenever a slot's IR actually changes. */
+  private irA: { samples: Float32Array; sampleRate: number } | null = null
+  private irB: { samples: Float32Array; sampleRate: number } | null = null
+
+  private async buildCabinetSlot(
+    ir: { samples: Float32Array; sampleRate: number } | null
+  ): Promise<{ convolver: ConvolverNode; wetGain: GainNode; makeup: number } | null> {
     const ctx = this.ctx
-    if (!ctx || !this.worklet || !this.fxInput) return
+    if (!ctx || !this.worklet || !this.fxInput || !ir || ir.samples.length === 0) return null
 
-    // Drop any previous cabinet stage.
-    for (const node of [this.convolver, this.wetGain, this.dryGain]) {
-      try {
-        node?.disconnect()
-      } catch {
-        // Already disconnected.
-      }
-    }
-    this.convolver = null
-    this.wetGain = null
-    this.dryGain = null
-    this.irMakeup = 1
-
-    if (!ir || ir.samples.length === 0 || this.irMix <= 0) {
-      this.worklet.connect(this.fxInput)
-      return
-    }
-
-    // Parallel wet/dry so cab amount stays blendable, matching the offline path.
-    this.convolver = ctx.createConvolver()
-    this.convolver.normalize = false
+    const convolver = ctx.createConvolver()
+    convolver.normalize = false
 
     // Always route through resampleForContext: it short-circuits when the rates match, and
     // returns a fresh ArrayBuffer-backed array, which copyToChannel's typing requires.
     const irSamples = await resampleForContext(ir.samples, ir.sampleRate, ctx.sampleRate)
     const irBuffer = ctx.createBuffer(1, irSamples.length, ctx.sampleRate)
     irBuffer.copyToChannel(irSamples, 0)
-    this.convolver.buffer = irBuffer
+    convolver.buffer = irBuffer
 
     // Compensate for the IR's own gain.
     //
@@ -2323,29 +2323,77 @@ export class LiveEngine {
     // normalize=true approximates, but applied where we can see and adjust it.
     let irEnergy = 0
     for (let i = 0; i < irSamples.length; i++) irEnergy += irSamples[i] * irSamples[i]
-    this.irMakeup = irEnergy > 0 ? 1 / Math.sqrt(irEnergy) : 1
+    const makeup = irEnergy > 0 ? 1 / Math.sqrt(irEnergy) : 1
 
-    this.wetGain = ctx.createGain()
-    this.wetGain.gain.value = this.irMix * this.irMakeup
+    const wetGain = ctx.createGain()
+    this.worklet.connect(convolver)
+    convolver.connect(wetGain)
+    wetGain.connect(this.fxInput)
+    return { convolver, wetGain, makeup }
+  }
+
+  /** Sets each slot's wetGain (and the shared dryGain) from the current irMix/irBlend — the only
+   * thing setBlend()/setIrMix() need to touch, no rebuild. */
+  private applyCabinetGains(): void {
+    if (this.wetGainA) this.wetGainA.gain.value = this.irMix * this.irMakeupA * (1 - this.irBlend)
+    if (this.wetGainB) this.wetGainB.gain.value = this.irMix * this.irMakeupB * this.irBlend
+    if (this.dryGain) this.dryGain.gain.value = 1 - this.irMix
+  }
+
+  /** Tears down and rebuilds both cabinet slots from this.irA/this.irB — same all-or-nothing
+   * rebuild style the original single-slot wireIr() used, just parameterized over two IRs
+   * instead of one. Assumes the caller has already disconnected the worklet's outputs. */
+  private async wireCabinets(): Promise<void> {
+    const ctx = this.ctx
+    if (!ctx || !this.worklet || !this.fxInput) return
+
+    for (const node of [this.convolverA, this.wetGainA, this.convolverB, this.wetGainB, this.dryGain]) {
+      try {
+        node?.disconnect()
+      } catch {
+        // Already disconnected.
+      }
+    }
+    this.convolverA = null
+    this.wetGainA = null
+    this.irMakeupA = 1
+    this.convolverB = null
+    this.wetGainB = null
+    this.irMakeupB = 1
+    this.dryGain = null
+
+    if ((!this.irA && !this.irB) || this.irMix <= 0) {
+      this.worklet.connect(this.fxInput)
+      return
+    }
+
+    const [a, b] = await Promise.all([this.buildCabinetSlot(this.irA), this.buildCabinetSlot(this.irB)])
+    if (a) {
+      this.convolverA = a.convolver
+      this.wetGainA = a.wetGain
+      this.irMakeupA = a.makeup
+    }
+    if (b) {
+      this.convolverB = b.convolver
+      this.wetGainB = b.wetGain
+      this.irMakeupB = b.makeup
+    }
+
     this.dryGain = ctx.createGain()
-    this.dryGain.gain.value = 1 - this.irMix
-
-    this.worklet.connect(this.convolver)
-    this.convolver.connect(this.wetGain)
-    this.wetGain.connect(this.fxInput)
-
     this.worklet.connect(this.dryGain)
     this.dryGain.connect(this.fxInput)
+
+    this.applyCabinetGains()
   }
 
   /**
-   * Swap the cabinet while playing.
+   * Swap a cabinet slot while playing.
    *
    * Rewiring an audio graph mid-stream steps the signal discontinuously, which is an audible
    * click through headphones, so the output is faded down first and back up after. The fade is
    * short enough to read as a crossfade between cabs rather than a gap.
    */
-  async setIr(ir: { samples: Float32Array; sampleRate: number } | null): Promise<void> {
+  private async rebuildCabinetsWithFade(): Promise<void> {
     const ctx = this.ctx
     if (!ctx || !this.worklet || !this.fxInput || !this.outputGain) return
 
@@ -2366,13 +2414,56 @@ export class LiveEngine {
       // Already disconnected.
     }
     // The tap is on the source, not the worklet, so it survives this rewiring untouched.
-    await this.wireIr(ir)
+    await this.wireCabinets()
     if (this.ctx !== ctx) return
 
     const resumeAt = ctx.currentTime
     gain.cancelScheduledValues(resumeAt)
     gain.setValueAtTime(gain.value, resumeAt)
     gain.linearRampToValueAtTime(this.normalizeGain * this.volume, resumeAt + FADE)
+  }
+
+  /** Back-compat single-cabinet path — every existing NAM-mode caller (one cab, irMix wet/dry
+   * only). Equivalent to setIrSlot('A', ir) with slot B cleared and blend forced to 0, so a
+   * caller that never knew about slot B keeps behaving exactly as before. */
+  async setIr(ir: { samples: Float32Array; sampleRate: number } | null): Promise<void> {
+    this.irA = ir
+    this.irB = null
+    this.irBlend = 0
+    await this.rebuildCabinetsWithFade()
+  }
+
+  /** Loads an IR into one of the two cabinet slots without disturbing the other — the blend
+   * control (setBlend) then crossfades between whatever is loaded in each. */
+  async setIrSlot(slot: 'A' | 'B', ir: { samples: Float32Array; sampleRate: number } | null): Promise<void> {
+    if (slot === 'A') this.irA = ir
+    else this.irB = ir
+    await this.rebuildCabinetsWithFade()
+  }
+
+  /** Crossfades slot A/B (0 = A only, 1 = B only) — a pure gain ramp, no rewiring, so it's
+   * instant and click-free unlike a slot's IR actually changing. */
+  setBlend(value: number): void {
+    this.irBlend = Math.max(0, Math.min(1, value))
+    if (!this.ctx) return
+    const now = this.ctx.currentTime
+    const RAMP = 0.05
+    if (this.wetGainA) {
+      const g = this.wetGainA.gain
+      g.cancelScheduledValues(now)
+      g.setValueAtTime(g.value, now)
+      g.linearRampToValueAtTime(this.irMix * this.irMakeupA * (1 - this.irBlend), now + RAMP)
+    }
+    if (this.wetGainB) {
+      const g = this.wetGainB.gain
+      g.cancelScheduledValues(now)
+      g.setValueAtTime(g.value, now)
+      g.linearRampToValueAtTime(this.irMix * this.irMakeupB * this.irBlend, now + RAMP)
+    }
+  }
+
+  get blend(): number {
+    return this.irBlend
   }
 
   /** Current output peak, 0..1. Cheap enough to poll from an animation frame. */
@@ -2524,13 +2615,11 @@ export class LiveEngine {
     this.outputGain.gain.linearRampToValueAtTime(target, now + 0.015)
   }
 
-  /** Change cabinet blend without rebuilding the graph. */
+  /** Change wet/dry cabinet mix without rebuilding the graph. */
   setIrMix(mix: number): void {
-    const wet = Math.max(0, Math.min(1, mix))
-    this.irMix = wet
-    // Keep the IR makeup applied, or sliding the mix would reintroduce the level jump.
-    if (this.wetGain) this.wetGain.gain.value = wet * this.irMakeup
-    if (this.dryGain) this.dryGain.gain.value = 1 - wet
+    this.irMix = Math.max(0, Math.min(1, mix))
+    // Keep each slot's makeup gain applied, or sliding the mix would reintroduce the level jump.
+    this.applyCabinetGains()
   }
 
   async stop(): Promise<void> {
@@ -2620,8 +2709,10 @@ export class LiveEngine {
       this.tremStdSel,
       this.tremHarmSel,
       this.tremOut,
-      this.convolver,
-      this.wetGain,
+      this.convolverA,
+      this.wetGainA,
+      this.convolverB,
+      this.wetGainB,
       this.dryGain,
       this.outputGain,
       this.analyser,
@@ -2642,13 +2733,19 @@ export class LiveEngine {
     this.worklet = null
     this.preWorklet = null
     this.preGainNode = null
-    this.convolver = null
-    this.wetGain = null
+    this.convolverA = null
+    this.wetGainA = null
+    this.irMakeupA = 1
+    this.convolverB = null
+    this.wetGainB = null
+    this.irMakeupB = 1
+    this.irA = null
+    this.irB = null
+    this.irBlend = 0
     this.dryGain = null
     this.outputGain = null
     this.analyser = null
     this.inputAnalyser = null
-    this.irMakeup = 1
     this.irMix = 1
     this.normalizeGain = 1
     this.volume = 1

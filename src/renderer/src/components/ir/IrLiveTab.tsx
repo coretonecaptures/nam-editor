@@ -71,12 +71,42 @@ export function IrLiveTab({ live }: { live: IrLiveAuditionApi }): React.ReactEle
             />
           </div>
           <div className="text-xs text-nm-text-3 mt-1 truncate">
-            {live.starting
-              ? 'Starting…'
-              : live.running
-                ? `Live — ${live.activeItemName ?? 'no IR yet'}`
-                : 'Not running'}
+            {live.starting ? 'Starting…' : live.running ? 'Live' : 'Not running'}
           </div>
+        </div>
+      </div>
+
+      <div>
+        <div className="text-xs text-nm-text-2 mb-1">Cabinet slots</div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="rounded border border-nm-border-s p-2">
+            <div className="text-[11px] text-nm-accent mb-0.5">Slot A</div>
+            <div className="text-xs text-nm-text truncate" title={live.slotA?.display_name ?? undefined}>
+              {live.slotA?.display_name ?? 'Empty — play an IR to load it'}
+            </div>
+          </div>
+          <div className="rounded border border-nm-border-s p-2">
+            <div className="text-[11px] text-sky-500 mb-0.5">Slot B</div>
+            <div className="text-xs text-nm-text truncate" title={live.slotB?.display_name ?? undefined}>
+              {live.slotB?.display_name ?? 'Empty — right-click an IR → Slot B'}
+            </div>
+          </div>
+        </div>
+        <div className="mt-2">
+          <div className="flex items-center justify-between text-[11px] text-nm-text-3 mb-1">
+            <span>A</span>
+            <span>Blend</span>
+            <span>B</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={Math.round(live.blend * 100)}
+            onChange={(e) => live.setBlend(Number(e.target.value) / 100)}
+            disabled={!live.slotA && !live.slotB}
+            className="w-full accent-nm-accent disabled:opacity-40"
+          />
         </div>
       </div>
 
