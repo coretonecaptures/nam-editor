@@ -39,16 +39,16 @@ export default function AppRoot(): React.ReactElement {
         'hiddenInset' instead, which puts traffic-light buttons top-LEFT. top-10 clears the
         Windows overlay height (32px) with margin and is nowhere near the Mac traffic lights.
       */}
-      <div className="fixed top-10 right-3 z-[100] flex rounded-md overflow-hidden border border-gray-300 dark:border-gray-700 shadow-sm text-xs">
+      <div className="fixed top-10 right-3 z-[100] flex rounded-md overflow-hidden border border-field-bd shadow-sm text-xs">
         <button
           onClick={() => setMode('nam')}
-          className={`px-2.5 py-1 ${mode === 'nam' ? 'bg-indigo-600 text-white' : 'bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+          className={`px-2.5 py-1 ${mode === 'nam' ? 'bg-nm-accent text-accent-fg' : 'bg-field-bg text-nm-text-2 hover:bg-hov'}`}
         >
           NAM
         </button>
         <button
           onClick={() => setMode('ir')}
-          className={`px-2.5 py-1 ${mode === 'ir' ? 'bg-indigo-600 text-white' : 'bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+          className={`px-2.5 py-1 ${mode === 'ir' ? 'bg-nm-accent text-accent-fg' : 'bg-field-bg text-nm-text-2 hover:bg-hov'}`}
         >
           IR
         </button>

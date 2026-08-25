@@ -499,6 +499,12 @@ declare global {
         imported_at: string
       } | null>
       irLibraryDeleteFolderDocument: (documentId: number) => Promise<{ success: boolean }>
+      irLibraryAddToTray: (itemId: string) => Promise<{ success: boolean; reason?: string }>
+      irLibraryRemoveFromTray: (itemId: string) => Promise<{ success: boolean }>
+      irLibraryListTray: () => Promise<Array<{ id: string; relative_path: string; display_name: string; abs_path: string; position: number }>>
+      irLibraryIsInTray: (itemId: string) => Promise<boolean>
+      irLabConnectorAvailable: () => Promise<boolean>
+      irLibrarySendTrayToIrLab: () => Promise<{ success: boolean; reason?: string }>
       listWavSiblings: (filePath: string) => Promise<{ files: string[]; error?: string }>
       hashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
       hashFilesWithoutMetadata: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>

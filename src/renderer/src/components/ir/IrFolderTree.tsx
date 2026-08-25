@@ -45,7 +45,7 @@ function buildTree(rows: FolderRow[]): TreeNode[] {
 function FolderIcon({ expanded, isSelected }: { expanded: boolean; isSelected: boolean }): React.ReactElement {
   return (
     <svg
-      className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? 'text-indigo-500' : 'text-gray-500 dark:text-gray-400'}`}
+      className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? 'text-nm-accent' : 'text-nm-text-2'}`}
       fill={expanded ? 'currentColor' : 'none'}
       viewBox="0 0 24 24"
       stroke="currentColor"
@@ -80,7 +80,7 @@ function TreeRow({
         onClick={() => onSelect(node.id, node.name)}
         style={{ paddingLeft: `${depth * 14 + 6}px` }}
         className={`flex items-center gap-1.5 py-0.5 pr-2 text-xs cursor-pointer rounded ${
-          isSelected ? 'bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300' : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+          isSelected ? 'bg-active-bg text-nm-accent' : 'hover:bg-hov text-nm-text'
         }`}
       >
         {hasChildren ? (
@@ -89,7 +89,7 @@ function TreeRow({
               e.stopPropagation()
               setExpanded((v) => !v)
             }}
-            className="w-3 flex-shrink-0 text-gray-400"
+            className="w-3 flex-shrink-0 text-nm-text-3"
           >
             {expanded ? '▾' : '▸'}
           </button>
@@ -141,10 +141,10 @@ export function IrFolderTree({
   const tree = useMemo(() => buildTree(rows), [rows])
 
   if (libraryRootId == null) {
-    return <div className="p-3 text-xs text-gray-400 dark:text-gray-600">Add a library folder to see its structure.</div>
+    return <div className="p-3 text-xs text-nm-text-3">Add a library folder to see its structure.</div>
   }
   if (tree.length === 0) {
-    return <div className="p-3 text-xs text-gray-400 dark:text-gray-600">No subfolders.</div>
+    return <div className="p-3 text-xs text-nm-text-3">No subfolders.</div>
   }
 
   return (

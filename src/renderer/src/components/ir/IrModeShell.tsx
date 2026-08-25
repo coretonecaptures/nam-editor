@@ -35,7 +35,7 @@ const PAGE_SIZE = 200
 function confidenceDotClass(source: string | null): string {
   switch (source) {
     case 'vendor_parser':
-      return 'bg-indigo-400'
+      return 'bg-nm-accent'
     case 'filename_inferred':
       return 'bg-gray-400 dark:bg-gray-600'
     default:
@@ -48,7 +48,7 @@ function FieldBadge({ label, value, source }: { label: string; value: string | n
   return (
     <span
       title={`${label}: ${value} (${source === 'vendor_parser' ? 'vendor parser' : source === 'filename_inferred' ? 'filename guess' : 'unknown source'})`}
-      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-400"
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-panel-2 text-[11px] text-nm-text-2"
     >
       <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${confidenceDotClass(source)}`} />
       {value}
@@ -100,6 +100,20 @@ export function IrModeShell(): React.ReactElement {
     const saved = Number(localStorage.getItem('nam-lab-ir-tree-width'))
     return Number.isFinite(saved) && saved > 0 ? saved : 200
   })
+  // Tray + Send to IR Lab (plan section 9/Phase 6). trayIds is the fast per-row membership
+  // lookup; trayRows is the ordered list the strip renders — kept in IrModeShell rather than a
+  // separate component since both the row context menu and the strip need to read/mutate the
+  // same state.
+  const [trayIds, setTrayIds] = useState<Set<string>>(new Set())
+  const [trayRows, setTrayRows] = useState<Array<{ id: string; display_name: string; abs_path: string }>>([])
+  const [connectorAvailable, setConnectorAvailable] = useState(false)
+  const [sendingTray, setSendingTray] = useState(false)
+  const [trayError, setTrayError] = useState<string | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; row: IrItemRow } | null>(null)
+  const [panelWidth, setPanelWidth] = useState(() => {
+    const saved = Number(localStorage.getItem('nam-lab-ir-panel-width'))
+    return Number.isFinite(saved) && saved > 0 ? saved : 256
+  })
   // Bumped on every filter/search change so a query response that resolves AFTER a newer filter
   // was already selected gets thrown away instead of populating the cache with stale-context rows
   // (e.g. a slow "all IRs" query resolving after the user already clicked into a folder).
@@ -134,6 +148,60 @@ export function IrModeShell(): React.ReactElement {
       if (p.done) setScanning(false)
     })
   }, [])
+
+  const refreshTray = useCallback(() => {
+    window.api.irLibraryListTray().then((rows) => {
+      setTrayRows(rows)
+      setTrayIds(new Set(rows.map((r) => r.id)))
+    })
+  }, [])
+
+  useEffect(() => {
+    refreshTray()
+    window.api.irLabConnectorAvailable().then(setConnectorAvailable)
+  }, [refreshTray])
+
+  const toggleTray = useCallback(
+    async (row: IrItemRow) => {
+      if (trayIds.has(row.id)) {
+        await window.api.irLibraryRemoveFromTray(row.id)
+      } else {
+        const result = await window.api.irLibraryAddToTray(row.id)
+        if (!result.success) {
+          setTrayError(result.reason ?? 'Could not add to tray')
+          setTimeout(() => setTrayError(null), 3000)
+        }
+      }
+      refreshTray()
+    },
+    [trayIds, refreshTray]
+  )
+
+  const sendTrayToIrLab = useCallback(async () => {
+    setSendingTray(true)
+    setTrayError(null)
+    try {
+      const result = await window.api.irLibrarySendTrayToIrLab()
+      if (!result.success) setTrayError(result.reason ?? 'Failed to send to IR Lab')
+    } finally {
+      setSendingTray(false)
+    }
+  }, [])
+
+  // Context menu: dismiss on outside click or Escape.
+  useEffect(() => {
+    if (!contextMenu) return
+    const dismiss = (): void => setContextMenu(null)
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setContextMenu(null)
+    }
+    window.addEventListener('click', dismiss)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('click', dismiss)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [contextMenu])
 
   // New search, folder filter, or a completed scan invalidates every cached index — the same
   // offset can now point at a different row.
@@ -292,14 +360,38 @@ export function IrModeShell(): React.ReactElement {
     [treeWidth]
   )
 
+  const onPanelDragStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      const startX = e.clientX
+      const startWidth = panelWidth
+      let latest = panelWidth
+      const onMove = (ev: MouseEvent): void => {
+        // Panel is on the right, so dragging LEFT (negative delta) widens it — inverse of the
+        // tree handle's sign.
+        const next = Math.min(480, Math.max(180, startWidth - (ev.clientX - startX)))
+        latest = next
+        setPanelWidth(next)
+      }
+      const onUp = (): void => {
+        localStorage.setItem('nam-lab-ir-panel-width', String(latest))
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+      }
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
+    },
+    [panelWidth]
+  )
+
   return (
-    <div className="flex flex-col h-screen bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 overflow-hidden">
-      <div className="flex items-center gap-3 px-4 py-2 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
-        <h1 className="text-sm font-semibold text-gray-500 dark:text-gray-400">IR Library</h1>
+    <div className="flex flex-col h-screen bg-app-bg text-nm-text overflow-hidden">
+      <div className="flex items-center gap-3 px-4 py-2 border-b border-nm-border flex-shrink-0">
+        <h1 className="text-sm font-semibold text-nm-text-2">IR Library</h1>
         <button
           onClick={handleAddFolder}
           disabled={scanning}
-          className="px-3 py-1 text-xs rounded bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white"
+          className="px-3 py-1 text-xs rounded bg-nm-accent hover:opacity-90 disabled:opacity-50 text-accent-fg"
         >
           {scanning ? 'Scanning…' : 'Add Library Folder'}
         </button>
@@ -308,15 +400,15 @@ export function IrModeShell(): React.ReactElement {
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             placeholder="Search…"
-            className="flex-1 max-w-md px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900"
+            className="flex-1 max-w-md px-2 py-1 text-sm rounded border border-field-bd bg-field-bg"
           />
         )}
-        {hasAnyRoot && <span className="text-xs text-gray-400 dark:text-gray-600 flex-shrink-0">{total.toLocaleString()} IRs</span>}
+        {hasAnyRoot && <span className="text-xs text-nm-text-3 flex-shrink-0">{total.toLocaleString()} IRs</span>}
         {hasAnyRoot && (
           <button
             onClick={audition.pickDiClip}
             title={audition.diPath ?? 'Pick a DI clip to audition IRs against'}
-            className="ml-auto px-2.5 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 flex-shrink-0"
+            className="ml-auto px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov flex-shrink-0"
           >
             {audition.diPath ? `DI: ${audition.diPath.split(/[\\/]/).pop()}` : 'Pick DI clip…'}
           </button>
@@ -329,7 +421,7 @@ export function IrModeShell(): React.ReactElement {
       )}
 
       {scanning && scanProgress && (
-        <div className="px-4 py-1 text-xs text-gray-500 dark:text-gray-400 bg-indigo-50 dark:bg-indigo-950/40 flex-shrink-0">
+        <div className="px-4 py-1 text-xs text-nm-text-2 bg-active-bg flex-shrink-0">
           Scanning… {scanProgress.filesSeen.toLocaleString()} files, {scanProgress.foldersSeen.toLocaleString()} folders,{' '}
           {(scanProgress.elapsedMs / 1000).toFixed(1)}s
         </div>
@@ -338,20 +430,20 @@ export function IrModeShell(): React.ReactElement {
         <div className="px-4 py-1 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 flex-shrink-0">{scanError}</div>
       )}
       {selectedFolderId != null && (
-        <div className="flex items-center gap-2 px-4 py-1 text-xs bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
-          <span className="text-gray-500 dark:text-gray-400">
-            Showing: <span className="font-medium text-gray-700 dark:text-gray-300">{selectedFolderName}</span> and its subfolders
+        <div className="flex items-center gap-2 px-4 py-1 text-xs bg-panel-2 border-b border-nm-border flex-shrink-0">
+          <span className="text-nm-text-2">
+            Showing: <span className="font-medium text-nm-text">{selectedFolderName}</span> and its subfolders
           </span>
-          <button onClick={clearFolderFilter} className="text-indigo-600 dark:text-indigo-400 hover:underline">
+          <button onClick={clearFolderFilter} className="text-nm-accent hover:underline">
             Clear
           </button>
         </div>
       )}
 
       {!hasAnyRoot && !scanning ? (
-        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center p-8 text-gray-500 dark:text-gray-500">
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center p-8 text-nm-text-2">
           <p className="text-sm">No IR library folders added yet.</p>
-          <button onClick={handleAddFolder} className="px-3 py-1.5 text-sm rounded bg-indigo-600 hover:bg-indigo-500 text-white">
+          <button onClick={handleAddFolder} className="px-3 py-1.5 text-sm rounded bg-nm-accent hover:opacity-90 text-accent-fg">
             Add Library Folder
           </button>
         </div>
@@ -366,7 +458,7 @@ export function IrModeShell(): React.ReactElement {
           </div>
           <div
             onMouseDown={onTreeDragStart}
-            className="w-1 flex-shrink-0 cursor-col-resize hover:bg-indigo-500/40 active:bg-indigo-500/60 transition-colors"
+            className="w-1 flex-shrink-0 cursor-col-resize hover:bg-nm-accent/40 active:bg-nm-accent/60 transition-colors"
           />
           <VirtualList
             total={total}
@@ -376,7 +468,7 @@ export function IrModeShell(): React.ReactElement {
             renderRow={(index) => {
             const row = cacheRef.current.get(index)
             if (!row) {
-              return <div className="h-full border-b border-gray-100 dark:border-gray-900" />
+              return <div className="h-full border-b border-nm-border-s" />
             }
             const { folder, name } = splitPath(row.relative_path)
             const isPlaying = audition.playingId === row.id
@@ -384,7 +476,12 @@ export function IrModeShell(): React.ReactElement {
             return (
               <div
                 onClick={() => setFocusedIndex(index)}
-                className={`h-full flex items-center gap-3 px-4 border-b border-gray-100 dark:border-gray-900 hover:bg-gray-50 dark:hover:bg-gray-900/50 ${isFocused ? 'bg-indigo-50 dark:bg-indigo-950/30' : ''}`}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  setFocusedIndex(index)
+                  setContextMenu({ x: e.clientX, y: e.clientY, row })
+                }}
+                className={`h-full flex items-center gap-3 px-4 border-b border-nm-border-s hover:bg-hov ${isFocused ? 'bg-active-bg' : ''}`}
               >
                 <button
                   onClick={(e) => {
@@ -395,7 +492,7 @@ export function IrModeShell(): React.ReactElement {
                   }}
                   disabled={!audition.diPath}
                   title={audition.diPath ? (isPlaying ? 'Stop' : 'Audition this IR') : 'Pick a DI clip first'}
-                  className={`flex-shrink-0 text-base w-5 text-center ${isPlaying ? 'text-indigo-500' : 'text-gray-400 dark:text-gray-600 hover:text-indigo-400'} disabled:opacity-30`}
+                  className={`flex-shrink-0 text-base w-5 text-center ${isPlaying ? 'text-nm-accent' : 'text-nm-text-3 hover:text-nm-accent'} disabled:opacity-30`}
                 >
                   {isPlaying ? '■' : '▶'}
                 </button>
@@ -405,13 +502,13 @@ export function IrModeShell(): React.ReactElement {
                     toggleFavorite(row, index)
                   }}
                   title={row.is_favorite ? 'Remove favorite' : 'Add favorite'}
-                  className={`flex-shrink-0 text-lg ${row.is_favorite ? 'text-amber-400' : 'text-gray-300 dark:text-gray-700 hover:text-amber-300'}`}
+                  className={`flex-shrink-0 text-lg ${row.is_favorite ? 'text-amber-400' : 'text-nm-text-3 hover:text-amber-300'}`}
                 >
                   {row.is_favorite ? '★' : '☆'}
                 </button>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm truncate">{name}</div>
-                  {folder && <div className="text-xs text-gray-400 dark:text-gray-600 truncate">{folder}</div>}
+                  {folder && <div className="text-xs text-nm-text-3 truncate">{folder}</div>}
                   {(row.manufacturer || row.cabinet || row.speaker || row.microphone) && (
                     <div className="flex items-center gap-1 mt-0.5 overflow-hidden">
                       <FieldBadge label="Manufacturer" value={row.manufacturer} source={row.manufacturer_source} />
@@ -426,22 +523,95 @@ export function IrModeShell(): React.ReactElement {
                     <button
                       key={n}
                       onClick={() => setRating(row, index, n)}
-                      className={`text-sm ${row.rating != null && n <= row.rating ? 'text-amber-400' : 'text-gray-300 dark:text-gray-700 hover:text-amber-300'}`}
+                      className={`text-sm ${row.rating != null && n <= row.rating ? 'text-amber-400' : 'text-nm-text-3 hover:text-amber-300'}`}
                     >
                       ★
                     </button>
                   ))}
                 </div>
-                <div className="flex-shrink-0 text-xs text-gray-400 dark:text-gray-600 w-14 text-right">{formatBytes(row.file_size)}</div>
+                <div className="flex-shrink-0 text-xs text-nm-text-3 w-14 text-right">{formatBytes(row.file_size)}</div>
               </div>
             )
           }}
           />
           {selectedFolderId != null && (
-            <div className="w-64 flex-shrink-0 border-l border-gray-200 dark:border-gray-800 overflow-y-auto">
-              <IrFolderPanel folderId={selectedFolderId} />
-            </div>
+            <>
+              <div
+                onMouseDown={onPanelDragStart}
+                className="w-1 flex-shrink-0 cursor-col-resize hover:bg-nm-accent/40 active:bg-nm-accent/60 transition-colors"
+              />
+              <div style={{ width: panelWidth }} className="flex-shrink-0 overflow-y-auto">
+                <IrFolderPanel folderId={selectedFolderId} />
+              </div>
+            </>
           )}
+        </div>
+      )}
+
+      {trayRows.length > 0 && (
+        <div className="flex items-center gap-2 px-4 py-2 border-t border-nm-border bg-panel-2 flex-shrink-0">
+          <span className="text-xs text-nm-text-2 flex-shrink-0">Tray ({trayRows.length}/8)</span>
+          <div className="flex items-center gap-1 flex-1 min-w-0 overflow-x-auto">
+            {trayRows.map((row) => (
+              <span
+                key={row.id}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-field-bg border border-field-bd text-xs whitespace-nowrap flex-shrink-0"
+              >
+                {row.display_name}
+                <button
+                  onClick={() => window.api.irLibraryRemoveFromTray(row.id).then(refreshTray)}
+                  className="text-nm-text-3 hover:text-red-500"
+                  title="Remove from tray"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+          <button
+            onClick={sendTrayToIrLab}
+            disabled={!connectorAvailable || sendingTray}
+            title={connectorAvailable ? 'Send this tray to IR Lab’s Blender' : 'IR Lab connector not configured in this build'}
+            className="px-3 py-1 text-xs rounded bg-nm-accent hover:opacity-90 disabled:opacity-40 text-accent-fg flex-shrink-0"
+          >
+            {sendingTray ? 'Sending…' : 'Send to IR Lab'}
+          </button>
+        </div>
+      )}
+      {trayError && (
+        <div className="px-4 py-1 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 flex-shrink-0">{trayError}</div>
+      )}
+
+      {contextMenu && (
+        <div
+          style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x, zIndex: 200 }}
+          onClick={(e) => e.stopPropagation()}
+          className="min-w-[180px] py-1 rounded border border-nm-border bg-panel shadow-lg text-xs"
+        >
+          <button
+            onClick={() => {
+              window.api.revealFile(contextMenu.row.abs_path)
+              setContextMenu(null)
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-hov text-nm-text"
+          >
+            Reveal in Folder
+          </button>
+          <button
+            onClick={() => {
+              toggleTray(contextMenu.row)
+              setContextMenu(null)
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-hov text-nm-text"
+          >
+            {trayIds.has(contextMenu.row.id) ? 'Remove from Tray' : 'Add to Tray'}
+          </button>
+          <div className="border-t border-nm-border-s my-1" />
+          {/* Placeholder for the rest of section 12's roadmap (tags, collections, IR Lab handoff
+              beyond blend) — a stub row rather than inventing menu items that don't do anything,
+              per the user's own framing ("add a reveal in folder...or add to tray etc until we
+              build it up"). */}
+          <div className="px-3 py-1 text-nm-text-3 italic">More actions coming soon</div>
         </div>
       )}
     </div>

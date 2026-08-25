@@ -1,8 +1,9 @@
 /**
- * IR Lab Manager — main-process IPC layer for Phase 2 (read-only browse + search).
- * docs/ir-lab-manager-build-plan.md section 10 lists the eventual channel set; this wires the
- * subset Phase 2 needs: addRoot, listRoots, scan (progress-reporting), query, setFavorite,
- * setRating. Vendor parsers/audition/tray are later phases and untouched here.
+ * IR Lab Manager — main-process IPC layer. docs/ir-lab-manager-build-plan.md section 10 lists
+ * the eventual full channel set; this file now wires Phases 2 (browse/search), 3 (vendor
+ * parsers, inside the scan handler), 4 (audition needs abs_path from query, not its own
+ * channels — see useIrAudition.ts), 5 (folder metadata/documents), and 6 (tray + IR Lab
+ * connector). A/B audition and the rest of Phase 7 are still not here.
  *
  * catalog.db lives at userData/ir-catalog.db, opened lazily on first use — `app.getPath` must
  * never be called at module load time (CLAUDE.md).
@@ -24,6 +25,8 @@ import {
   getFolderDetail
 } from './irCatalog/folderMetadata'
 import { importFolderDocument, listFolderDocuments, deleteFolderDocument } from './irCatalog/folderDocuments'
+import { addToTray, removeFromTray, listTray, isInTray } from './irCatalog/tray'
+import { sendToIrLab, irLabConnectorAvailable } from './irLabConnector'
 
 let db: DatabaseSync | null = null
 // Guards against two overlapping background content_hash runs for the same root — a second
@@ -196,4 +199,24 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     deleteFolderDocument(getDb(), documentId)
     return { success: true }
   })
+
+  // Tray + Send to IR Lab (docs/ir-lab-manager-build-plan.md section 9). isInTray reads through
+  // getDb() per-call rather than caching in the renderer — the tray is small (max 8) and this
+  // avoids a second source of truth going stale.
+  ipcMain.handle('irLibrary:addToTray', (_event, itemId: string) => addToTray(getDb(), itemId))
+  ipcMain.handle('irLibrary:removeFromTray', (_event, itemId: string) => {
+    removeFromTray(getDb(), itemId)
+    return { success: true }
+  })
+  ipcMain.handle('irLibrary:listTray', () => listTray(getDb()))
+  ipcMain.handle('irLibrary:isInTray', (_event, itemId: string) => isInTray(getDb(), itemId))
+  ipcMain.handle('irLibrary:irLabConnectorAvailable', () => irLabConnectorAvailable())
+  ipcMain.handle('irLibrary:sendTrayToIrLab', async () => {
+    const tray = listTray(getDb())
+    if (tray.length === 0) return { success: false, reason: 'Tray is empty' }
+    return sendToIrLab({ kind: 'blend', items: tray.map((row) => row.abs_path) })
+  })
+  // "Reveal in folder" reuses the existing generic shell:revealFile channel (window.api.revealFile)
+  // rather than a duplicate irLibrary:-prefixed one — it's a plain absolute-path reveal, nothing
+  // IR-catalog-specific about it.
 }

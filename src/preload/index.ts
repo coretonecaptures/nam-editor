@@ -388,7 +388,17 @@ const api = {
     imported_at: string
   } | null> => ipcRenderer.invoke('irLibrary:importFolderDocument', folderId),
   irLibraryDeleteFolderDocument: (documentId: number): Promise<{ success: boolean }> =>
-    ipcRenderer.invoke('irLibrary:deleteFolderDocument', documentId)
+    ipcRenderer.invoke('irLibrary:deleteFolderDocument', documentId),
+  irLibraryAddToTray: (itemId: string): Promise<{ success: boolean; reason?: string }> =>
+    ipcRenderer.invoke('irLibrary:addToTray', itemId),
+  irLibraryRemoveFromTray: (itemId: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('irLibrary:removeFromTray', itemId),
+  irLibraryListTray: (): Promise<Array<{ id: string; relative_path: string; display_name: string; abs_path: string; position: number }>> =>
+    ipcRenderer.invoke('irLibrary:listTray'),
+  irLibraryIsInTray: (itemId: string): Promise<boolean> => ipcRenderer.invoke('irLibrary:isInTray', itemId),
+  irLabConnectorAvailable: (): Promise<boolean> => ipcRenderer.invoke('irLibrary:irLabConnectorAvailable'),
+  irLibrarySendTrayToIrLab: (): Promise<{ success: boolean; reason?: string }> =>
+    ipcRenderer.invoke('irLibrary:sendTrayToIrLab')
 }
 
 if (process.contextIsolated) {

@@ -81,7 +81,7 @@ export function IrFolderPanel({ folderId }: { folderId: number | null }): React.
   )
 
   if (folderId == null || !detail) {
-    return <div className="p-3 text-xs text-gray-400 dark:text-gray-600">Select a folder to view or edit its metadata.</div>
+    return <div className="p-3 text-xs text-nm-text-3">Select a folder to view or edit its metadata.</div>
   }
 
   return (
@@ -91,20 +91,20 @@ export function IrFolderPanel({ folderId }: { folderId: number | null }): React.
       </div>
 
       <div>
-        <label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">Notes</label>
+        <label className="text-xs text-nm-text-2 block mb-1">Notes</label>
         <textarea
           value={notesDraft}
           onChange={(e) => setNotesDraft(e.target.value)}
           onBlur={saveNotes}
           rows={3}
-          className="w-full text-xs px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900"
+          className="w-full text-xs px-2 py-1 rounded border border-field-bd bg-field-bg"
         />
       </div>
 
       <div className="flex flex-col gap-2">
         {FIELDS.map((field) => (
           <div key={field}>
-            <label className="text-xs text-gray-500 dark:text-gray-400 block mb-1 capitalize">{field}</label>
+            <label className="text-xs text-nm-text-2 block mb-1 capitalize">{field}</label>
             <input
               value={fieldDrafts[field] ?? ''}
               onChange={(e) => setFieldDrafts((d) => ({ ...d, [field]: e.target.value }))}
@@ -113,7 +113,7 @@ export function IrFolderPanel({ folderId }: { folderId: number | null }): React.
                 if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
               }}
               placeholder="Applies to every item in this folder and below"
-              className="w-full text-xs px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900"
+              className="w-full text-xs px-2 py-1 rounded border border-field-bd bg-field-bg"
             />
           </div>
         ))}
@@ -121,17 +121,17 @@ export function IrFolderPanel({ folderId }: { folderId: number | null }): React.
 
       <div>
         <div className="flex items-center justify-between mb-1">
-          <label className="text-xs text-gray-500 dark:text-gray-400">Vendor documents</label>
+          <label className="text-xs text-nm-text-2">Vendor documents</label>
           <button
             onClick={addDocument}
             disabled={importing}
-            className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline disabled:opacity-50"
+            className="text-xs text-nm-accent hover:underline disabled:opacity-50"
           >
             {importing ? 'Adding…' : '+ Add PDF/CSV'}
           </button>
         </div>
         {detail.documents.length === 0 ? (
-          <div className="text-xs text-gray-400 dark:text-gray-600">None yet.</div>
+          <div className="text-xs text-nm-text-3">None yet.</div>
         ) : (
           <ul className="flex flex-col gap-1">
             {detail.documents.map((doc) => (
@@ -141,7 +141,7 @@ export function IrFolderPanel({ folderId }: { folderId: number | null }): React.
                 </span>
                 <button
                   onClick={() => removeDocument(doc.id)}
-                  className="text-gray-400 hover:text-red-500 flex-shrink-0 ml-2"
+                  className="text-nm-text-3 hover:text-red-500 flex-shrink-0 ml-2"
                   title="Remove"
                 >
                   ×
