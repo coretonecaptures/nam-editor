@@ -5,6 +5,7 @@ import os from 'os'
 import http from 'http'
 import crypto from 'crypto'
 import { findOuterMetadataMatch, findMatchingBrace, serializeJsonValue, escapeRe, patchMetadataFields } from './metadataPatcher'
+import { registerIrLibraryIpc } from './irLibraryIpc'
 
 const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
 
@@ -5989,6 +5990,12 @@ app.whenReady().then(async () => {
       // Cosmetic only — never worth failing startup over.
     }
   }
+
+  // IR Lab Manager — Phase 2 (docs/ir-lab-manager-build-plan.md). getMainWindow is a thunk
+  // rather than passing `mainWindow` by value: this runs once at startup, before createWindow()
+  // has necessarily assigned it, and the module needs the CURRENT window at scan-progress-send
+  // time, not whatever it was when registration ran.
+  registerIrLibraryIpc(() => mainWindow)
 
   // NOTE: COOP/COEP header injection was removed here. It was added to try to make
   // `crossOriginIsolated` true so the real-time WASM AudioWorklet player could transfer a

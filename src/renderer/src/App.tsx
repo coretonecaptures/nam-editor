@@ -437,6 +437,39 @@ declare global {
         files: Array<{ name: string; path: string; rel: string }>
         indexed: boolean
       }>
+      // IR Lab Manager — Phase 2 (docs/ir-lab-manager-build-plan.md section 10/12). Separate
+      // from the IR-picker calls above: those index one flat byte buffer in-memory for the
+      // Cab/Delay/Reverb pickers; this is the persisted SQLite catalog behind the IR mode's own
+      // browse/search screen, keyed by UUID rather than path.
+      irLibraryListRoots: () => Promise<Array<{ id: number; path: string; label: string | null; watch_mode: string; created_at: string }>>
+      irLibraryAddRoot: (folderPath: string, label: string | null) => Promise<{ libraryRootId: number }>
+      irLibraryScan: (folderPath: string, label: string | null) => Promise<{
+        libraryRootId: number
+        foldersInserted: number
+        itemsInserted: number
+        elapsedMs: number
+      }>
+      onIrLibraryScanProgress: (
+        cb: (p: { filesSeen: number; foldersSeen: number; elapsedMs: number; done: boolean }) => void
+      ) => () => void
+      irLibraryQuery: (options: {
+        libraryRootId?: number | null
+        search?: string
+        offset: number
+        limit: number
+      }) => Promise<{
+        rows: Array<{
+          id: string
+          relative_path: string
+          display_name: string
+          file_size: number | null
+          is_favorite: number
+          rating: number | null
+        }>
+        total: number
+      }>
+      irLibrarySetFavorite: (itemId: string, isFavorite: boolean) => Promise<{ success: boolean }>
+      irLibrarySetRating: (itemId: string, rating: number | null) => Promise<{ success: boolean }>
       listWavSiblings: (filePath: string) => Promise<{ files: string[]; error?: string }>
       hashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
       hashFilesWithoutMetadata: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>

@@ -5,7 +5,7 @@ import * as os from 'node:os'
 import { join } from 'node:path'
 import { createCoreSchema, finalizeIndexes } from './schema'
 import { importLibrary } from './importLibrary'
-import { queryPage, searchItems } from './queryLibrary'
+import { queryItems } from './queryLibrary'
 import { hasFts5 } from './sqliteCapabilities'
 
 // This schema uses an FTS5 virtual table, which the plain Node.js this repo's devDependency
@@ -108,7 +108,7 @@ describe.skipIf(!hasFts5())('importLibrary', () => {
     const stats = await importLibrary(db, root, 'test-root')
     finalizeIndexes(db)
 
-    const page = queryPage(db, stats.libraryRootId, 0, 10)
+    const page = queryItems(db, { libraryRootId: stats.libraryRootId, offset: 0, limit: 10 })
     expect(page).toHaveLength(3)
     // Stored relative_path is posix-normalized regardless of host platform (toPosixRel).
     expect(page.map((r) => r.relative_path).sort()).toEqual(
@@ -119,7 +119,7 @@ describe.skipIf(!hasFts5())('importLibrary', () => {
       ].sort()
     )
 
-    const results = searchItems(db, 'SM57', 10)
+    const results = queryItems(db, { search: 'SM57', offset: 0, limit: 10 })
     expect(results).toHaveLength(1)
     expect(results[0].display_name).toBe('SM57 Cone.wav')
 

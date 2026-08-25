@@ -16,7 +16,7 @@ import * as os from 'node:os'
 import { join } from 'node:path'
 import { createCoreSchema, finalizeIndexes } from './schema'
 import { importLibrary } from './importLibrary'
-import { queryPage, searchItems } from './queryLibrary'
+import { queryItems } from './queryLibrary'
 
 async function main(): Promise<void> {
   const rootPath = process.argv[2] ?? process.env.IR_LIBRARY_PATH
@@ -70,12 +70,12 @@ async function main(): Promise<void> {
   console.log('\n--- Query latency ---')
   {
     const t0 = performance.now()
-    const page = queryPage(db, stats.libraryRootId, 0, 200)
+    const page = queryItems(db, { libraryRootId: stats.libraryRootId, offset: 0, limit: 200 })
     console.log(`  paginated browse (first 200): ${(performance.now() - t0).toFixed(1)}ms, ${page.length} rows`)
   }
   {
     const t0 = performance.now()
-    const results = searchItems(db, 'v30', 200)
+    const results = queryItems(db, { search: 'v30', offset: 0, limit: 200 })
     console.log(`  FTS5 search "v30": ${(performance.now() - t0).toFixed(1)}ms, ${results.length} rows`)
   }
 

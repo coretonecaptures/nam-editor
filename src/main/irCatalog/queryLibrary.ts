@@ -1,35 +1,84 @@
 /**
- * Read paths exercised by the Phase 1 benchmark: paginated browse and FTS5 search.
- * docs/ir-lab-manager-build-plan.md Phase 1 measures query latency against the finished catalog,
- * not just import speed — this is what Phase 2's browse/search screen would actually call.
+ * Read paths for Phase 2's browse/search screen — paginated, optionally scoped to one
+ * library_root, optionally filtered by an FTS5 search query. This is also what the Phase 1
+ * benchmark measured latency against (docs/ir-lab-manager-build-plan.md section 12).
  */
-import type { DatabaseSync } from 'node:sqlite'
+import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 
 export interface ItemRow {
   id: string
   relative_path: string
   display_name: string
   file_size: number | null
+  is_favorite: number
+  rating: number | null
 }
 
-export function queryPage(db: DatabaseSync, libraryRootId: number, offset: number, limit: number): ItemRow[] {
-  return db
-    .prepare(
-      `SELECT id, relative_path, display_name, file_size FROM item
-       WHERE library_root_id = ? ORDER BY relative_path LIMIT ? OFFSET ?`
-    )
-    .all(libraryRootId, limit, offset) as unknown as ItemRow[]
+export interface QueryOptions {
+  /** Omit (or null) to browse across every library_root at once. */
+  libraryRootId?: number | null
+  /** Free-text query; empty/omitted means "no filter" (plain paginated browse). */
+  search?: string
+  offset: number
+  limit: number
 }
 
-export function searchItems(db: DatabaseSync, query: string, limit: number): ItemRow[] {
+/**
+ * Turns free-typed user input into a safe FTS5 MATCH expression: each whitespace-separated
+ * token is quoted (so punctuation/hyphens/colons in a filename can't be parsed as FTS5 query
+ * syntax and throw) and given a trailing `*` for prefix matching, so results appear while the
+ * user is still typing rather than only once a whole word is complete. Tokens are ANDed
+ * (FTS5's default when multiple quoted strings appear with no explicit OR).
+ */
+function toFts5MatchExpression(rawQuery: string): string | null {
+  const tokens = rawQuery
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((t) => `"${t.replace(/"/g, '""')}"*`)
+  return tokens.length > 0 ? tokens.join(' ') : null
+}
+
+function buildWhereAndParams(options: QueryOptions, matchExpr: string | null): { where: string; params: SQLInputValue[] } {
+  const clauses: string[] = []
+  const params: SQLInputValue[] = []
+  if (options.libraryRootId != null) {
+    clauses.push('item.library_root_id = ?')
+    params.push(options.libraryRootId)
+  }
+  if (matchExpr !== null) {
+    clauses.push('item.id IN (SELECT item_id FROM item_search WHERE item_search MATCH ?)')
+    params.push(matchExpr)
+  }
+  return { where: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '', params }
+}
+
+export function queryItems(db: DatabaseSync, options: QueryOptions): ItemRow[] {
+  const matchExpr = options.search ? toFts5MatchExpression(options.search) : null
+  const { where, params } = buildWhereAndParams(options, matchExpr)
   return db
     .prepare(
-      `SELECT item.id as id, item.relative_path as relative_path,
-              item.display_name as display_name, item.file_size as file_size
-       FROM item_search
-       JOIN item ON item.id = item_search.item_id
-       WHERE item_search MATCH ?
-       LIMIT ?`
+      `SELECT item.id as id, item.relative_path as relative_path, item.display_name as display_name,
+              item.file_size as file_size, item.is_favorite as is_favorite, item.rating as rating
+       FROM item
+       ${where}
+       ORDER BY item.relative_path
+       LIMIT ? OFFSET ?`
     )
-    .all(query, limit) as unknown as ItemRow[]
+    .all(...params, options.limit, options.offset) as unknown as ItemRow[]
+}
+
+export function countItems(db: DatabaseSync, options: Omit<QueryOptions, 'offset' | 'limit'>): number {
+  const matchExpr = options.search ? toFts5MatchExpression(options.search) : null
+  const { where, params } = buildWhereAndParams(options as QueryOptions, matchExpr)
+  const row = db.prepare(`SELECT COUNT(*) as c FROM item ${where}`).get(...params) as { c: number }
+  return row.c
+}
+
+export function setFavorite(db: DatabaseSync, itemId: string, isFavorite: boolean): void {
+  db.prepare('UPDATE item SET is_favorite = ? WHERE id = ?').run(isFavorite ? 1 : 0, itemId)
+}
+
+export function setRating(db: DatabaseSync, itemId: string, rating: number | null): void {
+  db.prepare('UPDATE item SET rating = ? WHERE id = ?').run(rating, itemId)
 }

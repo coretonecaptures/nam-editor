@@ -317,7 +317,44 @@ const api = {
   clearAiKey: (provider: string): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('app:clearAiKey', provider),
   aiEnrich: (payload: { prompt: string; provider: string; model: string }): Promise<{ success: boolean; text?: string; error?: string }> =>
-    ipcRenderer.invoke('app:aiEnrich', payload)
+    ipcRenderer.invoke('app:aiEnrich', payload),
+  // IR Lab Manager — Phase 2 (docs/ir-lab-manager-build-plan.md section 10/12).
+  irLibraryListRoots: (): Promise<Array<{ id: number; path: string; label: string | null; watch_mode: string; created_at: string }>> =>
+    ipcRenderer.invoke('irLibrary:listRoots'),
+  irLibraryAddRoot: (folderPath: string, label: string | null): Promise<{ libraryRootId: number }> =>
+    ipcRenderer.invoke('irLibrary:addRoot', folderPath, label),
+  irLibraryScan: (
+    folderPath: string,
+    label: string | null
+  ): Promise<{ libraryRootId: number; foldersInserted: number; itemsInserted: number; elapsedMs: number }> =>
+    ipcRenderer.invoke('irLibrary:scan', folderPath, label),
+  onIrLibraryScanProgress: (
+    cb: (p: { filesSeen: number; foldersSeen: number; elapsedMs: number; done: boolean }) => void
+  ): (() => void) => {
+    const handler = (_event: unknown, p: { filesSeen: number; foldersSeen: number; elapsedMs: number; done: boolean }) => cb(p)
+    ipcRenderer.on('irLibrary:scanProgress', handler)
+    return () => ipcRenderer.removeListener('irLibrary:scanProgress', handler)
+  },
+  irLibraryQuery: (options: {
+    libraryRootId?: number | null
+    search?: string
+    offset: number
+    limit: number
+  }): Promise<{
+    rows: Array<{
+      id: string
+      relative_path: string
+      display_name: string
+      file_size: number | null
+      is_favorite: number
+      rating: number | null
+    }>
+    total: number
+  }> => ipcRenderer.invoke('irLibrary:query', options),
+  irLibrarySetFavorite: (itemId: string, isFavorite: boolean): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('irLibrary:setFavorite', itemId, isFavorite),
+  irLibrarySetRating: (itemId: string, rating: number | null): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('irLibrary:setRating', itemId, rating)
 }
 
 if (process.contextIsolated) {

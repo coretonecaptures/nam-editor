@@ -1,6 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import App from './App'
+import AppRoot from './AppRoot'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import './assets/index.css'
 
@@ -17,7 +17,7 @@ window.confirm = (message?: string): boolean => {
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
     <ErrorBoundary>
-      <App />
+      <AppRoot />
     </ErrorBoundary>
   </React.StrictMode>
 )
