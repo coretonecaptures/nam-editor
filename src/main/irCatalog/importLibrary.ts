@@ -68,6 +68,17 @@ export async function importLibrary(
   const skipQuickHash = options.skipQuickHash ?? false
   const started = Date.now()
 
+  // Tracks every relative_path upserted this scan, for missing-file detection at the end (see
+  // below). A wall-clock timestamp comparison (last_seen_at < scan-start-time) was tried first
+  // and rejected: two scans completing within the same millisecond compare equal, not
+  // less-than, which would silently fail to detect anything missing — implausible at human
+  // timescales in real usage, but a real race, and caught immediately by two fast back-to-back
+  // scans in a test. A temp table anti-join has no such race. TEMP tables are connection-scoped,
+  // so this must be cleared (not just created) at the start of every call on a reused connection.
+  db.exec('CREATE TEMP TABLE IF NOT EXISTS scan_touched (relative_path TEXT PRIMARY KEY)')
+  db.exec('DELETE FROM scan_touched')
+  const markTouched = db.prepare('INSERT OR IGNORE INTO scan_touched (relative_path) VALUES (?)')
+
   const insertRoot = db.prepare(
     `INSERT INTO library_root (path, label, watch_mode, created_at)
      VALUES (?, ?, 'manual', ?)
@@ -144,6 +155,7 @@ export async function importLibrary(
       insertItem.run(
         id, libraryRootId, folderId, relPosix, displayName, it.modifiedAt, now, now, it.size, hashes[i]
       )
+      markTouched.run(relPosix)
       itemsInserted++
     }
     pendingItems.length = 0
@@ -183,6 +195,15 @@ export async function importLibrary(
       options.onProgress?.({ filesSeen, foldersSeen, elapsedMs: Date.now() - started })
     }
   })
+
+  // Missing-file detection (docs/ir-lab-manager-build-plan.md section 5) — a real gap this
+  // function had until now: it upserted files it found, but never noticed files that used to be
+  // here and no longer are. One bulk anti-join against scan_touched, not per-item.
+  db.prepare(
+    `UPDATE item SET missing_since = ?
+     WHERE library_root_id = ? AND missing_since IS NULL
+       AND relative_path NOT IN (SELECT relative_path FROM scan_touched)`
+  ).run(new Date().toISOString(), libraryRootId)
 
   return {
     libraryRootId,

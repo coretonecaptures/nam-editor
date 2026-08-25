@@ -140,4 +140,47 @@ describe.skipIf(!hasFts5())('importLibrary', () => {
 
     db.close()
   })
+
+  it('marks a file missing_since when a re-scan no longer finds it, without deleting the row', async () => {
+    const root = makeFixture()
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    await importLibrary(db, root, 'test-root')
+
+    fs.unlinkSync(join(root, 'RedWirez', 'Marshall G12M', 'Combo.wav'))
+    await importLibrary(db, root, 'test-root')
+
+    const rows = db.prepare('SELECT relative_path, missing_since FROM item').all() as Array<{
+      relative_path: string
+      missing_since: string | null
+    }>
+    expect(rows).toHaveLength(3) // still there — never deleted
+    const missing = rows.find((r) => r.relative_path.includes('Combo.wav'))
+    expect(missing?.missing_since).not.toBeNull()
+    const stillPresent = rows.filter((r) => !r.relative_path.includes('Combo.wav'))
+    for (const r of stillPresent) expect(r.missing_since).toBeNull()
+
+    db.close()
+  })
+
+  it('clears missing_since if a file reappears on a later scan', async () => {
+    const root = makeFixture()
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    await importLibrary(db, root, 'test-root')
+
+    const comboPath = join(root, 'RedWirez', 'Marshall G12M', 'Combo.wav')
+    const contents = fs.readFileSync(comboPath)
+    fs.unlinkSync(comboPath)
+    await importLibrary(db, root, 'test-root')
+    fs.writeFileSync(comboPath, contents)
+    await importLibrary(db, root, 'test-root')
+
+    const row = db
+      .prepare(`SELECT missing_since FROM item WHERE relative_path LIKE '%Combo.wav'`)
+      .get() as { missing_since: string | null }
+    expect(row.missing_since).toBeNull()
+
+    db.close()
+  })
 })

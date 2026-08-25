@@ -14,8 +14,15 @@ import { createCoreSchema, finalizeIndexes, itemSearchTableExists } from './irCa
 import { importLibrary } from './irCatalog/importLibrary'
 import { queryItems, countItems, setFavorite, setRating } from './irCatalog/queryLibrary'
 import { applyVendorParsers } from './irCatalog/vendorParsers/applyVendorParsers'
+import { reconcileMissingItems } from './irCatalog/reconciliation'
+import { runContentHashQueue } from './irCatalog/contentHash'
+import { setFolderMetadata, removeFolderMetadata } from './irCatalog/folderMetadata'
 
 let db: DatabaseSync | null = null
+// Guards against two overlapping background content_hash runs for the same root — a second
+// 'Add Library Folder' scan on the same root while the first's hash queue is still draining would
+// otherwise start a second pass over the same rows.
+const hashingInProgress = new Set<number>()
 
 function getDb(): DatabaseSync {
   if (db) return db
@@ -59,13 +66,21 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     return { libraryRootId: row.id }
   })
 
-  // Runs the batched import (irCatalog/importLibrary.ts), finalizes indexes/FTS5 once (Phase 1
-  // fix — docs/ir-lab-manager-build-plan.md section 12), then runs the vendor parser chain
-  // (Phase 3, section 6) and finalizes again so the newly-parsed manufacturer/cabinet/speaker/
-  // microphone fields are actually searchable (see schema.ts's finalizeIndexes doc comment).
-  // Progress streams to the renderer over 'irLibrary:scanProgress'; the resolved value is the
-  // final import stats (vendor-parse stats aren't currently surfaced to the UI — no progress
-  // event for that phase yet, it runs as one bulk pass after import completes).
+  // Runs the batched import (irCatalog/importLibrary.ts) — which also marks anything not
+  // re-found as missing_since (section 5) — finalizes indexes/FTS5 once (Phase 1 fix), then
+  // reconciliation (section 5: relink an exact quick_hash/content_hash match, e.g. a renamed or
+  // moved file, merging it back onto its original item id rather than leaving two rows), then
+  // the vendor parser chain (Phase 3, section 6) on whatever's left, then finalizes again so the
+  // newly-parsed manufacturer/cabinet/speaker/microphone fields are searchable (see schema.ts's
+  // finalizeIndexes doc comment). Progress streams to the renderer over 'irLibrary:scanProgress';
+  // the resolved value is the final import stats (reconciliation/vendor-parse stats aren't
+  // currently surfaced to the UI — no progress event for those phases, they run as bulk passes).
+  //
+  // The content_hash background queue (section 4) is started AFTER this handler resolves, not
+  // awaited here — it's explicitly lazy/best-effort (full-file hashing of a huge library can take
+  // a long time) and reconciliation above already ran with whatever hashes existed at scan time;
+  // a slow-arriving content_hash only improves the NEXT reconciliation pass's tier-1 accuracy, not
+  // this one's.
   ipcMain.handle('irLibrary:scan', async (_event, folderPath: string, label: string | null) => {
     const database = getDb()
     const stats = await importLibrary(database, folderPath, label, {
@@ -74,6 +89,7 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
       }
     })
     finalizeIndexes(database)
+    reconcileMissingItems(database, stats.libraryRootId)
     applyVendorParsers(database, stats.libraryRootId)
     finalizeIndexes(database)
     safeSend('irLibrary:scanProgress', {
@@ -82,6 +98,20 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
       elapsedMs: stats.elapsedMs,
       done: true
     })
+
+    if (!hashingInProgress.has(stats.libraryRootId)) {
+      hashingInProgress.add(stats.libraryRootId)
+      void runContentHashQueue(database, stats.libraryRootId)
+        .catch(() => {
+          // Best-effort background work — a failure here (e.g. a file vanished mid-hash) must
+          // never surface as a scan error; computeContentHash itself already swallows per-file
+          // failures, so this only guards the queue driver itself.
+        })
+        .finally(() => {
+          hashingInProgress.delete(stats.libraryRootId)
+        })
+    }
+
     return stats
   })
 
@@ -111,6 +141,19 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
 
   ipcMain.handle('irLibrary:setRating', (_event, itemId: string, rating: number | null) => {
     setRating(getDb(), itemId, rating)
+    return { success: true }
+  })
+
+  // Backend only — no UI panel calls these yet (docs/ir-lab-manager-build-plan.md section 12,
+  // Phase 5 notes: folder notes/vendor-document-import UI is tracked as a separate, not-yet-built
+  // feature; this just makes the already-implemented inheritance backend reachable from IPC).
+  ipcMain.handle('irLibrary:setFolderMetadata', (_event, folderId: number, field: string, value: string, source: string) => {
+    setFolderMetadata(getDb(), folderId, field, value, source)
+    return { success: true }
+  })
+
+  ipcMain.handle('irLibrary:removeFolderMetadata', (_event, folderId: number, field: string) => {
+    removeFolderMetadata(getDb(), folderId, field)
     return { success: true }
   })
 }

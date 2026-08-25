@@ -75,10 +75,14 @@ export function queryItems(db: DatabaseSync, options: QueryOptions): ItemRow[] {
     .prepare(
       `SELECT item.id as id, item.relative_path as relative_path, item.display_name as display_name,
               item.file_size as file_size, item.is_favorite as is_favorite, item.rating as rating,
-              ir_item.manufacturer as manufacturer, mfr_src.source as manufacturer_source,
-              ir_item.cabinet as cabinet, cab_src.source as cabinet_source,
-              ir_item.speaker as speaker, spk_src.source as speaker_source,
-              ir_item.microphone as microphone, mic_src.source as microphone_source,
+              COALESCE(ir_item.manufacturer, mfr_fme.value) as manufacturer,
+              COALESCE(mfr_src.source, mfr_fme.source) as manufacturer_source,
+              COALESCE(ir_item.cabinet, cab_fme.value) as cabinet,
+              COALESCE(cab_src.source, cab_fme.source) as cabinet_source,
+              COALESCE(ir_item.speaker, spk_fme.value) as speaker,
+              COALESCE(spk_src.source, spk_fme.source) as speaker_source,
+              COALESCE(ir_item.microphone, mic_fme.value) as microphone,
+              COALESCE(mic_src.source, mic_fme.source) as microphone_source,
               library_root.path as library_root_path
        FROM item
        JOIN library_root ON library_root.id = item.library_root_id
@@ -87,6 +91,12 @@ export function queryItems(db: DatabaseSync, options: QueryOptions): ItemRow[] {
        LEFT JOIN ir_item_field_source cab_src ON cab_src.item_id = item.id AND cab_src.field = 'cabinet'
        LEFT JOIN ir_item_field_source spk_src ON spk_src.item_id = item.id AND spk_src.field = 'speaker'
        LEFT JOIN ir_item_field_source mic_src ON mic_src.item_id = item.id AND mic_src.field = 'microphone'
+       -- Folder-inheritance fallback (section 2d: resolve-at-query) -- only consulted when the
+       -- item itself has no value for that field, via COALESCE above.
+       LEFT JOIN folder_metadata_effective mfr_fme ON mfr_fme.folder_id = item.folder_id AND mfr_fme.field = 'manufacturer'
+       LEFT JOIN folder_metadata_effective cab_fme ON cab_fme.folder_id = item.folder_id AND cab_fme.field = 'cabinet'
+       LEFT JOIN folder_metadata_effective spk_fme ON spk_fme.folder_id = item.folder_id AND spk_fme.field = 'speaker'
+       LEFT JOIN folder_metadata_effective mic_fme ON mic_fme.folder_id = item.folder_id AND mic_fme.field = 'microphone'
        ${where}
        ORDER BY item.relative_path
        LIMIT ? OFFSET ?`

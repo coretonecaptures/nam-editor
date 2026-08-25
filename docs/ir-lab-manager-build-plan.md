@@ -806,7 +806,48 @@ ear-fatigue reasoning already agreed on.
    virtualized list's loaded cache; jumping ahead of what's been fetched moves focus silently
    with no play and no retry once that page loads. A/B audition (hold two candidates, instant
    toggle) is explicitly Phase 7, not attempted here.
-5. **Folder notes + vendor document import**, with inheritance (section 2's `folder_metadata`/`folder_metadata_effective`/`folder_document`) and reconciliation (section 5) — reconciliation is fully designed already (section 5's four confidence tiers) but zero code exists yet; a moved/renamed file today just becomes a new row, with the old one sitting `missing_since`-flagged forever with no relink path, until this phase builds it. Its top tier also depends on the `content_hash` background queue, which Phase 1 didn't build either (see Phase 1 above) — build that first if this phase starts before it exists.
+5. **Backend done — UI not started.** Four backend pieces landed; the folder-notes/vendor-
+   document UI this phase was named for did not.
+
+   - **`content_hash` background queue** — closed the Phase 1 gap. `contentHash.ts`: streamed
+     (not read-whole-file, quickHash.ts's approach doesn't scale to hundreds-of-MB files),
+     bounded concurrency (8, deliberately gentler than scan's 32 — this runs in the background
+     while other things may be using the disk), batched updates, per-file failures swallowed
+     (a vanished file just stays unhashed, not a queue-crashing error). Started automatically
+     after every `irLibrary:scan` resolves, NOT awaited by it — genuinely fire-and-forget,
+     guarded against two overlapping runs on the same root.
+   - **Missing-file detection** — a real correctness gap `importLibrary.ts` had since Phase 1:
+     it upserted files it found but never noticed ones that disappeared. Fixed with a
+     `scan_touched` temp table anti-joined against `item` after the walk, not a wall-clock
+     timestamp comparison — that was tried first and rejected: two scans finishing within the
+     same millisecond compare equal, not less-than, silently missing the detection. Implausible
+     between real user-triggered scans, but caught immediately by two back-to-back scans in a
+     test, so fixed at the root rather than papered over.
+   - **Reconciliation** (section 5) — all four tiers, `reconciliation.ts`, run as a post-scan
+     pass (needs the quick_hash/content_hash indexes, which per the Phase 1 fix don't exist
+     during the bulk import itself, only after `finalizeIndexes()`). Tier 3's "filename+size,
+     gated on folder-name similarity" uses a simpler stand-in than the plan's suggested
+     Jaro-Winkler — shared-token overlap between the two paths' immediate parent folder names,
+     documented as a deliberate simplification in `reconciliation.ts`, not silently substituted.
+     A real order-of-operations bug (updating the surviving row onto the duplicate's path before
+     deleting the duplicate — violates the `UNIQUE` constraint, since both rows would briefly
+     share one path) was caught by its own test suite before this ever ran for real.
+   - **Folder-metadata inheritance** (section 2d's resolve-at-query decision) — `folderMetadata.ts`:
+     `setFolderMetadata`/`removeFolderMetadata`, cascading recompute of
+     `folder_metadata_effective` down to every descendant (a change three levels up can change
+     what a leaf folder inherits even though the leaf's own declarations didn't change — covered
+     by a test for exactly that case). `queryLibrary.ts`'s `queryItems` now `COALESCE`s each
+     descriptive field against the item's folder's effective value, so a folder-level declaration
+     actually shows up in browse/search results — item-level (including Phase 3's vendor-parsed)
+     values still always win when present. Wired to IPC (`irLibrary:setFolderMetadata`/
+     `removeFolderMetadata`) but **not exposed through preload/the renderer at all** — no UI
+     calls these yet.
+
+   **Not done, and this is the part the phase name actually promised:** folder notes editing UI,
+   vendor document (PDF/CSV) import UI (`folder_document`, untouched — no table writes, no
+   storage-copy logic, no upload UI). These are real UI-design work, not backend logic with a
+   clear existing spec to implement the way the four pieces above had — tracked here as the
+   actual remaining Phase 5 scope, not silently folded into "done."
 6. **Tray + IR Lab handoff** (sections 9 and 11, built together since they're two halves of one feature) — this is the point where the private connector piece is actually needed; everything before it ships fully functional without it.
 7. **A/B audition, tags, collections beyond the tray** — polish layer, no new architecture.
 
