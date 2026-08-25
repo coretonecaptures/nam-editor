@@ -703,12 +703,49 @@ ear-fatigue reasoning already agreed on.
    is now the established design** for the real Phase 2+ importer, not just this benchmark
    harness — any future schema change that adds a table/index touched during bulk import should
    go through the same core/deferred split rather than being added to `CORE_SCHEMA_SQL` directly.
-   Phase 1 is done: traversal (reused from production, section 2a), persistence and query latency,
-   and import throughput are all validated against the real library.
-2. **Read-only virtualized browse + search**, no organization features yet. List/grid over the catalog, FTS5 search, confidence badges, favorite/rating working. This alone should already feel better than Explorer for a big library — validate that claim here before building more.
+   **Phase 1 is done for traversal, persistence, and import throughput** — all validated against
+   the real library — **but not fully for its own stated measurement list.** Its bullet points
+   above include "how far the background `content_hash` queue lags behind a huge import" — that
+   queue (section 4's second paragraph: full-file hash, computed lazily after `quick_hash`) was
+   never built, so that specific measurement never happened. Only `quick_hash` (inline, size +
+   first/last 64KB) exists in code today; the `content_hash` column and its index
+   (`idx_item_hash`) are declared in the schema and sit empty. Nothing currently depends on it
+   being populated — browse/search/favorite/rating all work without it, by design — but Phase 5's
+   reconciliation (section 5) has a tier that assumes it exists, and that tier isn't built either
+   (see Phase 5 below; reconciliation was always scheduled there, not skipped early from Phase 1).
+2. **Read-only virtualized browse + search** — **done, with gaps tracked below.** Shipped: the
+   NAM|IR mode toggle (`AppRoot.tsx`), "Add Library Folder" → scan with live progress
+   (`irLibrary:scan`/`irLibrary:scanProgress`), a dependency-free virtualized list over a sparse
+   paginated dataset (`components/ir/VirtualList.tsx` — necessary at Phase 1's proven ~282K-row
+   scale, holds only the visible range in memory), debounced FTS5 search with input sanitized
+   into a safe quoted/prefix-matched query (`queryLibrary.ts`), favorite toggle and 1-5 star
+   rating (`irLibrary:setFavorite`/`setRating`).
+
+   **Explicitly NOT done, tracked here rather than left implicit:**
+   - **Confidence badges** — deliberate, not an oversight: they show per-field provenance on
+     `ir_item` (section 3), and nothing populates `ir_item` until Phase 3's vendor parsers exist.
+     Documented inline in `IrModeShell.tsx`.
+   - **Faceted filter chips** (cabinet/speaker/mic/manufacturer, section 7) — same reason as
+     badges (no `ir_item` data yet), but unlike badges this wasn't called out until asked; only
+     free-text search was built. Revisit once Phase 3 lands.
+   - **Cancelable scan** — section 10's IPC list describes `irLibrary:scan` as
+     "progress-reporting, cancelable." Only the progress-reporting half was built; there is no
+     cancel button and no cancellation token threaded through `importLibrary()`. A started scan
+     runs to completion.
+   - **Favourites/recents migration** (section 2e) — designed (one-directional, `localStorage` →
+     `item.is_favorite`, per library root at first scan) but never implemented. The existing
+     Cab/Delay/Reverb picker favourites (`utils/irLibrary.ts`) and the new IR-mode catalog
+     favourites are two disconnected systems right now.
+   - **NAM-capture ingestion** — `item.kind` is hardcoded to `'ir'` in `importLibrary.ts`; nothing
+     scans or catalogs `.nam` captures through this pipeline yet, even though `item` and
+     `nam_capture_item` are both already shaped for it. IR mode is IR-only in practice today.
+   - **Folder-tree navigation** — not actually in this plan at all (see section 13's new open
+     decision on this) — Phase 2 shipped flat list/search only, per section 1's stated non-goal
+     ("Not a file browser"), not as an oversight, but that's a product call worth confirming
+     rather than assuming.
 3. **Vendor parsers**: generic filename-vocabulary fallback first (broadest coverage, least code), then Ownhammer, then RedWirez.
 4. **Quick audition**, ported from NAM Lab per section 8.
-5. **Folder notes + vendor document import**, with inheritance (section 2's `folder_metadata`/`folder_metadata_effective`/`folder_document`) and reconciliation (section 5).
+5. **Folder notes + vendor document import**, with inheritance (section 2's `folder_metadata`/`folder_metadata_effective`/`folder_document`) and reconciliation (section 5) — reconciliation is fully designed already (section 5's four confidence tiers) but zero code exists yet; a moved/renamed file today just becomes a new row, with the old one sitting `missing_since`-flagged forever with no relink path, until this phase builds it. Its top tier also depends on the `content_hash` background queue, which Phase 1 didn't build either (see Phase 1 above) — build that first if this phase starts before it exists.
 6. **Tray + IR Lab handoff** (sections 9 and 11, built together since they're two halves of one feature) — this is the point where the private connector piece is actually needed; everything before it ships fully functional without it.
 7. **A/B audition, tags, collections beyond the tray** — polish layer, no new architecture.
 
@@ -719,3 +756,13 @@ similarity search, non-WAV formats, user-customizable parser definitions.
 
 - Exact IR Lab license enforcement point/timing — the user has already noted this can land before final release, independent of this plan.
 - Whether IR mode ships free indefinitely or some future piece becomes paid — doesn't change anything built here; only changes what gets injected into the private connector config later.
+- **Folder-tree navigation (raised during Phase 2 build, not yet decided).** NAM Lab's own left
+  panel has a `FolderTree` component; IR mode currently has none — Phase 2 shipped flat
+  list/search only. That was a deliberate read of section 1's non-goal ("Not a file browser"),
+  reasonable at real vendor-pack depth (Ownhammer nests 3 levels, RedWirez 5+) and at
+  Phase 1's proven ~282K-row scale, where tree-browsing that deep is arguably worse than search.
+  But it was never explicitly confirmed with the user before building — it's a real product
+  decision, not a foregone one. If a tree view is wanted (e.g. as a secondary navigation mode
+  alongside search, useful right after adding a new vendor pack to see what's actually in it),
+  the data already supports it — `folder.parent_id` is a real tree edge (section 2) — so it's an
+  additive UI feature, not a schema change, whichever phase it lands in.
