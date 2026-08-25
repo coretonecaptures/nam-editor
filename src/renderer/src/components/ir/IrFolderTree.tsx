@@ -1,41 +1,77 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 
-type FolderRow = { id: number; parent_id: number | null; relative_path: string }
+type FolderRow = { id: number; parent_id: number | null; relative_path: string; direct_item_count: number }
 
 interface TreeNode {
   id: number
   name: string
+  parentId: number | null
+  directCount: number
+  /** Rolled up bottom-up during buildTree — every item under this folder, recursively. Mirrors
+   * NAM Lab's own FolderTree.tsx "totalCount" convention (that component computes the same kind
+   * of subtree rollup for its own badge). */
+  totalCount: number
   children: TreeNode[]
 }
 
-/** Flat folder list (id/parent_id/relative_path) -> nested tree, root's own row (relative_path
- * === '') excluded from display since it has no meaningful name of its own — its children render
- * at the top level instead. */
-function buildTree(rows: FolderRow[]): TreeNode[] {
+/** Flat folder list -> nested tree with rolled-up counts. Root's own row (relative_path === '')
+ * excluded from display since it has no meaningful name of its own — its children render at the
+ * top level instead, but its count still rolls up correctly since totals sum children first. */
+function buildTree(rows: FolderRow[]): { roots: TreeNode[]; allIds: number[] } {
   const byId = new Map<number, TreeNode>()
   const childrenOf = new Map<number | null, TreeNode[]>()
+  const allIds: number[] = []
   for (const row of rows) {
     const name = row.relative_path === '' ? '' : row.relative_path.split('/').pop() ?? row.relative_path
-    const node: TreeNode = { id: row.id, name, children: [] }
+    const node: TreeNode = { id: row.id, name, parentId: row.parent_id, directCount: row.direct_item_count, totalCount: 0, children: [] }
     byId.set(row.id, node)
+    allIds.push(row.id)
     const siblings = childrenOf.get(row.parent_id) ?? []
     siblings.push(node)
     childrenOf.set(row.parent_id, siblings)
   }
+  // Children first (post-order) so a parent's totalCount can sum already-finalized children.
   const attach = (node: TreeNode): void => {
     node.children = (childrenOf.get(node.id) ?? []).sort((a, b) => a.name.localeCompare(b.name))
-    for (const child of node.children) attach(child)
+    let sum = node.directCount
+    for (const child of node.children) {
+      attach(child)
+      sum += child.totalCount
+    }
+    node.totalCount = sum
   }
+
   const rootRow = rows.find((r) => r.relative_path === '')
   if (rootRow) {
     const rootNode = byId.get(rootRow.id)!
     attach(rootNode)
-    return rootNode.children
+    return { roots: rootNode.children, allIds }
   }
-  // No explicit root row (shouldn't happen once a scan has run, but don't crash if it does).
   const topLevel = (childrenOf.get(null) ?? []).sort((a, b) => a.name.localeCompare(b.name))
   for (const node of topLevel) attach(node)
-  return topLevel
+  return { roots: topLevel, allIds }
+}
+
+/** ids of every node whose name matches `query`, plus every ancestor of a match (so the match is
+ * actually reachable without manually expanding down to it) — same "show the path to a hit"
+ * behavior search UIs generally use. Returns null when query is empty (no filtering active). */
+function computeVisibleIds(roots: TreeNode[], query: string): Set<number> | null {
+  const trimmed = query.trim().toLowerCase()
+  if (!trimmed) return null
+  const visible = new Set<number>()
+  const visit = (node: TreeNode, ancestors: number[]): boolean => {
+    let matched = node.name.toLowerCase().includes(trimmed)
+    for (const child of node.children) {
+      if (visit(child, [...ancestors, node.id])) matched = true
+    }
+    if (matched) {
+      visible.add(node.id)
+      for (const a of ancestors) visible.add(a)
+    }
+    return matched
+  }
+  for (const root of roots) visit(root, [])
+  return visible
 }
 
 /** Same path/convention as NAM Lab's own FolderTree.tsx (~line 828): outline when closed, filled
@@ -64,15 +100,24 @@ function TreeRow({
   node,
   depth,
   selectedId,
-  onSelect
+  expandedIds,
+  visibleIds,
+  onSelect,
+  onToggleExpand
 }: {
   node: TreeNode
   depth: number
   selectedId: number | null
+  expandedIds: Set<number>
+  visibleIds: Set<number> | null
   onSelect: (id: number, name: string) => void
-}): React.ReactElement {
-  const [expanded, setExpanded] = useState(depth < 1)
+  onToggleExpand: (id: number) => void
+}): React.ReactElement | null {
+  if (visibleIds && !visibleIds.has(node.id)) return null
   const hasChildren = node.children.length > 0
+  // While searching, force every visible node open so matches are actually shown, not hidden
+  // behind manual collapse state that predates the search.
+  const expanded = visibleIds ? true : expandedIds.has(node.id)
   const isSelected = selectedId === node.id
   return (
     <div>
@@ -87,7 +132,7 @@ function TreeRow({
           <button
             onClick={(e) => {
               e.stopPropagation()
-              setExpanded((v) => !v)
+              onToggleExpand(node.id)
             }}
             className="w-3 flex-shrink-0 text-nm-text-3"
           >
@@ -97,12 +142,24 @@ function TreeRow({
           <span className="w-3 flex-shrink-0" />
         )}
         <FolderIcon expanded={expanded && hasChildren} isSelected={isSelected} />
-        <span className="truncate">{node.name}</span>
+        <span className="truncate flex-1">{node.name}</span>
+        {node.totalCount > 0 && (
+          <span className={`text-xs flex-shrink-0 ${isSelected ? 'text-nm-accent' : 'text-nm-text-3'}`}>{node.totalCount}</span>
+        )}
       </div>
       {hasChildren && expanded && (
         <div>
           {node.children.map((child) => (
-            <TreeRow key={child.id} node={child} depth={depth + 1} selectedId={selectedId} onSelect={onSelect} />
+            <TreeRow
+              key={child.id}
+              node={child}
+              depth={depth + 1}
+              selectedId={selectedId}
+              expandedIds={expandedIds}
+              visibleIds={visibleIds}
+              onSelect={onSelect}
+              onToggleExpand={onToggleExpand}
+            />
           ))}
         </div>
       )}
@@ -117,7 +174,8 @@ function TreeRow({
  * rename, move, context menus) — a vendor IR library is read-only from this app's perspective,
  * the folder structure comes from disk, not from user reorganization. Selecting a folder both
  * opens its metadata panel (IrFolderPanel.tsx) and filters IrModeShell's item list to that
- * folder's subtree.
+ * folder's subtree. Per-folder item counts (recursive, "totalCount") match NAM Lab's own tree
+ * badge convention.
  */
 export function IrFolderTree({
   libraryRootId,
@@ -129,29 +187,75 @@ export function IrFolderTree({
   onSelectFolder: (folderId: number, name: string) => void
 }): React.ReactElement {
   const [rows, setRows] = useState<FolderRow[]>([])
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set())
+  const [treeSearch, setTreeSearch] = useState('')
 
   useEffect(() => {
     if (libraryRootId == null) {
       setRows([])
       return
     }
-    window.api.irLibraryListFolders(libraryRootId).then(setRows)
+    window.api.irLibraryListFolders(libraryRootId).then((r) => {
+      setRows(r)
+      // Depth-0 expanded by default, matching the previous per-row default — built directly here
+      // (not via the memoized `roots` below, which won't reflect this render's state yet).
+      const { roots: topLevel } = buildTree(r)
+      setExpandedIds(new Set(topLevel.map((node) => node.id)))
+    })
   }, [libraryRootId])
 
-  const tree = useMemo(() => buildTree(rows), [rows])
+  const { roots, allIds } = useMemo(() => buildTree(rows), [rows])
+  const visibleIds = useMemo(() => computeVisibleIds(roots, treeSearch), [roots, treeSearch])
+
+  const toggleExpand = useCallback((id: number) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const expandAll = useCallback(() => setExpandedIds(new Set(allIds)), [allIds])
+  const collapseAll = useCallback(() => setExpandedIds(new Set()), [])
 
   if (libraryRootId == null) {
     return <div className="p-3 text-xs text-nm-text-3">Add a library folder to see its structure.</div>
   }
-  if (tree.length === 0) {
+  if (roots.length === 0) {
     return <div className="p-3 text-xs text-nm-text-3">No subfolders.</div>
   }
 
   return (
-    <div className="py-1 overflow-y-auto">
-      {tree.map((node) => (
-        <TreeRow key={node.id} node={node} depth={0} selectedId={selectedFolderId} onSelect={onSelectFolder} />
-      ))}
+    <div className="flex flex-col h-full">
+      <div className="flex items-center gap-1 px-2 py-1 border-b border-nm-border-s flex-shrink-0">
+        <input
+          value={treeSearch}
+          onChange={(e) => setTreeSearch(e.target.value)}
+          placeholder="Filter folders…"
+          className="flex-1 min-w-0 text-xs px-1.5 py-0.5 rounded border border-field-bd bg-field-bg"
+        />
+        <button onClick={expandAll} title="Expand all" className="text-nm-text-3 hover:text-nm-accent px-1 text-xs flex-shrink-0">
+          ⊞
+        </button>
+        <button onClick={collapseAll} title="Collapse all" className="text-nm-text-3 hover:text-nm-accent px-1 text-xs flex-shrink-0">
+          ⊟
+        </button>
+      </div>
+      <div className="py-1 overflow-y-auto flex-1">
+        {roots.map((node) => (
+          <TreeRow
+            key={node.id}
+            node={node}
+            depth={0}
+            selectedId={selectedFolderId}
+            expandedIds={expandedIds}
+            visibleIds={visibleIds}
+            onSelect={onSelectFolder}
+            onToggleExpand={toggleExpand}
+          />
+        ))}
+      </div>
     </div>
   )
 }

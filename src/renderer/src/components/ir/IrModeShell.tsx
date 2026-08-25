@@ -3,6 +3,8 @@ import { VirtualList } from './VirtualList'
 import { useIrAudition } from './useIrAudition'
 import { IrFolderTree } from './IrFolderTree'
 import { IrFolderPanel } from './IrFolderPanel'
+import { IrLibraryOverview } from './IrLibraryOverview'
+import { IrMenuBar } from './IrMenuBar'
 
 type IrItemRow = {
   id: string
@@ -89,6 +91,8 @@ export function IrModeShell(): React.ReactElement {
   const [search, setSearch] = useState('')
   const [total, setTotal] = useState(0)
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null)
+  const [favoritesOnly, setFavoritesOnly] = useState(false)
+  const [ratedOnly, setRatedOnly] = useState(false)
   // Folder tree/panel — scoped to the first root for now (no root switcher yet; a second "Add
   // Library Folder" click adds another root but the tree only ever shows the first one). Selecting
   // a folder both opens its metadata panel AND filters the item list to that folder's subtree
@@ -216,7 +220,7 @@ export function IrModeShell(): React.ReactElement {
     // fixed dependency set) — omitted from deps so a play/stop state change doesn't itself
     // re-trigger a cache wipe.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, roots.length, selectedFolderId])
+  }, [search, roots.length, selectedFolderId, favoritesOnly, ratedOnly])
 
   // Arrow-key navigation through the current filtered list (plan section 8), plus Escape to stop.
   // Ignored while a text input has focus so this doesn't fight the search box's own cursor keys.
@@ -285,7 +289,14 @@ export function IrModeShell(): React.ReactElement {
 
       const epoch = requestEpochRef.current
       window.api
-        .irLibraryQuery({ search: search || undefined, folderId: selectedFolderId, offset: pageStart, limit: pageEnd - pageStart })
+        .irLibraryQuery({
+          search: search || undefined,
+          folderId: selectedFolderId,
+          favoritesOnly: favoritesOnly || undefined,
+          minRating: ratedOnly ? 1 : undefined,
+          offset: pageStart,
+          limit: pageEnd - pageStart
+        })
         .then((res) => {
           if (requestEpochRef.current !== epoch) return // a newer filter/search superseded this
           setTotal(res.total)
@@ -296,21 +307,30 @@ export function IrModeShell(): React.ReactElement {
           pendingRef.current.delete(key)
         })
     },
-    [search, total, selectedFolderId]
+    [search, total, selectedFolderId, favoritesOnly, ratedOnly]
   )
 
-  // Fires once per search/folder change to establish `total` even before the list scrolls
+  // Fires once per search/folder/filter change to establish `total` even before the list scrolls
   // (VirtualList's own effect also triggers a range fetch, but that only runs once `total` — and
   // thus a non-zero row count to scroll through — is already known).
   useEffect(() => {
     const epoch = requestEpochRef.current
-    window.api.irLibraryQuery({ search: search || undefined, folderId: selectedFolderId, offset: 0, limit: PAGE_SIZE }).then((res) => {
-      if (requestEpochRef.current !== epoch) return
-      setTotal(res.total)
-      res.rows.forEach((row, i) => cacheRef.current.set(i, row))
-      forceRerender((n) => n + 1)
-    })
-  }, [search, roots.length, selectedFolderId])
+    window.api
+      .irLibraryQuery({
+        search: search || undefined,
+        folderId: selectedFolderId,
+        favoritesOnly: favoritesOnly || undefined,
+        minRating: ratedOnly ? 1 : undefined,
+        offset: 0,
+        limit: PAGE_SIZE
+      })
+      .then((res) => {
+        if (requestEpochRef.current !== epoch) return
+        setTotal(res.total)
+        res.rows.forEach((row, i) => cacheRef.current.set(i, row))
+        forceRerender((n) => n + 1)
+      })
+  }, [search, roots.length, selectedFolderId, favoritesOnly, ratedOnly])
 
   const toggleFavorite = useCallback((row: IrItemRow, index: number) => {
     const next = row.is_favorite ? 0 : 1
@@ -386,6 +406,7 @@ export function IrModeShell(): React.ReactElement {
 
   return (
     <div className="flex flex-col h-screen bg-app-bg text-nm-text overflow-hidden">
+      <IrMenuBar onAddLibraryFolder={handleAddFolder} scanning={scanning} />
       <div className="flex items-center gap-3 px-4 py-2 border-b border-nm-border flex-shrink-0">
         <h1 className="text-sm font-semibold text-nm-text-2">IR Library</h1>
         <button
@@ -402,6 +423,24 @@ export function IrModeShell(): React.ReactElement {
             placeholder="Search…"
             className="flex-1 max-w-md px-2 py-1 text-sm rounded border border-field-bd bg-field-bg"
           />
+        )}
+        {hasAnyRoot && (
+          <button
+            onClick={() => setFavoritesOnly((v) => !v)}
+            title="Favorites only"
+            className={`px-2 py-1 text-xs rounded border flex-shrink-0 ${favoritesOnly ? 'bg-active-bg border-nm-accent text-nm-accent' : 'border-field-bd text-nm-text-2 hover:bg-hov'}`}
+          >
+            ★ Favorites
+          </button>
+        )}
+        {hasAnyRoot && (
+          <button
+            onClick={() => setRatedOnly((v) => !v)}
+            title="Rated only"
+            className={`px-2 py-1 text-xs rounded border flex-shrink-0 ${ratedOnly ? 'bg-active-bg border-nm-accent text-nm-accent' : 'border-field-bd text-nm-text-2 hover:bg-hov'}`}
+          >
+            Rated
+          </button>
         )}
         {hasAnyRoot && <span className="text-xs text-nm-text-3 flex-shrink-0">{total.toLocaleString()} IRs</span>}
         {hasAnyRoot && (
@@ -534,17 +573,17 @@ export function IrModeShell(): React.ReactElement {
             )
           }}
           />
-          {selectedFolderId != null && (
-            <>
-              <div
-                onMouseDown={onPanelDragStart}
-                className="w-1 flex-shrink-0 cursor-col-resize hover:bg-nm-accent/40 active:bg-nm-accent/60 transition-colors"
-              />
-              <div style={{ width: panelWidth }} className="flex-shrink-0 overflow-y-auto">
-                <IrFolderPanel folderId={selectedFolderId} />
-              </div>
-            </>
-          )}
+          <div
+            onMouseDown={onPanelDragStart}
+            className="w-1 flex-shrink-0 cursor-col-resize hover:bg-nm-accent/40 active:bg-nm-accent/60 transition-colors"
+          />
+          <div style={{ width: panelWidth }} className="flex-shrink-0 overflow-y-auto">
+            {selectedFolderId != null ? (
+              <IrFolderPanel folderId={selectedFolderId} />
+            ) : (
+              <IrLibraryOverview libraryRootId={roots[0]?.id ?? null} />
+            )}
+          </div>
         </div>
       )}
 

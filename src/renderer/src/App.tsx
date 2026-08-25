@@ -456,6 +456,8 @@ declare global {
         libraryRootId?: number | null
         folderId?: number | null
         search?: string
+        favoritesOnly?: boolean
+        minRating?: number
         offset: number
         limit: number
       }) => Promise<{
@@ -480,7 +482,19 @@ declare global {
       }>
       irLibrarySetFavorite: (itemId: string, isFavorite: boolean) => Promise<{ success: boolean }>
       irLibrarySetRating: (itemId: string, rating: number | null) => Promise<{ success: boolean }>
-      irLibraryListFolders: (libraryRootId: number) => Promise<Array<{ id: number; parent_id: number | null; relative_path: string }>>
+      irLibraryListFolders: (
+        libraryRootId: number
+      ) => Promise<Array<{ id: number; parent_id: number | null; relative_path: string; direct_item_count: number }>>
+      irLibraryGetLibraryOverview: (libraryRootId: number) => Promise<{
+        totalItems: number
+        totalFolders: number
+        favoriteCount: number
+        ratedCount: number
+        documentCount: number
+        taggedCount: number
+        manufacturerBreakdown: Array<{ value: string; count: number }>
+        microphoneBreakdown: Array<{ value: string; count: number }>
+      }>
       irLibraryGetFolderDetail: (folderId: number) => Promise<{
         id: number
         relativePath: string

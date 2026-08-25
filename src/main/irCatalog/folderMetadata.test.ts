@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { createCoreSchema, finalizeIndexes } from './schema'
 import { importLibrary } from './importLibrary'
 import { queryItems } from './queryLibrary'
-import { setFolderMetadata, removeFolderMetadata } from './folderMetadata'
+import { setFolderMetadata, removeFolderMetadata, listFolders } from './folderMetadata'
 import { hasFts5 } from './sqliteCapabilities'
 
 const tmpDirs: string[] = []
@@ -144,6 +144,24 @@ describe.skipIf(!hasFts5())('folderMetadata', () => {
       r.relative_path.includes('nested.wav')
     )
     expect(nested?.manufacturer).toBe('Marshall') // falls back to the ancestor
+
+    db.close()
+  })
+
+  it('listFolders reports the direct (non-recursive) item count per folder', async () => {
+    const root = makeNestedFixture()
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const stats = await importLibrary(db, root, 'test-root')
+    finalizeIndexes(db)
+
+    const rows = listFolders(db, stats.libraryRootId)
+    const packA = rows.find((r) => r.relative_path === 'PackA')
+    const sub = rows.find((r) => r.relative_path === 'PackA/Sub')
+    const top = rows.find((r) => r.relative_path === '')
+    expect(packA?.direct_item_count).toBe(1) // file.wav only -- nested.wav is one level deeper
+    expect(sub?.direct_item_count).toBe(1)
+    expect(top?.direct_item_count).toBe(0) // no items sit directly at the root
 
     db.close()
   })

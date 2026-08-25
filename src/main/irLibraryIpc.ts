@@ -27,6 +27,7 @@ import {
 import { importFolderDocument, listFolderDocuments, deleteFolderDocument } from './irCatalog/folderDocuments'
 import { addToTray, removeFromTray, listTray, isInTray } from './irCatalog/tray'
 import { sendToIrLab, irLabConnectorAvailable } from './irLabConnector'
+import { getLibraryOverview } from './irCatalog/libraryOverview'
 
 let db: DatabaseSync | null = null
 // Guards against two overlapping background content_hash runs for the same root — a second
@@ -127,7 +128,18 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
 
   ipcMain.handle(
     'irLibrary:query',
-    (_event, options: { libraryRootId?: number | null; folderId?: number | null; search?: string; offset: number; limit: number }) => {
+    (
+      _event,
+      options: {
+        libraryRootId?: number | null
+        folderId?: number | null
+        search?: string
+        favoritesOnly?: boolean
+        minRating?: number
+        offset: number
+        limit: number
+      }
+    ) => {
       const database = getDb()
       const rows = queryItems(database, options).map((row) => ({
         ...row,
@@ -219,4 +231,8 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
   // "Reveal in folder" reuses the existing generic shell:revealFile channel (window.api.revealFile)
   // rather than a duplicate irLibrary:-prefixed one — it's a plain absolute-path reveal, nothing
   // IR-catalog-specific about it.
+
+  ipcMain.handle('irLibrary:getLibraryOverview', (_event, libraryRootId: number) => {
+    return getLibraryOverview(getDb(), libraryRootId)
+  })
 }

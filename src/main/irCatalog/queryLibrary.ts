@@ -38,6 +38,11 @@ export interface QueryOptions {
   folderId?: number | null
   /** Free-text query; empty/omitted means "no filter" (plain paginated browse). */
   search?: string
+  /** Quick filters for the browse/search bar — client-side filtering would break under
+   * pagination (a page's worth of raw rows might contain zero favorites), so these are real
+   * WHERE clauses, not a post-fetch JS filter. */
+  favoritesOnly?: boolean
+  minRating?: number
   offset: number
   limit: number
 }
@@ -101,6 +106,13 @@ function buildWhereAndParams(
   if (matchExpr !== null) {
     clauses.push('item.id IN (SELECT item_id FROM item_search WHERE item_search MATCH ?)')
     params.push(matchExpr)
+  }
+  if (options.favoritesOnly) {
+    clauses.push('item.is_favorite = 1')
+  }
+  if (options.minRating != null) {
+    clauses.push('item.rating >= ?')
+    params.push(options.minRating)
   }
   return { where: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '', params }
 }

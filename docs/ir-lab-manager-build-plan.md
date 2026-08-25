@@ -884,7 +884,45 @@ ear-fatigue reasoning already agreed on.
      Library Folder" click adds another root to the query/browse scope but not to the tree.
    - `folder_document` still doesn't extract any fields from what it imports (see the TODO on
      that table in section 2) — this phase only closes the storage/linking half.
-6. **Tray + IR Lab handoff** (sections 9 and 11, built together since they're two halves of one feature) — this is the point where the private connector piece is actually needed; everything before it ships fully functional without it.
+6. **Tray + IR Lab handoff — done.** Private connector spec confirmed live against the real
+   `ir-lab` repo (2026-08-24/25): `irlab://` scheme, `session`/`blend`/`project` routes, plain
+   query params sent via `shell.openExternal` — no socket, no shared database, matching section
+   0/11's design exactly. `irLabConnector.ts` (public repo) builds these URLs; the actual scheme
+   string is injected via `IR_LAB_URL_SCHEME` at build/run time (same pattern this repo already
+   uses for `CSC_KEY_PASSWORD`), never hardcoded here. `tray.ts`: an 8-slot `collection`
+   (matches `LiveAuditionEngine::blendPreviewSlotCount = 8`, confirmed live, not guessed), wired
+   end to end — bottom strip in `IrModeShell.tsx`, right-click "Add/Remove Tray", "Send to IR
+   Lab" button.
+
+   Also landed alongside this, in response to live UI feedback and follow-up asks (not originally
+   scoped to Phase 6, folded in because they touched the same surface):
+   - **Design tokens**: IR mode now uses the app's actual CSS-variable theme tokens
+     (`bg-app-bg`/`text-nm-text`/`bg-nm-accent`/etc., `tailwind.config.js`) instead of hardcoded
+     Tailwind grays — follows light/dark/accent themes like NAM Lab does, not independently of it.
+   - **Folder tree**: collapse-all/expand-all, an in-tree filter (matches + their ancestor chain
+     shown, auto-expanded), and per-folder recursive item-count badges — same "totalCount"
+     convention as NAM Lab's own `FolderTree.tsx`.
+   - **Right-click context menu** on item rows: Reveal in Folder (reuses the existing generic
+     `shell:revealFile` channel), Add/Remove Tray, an explicit "More actions coming soon" stub
+     rather than inventing menu items that don't do anything.
+   - **Both side panels resizable** (tree and folder-metadata panel), matching NAM Lab's own
+     `DragHandle` pattern.
+   - **Quick filters** (Favorites only / Rated only) in the browse bar — real `WHERE` clauses in
+     `queryLibrary.ts`, not a post-fetch JS filter (which would break under pagination — a page
+     of raw rows can easily contain zero favorites).
+   - **Library Overview**: the right panel's default content when no folder is selected (previously
+     just an empty "select a folder" placeholder) — total IRs/folders/favorites/rated/tagged/
+     vendor-doc counts, plus two small CSS-bar breakdowns (top manufacturers, top microphones)
+     from whatever Phase 3's parsers already populated. Deliberately not a real dashboard — "a
+     few graphs for now," per the ask.
+   - **Top menu bar** (File/Settings/Help) — File works (Add Library Folder). Settings/Help are
+     honest disabled stubs, not fake working buttons: NAM Lab's existing Settings panel is local
+     state inside `App.tsx` (~6,000 lines), and sharing it across both modes is a real state-
+     lifting refactor, not something to improvise as a side effect of adding a menu bar. Tracked
+     as follow-up, not silently skipped.
+   - A **Claude Design cohesion review** was requested (screenshots of both modes) before going
+     further into new IR-mode-specific UI (folder report, live-blend audition) — so those land
+     looking like one product with NAM Lab instead of another disjointed pass.
 7. **A/B audition, tags, collections beyond the tray** — polish layer, no new architecture.
 
 Deferred, explicitly out of scope until requested: acoustic/fingerprint

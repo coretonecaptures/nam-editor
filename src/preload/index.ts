@@ -339,6 +339,8 @@ const api = {
     libraryRootId?: number | null
     folderId?: number | null
     search?: string
+    favoritesOnly?: boolean
+    minRating?: number
     offset: number
     limit: number
   }): Promise<{
@@ -365,8 +367,20 @@ const api = {
     ipcRenderer.invoke('irLibrary:setFavorite', itemId, isFavorite),
   irLibrarySetRating: (itemId: string, rating: number | null): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('irLibrary:setRating', itemId, rating),
-  irLibraryListFolders: (libraryRootId: number): Promise<Array<{ id: number; parent_id: number | null; relative_path: string }>> =>
+  irLibraryListFolders: (
+    libraryRootId: number
+  ): Promise<Array<{ id: number; parent_id: number | null; relative_path: string; direct_item_count: number }>> =>
     ipcRenderer.invoke('irLibrary:listFolders', libraryRootId),
+  irLibraryGetLibraryOverview: (libraryRootId: number): Promise<{
+    totalItems: number
+    totalFolders: number
+    favoriteCount: number
+    ratedCount: number
+    documentCount: number
+    taggedCount: number
+    manufacturerBreakdown: Array<{ value: string; count: number }>
+    microphoneBreakdown: Array<{ value: string; count: number }>
+  }> => ipcRenderer.invoke('irLibrary:getLibraryOverview', libraryRootId),
   irLibraryGetFolderDetail: (folderId: number): Promise<{
     id: number
     relativePath: string

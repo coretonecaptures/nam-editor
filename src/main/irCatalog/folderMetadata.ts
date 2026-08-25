@@ -115,12 +115,25 @@ export interface FolderTreeRow {
   id: number
   parent_id: number | null
   relative_path: string
+  /** Items directly in this folder (not counting subfolders) — recursive/subtree totals (NAM
+   * Lab's FolderTree "totalCount" convention) are rolled up client-side from this during tree
+   * building, same pattern as the totals nam-editor's own FolderTree.tsx already uses. */
+  direct_item_count: number
 }
 
 export function listFolders(db: DatabaseSync, libraryRootId: number): FolderTreeRow[] {
   return db
-    .prepare(`SELECT id, parent_id, relative_path FROM folder WHERE library_root_id = ? ORDER BY relative_path`)
-    .all(libraryRootId) as unknown as FolderTreeRow[]
+    .prepare(
+      `SELECT folder.id as id, folder.parent_id as parent_id, folder.relative_path as relative_path,
+              COALESCE(counts.c, 0) as direct_item_count
+       FROM folder
+       LEFT JOIN (
+         SELECT folder_id, COUNT(*) as c FROM item WHERE library_root_id = ? GROUP BY folder_id
+       ) counts ON counts.folder_id = folder.id
+       WHERE folder.library_root_id = ?
+       ORDER BY folder.relative_path`
+    )
+    .all(libraryRootId, libraryRootId) as unknown as FolderTreeRow[]
 }
 
 export interface FolderDetail {
