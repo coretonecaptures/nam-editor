@@ -23,6 +23,10 @@ export interface ItemRow {
   speaker_source: string | null
   microphone: string | null
   microphone_source: string | null
+  /** The owning library_root's filesystem path — join with relative_path (via node:path, not
+   * string concat, for correct separators) to get an absolute path for reading the file's audio
+   * bytes. Phase 4 (audition) is the first caller that needs this. */
+  library_root_path: string
 }
 
 export interface QueryOptions {
@@ -74,8 +78,10 @@ export function queryItems(db: DatabaseSync, options: QueryOptions): ItemRow[] {
               ir_item.manufacturer as manufacturer, mfr_src.source as manufacturer_source,
               ir_item.cabinet as cabinet, cab_src.source as cabinet_source,
               ir_item.speaker as speaker, spk_src.source as speaker_source,
-              ir_item.microphone as microphone, mic_src.source as microphone_source
+              ir_item.microphone as microphone, mic_src.source as microphone_source,
+              library_root.path as library_root_path
        FROM item
+       JOIN library_root ON library_root.id = item.library_root_id
        LEFT JOIN ir_item ON ir_item.item_id = item.id
        LEFT JOIN ir_item_field_source mfr_src ON mfr_src.item_id = item.id AND mfr_src.field = 'manufacturer'
        LEFT JOIN ir_item_field_source cab_src ON cab_src.item_id = item.id AND cab_src.field = 'cabinet'

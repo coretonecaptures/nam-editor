@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { VirtualList } from './VirtualList'
+import { useIrAudition } from './useIrAudition'
 
 type IrItemRow = {
   id: string
@@ -16,6 +17,7 @@ type IrItemRow = {
   speaker_source: string | null
   microphone: string | null
   microphone_source: string | null
+  abs_path: string
 }
 
 type LibraryRoot = { id: number; path: string; label: string | null; watch_mode: string; created_at: string }
@@ -69,10 +71,12 @@ function splitPath(rel: string): { folder: string; name: string } {
 /**
  * Phase 2 — read-only browse + search over the IR catalog (docs/ir-lab-manager-build-plan.md
  * section 12, Phase 2), now showing Phase 3's vendor-parsed fields with confidence badges
- * (section 3) per field. No organization features yet (tags/collections/tray are later phases).
- * No faceted filter chips yet either (section 7) — badges show what's known per row, but there's
- * no click-to-narrow-by-cabinet/speaker/mic UI; that's a distinct feature (needs a distinct-
- * values aggregation query + filter state) still tracked as not done.
+ * (section 3) per field, and Phase 4's quick audition (section 8) — a play button per row plus
+ * arrow-key navigation through the current filtered list, per the plan's spec. No organization
+ * features yet (tags/collections/tray are later phases), no A/B audition yet (Phase 7). No
+ * faceted filter chips yet either (section 7) — badges show what's known per row, but there's no
+ * click-to-narrow-by-cabinet/speaker/mic UI; that's a distinct feature (needs a distinct-values
+ * aggregation query + filter state) still tracked as not done.
  */
 export function IrModeShell(): React.ReactElement {
   const [roots, setRoots] = useState<LibraryRoot[]>([])
@@ -82,6 +86,9 @@ export function IrModeShell(): React.ReactElement {
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
   const [total, setTotal] = useState(0)
+  const [focusedIndex, setFocusedIndex] = useState<number | null>(null)
+
+  const audition = useIrAudition()
 
   // Sparse cache keyed by row index within the current (root, search) result set — a 282K-row
   // catalog is never fetched or held in full, only the indices actually scrolled into view. Reset
@@ -116,8 +123,43 @@ export function IrModeShell(): React.ReactElement {
   useEffect(() => {
     cacheRef.current = new Map()
     pendingRef.current = new Set()
+    setFocusedIndex(null)
+    audition.stop()
     forceRerender((n) => n + 1)
+    // audition is stable across renders (all its returned functions are useCallback'd with a
+    // fixed dependency set) — omitted from deps so a play/stop state change doesn't itself
+    // re-trigger a cache wipe.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, roots.length])
+
+  // Arrow-key navigation through the current filtered list (plan section 8), plus Escape to stop.
+  // Ignored while a text input has focus so this doesn't fight the search box's own cursor keys.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent): void => {
+      const active = document.activeElement
+      if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) return
+      if (total === 0) return
+
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        setFocusedIndex((current) => {
+          const base = current ?? -1
+          const next = e.key === 'ArrowDown' ? Math.min(total - 1, base + 1) : Math.max(0, base - 1)
+          const row = cacheRef.current.get(next)
+          // Known rough edge: if `next` hasn't loaded into cacheRef yet (rapid jump ahead of
+          // what VirtualList has fetched), this silently doesn't play — no retry once it
+          // arrives. Acceptable for a first cut; revisit if it's actually annoying in practice.
+          if (row) audition.play(row)
+          return next
+        })
+      } else if (e.key === 'Escape') {
+        audition.stop()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [total])
 
   const handleAddFolder = useCallback(async () => {
     const folder = await window.api.openFolder()
@@ -216,7 +258,21 @@ export function IrModeShell(): React.ReactElement {
           />
         )}
         {hasAnyRoot && <span className="text-xs text-gray-400 dark:text-gray-600 flex-shrink-0">{total.toLocaleString()} IRs</span>}
+        {hasAnyRoot && (
+          <button
+            onClick={audition.pickDiClip}
+            title={audition.diPath ?? 'Pick a DI clip to audition IRs against'}
+            className="ml-auto px-2.5 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 flex-shrink-0"
+          >
+            {audition.diPath ? `DI: ${audition.diPath.split(/[\\/]/).pop()}` : 'Pick DI clip…'}
+          </button>
+        )}
       </div>
+      {audition.error && (
+        <div className="px-4 py-1 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 flex-shrink-0">
+          Audition: {audition.error}
+        </div>
+      )}
 
       {scanning && scanProgress && (
         <div className="px-4 py-1 text-xs text-gray-500 dark:text-gray-400 bg-indigo-50 dark:bg-indigo-950/40 flex-shrink-0">
@@ -247,10 +303,31 @@ export function IrModeShell(): React.ReactElement {
               return <div className="h-full border-b border-gray-100 dark:border-gray-900" />
             }
             const { folder, name } = splitPath(row.relative_path)
+            const isPlaying = audition.playingId === row.id
+            const isFocused = focusedIndex === index
             return (
-              <div className="h-full flex items-center gap-3 px-4 border-b border-gray-100 dark:border-gray-900 hover:bg-gray-50 dark:hover:bg-gray-900/50">
+              <div
+                onClick={() => setFocusedIndex(index)}
+                className={`h-full flex items-center gap-3 px-4 border-b border-gray-100 dark:border-gray-900 hover:bg-gray-50 dark:hover:bg-gray-900/50 ${isFocused ? 'bg-indigo-50 dark:bg-indigo-950/30' : ''}`}
+              >
                 <button
-                  onClick={() => toggleFavorite(row, index)}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setFocusedIndex(index)
+                    if (isPlaying) audition.stop()
+                    else audition.play(row)
+                  }}
+                  disabled={!audition.diPath}
+                  title={audition.diPath ? (isPlaying ? 'Stop' : 'Audition this IR') : 'Pick a DI clip first'}
+                  className={`flex-shrink-0 text-base w-5 text-center ${isPlaying ? 'text-indigo-500' : 'text-gray-400 dark:text-gray-600 hover:text-indigo-400'} disabled:opacity-30`}
+                >
+                  {isPlaying ? '■' : '▶'}
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    toggleFavorite(row, index)
+                  }}
                   title={row.is_favorite ? 'Remove favorite' : 'Add favorite'}
                   className={`flex-shrink-0 text-lg ${row.is_favorite ? 'text-amber-400' : 'text-gray-300 dark:text-gray-700 hover:text-amber-300'}`}
                 >

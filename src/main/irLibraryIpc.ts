@@ -89,8 +89,16 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     'irLibrary:query',
     (_event, options: { libraryRootId?: number | null; search?: string; offset: number; limit: number }) => {
       const database = getDb()
+      const rows = queryItems(database, options).map((row) => ({
+        ...row,
+        // Computed here (node:path, correct separators) rather than in SQL — Phase 4 (audition)
+        // needs a real filesystem path to read the file's audio bytes via the existing generic
+        // window.api.readFileBinary. relative_path is stored posix-normalized (toPosixRel), so
+        // it's split and rejoined rather than passed straight to `join`.
+        abs_path: join(row.library_root_path, ...row.relative_path.split('/'))
+      }))
       return {
-        rows: queryItems(database, options),
+        rows,
         total: countItems(database, options)
       }
     }

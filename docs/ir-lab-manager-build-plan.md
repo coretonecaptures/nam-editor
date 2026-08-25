@@ -781,7 +781,31 @@ ear-fatigue reasoning already agreed on.
    actually covered them even before Phase 3. Confidence badges (Phase 2's flagged gap) now show
    real data in `IrModeShell.tsx`. Faceted filter chips (section 7) remain unbuilt — badges show
    per-row provenance, but there's still no click-to-narrow-by-field UI.
-4. **Quick audition**, ported from NAM Lab per section 8.
+4. **Quick audition** — **done**, per section 8's explicit instruction to drop the WASM model
+   worklet entirely for this workflow (`components/ir/useIrAudition.ts`). Reused directly rather
+   than ported: `playerAudio.ts`'s decode/normalize helpers and `audioGraph.ts`'s
+   `applyCabinetIr` — the same convolution the player and NAM captures' own audition already run
+   through, so an IR heard here sounds like it will everywhere else. Also reused: `useAudition.ts`'s
+   generation-counter staleness guard, which that file's own header comment documents fixing a
+   real "captures play over each other" bug for — the same race exists here (rapid row-to-row
+   navigation), so the same fix applies rather than re-discovering the bug.
+
+   **Deliberately not ported: the render-ahead worker pool.** `useAudition.ts`'s `POOL_SIZE=4`
+   pool exists specifically to parallelize the WASM model render (~60-180ms measured, per that
+   file's own comment) off the main thread. There's no model render in this workflow — it's an
+   offline convolution of a 5s DI clip against a typically-sub-1s IR, cheap enough to render
+   on-demand inside a promise without a dedicated pool. This is a stated scope decision, not an
+   oversight: if real usage shows the on-demand render is too slow to feel instant, add
+   prefetch-ahead then, informed by actual measurement rather than assumed upfront.
+
+   UI: a "Pick DI clip" control (reuses the existing `openAudioFile` dialog, persists the choice
+   to `localStorage`), a play/stop button per row, and arrow-key (`ArrowUp`/`ArrowDown`)
+   navigation through the current filtered list plus `Escape` to stop, per section 8's spec —
+   ignored while a text input has focus so it doesn't fight the search box's own cursor keys.
+   **Known rough edge:** arrow-key navigation only auto-plays a row already present in the
+   virtualized list's loaded cache; jumping ahead of what's been fetched moves focus silently
+   with no play and no retry once that page loads. A/B audition (hold two candidates, instant
+   toggle) is explicitly Phase 7, not attempted here.
 5. **Folder notes + vendor document import**, with inheritance (section 2's `folder_metadata`/`folder_metadata_effective`/`folder_document`) and reconciliation (section 5) — reconciliation is fully designed already (section 5's four confidence tiers) but zero code exists yet; a moved/renamed file today just becomes a new row, with the old one sitting `missing_since`-flagged forever with no relink path, until this phase builds it. Its top tier also depends on the `content_hash` background queue, which Phase 1 didn't build either (see Phase 1 above) — build that first if this phase starts before it exists.
 6. **Tray + IR Lab handoff** (sections 9 and 11, built together since they're two halves of one feature) — this is the point where the private connector piece is actually needed; everything before it ships fully functional without it.
 7. **A/B audition, tags, collections beyond the tray** — polish layer, no new architecture.

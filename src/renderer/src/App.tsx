@@ -473,6 +473,7 @@ declare global {
           speaker_source: string | null
           microphone: string | null
           microphone_source: string | null
+          abs_path: string
         }>
         total: number
       }>
