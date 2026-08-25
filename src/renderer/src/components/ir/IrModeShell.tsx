@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { VirtualList } from './VirtualList'
-import { useIrAudition } from './useIrAudition'
+import { useIrLiveAudition } from './useIrLiveAudition'
 import { IrFolderTree } from './IrFolderTree'
 import { IrRightPanel } from './IrRightPanel'
 import { IrMenuBar } from './IrMenuBar'
@@ -74,12 +74,14 @@ function splitPath(rel: string): { folder: string; name: string } {
 /**
  * Phase 2 — read-only browse + search over the IR catalog (docs/ir-lab-manager-build-plan.md
  * section 12, Phase 2), now showing Phase 3's vendor-parsed fields with confidence badges
- * (section 3) per field, and Phase 4's quick audition (section 8) — a play button per row plus
- * arrow-key navigation through the current filtered list, per the plan's spec. No organization
- * features yet (tags/collections/tray are later phases), no A/B audition yet (Phase 7). No
- * faceted filter chips yet either (section 7) — badges show what's known per row, but there's no
- * click-to-narrow-by-cabinet/speaker/mic UI; that's a distinct feature (needs a distinct-values
- * aggregation query + filter state) still tracked as not done.
+ * (section 3) per field, and live audition (section 8b) — a row's play button hot-swaps the
+ * cabinet on a real-time NAM-through-LiveEngine session (pick an amp capture once in the Live
+ * tab), same mechanism and UI idiom as NAM Lab's own PlayerPanel Live mode, not the earlier
+ * DI-render-once mechanism it replaced. Arrow-key navigation through the current filtered list
+ * plays live too. No A/B audition yet (Phase 7). No faceted filter chips yet either (section 7) —
+ * badges show what's known per row, but there's no click-to-narrow-by-cabinet/speaker/mic UI;
+ * that's a distinct feature (needs a distinct-values aggregation query + filter state) still
+ * tracked as not done.
  */
 export function IrModeShell(): React.ReactElement {
   const [roots, setRoots] = useState<LibraryRoot[]>([])
@@ -131,7 +133,7 @@ export function IrModeShell(): React.ReactElement {
   // (e.g. a slow "all IRs" query resolving after the user already clicked into a folder).
   const requestEpochRef = useRef(0)
 
-  const audition = useIrAudition()
+  const live = useIrLiveAudition()
 
   // Sparse cache keyed by row index within the current (root, search) result set — a 282K-row
   // catalog is never fetched or held in full, only the indices actually scrolled into view. Reset
@@ -252,18 +254,16 @@ export function IrModeShell(): React.ReactElement {
   }, [contextMenu])
 
   // New search, folder filter, or a completed scan invalidates every cached index — the same
-  // offset can now point at a different row.
+  // offset can now point at a different row. Deliberately does NOT stop live monitoring (unlike
+  // the old offline-DI audition this replaced) — live is a continuous session tied to the chosen
+  // amp capture, not to the current search/filter view; stopping it on every keystroke would be
+  // far more disruptive than the old mechanism's cheap-to-restart render.
   useEffect(() => {
     requestEpochRef.current++
     cacheRef.current = new Map()
     pendingRef.current = new Set()
     setFocusedIndex(null)
-    audition.stop()
     forceRerender((n) => n + 1)
-    // audition is stable across renders (all its returned functions are useCallback'd with a
-    // fixed dependency set) — omitted from deps so a play/stop state change doesn't itself
-    // re-trigger a cache wipe.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, roots.length, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId])
 
   // Arrow-key navigation through the current filtered list (plan section 8), plus Escape to stop.
@@ -283,11 +283,11 @@ export function IrModeShell(): React.ReactElement {
           // Known rough edge: if `next` hasn't loaded into cacheRef yet (rapid jump ahead of
           // what VirtualList has fetched), this silently doesn't play — no retry once it
           // arrives. Acceptable for a first cut; revisit if it's actually annoying in practice.
-          if (row) audition.play(row)
+          if (row) void live.playItem(row)
           return next
         })
       } else if (e.key === 'Escape') {
-        audition.stop()
+        void live.stop()
       }
     }
     window.addEventListener('keydown', handler)
@@ -560,17 +560,19 @@ export function IrModeShell(): React.ReactElement {
         {hasAnyRoot && <span className="text-xs text-nm-text-3 flex-shrink-0">{total.toLocaleString()} IRs</span>}
         {hasAnyRoot && (
           <button
-            onClick={audition.pickDiClip}
-            title={audition.diPath ?? 'Pick a DI clip to audition IRs against'}
-            className="ml-auto px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov flex-shrink-0"
+            onClick={() => (live.running ? void live.stop() : undefined)}
+            title={live.running ? 'Click to stop live monitoring' : live.capturePath ? live.captureName ?? undefined : 'Set an amp capture in the Live tab'}
+            className={`ml-auto px-2.5 py-1 text-xs rounded border flex-shrink-0 ${
+              live.running ? 'border-nm-accent text-nm-accent bg-active-bg' : 'border-field-bd text-nm-text-2 hover:bg-hov'
+            }`}
           >
-            {audition.diPath ? `DI: ${audition.diPath.split(/[\\/]/).pop()}` : 'Pick DI clip…'}
+            {live.starting ? 'Starting…' : live.running ? `● Live — ${live.activeItemName ?? '…'}` : 'Live: off'}
           </button>
         )}
       </div>
-      {audition.error && (
+      {live.error && (
         <div className="px-4 py-1 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 flex-shrink-0">
-          Audition: {audition.error}
+          Live audition: {live.error}
         </div>
       )}
 
@@ -633,7 +635,7 @@ export function IrModeShell(): React.ReactElement {
               return <div className="h-full border-b border-nm-border-s" />
             }
             const { folder, name } = splitPath(row.relative_path)
-            const isPlaying = audition.playingId === row.id
+            const isPlaying = live.running && live.activeItemId === row.id
             const isFocused = focusedIndex === index
             return (
               <div
@@ -649,11 +651,11 @@ export function IrModeShell(): React.ReactElement {
                   onClick={(e) => {
                     e.stopPropagation()
                     setFocusedIndex(index)
-                    if (isPlaying) audition.stop()
-                    else audition.play(row)
+                    if (isPlaying) void live.stop()
+                    else void live.playItem({ id: row.id, abs_path: row.abs_path, display_name: row.display_name })
                   }}
-                  disabled={!audition.diPath}
-                  title={audition.diPath ? (isPlaying ? 'Stop' : 'Audition this IR') : 'Pick a DI clip first'}
+                  disabled={!live.capturePath}
+                  title={live.capturePath ? (isPlaying ? 'Stop live monitoring' : 'Audition this IR live') : 'Set an amp capture in the Live tab first'}
                   className={`flex-shrink-0 text-base w-5 text-center ${isPlaying ? 'text-nm-accent' : 'text-nm-text-3 hover:text-nm-accent'} disabled:opacity-30`}
                 >
                   {isPlaying ? '■' : '▶'}
@@ -706,6 +708,7 @@ export function IrModeShell(): React.ReactElement {
               libraryRootPath={roots[0]?.path ?? null}
               folderId={selectedFolderId}
               folderName={selectedFolderName}
+              live={live}
             />
           </div>
         </div>

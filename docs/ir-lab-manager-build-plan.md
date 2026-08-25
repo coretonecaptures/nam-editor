@@ -945,68 +945,70 @@ in the main process — the renderer has no `node:path`/`node:fs` access under
 existing generic channels with that path exactly like NAM Lab's own pack
 detail panel does — no IR-specific backend work required for either tab.
 
-### 8b. Live-blend cabinet audition — plan (not implemented)
+### 8b. Live cabinet audition (built — single-IR; two-IR blend still a plan)
 
-Today's IR audition (`useIrAudition.ts`, Phase 4) is a separate, simpler
-mechanism: offline-render-once via `applyCabinetIr`, loop a static
-`AudioBuffer`. It deliberately never touches `LiveEngine` or the WASM NAM
-render worker pool. What's being asked for now is different: play a DI file
-(or live guitar input) *through NAM in real time*, and instead of swapping
-which NAM capture is loaded (today's normal live-monitoring flow), clicking
-an IR's play button hot-swaps the **cabinet/IR block only**, leaving the amp
-model in place.
+The single-IR version of this is now built, replacing the earlier Phase 4
+mechanism entirely (`useIrAudition.ts` — offline-render-once via
+`applyCabinetIr`, loop a static `AudioBuffer` against a picked DI file — was
+deleted, not kept alongside). What was actually asked for, once clarified
+against a live UI screenshot/discussion: a row's play button should behave
+like NAM Lab's own PlayerPanel **Live** mode (real mic/interface input
+through an amp capture, continuously, no DI file involved at all) with the
+cabinet swapped instead of the amp — not the separate, much simpler
+offline-DI mechanism this replaced.
 
-`LiveEngine` (`src/renderer/src/utils/liveEngine.ts`) already has the exact
-mechanism this needs: the signal graph is
-`MediaStreamSource -> [NAM AudioWorklet] -> [ConvolverNode wet] -+-> outputGain -> destination`
-with a parallel `dryGain`, and the private method `wireIr(ir)` (~line 2282)
-already rebuilds just the cabinet stage on demand — disconnects/nulls the old
-`ConvolverNode`/`wetGain`/`dryGain`, creates a fresh `ConvolverNode`
-(`normalize = false`), resamples the IR to the context's sample rate, sets
-`.buffer`, and computes gain-makeup from the IR's L2 energy norm. "Swap IR
-instead of swapping the NAM capture" is calling `wireIr()` with a different
-IR and leaving everything upstream of it untouched.
+**Built, reusing `LiveEngine` directly (not a copy):**
 
-What the plan adds on top of the existing method:
+- `src/renderer/src/components/ir/useIrLiveAudition.ts` — new hook, but the
+  audio engine underneath it is the *exact same* `LiveEngine` class
+  (`src/renderer/src/utils/liveEngine.ts`) `PlayerPanel.tsx`'s own Live mode
+  uses. `start()` opens `LiveEngine` with a chosen amp capture's `.nam` file
+  (`modelJson`) and no IR yet; `playItem(item)` starts monitoring on first
+  use (or reuses the running engine) and calls `engine.setIr()` — the exact
+  method `PlayerPanel.tsx:1288-1304` already calls when you change cabs
+  mid-session in NAM mode, not a new mechanism. `wireIr()`
+  (`liveEngine.ts:2282`, called by `setIr`) already does the disconnect/
+  resample/gain-makeup dance needed to swap cabinets without dropping the
+  mic or reloading the amp model.
+- Amp capture picked once via `window.api.openFiles()` (same generic .nam
+  file dialog, persisted to localStorage), matching the decided answer:
+  "pick an amp capture first," same flow as NAM Lab's own Live mode.
+- `src/renderer/src/components/ir/IrLiveTab.tsx` — a new "Live" tab in
+  `IrRightPanel.tsx` (always available, not folder-scoped): capture picker,
+  play/stop transport reusing the *same* tape-cap artwork files NAM Lab's
+  player uses (`assets/transport/play-lit.png` etc., imported by the same
+  path, not copied), an output meter bar, and error display.
+- Row play buttons (`IrModeShell.tsx`) and arrow-key navigation now call
+  `live.playItem(row)` instead of the deleted offline mechanism; Escape
+  calls `live.stop()`. The header's old "Pick DI clip…" button is gone,
+  replaced by a compact live-status indicator. Deliberately does NOT stop
+  live monitoring on search/folder/filter changes (unlike the old mechanism,
+  which was cheap to restart) — live is a continuous session tied to the
+  chosen amp capture, independent of the current browse view.
 
-1. **Two-IR blend.** `wireIr()` currently wires one `ConvolverNode`. Extend
-   the cabinet stage to two parallel convolver branches (IR A, IR B), each
-   with its own gain node, both summed into the existing single `wetGain`
-   bus before `outputGain`. A blend control (0=A, 1=B, crossfade between) is
-   just the two gain nodes' values moving inversely — no new audio nodes
-   needed beyond the second convolver+gain pair. Selecting "just IR A" is the
-   degenerate case (B gain = 0), so this subsumes today's single-IR path
-   rather than branching around it.
-2. **Source: DI file loop vs. live mic/interface input.** These are
-   different `MediaStreamSource` origins already distinguished elsewhere in
-   `LiveEngine` (DI loop uses a decoded-buffer source node in a loop; live
-   input uses `getUserMedia`/interface input). The IR-hot-swap behavior is
-   identical either way since it only touches the cabinet stage — this plan
-   doesn't need to special-case the source, only reuse whichever source
-   `LiveEngine` is already configured with.
-3. **Cross-tree architecture gap (real, unresolved).** `AppRoot.tsx` renders
-   NAM mode (`App.tsx`) and IR mode (`IrModeShell.tsx`) as siblings with no
-   shared state/store. `LiveEngine` today is owned by NAM mode. IR mode
-   hot-swapping cabinet IRs on an existing live NAM signal chain means either
-   (a) IR mode gets its own `LiveEngine` instance (simpler, but two engines
-   means two audio contexts/worklets if both modes are live-monitoring at
-   once — wasteful, possibly audible glitches on device contention), or
-   (b) `LiveEngine` gets lifted to a shared owner both trees can reach
-   (correct long-term, but a real state-lifting refactor, same category as
-   the already-flagged shared-Settings-panel gap). Not solving this tonight;
-   flagging it here so it isn't rediscovered from scratch later. Recommend
-   (b) once this is actually built, given it's the same shape of problem as
-   Settings and doing both refactors together is cheaper than doing them
-   twice.
-4. **UI surface.** Each IR row's existing play button becomes "audition this
-   IR live" instead of (or in addition to) the current offline preview;
-   "add to blend slot A/B" comes from the tray (already selects up to 8 for
-   comparison — two of those slots become the live A/B blend inputs) rather
-   than inventing a second selection mechanism.
+**Deliberately NOT built, real gaps not oversights:**
 
-Scope explicitly bigger than Phase 4 — treated as its own follow-up phase
-once the tray/groups/tabs work in this batch lands, not attempted in the
-same pass.
+1. **Two-IR blend.** `wireIr()`/`setIr()` still wire one cabinet at a time.
+   Blending two IRs (crossfade via two parallel convolver+gain branches
+   summed into the existing wet bus) is unbuilt — the tray's up-to-8
+   selection could supply the two blend slots, but nothing wires that yet.
+2. **No gate/EQ/delay/reverb/chorus/device picker** in `IrLiveTab.tsx` —
+   `PlayerPanel.tsx`'s full Live mode has all of these; the new hook passes
+   only `modelJson` to `LiveEngine.start()`, leaving everything else at
+   `LiveEngine`'s own defaults (all off). Shipped this way on purpose to get
+   the core "click an IR, hear it live" loop working first, not because
+   `LiveEngine` can't support them — it already does, for NAM mode.
+3. **Cross-tree architecture gap (still real, still unresolved).**
+   `AppRoot.tsx` renders NAM mode (`App.tsx`) and IR mode (`IrModeShell.tsx`)
+   as siblings with no shared state — each mode now owns its own
+   independent `LiveEngine` instance (NAM mode's inside `PlayerPanel`, IR
+   mode's inside `useIrLiveAudition`). Running both live at once means two
+   separate audio contexts/worklets/mic streams contending for the same
+   input device — not prevented, not tested, likely to misbehave. Lifting
+   `LiveEngine` to a shared owner both trees can reach is the correct
+   long-term fix (same shape of problem as the already-flagged shared-
+   Settings-panel gap) but wasn't attempted here; flagging again so it isn't
+   rediscovered from scratch.
 
 ### 8c. IR Lab Projects vs. third-party vendor libraries — ingestion (built)
 

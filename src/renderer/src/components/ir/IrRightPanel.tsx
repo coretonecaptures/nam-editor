@@ -4,14 +4,19 @@ import { IrLibraryOverview } from './IrLibraryOverview'
 import { IrGalleryTab } from './IrGalleryTab'
 import { IrReadMeTab } from './IrReadMeTab'
 import { IrProjectTab } from './IrProjectTab'
+import { IrLiveTab } from './IrLiveTab'
+import type { IrLiveAuditionApi } from './useIrLiveAudition'
 
-type Tab = 'overview' | 'project' | 'pack-info' | 'gallery' | 'readme'
+type Tab = 'overview' | 'project' | 'pack-info' | 'gallery' | 'readme' | 'live'
 
 const BASE_TABS: Array<{ key: Tab; label: string }> = [
   { key: 'overview', label: 'Overview' },
   { key: 'pack-info', label: 'Pack Info' },
   { key: 'gallery', label: 'Gallery' },
-  { key: 'readme', label: 'Read Me' }
+  { key: 'readme', label: 'Read Me' },
+  // Not folder-scoped like the others — always available, to the right, same placement as NAM
+  // Lab's own Live rig (plan section 8b).
+  { key: 'live', label: 'Live' }
 ]
 
 /**
@@ -28,12 +33,14 @@ export function IrRightPanel({
   libraryRootId,
   libraryRootPath,
   folderId,
-  folderName
+  folderName,
+  live
 }: {
   libraryRootId: number | null
   libraryRootPath: string | null
   folderId: number | null
   folderName: string | null
+  live: IrLiveAuditionApi
 }): React.ReactElement {
   const [tab, setTab] = useState<Tab>('overview')
   const [folderAbsPath, setFolderAbsPath] = useState<string | null>(null)
@@ -90,6 +97,7 @@ export function IrRightPanel({
         {tab === 'pack-info' && <IrFolderPanel folderId={folderId} />}
         {tab === 'gallery' && <IrGalleryTab absPath={effectiveAbsPath} />}
         {tab === 'readme' && <IrReadMeTab absPath={effectiveAbsPath} />}
+        {tab === 'live' && <IrLiveTab live={live} />}
       </div>
     </div>
   )
