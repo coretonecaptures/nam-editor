@@ -86,6 +86,7 @@ export function IrModeShell(): React.ReactElement {
   const [scanning, setScanning] = useState(false)
   const [scanProgress, setScanProgress] = useState<{ filesSeen: number; foldersSeen: number; elapsedMs: number } | null>(null)
   const [scanError, setScanError] = useState<string | null>(null)
+  const [importResult, setImportResult] = useState<string | null>(null)
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
   const [total, setTotal] = useState(0)
@@ -310,6 +311,28 @@ export function IrModeShell(): React.ReactElement {
     }
   }, [refreshRoots])
 
+  const handleImportLabProjects = useCallback(async () => {
+    const folder = await window.api.openFolder()
+    if (!folder) return
+    setScanError(null)
+    setImportResult(null)
+    setScanning(true)
+    setScanProgress({ filesSeen: 0, foldersSeen: 0, elapsedMs: 0 })
+    try {
+      const result = await window.api.irLibraryImportLabProjects(folder, null)
+      await refreshRoots()
+      setImportResult(
+        result.reusedExistingRoot
+          ? `Rescanned existing library — found ${result.projectsFound} IR Lab Project${result.projectsFound === 1 ? '' : 's'}, enriched ${result.itemsEnriched} capture${result.itemsEnriched === 1 ? '' : 's'}.`
+          : `Imported ${result.projectsFound} IR Lab Project${result.projectsFound === 1 ? '' : 's'} (${result.itemsEnriched} capture${result.itemsEnriched === 1 ? '' : 's'}); skipped ${result.nonProjectItemsRemoved} non-Project file${result.nonProjectItemsRemoved === 1 ? '' : 's'} found in the same folder.`
+      )
+    } catch (err) {
+      setScanError(String(err))
+    } finally {
+      setScanning(false)
+    }
+  }, [refreshRoots])
+
   const onVisibleRangeChange = useCallback(
     (start: number, end: number) => {
       const missingStart = start
@@ -451,7 +474,7 @@ export function IrModeShell(): React.ReactElement {
 
   return (
     <div className="flex flex-col h-screen bg-app-bg text-nm-text overflow-hidden">
-      <IrMenuBar onAddLibraryFolder={handleAddFolder} scanning={scanning} />
+      <IrMenuBar onAddLibraryFolder={handleAddFolder} onImportLabProjects={handleImportLabProjects} scanning={scanning} />
       <div className="flex items-center gap-3 px-4 py-2 border-b border-nm-border flex-shrink-0">
         <h1 className="text-sm font-semibold text-nm-text-2">IR Library</h1>
         <button
@@ -559,6 +582,14 @@ export function IrModeShell(): React.ReactElement {
       )}
       {scanError && (
         <div className="px-4 py-1 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 flex-shrink-0">{scanError}</div>
+      )}
+      {importResult && (
+        <div className="flex items-center justify-between gap-2 px-4 py-1 text-xs text-nm-text-2 bg-active-bg flex-shrink-0">
+          <span>{importResult}</span>
+          <button onClick={() => setImportResult(null)} className="text-nm-text-3 hover:text-nm-text flex-shrink-0">
+            ×
+          </button>
+        </div>
       )}
       {selectedFolderId != null && (
         <div className="flex items-center gap-2 px-4 py-1 text-xs bg-panel-2 border-b border-nm-border flex-shrink-0">

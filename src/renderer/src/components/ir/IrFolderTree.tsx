@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
 
-type FolderRow = { id: number; parent_id: number | null; relative_path: string; direct_item_count: number }
+type FolderRow = {
+  id: number
+  parent_id: number | null
+  relative_path: string
+  direct_item_count: number
+  is_lab_project: number
+}
 
 interface TreeNode {
   id: number
@@ -11,6 +17,10 @@ interface TreeNode {
    * NAM Lab's own FolderTree.tsx "totalCount" convention (that component computes the same kind
    * of subtree rollup for its own badge). */
   totalCount: number
+  /** True iff labProjectEnrichment.ts found an IR Lab Project anchored to this exact folder (plan
+   * section 8c/§5) — drives the blue dot badge, mirroring NAM Lab's own pack-owning-folder dot
+   * (FolderTree.tsx, bg-blue-500 — same color, same idiom, not a recolored icon/label). */
+  isLabProject: boolean
   children: TreeNode[]
 }
 
@@ -23,7 +33,15 @@ function buildTree(rows: FolderRow[]): { roots: TreeNode[]; allIds: number[] } {
   const allIds: number[] = []
   for (const row of rows) {
     const name = row.relative_path === '' ? '' : row.relative_path.split('/').pop() ?? row.relative_path
-    const node: TreeNode = { id: row.id, name, parentId: row.parent_id, directCount: row.direct_item_count, totalCount: 0, children: [] }
+    const node: TreeNode = {
+      id: row.id,
+      name,
+      parentId: row.parent_id,
+      directCount: row.direct_item_count,
+      totalCount: 0,
+      isLabProject: !!row.is_lab_project,
+      children: []
+    }
     byId.set(row.id, node)
     allIds.push(row.id)
     const siblings = childrenOf.get(row.parent_id) ?? []
@@ -142,6 +160,9 @@ function TreeRow({
           <span className="w-3 flex-shrink-0" />
         )}
         <FolderIcon expanded={expanded && hasChildren} isSelected={isSelected} />
+        {node.isLabProject && (
+          <span className="w-1.5 h-1.5 rounded-full bg-blue-500 flex-shrink-0" title="IR Lab Project" />
+        )}
         <span className="truncate flex-1">{node.name}</span>
         {node.totalCount > 0 && (
           <span className={`text-xs flex-shrink-0 ${isSelected ? 'text-nm-accent' : 'text-nm-text-3'}`}>{node.totalCount}</span>

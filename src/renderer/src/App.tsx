@@ -449,6 +449,16 @@ declare global {
         itemsInserted: number
         elapsedMs: number
       }>
+      irLibraryImportLabProjects: (folderPath: string, label: string | null) => Promise<{
+        libraryRootId: number
+        foldersInserted: number
+        itemsInserted: number
+        elapsedMs: number
+        projectsFound: number
+        itemsEnriched: number
+        nonProjectItemsRemoved: number
+        reusedExistingRoot: boolean
+      }>
       onIrLibraryScanProgress: (
         cb: (p: { filesSeen: number; foldersSeen: number; elapsedMs: number; done: boolean }) => void
       ) => () => void
@@ -485,7 +495,28 @@ declare global {
       irLibrarySetRating: (itemId: string, rating: number | null) => Promise<{ success: boolean }>
       irLibraryListFolders: (
         libraryRootId: number
-      ) => Promise<Array<{ id: number; parent_id: number | null; relative_path: string; direct_item_count: number }>>
+      ) => Promise<
+        Array<{ id: number; parent_id: number | null; relative_path: string; direct_item_count: number; is_lab_project: number }>
+      >
+      irLibraryGetProjectDetailForFolder: (folderId: number) => Promise<{
+        id: string
+        name: string
+        createdAt: string | null
+        items: Array<{
+          itemId: string
+          displayName: string
+          captureId: string | null
+          cabinet: string | null
+          speaker: string | null
+          microphone: string | null
+          position: string | null
+          captureType: string | null
+          sampleRate: number | null
+          isStereo: boolean
+          isTrueStereo: boolean
+          variants: Array<{ id: string; name: string; isCurrent: boolean; isArchived: boolean; createdAt: string | null }>
+        }>
+      } | null>
       irLibraryGetLibraryOverview: (libraryRootId: number, folderId?: number | null) => Promise<{
         totalItems: number
         totalFolders: number
@@ -503,6 +534,7 @@ declare global {
         declared: Array<{ field: string; value: string; source: string }>
         documents: Array<{ id: number; folder_id: number; stored_path: string; original_filename: string | null; imported_at: string }>
         absPath: string
+        isLabProject: boolean
       } | null>
       irLibrarySetFolderMetadata: (folderId: number, field: string, value: string, source: string) => Promise<{ success: boolean }>
       irLibraryRemoveFolderMetadata: (folderId: number, field: string) => Promise<{ success: boolean }>

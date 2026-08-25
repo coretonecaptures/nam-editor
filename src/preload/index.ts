@@ -328,6 +328,19 @@ const api = {
     label: string | null
   ): Promise<{ libraryRootId: number; foldersInserted: number; itemsInserted: number; elapsedMs: number }> =>
     ipcRenderer.invoke('irLibrary:scan', folderPath, label),
+  irLibraryImportLabProjects: (
+    folderPath: string,
+    label: string | null
+  ): Promise<{
+    libraryRootId: number
+    foldersInserted: number
+    itemsInserted: number
+    elapsedMs: number
+    projectsFound: number
+    itemsEnriched: number
+    nonProjectItemsRemoved: number
+    reusedExistingRoot: boolean
+  }> => ipcRenderer.invoke('irLibrary:importLabProjects', folderPath, label),
   onIrLibraryScanProgress: (
     cb: (p: { filesSeen: number; foldersSeen: number; elapsedMs: number; done: boolean }) => void
   ): (() => void) => {
@@ -370,8 +383,9 @@ const api = {
     ipcRenderer.invoke('irLibrary:setRating', itemId, rating),
   irLibraryListFolders: (
     libraryRootId: number
-  ): Promise<Array<{ id: number; parent_id: number | null; relative_path: string; direct_item_count: number }>> =>
-    ipcRenderer.invoke('irLibrary:listFolders', libraryRootId),
+  ): Promise<
+    Array<{ id: number; parent_id: number | null; relative_path: string; direct_item_count: number; is_lab_project: number }>
+  > => ipcRenderer.invoke('irLibrary:listFolders', libraryRootId),
   irLibraryGetLibraryOverview: (libraryRootId: number, folderId?: number | null): Promise<{
     totalItems: number
     totalFolders: number
@@ -382,6 +396,25 @@ const api = {
     manufacturerBreakdown: Array<{ value: string; count: number }>
     microphoneBreakdown: Array<{ value: string; count: number }>
   }> => ipcRenderer.invoke('irLibrary:getLibraryOverview', libraryRootId, folderId ?? null),
+  irLibraryGetProjectDetailForFolder: (folderId: number): Promise<{
+    id: string
+    name: string
+    createdAt: string | null
+    items: Array<{
+      itemId: string
+      displayName: string
+      captureId: string | null
+      cabinet: string | null
+      speaker: string | null
+      microphone: string | null
+      position: string | null
+      captureType: string | null
+      sampleRate: number | null
+      isStereo: boolean
+      isTrueStereo: boolean
+      variants: Array<{ id: string; name: string; isCurrent: boolean; isArchived: boolean; createdAt: string | null }>
+    }>
+  } | null> => ipcRenderer.invoke('irLibrary:getProjectDetailForFolder', folderId),
   irLibraryGetFolderDetail: (folderId: number): Promise<{
     id: number
     relativePath: string
@@ -389,6 +422,7 @@ const api = {
     declared: Array<{ field: string; value: string; source: string }>
     documents: Array<{ id: number; folder_id: number; stored_path: string; original_filename: string | null; imported_at: string }>
     absPath: string
+    isLabProject: boolean
   } | null> => ipcRenderer.invoke('irLibrary:getFolderDetail', folderId),
   irLibrarySetFolderMetadata: (folderId: number, field: string, value: string, source: string): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('irLibrary:setFolderMetadata', folderId, field, value, source),

@@ -120,13 +120,20 @@ export interface FolderTreeRow {
    * Lab's FolderTree "totalCount" convention) are rolled up client-side from this during tree
    * building, same pattern as the totals nam-editor's own FolderTree.tsx already uses. */
   direct_item_count: number
+  /** Derived, never stored (plan section 8c/§1): true iff labProjectEnrichment.ts found an
+   * ir_project collection anchored to this folder — never goes stale independently of the actual
+   * collection row, since it's just an EXISTS check, not a separate flag. */
+  is_lab_project: number
 }
 
 export function listFolders(db: DatabaseSync, libraryRootId: number): FolderTreeRow[] {
   return db
     .prepare(
       `SELECT folder.id as id, folder.parent_id as parent_id, folder.relative_path as relative_path,
-              COALESCE(counts.c, 0) as direct_item_count
+              COALESCE(counts.c, 0) as direct_item_count,
+              EXISTS (
+                SELECT 1 FROM collection WHERE collection.folder_id = folder.id AND collection.kind = 'ir_project'
+              ) as is_lab_project
        FROM folder
        LEFT JOIN (
          SELECT folder_id, COUNT(*) as c FROM item WHERE library_root_id = ? GROUP BY folder_id
@@ -147,17 +154,25 @@ export interface FolderDetail {
    * needs the folder's real on-disk location (Gallery, Read Me — plan section 8a) reads it here
    * rather than reconstructing it client-side. */
   absPath: string
+  /** Same derived EXISTS check as listFolders()'s is_lab_project — the right panel's tab bar
+   * (IrRightPanel.tsx) needs this alongside absPath to decide whether to show the Project tab. */
+  isLabProject: boolean
 }
 
 export function getFolderDetail(db: DatabaseSync, folderId: number): FolderDetail | null {
   const folder = db
     .prepare(
       `SELECT folder.id as id, folder.relative_path as relative_path, folder.notes as notes,
-              library_root.path as root_path
+              library_root.path as root_path,
+              EXISTS (
+                SELECT 1 FROM collection WHERE collection.folder_id = folder.id AND collection.kind = 'ir_project'
+              ) as is_lab_project
        FROM folder JOIN library_root ON library_root.id = folder.library_root_id
        WHERE folder.id = ?`
     )
-    .get(folderId) as { id: number; relative_path: string; notes: string | null; root_path: string } | undefined
+    .get(folderId) as
+    | { id: number; relative_path: string; notes: string | null; root_path: string; is_lab_project: number }
+    | undefined
   if (!folder) return null
   const declared = db
     .prepare(`SELECT field, value, source FROM folder_metadata WHERE folder_id = ?`)
@@ -167,6 +182,7 @@ export function getFolderDetail(db: DatabaseSync, folderId: number): FolderDetai
     relativePath: folder.relative_path,
     notes: folder.notes,
     declared,
-    absPath: path.join(folder.root_path, folder.relative_path)
+    absPath: path.join(folder.root_path, folder.relative_path),
+    isLabProject: !!folder.is_lab_project
   }
 }

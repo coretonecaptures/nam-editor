@@ -1008,59 +1008,104 @@ Scope explicitly bigger than Phase 4 — treated as its own follow-up phase
 once the tray/groups/tabs work in this batch lands, not attempted in the
 same pass.
 
-### 8c. IR Lab Projects vs. third-party vendor libraries — ingestion design
+### 8c. IR Lab Projects vs. third-party vendor libraries — ingestion (built)
 
-The schema already anticipated this split (section 2/3): `ir_item.capture_id`
-(IR Lab's own `captureId`, NULL for third-party), `ir_lab_native` sitting
-above `vendor_documentation`/`vendor_parser`/`filename_inferred`/
-`user_entered` on the confidence ladder, `ir_derivative_variant` (mirrors IR
-Lab's `DerivativeVariant`), and `collection(kind='ir_project')`. What's
-missing is the importer that actually populates them — today every folder,
-IR Lab Project or not, only ever goes through the Phase 3 vendor
-filename/folder parsers, which is wrong for a Project: an IR Lab Project has
-real structured metadata sitting right there in `analysis.json` and should
-never be guessed from a filename.
+**Superseded/corrected below** — the version originally written here guessed
+`analysis.json`'s shape from an early, partial read of the private repo. It
+was wrong on real specifics (there is no top-level `session`+`analysis`
+object with a `variants[]` array in one file — metadata is split across
+several files under a `.SessionData/` folder). This section was rewritten
+after actually reading the ir-lab source
+(`C:\Users\Admin\ir-lab`, `SessionStore.h/.cpp`, `ProjectStore.h/.cpp`,
+`Project.h`, pulled fresh) and the design below is what got built, not a
+plan.
 
-IR Lab's actual `analysis.json` shape (read from the private repo's
-`ir-lab/src/core/Domain.h` / session-write code, not guessed): a top-level
-`session` object (`id`, `displayName`, `createdAt`) and an `analysis` object
-(`captureId`, `createdAt`, `cabinet`, `speaker`, `microphone`, `position`,
-`notes`, `captureType` = `"Hardware"`/`"Software"`, `sampleRate`,
-`isStereo`, `isTrueStereo`, and a `variants` array of
-`{ id, name, analysis (relative path), createdAt }`).
+**Real on-disk layout, confirmed from source, not guessed:**
 
-Planned importer (not built tonight):
+```
+<outputRoot>/                              <- what a user points the importer at
+  <capture-1>.wav                          <- deliverable, flat (Project.h: "Deliberately flat in phase 1")
+  <capture-2>.wav
+  .SessionData/                            <- dot-prefixed -> scanWalk.ts already skips this entirely
+    project.json                           <- ProjectStore.cpp:477-510: { id, name, createdAt, captureIndex: [{captureId, outputFileName}], ... }
+    <captureId>/
+      session.json                         <- SessionStore.cpp:665-681: { id, displayName, createdAt, captureIds[], metadata: {cabinet,speaker,microphone,position,notes,captureType} }
+      captures/<captureId>/analysis.json   <- SessionStore.cpp:683-737,1543-1622: { captureId, createdAt, measurement: {sampleRate,...}, isStereo, isTrueStereo, ... }
+      variants.json                        <- SessionStore.cpp:458-534: [{ id, name, master, distribution, analysis, sampleRate, createdAt, current, archived, ... }]
+```
 
-1. **Detection.** During folder scan, a folder containing an `analysis.json`
-   at its own level is an IR Lab Project folder, full stop — no heuristic
-   needed, IR Lab itself is the only thing that ever writes this file.
-2. **Ingestion.** Parse `analysis.json` directly into `ir_item` (capture_id,
-   manufacturer left NULL — IR Lab doesn't track manufacturer, only
-   cabinet/speaker/mic/position — cabinet, speaker, microphone, position,
-   capture_type, sample_rate, is_stereo, is_true_stereo) with every field
-   written at `ir_lab_native` source — the top of the ladder, so a vendor
-   parser or filename guess can never later downgrade it. `notes` goes to
-   `item.notes` directly (already a plain column, not part of the confidence
-   ladder). Each `variants[]` entry becomes an `ir_derivative_variant` row.
-3. **Grouping.** The owning folder (or the `session.id`/`displayName`) is
-   registered as a `collection` with `kind = 'ir_project'`, exactly the same
-   representation a NAM pack/bundle already uses, so browsing "IR Lab
-   Projects" in the UI is the same collection-listing code path Phase 6's
-   groups/tray work already establishes, not a new special case.
-4. **UI distinction.** Overview/Pack Info tabs should visibly badge an item
-   as "IR Lab Project" vs. vendor library (a small label, similar to the
-   existing confidence-ladder dot convention) so it's clear which items carry
-   trustworthy structured metadata versus filename-guessed metadata — this
-   was the concrete ask ("understand 'Projects' ... vs 3rd party libraries").
-5. **Gallery.** IR Lab Projects are the only IR-side folders where a photo
-   gallery is meaningful in the same sense NAM Lab's pack gallery is (a
-   vendor library folder is just delivered WAVs, no photos) — Gallery tab
-   (8a) should still render for any folder that happens to have images in it
-   (cheap, no harm), but Project folders are the expected/primary case.
+Because `.SessionData` is dot-prefixed, `scanWalk.ts`'s existing directory
+skip (`.`-prefixed dirs, line ~80) **already excludes it and everything
+under it from a normal scan** — a plain "Add Library Folder" pointed at a
+Project's `outputRoot` was already importing exactly the right files (the
+flat deliverables) before any of this work started. The only real gap was
+metadata: nothing read `.SessionData/` to enrich those already-correct
+`item` rows. `variants.json`'s `current`/`archived` map directly onto the
+schema's pre-existing `ir_derivative_variant.is_current`/`is_archived`
+columns — confirms a capture's variants are edit-revision history of ONE
+deliverable, not separate browsable IRs (an open question earlier in this
+session, settled by reading the real source rather than guessed).
 
-None of this is implemented yet — this section exists so the distinction
-the user asked about has an answer on record rather than being re-derived
-from scratch next session.
+**Built:**
+
+- `src/main/irCatalog/labProjectEnrichment.ts` — `enrichLabProjects(db,
+  libraryRootId)`, a third pass (same slot as Phase 3's `applyVendorParsers`)
+  run after every scan. For every folder with `.SessionData/project.json`:
+  upserts a `collection(kind='ir_project', folder_id=...)`; for each
+  `captureIndex[]` entry, matches the already-imported deliverable `item` by
+  filename, reads that capture's `session.json`+`analysis.json`+
+  `variants.json`, writes `ir_item`/`ir_item_field_source`
+  (`source='ir_lab_native'`, the confidence ladder's top tier — never
+  overwritten by a later vendor-parser guess, `applyVendorParsers.ts`'s
+  `RANK` map already enforces this) and `ir_derivative_variant` rows, and
+  links the item into the Project's `collection_item`. Also exports
+  `getProjectDetailForFolder()` for the UI's Project tab.
+- `collection.folder_id` — new nullable column (schema.ts), anchoring a
+  Project's collection to the folder IR Lab wrote it into; "is this folder a
+  Lab Project" is derived (`EXISTS` against this column, never a separate
+  stored flag) in both `listFolders()` (folder tree) and `getFolderDetail()`
+  (right panel).
+- **Duplicate-import guard** — the user's core worry ("same IRs in the IR
+  library folder... only look at the ones in the project"). Because
+  file-selection was already correct for free, the only real duplication
+  risk was two `library_root` rows over overlapping paths. Both scan entry
+  points now check (`findContainingRoot()`, `irLibraryIpc.ts`) whether the
+  chosen folder is already inside an existing root before creating a new
+  one; if so, they rescan the *existing* root's own path instead (cheap,
+  idempotent, per Phase 1's benchmarks) rather than registering a second
+  root over the same files.
+- **Two entry points, one mechanism.** "Add Library Folder" now
+  auto-enriches any Project folder anywhere in the tree, no separate action
+  needed. A new **"Import IR Lab Project(s)…"** File-menu action
+  (`IrMenuBar.tsx`) runs the identical pipeline, then — only when it created
+  a genuinely new root (never when the guard above reused an existing one,
+  to avoid ever deleting a user's pre-existing generic-scan content) —
+  deletes any `item` whose folder isn't a detected Project folder, for the
+  case of pointing directly at a folder of Projects and wanting only those.
+- **Folder tree colorization** — a small `bg-blue-500` dot badge next to a
+  Project folder's icon (`IrFolderTree.tsx`), the exact same idiom NAM Lab's
+  own `FolderTree.tsx` already uses for pack-owning folders (confirmed via
+  that file, blue-500 already documented there as reserved for this kind of
+  "special folder" semantic) — a badge dot, not a recolored icon/label.
+- **Project tab** (`IrProjectTab.tsx`) — a fifth right-panel tab, shown only
+  when the selected folder is a detected Project, auto-selected on first
+  landing on one. Shows the project name/capture count plus, per capture,
+  its cabinet/speaker/mic/position/type/sample-rate and variant history
+  (current vs. archived) — the one thing not visible anywhere else in the
+  UI (the row list's badges only show four fields, no variant history).
+- 6 new unit tests (`labProjectEnrichment.test.ts`) against a fixture built
+  to the exact confirmed on-disk shape: enrichment correctness, idempotency
+  (re-running doesn't duplicate variants/collection_item rows), the
+  ladder-priority regression (`applyVendorParsers` run afterward never
+  downgrades an `ir_lab_native` field), `is_lab_project` folder detection,
+  `getProjectDetailForFolder`'s shape, and confirmation that `.SessionData`
+  contents never become `item` rows via the ordinary scan.
+
+Not built: the Project-vs-vendor UI badge on individual row list entries
+(the folder-tree dot and the Project tab cover the ask; a per-row badge in
+the center list was judged redundant, not requested explicitly). Gallery
+tab (8a) already renders for any folder with images, Project or not — no
+Project-specific gate needed, matches the original note here.
 
 Deferred, explicitly out of scope until requested: acoustic/fingerprint
 similarity search, non-WAV formats, user-customizable parser definitions.

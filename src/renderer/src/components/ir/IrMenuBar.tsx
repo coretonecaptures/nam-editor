@@ -56,13 +56,26 @@ function Menu({ label, items }: { label: string; items: MenuItem[] }): React.Rea
  * (disabled items, not fake working buttons) rather than pretending this is finished —
  * docs/ir-lab-manager-build-plan.md tracks the shared-settings-panel work as a follow-up.
  */
-export function IrMenuBar({ onAddLibraryFolder, scanning }: { onAddLibraryFolder: () => void; scanning: boolean }): React.ReactElement {
+export function IrMenuBar({
+  onAddLibraryFolder,
+  onImportLabProjects,
+  scanning
+}: {
+  onAddLibraryFolder: () => void
+  onImportLabProjects: () => void
+  scanning: boolean
+}): React.ReactElement {
   return (
     <div className="flex items-center gap-1 px-2 py-1 border-b border-nm-border-s bg-panel-2 flex-shrink-0">
       <Menu
         label="File"
         items={[
           { label: 'Add Library Folder…', onClick: onAddLibraryFolder, disabled: scanning },
+          // Distinct entry point (plan section 8c/§4) for pointing directly at a folder full of IR
+          // Lab Projects and getting only those imported, rather than everything the folder
+          // contains — Add Library Folder above already auto-detects/enriches Projects too, this
+          // one additionally prunes any non-Project content on a fresh scan.
+          { label: 'Import IR Lab Project(s)…', onClick: onImportLabProjects, disabled: scanning },
           // Stub per the ask ("build my packs for irs like i do NAM releases") — the `collection`
           // table already reserves kind='release' for this (plan section 2), but nothing builds a
           // release/pack-sheet from IR items yet. Honest disabled entry, not a fake button.

@@ -150,6 +150,12 @@ CREATE TABLE IF NOT EXISTS collection (
   kind                  TEXT NOT NULL CHECK (kind IN ('ir_project', 'nam_pack', 'nam_bundle', 'release', 'tray')),
   parent_id             TEXT REFERENCES collection(id),
   library_root_id       INTEGER REFERENCES library_root(id),
+  -- Anchors an 'ir_project' collection to the folder IR Lab wrote it into
+  -- (the folder holding that Project's .SessionData/project.json) -- lets
+  -- "is this folder an IR Lab Project" be derived (EXISTS against this
+  -- column) rather than a separate stored flag that could drift out of
+  -- sync. NULL for every other collection kind.
+  folder_id             INTEGER REFERENCES folder(id),
   name                  TEXT NOT NULL,
   output_relative_path  TEXT,
   naming_template       TEXT,

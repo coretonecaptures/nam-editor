@@ -3,10 +3,11 @@ import { IrFolderPanel } from './IrFolderPanel'
 import { IrLibraryOverview } from './IrLibraryOverview'
 import { IrGalleryTab } from './IrGalleryTab'
 import { IrReadMeTab } from './IrReadMeTab'
+import { IrProjectTab } from './IrProjectTab'
 
-type Tab = 'overview' | 'pack-info' | 'gallery' | 'readme'
+type Tab = 'overview' | 'project' | 'pack-info' | 'gallery' | 'readme'
 
-const TABS: Array<{ key: Tab; label: string }> = [
+const BASE_TABS: Array<{ key: Tab; label: string }> = [
   { key: 'overview', label: 'Overview' },
   { key: 'pack-info', label: 'Pack Info' },
   { key: 'gallery', label: 'Gallery' },
@@ -36,33 +37,40 @@ export function IrRightPanel({
 }): React.ReactElement {
   const [tab, setTab] = useState<Tab>('overview')
   const [folderAbsPath, setFolderAbsPath] = useState<string | null>(null)
+  const [isLabProject, setIsLabProject] = useState(false)
 
   // Overview/Pack Info don't need absPath (folderId is enough), but Gallery/Read Me do — fetched
   // once per folder selection rather than per-tab-switch, since switching tabs shouldn't re-fetch.
   useEffect(() => {
     if (folderId == null) {
       setFolderAbsPath(null)
+      setIsLabProject(false)
       return
     }
     let cancelled = false
     window.api.irLibraryGetFolderDetail(folderId).then((detail) => {
-      if (!cancelled) setFolderAbsPath(detail?.absPath ?? null)
+      if (cancelled) return
+      setFolderAbsPath(detail?.absPath ?? null)
+      const labProject = detail?.isLabProject ?? false
+      setIsLabProject(labProject)
+      // Jump straight to the Project tab on selecting a newly-detected Project folder, since its
+      // variant history isn't visible anywhere else in the UI — otherwise keep whichever tab was
+      // active (a user browsing Gallery folder to folder shouldn't get bounced back every click).
+      setTab((current) => (labProject ? 'project' : current === 'project' ? 'overview' : current))
     })
     return () => {
       cancelled = true
     }
   }, [folderId])
 
-  // Selecting a different folder (or clearing back to root) keeps whichever tab was active rather
-  // than resetting to Overview — a user browsing Gallery folder to folder shouldn't get bounced
-  // back every click.
+  const tabs = isLabProject ? [BASE_TABS[0], { key: 'project' as const, label: 'Project' }, ...BASE_TABS.slice(1)] : BASE_TABS
 
   const effectiveAbsPath = folderId == null ? libraryRootPath : folderAbsPath
 
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-0.5 px-2 pt-2 border-b border-nm-border-s flex-shrink-0">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
@@ -78,6 +86,7 @@ export function IrRightPanel({
       </div>
       <div className="flex-1 min-h-0 overflow-hidden">
         {tab === 'overview' && <IrLibraryOverview libraryRootId={libraryRootId} folderId={folderId} folderName={folderName} />}
+        {tab === 'project' && <IrProjectTab folderId={folderId} />}
         {tab === 'pack-info' && <IrFolderPanel folderId={folderId} />}
         {tab === 'gallery' && <IrGalleryTab absPath={effectiveAbsPath} />}
         {tab === 'readme' && <IrReadMeTab absPath={effectiveAbsPath} />}

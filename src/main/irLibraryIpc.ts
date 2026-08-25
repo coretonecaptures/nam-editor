@@ -28,6 +28,7 @@ import { importFolderDocument, listFolderDocuments, deleteFolderDocument } from 
 import { addToTray, removeFromTray, listTray, isInTray } from './irCatalog/tray'
 import { sendToIrLab, irLabConnectorAvailable } from './irLabConnector'
 import { getLibraryOverview } from './irCatalog/libraryOverview'
+import { enrichLabProjects, getProjectDetailForFolder } from './irCatalog/labProjectEnrichment'
 import {
   listTags,
   getOrCreateTag,
@@ -43,6 +44,28 @@ let db: DatabaseSync | null = null
 // 'Add Library Folder' scan on the same root while the first's hash queue is still draining would
 // otherwise start a second pass over the same rows.
 const hashingInProgress = new Set<number>()
+
+function normalizeForCompare(p: string): string {
+  return p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+}
+
+/** Guards against the duplicate-import risk the user specifically flagged (plan section 8c/§3):
+ * two different library_root rows pointing at overlapping paths, e.g. a normal "Add Library
+ * Folder" on a parent folder plus a later "Import IR Lab Project(s)..." pointed at a Projects
+ * subfolder inside it. If `folderPath` is already covered by (or exactly matches) an existing
+ * root, returns that root and the caller should re-scan at the EXISTING root's own path instead
+ * of registering a second root — rescans are cheap (Phase 1 benchmarks) and idempotent, so
+ * "rescan the whole existing root" is a safe, simple way to still pick up whatever's new under
+ * the more specific subfolder the user actually pointed at. */
+function findContainingRoot(db: DatabaseSync, folderPath: string): { id: number; path: string } | null {
+  const roots = db.prepare(`SELECT id, path FROM library_root`).all() as Array<{ id: number; path: string }>
+  const target = normalizeForCompare(folderPath)
+  for (const root of roots) {
+    const rootNorm = normalizeForCompare(root.path)
+    if (target === rootNorm || target.startsWith(`${rootNorm}/`)) return root
+  }
+  return null
+}
 
 function getDb(): DatabaseSync {
   if (db) return db
@@ -111,6 +134,10 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     finalizeIndexes(database)
     reconcileMissingItems(database, stats.libraryRootId)
     applyVendorParsers(database, stats.libraryRootId)
+    // Third pass (plan section 8c) -- detects any .SessionData/project.json anywhere under this
+    // root and enriches its already-correctly-scanned deliverable items with real IR Lab metadata.
+    // Automatic on every scan, not just the dedicated "Import IR Lab Project(s)..." action below.
+    enrichLabProjects(database, stats.libraryRootId)
     finalizeIndexes(database)
     safeSend('irLibrary:scanProgress', {
       filesSeen: stats.itemsInserted,
@@ -133,6 +160,61 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     }
 
     return stats
+  })
+
+  // "Import IR Lab Project(s)..." (plan section 8c/§4) -- a distinct File-menu action for pointing
+  // directly at a folder full of Projects and getting only those, rather than everything the
+  // folder happens to contain. Runs the identical pipeline as a normal scan (import -> finalize ->
+  // reconcile -> vendor-parse -> enrich -> finalize), subject to the same duplicate-root guard, and
+  // then -- ONLY when this call created a genuinely new library_root (never when it reused an
+  // existing one, to avoid ever deleting a user's pre-existing generic scan content) -- deletes any
+  // item whose folder isn't a detected Project folder.
+  ipcMain.handle('irLibrary:importLabProjects', async (_event, folderPath: string, label: string | null) => {
+    const database = getDb()
+    const existingRoot = findContainingRoot(database, folderPath)
+    const scanPath = existingRoot ? existingRoot.path : folderPath
+
+    const stats = await importLibrary(database, scanPath, label, {
+      onProgress: (p) => {
+        safeSend('irLibrary:scanProgress', { filesSeen: p.filesSeen, foldersSeen: p.foldersSeen, elapsedMs: p.elapsedMs, done: false })
+      }
+    })
+    finalizeIndexes(database)
+    reconcileMissingItems(database, stats.libraryRootId)
+    applyVendorParsers(database, stats.libraryRootId)
+    const enrichStats = enrichLabProjects(database, stats.libraryRootId)
+
+    let nonProjectItemsRemoved = 0
+    if (!existingRoot) {
+      const result = database
+        .prepare(
+          `DELETE FROM item WHERE library_root_id = ? AND (folder_id IS NULL OR folder_id NOT IN (
+             SELECT folder_id FROM collection WHERE library_root_id = ? AND kind = 'ir_project' AND folder_id IS NOT NULL
+           ))`
+        )
+        .run(stats.libraryRootId, stats.libraryRootId)
+      nonProjectItemsRemoved = Number(result.changes)
+    }
+    finalizeIndexes(database)
+
+    safeSend('irLibrary:scanProgress', {
+      filesSeen: stats.itemsInserted,
+      foldersSeen: stats.foldersInserted,
+      elapsedMs: stats.elapsedMs,
+      done: true
+    })
+
+    return {
+      ...stats,
+      projectsFound: enrichStats.projectsFound,
+      itemsEnriched: enrichStats.itemsEnriched,
+      nonProjectItemsRemoved,
+      reusedExistingRoot: existingRoot != null
+    }
+  })
+
+  ipcMain.handle('irLibrary:getProjectDetailForFolder', (_event, folderId: number) => {
+    return getProjectDetailForFolder(getDb(), folderId)
   })
 
   ipcMain.handle(
