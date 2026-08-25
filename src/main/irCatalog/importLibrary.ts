@@ -15,6 +15,16 @@ import { randomUUID } from 'node:crypto'
 import { walkWavLibrary, toPosixRel, type WalkEvent } from './scanWalk'
 import { computeQuickHash } from './quickHash'
 import { withoutLiveSearchTriggers } from './schema'
+import { mapPool } from './concurrency'
+
+/**
+ * How many files' quick_hash computations run concurrently per batch. Same fix, same reasoning
+ * as scanWalk.ts's STAT_CONCURRENCY — this was the other fully-serial I/O loop Phase 1's
+ * real-library run found collapsing throughput. Hashing is computed outside the DB transaction
+ * (pure fs I/O, no SQLite involved) so parallelizing it doesn't touch the single synchronous
+ * connection at all.
+ */
+const HASH_CONCURRENCY = 32
 
 export interface ImportOptions {
   /** Rows per transaction. Plan section 4: ~2,000-5,000. */
@@ -115,18 +125,26 @@ export async function importLibrary(
     pendingFolders.length = 0
   }
 
-  const flushItems = async (): Promise<void> => {
+  // Pure fs I/O, no SQLite involved — safe to run with real concurrency, and deliberately done
+  // BEFORE the DB transaction opens rather than inside flushItems, so the single synchronous
+  // connection is never sitting idle mid-transaction waiting on file reads.
+  const computeHashes = async (): Promise<Array<string | null>> => {
+    if (skipQuickHash) return pendingItems.map(() => null)
+    return mapPool(pendingItems, HASH_CONCURRENCY, (it) => computeQuickHash(it.absPath, it.size))
+  }
+
+  const flushItems = (hashes: Array<string | null>): void => {
     if (pendingItems.length === 0) return
     const now = new Date().toISOString()
-    for (const it of pendingItems) {
+    for (let i = 0; i < pendingItems.length; i++) {
+      const it = pendingItems[i]
       const relPosix = toPosixRel(it.relPath)
       const folderId = folderIds.get(toPosixRel(it.folderRelPath)) ?? null
       const displayName = relPosix.slice(relPosix.lastIndexOf('/') + 1)
-      const quickHash = skipQuickHash ? null : await computeQuickHash(it.absPath, it.size)
       const id = randomUUID()
 
       const row = insertItem.get(
-        id, libraryRootId, folderId, relPosix, displayName, it.modifiedAt, now, now, it.size, quickHash
+        id, libraryRootId, folderId, relPosix, displayName, it.modifiedAt, now, now, it.size, hashes[i]
       ) as { id: string }
       deleteSearch.run(row.id)
       insertSearch.run(row.id, displayName)
@@ -136,10 +154,11 @@ export async function importLibrary(
   }
 
   const runBatch = async (): Promise<void> => {
+    const hashes = await computeHashes()
     db.exec('BEGIN')
     try {
       flushFolders()
-      await flushItems()
+      flushItems(hashes)
       db.exec('COMMIT')
     } catch (err) {
       db.exec('ROLLBACK')

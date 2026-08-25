@@ -11,6 +11,15 @@
  */
 import * as fs from 'node:fs'
 import { join, relative, sep } from 'node:path'
+import { mapPool } from './concurrency'
+
+/**
+ * How many files' `stat` calls run concurrently within one directory. Phase 1's measured
+ * throughput collapse (docs/ir-lab-manager-build-plan.md section 12) traced to this exact loop
+ * running fully serially — one file's round trip at a time, at 7% CPU utilization. This is a
+ * starting point, not a tuned value; re-measure against the real library before changing it.
+ */
+const STAT_CONCURRENCY = 32
 
 export interface WavFileEntry {
   /** Path relative to the scan root, platform separator. */
@@ -65,29 +74,37 @@ export async function* walkWavLibrary(root: string): AsyncGenerator<WalkEvent> {
     // Children pushed in reverse so they pop in original readdir order — cosmetic (progress
     // reporting order), not correctness-relevant.
     const subdirs: fs.Dirent[] = []
+    const wavDirents: fs.Dirent[] = []
     for (const dirent of dirents) {
       if (dirent.isDirectory()) {
         if (dirent.name.startsWith('.') || dirent.name === '__MACOSX') continue
         subdirs.push(dirent)
       } else if (dirent.isFile() && dirent.name.toLowerCase().endsWith('.wav')) {
         if (dirent.name.startsWith('._')) continue
-        const absPath = join(dir, dirent.name)
-        const relPath = relative(root, absPath)
-        let stat: fs.Stats
-        try {
-          stat = await fs.promises.stat(absPath)
-        } catch {
-          continue
-        }
-        yield {
-          type: 'file',
-          file: {
-            relPath,
-            absPath,
-            folderRelPath: rel,
-            size: stat.size,
-            modifiedAt: stat.mtime.toISOString()
-          }
+        wavDirents.push(dirent)
+      }
+    }
+
+    // `stat` per file, up to STAT_CONCURRENCY in flight at once — see the constant's comment.
+    // Yielding itself stays sequential afterward; only the I/O is parallelized.
+    const statResults = await mapPool(wavDirents, STAT_CONCURRENCY, async (dirent) => {
+      const absPath = join(dir, dirent.name)
+      try {
+        return { dirent, absPath, stat: await fs.promises.stat(absPath) }
+      } catch {
+        return null
+      }
+    })
+    for (const result of statResults) {
+      if (!result) continue
+      yield {
+        type: 'file',
+        file: {
+          relPath: relative(root, result.absPath),
+          absPath: result.absPath,
+          folderRelPath: rel,
+          size: result.stat.size,
+          modifiedAt: result.stat.mtime.toISOString()
         }
       }
     }
