@@ -11,10 +11,24 @@
  * item_search triggers are intentionally partial: only `item` is a live source in Phase 1, since
  * nam_capture_item/ir_item aren't populated until parsers exist. Extend the trigger set when that
  * lands, per docs/ir-lab-manager-build-plan.md section 2c/4.
+ *
+ * CORE_SCHEMA_SQL / DEFERRED_INDEXES_SQL split: root-caused by real measurement
+ * (docs/ir-lab-manager-build-plan.md section 12 Phase 1) that the five secondary indexes on
+ * `item` plus the FTS5 `item_search` table were the actual bottleneck in a large bulk import —
+ * maintaining six B-tree-family structures per row, live, is what turned ~1,600 items/sec into
+ * ~90 by 260s on a real 282K-file library. Walking and hashing were both isolated and cleared
+ * first (fast and flat at full scale on their own); only removing the DB from the loop entirely
+ * reproduced the same decay, and it survived every other fix tried (app-level I/O concurrency,
+ * raising libuv's thread pool, excluding the library from AV scanning). `CORE_SCHEMA_SQL` has
+ * only the `UNIQUE` constraints bulk import's `ON CONFLICT` upserts actually depend on — those
+ * can't be deferred, they're what makes resumability work. Everything deferrable (the five
+ * `item` indexes, `item_search`, its live-edit triggers) lives in `DEFERRED_INDEXES_SQL` /
+ * `finalizeIndexes`, built once against a static table after bulk import finishes, which is
+ * standard practice for bulk-loading SQL databases generally and not specific to this schema.
  */
 import type { DatabaseSync } from 'node:sqlite'
 
-export const SCHEMA_SQL = `
+export const CORE_SCHEMA_SQL = `
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
@@ -34,7 +48,9 @@ CREATE TABLE IF NOT EXISTS folder (
   notes            TEXT,
   UNIQUE (library_root_id, relative_path)
 );
-CREATE INDEX IF NOT EXISTS idx_folder_parent ON folder(parent_id);
+-- idx_folder_parent deferred (DEFERRED_INDEXES_SQL) -- folder count stays in the hundreds even
+-- under a huge pack (section 2/2a), so this one's live-maintenance cost was never the bottleneck,
+-- but it's deferred anyway for consistency: nothing outside finalizeIndexes needs it mid-import.
 
 CREATE TABLE IF NOT EXISTS folder_metadata (
   folder_id  INTEGER NOT NULL REFERENCES folder(id) ON DELETE CASCADE,
@@ -80,11 +96,8 @@ CREATE TABLE IF NOT EXISTS item (
   notes            TEXT,
   UNIQUE (library_root_id, relative_path)
 );
-CREATE INDEX IF NOT EXISTS idx_item_kind      ON item(kind);
-CREATE INDEX IF NOT EXISTS idx_item_folder    ON item(folder_id);
-CREATE INDEX IF NOT EXISTS idx_item_missing   ON item(missing_since) WHERE missing_since IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_item_quickhash ON item(quick_hash) WHERE quick_hash IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_item_hash      ON item(content_hash) WHERE content_hash IS NOT NULL;
+-- idx_item_kind/folder/missing/quickhash/hash all deferred (DEFERRED_INDEXES_SQL) -- these five
+-- were the measured bottleneck; see this file's header comment.
 
 CREATE TABLE IF NOT EXISTS nam_capture_item (
   item_id           TEXT PRIMARY KEY REFERENCES item(id) ON DELETE CASCADE,
@@ -130,7 +143,7 @@ CREATE TABLE IF NOT EXISTS ir_derivative_variant (
   is_current     INTEGER NOT NULL DEFAULT 0,
   is_archived    INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS idx_variant_item ON ir_derivative_variant(item_id);
+-- idx_variant_item deferred (DEFERRED_INDEXES_SQL) -- not written to until Phase 3+ anyway.
 
 CREATE TABLE IF NOT EXISTS collection (
   id                    TEXT PRIMARY KEY,
@@ -206,6 +219,25 @@ CREATE TABLE IF NOT EXISTS asset_file (
   source_mtime   TEXT,
   CHECK ((item_id IS NOT NULL) + (collection_id IS NOT NULL) + (folder_id IS NOT NULL) = 1)
 );
+-- idx_asset_item/collection/folder deferred (DEFERRED_INDEXES_SQL) -- not written to until
+-- Phase 3+ (folder documents/cover art) anyway.
+`
+
+/**
+ * Indexes and FTS5, deferred out of CORE_SCHEMA_SQL and built once after bulk import instead of
+ * maintained live per-row. See this file's header comment for why.
+ */
+export const DEFERRED_INDEXES_SQL = `
+CREATE INDEX IF NOT EXISTS idx_folder_parent ON folder(parent_id);
+
+CREATE INDEX IF NOT EXISTS idx_item_kind      ON item(kind);
+CREATE INDEX IF NOT EXISTS idx_item_folder    ON item(folder_id);
+CREATE INDEX IF NOT EXISTS idx_item_missing   ON item(missing_since) WHERE missing_since IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_item_quickhash ON item(quick_hash) WHERE quick_hash IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_item_hash      ON item(content_hash) WHERE content_hash IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_variant_item ON ir_derivative_variant(item_id);
+
 CREATE INDEX IF NOT EXISTS idx_asset_item       ON asset_file(item_id);
 CREATE INDEX IF NOT EXISTS idx_asset_collection ON asset_file(collection_id);
 CREATE INDEX IF NOT EXISTS idx_asset_folder     ON asset_file(folder_id);
@@ -218,12 +250,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS item_search USING fts5(
 `
 
 /**
- * Live-edit trigger: keeps item_search in sync for single-row inserts/updates outside of bulk
- * import. Bulk import (importLibrary.ts) inserts into item_search directly inside its own batch
- * transactions instead, per docs/ir-lab-manager-build-plan.md section 2c — these triggers would
- * triple write volume at exactly the moment bulk-import throughput is being measured, so callers
- * doing a bulk import must NOT apply this DDL until the import finishes (see
- * `withLiveSearchTriggers` below).
+ * Live-edit trigger: keeps item_search in sync for single-row inserts/updates once the catalog is
+ * past its initial bulk import (a scan-detected new file, a user edit). References item_search,
+ * so this can only be applied after DEFERRED_INDEXES_SQL has created that table — see
+ * `finalizeIndexes` below, which is the only place this should normally be called from.
  */
 export const ITEM_SEARCH_TRIGGERS_SQL = `
 CREATE TRIGGER IF NOT EXISTS item_search_ai AFTER INSERT ON item BEGIN
@@ -246,17 +276,52 @@ DROP TRIGGER IF EXISTS item_search_au;
 DROP TRIGGER IF EXISTS item_search_ad;
 `
 
-export function createSchema(db: DatabaseSync): void {
-  db.exec(SCHEMA_SQL)
+/** Only the tables and the UNIQUE constraints bulk import's ON CONFLICT upserts depend on. */
+export function createCoreSchema(db: DatabaseSync): void {
+  db.exec(CORE_SCHEMA_SQL)
+}
+
+export function itemSearchTableExists(db: DatabaseSync): boolean {
+  const row = db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'item_search'`).get()
+  return row !== undefined
 }
 
 /**
- * Runs `fn` with item_search triggers removed for the duration, then restores them.
+ * Builds everything CORE_SCHEMA_SQL deferred: the five item indexes, item_search (FTS5),
+ * populated in one bulk pass from whatever's already in `item`, then the live-edit triggers.
+ * See this file's header comment for why building these live per-row during import was the
+ * actual Phase 1 bottleneck.
+ *
+ * Idempotent and cheap (a single DELETE + INSERT...SELECT, not per-row) — call it after EVERY
+ * call to importLibrary(), not just the first: that function never populates item_search itself,
+ * even on a re-scan against an already-finalized catalog, since its trigger-dropping wrapper
+ * (withoutLiveSearchTriggers) disables the live triggers for the whole call by design.
+ */
+export function finalizeIndexes(db: DatabaseSync): void {
+  db.exec(DEFERRED_INDEXES_SQL)
+  db.exec(`DELETE FROM item_search`)
+  db.exec(`INSERT INTO item_search (item_id, display_name) SELECT id, display_name FROM item`)
+  db.exec(ITEM_SEARCH_TRIGGERS_SQL)
+}
+
+/** Full schema immediately, indexes and all — for tests and other non-bulk-import callers. */
+export function createSchema(db: DatabaseSync): void {
+  createCoreSchema(db)
+  finalizeIndexes(db)
+}
+
+/**
+ * Runs `fn` with item_search triggers removed for the duration, then restores them — for a
+ * re-scan against an already-finalized catalog (item_search + triggers already exist), so a large
+ * batch of upserts doesn't pay live per-row trigger cost. A no-op wrapper (just runs `fn`) when
+ * item_search doesn't exist yet, since there's nothing to drop/restore during a catalog's first
+ * bulk import (see importLibrary.ts, which calls finalizeIndexes separately once that's done).
  *
  * Awaits `fn`'s result before restoring — the triggers must stay dropped for the whole async
  * import, not just until `fn` returns its (pending) promise.
  */
 export async function withoutLiveSearchTriggers<T>(db: DatabaseSync, fn: () => T | Promise<T>): Promise<T> {
+  if (!itemSearchTableExists(db)) return await fn()
   db.exec(DROP_ITEM_SEARCH_TRIGGERS_SQL)
   try {
     return await fn()

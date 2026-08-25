@@ -14,7 +14,7 @@ import { DatabaseSync } from 'node:sqlite'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import { join } from 'node:path'
-import { createSchema } from './schema'
+import { createCoreSchema, finalizeIndexes } from './schema'
 import { importLibrary } from './importLibrary'
 import { queryPage, searchItems } from './queryLibrary'
 
@@ -36,7 +36,7 @@ async function main(): Promise<void> {
   console.log(`catalog.db -> ${dbPath}`)
 
   const db = new DatabaseSync(dbPath)
-  createSchema(db)
+  createCoreSchema(db)
 
   console.log(`Importing ${rootPath} ...`)
   const stats = await importLibrary(db, rootPath, 'benchmark-root', {
@@ -56,6 +56,11 @@ async function main(): Promise<void> {
   if (stats.itemsInserted > 0) {
     console.log(`  throughput      : ${(stats.itemsInserted / (stats.elapsedMs / 1000)).toFixed(0)} items/s`)
   }
+
+  console.log('\n--- Finalize indexes + FTS5 (post-import, one bulk pass) ---')
+  const finalizeStart = performance.now()
+  finalizeIndexes(db)
+  console.log(`  elapsed: ${((performance.now() - finalizeStart) / 1000).toFixed(1)}s`)
 
   const dbSize = fs.statSync(dbPath).size
   const walPath = `${dbPath}-wal`
@@ -77,6 +82,7 @@ async function main(): Promise<void> {
   console.log('\n--- Resumability ---')
   const t0 = performance.now()
   const resumeStats = await importLibrary(db, rootPath, 'benchmark-root')
+  finalizeIndexes(db) // required after every importLibrary() call, not just the first — see schema.ts
   console.log(
     `  re-run against same root: ${(performance.now() - t0).toFixed(0)}ms, ` +
       `${resumeStats.itemsInserted} item rows upserted, no duplicates expected ` +

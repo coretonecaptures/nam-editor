@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import { join } from 'node:path'
-import { createSchema } from './schema'
+import { createCoreSchema, finalizeIndexes } from './schema'
 import { importLibrary } from './importLibrary'
 import { queryPage, searchItems } from './queryLibrary'
 import { hasFts5 } from './sqliteCapabilities'
@@ -48,9 +48,10 @@ describe.skipIf(!hasFts5())('importLibrary', () => {
   it('inserts folders, items, and item_search rows matching the walked files', async () => {
     const root = makeFixture()
     const db = new DatabaseSync(':memory:')
-    createSchema(db)
+    createCoreSchema(db)
 
     const stats = await importLibrary(db, root, 'test-root')
+    finalizeIndexes(db)
 
     expect(stats.itemsInserted).toBe(3)
     // root + Ownhammer + Ownhammer/Mesa V30 + RedWirez + RedWirez/Marshall G12M
@@ -67,7 +68,7 @@ describe.skipIf(!hasFts5())('importLibrary', () => {
   it('computes quick_hash and file_size for every item', async () => {
     const root = makeFixture()
     const db = new DatabaseSync(':memory:')
-    createSchema(db)
+    createCoreSchema(db)
     await importLibrary(db, root, 'test-root')
 
     const rows = db.prepare('SELECT file_size, quick_hash FROM item').all() as Array<{
@@ -86,10 +87,11 @@ describe.skipIf(!hasFts5())('importLibrary', () => {
   it('is safe to re-run against the same root: no duplicate item or item_search rows', async () => {
     const root = makeFixture()
     const db = new DatabaseSync(':memory:')
-    createSchema(db)
+    createCoreSchema(db)
 
     await importLibrary(db, root, 'test-root')
     await importLibrary(db, root, 'test-root')
+    finalizeIndexes(db)
 
     const itemCount = (db.prepare('SELECT COUNT(*) as c FROM item').get() as { c: number }).c
     const searchCount = (db.prepare('SELECT COUNT(*) as c FROM item_search').get() as { c: number }).c
@@ -102,8 +104,9 @@ describe.skipIf(!hasFts5())('importLibrary', () => {
   it('supports paginated browse and FTS5 search over the imported catalog', async () => {
     const root = makeFixture()
     const db = new DatabaseSync(':memory:')
-    createSchema(db)
+    createCoreSchema(db)
     const stats = await importLibrary(db, root, 'test-root')
+    finalizeIndexes(db)
 
     const page = queryPage(db, stats.libraryRootId, 0, 10)
     expect(page).toHaveLength(3)
@@ -126,7 +129,7 @@ describe.skipIf(!hasFts5())('importLibrary', () => {
   it('splits a small library across multiple batches without dropping rows', async () => {
     const root = makeFixture()
     const db = new DatabaseSync(':memory:')
-    createSchema(db)
+    createCoreSchema(db)
 
     // batchSize smaller than folder+item event count forces multiple transactions.
     const stats = await importLibrary(db, root, 'test-root', { batchSize: 1 })

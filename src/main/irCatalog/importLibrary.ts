@@ -7,8 +7,16 @@
  * resume-from-where-it-stopped UX described in the plan is a later-phase UI concern, not something
  * this standalone harness needs to implement to answer Phase 1's questions.
  *
- * item_search is populated by direct insert inside the same batch transaction, with live-edit
- * triggers absent for the duration — see schema.ts / docs/ir-lab-manager-build-plan.md section 2c.
+ * item_search handling here is deliberately minimal, per the root cause found in Phase 1's real
+ * benchmarking (docs/ir-lab-manager-build-plan.md section 12 — the five item indexes plus FTS5,
+ * maintained live per row, were what actually turned ~1,600 items/sec into ~90 on a 282K-file
+ * library; walking and hashing were both isolated and cleared first). This function NEVER
+ * populates item_search itself, on a first import or a re-scan alike — `withoutLiveSearchTriggers`
+ * drops the live-edit triggers for the whole call if they exist, specifically so a re-scan against
+ * an already-finalized catalog doesn't pay per-row trigger cost either. **Callers must call
+ * `finalizeIndexes(db)` after every call to this function**, not just the first one, to bring
+ * item_search back in sync — it's a single cheap bulk statement (DELETE + INSERT...SELECT), not a
+ * per-row cost, so paying it once after a batch of upserts is the whole point of deferring it.
  */
 import type { DatabaseSync } from 'node:sqlite'
 import { randomUUID } from 'node:crypto'
@@ -94,18 +102,8 @@ export async function importLibrary(
        last_seen_at = excluded.last_seen_at,
        file_size = excluded.file_size,
        quick_hash = excluded.quick_hash,
-       missing_since = NULL
-     RETURNING id`
+       missing_since = NULL`
   )
-  // Delete-then-insert rather than plain insert: a re-run against an already-imported root (the
-  // resumability case Phase 1 tests) upserts existing item rows, and item_search has no
-  // uniqueness constraint of its own to lean on — without the delete, re-running would duplicate
-  // search rows for every already-seen item.
-  const deleteSearch = db.prepare(`DELETE FROM item_search WHERE item_id = ?`)
-  const insertSearch = db.prepare(
-    `INSERT INTO item_search (item_id, display_name) VALUES (?, ?)`
-  )
-
   let foldersInserted = 0
   let itemsInserted = 0
   let filesSeen = 0
@@ -143,11 +141,9 @@ export async function importLibrary(
       const displayName = relPosix.slice(relPosix.lastIndexOf('/') + 1)
       const id = randomUUID()
 
-      const row = insertItem.get(
+      insertItem.run(
         id, libraryRootId, folderId, relPosix, displayName, it.modifiedAt, now, now, it.size, hashes[i]
-      ) as { id: string }
-      deleteSearch.run(row.id)
-      insertSearch.run(row.id, displayName)
+      )
       itemsInserted++
     }
     pendingItems.length = 0
