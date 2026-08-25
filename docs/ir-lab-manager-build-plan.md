@@ -614,7 +614,8 @@ ear-fatigue reasoning already agreed on.
    
    This is the one genuinely unproven risk — everything else in this plan is proven-elsewhere or straightforward. Do not proceed past this until it holds up.
 
-   **Results, measured against the real ~525K-file library — Phase 1 does NOT yet hold up.**
+   **Results, measured against the real ~525K-file library — initial run did NOT hold up (fix
+   below resolved it).**
    The harness (`src/main/irCatalog/`) was built and run for real. Two things it proved cleanly,
    and one it disproved:
 
@@ -668,17 +669,42 @@ ear-fatigue reasoning already agreed on.
         ~12,000-15,000 items/sec (a mild, stable dip from an initial ~15,400/s, not a collapse).
         `quick_hash` is not the problem either.
 
-   **Conclusion: the SQLite write path is the bottleneck** — batched inserts across `item`,
-   `item_search` (FTS5), and five indexes on `item`, with cost growing as the table reaches
-   hundreds of thousands of rows. This matches the classic B-tree/index-maintenance-cost pattern
+   **Conclusion: the SQLite write path was the bottleneck** — batched inserts across `item`,
+   `item_search` (FTS5), and five indexes on `item`, with cost growing as the table reached
+   hundreds of thousands of rows. This matched the classic B-tree/index-maintenance-cost pattern
    exactly (a hypothesis worth taking seriously precisely because it's the standard explanation
-   for "fast at first, progressively slower" on any SQL engine, this one included) — and it's a
-   fixable code problem, not an environmental one. Isolating it fully (walk + DB-insert-only, no
-   hash, at large scale) and applying a fix (candidates: deferring non-unique index creation
-   until after bulk load and building them once at the end, reviewing `PRAGMA synchronous`/WAL
-   checkpoint behavior, or restructuring the FTS5 insert) is the next concrete step before Phase 1
-   can be marked done. Query latency and catalog size remain validated from the earlier partial
-   run and don't need re-measuring.
+   for "fast at first, progressively slower" on any SQL engine, this one included). Confirmed
+   directly with a fourth isolation test: walk + DB-insert-only (indexes/FTS5 live, no hashing)
+   reproduced the identical decay curve (52,658 files at 193.8s, matching the earlier runs almost
+   exactly), while pure walk (5.9s/282K files) and walk+hash (23.6s/282K files) stayed fast and
+   flat. That fully separated the DB layer as the sole cause.
+
+   **Fix applied and confirmed — Phase 1's throughput question is now RESOLVED, not just
+   root-caused.** `schema.ts` now splits `CORE_SCHEMA_SQL` (tables plus only the `UNIQUE`
+   constraints bulk import's `ON CONFLICT` upserts require — these can't be deferred without
+   breaking resumability) from `DEFERRED_INDEXES_SQL` (the five `item` indexes, `item_search`
+   FTS5, and its live-edit triggers). A new `finalizeIndexes(db)` builds everything deferred in
+   one bulk pass — standard practice for bulk-loading SQL databases generally, not specific to
+   this schema. `importLibrary.ts` no longer touches `item_search` during the bulk pass at all;
+   callers call `finalizeIndexes()` once after every import (first run or re-scan alike).
+
+   Re-ran the full real benchmark against the same `Ownhammer` folder (282,041 files) used
+   throughout this investigation, fix applied:
+
+   | | Before | After |
+   |---|---|---|
+   | Full import | Collapsed to ~90-100 items/sec, 2-3+ hrs projected, never completed in testing | **313.1s total, flat ~901 items/sec throughout** |
+   | Rate, start → end | ~3,645/s → ~90/s (a ~40x collapse) | ~941/s → ~873/s (flat, not a decay) |
+   | Index + FTS5 build | Paid incrementally per row — this was the entire problem | **1.2s, one bulk pass, all 282,041 rows** |
+   | `catalog.db` size | — | 191.1 MB + 39.4 MB WAL |
+   | Query latency | 0.4-10.5ms (already fine) | 0.2ms browse, 1.4ms FTS5 search — still excellent |
+
+   **This deferred-index/FTS5-after-bulk-import pattern (`createCoreSchema` + `finalizeIndexes`)
+   is now the established design** for the real Phase 2+ importer, not just this benchmark
+   harness — any future schema change that adds a table/index touched during bulk import should
+   go through the same core/deferred split rather than being added to `CORE_SCHEMA_SQL` directly.
+   Phase 1 is done: traversal (reused from production, section 2a), persistence and query latency,
+   and import throughput are all validated against the real library.
 2. **Read-only virtualized browse + search**, no organization features yet. List/grid over the catalog, FTS5 search, confidence badges, favorite/rating working. This alone should already feel better than Explorer for a big library — validate that claim here before building more.
 3. **Vendor parsers**: generic filename-vocabulary fallback first (broadest coverage, least code), then Ownhammer, then RedWirez.
 4. **Quick audition**, ported from NAM Lab per section 8.
