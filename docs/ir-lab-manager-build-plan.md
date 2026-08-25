@@ -1039,14 +1039,16 @@ not part of it.
    long-term fix (same shape of problem as the already-flagged shared-
    Settings-panel gap) but wasn't attempted here; flagging again so it isn't
    rediscovered from scratch.
-3. **IR-centric Live tab layout — a future plan, not started.** Raised
+3. **IR-focused Live tab layout — a future plan, not started.** Raised
    directly: in `IrLiveTab.tsx` today the amp capture picker is the first,
    most prominent control and the loaded IR is a small text line below it —
-   backwards for a screen whose whole point is auditioning IRs. The IR (and
-   now the two-slot blend) should be the visually dominant element, with the
-   amp capture reduced to a small secondary control (e.g. a corner chip).
-   Not implemented yet — noted here as the next design pass on this tab
-   specifically, separate from the functional two-slot work above.
+   backwards for a screen whose whole point is auditioning IRs. Not
+   literally "center" (no specific geometric layout decided) — the point is
+   *emphasis*: the IR (and now the two-slot blend) should read as the focal
+   point, with the amp capture reduced to a small secondary control (e.g. a
+   corner chip). Not implemented yet — noted here as the next design pass
+   on this tab specifically, separate from the functional two-slot work
+   above.
 
 ### 8c. IR Lab Projects vs. third-party vendor libraries — ingestion (built)
 
