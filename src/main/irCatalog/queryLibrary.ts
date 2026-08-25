@@ -12,6 +12,17 @@ export interface ItemRow {
   file_size: number | null
   is_favorite: number
   rating: number | null
+  // Phase 3 (vendor parsers) fields — all null until applyVendorParsers has run for this item's
+  // library_root. `*_source` is the confidence-ladder provenance (section 3) for the UI badge;
+  // null alongside a null value means "no parser touched this field," not "checked and blank."
+  manufacturer: string | null
+  manufacturer_source: string | null
+  cabinet: string | null
+  cabinet_source: string | null
+  speaker: string | null
+  speaker_source: string | null
+  microphone: string | null
+  microphone_source: string | null
 }
 
 export interface QueryOptions {
@@ -59,8 +70,17 @@ export function queryItems(db: DatabaseSync, options: QueryOptions): ItemRow[] {
   return db
     .prepare(
       `SELECT item.id as id, item.relative_path as relative_path, item.display_name as display_name,
-              item.file_size as file_size, item.is_favorite as is_favorite, item.rating as rating
+              item.file_size as file_size, item.is_favorite as is_favorite, item.rating as rating,
+              ir_item.manufacturer as manufacturer, mfr_src.source as manufacturer_source,
+              ir_item.cabinet as cabinet, cab_src.source as cabinet_source,
+              ir_item.speaker as speaker, spk_src.source as speaker_source,
+              ir_item.microphone as microphone, mic_src.source as microphone_source
        FROM item
+       LEFT JOIN ir_item ON ir_item.item_id = item.id
+       LEFT JOIN ir_item_field_source mfr_src ON mfr_src.item_id = item.id AND mfr_src.field = 'manufacturer'
+       LEFT JOIN ir_item_field_source cab_src ON cab_src.item_id = item.id AND cab_src.field = 'cabinet'
+       LEFT JOIN ir_item_field_source spk_src ON spk_src.item_id = item.id AND spk_src.field = 'speaker'
+       LEFT JOIN ir_item_field_source mic_src ON mic_src.item_id = item.id AND mic_src.field = 'microphone'
        ${where}
        ORDER BY item.relative_path
        LIMIT ? OFFSET ?`

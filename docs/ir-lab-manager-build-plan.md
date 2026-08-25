@@ -743,7 +743,44 @@ ear-fatigue reasoning already agreed on.
      decision on this) — Phase 2 shipped flat list/search only, per section 1's stated non-goal
      ("Not a file browser"), not as an oversight, but that's a product call worth confirming
      rather than assuming.
-3. **Vendor parsers**: generic filename-vocabulary fallback first (broadest coverage, least code), then Ownhammer, then RedWirez.
+3. **Vendor parsers** — **done**, built in the order the plan specifies (generic vocabulary
+   first, then Ownhammer, then RedWirez). `src/main/irCatalog/vendorParsers/`.
+
+   The plan's original path-shape sketches for Ownhammer/RedWirez didn't match reality — checked
+   directly against a real library rather than assumed. Real Ownhammer nests deeper and
+   inconsistently pack-to-pack (`1012 GIBS/Atomic/1012 GIBS/V10/Mics/OH 1012 GIBS V10 121-00.wav`,
+   not `Pack/{SampleRate}/{Cab}/{Mic}.wav`), so `ownhammer.ts` parses the filename shape
+   (`OH {cab tokens} {speaker code} {mic code}[-position].wav`) rather than folder depth. Real
+   RedWirez is `.../{cab family}/BIGBox/{rate} KHz-{bits}bit/{cab}/{mic}/{cab}-{mic}-{position}.wav`
+   — `redwirez.ts` recognizes via the sample-rate-labeled folder + hyphenated filename together,
+   since the filename shape alone isn't distinctive enough to trust.
+
+   Validated against real data, not just synthetic fixtures — ran against a real 15,204-file
+   Ownhammer pack and a real 10,539-file RedWirez pack:
+   - Ownhammer: microphone 91.4%, cabinet 100%, speaker 51.0% (correctly null for blend files
+     like `V10+V30` — deliberately not guessed), manufacturer 0% (expected: cab-only packs don't
+     encode amp brand).
+   - RedWirez: microphone 92.9%, cabinet 88.9%, speaker 0% (expected: RedWirez doesn't separate
+     cabinet from speaker the way this schema does), manufacturer 48.2%.
+
+   Found and fixed one real bug live, from the Ownhammer run: the generic vocabulary parser was
+   matching "V30" as a standalone term inside the blend filename "V30+V10", silently overriding
+   Ownhammer's own deliberate refusal to guess a speaker for blends — `+` wasn't being treated as
+   a real token boundary. Fixed by excluding `+` from the matcher's boundary character class, with
+   a regression test. Also extended the vocabulary (`vocabulary.ts`) with terms found missing
+   during real-data validation (AKG D12 — distinct from D112 — plus M380/TC30/e602/PR40/Hartke).
+
+   Per-field confidence writing (`applyVendorParsers.ts`) respects the ladder (section 3):
+   `user_entered` is never overwritten by any parser, structural `vendor_parser` results are
+   never downgraded by the generic `filename_inferred` pass, and the generic pass still fills
+   whatever fields a structural match left blank (e.g. `manufacturer`, which `ownhammer.ts` never
+   sets). Wired into `irLibrary:scan` (`irLibraryIpc.ts`): runs after the first `finalizeIndexes()`
+   call, followed by a second `finalizeIndexes()` so the newly-parsed fields are actually
+   searchable — this also fixed a latent Phase 2 bug where `item_search`'s manufacturer/cabinet/
+   speaker/microphone FTS5 columns were declared but never populated by anything, so search never
+   actually covered them even before Phase 3. Confidence badges (Phase 2's flagged gap) now show
+   real data in `IrModeShell.tsx`. Faceted filter chips (section 7) remain unbuilt — badges show
+   per-row provenance, but there's still no click-to-narrow-by-field UI.
 4. **Quick audition**, ported from NAM Lab per section 8.
 5. **Folder notes + vendor document import**, with inheritance (section 2's `folder_metadata`/`folder_metadata_effective`/`folder_document`) and reconciliation (section 5) — reconciliation is fully designed already (section 5's four confidence tiers) but zero code exists yet; a moved/renamed file today just becomes a new row, with the old one sitting `missing_since`-flagged forever with no relink path, until this phase builds it. Its top tier also depends on the `content_hash` background queue, which Phase 1 didn't build either (see Phase 1 above) — build that first if this phase starts before it exists.
 6. **Tray + IR Lab handoff** (sections 9 and 11, built together since they're two halves of one feature) — this is the point where the private connector piece is actually needed; everything before it ships fully functional without it.

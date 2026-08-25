@@ -465,6 +465,14 @@ declare global {
           file_size: number | null
           is_favorite: number
           rating: number | null
+          manufacturer: string | null
+          manufacturer_source: string | null
+          cabinet: string | null
+          cabinet_source: string | null
+          speaker: string | null
+          speaker_source: string | null
+          microphone: string | null
+          microphone_source: string | null
         }>
         total: number
       }>

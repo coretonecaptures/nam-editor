@@ -288,19 +288,30 @@ export function itemSearchTableExists(db: DatabaseSync): boolean {
 
 /**
  * Builds everything CORE_SCHEMA_SQL deferred: the five item indexes, item_search (FTS5),
- * populated in one bulk pass from whatever's already in `item`, then the live-edit triggers.
- * See this file's header comment for why building these live per-row during import was the
- * actual Phase 1 bottleneck.
+ * populated in one bulk pass from whatever's already in `item` (LEFT JOINed against `ir_item`,
+ * if any rows exist there yet — see below), then the live-edit triggers. See this file's header
+ * comment for why building these live per-row during import was the actual Phase 1 bottleneck.
  *
  * Idempotent and cheap (a single DELETE + INSERT...SELECT, not per-row) — call it after EVERY
  * call to importLibrary(), not just the first: that function never populates item_search itself,
  * even on a re-scan against an already-finalized catalog, since its trigger-dropping wrapper
  * (withoutLiveSearchTriggers) disables the live triggers for the whole call by design.
+ *
+ * Also call it again after vendor parsing (Phase 3's applyVendorParsers) populates ir_item's
+ * manufacturer/cabinet/speaker/microphone — this join is what makes those fields searchable at
+ * all; without a second call, search only ever covers display_name. Known gap, not yet fixed:
+ * the live-edit triggers (ITEM_SEARCH_TRIGGERS_SQL) only fire on `item` INSERT/UPDATE, not on an
+ * `ir_item` field edit, so a future single-item metadata edit won't refresh search live — only
+ * the next bulk finalizeIndexes() call will pick it up.
  */
 export function finalizeIndexes(db: DatabaseSync): void {
   db.exec(DEFERRED_INDEXES_SQL)
   db.exec(`DELETE FROM item_search`)
-  db.exec(`INSERT INTO item_search (item_id, display_name) SELECT id, display_name FROM item`)
+  db.exec(`
+    INSERT INTO item_search (item_id, display_name, notes, manufacturer, cabinet, speaker, microphone)
+    SELECT item.id, item.display_name, item.notes, ir_item.manufacturer, ir_item.cabinet, ir_item.speaker, ir_item.microphone
+    FROM item LEFT JOIN ir_item ON ir_item.item_id = item.id
+  `)
   db.exec(ITEM_SEARCH_TRIGGERS_SQL)
 }
 

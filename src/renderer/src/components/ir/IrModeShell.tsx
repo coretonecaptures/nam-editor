@@ -8,12 +8,49 @@ type IrItemRow = {
   file_size: number | null
   is_favorite: number
   rating: number | null
+  manufacturer: string | null
+  manufacturer_source: string | null
+  cabinet: string | null
+  cabinet_source: string | null
+  speaker: string | null
+  speaker_source: string | null
+  microphone: string | null
+  microphone_source: string | null
 }
 
 type LibraryRoot = { id: number; path: string; label: string | null; watch_mode: string; created_at: string }
 
-const ROW_HEIGHT = 52
+const ROW_HEIGHT = 64
 const PAGE_SIZE = 200
+
+/**
+ * Confidence-ladder badge color (plan section 3) — "a small badge, not a modal," per field.
+ * Only the two sources Phase 3's parsers actually produce are handled; ir_lab_native/
+ * vendor_documentation/user_entered aren't written by any code yet (Phase 4/5/UI-editing).
+ */
+function confidenceDotClass(source: string | null): string {
+  switch (source) {
+    case 'vendor_parser':
+      return 'bg-indigo-400'
+    case 'filename_inferred':
+      return 'bg-gray-400 dark:bg-gray-600'
+    default:
+      return 'bg-gray-300 dark:bg-gray-700'
+  }
+}
+
+function FieldBadge({ label, value, source }: { label: string; value: string | null; source: string | null }): React.ReactElement | null {
+  if (!value) return null
+  return (
+    <span
+      title={`${label}: ${value} (${source === 'vendor_parser' ? 'vendor parser' : source === 'filename_inferred' ? 'filename guess' : 'unknown source'})`}
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-400"
+    >
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${confidenceDotClass(source)}`} />
+      {value}
+    </span>
+  )
+}
 
 function formatBytes(bytes: number | null): string {
   if (bytes == null) return ''
@@ -31,12 +68,11 @@ function splitPath(rel: string): { folder: string; name: string } {
 
 /**
  * Phase 2 — read-only browse + search over the IR catalog (docs/ir-lab-manager-build-plan.md
- * section 12, Phase 2). No organization features yet (tags/collections/tray are later phases).
- *
- * Confidence badges (plan section 3) are deliberately absent here: they show per-field provenance
- * (vendor_parser / filename_inferred / user_entered / ...) on ir_item's descriptive columns, and
- * nothing populates ir_item yet — vendor parsers are Phase 3. Building badge UI against a table
- * with no rows would be decorative, not functional; it lands once Phase 3 gives it real data.
+ * section 12, Phase 2), now showing Phase 3's vendor-parsed fields with confidence badges
+ * (section 3) per field. No organization features yet (tags/collections/tray are later phases).
+ * No faceted filter chips yet either (section 7) — badges show what's known per row, but there's
+ * no click-to-narrow-by-cabinet/speaker/mic UI; that's a distinct feature (needs a distinct-
+ * values aggregation query + filter state) still tracked as not done.
  */
 export function IrModeShell(): React.ReactElement {
   const [roots, setRoots] = useState<LibraryRoot[]>([])
@@ -223,6 +259,14 @@ export function IrModeShell(): React.ReactElement {
                 <div className="flex-1 min-w-0">
                   <div className="text-sm truncate">{name}</div>
                   {folder && <div className="text-xs text-gray-400 dark:text-gray-600 truncate">{folder}</div>}
+                  {(row.manufacturer || row.cabinet || row.speaker || row.microphone) && (
+                    <div className="flex items-center gap-1 mt-0.5 overflow-hidden">
+                      <FieldBadge label="Manufacturer" value={row.manufacturer} source={row.manufacturer_source} />
+                      <FieldBadge label="Cabinet" value={row.cabinet} source={row.cabinet_source} />
+                      <FieldBadge label="Speaker" value={row.speaker} source={row.speaker_source} />
+                      <FieldBadge label="Microphone" value={row.microphone} source={row.microphone_source} />
+                    </div>
+                  )}
                 </div>
                 <div className="flex-shrink-0 flex items-center gap-0.5">
                   {[1, 2, 3, 4, 5].map((n) => (

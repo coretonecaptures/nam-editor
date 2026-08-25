@@ -13,6 +13,7 @@ import { join } from 'node:path'
 import { createCoreSchema, finalizeIndexes, itemSearchTableExists } from './irCatalog/schema'
 import { importLibrary } from './irCatalog/importLibrary'
 import { queryItems, countItems, setFavorite, setRating } from './irCatalog/queryLibrary'
+import { applyVendorParsers } from './irCatalog/vendorParsers/applyVendorParsers'
 
 let db: DatabaseSync | null = null
 
@@ -58,9 +59,13 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     return { libraryRootId: row.id }
   })
 
-  // Runs the batched import (irCatalog/importLibrary.ts) then finalizes indexes/FTS5 once,
-  // per the Phase 1 fix — see docs/ir-lab-manager-build-plan.md section 12. Progress streams to
-  // the renderer over 'irLibrary:scanProgress'; the resolved value is the final stats.
+  // Runs the batched import (irCatalog/importLibrary.ts), finalizes indexes/FTS5 once (Phase 1
+  // fix — docs/ir-lab-manager-build-plan.md section 12), then runs the vendor parser chain
+  // (Phase 3, section 6) and finalizes again so the newly-parsed manufacturer/cabinet/speaker/
+  // microphone fields are actually searchable (see schema.ts's finalizeIndexes doc comment).
+  // Progress streams to the renderer over 'irLibrary:scanProgress'; the resolved value is the
+  // final import stats (vendor-parse stats aren't currently surfaced to the UI — no progress
+  // event for that phase yet, it runs as one bulk pass after import completes).
   ipcMain.handle('irLibrary:scan', async (_event, folderPath: string, label: string | null) => {
     const database = getDb()
     const stats = await importLibrary(database, folderPath, label, {
@@ -68,6 +73,8 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
         safeSend('irLibrary:scanProgress', { filesSeen: p.filesSeen, foldersSeen: p.foldersSeen, elapsedMs: p.elapsedMs, done: false })
       }
     })
+    finalizeIndexes(database)
+    applyVendorParsers(database, stats.libraryRootId)
     finalizeIndexes(database)
     safeSend('irLibrary:scanProgress', {
       filesSeen: stats.itemsInserted,
