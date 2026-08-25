@@ -32,7 +32,14 @@ export default function AppRoot(): React.ReactElement {
   return (
     <>
       {mode === 'nam' ? <App /> : <IrModeShell />}
-      <div className="fixed top-1.5 right-3 z-[100] flex rounded-md overflow-hidden border border-gray-300 dark:border-gray-700 shadow-sm text-xs">
+      {/*
+        Windows: BrowserWindow uses titleBarStyle 'hidden' + a titleBarOverlay (src/main/index.ts
+        createWindow) -- Electron draws the real minimize/maximize/close buttons as OS-composited
+        chrome in the top-right ~32px, on top of any web content there, invisibly. macOS uses
+        'hiddenInset' instead, which puts traffic-light buttons top-LEFT. top-10 clears the
+        Windows overlay height (32px) with margin and is nowhere near the Mac traffic lights.
+      */}
+      <div className="fixed top-10 right-3 z-[100] flex rounded-md overflow-hidden border border-gray-300 dark:border-gray-700 shadow-sm text-xs">
         <button
           onClick={() => setMode('nam')}
           className={`px-2.5 py-1 ${mode === 'nam' ? 'bg-indigo-600 text-white' : 'bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
