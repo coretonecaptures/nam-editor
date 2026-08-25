@@ -642,47 +642,43 @@ ear-fatigue reasoning already agreed on.
      the unique-file working set grows past whatever stays cheap. 7% CPU utilization means there
      is enormous room to parallelize I/O-bound work that today runs with none.
 
-   **Follow-up: two fixes tried against the real library, neither closed the gap — root cause is
-   still open, and the likely remaining explanation is outside this app's control.**
+   **Follow-up: root cause isolated to the SQLite write path — no AV exclusion, no user
+   security tradeoff needed.** Four things were tried and measured against the real library,
+   in order of elimination:
 
-   *Attempt 1 — app-level bounded concurrency.* Added `mapPool` (concurrency 32) to both
-   `scanWalk.ts`'s per-file `stat` calls and `importLibrary.ts`'s `quick_hash` computation (moved
-   outside the DB transaction entirely, since it's pure fs I/O). Re-ran against `Ownhammer`
-   alone (282,041 files — chosen over the full drive per the point that a single realistic
-   per-vendor `library_root`, which the multi-root design already supports, is plenty large to
-   stress-test on its own). **Result: no meaningful change.** Same decay shape, same order of
-   magnitude — ~3,645 items/sec on the first batch down to ~90 items/sec by 293.7s
-   (55,600 files). Early-batch throughput improved slightly; the decay pattern did not.
+   1. *App-level bounded concurrency* (`mapPool`, concurrency 32, on both `scanWalk.ts`'s
+      per-file `stat` and `importLibrary.ts`'s `quick_hash`) — **no meaningful change** against
+      `Ownhammer` (282,041 files): same decay shape, ~3,645 items/sec first batch down to
+      ~90 items/sec by 293.7s (55,600 files).
+   2. *libuv thread pool size* (`fs.promises` calls funnel through a pool that defaults to 4
+      threads regardless of app-level concurrency) — raised to 64 with the same code, same
+      folder. **No meaningful change** — 288.1s vs. 293.7s, ~2%, noise.
+   3. *Windows Defender real-time-scan exclusion* — added `F:\Impulse Responses` to Defender's
+      exclusion list and re-ran identical code. **No meaningful change** — 188.9s at 43,855 files
+      vs. 178.7-178.9s before, if anything marginally worse. **This rules the AV theory out**, and
+      cleanly: it isn't just "the exclusion didn't help," a separate pure-filesystem test (below)
+      proves no scanning backlog could exist in the first place. **No AV exclusion is needed or
+      recommended to ship this feature** — that would have been an unnecessary security tradeoff
+      to ask users to make for a bug that was never in their AV settings.
+   4. *Split walk/hash/DB apart entirely, no database involved in the first two:*
+      - **Pure walk + `stat`, zero hashing, zero SQLite:** all 282,041 files in **5.9 seconds**,
+        sustained ~48,700 items/sec, zero deceleration. The filesystem layer is not the problem,
+        at any scale tested.
+      - **Walk + `quick_hash`, zero SQLite:** all 282,041 files in **23.6 seconds**, sustained
+        ~12,000-15,000 items/sec (a mild, stable dip from an initial ~15,400/s, not a collapse).
+        `quick_hash` is not the problem either.
 
-   *Attempt 2 — libuv thread pool.* `fs.promises` calls all funnel through libuv's thread pool,
-   which defaults to 4 threads regardless of how much app-level concurrency requests — 32
-   in-flight promises can still be serialized behind 4 real OS threads. Re-ran the identical
-   concurrency-fixed code against the same `Ownhammer` folder with `UV_THREADPOOL_SIZE=64`.
-   **Result: no meaningful change either** — 55,600 files at 288.1s vs. 293.7s before, a ~2%
-   difference, well within run-to-run noise.
-
-   *Remaining hypothesis, not confirmed:* Windows Defender real-time protection is active on the
-   test machine (`Get-MpComputerStatus` → `RealTimeProtectionEnabled: True`), which is a
-   documented cause of exactly this shape of problem — sustained new-file access on Windows can
-   build a growing real-time-scan backlog that has nothing to do with the requesting
-   application's own concurrency or thread pool size. This was **not confirmed**, deliberately:
-   confirming it would mean disabling real-time AV scanning, which wasn't done without the user
-   explicitly asking for it, since that's a security-relevant change outside this plan's scope to
-   make unilaterally.
-
-   **Where this leaves Phase 1:** query latency and catalog size are validated and don't need
-   re-measuring. Import throughput is **not yet resolved** — two plausible code-level fixes were
-   tried and measured, and neither explains the bulk of the collapse. Before this can be marked
-   done, either (a) the user tests with the library folder added to Defender's exclusion list to
-   confirm/rule out that hypothesis directly, or (b) accept AV-driven throughput as a fact of
-   Windows deployment and design the real product feature around it rather than around raw
-   import speed: background/resumable scanning that runs incrementally over time (a `watch_mode:
-   'watched'` root re-scanning as files appear, an initial import that runs across multiple app
-   sessions rather than blocking one), which the plan's architecture already supports (batched,
-   resumable-shaped transactions per section 4) — it just means "525K files fully cataloged in
-   one sitting" was never a realistic Phase 2 UX expectation, whatever the eventual root cause.
-   A documented mitigation either way: advise users to exclude their IR library folders from
-   real-time AV scanning, the same recommendation any large-scale file-indexing tool would give.
+   **Conclusion: the SQLite write path is the bottleneck** — batched inserts across `item`,
+   `item_search` (FTS5), and five indexes on `item`, with cost growing as the table reaches
+   hundreds of thousands of rows. This matches the classic B-tree/index-maintenance-cost pattern
+   exactly (a hypothesis worth taking seriously precisely because it's the standard explanation
+   for "fast at first, progressively slower" on any SQL engine, this one included) — and it's a
+   fixable code problem, not an environmental one. Isolating it fully (walk + DB-insert-only, no
+   hash, at large scale) and applying a fix (candidates: deferring non-unique index creation
+   until after bulk load and building them once at the end, reviewing `PRAGMA synchronous`/WAL
+   checkpoint behavior, or restructuring the FTS5 insert) is the next concrete step before Phase 1
+   can be marked done. Query latency and catalog size remain validated from the earlier partial
+   run and don't need re-measuring.
 2. **Read-only virtualized browse + search**, no organization features yet. List/grid over the catalog, FTS5 search, confidence badges, favorite/rating working. This alone should already feel better than Explorer for a big library — validate that claim here before building more.
 3. **Vendor parsers**: generic filename-vocabulary fallback first (broadest coverage, least code), then Ownhammer, then RedWirez.
 4. **Quick audition**, ported from NAM Lab per section 8.
