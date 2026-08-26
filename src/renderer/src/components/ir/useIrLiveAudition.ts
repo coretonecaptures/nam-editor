@@ -10,11 +10,13 @@
  * uses when you change cabs mid-session (PlayerPanel.tsx:1288-1304), extended to two slots (A/B)
  * with a crossfade blend between them, per the "add a second IR slot" ask.
  *
- * Also carries an input/output device picker and simple on/off toggles for gate/EQ/delay/reverb/
- * chorus (each just flips `enabled` — or, for delay, its mix between 0 and a fixed default — at
- * LiveEngine's own default settings otherwise) — enough to close the "no FX at all" gap without
- * rebuilding PlayerPanel's full knob-by-knob rack. Fine-grained per-effect controls (delay time,
- * reverb tone, etc.) are a real, separate gap, not attempted here.
+ * FX state here is the SAME full settings objects (GateSettings/EqSettings/DelaySettings/
+ * EchoLabSettings/ReverbSettings/ChorusSettings) LiveEngine and PlayerPanel.tsx already use, not
+ * a simplified on/off version — this is what lets IrLiveTab.tsx render the ACTUAL Rack500/
+ * RackDelay/RackEchoLab/RackReverbTest components PlayerPanel.tsx uses, unchanged, rather than
+ * reinventing a second, thinner FX UI. Every `set*` here is a thin `{...prev, ...patch}` merge +
+ * live-apply via `engine.set*(patch)` — the same partial-update contract those Rack components'
+ * own `onChange` props already expect, so no adapter layer is needed between them and this hook.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -24,17 +26,22 @@ import {
   DEFAULT_GATE,
   DEFAULT_EQ,
   DEFAULT_DELAY,
+  DEFAULT_ECHO_LAB,
   DEFAULT_REVERB,
   DEFAULT_CHORUS,
-  type LiveDeviceInfo
+  type LiveDeviceInfo,
+  type GateSettings,
+  type EqSettings,
+  type DelaySettings,
+  type EchoLabSettings,
+  type ReverbSettings,
+  type ChorusSettings,
+  type DelaySlotView
 } from '../../utils/liveEngine'
 import { base64ToArrayBuffer } from '../../utils/playerAudio'
 import { tryAcquireLiveEngine, releaseLiveEngine, describeLiveEngineOwner, getActiveLiveEngineOwner } from '../../utils/liveEngineOwner'
 
 const CAPTURE_PATH_KEY = 'nam-lab-ir-mode-live-capture-path'
-/** Non-zero mix used when the delay toggle is switched on — DelaySettings has no separate
- * `enabled` flag, mix itself IS the on/off (0 = off, matching PlayerPanel's own convention). */
-const DELAY_ON_MIX = 0.25
 
 export type IrLiveSlot = 'A' | 'B'
 
@@ -42,14 +49,6 @@ export interface IrLiveAuditionItem {
   id: string
   abs_path: string
   display_name: string
-}
-
-export interface IrLiveFx {
-  gate: boolean
-  eq: boolean
-  delay: boolean
-  reverb: boolean
-  chorus: boolean
 }
 
 export interface IrLiveAuditionApi {
@@ -72,8 +71,22 @@ export interface IrLiveAuditionApi {
   outputDeviceId: string | null
   setInputDeviceId: (id: string | null) => void
   setOutputDeviceId: (id: string | null) => void
-  fx: IrLiveFx
-  toggleFx: (key: keyof IrLiveFx) => void
+  gate: GateSettings
+  setGate: (patch: Partial<GateSettings>) => void
+  eq: EqSettings
+  setEq: (patch: Partial<EqSettings>) => void
+  delay: DelaySettings
+  setDelay: (patch: Partial<DelaySettings>) => void
+  echoLab: EchoLabSettings
+  setEchoLab: (patch: Partial<EchoLabSettings>) => void
+  delaySlotView: DelaySlotView
+  setDelaySlotView: (view: DelaySlotView) => void
+  reverb: ReverbSettings
+  setReverb: (patch: Partial<ReverbSettings>) => void
+  chorus: ChorusSettings
+  setChorus: (patch: Partial<ChorusSettings>) => void
+  fxPower: boolean
+  setFxPower: (value: boolean) => void
   /** Starts monitoring (if not already running) and loads this IR into the given slot — a row's
    * plain play button always targets slot A (matching the ask: "auto pick the IR block to
    * whatever you click play on"); the tray/context menu can target slot B for blending. */
@@ -100,7 +113,15 @@ export function useIrLiveAudition(): IrLiveAuditionApi {
   const [outputDevices, setOutputDevices] = useState<LiveDeviceInfo[]>([])
   const [inputDeviceId, setInputDeviceIdState] = useState<string | null>(null)
   const [outputDeviceId, setOutputDeviceIdState] = useState<string | null>(null)
-  const [fx, setFx] = useState<IrLiveFx>({ gate: false, eq: false, delay: false, reverb: false, chorus: false })
+
+  const [gate, setGateState] = useState<GateSettings>(DEFAULT_GATE)
+  const [eq, setEqState] = useState<EqSettings>(DEFAULT_EQ)
+  const [delay, setDelayState] = useState<DelaySettings>(DEFAULT_DELAY)
+  const [echoLab, setEchoLabState] = useState<EchoLabSettings>(DEFAULT_ECHO_LAB)
+  const [delaySlotView, setDelaySlotView] = useState<DelaySlotView>('echo-lab')
+  const [reverb, setReverbState] = useState<ReverbSettings>(DEFAULT_REVERB)
+  const [chorus, setChorusState] = useState<ChorusSettings>(DEFAULT_CHORUS)
+  const [fxPower, setFxPowerState] = useState(true)
 
   const engineRef = useRef<LiveEngine | null>(null)
   const decodeCtxRef = useRef<AudioContext | null>(null)
@@ -161,9 +182,6 @@ export function useIrLiveAudition(): IrLiveAuditionApi {
       setError('Pick an amp capture first.')
       return null
     }
-    // Cross-tree mutex (plan section 8b/2) — NAM mode and IR mode each own an independent
-    // LiveEngine; refuse to open a second one (and a second mic stream) while the other mode is
-    // already live, rather than silently contending for the same input device.
     if (!tryAcquireLiveEngine('ir-mode')) {
       setError(`Live monitoring is already running in ${describeLiveEngineOwner(getActiveLiveEngineOwner()!)} — stop it there first.`)
       return null
@@ -184,11 +202,12 @@ export function useIrLiveAudition(): IrLiveAuditionApi {
         modelJson,
         deviceId: inputDeviceId,
         outputDeviceId,
-        gate: { ...DEFAULT_GATE, enabled: fx.gate },
-        eq: { ...DEFAULT_EQ, enabled: fx.eq },
-        delay: { ...DEFAULT_DELAY, mix: fx.delay ? DELAY_ON_MIX : 0 },
-        reverb: { ...DEFAULT_REVERB, enabled: fx.reverb },
-        chorus: { ...DEFAULT_CHORUS, enabled: fx.chorus }
+        gate: fxPower ? gate : { ...gate, enabled: false },
+        eq: fxPower ? eq : { ...eq, enabled: false },
+        delay,
+        echoLab,
+        reverb,
+        chorus: fxPower ? chorus : { ...chorus, enabled: false }
       })
       if (generationRef.current !== generation) {
         await engine.stop()
@@ -211,11 +230,14 @@ export function useIrLiveAudition(): IrLiveAuditionApi {
     } finally {
       if (generationRef.current === generation) setStarting(false)
     }
-  }, [capturePath, inputDeviceId, outputDeviceId, fx])
+    // fxPower/gate/eq/chorus are read at start() time only (deliberately) — while running, FX
+    // changes apply live via the per-setting effects below, not by restarting the engine.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [capturePath, inputDeviceId, outputDeviceId])
 
   /** Changing an input/output device needs a fresh getUserMedia stream — restart if already
    * running, matching how NAM mode's own device pickers behave (a live device switch isn't a
-   * hot-swap the way a cabinet or an FX toggle is). */
+   * hot-swap the way a cabinet or an FX setting is). */
   const restartIfRunning = useCallback(async () => {
     if (!engineRef.current) return
     const wasSlotA = slotA
@@ -253,9 +275,8 @@ export function useIrLiveAudition(): IrLiveAuditionApi {
       setInputDeviceIdState(id)
       void restartIfRunning()
     },
-    // restartIfRunning intentionally omitted — it closes over the OLD inputDeviceId until the
-    // next render, and this only needs to fire once per explicit device pick, not on every
-    // dependency ripple restartIfRunning itself has.
+    // restartIfRunning intentionally omitted — see useIrLiveAudition.ts's earlier note (kept
+    // identical behavior across this rewrite): this should fire once per explicit device pick.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   )
@@ -268,23 +289,37 @@ export function useIrLiveAudition(): IrLiveAuditionApi {
     []
   )
 
-  const toggleFx = useCallback(
-    (key: keyof IrLiveFx) => {
-      setFx((prev) => {
-        const next = { ...prev, [key]: !prev[key] }
-        const engine = engineRef.current
-        if (engine) {
-          if (key === 'gate') engine.setGate({ enabled: next.gate })
-          else if (key === 'eq') engine.setEq({ enabled: next.eq })
-          else if (key === 'delay') engine.setDelay({ mix: next.delay ? DELAY_ON_MIX : 0 })
-          else if (key === 'reverb') engine.setReverb({ enabled: next.reverb })
-          else if (key === 'chorus') engine.setChorus({ enabled: next.chorus })
-        }
-        return next
-      })
-    },
-    []
-  )
+  // FX settings apply live to a running engine, same pattern PlayerPanel.tsx uses for each of
+  // these — a state update plus an effect that pushes the new value into LiveEngine, no restart.
+  const setGate = useCallback((patch: Partial<GateSettings>) => setGateState((g) => ({ ...g, ...patch })), [])
+  const setEq = useCallback((patch: Partial<EqSettings>) => setEqState((e) => ({ ...e, ...patch })), [])
+  const setDelay = useCallback((patch: Partial<DelaySettings>) => setDelayState((d) => ({ ...d, ...patch })), [])
+  const setEchoLab = useCallback((patch: Partial<EchoLabSettings>) => setEchoLabState((e) => ({ ...e, ...patch })), [])
+  const setReverb = useCallback((patch: Partial<ReverbSettings>) => setReverbState((r) => ({ ...r, ...patch })), [])
+  const setChorus = useCallback((patch: Partial<ChorusSettings>) => setChorusState((c) => ({ ...c, ...patch })), [])
+  const setFxPower = useCallback((value: boolean) => setFxPowerState(value), [])
+
+  useEffect(() => {
+    if (running) engineRef.current?.setGate(fxPower ? gate : { ...gate, enabled: false })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gate, fxPower, running])
+  useEffect(() => {
+    if (running) engineRef.current?.setEq(fxPower ? eq : { ...eq, enabled: false })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eq, fxPower, running])
+  useEffect(() => {
+    if (running) engineRef.current?.setDelay(delay)
+  }, [delay, running])
+  useEffect(() => {
+    if (running) engineRef.current?.setEchoLab(echoLab)
+  }, [echoLab, running])
+  useEffect(() => {
+    if (running) engineRef.current?.setReverb(reverb)
+  }, [reverb, running])
+  useEffect(() => {
+    if (running) engineRef.current?.setChorus(fxPower ? chorus : { ...chorus, enabled: false })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chorus, fxPower, running])
 
   const playItem = useCallback(
     async (item: IrLiveAuditionItem, slot: IrLiveSlot = 'A') => {
@@ -348,8 +383,22 @@ export function useIrLiveAudition(): IrLiveAuditionApi {
     outputDeviceId,
     setInputDeviceId,
     setOutputDeviceId,
-    fx,
-    toggleFx,
+    gate,
+    setGate,
+    eq,
+    setEq,
+    delay,
+    setDelay,
+    echoLab,
+    setEchoLab,
+    delaySlotView,
+    setDelaySlotView,
+    reverb,
+    setReverb,
+    chorus,
+    setChorus,
+    fxPower,
+    setFxPower,
     playItem,
     stop
   }

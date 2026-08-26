@@ -1085,20 +1085,32 @@ not part of it.
 
 **Live audition follow-ups — all three built (2026-08-25):**
 
-1. ~~No gate/EQ/delay/reverb/chorus/device picker~~ — **built**.
-   `useIrLiveAudition.ts` now carries input/output device selection
-   (`listAudioInputs`/`listAudioOutputs`, same as NAM mode) and simple on/off
-   toggles for gate/EQ/delay/reverb/chorus — each just flips `enabled` (or,
-   for delay, its `mix` between 0 and a fixed on-value, since `DelaySettings`
-   has no separate enabled flag) at `LiveEngine`'s own default settings,
-   applied live via `engine.setGate/setEq/setDelay/setReverb/setChorus`
-   without a restart. Changing an input/output device DOES restart the
-   engine (a live device switch needs a fresh `getUserMedia` stream, unlike
-   a cabinet or FX toggle) — `restartIfRunning()` tears down and rebuilds,
-   reloading whatever was in both cabinet slots and the blend position
-   first. Deliberately still no fine-grained per-effect controls (delay
-   time, reverb tone, etc.) — that's `PlayerPanel.tsx`'s full knob-by-knob
-   rack, a much larger UI this pass didn't attempt to replicate.
+1. ~~No gate/EQ/delay/reverb/chorus/device picker~~ — **built, then
+   corrected the same day to actually reuse PlayerPanel's real rack UI
+   instead of a second, thinner one.** First pass shipped simple on/off
+   toggles for gate/EQ/delay/reverb/chorus, applied live via
+   `engine.setGate/setEq/setDelay/setReverb/setChorus`. Called out directly
+   as the wrong call — "why is this not just an absolute load of the
+   existing code???...we should follow good design principles, abstraction,
+   reusability...not copy/paste." Corrected: `useIrLiveAudition.ts` now
+   holds the SAME full settings objects (`GateSettings`/`EqSettings`/
+   `DelaySettings`/`EchoLabSettings`/`ReverbSettings`/`ChorusSettings`)
+   `LiveEngine`/`PlayerPanel.tsx` already use, and `IrLiveTab.tsx` renders
+   the ACTUAL `Rack500`/`RackDelay`/`RackEchoLab`/`RackReverbTest`
+   components `PlayerPanel.tsx`'s Live mode uses — imported directly, not
+   reimplemented. This worked with zero changes to `PlayerPanel.tsx` itself
+   because those components were already properly decoupled there (plain
+   `settings` + `onChange(patch)` props, no `NamFile` dependency) — the
+   duplication was entirely in the hook layer around them, not in the racks
+   themselves. Input/output device selection
+   (`listAudioInputs`/`listAudioOutputs`, same as NAM mode) restarts the
+   engine on change (a live device switch needs a fresh `getUserMedia`
+   stream, unlike a cabinet or FX setting) — `restartIfRunning()` tears down
+   and rebuilds, reloading whatever was in both cabinet slots and the blend
+   position first. Real, current gaps: PlayerPanel's floating-window
+   pop-outs, named FX presets, and per-effect convolution IR pickers
+   (Delay/Reverb convolution mode needs an IR to pick from a library IR
+   mode doesn't have wired up yet) are not reused/built here.
 2. ~~Cross-tree architecture gap~~ — **built, as a mutex, not a shared
    instance.** New `utils/liveEngineOwner.ts`: a plain module-level
    singleton (`tryAcquireLiveEngine('nam'|'ir-mode')` /
@@ -1123,6 +1135,30 @@ not part of it.
    secondary strip below. Not literally centered (no specific geometric
    layout rule) — the point was emphasis, and the IR/blend now reads as the
    focal point instead of the capture picker.
+4. **Cross-app visual consistency — one gap found and fixed, one identified
+   and deliberately not touched yet.** Raised directly: "even the context
+   menu looks totally different in IR than in NAM...these are not two apps!
+   they are 2 parts of one app." Checked both directly:
+   - Context menu: confirmed real — NAM mode's (`FileList.tsx`) used
+     `text-sm` with an icon per item and raw Tailwind grays; IR mode's
+     (`IrModeShell.tsx`) used `text-xs`, no icons, design tokens. Neither had
+     ever been a shared component — every screen in the app built its own
+     inline popup. Fixed: new `components/ContextMenu.tsx` — one shell
+     (design-token colors, NAM's `text-sm` sizing since it's the more
+     established shipped spec, optional icon slot, dividers, a destructive
+     variant, self-contained dismiss-on-outside-click/Escape) — `IrModeShell.tsx`
+     migrated to it now. **`FileList.tsx`'s own menu (11+ conditional items —
+     copy/move/rename/trash/apply-defaults/add-to-group) was deliberately
+     NOT migrated in this pass** — real, core, actively-used file-operations
+     UI, not a contained swap, and flagged rather than touched without
+     confirmation given this session's own established caution around
+     high-blast-radius edits to the main app. Follow-up, not forgotten.
+   - Tree font: checked and NOT actually different — both `FolderTree.tsx`
+     and `IrFolderTree.tsx` use `text-xs`, inheriting the same global
+     `body { font-family: var(--font-ui) }` (IBM Plex Sans) either way. No
+     literal typeface/size divergence found; the perceived difference was
+     most likely the adjacent context-menu inconsistency (icons/sizing/
+     colors) above, not the tree rows themselves.
 
 ### 8c. IR Lab Projects vs. third-party vendor libraries — ingestion (built)
 

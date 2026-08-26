@@ -2,30 +2,29 @@ import playUnlit from '../../assets/transport/play-unlit.png'
 import playLit from '../../assets/transport/play-lit.png'
 import stopUnlit from '../../assets/transport/stop-unlit.png'
 import stopLit from '../../assets/transport/stop-lit.png'
-import type { IrLiveAuditionApi, IrLiveFx } from './useIrLiveAudition'
+import { RackColumn } from '../RackColumn'
+import { RackCrop, RACK_CROP } from '../RackCrop'
+import { Rack500 } from '../Rack500'
+import { RackDelay } from '../RackDelay'
+import { RackEchoLab } from '../RackEchoLab'
+import { RackReverbTest } from '../RackReverbTest'
+import type { IrLiveAuditionApi } from './useIrLiveAudition'
 
 const CAP_SIZE = 56
-const FX_LABELS: Array<{ key: keyof IrLiveFx; label: string }> = [
-  { key: 'gate', label: 'Gate' },
-  { key: 'eq', label: 'EQ' },
-  { key: 'delay', label: 'Delay' },
-  { key: 'reverb', label: 'Reverb' },
-  { key: 'chorus', label: 'Chorus' }
-]
 
 /**
- * Live tab (docs/ir-lab-manager-build-plan.md section 8b) — the IR (and now the two-slot blend)
- * is the focal point of this layout, not the amp capture: the slots sit at the top, large, with
- * the blend slider directly under them; the amp capture picker, devices, and FX toggles are
- * pushed down into a secondary strip below. This was raised directly as feedback on the earlier
- * version, which led with the capture picker and buried the IR in a small text line — backwards
- * for a screen whose whole point is auditioning IRs. Not a literal geometric "center" — the point
- * is emphasis, not a specific layout rule.
+ * Live tab (docs/ir-lab-manager-build-plan.md section 8b) — the IR (and two-slot blend) is the
+ * focal point at the top; below it is the REAL FX rack NAM Lab's own PlayerPanel Live mode uses —
+ * `Rack500`/`RackDelay`/`RackEchoLab`/`RackReverbTest`, the exact same components, imported
+ * directly, not a second reimplementation of gate/EQ/delay/reverb UI. Those components were
+ * already decoupled from PlayerPanel's own state (plain `settings` + `onChange(patch)` props, no
+ * `NamFile` dependency) — reusing them here needed zero changes to PlayerPanel.tsx itself.
  *
- * Uses the same tape-cap artwork NAM Lab's own PlayerPanel Live mode uses
- * (src/assets/transport/*.png) for visual identity, not a re-theme. Row-level play buttons in the
- * center list do the actual IR hot-swapping (useIrLiveAudition.playItem) — this tab is where you
- * pick the amp capture/devices/FX and see/stop what's currently running.
+ * Not reused (real, current gaps, not oversights): PlayerPanel's floating-window pop-outs for
+ * Delay/Echo Lab/Reverb, its named-preset menus (delay/reverb/chorus presets — IR mode has none
+ * yet), and per-effect convolution IR pickers (Delay/Reverb can run in convolution mode, but IR
+ * mode has no delay-IR/reverb-IR library wired up to pick one from, so both stay in their
+ * non-convolution modes here for now).
  */
 export function IrLiveTab({ live }: { live: IrLiveAuditionApi }): React.ReactElement {
   return (
@@ -102,8 +101,8 @@ export function IrLiveTab({ live }: { live: IrLiveAuditionApi }): React.ReactEle
         {live.error && <div className="text-xs text-red-600 dark:text-red-400">{live.error}</div>}
       </div>
 
-      {/* Secondary strip: amp capture, devices, FX — smaller, below the fold on purpose. */}
-      <div className="p-3 flex flex-col gap-3 text-xs">
+      {/* Amp capture + devices — small, secondary, below the fold on purpose. */}
+      <div className="p-3 flex flex-col gap-3 text-xs border-b border-nm-border-s">
         <div>
           <label className="text-nm-text-3 block mb-1">Amp capture</label>
           <div className="flex items-center gap-2">
@@ -151,23 +150,68 @@ export function IrLiveTab({ live }: { live: IrLiveAuditionApi }): React.ReactEle
             </select>
           </div>
         </div>
+      </div>
 
-        <div>
-          <label className="text-nm-text-3 block mb-1">FX (on/off — LiveEngine defaults, no fine controls yet)</label>
-          <div className="flex flex-wrap gap-1.5">
-            {FX_LABELS.map(({ key, label }) => (
-              <button
-                key={key}
-                onClick={() => live.toggleFx(key)}
-                className={`px-2 py-1 rounded border ${
-                  live.fx[key] ? 'border-nm-accent text-nm-accent bg-active-bg' : 'border-field-bd text-nm-text-2 hover:bg-hov'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
+      {/* The real FX rack — same components PlayerPanel.tsx's Live mode renders. */}
+      <div className="p-3 flex flex-col gap-3">
+        <RackColumn
+          header={
+            <div className="flex items-center justify-between gap-2 text-xs text-nm-text-2">
+              <span>EQ · Gate · Modulation</span>
+            </div>
+          }
+          panel={
+            <RackCrop metal={RACK_CROP.rack500}>
+              <Rack500
+                gate={live.gate}
+                eq={live.eq}
+                chorus={live.chorus}
+                onGate={live.setGate}
+                onEq={live.setEq}
+                onChorus={live.setChorus}
+                power={live.fxPower}
+                onTogglePower={() => live.setFxPower(!live.fxPower)}
+              />
+            </RackCrop>
+          }
+        />
+
+        <RackColumn
+          header={
+            <div className="flex items-center justify-between gap-2 text-xs text-nm-text-2">
+              <span>{live.delaySlotView === 'echo-lab' ? 'Echo Lab' : 'Delay'}</span>
+              <div className="flex rounded border border-field-bd overflow-hidden">
+                {(['echo-lab', 'delay'] as const).map((v) => (
+                  <button
+                    key={v}
+                    onClick={() => live.setDelaySlotView(v)}
+                    className={`px-2 py-0.5 ${live.delaySlotView === v ? 'bg-active-bg text-nm-accent' : 'hover:bg-hov'}`}
+                  >
+                    {v === 'echo-lab' ? 'Echo Lab' : 'Delay'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          }
+          panel={
+            live.delaySlotView === 'delay' ? (
+              <RackCrop metal={RACK_CROP.delay}>
+                <RackDelay delay={live.delay} onChange={live.setDelay} delayPresets={[]} irName={null} irPath={null} />
+              </RackCrop>
+            ) : (
+              <RackEchoLab echoLab={live.echoLab} onChange={live.setEchoLab} />
+            )
+          }
+        />
+
+        <RackColumn
+          header={<div className="text-xs text-nm-text-2">Reverb</div>}
+          panel={
+            <RackCrop metal={RACK_CROP.reverb}>
+              <RackReverbTest reverb={live.reverb} onChange={live.setReverb} reverbPresets={[]} irName={null} irPath={null} />
+            </RackCrop>
+          }
+        />
       </div>
     </div>
   )

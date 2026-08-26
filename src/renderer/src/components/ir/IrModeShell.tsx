@@ -4,6 +4,7 @@ import { useIrLiveAudition } from './useIrLiveAudition'
 import { IrFolderTree } from './IrFolderTree'
 import { IrRightPanel } from './IrRightPanel'
 import { IrMenuBar } from './IrMenuBar'
+import { ContextMenu } from '../ContextMenu'
 
 type IrItemRow = {
   id: string
@@ -276,21 +277,6 @@ export function IrModeShell(): React.ReactElement {
     window.addEventListener('click', dismiss)
     return () => window.removeEventListener('click', dismiss)
   }, [groupsMenuOpen])
-
-  // Context menu: dismiss on outside click or Escape.
-  useEffect(() => {
-    if (!contextMenu) return
-    const dismiss = (): void => setContextMenu(null)
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setContextMenu(null)
-    }
-    window.addEventListener('click', dismiss)
-    window.addEventListener('keydown', onKey)
-    return () => {
-      window.removeEventListener('click', dismiss)
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [contextMenu])
 
   // New search, folder filter, or a completed scan invalidates every cached index — the same
   // offset can now point at a different row. Deliberately does NOT stop live monitoring (unlike
@@ -873,69 +859,40 @@ export function IrModeShell(): React.ReactElement {
       )}
 
       {contextMenu && (
-        <div
-          style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x, zIndex: 200 }}
-          onClick={(e) => e.stopPropagation()}
-          className="min-w-[180px] py-1 rounded border border-nm-border bg-panel shadow-lg text-xs"
-        >
-          <button
-            onClick={() => {
-              window.api.revealFile(contextMenu.row.abs_path)
-              setContextMenu(null)
-            }}
-            className="w-full text-left px-3 py-1.5 hover:bg-hov text-nm-text"
-          >
-            Reveal in Folder
-          </button>
-          <button
-            onClick={() => {
-              toggleTray(contextMenu.row)
-              setContextMenu(null)
-            }}
-            className="w-full text-left px-3 py-1.5 hover:bg-hov text-nm-text"
-          >
-            {trayIds.has(contextMenu.row.id) ? 'Remove from Tray' : 'Add to Tray'}
-          </button>
-          <button
-            onClick={() => {
-              void live.playItem(
-                { id: contextMenu.row.id, abs_path: contextMenu.row.abs_path, display_name: contextMenu.row.display_name },
-                'A'
-              )
-              setContextMenu(null)
-            }}
-            className="w-full text-left px-3 py-1.5 hover:bg-hov text-nm-text"
-          >
-            Audition Live — Slot A
-          </button>
-          <button
-            onClick={() => {
-              void live.playItem(
-                { id: contextMenu.row.id, abs_path: contextMenu.row.abs_path, display_name: contextMenu.row.display_name },
-                'B'
-              )
-              setContextMenu(null)
-            }}
-            className="w-full text-left px-3 py-1.5 hover:bg-hov text-nm-text"
-          >
-            Audition Live — Slot B (blend)
-          </button>
-          <button
-            onClick={() => {
-              setAddToGroupRow(contextMenu.row)
-              setContextMenu(null)
-            }}
-            className="w-full text-left px-3 py-1.5 hover:bg-hov text-nm-text"
-          >
-            Add to Group…
-          </button>
-          <div className="border-t border-nm-border-s my-1" />
-          {/* Placeholder for the rest of section 12's roadmap (collections beyond tray/groups, IR
-              Lab handoff beyond blend) — a stub row rather than inventing menu items that don't
-              do anything, per the user's own framing ("add a reveal in folder...or add to tray
-              etc until we build it up"). */}
-          <div className="px-3 py-1 text-nm-text-3 italic">More actions coming soon</div>
-        </div>
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={() => setContextMenu(null)}
+          items={[
+            { label: 'Reveal in Folder', onClick: () => window.api.revealFile(contextMenu.row.abs_path) },
+            {
+              label: trayIds.has(contextMenu.row.id) ? 'Remove from Tray' : 'Add to Tray',
+              onClick: () => toggleTray(contextMenu.row)
+            },
+            {
+              label: 'Audition Live — Slot A',
+              onClick: () =>
+                void live.playItem(
+                  { id: contextMenu.row.id, abs_path: contextMenu.row.abs_path, display_name: contextMenu.row.display_name },
+                  'A'
+                )
+            },
+            {
+              label: 'Audition Live — Slot B (blend)',
+              onClick: () =>
+                void live.playItem(
+                  { id: contextMenu.row.id, abs_path: contextMenu.row.abs_path, display_name: contextMenu.row.display_name },
+                  'B'
+                )
+            },
+            { label: 'Add to Group…', onClick: () => setAddToGroupRow(contextMenu.row) },
+            { divider: true },
+            // Placeholder for the rest of section 12's roadmap (collections beyond tray/groups,
+            // IR Lab handoff beyond blend) — an honest disabled row rather than inventing menu
+            // items that don't do anything yet.
+            { label: 'More actions coming soon', disabled: true }
+          ]}
+        />
       )}
 
       {addToGroupRow && (
