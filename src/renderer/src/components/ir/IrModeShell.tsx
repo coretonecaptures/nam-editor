@@ -723,8 +723,12 @@ export function IrModeShell(): React.ReactElement {
                   setFocusedIndex(index)
                   setContextMenu({ x: e.clientX, y: e.clientY, row })
                 }}
-                className={`h-full flex items-center gap-3 px-4 border-b border-nm-border-s hover:bg-hov ${isFocused ? 'bg-active-bg' : ''}`}
+                className={`group h-full flex items-center gap-3 px-4 border-b border-nm-border-s hover:bg-hov ${isFocused ? 'bg-active-bg' : ''}`}
               >
+                {/* Same faint-at-rest, grows-solid-on-row-hover button NAM Lab's own FileList.tsx
+                    uses for its play button (same size, same triangle icon, same color/opacity/
+                    transition classes) — this is one action on one row in both apps, so it should
+                    look and behave identically, not like two different products. */}
                 <button
                   onClick={(e) => {
                     e.stopPropagation()
@@ -740,11 +744,23 @@ export function IrModeShell(): React.ReactElement {
                         : 'Audition this IR live (slot A) — right-click for slot B'
                       : 'Set an amp capture in the Live tab first'
                   }
-                  className={`flex-shrink-0 text-base w-5 text-center ${
-                    isSlotB ? 'text-sky-500' : isSlotA ? 'text-nm-accent' : 'text-nm-text-3 hover:text-nm-accent'
-                  } disabled:opacity-30`}
+                  className={`flex-shrink-0 self-center w-9 h-9 rounded-full flex items-center justify-center opacity-40 group-hover:opacity-100 transition-all duration-150 disabled:opacity-20 disabled:pointer-events-none ${
+                    isPlaying
+                      ? isSlotB
+                        ? 'text-sky-500 dark:text-sky-400 hover:bg-sky-500 hover:text-white dark:hover:bg-sky-500 dark:hover:text-white'
+                        : 'text-red-500 dark:text-red-400 hover:bg-red-500 hover:text-white dark:hover:bg-red-500 dark:hover:text-white'
+                      : 'text-green-500 dark:text-green-400 hover:bg-green-500 hover:text-white dark:hover:bg-green-500 dark:hover:text-white hover:!bg-green-600'
+                  }`}
                 >
-                  {isPlaying ? '■' : '▶'}
+                  {isPlaying ? (
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                      <rect x="6" y="6" width="12" height="12" rx="1.5" />
+                    </svg>
+                  ) : (
+                    <svg className="w-5 h-5 ml-0.5" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M8 5.14v14l11-7-11-7z" />
+                    </svg>
+                  )}
                 </button>
                 <button
                   onClick={(e) => {
