@@ -42,7 +42,15 @@ function makeProjectFixture(): { root: string; captureId: string } {
       id: 'project-1',
       name: 'Marshall Session',
       createdAt: '2026-08-01T00:00:00.000Z',
-      captureIndex: [{ captureId, outputFileName: 'Marshall 412 SM57.wav' }]
+      captureIndex: [{ captureId, outputFileName: 'Marshall 412 SM57.wav' }],
+      // 2026-08-26 Project Details fields.
+      cabinet: 'Marshall 1960A (project default)',
+      speaker: 'Celestion V30 (project default)',
+      amplifier: 'Marshall JCM800',
+      room: 'Iso Booth',
+      signalChain: 'Apollo x6 -> Neve 1073',
+      description: 'Marshall stack, single-mic pass',
+      projectNotes: 'Recorded at low volume for the neighbours.'
     })
   )
   fs.writeFileSync(
@@ -58,7 +66,19 @@ function makeProjectFixture(): { root: string; captureId: string } {
         microphone: 'Shure SM57',
         position: 'Cap edge',
         notes: 'Close mic, slight off-axis.',
-        captureType: 'Hardware'
+        captureType: 'Hardware',
+        // 2026-08-26 CaptureMetadata additions.
+        speakerPosition: 'Top-Left',
+        modeledMicrophone: 'Royer 121',
+        presetKind: 'Cab IR',
+        micATypeName: 'Dynamic',
+        micAPolarPattern: 'Cardioid',
+        micATargetZone: 'Cap Edge',
+        micADistance: 1.5,
+        micADistanceUnit: 'in',
+        micAAxisAngleDeg: 15,
+        micASignalChainOverride: '',
+        micANotes: 'Angled slightly off-axis'
       }
     })
   )
@@ -110,11 +130,42 @@ describe.skipIf(!hasFts5())('enrichLabProjects', () => {
     expect(irItem.is_stereo).toBe(0)
     expect(item.notes).toBe('Close mic, slight off-axis.')
 
+    // 2026-08-26 CaptureMetadata additions.
+    expect(irItem.speaker_position).toBe('Top-Left')
+    expect(irItem.modeled_microphone).toBe('Royer 121')
+    expect(irItem.preset_kind).toBe('Cab IR')
+    expect(irItem.mic_a_type).toBe('Dynamic')
+    expect(irItem.mic_a_polar_pattern).toBe('Cardioid')
+    expect(irItem.mic_a_target_zone).toBe('Cap Edge')
+    expect(irItem.mic_a_distance).toBe(1.5)
+    expect(irItem.mic_a_distance_unit).toBe('in')
+    expect(irItem.mic_a_axis_angle_deg).toBe(15)
+    expect(irItem.mic_a_notes).toBe('Angled slightly off-axis')
+    // Mic B was never filled in on this fixture — must stay null, not some default.
+    expect(irItem.mic_b_type).toBeNull()
+
     const sources = db
       .prepare(`SELECT field, source FROM ir_item_field_source WHERE item_id = ? ORDER BY field`)
       .all(item.id) as Array<{ field: string; source: string }>
     expect(sources.every((s) => s.source === 'ir_lab_native')).toBe(true)
-    expect(sources.map((s) => s.field)).toEqual(['cabinet', 'capture_type', 'microphone', 'position', 'speaker'])
+    // Every string field writeField() touches gets a confidence-ladder row, including the
+    // 2026-08-26 additions -- only the numeric mic_a_distance/mic_a_axis_angle_deg bypass it
+    // (written directly, since writeField's writer only handles strings).
+    expect(sources.map((s) => s.field)).toEqual([
+      'cabinet',
+      'capture_type',
+      'mic_a_distance_unit',
+      'mic_a_notes',
+      'mic_a_polar_pattern',
+      'mic_a_target_zone',
+      'mic_a_type',
+      'microphone',
+      'modeled_microphone',
+      'position',
+      'preset_kind',
+      'speaker',
+      'speaker_position'
+    ])
 
     const variants = db
       .prepare(`SELECT id, is_current, is_archived FROM ir_derivative_variant WHERE item_id = ? ORDER BY id`)
@@ -213,6 +264,68 @@ describe.skipIf(!hasFts5())('enrichLabProjects', () => {
     expect(detail?.items).toHaveLength(1)
     expect(detail?.items[0].cabinet).toBe('Marshall 1960A')
     expect(detail?.items[0].variants).toHaveLength(2)
+
+    // 2026-08-26 Project Details fields, on the collection itself.
+    expect(detail?.amplifier).toBe('Marshall JCM800')
+    expect(detail?.room).toBe('Iso Booth')
+    expect(detail?.signalChain).toBe('Apollo x6 -> Neve 1073')
+    expect(detail?.description).toBe('Marshall stack, single-mic pass')
+    expect(detail?.projectNotes).toBe('Recorded at low volume for the neighbours.')
+
+    // 2026-08-26 CaptureMetadata additions, per item.
+    const item = detail!.items[0]
+    expect(item.speakerPosition).toBe('Top-Left')
+    expect(item.modeledMicrophone).toBe('Royer 121')
+    expect(item.presetKind).toBe('Cab IR')
+    expect(item.micA).toEqual({
+      type: 'Dynamic',
+      polarPattern: 'Cardioid',
+      targetZone: 'Cap Edge',
+      distance: 1.5,
+      distanceUnit: 'in',
+      axisAngleDeg: 15,
+      signalChainOverride: null,
+      notes: 'Angled slightly off-axis'
+    })
+    expect(item.micB.type).toBeNull()
+
+    db.close()
+  })
+
+  it("a blank capture-level cabinet/speaker falls back to the Project's own value in getProjectDetailForFolder", async () => {
+    const root = makeTmpDir()
+    const projectDir = join(root, 'No Capture Cabinet')
+    const captureId = 'capture-blank'
+    const sessionDataDir = join(projectDir, '.SessionData')
+    const captureDir = join(sessionDataDir, captureId)
+    fs.mkdirSync(join(captureDir, 'captures', captureId), { recursive: true })
+    fs.writeFileSync(join(projectDir, 'blank.wav'), 'z'.repeat(500))
+    fs.writeFileSync(
+      join(sessionDataDir, 'project.json'),
+      JSON.stringify({
+        name: 'No Capture Cabinet',
+        captureIndex: [{ captureId, outputFileName: 'blank.wav' }],
+        cabinet: 'Project-Level Cab',
+        speaker: 'Project-Level Speaker'
+      })
+    )
+    // No cabinet/speaker on the capture itself -- only the project declares it.
+    fs.writeFileSync(join(captureDir, 'session.json'), JSON.stringify({ metadata: {} }))
+
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const stats = await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+    finalizeIndexes(db)
+    enrichLabProjects(db, stats.libraryRootId)
+
+    // getProjectDetailForFolder itself does NOT resolve the fallback (it reports the raw
+    // capture-level column, null here) -- that's queryLibrary.ts's job, covered by its own test.
+    // This test exists to confirm the collection row's own fields ARE populated and available for
+    // whichever caller needs to apply that fallback.
+    const folderRow = db.prepare(`SELECT id FROM folder WHERE relative_path = 'No Capture Cabinet'`).get() as { id: number }
+    const detail = getProjectDetailForFolder(db, folderRow.id)
+    expect(detail?.cabinet).toBe('Project-Level Cab')
+    expect(detail?.items[0].cabinet).toBeNull()
 
     db.close()
   })

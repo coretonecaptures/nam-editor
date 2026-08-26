@@ -87,7 +87,19 @@ function FieldBadge({
         e.stopPropagation()
         onClick?.()
       }}
-      title={`${label}: ${value} (${source === 'vendor_parser' ? 'vendor parser' : source === 'filename_inferred' ? 'filename guess' : source === 'ir_lab_native' ? 'IR Lab' : 'unknown source'}) — click to filter`}
+      title={`${label}: ${value} (${
+        source === 'vendor_parser'
+          ? 'vendor parser'
+          : source === 'filename_inferred'
+            ? 'filename guess'
+            : source === 'ir_lab_native'
+              ? 'IR Lab'
+              : source === 'ir_lab_embedded'
+                ? "IR Lab, embedded in the file"
+                : source === 'ir_lab_project'
+                  ? 'inherited from the IR Lab Project'
+                  : 'unknown source'
+      }) — click to filter`}
       className={`nam-chip ${FIELD_CHIP_CLASS[field]} flex-shrink-0 ${isGuess ? 'opacity-60' : ''} ${
         active ? 'ring-1 ring-nm-accent' : ''
       }`}

@@ -133,7 +133,40 @@ CREATE TABLE IF NOT EXISTS ir_item (
   -- Pre-rendered search text for the format above (wavHeader.ts's wavSearchText). Stored rather
   -- than assembled in finalizeIndexes' SQL so the indexed spelling always matches what the UI
   -- shows -- see that function's own comment for the bug that motivated it.
-  audio_search     TEXT
+  audio_search     TEXT,
+  -- Added 2026-08-26 per ir-lab's docs/metadata-model-plan-2026-08-26.md (CaptureMetadata,
+  -- confirmed against the real source, not the handoff doc's own wording -- see
+  -- labProjectEnrichment.ts's header comment). Every column below is nullable/blank-default, same
+  -- as the fields above; most sessions leave most of these empty. speaker_position/
+  -- modeled_microphone/preset_kind have no fixed choice list in IR Lab (free text / auto-populated);
+  -- the mic_*_type/pattern/zone columns DO have one, but this schema stores whatever string IR Lab
+  -- wrote rather than re-enforcing its own choice list.
+  speaker_position            TEXT, -- which driver in a multi-speaker cab (free text)
+  modeled_microphone          TEXT, -- Townsend Sphere case: virtual mic modeled from 'microphone'
+  preset_kind                 TEXT, -- auto-populated: "Cab IR" / "Short Reverb IR" / etc. -- NOT
+                                     -- the same axis as capture_type (method) above
+  mic_a_type                  TEXT, -- Dynamic / Ribbon / Condenser / Other
+  mic_a_polar_pattern         TEXT, -- Cardioid / Supercardioid / Hypercardioid / Figure-8 / Omni / Variable / Other
+  mic_a_target_zone           TEXT, -- Cap Center / Cap Edge / Cap Edge-Seam / Cone Middle / Cone Edge-Surround / Off-Cone / Other
+  mic_a_distance              REAL, -- NULL/0 = unset
+  mic_a_distance_unit         TEXT, -- "in" or "cm"
+  mic_a_axis_angle_deg        REAL, -- 0-90; on/off-axis is derived at display time, never stored separately
+  mic_a_signal_chain_override TEXT, -- blank = uses the owning collection's signal_chain
+  mic_a_notes                 TEXT,
+  mic_b_type                  TEXT,
+  mic_b_polar_pattern         TEXT,
+  mic_b_target_zone           TEXT,
+  mic_b_distance              REAL,
+  mic_b_distance_unit         TEXT,
+  mic_b_axis_angle_deg        REAL,
+  mic_b_signal_chain_override TEXT,
+  mic_b_notes                 TEXT
+  -- Mic A's MODEL is 'microphone' above; Mic B's MODEL is IR Lab's own
+  -- ProcessingRecipe::multiMicBlendNameRight, which this schema does not carry
+  -- (ProcessingRecipe stays out of the database entirely, per design principle 6 in
+  -- ir-lab-manager-shared-catalog-schema.md) -- so Mic B's model name is only ever visible by
+  -- opening the session's own analysis.json. mic_b_* columns above are meaningless/blank whenever
+  -- the capture didn't actually use a real multi-mic blend.
 );
 
 CREATE TABLE IF NOT EXISTS ir_item_field_source (
@@ -175,7 +208,20 @@ CREATE TABLE IF NOT EXISTS collection (
   naming_template       TEXT,
   created_at            TEXT,
   last_used_at          TEXT,
-  is_builtin            INTEGER NOT NULL DEFAULT 0
+  is_builtin            INTEGER NOT NULL DEFAULT 0,
+  -- Added 2026-08-26, meaningful only where kind = 'ir_project' -- IR Lab's "Project Details"
+  -- screen, entered once and shared by every capture in the project. A blank ir_item.cabinet/
+  -- speaker means that capture displays/searches as THIS row's cabinet/speaker instead -- a
+  -- display-time fallback (queryLibrary.ts's browse SELECT/facetClause), never copy-on-write, so
+  -- this is read at query time rather than flattened into ir_item.
+  cabinet               TEXT,
+  speaker               TEXT,
+  amplifier             TEXT, -- no per-capture override exists anywhere -- this is the only value
+  room                  TEXT, -- e.g. "Iso Booth" -- free text, no per-capture override either
+  signal_chain          TEXT, -- e.g. "Apollo x6 -> Neve 1073" -- mic_a/b_signal_chain_override
+                                -- on ir_item take precedence per-mic when non-blank
+  description           TEXT, -- short, one-line
+  project_notes         TEXT  -- free-form, distinct from any item's own notes
 );
 
 CREATE TABLE IF NOT EXISTS collection_item (
@@ -268,7 +314,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS item_search USING fts5(
   mics, tone_type, gear_make, gear_model,
   -- Technical format as searchable text ("44.1k 24-bit mono"), so typing "24-bit" or "96k" in the
   -- search box finds those files. Populated in finalizeIndexes from ir_item's WAV-header columns.
-  audio
+  audio,
+  -- Added 2026-08-26 alongside ir_item's new columns. cabinet/speaker above already carry the
+  -- collection-fallback value (finalizeIndexes' own COALESCE), so a search for a project-level
+  -- cabinet name finds every capture that inherited it, not only ones that repeated it verbatim.
+  speaker_position, modeled_microphone, preset_kind, amplifier, room
 );
 `
 
@@ -321,6 +371,14 @@ function runMigrations(db: DatabaseSync): void {
   if (collectionColumns.length > 0 && !collectionColumns.some((c) => c.name === 'folder_id')) {
     db.exec(`ALTER TABLE collection ADD COLUMN folder_id INTEGER REFERENCES folder(id)`)
   }
+  // IR Lab's 2026-08-26 Project Details fields (cabinet/speaker/amplifier/room/signal_chain/
+  // description/project_notes) — meaningful only for kind='ir_project' rows.
+  if (collectionColumns.length > 0) {
+    const have = new Set(collectionColumns.map((c) => c.name))
+    for (const name of ['cabinet', 'speaker', 'amplifier', 'room', 'signal_chain', 'description', 'project_notes'] as const) {
+      if (!have.has(name)) db.exec(`ALTER TABLE collection ADD COLUMN ${name} TEXT`)
+    }
+  }
 
   // WAV header columns (see ir_item's own comment). Added per-column so a database that already
   // has some of them isn't an error.
@@ -332,7 +390,27 @@ function runMigrations(db: DatabaseSync): void {
       ['channels', 'INTEGER'],
       ['duration_seconds', 'REAL'],
       ['audio_format', 'TEXT'],
-      ['audio_search', 'TEXT']
+      ['audio_search', 'TEXT'],
+      // IR Lab's 2026-08-26 CaptureMetadata fields (see ir_item's own CREATE TABLE comment).
+      ['speaker_position', 'TEXT'],
+      ['modeled_microphone', 'TEXT'],
+      ['preset_kind', 'TEXT'],
+      ['mic_a_type', 'TEXT'],
+      ['mic_a_polar_pattern', 'TEXT'],
+      ['mic_a_target_zone', 'TEXT'],
+      ['mic_a_distance', 'REAL'],
+      ['mic_a_distance_unit', 'TEXT'],
+      ['mic_a_axis_angle_deg', 'REAL'],
+      ['mic_a_signal_chain_override', 'TEXT'],
+      ['mic_a_notes', 'TEXT'],
+      ['mic_b_type', 'TEXT'],
+      ['mic_b_polar_pattern', 'TEXT'],
+      ['mic_b_target_zone', 'TEXT'],
+      ['mic_b_distance', 'REAL'],
+      ['mic_b_distance_unit', 'TEXT'],
+      ['mic_b_axis_angle_deg', 'REAL'],
+      ['mic_b_signal_chain_override', 'TEXT'],
+      ['mic_b_notes', 'TEXT']
     ] as const) {
       if (!have.has(name)) db.exec(`ALTER TABLE ir_item ADD COLUMN ${name} ${type}`)
     }
@@ -345,6 +423,9 @@ function runMigrations(db: DatabaseSync): void {
   // check rebuilds and repopulates it from item/ir_item on this very same open.
   const searchColumns = db.prepare(`PRAGMA table_info(item_search)`).all() as Array<{ name: string }>
   if (searchColumns.length > 0 && !searchColumns.some((c) => c.name === 'audio')) {
+    db.exec(ITEM_SEARCH_DROP_SQL)
+  } else if (searchColumns.length > 0 && !searchColumns.some((c) => c.name === 'speaker_position')) {
+    // Same rebuild, for the 2026-08-26 metadata model's 5 new search columns.
     db.exec(ITEM_SEARCH_DROP_SQL)
   }
 
@@ -412,12 +493,38 @@ export function finalizeIndexes(db: DatabaseSync): void {
   // here instead and got it subtly wrong — SQLite's integer division produced "96.0k" for 96000,
   // which FTS5 tokenizes as `96` + `0k`, so searching "96k" matched nothing. Caught by this
   // feature's own end-to-end test before it shipped.
+  // cabinet/speaker fall back to the owning ir_project collection's own value when the capture's
+  // own field is blank (2026-08-26 metadata model — a project-level cabinet/speaker, entered once,
+  // is meant to make every capture in that project searchable by it, not just ones that repeated
+  // it verbatim). amplifier/room have no per-capture field at all, so they're straight from the
+  // collection. proj is a correlated subquery rather than a JOIN so an item that somehow belonged
+  // to more than one collection can't fan out into duplicate item_search rows.
   db.exec(`
-    INSERT INTO item_search (item_id, display_name, notes, manufacturer, cabinet, speaker, microphone, audio)
+    INSERT INTO item_search (
+      item_id, display_name, notes, manufacturer, cabinet, speaker, microphone, audio,
+      speaker_position, modeled_microphone, preset_kind, amplifier, room
+    )
     SELECT item.id, item.display_name, item.notes,
-           ir_item.manufacturer, ir_item.cabinet, ir_item.speaker, ir_item.microphone,
-           ir_item.audio_search
-    FROM item LEFT JOIN ir_item ON ir_item.item_id = item.id
+           ir_item.manufacturer,
+           COALESCE(ir_item.cabinet, proj.cabinet),
+           COALESCE(ir_item.speaker, proj.speaker),
+           ir_item.microphone,
+           ir_item.audio_search,
+           ir_item.speaker_position, ir_item.modeled_microphone, ir_item.preset_kind,
+           proj.amplifier, proj.room
+    FROM item
+    LEFT JOIN ir_item ON ir_item.item_id = item.id
+    LEFT JOIN (
+      -- GROUP BY guards against an item somehow belonging to more than one ir_project collection
+      -- (not something enrichLabProjects itself would ever do, but not schema-enforced either) --
+      -- without it, a fan-out here would duplicate that item's item_search row.
+      SELECT collection_item.item_id as item_id, MAX(collection.cabinet) as cabinet,
+             MAX(collection.speaker) as speaker, MAX(collection.amplifier) as amplifier,
+             MAX(collection.room) as room
+      FROM collection_item JOIN collection ON collection.id = collection_item.collection_id
+      WHERE collection.kind = 'ir_project'
+      GROUP BY collection_item.item_id
+    ) proj ON proj.item_id = item.id
   `)
   db.exec(ITEM_SEARCH_TRIGGERS_SQL)
 }

@@ -3,6 +3,19 @@ import fs from 'fs'
 import path from 'path'
 import type { TrainerStartPayload, TrainerStateSnapshot, TrainerHistoryEntry, WatcherFileEntry } from '../renderer/src/types/trainer'
 
+/** One mic slot's structured detail (labProjectEnrichment.ts's ProjectDetailMic) — shared by
+ * irLibraryGetProjectDetailForFolder's two mic slots below. */
+interface ProjectDetailMicShape {
+  type: string | null
+  polarPattern: string | null
+  targetZone: string | null
+  distance: number | null
+  distanceUnit: string | null
+  axisAngleDeg: number | null
+  signalChainOverride: string | null
+  notes: string | null
+}
+
 // Read settings.json from userData synchronously so the renderer has settings
 // available immediately — no async flash, no re-render on load.
 let initialSettings: unknown = null
@@ -443,6 +456,13 @@ const api = {
     id: string
     name: string
     createdAt: string | null
+    cabinet: string | null
+    speaker: string | null
+    amplifier: string | null
+    room: string | null
+    signalChain: string | null
+    description: string | null
+    projectNotes: string | null
     items: Array<{
       itemId: string
       displayName: string
@@ -455,6 +475,11 @@ const api = {
       sampleRate: number | null
       isStereo: boolean
       isTrueStereo: boolean
+      speakerPosition: string | null
+      modeledMicrophone: string | null
+      presetKind: string | null
+      micA: ProjectDetailMicShape
+      micB: ProjectDetailMicShape
       variants: Array<{ id: string; name: string; isCurrent: boolean; isArchived: boolean; createdAt: string | null }>
     }>
   } | null> => ipcRenderer.invoke('irLibrary:getProjectDetailForFolder', folderId),

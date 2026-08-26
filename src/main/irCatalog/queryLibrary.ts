@@ -34,6 +34,13 @@ export interface ItemRow {
   channels: number | null
   duration_seconds: number | null
   audio_format: string | null
+  // IR Lab's 2026-08-26 CaptureMetadata additions (labProjectEnrichment.ts writes these). Free
+  // text / auto-populated, not exposed here with their own *_source column: unlike manufacturer/
+  // cabinet/speaker/microphone above, nothing else in this app ever guesses these fields, so
+  // there's no "which source won" question for the browse row to show.
+  speaker_position: string | null
+  modeled_microphone: string | null
+  preset_kind: string | null
 }
 
 export interface QueryOptions {
@@ -194,10 +201,20 @@ function toFts5MatchExpression(rawQuery: string): string | null {
  * folder-inherited badge value matches exactly the rows that badge is actually shown on —
  * a plain `ir_item.field = ?` would silently miss every item inheriting that value from its
  * folder rather than having it set directly. */
+/** cabinet/speaker also fall back to the owning ir_project collection's value (2026-08-26 metadata
+ * model) — same 3-way ladder the browse SELECT's own COALESCE uses, so filtering by a
+ * project-inherited badge narrows to exactly what's displayed. manufacturer/microphone have no
+ * project-level field at all, so they stay the plain 2-way item-or-folder-default fallback. */
 function facetClause(field: 'manufacturer' | 'cabinet' | 'speaker' | 'microphone', count: number): string {
   const placeholders = Array(count).fill('?').join(',')
+  const projectFallback =
+    field === 'cabinet' || field === 'speaker'
+      ? `,
+    (SELECT MAX(collection.${field}) FROM collection_item JOIN collection ON collection.id = collection_item.collection_id
+     WHERE collection_item.item_id = item.id AND collection.kind = 'ir_project')`
+      : ''
   return `COALESCE(
-    (SELECT ${field} FROM ir_item WHERE ir_item.item_id = item.id),
+    (SELECT ${field} FROM ir_item WHERE ir_item.item_id = item.id)${projectFallback},
     (SELECT value FROM folder_metadata_effective WHERE folder_id = item.folder_id AND field = '${field}')
   ) IN (${placeholders})`
 }
@@ -271,10 +288,15 @@ export function queryItems(db: DatabaseSync, options: QueryOptions): ItemRow[] {
               item.file_size as file_size, item.is_favorite as is_favorite, item.rating as rating,
               COALESCE(ir_item.manufacturer, mfr_fme.value) as manufacturer,
               COALESCE(mfr_src.source, mfr_fme.source) as manufacturer_source,
-              COALESCE(ir_item.cabinet, cab_fme.value) as cabinet,
-              COALESCE(cab_src.source, cab_fme.source) as cabinet_source,
-              COALESCE(ir_item.speaker, spk_fme.value) as speaker,
-              COALESCE(spk_src.source, spk_fme.source) as speaker_source,
+              -- 3-way fallback (2026-08-26 metadata model): the item's own value, then the owning
+              -- IR Lab Project's value (collection.cabinet/speaker — a real value IR Lab itself
+              -- recorded), then IR Lab Manager's own manual per-folder default. Project comes
+              -- before the folder default because it's the more specific, authoritative source
+              -- for exactly this item, not a blunt default someone typed for a whole folder.
+              COALESCE(ir_item.cabinet, proj.cabinet, cab_fme.value) as cabinet,
+              COALESCE(cab_src.source, CASE WHEN proj.cabinet IS NOT NULL THEN 'ir_lab_project' END, cab_fme.source) as cabinet_source,
+              COALESCE(ir_item.speaker, proj.speaker, spk_fme.value) as speaker,
+              COALESCE(spk_src.source, CASE WHEN proj.speaker IS NOT NULL THEN 'ir_lab_project' END, spk_fme.source) as speaker_source,
               COALESCE(ir_item.microphone, mic_fme.value) as microphone,
               COALESCE(mic_src.source, mic_fme.source) as microphone_source,
               library_root.path as library_root_path,
@@ -282,7 +304,10 @@ export function queryItems(db: DatabaseSync, options: QueryOptions): ItemRow[] {
               ir_item.bit_depth as bit_depth,
               ir_item.channels as channels,
               ir_item.duration_seconds as duration_seconds,
-              ir_item.audio_format as audio_format
+              ir_item.audio_format as audio_format,
+              ir_item.speaker_position as speaker_position,
+              ir_item.modeled_microphone as modeled_microphone,
+              ir_item.preset_kind as preset_kind
        FROM item
        JOIN library_root ON library_root.id = item.library_root_id
        LEFT JOIN ir_item ON ir_item.item_id = item.id
@@ -296,6 +321,12 @@ export function queryItems(db: DatabaseSync, options: QueryOptions): ItemRow[] {
        LEFT JOIN folder_metadata_effective cab_fme ON cab_fme.folder_id = item.folder_id AND cab_fme.field = 'cabinet'
        LEFT JOIN folder_metadata_effective spk_fme ON spk_fme.folder_id = item.folder_id AND spk_fme.field = 'speaker'
        LEFT JOIN folder_metadata_effective mic_fme ON mic_fme.folder_id = item.folder_id AND mic_fme.field = 'microphone'
+       LEFT JOIN (
+         SELECT collection_item.item_id as item_id, MAX(collection.cabinet) as cabinet, MAX(collection.speaker) as speaker
+         FROM collection_item JOIN collection ON collection.id = collection_item.collection_id
+         WHERE collection.kind = 'ir_project'
+         GROUP BY collection_item.item_id
+       ) proj ON proj.item_id = item.id
        ${where}
        ORDER BY item.relative_path
        LIMIT ? OFFSET ?`

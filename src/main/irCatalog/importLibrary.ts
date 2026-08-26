@@ -208,6 +208,16 @@ export async function importLibrary(
           // notes is a plain item column with no confidence tracking at all (matches
           // labProjectEnrichment.ts's own convention for the same field) — last writer wins.
           if (embedded.notes) db.prepare(`UPDATE item SET notes = ? WHERE id = ?`).run(embedded.notes, row.id)
+          // mic_a_distance/unit are numeric, so they bypass the string-only ladder writer — same
+          // as labProjectEnrichment.ts's own direct writes for these columns. No competing writer
+          // exists for them either, so an unconditional overwrite is correct, not a shortcut.
+          if (embedded.micADistance != null) {
+            db.prepare(`UPDATE ir_item SET mic_a_distance = ?, mic_a_distance_unit = ? WHERE item_id = ?`).run(
+              embedded.micADistance,
+              embedded.micADistanceUnit ?? null,
+              row.id
+            )
+          }
         }
       }
       markTouched.run(relPosix)

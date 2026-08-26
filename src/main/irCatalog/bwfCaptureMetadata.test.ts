@@ -34,4 +34,19 @@ describe('parseBwfCaptureMetadata', () => {
     expect(parseBwfCaptureMetadata(null, 'IR Lab')).toBeNull()
     expect(parseBwfCaptureMetadata('', 'IR Lab')).toBeNull()
   })
+
+  it('splits the combined MicADistance token into value + unit', () => {
+    const fields = parseBwfCaptureMetadata('Cabinet: Mesa 4x12 | MicADistance: 3.50in', 'IR Lab')
+    expect(fields).toEqual({ cabinet: 'Mesa 4x12', micADistance: 3.5, micADistanceUnit: 'in' })
+  })
+
+  it('handles a cm unit and non-integer values', () => {
+    const fields = parseBwfCaptureMetadata('MicADistance: 7.25cm', 'IR Lab')
+    expect(fields).toEqual({ micADistance: 7.25, micADistanceUnit: 'cm' })
+  })
+
+  it('ignores an unparseable MicADistance token rather than throwing', () => {
+    expect(() => parseBwfCaptureMetadata('MicADistance: garbage', 'IR Lab')).not.toThrow()
+    expect(parseBwfCaptureMetadata('MicADistance: garbage', 'IR Lab')).toBeNull()
+  })
 })

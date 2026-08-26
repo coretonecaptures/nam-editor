@@ -525,6 +525,13 @@ declare global {
         id: string
         name: string
         createdAt: string | null
+        cabinet: string | null
+        speaker: string | null
+        amplifier: string | null
+        room: string | null
+        signalChain: string | null
+        description: string | null
+        projectNotes: string | null
         items: Array<{
           itemId: string
           displayName: string
@@ -537,6 +544,29 @@ declare global {
           sampleRate: number | null
           isStereo: boolean
           isTrueStereo: boolean
+          speakerPosition: string | null
+          modeledMicrophone: string | null
+          presetKind: string | null
+          micA: {
+            type: string | null
+            polarPattern: string | null
+            targetZone: string | null
+            distance: number | null
+            distanceUnit: string | null
+            axisAngleDeg: number | null
+            signalChainOverride: string | null
+            notes: string | null
+          }
+          micB: {
+            type: string | null
+            polarPattern: string | null
+            targetZone: string | null
+            distance: number | null
+            distanceUnit: string | null
+            axisAngleDeg: number | null
+            signalChainOverride: string | null
+            notes: string | null
+          }
           variants: Array<{ id: string; name: string; isCurrent: boolean; isArchived: boolean; createdAt: string | null }>
         }>
       } | null>

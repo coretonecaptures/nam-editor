@@ -1525,6 +1525,128 @@ round trip, foreign-Originator rejection, and the "vendor parser can't
 downgrade an embedded value" regression). irCatalog 107 tests total,
 renderer 357, build clean.
 
+## 12f. IR Lab's 2026-08-26 metadata model — Project Details + per-capture mic detail
+
+"pull down the latest ir lab github" (again) turned up a much bigger change
+than the previous pull: a whole new metadata model, with a handoff doc
+(`docs/ir-lab-manager-handoff-2026-08-26.md` in the ir-lab repo) written
+specifically for whoever picks up IR Lab Manager next. User confirmed scope
+directly: "please review and implement to SQL and the IR section for
+projects and capture data, both in the WAV and JSON."
+
+**Two structs gained fields, confirmed against the real source (Domain.h,
+ProjectStore.cpp, SessionStore.cpp, WavIO.cpp), not just the handoff doc's
+own wording** — one correction found this way: the doc describes
+CaptureMetadata as living in `analysis.json`; the actual code
+(`SessionStore.cpp::writeSessionJson`) puts it in `session.json`'s
+`"metadata"` key, same file this app's `labProjectEnrichment.ts` already
+read for the original six fields.
+
+- **`Project` (7 new fields, "Project Details" screen):** `cabinet`,
+  `speaker`, `amplifier`, `room`, `signalChain`, `description`,
+  `projectNotes` — entered once for the whole rig.
+- **`CaptureMetadata` (15 new fields):** 3 flat (`speakerPosition`,
+  `modeledMicrophone`, `presetKind`) + 16 structured per-mic fields (8 each
+  for two fixed slots, Mic A / Mic B — type, polar pattern, target zone,
+  distance+unit, axis angle, signal-chain override, notes). Two mic slots
+  only, never N — matches ir-lab's real capture engine (no 3+ mic blend
+  path anywhere in the codebase).
+
+**Inheritance, not copy-on-write**: `cabinet`/`speaker` exist on both
+levels. A blank capture-level value falls back to the project's value at
+display/search time — never written back into the capture's own row.
+`amplifier`/`room`/`signalChain` exist ONLY on `Project` — no per-capture
+override field at all.
+
+### What was built
+
+- **Schema** (`schema.ts`): 19 new `ir_item` columns (the 3 flat + 16 mic
+  fields) and 7 new `collection` columns (meaningful only for
+  `kind='ir_project'`), plus migrations for both on an existing catalog.db
+  (`ALTER TABLE ADD COLUMN`, guarded by `PRAGMA table_info`).
+- **The 3-way fallback** (`queryLibrary.ts`): the browse SELECT's cabinet/
+  speaker COALESCE now checks `ir_item` first, then the owning
+  `ir_project` collection's own value (a correlated, `GROUP BY`-guarded
+  subquery, not a JOIN — an item somehow belonging to two collections
+  can't fan out into duplicate rows), then IR Lab Manager's own manual
+  per-folder default (`folder_metadata_effective`) last. Project comes
+  before the folder default because it's the more specific, authoritative
+  source for that exact item. `facetClause` (the filter-bar WHERE
+  builder) mirrors the same ladder, so filtering by a project-inherited
+  badge matches exactly what's displayed. A new synthetic source label,
+  `ir_lab_project`, shows in the FieldBadge tooltip when a value came from
+  this fallback rather than the item itself.
+- **FTS5 search** (`item_search`): gained `speaker_position`,
+  `modeled_microphone`, `preset_kind`, `amplifier`, `room` — cabinet/
+  speaker already carry the same collection-fallback value, so a search
+  for a project-level cabinet name finds every capture that inherited it,
+  not only ones that repeated it verbatim. Migration follows the same
+  drop-and-rebuild-from-`getDb()` pattern as the earlier `audio` column.
+- **Reading the new session.json fields** (`labProjectEnrichment.ts`):
+  every flat/mic string field routes through the same `writeField()`
+  confidence-ladder writer the original six fields use (source
+  `ir_lab_native`) — cheap consistency, since nothing else in this app
+  ever guesses these values, so there's no actual competing writer to
+  rank against. The two numeric fields per mic (`distance`,
+  `axisAngleDeg`) are written directly (the ladder writer only handles
+  strings) — `distance` skips a value of exactly 0 (IR Lab's own "unset"
+  convention, per `Domain.h`'s comment), `axisAngleDeg` does not (0° is a
+  legitimate on-axis measurement, not an absence).
+- **Reading the new project.json fields**: `collection.cabinet/speaker/
+  amplifier/room/signal_chain/description/project_notes` are re-applied
+  from `project.json` on every scan — there's no NAM Lab Manager UI that
+  hand-edits a Project's own details yet, so unlike `ir_item`'s ladder
+  there's nothing here to protect from being overwritten.
+- **Mic B "is this real" gate — a doc gap, not an oversight**: the
+  handoff doc recommends checking `ProcessingRecipe.multiMicBlendWeightRight
+  > 0.01` before treating Mic B data as present (its fields exist even on
+  a plain single-mic capture). Confirmed against the real source
+  (`ProcessingRecipe.h`/`SessionStore.cpp`'s `recipeJson()`) that this
+  field is **never actually serialized to analysis.json at all** — it's
+  in-memory-only during a live capture. On disk, "the field is non-blank"
+  is the only signal available, so that's what's used; a stale/default
+  Mic B value could in theory still land here on a non-blend capture.
+  Documented as a known limitation in `labProjectEnrichment.ts`, not
+  silently worked around.
+- **bext chunk**: only `MicADistance` was added on IR Lab's side (256-byte
+  hard limit — see that repo's own commit `0671c35`), combined
+  value+unit as one token (`"MicADistance: 3.50in"`).
+  `bwfCaptureMetadata.ts` splits it back into `micADistance`/
+  `micADistanceUnit`; `importLibrary.ts` writes it directly (numeric,
+  bypasses the string-only ladder writer, same as the JSON-side fields).
+- **UI** (`IrProjectTab.tsx`): the Project tab now shows the project-level
+  "Rig / Project Details" block (cabinet/speaker/amp/room/chain/
+  description/notes) above the per-capture list; each capture shows its
+  own speaker position/modeled mic/preset badges plus a collapsible-by-
+  content Mic A/Mic B detail block (type/pattern/zone/distance/angle/
+  chain/notes) — rendered only when that slot actually has something
+  filled in, for the same "meaningless when blank" reason as the backend
+  gate above. Capture rows also apply the cabinet/speaker fallback
+  locally (`item.cabinet ?? detail.cabinet`) so this tab's own display
+  matches what the browse list shows for the same item.
+
+### Known gaps / deliberately not done this pass
+
+- The browse row/`FieldBadge` UI and `IrLibraryOverview`'s manufacturer/
+  cabinet/speaker/microphone breakdowns do **not** yet show the 19 new
+  capture-level fields or `amplifier`/`room` as filter-bar multiselects —
+  scoped out to keep this pass to schema + inheritance + the Project tab,
+  per the explicit choice made when this was scoped ("Full schema +
+  inheritance + UI" was chosen over a UI-only or bare-schema pass, but
+  "UI" here means the Project tab, not every existing surface).
+- **Future idea, flagged by the user, not scheduled**: a cabinet with
+  mixed speakers (e.g. top two Celestion V30, bottom two G12H) is
+  expressible today via `speakerPosition` (Top-Left/Top-Right/etc.) +
+  per-capture `speaker` override, but there's no persistent mapping from
+  "this position" to "always this speaker model in this cab" — the
+  operator retypes the speaker model each time it differs from the
+  project default. Worth revisiting once used on a real mixed-cab
+  session, not before.
+
+irCatalog 112 tests (5 new this pass: cabinet/speaker project-fallback in
+queryLibrary, three MicADistance bext cases, extended labProjectEnrichment
+fixtures/assertions), renderer 357, build clean.
+
 ## 13. Open, non-blocking decisions
 
 - Exact IR Lab license enforcement point/timing — the user has already noted this can land before final release, independent of this plan.

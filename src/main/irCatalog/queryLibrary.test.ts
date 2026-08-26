@@ -187,6 +187,55 @@ describe.skipIf(!hasFts5())('queryLibrary', () => {
     db.close()
   })
 
+  it('cabinet/speaker fall back to the owning IR Lab Project when the item itself has no value', () => {
+    const db = new DatabaseSync(':memory:')
+    createSchema(db)
+    const now = new Date().toISOString()
+    const rootId = (
+      db.prepare(`INSERT INTO library_root (path, label, watch_mode, created_at) VALUES ('/proj','Proj','manual',?) RETURNING id`).get(now) as {
+        id: number
+      }
+    ).id
+    const folder = (
+      db.prepare(`INSERT INTO folder (library_root_id, parent_id, relative_path) VALUES (?, NULL, 'P') RETURNING id`).get(rootId) as {
+        id: number
+      }
+    ).id
+    const insertItem = (id: string, relPath: string): void => {
+      db.prepare(
+        `INSERT INTO item (id, kind, library_root_id, folder_id, relative_path, display_name, indexed_at, last_seen_at)
+         VALUES (?, 'ir', ?, ?, ?, ?, ?, ?)`
+      ).run(id, rootId, folder, relPath, relPath, now, now)
+    }
+    insertItem('blank-item', 'P/blank.wav') // no ir_item row at all
+    insertItem('override-item', 'P/override.wav')
+    db.prepare(`INSERT INTO ir_item (item_id, cabinet) VALUES ('override-item', 'Different Cab')`).run()
+
+    db.prepare(
+      `INSERT INTO collection (id, kind, library_root_id, folder_id, name, cabinet, speaker)
+       VALUES ('proj-1', 'ir_project', ?, ?, 'My Project', 'Mesa 4x12', 'V30')`
+    ).run(rootId, folder)
+    db.prepare(`INSERT INTO collection_item (collection_id, item_id) VALUES ('proj-1', 'blank-item')`).run()
+    db.prepare(`INSERT INTO collection_item (collection_id, item_id) VALUES ('proj-1', 'override-item')`).run()
+
+    const rows = queryItems(db, { libraryRootId: rootId, offset: 0, limit: 10 })
+    const blank = rows.find((r) => r.id === 'blank-item')!
+    const override = rows.find((r) => r.id === 'override-item')!
+
+    expect(blank.cabinet).toBe('Mesa 4x12')
+    expect(blank.cabinet_source).toBe('ir_lab_project')
+    expect(blank.speaker).toBe('V30')
+    // An item's own value always wins over the project's.
+    expect(override.cabinet).toBe('Different Cab')
+
+    // Filtering by the project-level value must match the inheriting item too.
+    expect(queryItems(db, { libraryRootId: rootId, cabinet: 'Mesa 4x12', offset: 0, limit: 10 }).map((r) => r.id).sort()).toEqual([
+      'blank-item'
+    ])
+
+    db.close()
+  })
+
   it('listFacetOptions/listNumericFacetOptions report only values actually present, scoped to root/folder', () => {
     const db = new DatabaseSync(':memory:')
     createSchema(db)
