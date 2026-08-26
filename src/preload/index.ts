@@ -390,6 +390,17 @@ const api = {
   ): Promise<
     Array<{ id: number; parent_id: number | null; relative_path: string; direct_item_count: number; is_lab_project: number }>
   > => ipcRenderer.invoke('irLibrary:listFolders', libraryRootId),
+  irLibraryListAllFolders: (): Promise<
+    Array<{
+      id: number
+      parent_id: number | null
+      relative_path: string
+      library_root_id: number
+      library_root_label: string
+      direct_item_count: number
+      is_lab_project: number
+    }>
+  > => ipcRenderer.invoke('irLibrary:listAllFolders'),
   irLibraryGetLibraryOverview: (libraryRootId: number, folderId?: number | null): Promise<{
     totalItems: number
     totalFolders: number

@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { createCoreSchema, finalizeIndexes } from './schema'
 import { importLibrary } from './importLibrary'
 import { queryItems } from './queryLibrary'
-import { setFolderMetadata, removeFolderMetadata, listFolders } from './folderMetadata'
+import { setFolderMetadata, removeFolderMetadata, listFolders, listAllFolders } from './folderMetadata'
 import { hasFts5 } from './sqliteCapabilities'
 
 const tmpDirs: string[] = []
@@ -162,6 +162,45 @@ describe.skipIf(!hasFts5())('folderMetadata', () => {
     expect(packA?.direct_item_count).toBe(1) // file.wav only -- nested.wav is one level deeper
     expect(sub?.direct_item_count).toBe(1)
     expect(top?.direct_item_count).toBe(0) // no items sit directly at the root
+
+    db.close()
+  })
+
+  it('listAllFolders returns folders from every library_root, each tagged with its own root', async () => {
+    const rootA = makeTmpDir()
+    fs.mkdirSync(join(rootA, 'ProjectA'), { recursive: true })
+    fs.writeFileSync(join(rootA, 'ProjectA', 'a.wav'), 'x'.repeat(500))
+    const rootB = makeTmpDir()
+    fs.mkdirSync(join(rootB, 'ProjectB'), { recursive: true })
+    fs.writeFileSync(join(rootB, 'ProjectB', 'b.wav'), 'y'.repeat(500))
+
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const statsA = await importLibrary(db, rootA, 'Alpha')
+    const statsB = await importLibrary(db, rootB, 'Beta')
+    finalizeIndexes(db)
+
+    const rows = listAllFolders(db)
+    const fromA = rows.filter((r) => r.library_root_id === statsA.libraryRootId)
+    const fromB = rows.filter((r) => r.library_root_id === statsB.libraryRootId)
+    expect(fromA.some((r) => r.relative_path === 'ProjectA')).toBe(true)
+    expect(fromB.some((r) => r.relative_path === 'ProjectB')).toBe(true)
+    expect(fromA.find((r) => r.relative_path === 'ProjectA')?.library_root_label).toBe('Alpha')
+    expect(fromB.find((r) => r.relative_path === 'ProjectB')?.library_root_label).toBe('Beta')
+
+    db.close()
+  })
+
+  it('listAllFolders falls back to the root path basename when no label was set', async () => {
+    const root = makeNestedFixture()
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    await importLibrary(db, root, null)
+    finalizeIndexes(db)
+
+    const rows = listAllFolders(db)
+    const expectedBasename = root.split(/[\\/]/).filter(Boolean).pop()
+    expect(rows[0]?.library_root_label).toBe(expectedBasename)
 
     db.close()
   })

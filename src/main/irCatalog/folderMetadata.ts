@@ -144,6 +144,66 @@ export function listFolders(db: DatabaseSync, libraryRootId: number): FolderTree
     .all(libraryRootId, libraryRootId) as unknown as FolderTreeRow[]
 }
 
+export interface AllRootsFolderRow extends FolderTreeRow {
+  library_root_id: number
+  /** root.label, falling back to the last path segment — same fallback IrModeShell's root
+   * switcher already uses, so a root reads identically whether picked from that dropdown or seen
+   * here as a virtual top-level tree node. */
+  library_root_label: string
+}
+
+/** Every folder across EVERY library_root, each tagged with which root it belongs to — backs the
+ * folder tree's virtual "Library" wrapper (docs/ir-lab-manager-build-plan.md section 13's
+ * root-switcher follow-up): a user who's added several roots (e.g. five separate IR Lab Projects,
+ * each its own root) should see all of them in the tree at once, not only whichever one root
+ * happens to be selected. `folder.id` is a single global auto-increment PK across every root, so
+ * there is no cross-root id collision risk building one combined tree from this. */
+export function listAllFolders(db: DatabaseSync): AllRootsFolderRow[] {
+  return db
+    .prepare(
+      `SELECT folder.id as id, folder.parent_id as parent_id, folder.relative_path as relative_path,
+              folder.library_root_id as library_root_id,
+              library_root.label as library_root_label_raw,
+              library_root.path as library_root_path,
+              COALESCE(counts.c, 0) as direct_item_count,
+              EXISTS (
+                SELECT 1 FROM collection WHERE collection.folder_id = folder.id AND collection.kind = 'ir_project'
+              ) as is_lab_project
+       FROM folder
+       JOIN library_root ON library_root.id = folder.library_root_id
+       LEFT JOIN (
+         SELECT folder_id, COUNT(*) as c FROM item GROUP BY folder_id
+       ) counts ON counts.folder_id = folder.id
+       ORDER BY library_root.id, folder.relative_path`
+    )
+    .all()
+    .map((row) => {
+      const r = row as {
+        id: number
+        parent_id: number | null
+        relative_path: string
+        library_root_id: number
+        library_root_label_raw: string | null
+        library_root_path: string
+        direct_item_count: number
+        is_lab_project: number
+      }
+      const label =
+        r.library_root_label_raw && r.library_root_label_raw.trim().length > 0
+          ? r.library_root_label_raw
+          : r.library_root_path.split(/[\\/]/).filter(Boolean).pop() || r.library_root_path
+      return {
+        id: r.id,
+        parent_id: r.parent_id,
+        relative_path: r.relative_path,
+        library_root_id: r.library_root_id,
+        library_root_label: label,
+        direct_item_count: r.direct_item_count,
+        is_lab_project: r.is_lab_project
+      }
+    })
+}
+
 export interface FolderDetail {
   id: number
   relativePath: string

@@ -886,11 +886,31 @@ ear-fatigue reasoning already agreed on.
    - ~~Selecting a folder does not filter the item list~~ — fixed later the same phase:
      `queryItems`/`countItems` take a `folderId` (resolved via `resolveFolderScopeIds`), and
      `IrModeShell.tsx` wires the tree's selection straight into it.
-   - ~~The tree only shows the first `library_root`, no root switcher~~ — **built** (2026-08-25):
-     a root-select dropdown (`IrModeShell.tsx`, next to Add Library Folder, only shown once a
-     second root exists) scopes both the folder tree and browse/search to one root, or "All
-     roots" (the prior default). Switching roots clears whatever folder was selected under the
-     old one.
+   - ~~The tree only shows the first `library_root`, no root switcher~~ — **built** (2026-08-25),
+     then **corrected same day** after real use surfaced two follow-on bugs. First pass: a
+     root-select dropdown next to Add Library Folder scoped the folder tree to one root at a
+     time. Reported immediately: adding five separate IR Lab Project roots left four of them
+     invisible — the tree only ever rendered whichever single root the dropdown had selected, so
+     "add 5 roots" meant "see 1 root's folders, plus a dropdown to swap which 1." Fixed by making
+     the tree root-agnostic: `IrFolderTree.tsx` now always fetches EVERY root
+     (`irLibrary:listAllFolders`, new — same shape as `listFolders` but joined across
+     `library_root` with no `WHERE library_root_id = ?`) and wraps them under a single synthetic
+     "Library" node once there's more than one root (a lone root skips the wrapper, unchanged from
+     before). The root-select dropdown still exists, but now only scopes browse/search — the tree
+     itself shows everything unconditionally.
+
+     Second bug, found while building the first fix: a folder tree node was always built from a
+     root's own top-level folder row (`relative_path = ''`), but that row's CHILDREN were shown in
+     its place, never the row itself — a deliberate choice for vendor packs (skip an extra "click
+     to expand the one thing you added" layer, jump straight to the real subfolders). That
+     silently broke down for an IR Lab Project specifically: a Project's `outputRoot` is flat, no
+     subfolders at all ("Deliberately flat in phase 1" — confirmed in the real ir-lab source,
+     section 8c) — so its children array is empty, and the old logic rendered nothing selectable
+     for it at all, with no expand arrow and no fallback. Fixed by reusing that root row directly
+     as the visible tree node (relabeled with the root's own name) whenever it has no children,
+     rather than only ever showing what's beneath it — a flat root is now a real, clickable,
+     correctly `is_lab_project`-flagged node; a root with real substructure still skips straight to
+     its subfolders as before.
    - ~~`folder_document` doesn't extract any fields~~ — **built** (2026-08-25):
      `vendorDocExtraction.ts`'s `extractVendorDocumentFields()` runs every imported PDF/CSV/TXT
      through the SAME `genericVocabularyParser` the filename parser uses (manufacturer/speaker/

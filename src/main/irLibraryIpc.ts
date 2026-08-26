@@ -22,6 +22,7 @@ import {
   removeFolderMetadata,
   setFolderNotes,
   listFolders,
+  listAllFolders,
   getFolderDetail
 } from './irCatalog/folderMetadata'
 import { importFolderDocument, listFolderDocuments, deleteFolderDocument } from './irCatalog/folderDocuments'
@@ -280,6 +281,10 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
 
   ipcMain.handle('irLibrary:listFolders', (_event, libraryRootId: number) => {
     return listFolders(getDb(), libraryRootId)
+  })
+
+  ipcMain.handle('irLibrary:listAllFolders', () => {
+    return listAllFolders(getDb())
   })
 
   ipcMain.handle('irLibrary:getFolderDetail', (_event, folderId: number) => {

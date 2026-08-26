@@ -705,7 +705,7 @@ export function IrModeShell(): React.ReactElement {
         <div className="flex-1 flex min-h-0">
           <div style={{ width: treeWidth }} className="flex-shrink-0 overflow-y-auto">
             <IrFolderTree
-              libraryRootId={activeRootId}
+              libraryRootCount={roots.length}
               selectedFolderId={selectedFolderId}
               onSelectFolder={handleSelectFolder}
             />

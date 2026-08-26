@@ -502,6 +502,17 @@ declare global {
       ) => Promise<
         Array<{ id: number; parent_id: number | null; relative_path: string; direct_item_count: number; is_lab_project: number }>
       >
+      irLibraryListAllFolders: () => Promise<
+        Array<{
+          id: number
+          parent_id: number | null
+          relative_path: string
+          library_root_id: number
+          library_root_label: string
+          direct_item_count: number
+          is_lab_project: number
+        }>
+      >
       irLibraryGetProjectDetailForFolder: (folderId: number) => Promise<{
         id: string
         name: string
