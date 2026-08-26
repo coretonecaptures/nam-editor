@@ -355,12 +355,12 @@ const api = {
     favoritesOnly?: boolean
     minRating?: number
     tagId?: number
-    manufacturer?: string
+    manufacturer?: string | string[]
     cabinet?: string
-    speaker?: string
-    microphone?: string
-    sampleRate?: number
-    bitDepth?: number
+    speaker?: string | string[]
+    microphone?: string | string[]
+    sampleRate?: number | number[]
+    bitDepth?: number | number[]
     channels?: number
     offset: number
     limit: number
@@ -418,7 +418,27 @@ const api = {
     taggedCount: number
     manufacturerBreakdown: Array<{ value: string; count: number }>
     microphoneBreakdown: Array<{ value: string; count: number }>
+    speakerBreakdown: Array<{ value: string; count: number }>
+    cabinetBreakdown: Array<{ value: string; count: number }>
+    sampleRateBreakdown: Array<{ value: string; count: number }>
+    bitDepthBreakdown: Array<{ value: string; count: number }>
+    channelsBreakdown: Array<{ value: string; count: number }>
+    totalBytes: number
+    missingAudioInfoCount: number
+    projectCount: number
   }> => ipcRenderer.invoke('irLibrary:getLibraryOverview', libraryRootId, folderId ?? null),
+  irLibraryListFacetOptions: (
+    field: 'manufacturer' | 'speaker' | 'microphone',
+    libraryRootId: number | null,
+    folderId: number | null
+  ): Promise<Array<{ value: string; count: number }>> =>
+    ipcRenderer.invoke('irLibrary:listFacetOptions', field, libraryRootId, folderId),
+  irLibraryListNumericFacetOptions: (
+    field: 'sampleRate' | 'bitDepth',
+    libraryRootId: number | null,
+    folderId: number | null
+  ): Promise<Array<{ value: number; count: number }>> =>
+    ipcRenderer.invoke('irLibrary:listNumericFacetOptions', field, libraryRootId, folderId),
   irLibraryGetProjectDetailForFolder: (folderId: number): Promise<{
     id: string
     name: string

@@ -1394,6 +1394,67 @@ because two of the three were pre-existing NAM Lab bugs, not IR-mode ones.
    inside JSX text nodes or attribute strings; they need the real
    characters.
 
+## 12d. Search/filter bar — scoped to the list column, multiselect makers/speakers/mics
+
+Asked directly for "a better search / filter bar above the list view (like
+nam lab)... quick filters on sample rate, bit rate, a multiselect list of
+all capture makers we have in the library, multiselect on microphones...
+and speaker... put it in the list middle area not above the middle/right
+bars (like nam lab)".
+
+Two structural changes, not just new controls:
+
+- **Placement.** The search box and quick filters previously lived in the
+  full-width header, spanning the folder tree and the right panel too.
+  Moved into a new `IrFilterBar.tsx`, rendered inside a `flex-col` that
+  wraps ONLY the center list column — matching where NAM Lab's own
+  equivalent actually lives (`FileList.tsx`'s search+filter row is inside
+  the file list component, not a page-wide header). The Groups dropdown,
+  Favorites/Rated toggles and the "Filtered by:" active-chip summary moved
+  down into it too, since they're the same category of control.
+- **Facets went from single-value to multi-select.** `manufacturer`,
+  `speaker` and `microphone` in `queryLibrary.ts`'s `QueryOptions` now
+  accept `string | string[]` (an array is OR'd via `IN (...)`); `sampleRate`
+  /`bitDepth` likewise accept `number | number[]`. `cabinet` stays
+  single-value on purpose — nothing offers a cabinet multiselect, since
+  `vocabulary.ts` has no cabinet term list and it's rarely populated (see
+  12c's Overview note on the same point). This threads through all three
+  IPC-wiring files (`irLibraryIpc.ts`, `preload/index.ts`, `App.tsx`) and
+  `IrModeShell.tsx`'s `facets`/`audioFacets` state, which changed from "one
+  active value per field, second click clears it" to "toggle membership in
+  an array per field."
+
+New backend reads, `listFacetOptions`/`listNumericFacetOptions`
+(`queryLibrary.ts`): every distinct value **currently on file** for one
+field, scoped to the active root/folder — "what we have in our list, not
+all in the world," so a checklist can never offer a value that matches
+zero IRs. `IrFilterBar` re-fetches these whenever the root/folder scope
+changes or a scan completes (`refreshKey`, the same pattern `IrLibraryOverview`
+uses in 12c).
+
+UI: manufacturer/speaker/microphone are checkbox popovers built on the same
+shape as NAM Lab's own column chooser (`FileList.tsx`: button opens an
+absolutely-positioned checklist with a header and a footer action) rather
+than a new picker pattern. Sample rate/bit depth are toggle pills instead
+of a popover — a real library typically only has 2-4 distinct rates, so
+seeing them all as clickable pills is faster than opening a list to pick
+one.
+
+**Bug found and fixed while wiring this up, not by the user this time:**
+picking a Group left any active folder/root scope in place. `tag.ts`
+documents groups as deliberately cross-folder and cross-root ("put a bunch
+of IRs in a named group for recall/filter later, across anywhere in your
+library"), but the browse query ANDs `folderId`/`libraryRootId` with
+`tagId` — so a group whose item lived outside the currently-selected
+folder silently returned zero rows while the Groups menu still showed a
+non-zero item count. Reported by the user exactly that way: "i see i have
+a group with 1 item, but when i click it, nothing shows in the list."
+Fixed by clearing folder/root scope when a group is selected
+(`selectTagFilter` in `IrModeShell.tsx`).
+
+irCatalog 97 tests (2 new: multi-value facet OR, `listFacetOptions`/
+`listNumericFacetOptions` scoping), renderer 357 tests, build clean.
+
 ## 13. Open, non-blocking decisions
 
 - Exact IR Lab license enforcement point/timing — the user has already noted this can land before final release, independent of this plan.

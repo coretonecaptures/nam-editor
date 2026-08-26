@@ -13,7 +13,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
 import { createCoreSchema, finalizeIndexes, itemSearchTableExists } from './irCatalog/schema'
 import { importLibrary } from './irCatalog/importLibrary'
-import { queryItems, countItems, setFavorite, setRating } from './irCatalog/queryLibrary'
+import { queryItems, countItems, setFavorite, setRating, listFacetOptions, listNumericFacetOptions } from './irCatalog/queryLibrary'
 import { applyVendorParsers } from './irCatalog/vendorParsers/applyVendorParsers'
 import { reconcileMissingItems } from './irCatalog/reconciliation'
 import { runContentHashQueue } from './irCatalog/contentHash'
@@ -220,6 +220,20 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
   })
 
   ipcMain.handle(
+    'irLibrary:listFacetOptions',
+    (_event, field: 'manufacturer' | 'speaker' | 'microphone', libraryRootId: number | null, folderId: number | null) => {
+      return listFacetOptions(getDb(), field, libraryRootId ?? null, folderId ?? null)
+    }
+  )
+
+  ipcMain.handle(
+    'irLibrary:listNumericFacetOptions',
+    (_event, field: 'sampleRate' | 'bitDepth', libraryRootId: number | null, folderId: number | null) => {
+      return listNumericFacetOptions(getDb(), field, libraryRootId ?? null, folderId ?? null)
+    }
+  )
+
+  ipcMain.handle(
     'irLibrary:query',
     (
       _event,
@@ -230,12 +244,12 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
         favoritesOnly?: boolean
         minRating?: number
         tagId?: number
-        manufacturer?: string
+        manufacturer?: string | string[]
         cabinet?: string
-        speaker?: string
-        microphone?: string
-        sampleRate?: number
-        bitDepth?: number
+        speaker?: string | string[]
+        microphone?: string | string[]
+        sampleRate?: number | number[]
+        bitDepth?: number | number[]
         channels?: number
         offset: number
         limit: number

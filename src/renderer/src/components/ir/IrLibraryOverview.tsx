@@ -69,8 +69,8 @@ export function IrLibraryOverview({
   folderName?: string | null
   onFacet?: (field: 'manufacturer' | 'cabinet' | 'speaker' | 'microphone', value: string) => void
   onAudioFacet?: (field: 'sampleRate' | 'bitDepth', value: number) => void
-  activeFacets?: { manufacturer?: string; cabinet?: string; speaker?: string; microphone?: string }
-  activeAudioFacets?: { sampleRate?: number; bitDepth?: number }
+  activeFacets?: { manufacturer?: string[]; cabinet?: string; speaker?: string[]; microphone?: string[] }
+  activeAudioFacets?: { sampleRate?: number[]; bitDepth?: number[] }
   /** Bumped by the shell when a scan finishes. Without it the report fetches once on mount and
    * never again — so an overview that happened to be open while a library was still importing
    * kept showing the empty result it got at the time, which reads as "the report is broken"
@@ -135,13 +135,13 @@ export function IrLibraryOverview({
           <D1BarList
             title="Sample rate"
             rows={toRows(overview.sampleRateBreakdown, FORMAT_COLORS)}
-            activeKey={activeAudioFacets?.sampleRate ? formatSampleRate(activeAudioFacets.sampleRate) : null}
+            activeKey={activeAudioFacets?.sampleRate?.length === 1 ? formatSampleRate(activeAudioFacets.sampleRate[0]) : null}
             onRowClick={onAudioFacet ? (key) => onAudioFacet('sampleRate', rateFromLabel(key)) : undefined}
           />
           <D1BarList
             title="Bit depth"
             rows={toRows(overview.bitDepthBreakdown, FORMAT_COLORS)}
-            activeKey={activeAudioFacets?.bitDepth ? `${activeAudioFacets.bitDepth}-bit` : null}
+            activeKey={activeAudioFacets?.bitDepth?.length === 1 ? `${activeAudioFacets.bitDepth[0]}-bit` : null}
             onRowClick={onAudioFacet ? (key) => onAudioFacet('bitDepth', depthFromLabel(key)) : undefined}
           />
           <D1BarList title="Channels" rows={toRows(overview.channelsBreakdown, FORMAT_COLORS)} />
@@ -169,7 +169,13 @@ export function IrLibraryOverview({
           key={field}
           title={title}
           rows={toRows(entries, RANK_COLORS)}
-          activeKey={activeFacets?.[field] ?? null}
+          activeKey={
+            field === 'cabinet'
+              ? activeFacets?.cabinet ?? null
+              : (activeFacets?.[field]?.length ?? 0) === 1
+                ? (activeFacets![field] as string[])[0]
+                : null
+          }
           onRowClick={onFacet ? (key) => onFacet(field, key) : undefined}
         />
       ))}

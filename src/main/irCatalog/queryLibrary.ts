@@ -57,16 +57,20 @@ export interface QueryOptions {
    * to exactly that value. Exact match (not a search token), and matched against the SAME
    * item-or-inherited-folder-value COALESCE the browse SELECT itself uses (see
    * facetClause below), so filtering by a folder-inherited badge behaves identically to
-   * filtering by an item-level one. */
-  manufacturer?: string
+   * filtering by an item-level one. An array is OR'd together (the filter bar's multiselect
+   * checklists — "Suhr or Mesa", not "Suhr and Mesa"); a bare string is still accepted for the
+   * single-value click-to-filter badges. `cabinet` stays single-value only: nothing in the UI
+   * offers a cabinet multiselect (vocabulary.ts has no cabinet term list, so it's rarely populated
+   * — see IrLibraryOverview's own note on this). */
+  manufacturer?: string | string[]
   cabinet?: string
-  speaker?: string
-  microphone?: string
+  speaker?: string | string[]
+  microphone?: string | string[]
   /** Technical-format filters, from the same badges the row shows. Exact matches against ir_item's
    * WAV-header columns — no folder-inheritance fallback, unlike the descriptive facets above:
    * these are measured per file, so there is no meaningful "inherited from the folder" value. */
-  sampleRate?: number
-  bitDepth?: number
+  sampleRate?: number | number[]
+  bitDepth?: number | number[]
   channels?: number
   offset: number
   limit: number
@@ -90,6 +94,85 @@ export function resolveFolderScopeIds(db: DatabaseSync, folderId: number): numbe
   return rows.map((r) => r.id)
 }
 
+export interface FacetOption<T> {
+  value: T
+  count: number
+}
+
+/**
+ * Every distinct value currently on file for one field, scoped to a library root and/or folder
+ * subtree — populates the filter bar's multiselect checklists ("what we have in our list, not all
+ * in the world"), so the choices offered can never fail to match anything. Reads `ir_item`
+ * directly rather than folding in `folder_metadata_effective` inheritance the way `facetClause`
+ * does for the WHERE clause: the picker is meant to show what's actually recorded on files, not
+ * every folder-level default a click-to-filter badge might also match.
+ */
+export function listFacetOptions(
+  db: DatabaseSync,
+  field: 'manufacturer' | 'speaker' | 'microphone',
+  libraryRootId: number | null,
+  folderId: number | null
+): FacetOption<string>[] {
+  const clauses = [`${field} IS NOT NULL`]
+  const params: SQLInputValue[] = []
+  if (libraryRootId != null) {
+    clauses.push('item.library_root_id = ?')
+    params.push(libraryRootId)
+  }
+  if (folderId != null) {
+    const ids = resolveFolderScopeIds(db, folderId)
+    if (ids.length === 0) {
+      clauses.push('0 = 1')
+    } else {
+      clauses.push(`item.folder_id IN (${ids.map(() => '?').join(',')})`)
+      params.push(...ids)
+    }
+  }
+  return db
+    .prepare(
+      `SELECT ${field} as value, COUNT(*) as count
+       FROM ir_item JOIN item ON item.id = ir_item.item_id
+       WHERE ${clauses.join(' AND ')}
+       GROUP BY ${field}
+       ORDER BY count DESC, value ASC`
+    )
+    .all(...params) as FacetOption<string>[]
+}
+
+/** Same idea as `listFacetOptions`, for the two numeric WAV-header columns. */
+export function listNumericFacetOptions(
+  db: DatabaseSync,
+  field: 'sampleRate' | 'bitDepth',
+  libraryRootId: number | null,
+  folderId: number | null
+): FacetOption<number>[] {
+  const column = field === 'sampleRate' ? 'sample_rate' : 'bit_depth'
+  const clauses = [`${column} IS NOT NULL`]
+  const params: SQLInputValue[] = []
+  if (libraryRootId != null) {
+    clauses.push('item.library_root_id = ?')
+    params.push(libraryRootId)
+  }
+  if (folderId != null) {
+    const ids = resolveFolderScopeIds(db, folderId)
+    if (ids.length === 0) {
+      clauses.push('0 = 1')
+    } else {
+      clauses.push(`item.folder_id IN (${ids.map(() => '?').join(',')})`)
+      params.push(...ids)
+    }
+  }
+  return db
+    .prepare(
+      `SELECT ${column} as value, COUNT(*) as count
+       FROM ir_item JOIN item ON item.id = ir_item.item_id
+       WHERE ${clauses.join(' AND ')}
+       GROUP BY ${column}
+       ORDER BY value ASC`
+    )
+    .all(...params) as FacetOption<number>[]
+}
+
 /**
  * Turns free-typed user input into a safe FTS5 MATCH expression: each whitespace-separated
  * token is quoted (so punctuation/hyphens/colons in a filename can't be parsed as FTS5 query
@@ -111,11 +194,12 @@ function toFts5MatchExpression(rawQuery: string): string | null {
  * folder-inherited badge value matches exactly the rows that badge is actually shown on —
  * a plain `ir_item.field = ?` would silently miss every item inheriting that value from its
  * folder rather than having it set directly. */
-function facetClause(field: 'manufacturer' | 'cabinet' | 'speaker' | 'microphone'): string {
+function facetClause(field: 'manufacturer' | 'cabinet' | 'speaker' | 'microphone', count: number): string {
+  const placeholders = Array(count).fill('?').join(',')
   return `COALESCE(
     (SELECT ${field} FROM ir_item WHERE ir_item.item_id = item.id),
     (SELECT value FROM folder_metadata_effective WHERE folder_id = item.folder_id AND field = '${field}')
-  ) = ?`
+  ) IN (${placeholders})`
 }
 
 function buildWhereAndParams(
@@ -157,10 +241,11 @@ function buildWhereAndParams(
   }
   for (const field of ['manufacturer', 'cabinet', 'speaker', 'microphone'] as const) {
     const value = options[field]
-    if (value) {
-      clauses.push(facetClause(field))
-      params.push(value)
-    }
+    if (value == null) continue
+    const values = Array.isArray(value) ? value : [value]
+    if (values.length === 0) continue
+    clauses.push(facetClause(field, values.length))
+    params.push(...values)
   }
   for (const [option, column] of [
     ['sampleRate', 'sample_rate'],
@@ -168,10 +253,11 @@ function buildWhereAndParams(
     ['channels', 'channels']
   ] as const) {
     const value = options[option]
-    if (value != null) {
-      clauses.push(`(SELECT ${column} FROM ir_item WHERE ir_item.item_id = item.id) = ?`)
-      params.push(value)
-    }
+    if (value == null) continue
+    const values = Array.isArray(value) ? value : [value]
+    if (values.length === 0) continue
+    clauses.push(`(SELECT ${column} FROM ir_item WHERE ir_item.item_id = item.id) IN (${values.map(() => '?').join(',')})`)
+    params.push(...values)
   }
   return { where: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '', params }
 }

@@ -5,6 +5,7 @@ import { IrRightPanel } from './IrRightPanel'
 import { IrMenuBar } from './IrMenuBar'
 import { ContextMenu } from '../ContextMenu'
 import { IrTray } from './IrTray'
+import { IrFilterBar } from './IrFilterBar'
 import { PlayerPanel } from '../PlayerPanel'
 import { loadNamFileForPlayback } from '../../utils/loadNamFile'
 import type { NamFile } from '../../types/nam'
@@ -148,35 +149,39 @@ export function IrModeShell(): React.ReactElement {
   // full list for the filter dropdown and the row context menu's "Add to Group" submenu.
   const [tags, setTags] = useState<Array<{ id: number; name: string; itemCount: number }>>([])
   const [tagFilterId, setTagFilterId] = useState<number | null>(null)
-  // Faceted filter chips — at most one active value per field (a plain toggle, not a multi-select
-  // facet browser). Clicking a badge with the same field+value again clears it.
-  const [facets, setFacets] = useState<{ manufacturer?: string; cabinet?: string; speaker?: string; microphone?: string }>({})
+  // Faceted filter chips. `cabinet` stays single-value (only ever set by clicking a row's cabinet
+  // badge — no multiselect UI offers it, since vocabulary.ts has no cabinet term list and it's
+  // rarely populated). manufacturer/speaker/microphone are arrays, OR'd together, driven by both
+  // the row-badge single click (IrFilterBar's toggle helpers below) AND the new filter bar's
+  // multiselect checklists ("multiselect on microphones... and speaker, same idea").
+  const [facets, setFacets] = useState<{ manufacturer?: string[]; cabinet?: string; speaker?: string[]; microphone?: string[] }>({})
   const toggleFacet = useCallback((field: 'manufacturer' | 'cabinet' | 'speaker' | 'microphone', value: string) => {
     setFacets((prev) => {
-      if (prev[field] === value) {
+      if (field === 'cabinet') {
         const next = { ...prev }
-        delete next[field]
+        if (prev.cabinet === value) delete next.cabinet
+        else next.cabinet = value
         return next
       }
-      return { ...prev, [field]: value }
+      const current = prev[field] ?? []
+      const next = current.includes(value) ? current.filter((v) => v !== value) : [...current, value]
+      return { ...prev, [field]: next.length > 0 ? next : undefined }
     })
   }, [])
   // Technical-format facets, separate state from the descriptive ones above because they filter
-  // on numbers rather than strings (queryLibrary's sampleRate/bitDepth/channels options).
-  const [audioFacets, setAudioFacets] = useState<{ sampleRate?: number; bitDepth?: number }>({})
+  // on numbers rather than strings (queryLibrary's sampleRate/bitDepth/channels options). Arrays
+  // for the same reason as manufacturer/speaker/microphone above — the filter bar's quick pills
+  // are multi-select ("44.1k or 48k"), not a single radio choice.
+  const [audioFacets, setAudioFacets] = useState<{ sampleRate?: number[]; bitDepth?: number[] }>({})
   const toggleAudioFacet = useCallback((field: 'sampleRate' | 'bitDepth', value: number) => {
     setAudioFacets((prev) => {
-      if (prev[field] === value) {
-        const next = { ...prev }
-        delete next[field]
-        return next
-      }
-      return { ...prev, [field]: value }
+      const current = prev[field] ?? []
+      const next = current.includes(value) ? current.filter((v) => v !== value) : [...current, value]
+      return { ...prev, [field]: next.length > 0 ? next : undefined }
     })
   }, [])
   // Root switcher — null means "All roots" (today's default: browse/search span every root).
   const [selectedRootId, setSelectedRootId] = useState<number | null>(null)
-  const [groupsMenuOpen, setGroupsMenuOpen] = useState(false)
   const [addToGroupRow, setAddToGroupRow] = useState<IrItemRow | null>(null)
   const [newGroupName, setNewGroupName] = useState('')
   // Folder tree/panel — scoped to the first root for now (no root switcher yet; a second "Add
@@ -320,14 +325,6 @@ export function IrModeShell(): React.ReactElement {
       setSendingTray(false)
     }
   }, [])
-
-  // Groups filter dropdown: dismiss on outside click.
-  useEffect(() => {
-    if (!groupsMenuOpen) return
-    const dismiss = (): void => setGroupsMenuOpen(false)
-    window.addEventListener('click', dismiss)
-    return () => window.removeEventListener('click', dismiss)
-  }, [groupsMenuOpen])
 
   // The amp capture the IR is auditioned THROUGH. Picked once, remembered across restarts, and
   // loaded lazily — the player can't open without one, so the first play prompts for it.
@@ -611,6 +608,21 @@ export function IrModeShell(): React.ReactElement {
     setSelectedFolderName(null)
   }, [])
 
+  // Picking a group clears any folder/root scoping first. A group is deliberately cross-folder AND
+  // cross-root (tag.ts: "across anywhere in your library"), but the browse query ANDs folderId and
+  // libraryRootId with tagId — so with either still scoped, a group whose item lives outside that
+  // scope silently returned zero rows while the Groups menu still showed a non-zero item count.
+  // Reported exactly that way: "i see i have a group with 1 item, but when i click it, nothing
+  // shows in the list".
+  const selectTagFilter = useCallback((id: number | null) => {
+    if (id != null) {
+      setSelectedFolderId(null)
+      setSelectedFolderName(null)
+      setSelectedRootId(null)
+    }
+    setTagFilterId(id)
+  }, [])
+
   const onTreeDragStart = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault()
@@ -690,79 +702,6 @@ export function IrModeShell(): React.ReactElement {
             ))}
           </select>
         )}
-        {hasAnyRoot && (
-          <input
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            placeholder="Search…"
-            className="flex-1 max-w-md px-2 py-1 text-sm rounded border border-field-bd bg-field-bg"
-          />
-        )}
-        {hasAnyRoot && (
-          <button
-            onClick={() => setFavoritesOnly((v) => !v)}
-            title="Favorites only"
-            className={`px-2 py-1 text-xs rounded border flex-shrink-0 ${favoritesOnly ? 'bg-active-bg border-nm-accent text-nm-accent' : 'border-field-bd text-nm-text-2 hover:bg-hov'}`}
-          >
-            ★ Favorites
-          </button>
-        )}
-        {hasAnyRoot && (
-          <button
-            onClick={() => setRatedOnly((v) => !v)}
-            title="Rated only"
-            className={`px-2 py-1 text-xs rounded border flex-shrink-0 ${ratedOnly ? 'bg-active-bg border-nm-accent text-nm-accent' : 'border-field-bd text-nm-text-2 hover:bg-hov'}`}
-          >
-            Rated
-          </button>
-        )}
-        {hasAnyRoot && tags.length > 0 && (
-          <div className="relative flex-shrink-0">
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                setGroupsMenuOpen((v) => !v)
-              }}
-              title="Filter to one group"
-              className={`px-2 py-1 text-xs rounded border ${
-                tagFilterId != null ? 'bg-active-bg border-nm-accent text-nm-accent' : 'border-field-bd text-nm-text-2 hover:bg-hov'
-              }`}
-            >
-              {tagFilterId != null ? tags.find((t) => t.id === tagFilterId)?.name ?? 'Group' : 'Groups'} ▾
-            </button>
-            {groupsMenuOpen && (
-              <div
-                onClick={(e) => e.stopPropagation()}
-                className="absolute left-0 top-full mt-0.5 min-w-[180px] max-h-72 overflow-y-auto py-1 rounded border border-nm-border bg-panel shadow-lg z-50"
-              >
-                {tagFilterId != null && (
-                  <button
-                    onClick={() => {
-                      setTagFilterId(null)
-                      setGroupsMenuOpen(false)
-                    }}
-                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-hov text-nm-accent"
-                  >
-                    Clear group filter
-                  </button>
-                )}
-                {tags.map((t) => (
-                  <button
-                    key={t.id}
-                    onClick={() => {
-                      setTagFilterId(t.id)
-                      setGroupsMenuOpen(false)
-                    }}
-                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-hov text-nm-text flex items-center justify-between gap-2"
-                  >
-                    <span className="truncate">{t.name}</span>
-                    <span className="text-nm-text-3 flex-shrink-0">{t.itemCount}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
         {hasAnyRoot && <span className="text-xs text-nm-text-3 flex-shrink-0">{total.toLocaleString()} IRs</span>}
         {hasAnyRoot && ampCapture && (
           <button
@@ -807,37 +746,6 @@ export function IrModeShell(): React.ReactElement {
           </button>
         </div>
       )}
-      {(Object.keys(facets).length > 0 || Object.keys(audioFacets).length > 0) && (
-        <div className="flex items-center gap-2 px-4 py-1 text-xs bg-panel-2 border-b border-nm-border flex-shrink-0">
-          <span className="text-nm-text-2">Filtered by:</span>
-          {(Object.entries(facets) as Array<[keyof typeof facets, string]>).map(([field, value]) => (
-            <span key={field} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-active-bg text-nm-accent">
-              {value}
-              <button onClick={() => toggleFacet(field, value)} className="hover:text-red-500" title={`Clear ${field} filter`}>
-                ×
-              </button>
-            </span>
-          ))}
-          {(Object.entries(audioFacets) as Array<[keyof typeof audioFacets, number]>).map(([field, value]) => (
-            <span key={field} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-active-bg text-nm-accent">
-              {field === 'sampleRate' ? formatSampleRate(value) : `${value}-bit`}
-              <button onClick={() => toggleAudioFacet(field, value)} className="hover:text-red-500" title={`Clear ${field} filter`}>
-                ×
-              </button>
-            </span>
-          ))}
-          <button
-            onClick={() => {
-              setFacets({})
-              setAudioFacets({})
-            }}
-            className="text-nm-accent hover:underline"
-          >
-            Clear all
-          </button>
-        </div>
-      )}
-
       {!hasAnyRoot && !scanning ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center p-8 text-nm-text-2">
           <p className="text-sm">No IR library folders added yet.</p>
@@ -858,12 +766,41 @@ export function IrModeShell(): React.ReactElement {
             onMouseDown={onTreeDragStart}
             className="w-1 flex-shrink-0 cursor-col-resize hover:bg-nm-accent/40 active:bg-nm-accent/60 transition-colors"
           />
-          <VirtualList
-            total={total}
-            rowHeight={ROW_HEIGHT}
-            onVisibleRangeChange={onVisibleRangeChange}
-            className="flex-1"
-            renderRow={(index) => {
+          {/* Search/filter bar sits in its own flex-col wrapping ONLY the list column — same idea
+              as NAM Lab's own FileList.tsx, whose search+filter row lives inside the file list
+              component itself rather than spanning the folder tree and the right panel too. */}
+          <div className="flex-1 flex flex-col min-w-0 min-h-0">
+            <IrFilterBar
+              search={searchInput}
+              onSearchChange={setSearchInput}
+              favoritesOnly={favoritesOnly}
+              onToggleFavoritesOnly={() => setFavoritesOnly((v) => !v)}
+              ratedOnly={ratedOnly}
+              onToggleRatedOnly={() => setRatedOnly((v) => !v)}
+              tags={tags}
+              tagFilterId={tagFilterId}
+              onSelectTag={selectTagFilter}
+              libraryRootId={selectedRootId}
+              folderId={selectedFolderId}
+              facets={facets}
+              audioFacets={audioFacets}
+              onToggleFacet={toggleFacet}
+              onToggleAudioFacet={toggleAudioFacet}
+              onClearAll={() => {
+                setFacets({})
+                setAudioFacets({})
+                setFavoritesOnly(false)
+                setRatedOnly(false)
+                setTagFilterId(null)
+              }}
+              refreshKey={requestEpochRef.current}
+            />
+            <VirtualList
+              total={total}
+              rowHeight={ROW_HEIGHT}
+              onVisibleRangeChange={onVisibleRangeChange}
+              className="flex-1"
+              renderRow={(index) => {
             const row = cacheRef.current.get(index)
             if (!row) {
               return <div className="h-full border-b border-nm-border-s" />
@@ -899,7 +836,7 @@ export function IrModeShell(): React.ReactElement {
                             toggleAudioFacet('sampleRate', row.sample_rate!)
                           }}
                           title="Filter to this sample rate"
-                          className={`nam-chip chip-ir-rate flex-shrink-0 ${audioFacets.sampleRate === row.sample_rate ? 'ring-1 ring-nm-accent' : ''}`}
+                          className={`nam-chip chip-ir-rate flex-shrink-0 ${audioFacets.sampleRate?.includes(row.sample_rate!) ? 'ring-1 ring-nm-accent' : ''}`}
                         >
                           <span className="nam-dot" />
                           {formatSampleRate(row.sample_rate)}
@@ -912,7 +849,7 @@ export function IrModeShell(): React.ReactElement {
                             toggleAudioFacet('bitDepth', row.bit_depth!)
                           }}
                           title="Filter to this bit depth"
-                          className={`nam-chip chip-ir-depth flex-shrink-0 ${audioFacets.bitDepth === row.bit_depth ? 'ring-1 ring-nm-accent' : ''}`}
+                          className={`nam-chip chip-ir-depth flex-shrink-0 ${audioFacets.bitDepth?.includes(row.bit_depth!) ? 'ring-1 ring-nm-accent' : ''}`}
                         >
                           <span className="nam-dot" />
                           {row.bit_depth}-bit
@@ -935,7 +872,7 @@ export function IrModeShell(): React.ReactElement {
                         label="Manufacturer"
                         value={row.manufacturer}
                         source={row.manufacturer_source}
-                        active={row.manufacturer != null && facets.manufacturer === row.manufacturer}
+                        active={row.manufacturer != null && (facets.manufacturer?.includes(row.manufacturer) ?? false)}
                         onClick={() => row.manufacturer && toggleFacet('manufacturer', row.manufacturer)}
                       />
                       <FieldBadge
@@ -951,7 +888,7 @@ export function IrModeShell(): React.ReactElement {
                         label="Speaker"
                         value={row.speaker}
                         source={row.speaker_source}
-                        active={row.speaker != null && facets.speaker === row.speaker}
+                        active={row.speaker != null && (facets.speaker?.includes(row.speaker) ?? false)}
                         onClick={() => row.speaker && toggleFacet('speaker', row.speaker)}
                       />
                       <FieldBadge
@@ -959,7 +896,7 @@ export function IrModeShell(): React.ReactElement {
                         label="Microphone"
                         value={row.microphone}
                         source={row.microphone_source}
-                        active={row.microphone != null && facets.microphone === row.microphone}
+                        active={row.microphone != null && (facets.microphone?.includes(row.microphone) ?? false)}
                         onClick={() => row.microphone && toggleFacet('microphone', row.microphone)}
                       />
                     </div>
@@ -1024,7 +961,8 @@ export function IrModeShell(): React.ReactElement {
               </div>
             )
           }}
-          />
+            />
+          </div>
           <div
             onMouseDown={onPanelDragStart}
             className="w-1 flex-shrink-0 cursor-col-resize hover:bg-nm-accent/40 active:bg-nm-accent/60 transition-colors"

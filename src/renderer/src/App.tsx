@@ -469,12 +469,12 @@ declare global {
         favoritesOnly?: boolean
         minRating?: number
         tagId?: number
-        manufacturer?: string
+        manufacturer?: string | string[]
         cabinet?: string
-        speaker?: string
-        microphone?: string
-        sampleRate?: number
-        bitDepth?: number
+        speaker?: string | string[]
+        microphone?: string | string[]
+        sampleRate?: number | number[]
+        bitDepth?: number | number[]
         channels?: number
         offset: number
         limit: number
@@ -549,7 +549,25 @@ declare global {
         taggedCount: number
         manufacturerBreakdown: Array<{ value: string; count: number }>
         microphoneBreakdown: Array<{ value: string; count: number }>
+        speakerBreakdown: Array<{ value: string; count: number }>
+        cabinetBreakdown: Array<{ value: string; count: number }>
+        sampleRateBreakdown: Array<{ value: string; count: number }>
+        bitDepthBreakdown: Array<{ value: string; count: number }>
+        channelsBreakdown: Array<{ value: string; count: number }>
+        totalBytes: number
+        missingAudioInfoCount: number
+        projectCount: number
       }>
+      irLibraryListFacetOptions: (
+        field: 'manufacturer' | 'speaker' | 'microphone',
+        libraryRootId: number | null,
+        folderId: number | null
+      ) => Promise<Array<{ value: string; count: number }>>
+      irLibraryListNumericFacetOptions: (
+        field: 'sampleRate' | 'bitDepth',
+        libraryRootId: number | null,
+        folderId: number | null
+      ) => Promise<Array<{ value: number; count: number }>>
       irLibraryGetFolderDetail: (folderId: number) => Promise<{
         id: number
         relativePath: string

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { createSchema } from './schema'
-import { queryItems, countItems, setFavorite, setRating } from './queryLibrary'
+import { queryItems, countItems, setFavorite, setRating, listFacetOptions, listNumericFacetOptions } from './queryLibrary'
 import { hasFts5 } from './sqliteCapabilities'
 
 function seed(db: DatabaseSync): { rootId: number; itemIds: string[] } {
@@ -164,6 +164,63 @@ describe.skipIf(!hasFts5())('queryLibrary', () => {
 
     const fenderOnly = queryItems(db, { manufacturer: 'Fender', offset: 0, limit: 10 })
     expect(fenderOnly.map((r) => r.id)).toEqual(['item-fender'])
+
+    db.close()
+  })
+
+  it('an array facet value ORs its members — the filter bar\'s multiselect checklist', () => {
+    const db = new DatabaseSync(':memory:')
+    createSchema(db)
+    seed(db)
+    db.prepare(`INSERT INTO ir_item (item_id, manufacturer) VALUES ('id-Marshall 412 SM57.wav', 'Marshall')`).run()
+    db.prepare(`INSERT INTO ir_item (item_id, manufacturer) VALUES ('id-OwnHammer V30 - Blend.wav', 'OwnHammer')`).run()
+    db.prepare(`INSERT INTO ir_item (item_id, manufacturer) VALUES ('id-plain.wav', 'Fender')`).run()
+
+    const twoMakers = queryItems(db, { manufacturer: ['Marshall', 'OwnHammer'], offset: 0, limit: 10 })
+    expect(twoMakers.map((r) => r.display_name).sort()).toEqual(['Marshall 412 SM57.wav', 'OwnHammer V30 - Blend.wav'])
+    expect(countItems(db, { manufacturer: ['Marshall', 'OwnHammer'] })).toBe(2)
+
+    // An empty array must behave like "no filter applied", not "match nothing" — an empty
+    // multiselect checklist (nothing checked) means the filter isn't active.
+    expect(countItems(db, { manufacturer: [] })).toBe(3)
+
+    db.close()
+  })
+
+  it('listFacetOptions/listNumericFacetOptions report only values actually present, scoped to root/folder', () => {
+    const db = new DatabaseSync(':memory:')
+    createSchema(db)
+    const now = new Date().toISOString()
+    const rootA = (
+      db.prepare(`INSERT INTO library_root (path, label, watch_mode, created_at) VALUES ('/a','A','manual',?) RETURNING id`).get(now) as {
+        id: number
+      }
+    ).id
+    const rootB = (
+      db.prepare(`INSERT INTO library_root (path, label, watch_mode, created_at) VALUES ('/b','B','manual',?) RETURNING id`).get(now) as {
+        id: number
+      }
+    ).id
+    const insert = (id: string, rootId: number, mic: string | null, sampleRate: number | null): void => {
+      db.prepare(
+        `INSERT INTO item (id, kind, library_root_id, relative_path, display_name, indexed_at, last_seen_at)
+         VALUES (?, 'ir', ?, ?, ?, ?, ?)`
+      ).run(id, rootId, id, id, now, now)
+      db.prepare(`INSERT INTO ir_item (item_id, microphone, sample_rate) VALUES (?, ?, ?)`).run(id, mic, sampleRate)
+    }
+    insert('a1', rootA, 'SM57', 44100)
+    insert('a2', rootA, 'SM57', 48000)
+    insert('a3', rootA, 'R121', 44100)
+    insert('b1', rootB, 'U87', 96000)
+
+    const micsInA = listFacetOptions(db, 'microphone', rootA, null)
+    expect(micsInA.map((o) => o.value).sort()).toEqual(['R121', 'SM57'])
+    expect(micsInA.find((o) => o.value === 'SM57')?.count).toBe(2)
+    // 'U87' only exists under root B — the picker must never offer a value with zero matches.
+    expect(micsInA.some((o) => o.value === 'U87')).toBe(false)
+
+    const ratesInA = listNumericFacetOptions(db, 'sampleRate', rootA, null)
+    expect(ratesInA.map((o) => o.value)).toEqual([44100, 48000])
 
     db.close()
   })

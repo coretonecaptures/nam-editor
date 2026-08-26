@@ -42,8 +42,8 @@ export function IrRightPanel({
    * list, not a dead-end infographic. */
   onFacet?: (field: 'manufacturer' | 'cabinet' | 'speaker' | 'microphone', value: string) => void
   onAudioFacet?: (field: 'sampleRate' | 'bitDepth', value: number) => void
-  activeFacets?: { manufacturer?: string; cabinet?: string; speaker?: string; microphone?: string }
-  activeAudioFacets?: { sampleRate?: number; bitDepth?: number }
+  activeFacets?: { manufacturer?: string[]; cabinet?: string; speaker?: string[]; microphone?: string[] }
+  activeAudioFacets?: { sampleRate?: number[]; bitDepth?: number[] }
 }): React.ReactElement {
   const [tab, setTab] = useState<Tab>('overview')
   const [folderAbsPath, setFolderAbsPath] = useState<string | null>(null)
