@@ -513,12 +513,17 @@ export function IrModeShell(): React.ReactElement {
     window.api.irLibrarySetFavorite(row.id, next === 1)
   }, [])
 
+  /** Ratings persist fine (queryLibrary.setRating + the "Rated" quick filter both still work);
+   * only the per-row star strip is currently unrendered, pending a decision on where ratings
+   * belong in the row now that actions have moved to the right. Kept rather than deleted so
+   * turning them back on is a render change, not a rebuild. */
   const setRating = useCallback((row: IrItemRow, index: number, rating: number) => {
     const next = row.rating === rating ? null : rating
     cacheRef.current.set(index, { ...row, rating: next })
     forceRerender((n) => n + 1)
     window.api.irLibrarySetRating(row.id, next)
   }, [])
+  void setRating
 
   const hasAnyRoot = roots.length > 0
   // "All roots" (selectedRootId === null) still needs ONE root to drive the folder tree (a tree
@@ -802,11 +807,59 @@ export function IrModeShell(): React.ReactElement {
                 }}
                 className={`group h-full flex items-center gap-3 px-4 border-b border-nm-border-s hover:bg-hov ${isFocused ? 'bg-active-bg' : ''}`}
               >
-                {/* Play + Play Live, identical in size, icon, color and hover treatment to NAM
-                    Lab's own row buttons (FileList.tsx) — the same two actions on a row in both
-                    halves of the app, so they look and behave the same rather than like two
-                    different products. Faint at rest, growing to a solid filled circle on row
-                    hover. */}
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm truncate">{name}</div>
+                  {folder && <div className="text-xs text-nm-text-3 truncate">{folder}</div>}
+                  {(row.manufacturer || row.cabinet || row.speaker || row.microphone) && (
+                    <div className="flex items-center gap-1 mt-0.5 overflow-hidden">
+                      <FieldBadge
+                        label="Manufacturer"
+                        value={row.manufacturer}
+                        source={row.manufacturer_source}
+                        active={row.manufacturer != null && facets.manufacturer === row.manufacturer}
+                        onClick={() => row.manufacturer && toggleFacet('manufacturer', row.manufacturer)}
+                      />
+                      <FieldBadge
+                        label="Cabinet"
+                        value={row.cabinet}
+                        source={row.cabinet_source}
+                        active={row.cabinet != null && facets.cabinet === row.cabinet}
+                        onClick={() => row.cabinet && toggleFacet('cabinet', row.cabinet)}
+                      />
+                      <FieldBadge
+                        label="Speaker"
+                        value={row.speaker}
+                        source={row.speaker_source}
+                        active={row.speaker != null && facets.speaker === row.speaker}
+                        onClick={() => row.speaker && toggleFacet('speaker', row.speaker)}
+                      />
+                      <FieldBadge
+                        label="Microphone"
+                        value={row.microphone}
+                        source={row.microphone_source}
+                        active={row.microphone != null && facets.microphone === row.microphone}
+                        onClick={() => row.microphone && toggleFacet('microphone', row.microphone)}
+                      />
+                    </div>
+                  )}
+                </div>
+                <div className="flex-shrink-0 text-xs text-nm-text-3 w-14 text-right">{formatBytes(row.file_size)}</div>
+                {/* Actions live to the RIGHT of the name, same side and same order as NAM Lab's
+                    own rows (FileList.tsx): favourite, then play, then Play Live. Identical size,
+                    icons, colors and hover treatment — faint at rest, growing to a solid filled
+                    circle on row hover.
+                    Rating stars are deliberately not rendered for now (see setRating's comment):
+                    hidden pending a decision on where they belong, not removed. */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    toggleFavorite(row, index)
+                  }}
+                  title={row.is_favorite ? 'Remove favorite' : 'Add favorite'}
+                  className={`flex-shrink-0 self-center text-lg ${row.is_favorite ? 'text-amber-400' : 'text-nm-text-3 hover:text-amber-300'}`}
+                >
+                  {row.is_favorite ? '★' : '☆'}
+                </button>
                 <button
                   onClick={(e) => {
                     e.stopPropagation()
@@ -846,64 +899,6 @@ export function IrModeShell(): React.ReactElement {
                     }}
                   />
                 </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    toggleFavorite(row, index)
-                  }}
-                  title={row.is_favorite ? 'Remove favorite' : 'Add favorite'}
-                  className={`flex-shrink-0 text-lg ${row.is_favorite ? 'text-amber-400' : 'text-nm-text-3 hover:text-amber-300'}`}
-                >
-                  {row.is_favorite ? '★' : '☆'}
-                </button>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm truncate">{name}</div>
-                  {folder && <div className="text-xs text-nm-text-3 truncate">{folder}</div>}
-                  {(row.manufacturer || row.cabinet || row.speaker || row.microphone) && (
-                    <div className="flex items-center gap-1 mt-0.5 overflow-hidden">
-                      <FieldBadge
-                        label="Manufacturer"
-                        value={row.manufacturer}
-                        source={row.manufacturer_source}
-                        active={row.manufacturer != null && facets.manufacturer === row.manufacturer}
-                        onClick={() => row.manufacturer && toggleFacet('manufacturer', row.manufacturer)}
-                      />
-                      <FieldBadge
-                        label="Cabinet"
-                        value={row.cabinet}
-                        source={row.cabinet_source}
-                        active={row.cabinet != null && facets.cabinet === row.cabinet}
-                        onClick={() => row.cabinet && toggleFacet('cabinet', row.cabinet)}
-                      />
-                      <FieldBadge
-                        label="Speaker"
-                        value={row.speaker}
-                        source={row.speaker_source}
-                        active={row.speaker != null && facets.speaker === row.speaker}
-                        onClick={() => row.speaker && toggleFacet('speaker', row.speaker)}
-                      />
-                      <FieldBadge
-                        label="Microphone"
-                        value={row.microphone}
-                        source={row.microphone_source}
-                        active={row.microphone != null && facets.microphone === row.microphone}
-                        onClick={() => row.microphone && toggleFacet('microphone', row.microphone)}
-                      />
-                    </div>
-                  )}
-                </div>
-                <div className="flex-shrink-0 flex items-center gap-0.5">
-                  {[1, 2, 3, 4, 5].map((n) => (
-                    <button
-                      key={n}
-                      onClick={() => setRating(row, index, n)}
-                      className={`text-sm ${row.rating != null && n <= row.rating ? 'text-amber-400' : 'text-nm-text-3 hover:text-amber-300'}`}
-                    >
-                      ★
-                    </button>
-                  ))}
-                </div>
-                <div className="flex-shrink-0 text-xs text-nm-text-3 w-14 text-right">{formatBytes(row.file_size)}</div>
               </div>
             )
           }}
