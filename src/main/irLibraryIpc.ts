@@ -234,6 +234,9 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
         cabinet?: string
         speaker?: string
         microphone?: string
+        sampleRate?: number
+        bitDepth?: number
+        channels?: number
         offset: number
         limit: number
       }

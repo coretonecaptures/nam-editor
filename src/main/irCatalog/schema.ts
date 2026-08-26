@@ -121,7 +121,19 @@ CREATE TABLE IF NOT EXISTS ir_item (
   sample_rate     REAL,
   is_reverb       INTEGER,
   is_stereo       INTEGER,
-  is_true_stereo  INTEGER
+  is_true_stereo  INTEGER,
+  -- Read from each file's own WAV header during the scan (wavHeader.ts, parsed out of the buffer
+  -- quickHash already reads -- no extra I/O). These are MEASURED facts about the bytes on disk,
+  -- not descriptive guesses, so unlike manufacturer/cabinet/speaker/microphone they carry no
+  -- ir_item_field_source confidence row: there is nothing to be more or less sure about.
+  bit_depth        INTEGER,
+  channels         INTEGER,
+  duration_seconds REAL,
+  audio_format     TEXT,
+  -- Pre-rendered search text for the format above (wavHeader.ts's wavSearchText). Stored rather
+  -- than assembled in finalizeIndexes' SQL so the indexed spelling always matches what the UI
+  -- shows -- see that function's own comment for the bug that motivated it.
+  audio_search     TEXT
 );
 
 CREATE TABLE IF NOT EXISTS ir_item_field_source (
@@ -251,7 +263,10 @@ CREATE INDEX IF NOT EXISTS idx_asset_folder     ON asset_file(folder_id);
 CREATE VIRTUAL TABLE IF NOT EXISTS item_search USING fts5(
   item_id UNINDEXED,
   display_name, notes, manufacturer, cabinet, speaker, microphone,
-  mics, tone_type, gear_make, gear_model
+  mics, tone_type, gear_make, gear_model,
+  -- Technical format as searchable text ("44.1k 24-bit mono"), so typing "24-bit" or "96k" in the
+  -- search box finds those files. Populated in finalizeIndexes from ir_item's WAV-header columns.
+  audio
 );
 `
 
@@ -282,6 +297,13 @@ DROP TRIGGER IF EXISTS item_search_au;
 DROP TRIGGER IF EXISTS item_search_ad;
 `
 
+/** Drops the FTS5 index and its triggers together — used by runMigrations when the index's column
+ * set is stale (FTS5 columns can't be ALTERed). Triggers must go first: they reference the table. */
+const ITEM_SEARCH_DROP_SQL = `
+${DROP_ITEM_SEARCH_TRIGGERS_SQL}
+DROP TABLE IF EXISTS item_search;
+`
+
 /**
  * `CREATE TABLE IF NOT EXISTS` (CORE_SCHEMA_SQL, above) only ever creates a table's FIRST version —
  * an existing catalog.db from before a column was added keeps the old shape forever, silently
@@ -296,6 +318,32 @@ function runMigrations(db: DatabaseSync): void {
   const collectionColumns = db.prepare(`PRAGMA table_info(collection)`).all() as Array<{ name: string }>
   if (collectionColumns.length > 0 && !collectionColumns.some((c) => c.name === 'folder_id')) {
     db.exec(`ALTER TABLE collection ADD COLUMN folder_id INTEGER REFERENCES folder(id)`)
+  }
+
+  // WAV header columns (see ir_item's own comment). Added per-column so a database that already
+  // has some of them isn't an error.
+  const irItemColumns = db.prepare(`PRAGMA table_info(ir_item)`).all() as Array<{ name: string }>
+  if (irItemColumns.length > 0) {
+    const have = new Set(irItemColumns.map((c) => c.name))
+    for (const [name, type] of [
+      ['bit_depth', 'INTEGER'],
+      ['channels', 'INTEGER'],
+      ['duration_seconds', 'REAL'],
+      ['audio_format', 'TEXT'],
+      ['audio_search', 'TEXT']
+    ] as const) {
+      if (!have.has(name)) db.exec(`ALTER TABLE ir_item ADD COLUMN ${name} ${type}`)
+    }
+  }
+
+  // item_search gained an `audio` column so "44.1k", "24-bit" and "stereo" are typeable in the
+  // search box. An FTS5 virtual table's columns are fixed at creation, so an existing index built
+  // before that column can't be ALTERed into shape — it's dropped here instead. Nothing is lost:
+  // it holds no source data, only a derived index, and getDb()'s `if (!itemSearchTableExists)`
+  // check rebuilds and repopulates it from item/ir_item on this very same open.
+  const searchColumns = db.prepare(`PRAGMA table_info(item_search)`).all() as Array<{ name: string }>
+  if (searchColumns.length > 0 && !searchColumns.some((c) => c.name === 'audio')) {
+    db.exec(ITEM_SEARCH_DROP_SQL)
   }
 }
 
@@ -331,9 +379,16 @@ export function itemSearchTableExists(db: DatabaseSync): boolean {
 export function finalizeIndexes(db: DatabaseSync): void {
   db.exec(DEFERRED_INDEXES_SQL)
   db.exec(`DELETE FROM item_search`)
+  // `audio` is copied straight from ir_item.audio_search, which importLibrary rendered in
+  // TypeScript (wavHeader.ts's wavSearchText). An earlier version assembled that string in SQL
+  // here instead and got it subtly wrong — SQLite's integer division produced "96.0k" for 96000,
+  // which FTS5 tokenizes as `96` + `0k`, so searching "96k" matched nothing. Caught by this
+  // feature's own end-to-end test before it shipped.
   db.exec(`
-    INSERT INTO item_search (item_id, display_name, notes, manufacturer, cabinet, speaker, microphone)
-    SELECT item.id, item.display_name, item.notes, ir_item.manufacturer, ir_item.cabinet, ir_item.speaker, ir_item.microphone
+    INSERT INTO item_search (item_id, display_name, notes, manufacturer, cabinet, speaker, microphone, audio)
+    SELECT item.id, item.display_name, item.notes,
+           ir_item.manufacturer, ir_item.cabinet, ir_item.speaker, ir_item.microphone,
+           ir_item.audio_search
     FROM item LEFT JOIN ir_item ON ir_item.item_id = item.id
   `)
   db.exec(ITEM_SEARCH_TRIGGERS_SQL)

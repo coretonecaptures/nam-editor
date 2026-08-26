@@ -21,7 +21,8 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { randomUUID } from 'node:crypto'
 import { walkWavLibrary, toPosixRel, type WalkEvent } from './scanWalk'
-import { computeQuickHash } from './quickHash'
+import { computeQuickHash, type QuickScanResult } from './quickHash'
+import { wavSearchText } from './wavHeader'
 import { withoutLiveSearchTriggers } from './schema'
 import { mapPool } from './concurrency'
 
@@ -102,6 +103,9 @@ export async function importLibrary(
      ON CONFLICT(library_root_id, relative_path) DO UPDATE SET relative_path = excluded.relative_path
      RETURNING id`
   )
+  // RETURNING id, not just run(): on a re-scan the ON CONFLICT path keeps the row's ORIGINAL id,
+  // so the freshly generated UUID passed in is not the id that ends up in the table. Anything
+  // writing a child row keyed on item_id (ir_item, below) needs the real one.
   const insertItem = db.prepare(
     `INSERT INTO item (
        id, kind, library_root_id, folder_id, relative_path, display_name,
@@ -113,7 +117,23 @@ export async function importLibrary(
        last_seen_at = excluded.last_seen_at,
        file_size = excluded.file_size,
        quick_hash = excluded.quick_hash,
-       missing_since = NULL`
+       missing_since = NULL
+     RETURNING id`
+  )
+  // WAV header facts (wavHeader.ts), parsed for free out of the buffer quickHash already read.
+  // Deliberately does NOT touch is_stereo/is_true_stereo: those carry IR Lab's own meaning for a
+  // Project capture (is_true_stereo is its 4-channel LL/LR/RL/RR convention), and `channels` is
+  // both more precise and independently measured, so there's no reason to overwrite them here.
+  const upsertAudioInfo = db.prepare(
+    `INSERT INTO ir_item (item_id, sample_rate, bit_depth, channels, duration_seconds, audio_format, audio_search)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(item_id) DO UPDATE SET
+       sample_rate = excluded.sample_rate,
+       bit_depth = excluded.bit_depth,
+       channels = excluded.channels,
+       duration_seconds = excluded.duration_seconds,
+       audio_format = excluded.audio_format,
+       audio_search = excluded.audio_search`
   )
   let foldersInserted = 0
   let itemsInserted = 0
@@ -137,12 +157,12 @@ export async function importLibrary(
   // Pure fs I/O, no SQLite involved — safe to run with real concurrency, and deliberately done
   // BEFORE the DB transaction opens rather than inside flushItems, so the single synchronous
   // connection is never sitting idle mid-transaction waiting on file reads.
-  const computeHashes = async (): Promise<Array<string | null>> => {
+  const scanFiles = async (): Promise<Array<QuickScanResult | null>> => {
     if (skipQuickHash) return pendingItems.map(() => null)
     return mapPool(pendingItems, HASH_CONCURRENCY, (it) => computeQuickHash(it.absPath, it.size))
   }
 
-  const flushItems = (hashes: Array<string | null>): void => {
+  const flushItems = (scanned: Array<QuickScanResult | null>): void => {
     if (pendingItems.length === 0) return
     const now = new Date().toISOString()
     for (let i = 0; i < pendingItems.length; i++) {
@@ -150,11 +170,23 @@ export async function importLibrary(
       const relPosix = toPosixRel(it.relPath)
       const folderId = folderIds.get(toPosixRel(it.folderRelPath)) ?? null
       const displayName = relPosix.slice(relPosix.lastIndexOf('/') + 1)
-      const id = randomUUID()
+      const result = scanned[i]
 
-      insertItem.run(
-        id, libraryRootId, folderId, relPosix, displayName, it.modifiedAt, now, now, it.size, hashes[i]
-      )
+      const row = insertItem.get(
+        randomUUID(), libraryRootId, folderId, relPosix, displayName, it.modifiedAt, now, now, it.size, result?.hash ?? null
+      ) as { id: string }
+      const header = result?.header
+      if (header) {
+        upsertAudioInfo.run(
+          row.id,
+          header.sampleRate,
+          header.bitDepth,
+          header.channels,
+          header.durationSeconds,
+          header.audioFormat,
+          wavSearchText(header)
+        )
+      }
       markTouched.run(relPosix)
       itemsInserted++
     }
@@ -162,11 +194,11 @@ export async function importLibrary(
   }
 
   const runBatch = async (): Promise<void> => {
-    const hashes = await computeHashes()
+    const scanned = await scanFiles()
     db.exec('BEGIN')
     try {
       flushFolders()
-      flushItems(hashes)
+      flushItems(scanned)
       db.exec('COMMIT')
     } catch (err) {
       db.exec('ROLLBACK')

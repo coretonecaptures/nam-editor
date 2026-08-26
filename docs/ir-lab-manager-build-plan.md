@@ -1302,6 +1302,72 @@ Project-specific gate needed, matches the original note here.
 Deferred, explicitly out of scope until requested: acoustic/fingerprint
 similarity search, non-WAV formats, user-customizable parser definitions.
 
+## 12c. Audio format facts from the WAV header (built)
+
+Asked directly: *"can you show some info about the file? do we know that?
+like its format...bit rate, length, sample rate, etc"* — and then, once the
+answer was no: *"yes we need that info to show/search etc....and we should
+be storing in the db"*.
+
+**What we knew before: essentially nothing.** Checked against the real
+catalog rather than assumed — 16,902 items, of which only **27** had an
+`ir_item` row at all (the IR Lab Project captures, from `analysis.json`).
+For the ~16,875 vendor IRs we stored filename, folder, file size, and
+name-guessed descriptive fields. No format, sample rate, bit depth, channel
+count or length.
+
+**The cost of getting it turned out to be zero.** `quickHash.ts` already
+reads the first 64KB of every file during the scan to fingerprint it, and a
+WAV header lives in the first few hundred bytes of exactly that buffer. So
+`computeQuickHash` now returns `{ hash, header }` — parsing what it already
+had in hand — rather than anything doing a second open+read per file, which
+at this library's scale would have been a whole extra pass over ~282K files
+to learn something already in memory.
+
+Built:
+
+- `src/main/irCatalog/wavHeader.ts` — `parseWavHeader(buf)`. Walks the
+  chunk list rather than assuming `fmt ` sits at byte 12: the spec doesn't
+  require it and real vendor packs carry LIST/INFO, JUNK or bext chunks
+  ahead of it, which a fixed-offset parser silently misreads. Handles
+  word-alignment padding, PCM/float/extensible tags, and a declared byte
+  rate of zero (falls back to computing it, so duration doesn't become
+  NaN). 12 unit tests.
+- `ir_item` gained `bit_depth`, `channels`, `duration_seconds`,
+  `audio_format` and `audio_search`, plus migrations for each — these are
+  MEASURED facts about bytes on disk, so unlike manufacturer/cabinet/
+  speaker/microphone they deliberately carry no `ir_item_field_source`
+  confidence row; there is nothing to be more or less sure about.
+- `importLibrary` writes them per item. This needed `insertItem` to gain
+  `RETURNING id`: on a re-scan the `ON CONFLICT` path keeps the row's
+  ORIGINAL id, so the freshly generated UUID being passed in is not the id
+  in the table, and any child row keyed on `item_id` written with it would
+  have been orphaned. Covered by a re-scan test.
+- Searchable: `item_search` gained an `audio` column, so "44.1k", "96000",
+  "24-bit" and "stereo" are typeable in the search box. FTS5 columns are
+  fixed at creation, so `runMigrations` drops a stale index outright and
+  `getDb()`'s existing `if (!itemSearchTableExists)` check rebuilds it on
+  the same open — nothing is lost, it holds no source data.
+- Filterable: `queryLibrary` gained `sampleRate`/`bitDepth`/`channels`
+  options, and the row's sample rate and bit depth are click-to-filter.
+  Channels/duration are plain text — nobody wants to narrow a library to
+  "everything 0.52 seconds long".
+- `src/shared/` (new, included by BOTH tsconfigs) holds the pure
+  formatters. The main process needs them at scan time to build the search
+  text and the renderer needs identical wording to display; duplicating a
+  "format a sample rate" helper across the process boundary is exactly how
+  the two drift — one showing "44.1k" while the other indexes "44100".
+
+**A bug caught by this feature's own test before it shipped:** the search
+text was first assembled in `finalizeIndexes`' SQL, where SQLite's integer
+division rendered 96000 as `"96.0k"`. FTS5 tokenizes that as `96` + `0k`,
+so searching "96k" matched nothing. Moving the rendering into TypeScript
+next to `formatSampleRate` removed the whole class of display/index
+mismatch.
+
+Existing catalogs pick all of this up on the next scan; rows imported
+before it exist simply have nulls until then.
+
 ## 12b. NAM Lab bugs found while bringing its player into IR mode
 
 Found and fixed while studying `PlayerPanel.tsx` to reuse it. Recorded here

@@ -27,6 +27,13 @@ export interface ItemRow {
    * string concat, for correct separators) to get an absolute path for reading the file's audio
    * bytes. Phase 4 (audition) is the first caller that needs this. */
   library_root_path: string
+  // Measured from each file's own WAV header at scan time (wavHeader.ts). Null for anything that
+  // wasn't a parseable WAV, and for rows imported before this existed and not yet re-scanned.
+  sample_rate: number | null
+  bit_depth: number | null
+  channels: number | null
+  duration_seconds: number | null
+  audio_format: string | null
 }
 
 export interface QueryOptions {
@@ -55,6 +62,12 @@ export interface QueryOptions {
   cabinet?: string
   speaker?: string
   microphone?: string
+  /** Technical-format filters, from the same badges the row shows. Exact matches against ir_item's
+   * WAV-header columns — no folder-inheritance fallback, unlike the descriptive facets above:
+   * these are measured per file, so there is no meaningful "inherited from the folder" value. */
+  sampleRate?: number
+  bitDepth?: number
+  channels?: number
   offset: number
   limit: number
 }
@@ -149,6 +162,17 @@ function buildWhereAndParams(
       params.push(value)
     }
   }
+  for (const [option, column] of [
+    ['sampleRate', 'sample_rate'],
+    ['bitDepth', 'bit_depth'],
+    ['channels', 'channels']
+  ] as const) {
+    const value = options[option]
+    if (value != null) {
+      clauses.push(`(SELECT ${column} FROM ir_item WHERE ir_item.item_id = item.id) = ?`)
+      params.push(value)
+    }
+  }
   return { where: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '', params }
 }
 
@@ -167,7 +191,12 @@ export function queryItems(db: DatabaseSync, options: QueryOptions): ItemRow[] {
               COALESCE(spk_src.source, spk_fme.source) as speaker_source,
               COALESCE(ir_item.microphone, mic_fme.value) as microphone,
               COALESCE(mic_src.source, mic_fme.source) as microphone_source,
-              library_root.path as library_root_path
+              library_root.path as library_root_path,
+              ir_item.sample_rate as sample_rate,
+              ir_item.bit_depth as bit_depth,
+              ir_item.channels as channels,
+              ir_item.duration_seconds as duration_seconds,
+              ir_item.audio_format as audio_format
        FROM item
        JOIN library_root ON library_root.id = item.library_root_id
        LEFT JOIN ir_item ON ir_item.item_id = item.id

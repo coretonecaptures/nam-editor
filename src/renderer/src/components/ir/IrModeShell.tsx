@@ -8,6 +8,7 @@ import { PlayerPanel } from '../PlayerPanel'
 import { loadNamFileForPlayback } from '../../utils/loadNamFile'
 import type { NamFile } from '../../types/nam'
 import guitarJackIcon from '../../assets/icons/guitar-jack.png'
+import { formatSampleRate } from '../../../../shared/wavFormat'
 
 /** The amp capture IRs are auditioned through, remembered across restarts. */
 const AMP_CAPTURE_KEY = 'nam-lab-ir-mode-live-capture-path'
@@ -27,6 +28,11 @@ type IrItemRow = {
   speaker_source: string | null
   microphone: string | null
   microphone_source: string | null
+  sample_rate: number | null
+  bit_depth: number | null
+  channels: number | null
+  duration_seconds: number | null
+  audio_format: string | null
   abs_path: string
 }
 
@@ -143,6 +149,19 @@ export function IrModeShell(): React.ReactElement {
   const [facets, setFacets] = useState<{ manufacturer?: string; cabinet?: string; speaker?: string; microphone?: string }>({})
   const toggleFacet = useCallback((field: 'manufacturer' | 'cabinet' | 'speaker' | 'microphone', value: string) => {
     setFacets((prev) => {
+      if (prev[field] === value) {
+        const next = { ...prev }
+        delete next[field]
+        return next
+      }
+      return { ...prev, [field]: value }
+    })
+  }, [])
+  // Technical-format facets, separate state from the descriptive ones above because they filter
+  // on numbers rather than strings (queryLibrary's sampleRate/bitDepth/channels options).
+  const [audioFacets, setAudioFacets] = useState<{ sampleRate?: number; bitDepth?: number }>({})
+  const toggleAudioFacet = useCallback((field: 'sampleRate' | 'bitDepth', value: number) => {
+    setAudioFacets((prev) => {
       if (prev[field] === value) {
         const next = { ...prev }
         delete next[field]
@@ -376,7 +395,7 @@ export function IrModeShell(): React.ReactElement {
     pendingRef.current = new Set()
     setFocusedIndex(null)
     forceRerender((n) => n + 1)
-  }, [search, roots.length, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, selectedRootId])
+  }, [search, roots.length, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, selectedRootId])
 
   // Arrow-key navigation through the current filtered list (plan section 8). While the player is
   // open this also swaps the cabinet as you move, which is the whole point — step down the list
@@ -476,6 +495,7 @@ export function IrModeShell(): React.ReactElement {
           minRating: ratedOnly ? 1 : undefined,
           tagId: tagFilterId ?? undefined,
           ...facets,
+          ...audioFacets,
           offset: pageStart,
           limit: pageEnd - pageStart
         })
@@ -489,7 +509,7 @@ export function IrModeShell(): React.ReactElement {
           pendingRef.current.delete(key)
         })
     },
-    [search, total, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, selectedRootId]
+    [search, total, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, selectedRootId]
   )
 
   // Fires once per search/folder/filter change to establish `total` even before the list scrolls
@@ -506,6 +526,7 @@ export function IrModeShell(): React.ReactElement {
         minRating: ratedOnly ? 1 : undefined,
         tagId: tagFilterId ?? undefined,
         ...facets,
+        ...audioFacets,
         offset: 0,
         limit: PAGE_SIZE
       })
@@ -515,7 +536,7 @@ export function IrModeShell(): React.ReactElement {
         res.rows.forEach((row, i) => cacheRef.current.set(i, row))
         forceRerender((n) => n + 1)
       })
-  }, [search, roots.length, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, selectedRootId])
+  }, [search, roots.length, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, selectedRootId])
 
   const toggleFavorite = useCallback((row: IrItemRow, index: number) => {
     const next = row.is_favorite ? 0 : 1
@@ -750,7 +771,7 @@ export function IrModeShell(): React.ReactElement {
           </button>
         </div>
       )}
-      {Object.keys(facets).length > 0 && (
+      {(Object.keys(facets).length > 0 || Object.keys(audioFacets).length > 0) && (
         <div className="flex items-center gap-2 px-4 py-1 text-xs bg-panel-2 border-b border-nm-border flex-shrink-0">
           <span className="text-nm-text-2">Filtered by:</span>
           {(Object.entries(facets) as Array<[keyof typeof facets, string]>).map(([field, value]) => (
@@ -761,7 +782,21 @@ export function IrModeShell(): React.ReactElement {
               </button>
             </span>
           ))}
-          <button onClick={() => setFacets({})} className="text-nm-accent hover:underline">
+          {(Object.entries(audioFacets) as Array<[keyof typeof audioFacets, number]>).map(([field, value]) => (
+            <span key={field} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-active-bg text-nm-accent">
+              {field === 'sampleRate' ? formatSampleRate(value) : `${value}-bit`}
+              <button onClick={() => toggleAudioFacet(field, value)} className="hover:text-red-500" title={`Clear ${field} filter`}>
+                ×
+              </button>
+            </span>
+          ))}
+          <button
+            onClick={() => {
+              setFacets({})
+              setAudioFacets({})
+            }}
+            className="text-nm-accent hover:underline"
+          >
             Clear all
           </button>
         </div>
@@ -813,6 +848,42 @@ export function IrModeShell(): React.ReactElement {
                 <div className="flex-1 min-w-0">
                   <div className="text-sm truncate">{name}</div>
                   {folder && <div className="text-xs text-nm-text-3 truncate">{folder}</div>}
+                  {/* Technical format, measured from the file's own WAV header at scan time.
+                      Sample rate and bit depth are click-to-filter like the descriptive badges
+                      above; channels/duration are plain text (nobody wants to filter a library
+                      down to "everything 0.52 seconds long"). */}
+                  {(row.sample_rate || row.channels || row.duration_seconds) && (
+                    <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-nm-text-3">
+                      {row.sample_rate ? (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            toggleAudioFacet('sampleRate', row.sample_rate!)
+                          }}
+                          title="Filter to this sample rate"
+                          className={`hover:text-nm-accent ${audioFacets.sampleRate === row.sample_rate ? 'text-nm-accent font-medium' : ''}`}
+                        >
+                          {formatSampleRate(row.sample_rate)}
+                        </button>
+                      ) : null}
+                      {row.bit_depth ? (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            toggleAudioFacet('bitDepth', row.bit_depth!)
+                          }}
+                          title="Filter to this bit depth"
+                          className={`hover:text-nm-accent ${audioFacets.bitDepth === row.bit_depth ? 'text-nm-accent font-medium' : ''}`}
+                        >
+                          {row.bit_depth}-bit
+                        </button>
+                      ) : null}
+                      {row.channels ? (
+                        <span>{row.channels === 1 ? 'mono' : row.channels === 2 ? 'stereo' : `${row.channels}ch`}</span>
+                      ) : null}
+                      {row.duration_seconds ? <span>{row.duration_seconds.toFixed(2)}s</span> : null}
+                    </div>
+                  )}
                   {(row.manufacturer || row.cabinet || row.speaker || row.microphone) && (
                     <div className="flex items-center gap-1 mt-0.5 overflow-hidden">
                       <FieldBadge

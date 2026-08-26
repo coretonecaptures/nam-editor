@@ -359,6 +359,9 @@ const api = {
     cabinet?: string
     speaker?: string
     microphone?: string
+    sampleRate?: number
+    bitDepth?: number
+    channels?: number
     offset: number
     limit: number
   }): Promise<{
@@ -377,6 +380,11 @@ const api = {
       speaker_source: string | null
       microphone: string | null
       microphone_source: string | null
+      sample_rate: number | null
+      bit_depth: number | null
+      channels: number | null
+      duration_seconds: number | null
+      audio_format: string | null
       abs_path: string
     }>
     total: number
