@@ -308,24 +308,7 @@ export function IrModeShell(): React.ReactElement {
 
   // The amp capture the IR is auditioned THROUGH. Picked once, remembered across restarts, and
   // loaded lazily — the player can't open without one, so the first play prompts for it.
-  const ensureAmpCapture = useCallback(async (): Promise<NamFile | null> => {
-    if (ampCapture) return ampCapture
-    let path: string | null = null
-    try {
-      path = localStorage.getItem(AMP_CAPTURE_KEY)
-    } catch {
-      // Non-fatal — falls through to the picker.
-    }
-    if (!path) {
-      const picked = await window.api.openFiles()
-      if (picked.length === 0) return null
-      path = picked[0]
-      try {
-        localStorage.setItem(AMP_CAPTURE_KEY, path)
-      } catch {
-        // Non-fatal — worst case the choice doesn't survive a restart.
-      }
-    }
+  const applyAmpCapturePath = useCallback(async (path: string, remember: boolean): Promise<void> => {
     const loaded = await loadNamFileForPlayback(path)
     if (!loaded) {
       // A remembered path can go stale (file moved/deleted). Forget it so the next attempt asks
@@ -335,25 +318,53 @@ export function IrModeShell(): React.ReactElement {
       } catch {
         // Non-fatal.
       }
+      setAmpCapture(null)
       setAmpCaptureError(`Could not read the amp capture: ${path}`)
-      return null
+      return
+    }
+    if (remember) {
+      try {
+        localStorage.setItem(AMP_CAPTURE_KEY, path)
+      } catch {
+        // Non-fatal — worst case the choice doesn't survive a restart.
+      }
     }
     setAmpCaptureError(null)
     setAmpCapture(loaded)
-    return loaded
-  }, [ampCapture])
+  }, [])
+
+  // Restore the remembered amp capture once, quietly, on mount — so a returning user never sees
+  // the "choose one" prompt again.
+  useEffect(() => {
+    let remembered: string | null = null
+    try {
+      remembered = localStorage.getItem(AMP_CAPTURE_KEY)
+    } catch {
+      // Non-fatal.
+    }
+    if (remembered) void applyAmpCapturePath(remembered, false)
+  }, [applyAmpCapturePath])
+
+  /** Explicit, user-initiated amp-capture picker. Only ever called from a button the user
+   * actually clicked — never as a side effect of pressing play. */
+  const chooseAmpCapture = useCallback(async () => {
+    const picked = await window.api.openFiles()
+    if (picked.length === 0) return
+    await applyAmpCapturePath(picked[0], true)
+  }, [applyAmpCapturePath])
 
   /** Opens the player on `row`. `jumpLive` mirrors NAM Lab's "Play Live" — straight to the
-   * full-screen rig instead of landing in Preview first. */
-  const openPlayer = useCallback(
-    async (row: IrItemRow, jumpLive: boolean) => {
-      const capture = await ensureAmpCapture()
-      if (!capture) return
-      setPlayerIr(row)
-      if (jumpLive) setLiveJumpRequest(Date.now())
-    },
-    [ensureAmpCapture]
-  )
+   * full-screen rig instead of landing in Preview first.
+   *
+   * Deliberately does NOT require an amp capture first. An earlier version awaited a picker here,
+   * so the very first press of play opened an OS file dialog instead of the player — reported as
+   * "why do the play and live play new buttons open a file picker and not the page". NAM Lab
+   * never does that (there, the row IS the capture), so the player opens immediately and asks for
+   * the amp capture inline, in the panel, where the request has visible context. */
+  const openPlayer = useCallback((row: IrItemRow, jumpLive: boolean) => {
+    setPlayerIr(row)
+    if (jumpLive) setLiveJumpRequest(Date.now())
+  }, [])
 
   // New search, folder filter, or a completed scan invalidates every cached index — the same
   // offset can now point at a different row. Deliberately does NOT close the player — it's tied
@@ -698,15 +709,7 @@ export function IrModeShell(): React.ReactElement {
         {hasAnyRoot && <span className="text-xs text-nm-text-3 flex-shrink-0">{total.toLocaleString()} IRs</span>}
         {hasAnyRoot && ampCapture && (
           <button
-            onClick={() => {
-              // Re-pick: forget the remembered capture so ensureAmpCapture prompts again.
-              try {
-                localStorage.removeItem(AMP_CAPTURE_KEY)
-              } catch {
-                // Non-fatal.
-              }
-              setAmpCapture(null)
-            }}
+            onClick={() => void chooseAmpCapture()}
             title={`Auditioning through ${ampCapture.filePath} — click to choose a different amp capture`}
             className="ml-auto px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov flex-shrink-0 max-w-[220px] truncate"
           >
@@ -864,7 +867,7 @@ export function IrModeShell(): React.ReactElement {
                   onClick={(e) => {
                     e.stopPropagation()
                     setFocusedIndex(index)
-                    void openPlayer(row, false)
+                    openPlayer(row, false)
                   }}
                   title="Play this IR through an amp capture"
                   className={`flex-shrink-0 self-center w-9 h-9 rounded-full flex items-center justify-center group-hover:opacity-100 transition-all duration-150 text-green-500 dark:text-green-400 hover:bg-green-500 hover:text-white dark:hover:bg-green-500 dark:hover:text-white hover:!bg-green-600 ${
@@ -879,7 +882,7 @@ export function IrModeShell(): React.ReactElement {
                   onClick={(e) => {
                     e.stopPropagation()
                     setFocusedIndex(index)
-                    void openPlayer(row, true)
+                    openPlayer(row, true)
                   }}
                   title="Play Live — open straight to the full-screen rig"
                   className="flex-shrink-0 self-center w-9 h-9 rounded-full flex items-center justify-center opacity-40 group-hover:opacity-100 text-pink-500 dark:text-pink-400 hover:bg-pink-500 hover:text-white dark:hover:bg-pink-500 dark:hover:text-white transition-all duration-150"
@@ -943,6 +946,27 @@ export function IrModeShell(): React.ReactElement {
                 liveJumpRequest={liveJumpRequest}
                 onLiveJumpHandled={() => setLiveJumpRequest(null)}
               />
+            ) : playerIr ? (
+              /* Player requested, but there's no amp capture to play the IR through yet. Ask for
+                 it HERE, in the panel, with the IR you clicked named right above the button —
+                 rather than firing an OS file dialog straight off the play button, which is what
+                 the first version did and gave no clue what was being asked for or why. */
+              <div className="h-full flex flex-col items-center justify-center gap-3 p-6 text-center">
+                <div className="text-sm text-nm-text">{playerIr.display_name.replace(/\.wav$/i, '')}</div>
+                <div className="text-xs text-nm-text-3 max-w-[260px]">
+                  Pick an amp capture to hear this IR through. Chosen once and remembered — every IR
+                  you play afterwards uses it.
+                </div>
+                <button
+                  onClick={() => void chooseAmpCapture()}
+                  className="px-3 py-1.5 text-xs rounded bg-nm-accent text-accent-fg hover:opacity-90"
+                >
+                  Choose amp capture…
+                </button>
+                <button onClick={() => setPlayerIr(null)} className="text-xs text-nm-text-3 hover:text-nm-text">
+                  Cancel
+                </button>
+              </div>
             ) : (
               <IrRightPanel
                 libraryRootId={activeRootId}
@@ -1000,8 +1024,8 @@ export function IrModeShell(): React.ReactElement {
               label: trayIds.has(contextMenu.row.id) ? 'Remove from Tray' : 'Add to Tray',
               onClick: () => toggleTray(contextMenu.row)
             },
-            { label: 'Play', onClick: () => void openPlayer(contextMenu.row, false) },
-            { label: 'Play Live', onClick: () => void openPlayer(contextMenu.row, true) },
+            { label: 'Play', onClick: () => openPlayer(contextMenu.row, false) },
+            { label: 'Play Live', onClick: () => openPlayer(contextMenu.row, true) },
             { label: 'Add to Group…', onClick: () => setAddToGroupRow(contextMenu.row) },
             { divider: true },
             // Placeholder for the rest of section 12's roadmap (collections beyond tray/groups,
