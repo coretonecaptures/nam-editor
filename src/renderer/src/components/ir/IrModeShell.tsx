@@ -39,7 +39,7 @@ type IrItemRow = {
 
 type LibraryRoot = { id: number; path: string; label: string | null; watch_mode: string; created_at: string }
 
-const ROW_HEIGHT = 64
+const ROW_HEIGHT = 72
 const PAGE_SIZE = 200
 
 /**
@@ -47,29 +47,29 @@ const PAGE_SIZE = 200
  * Only the two sources Phase 3's parsers actually produce are handled; ir_lab_native/
  * vendor_documentation/user_entered aren't written by any code yet (Phase 4/5/UI-editing).
  */
-function confidenceDotClass(source: string | null): string {
-  switch (source) {
-    case 'ir_lab_native':
-      return 'bg-blue-500'
-    case 'vendor_parser':
-      return 'bg-nm-accent'
-    case 'filename_inferred':
-      return 'bg-gray-400 dark:bg-gray-600'
-    default:
-      return 'bg-gray-300 dark:bg-gray-700'
-  }
-}
 
 /** Faceted filter chip (plan: "click-to-narrow-by-field UI"). Clicking a badge sets that field as
  * the ONLY active filter for it (clicking an active badge again clears it) — a plain toggle, not
  * a multi-select facet browser, matching the scope actually asked for. */
+/** Field type -> chip color, one of the `chip-ir-*` classes added to index.css alongside NAM
+ * Lab's own gear/tone chip colors — same `.nam-chip` system, so these pills follow the user's
+ * global soft/solid/minimal chip-style setting instead of hardcoding one look. */
+const FIELD_CHIP_CLASS: Record<string, string> = {
+  manufacturer: 'chip-ir-manufacturer',
+  cabinet: 'chip-ir-cabinet',
+  speaker: 'chip-ir-speaker',
+  microphone: 'chip-ir-mic'
+}
+
 function FieldBadge({
+  field,
   label,
   value,
   source,
   active,
   onClick
 }: {
+  field: keyof typeof FIELD_CHIP_CLASS
   label: string
   value: string | null
   source: string | null
@@ -77,6 +77,9 @@ function FieldBadge({
   onClick?: () => void
 }): React.ReactElement | null {
   if (!value) return null
+  // A filename guess is the lowest-confidence source, so its pill is dimmed rather than full
+  // strength — the color still says what KIND of fact this is, the opacity says how sure we are.
+  const isGuess = source === 'filename_inferred' || source == null
   return (
     <button
       onClick={(e) => {
@@ -84,11 +87,11 @@ function FieldBadge({
         onClick?.()
       }}
       title={`${label}: ${value} (${source === 'vendor_parser' ? 'vendor parser' : source === 'filename_inferred' ? 'filename guess' : source === 'ir_lab_native' ? 'IR Lab' : 'unknown source'}) — click to filter`}
-      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] ${
-        active ? 'bg-active-bg text-nm-accent ring-1 ring-nm-accent' : 'bg-panel-2 text-nm-text-2 hover:bg-hov'
+      className={`nam-chip ${FIELD_CHIP_CLASS[field]} flex-shrink-0 ${isGuess ? 'opacity-60' : ''} ${
+        active ? 'ring-1 ring-nm-accent' : ''
       }`}
     >
-      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${confidenceDotClass(source)}`} />
+      <span className="nam-dot" />
       {value}
     </button>
   )
@@ -878,15 +881,17 @@ export function IrModeShell(): React.ReactElement {
                 }}
                 className={`group h-full flex items-center gap-3 px-4 border-b border-nm-border-s hover:bg-hov ${isFocused ? 'bg-active-bg' : ''}`}
               >
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm truncate">{name}</div>
-                  {folder && <div className="text-xs text-nm-text-3 truncate">{folder}</div>}
-                  {/* Technical format, measured from the file's own WAV header at scan time.
-                      Sample rate and bit depth are click-to-filter like the descriptive badges
-                      above; channels/duration are plain text (nobody wants to filter a library
-                      down to "everything 0.52 seconds long"). */}
-                  {(row.sample_rate || row.channels || row.duration_seconds) && (
-                    <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-nm-text-3">
+                <div className="flex-1 min-w-0 flex flex-col justify-center gap-1 py-1.5">
+                  <div className="text-sm truncate leading-tight">{name}</div>
+                  {folder && <div className="text-[11px] text-nm-text-3 truncate leading-tight">{folder}</div>}
+                  {/* Audio-format pills and gear pills share ONE non-wrapping row rather than each
+                      stacking on its own line — the row is wide enough, and a fixed-height virtual
+                      list row can't grow to fit a third or fourth wrapped line without pills
+                      overlapping the row below it (the bug reported from the previous build).
+                      Anything past the available width is clipped by overflow-hidden rather than
+                      wrapping down into the next row. */}
+                  {(row.sample_rate || row.channels || row.duration_seconds || row.manufacturer || row.cabinet || row.speaker || row.microphone) && (
+                    <div className="flex items-center gap-1 overflow-hidden">
                       {row.sample_rate ? (
                         <button
                           onClick={(e) => {
@@ -894,8 +899,9 @@ export function IrModeShell(): React.ReactElement {
                             toggleAudioFacet('sampleRate', row.sample_rate!)
                           }}
                           title="Filter to this sample rate"
-                          className={`hover:text-nm-accent ${audioFacets.sampleRate === row.sample_rate ? 'text-nm-accent font-medium' : ''}`}
+                          className={`nam-chip chip-ir-rate flex-shrink-0 ${audioFacets.sampleRate === row.sample_rate ? 'ring-1 ring-nm-accent' : ''}`}
                         >
+                          <span className="nam-dot" />
                           {formatSampleRate(row.sample_rate)}
                         </button>
                       ) : null}
@@ -906,20 +912,26 @@ export function IrModeShell(): React.ReactElement {
                             toggleAudioFacet('bitDepth', row.bit_depth!)
                           }}
                           title="Filter to this bit depth"
-                          className={`hover:text-nm-accent ${audioFacets.bitDepth === row.bit_depth ? 'text-nm-accent font-medium' : ''}`}
+                          className={`nam-chip chip-ir-depth flex-shrink-0 ${audioFacets.bitDepth === row.bit_depth ? 'ring-1 ring-nm-accent' : ''}`}
                         >
+                          <span className="nam-dot" />
                           {row.bit_depth}-bit
                         </button>
                       ) : null}
                       {row.channels ? (
-                        <span>{row.channels === 1 ? 'mono' : row.channels === 2 ? 'stereo' : `${row.channels}ch`}</span>
+                        <span className="nam-chip chip-ir-channels flex-shrink-0">
+                          <span className="nam-dot" />
+                          {row.channels === 1 ? 'mono' : row.channels === 2 ? 'stereo' : `${row.channels}ch`}
+                        </span>
                       ) : null}
-                      {row.duration_seconds ? <span>{row.duration_seconds.toFixed(2)}s</span> : null}
-                    </div>
-                  )}
-                  {(row.manufacturer || row.cabinet || row.speaker || row.microphone) && (
-                    <div className="flex items-center gap-1 mt-0.5 overflow-hidden">
+                      {row.duration_seconds ? (
+                        <span className="nam-chip chip-ir-length flex-shrink-0">
+                          <span className="nam-dot" />
+                          {row.duration_seconds.toFixed(2)}s
+                        </span>
+                      ) : null}
                       <FieldBadge
+                        field="manufacturer"
                         label="Manufacturer"
                         value={row.manufacturer}
                         source={row.manufacturer_source}
@@ -927,6 +939,7 @@ export function IrModeShell(): React.ReactElement {
                         onClick={() => row.manufacturer && toggleFacet('manufacturer', row.manufacturer)}
                       />
                       <FieldBadge
+                        field="cabinet"
                         label="Cabinet"
                         value={row.cabinet}
                         source={row.cabinet_source}
@@ -934,6 +947,7 @@ export function IrModeShell(): React.ReactElement {
                         onClick={() => row.cabinet && toggleFacet('cabinet', row.cabinet)}
                       />
                       <FieldBadge
+                        field="speaker"
                         label="Speaker"
                         value={row.speaker}
                         source={row.speaker_source}
@@ -941,6 +955,7 @@ export function IrModeShell(): React.ReactElement {
                         onClick={() => row.speaker && toggleFacet('speaker', row.speaker)}
                       />
                       <FieldBadge
+                        field="microphone"
                         label="Microphone"
                         value={row.microphone}
                         source={row.microphone_source}

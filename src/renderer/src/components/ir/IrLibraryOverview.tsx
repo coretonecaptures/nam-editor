@@ -61,7 +61,8 @@ export function IrLibraryOverview({
   onFacet,
   onAudioFacet,
   activeFacets,
-  activeAudioFacets
+  activeAudioFacets,
+  refreshKey
 }: {
   libraryRootId: number | null
   folderId?: number | null
@@ -70,6 +71,11 @@ export function IrLibraryOverview({
   onAudioFacet?: (field: 'sampleRate' | 'bitDepth', value: number) => void
   activeFacets?: { manufacturer?: string; cabinet?: string; speaker?: string; microphone?: string }
   activeAudioFacets?: { sampleRate?: number; bitDepth?: number }
+  /** Bumped by the shell when a scan finishes. Without it the report fetches once on mount and
+   * never again — so an overview that happened to be open while a library was still importing
+   * kept showing the empty result it got at the time, which reads as "the report is broken"
+   * rather than "the data wasn't there yet". Reported exactly that way. */
+  refreshKey?: number
 }): React.ReactElement {
   const [overview, setOverview] = useState<Overview | null>(null)
 
@@ -85,7 +91,7 @@ export function IrLibraryOverview({
     return () => {
       cancelled = true
     }
-  }, [libraryRootId, folderId])
+  }, [libraryRootId, folderId, refreshKey])
 
   if (libraryRootId == null || !overview) {
     return <div className="p-3 text-xs text-nm-text-3">Add a library folder to see an overview.</div>
@@ -96,6 +102,15 @@ export function IrLibraryOverview({
   // label ("44.1k"), but the query filters on the raw number.
   const rateFromLabel = (label: string): number => Math.round(parseFloat(label) * 1000)
   const depthFromLabel = (label: string): number => parseInt(label, 10)
+
+  const descriptive = (
+    [
+      { title: 'Top manufacturers', field: 'manufacturer', entries: overview.manufacturerBreakdown },
+      { title: 'Top cabinets', field: 'cabinet', entries: overview.cabinetBreakdown },
+      { title: 'Top speakers', field: 'speaker', entries: overview.speakerBreakdown },
+      { title: 'Top microphones', field: 'microphone', entries: overview.microphoneBreakdown }
+    ] as const
+  ).filter((d) => d.entries.length > 0)
 
   return (
     <div className="h-full overflow-y-auto p-3 flex flex-col gap-3">
@@ -143,35 +158,32 @@ export function IrLibraryOverview({
         </div>
       )}
 
-      <D1BarList
-        title="Top manufacturers"
-        rows={toRows(overview.manufacturerBreakdown, RANK_COLORS)}
-        activeKey={activeFacets?.manufacturer ?? null}
-        onRowClick={onFacet ? (key) => onFacet('manufacturer', key) : undefined}
-      />
-      <D1BarList
-        title="Top cabinets"
-        rows={toRows(overview.cabinetBreakdown, RANK_COLORS)}
-        activeKey={activeFacets?.cabinet ?? null}
-        onRowClick={onFacet ? (key) => onFacet('cabinet', key) : undefined}
-      />
-      <D1BarList
-        title="Top speakers"
-        rows={toRows(overview.speakerBreakdown, RANK_COLORS)}
-        activeKey={activeFacets?.speaker ?? null}
-        onRowClick={onFacet ? (key) => onFacet('speaker', key) : undefined}
-      />
-      <D1BarList
-        title="Top microphones"
-        rows={toRows(overview.microphoneBreakdown, RANK_COLORS)}
-        activeKey={activeFacets?.microphone ?? null}
-        onRowClick={onFacet ? (key) => onFacet('microphone', key) : undefined}
-      />
+      {/* Only rendered when there's something to draw. An empty D1BarList still paints a titled
+          card saying "No data", so showing all four unconditionally filled the report with grey
+          placeholder cards and no colour whenever a library hadn't been parsed yet — which is
+          exactly what "the overview has zero colors or charts" looked like. Note `cabinet` is
+          routinely empty by design: vocabulary.ts has mic/speaker/brand term lists but no cabinet
+          list, so nothing ever infers a cabinet model from a filename. */}
+      {descriptive.map(({ title, field, entries }) => (
+        <D1BarList
+          key={field}
+          title={title}
+          rows={toRows(entries, RANK_COLORS)}
+          activeKey={activeFacets?.[field] ?? null}
+          onRowClick={onFacet ? (key) => onFacet(field, key) : undefined}
+        />
+      ))}
 
-      {overview.manufacturerBreakdown.length === 0 && overview.microphoneBreakdown.length === 0 && (
-        <p className="text-[11px] text-gray-400 dark:text-gray-600 italic">
-          Nothing in this scope has been recognised by a vendor parser or hand-entered yet.
-        </p>
+      {descriptive.length === 0 && (
+        <div className={`${CARD} flex flex-col gap-1`}>
+          <span className={EYEBROW}>Gear</span>
+          <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">
+            No manufacturer, speaker or microphone recognised in this scope yet. Those are read
+            from filenames and folder names during a scan — run{' '}
+            <span className="font-medium">File &rarr; Rescan Library</span> if this library was
+            added before that ran.
+          </p>
+        </div>
       )}
     </div>
   )

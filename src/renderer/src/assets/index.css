@@ -273,6 +273,19 @@ pre, code,
 /* Creator chip color */
 .nam-chip.chip-creator    { --c: #3b82f6; }
 
+/* IR chip colors (IR mode's browse rows + overview).
+   Deliberately reuse the .nam-chip system above rather than a parallel badge: that gives IR chips
+   the same geometry AND makes them follow the user's global soft/solid/minimal chip setting, so
+   both halves of the app restyle together instead of drifting apart. */
+.nam-chip.chip-ir-manufacturer { --c: #6366f1; }
+.nam-chip.chip-ir-cabinet      { --c: #3b82f6; }
+.nam-chip.chip-ir-speaker      { --c: #a855f7; }
+.nam-chip.chip-ir-mic          { --c: #ec4899; }
+.nam-chip.chip-ir-rate         { --c: #14b8a6; }
+.nam-chip.chip-ir-depth        { --c: #22c55e; }
+.nam-chip.chip-ir-channels     { --c: #64748b; }
+.nam-chip.chip-ir-length       { --c: #94a3b8; }
+
 /* Tone chip colors */
 .nam-chip.chip-clean      { --c: #0ea5e9; }
 .nam-chip.chip-crunch     { --c: #f59e0b; }
