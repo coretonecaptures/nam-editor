@@ -1647,6 +1647,68 @@ irCatalog 112 tests (5 new this pass: cabinet/speaker project-fallback in
 queryLibrary, three MicADistance bext cases, extended labProjectEnrichment
 fixtures/assertions), renderer 357, build clean.
 
+## 12g. Removing a folder/root from the catalog, and how deleted files are detected
+
+User asked directly: "how do we manage changes to folders, or remove from
+library. right click a folder and remove it and its children, with a
+confirm dialog. what if I delete the folder [on disk] — how would we know,
+without constantly scanning? how do other apps handle this at large scale?"
+
+**Answer to the second question first, since it shapes the first**: no
+live filesystem watcher exists for IR mode (`library_root.watch_mode` has
+had a `'watched'` option in the CHECK constraint since Phase 1, but nothing
+has ever implemented it — every root is inserted as `'manual'`). Detection
+is scan-time only: `importLibrary.ts`'s existing `missing_since` mechanism
+marks any item not re-found during a scan (never deletes the row), and
+clears it if the file reappears later. This is deliberate, not a gap to
+rush — constantly watching tens/hundreds of thousands of files across
+network drives and external volumes is exactly the "waveform-thumbnail
+cold-start problem" class of issue flagged as an open question in the
+shared catalog schema doc, and it's how large-library apps in this space
+actually behave: Lightroom doesn't live-watch a catalog's source folders
+either — it scans on demand/at launch and shows missing files with a
+"can't find" badge for the user to relink or remove in bulk, rather than
+trying to react to every filesystem change in real time. **File → Rescan
+Library already gives this app the same capability**; a live watcher would
+only be worth adding later if the manual-rescan cadence turns out to be
+actually annoying in practice.
+
+**Folder/root removal** (`removeFromCatalog.ts`, new): right-clicking any
+folder in the tree (a plain subfolder or a whole added library root) now
+offers a destructive context-menu item, gated behind a confirm dialog that
+fetches and shows a real item/folder count first — never a blind "are you
+sure?". Two entry points because the two things being removed are
+different in blast radius:
+
+- **A subfolder** (`removeFolderFromCatalog`): deletes just that folder's
+  full subtree — items, folders, and any `ir_project` collection anchored
+  inside it — scoped via the same `resolveFolderScopeIds` every other
+  folder-scoped query in this app already uses. Siblings and the rest of
+  the `library_root` are untouched.
+- **A whole root** (`removeLibraryRoot`): everything under that added
+  library folder, then the `library_root` row itself. Re-running "Add
+  Library Folder…" on the same path re-adds it from scratch.
+
+**Never touches a real file.** Both functions only ever `DELETE` rows in
+`catalog.db` — "remove" means "stop tracking this," matching the
+disposable-index principle the whole schema is built on (delete
+`catalog.db` entirely and a rescan rebuilds it).
+
+**Why this needed care, not just two `DELETE` statements**: `PRAGMA
+foreign_keys = ON` is set (schema.ts), but `folder.library_root_id` and
+`item.folder_id`/`item.library_root_id` are deliberately NOT `ON DELETE
+CASCADE` — a stray `DELETE FROM library_root` should never silently
+cascade away a whole library by accident. So removal here is an explicit,
+ordered delete (`collection` first, since collection_item/checklist_item/
+delivery_target/asset_file all cascade from IT; then `item`, which
+cascades ir_item/ir_item_field_source/item_tag/ir_derivative_variant and
+fires the existing `item_search_ad` trigger so the FTS index stays live
+in sync with no `finalizeIndexes()` call needed; then `folder` last).
+5 new tests confirm the ordering doesn't orphan rows or leak across
+sibling folders/roots.
+
+irCatalog 117 tests (+5 this pass), renderer 357, build clean.
+
 ## 13. Open, non-blocking decisions
 
 - Exact IR Lab license enforcement point/timing — the user has already noted this can land before final release, independent of this plan.

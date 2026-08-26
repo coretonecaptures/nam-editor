@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
+import { ContextMenu } from '../ContextMenu'
 
 type FolderRow = {
   id: number
@@ -15,6 +16,13 @@ interface TreeNode {
   name: string
   parentId: number | null
   directCount: number
+  /** Which added library folder this node belongs to — needed so the context menu can offer
+   * "Remove from Library" (the whole root) only on the node that IS that root. */
+  libraryRootId: number
+  /** True for the folder row that IS a library_root's own top-level folder (relative_path === ''
+   * per importLibrary.ts) — right-clicking this one removes the WHOLE added library folder, not
+   * just a subtree of it. */
+  isRootNode: boolean
   /** Rolled up bottom-up during buildTree — every item under this folder, recursively. Mirrors
    * NAM Lab's own FolderTree.tsx "totalCount" convention (that component computes the same kind
    * of subtree rollup for its own badge). */
@@ -57,6 +65,8 @@ function buildTree(rows: FolderRow[]): { roots: TreeNode[]; allIds: number[] } {
         name,
         parentId: row.parent_id,
         directCount: row.direct_item_count,
+        libraryRootId: row.library_root_id,
+        isRootNode: row.relative_path === '',
         totalCount: 0,
         isLabProject: !!row.is_lab_project,
         children: []
@@ -116,6 +126,8 @@ function buildTree(rows: FolderRow[]): { roots: TreeNode[]; allIds: number[] } {
     name: 'Library',
     parentId: null,
     directCount: 0,
+    libraryRootId: -1,
+    isRootNode: false,
     totalCount: perRootNodes.reduce((sum, n) => sum + n.totalCount, 0),
     isLabProject: false,
     isVirtual: true,
@@ -175,7 +187,8 @@ function TreeRow({
   expandedIds,
   visibleIds,
   onSelect,
-  onToggleExpand
+  onToggleExpand,
+  onContextMenu
 }: {
   node: TreeNode
   depth: number
@@ -184,6 +197,7 @@ function TreeRow({
   visibleIds: Set<number> | null
   onSelect: (id: number, name: string) => void
   onToggleExpand: (id: number) => void
+  onContextMenu: (node: TreeNode, x: number, y: number) => void
 }): React.ReactElement | null {
   if (visibleIds && !visibleIds.has(node.id)) return null
   const hasChildren = node.children.length > 0
@@ -195,6 +209,11 @@ function TreeRow({
     <div>
       <div
         onClick={() => (node.isVirtual ? onToggleExpand(node.id) : onSelect(node.id, node.name))}
+        onContextMenu={(e) => {
+          if (node.isVirtual) return
+          e.preventDefault()
+          onContextMenu(node, e.clientX, e.clientY)
+        }}
         style={{ paddingLeft: `${depth * 14 + 6}px` }}
         className={`flex items-center gap-1.5 py-0.5 pr-2 text-xs cursor-pointer rounded ${
           isSelected ? 'bg-active-bg text-nm-accent' : 'hover:bg-hov text-nm-text'
@@ -234,6 +253,7 @@ function TreeRow({
               visibleIds={visibleIds}
               onSelect={onSelect}
               onToggleExpand={onToggleExpand}
+              onContextMenu={onContextMenu}
             />
           ))}
         </div>
@@ -261,17 +281,24 @@ function TreeRow({
 export function IrFolderTree({
   libraryRootCount,
   selectedFolderId,
-  onSelectFolder
+  onSelectFolder,
+  onLibraryChanged
 }: {
   libraryRootCount: number
   selectedFolderId: number | null
   onSelectFolder: (folderId: number, name: string) => void
+  /** Called after a folder or whole root is actually removed, so the shell can clear the selected
+   * folder if it was the one removed, refresh the root list, and refetch the browse list/Overview. */
+  onLibraryChanged: () => void
 }): React.ReactElement {
   const [rows, setRows] = useState<FolderRow[]>([])
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set())
   const [treeSearch, setTreeSearch] = useState('')
+  const [contextMenu, setContextMenu] = useState<{ node: TreeNode; x: number; y: number } | null>(null)
+  const [removeTarget, setRemoveTarget] = useState<{ node: TreeNode; itemCount: number; folderCount: number } | null>(null)
+  const [removing, setRemoving] = useState(false)
 
-  useEffect(() => {
+  const refreshRows = useCallback(() => {
     if (libraryRootCount === 0) {
       setRows([])
       return
@@ -283,6 +310,11 @@ export function IrFolderTree({
       const { roots: topLevel } = buildTree(r)
       setExpandedIds(new Set(topLevel.map((node) => node.id)))
     })
+  }, [libraryRootCount])
+
+  useEffect(() => {
+    refreshRows()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [libraryRootCount])
 
   const { roots, allIds } = useMemo(() => buildTree(rows), [rows])
@@ -299,6 +331,29 @@ export function IrFolderTree({
 
   const expandAll = useCallback(() => setExpandedIds(new Set(allIds)), [allIds])
   const collapseAll = useCallback(() => setExpandedIds(new Set()), [])
+
+  const openRemoveConfirm = useCallback((node: TreeNode) => {
+    setContextMenu(null)
+    const preview = node.isRootNode
+      ? window.api.irLibraryPreviewLibraryRootRemoval(node.libraryRootId)
+      : window.api.irLibraryPreviewFolderRemoval(node.id)
+    preview.then((p) => setRemoveTarget({ node, itemCount: p.itemCount, folderCount: p.folderCount }))
+  }, [])
+
+  const confirmRemove = useCallback(async () => {
+    if (!removeTarget) return
+    setRemoving(true)
+    const { node } = removeTarget
+    if (node.isRootNode) {
+      await window.api.irLibraryRemoveLibraryRoot(node.libraryRootId)
+    } else {
+      await window.api.irLibraryRemoveFolderFromCatalog(node.id)
+    }
+    setRemoving(false)
+    setRemoveTarget(null)
+    refreshRows()
+    onLibraryChanged()
+  }, [removeTarget, refreshRows, onLibraryChanged])
 
   if (libraryRootCount === 0) {
     return <div className="p-3 text-xs text-nm-text-3">Add a library folder to see its structure.</div>
@@ -348,9 +403,76 @@ export function IrFolderTree({
             visibleIds={visibleIds}
             onSelect={onSelectFolder}
             onToggleExpand={toggleExpand}
+            onContextMenu={(n, x, y) => setContextMenu({ node: n, x, y })}
           />
         ))}
       </div>
+
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={() => setContextMenu(null)}
+          items={[
+            {
+              label: contextMenu.node.isRootNode ? `Remove "${contextMenu.node.name}" from Library…` : `Remove "${contextMenu.node.name}" from Catalog…`,
+              destructive: true,
+              onClick: () => openRemoveConfirm(contextMenu.node)
+            }
+          ]}
+        />
+      )}
+
+      {removeTarget && (
+        <div
+          className="fixed inset-0 z-[9990] bg-black/60 flex items-center justify-center"
+          onClick={() => !removing && setRemoveTarget(null)}
+        >
+          <div
+            className="bg-panel border border-nm-border rounded-xl p-5 w-[380px] flex flex-col gap-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-sm font-semibold text-nm-text">
+              {removeTarget.node.isRootNode ? 'Remove library folder?' : 'Remove folder from catalog?'}
+            </div>
+            <div className="text-xs text-nm-text-2 leading-relaxed">
+              {removeTarget.node.isRootNode ? (
+                <>
+                  This stops tracking <span className="font-medium text-nm-text">"{removeTarget.node.name}"</span> entirely —{' '}
+                  {removeTarget.itemCount.toLocaleString()} IR{removeTarget.itemCount === 1 ? '' : 's'} across{' '}
+                  {removeTarget.folderCount.toLocaleString()} folder{removeTarget.folderCount === 1 ? '' : 's'} will be removed from
+                  the catalog. Re-add it any time with "Add Library Folder…".
+                </>
+              ) : (
+                <>
+                  This removes <span className="font-medium text-nm-text">"{removeTarget.node.name}"</span> and everything under
+                  it — {removeTarget.itemCount.toLocaleString()} IR{removeTarget.itemCount === 1 ? '' : 's'} across{' '}
+                  {removeTarget.folderCount.toLocaleString()} folder{removeTarget.folderCount === 1 ? '' : 's'} — from the catalog.
+                </>
+              )}
+              <br />
+              <span className="font-medium">Files on disk are never touched.</span> This only affects the catalog index; run a
+              rescan on the parent folder to bring it back.
+            </div>
+            <div className="flex items-center justify-end gap-2 mt-1">
+              <button
+                onClick={() => setRemoveTarget(null)}
+                disabled={removing}
+                className="px-3 py-1.5 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void confirmRemove()}
+                disabled={removing}
+                className="px-3 py-1.5 text-xs rounded bg-red-600 hover:bg-red-700 text-white disabled:opacity-50"
+              >
+                {removing ? 'Removing…' : 'Remove'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -570,6 +570,10 @@ declare global {
           variants: Array<{ id: string; name: string; isCurrent: boolean; isArchived: boolean; createdAt: string | null }>
         }>
       } | null>
+      irLibraryPreviewFolderRemoval: (folderId: number) => Promise<{ itemCount: number; folderCount: number }>
+      irLibraryRemoveFolderFromCatalog: (folderId: number) => Promise<{ itemsRemoved: number; foldersRemoved: number }>
+      irLibraryPreviewLibraryRootRemoval: (libraryRootId: number) => Promise<{ itemCount: number; folderCount: number }>
+      irLibraryRemoveLibraryRoot: (libraryRootId: number) => Promise<{ itemsRemoved: number; foldersRemoved: number }>
       irLibraryGetLibraryOverview: (libraryRootId: number, folderId?: number | null) => Promise<{
         totalItems: number
         totalFolders: number

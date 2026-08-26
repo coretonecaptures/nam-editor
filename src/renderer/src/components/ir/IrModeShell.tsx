@@ -504,6 +504,19 @@ export function IrModeShell(): React.ReactElement {
     }
   }, [roots, refreshRoots])
 
+  // Fired by IrFolderTree after a folder or whole root is actually removed from the catalog
+  // (removeFromCatalog.ts). The removed folder may have been the one currently selected/scoped —
+  // clearing it here rather than leaving a stale folderId pointed at a row that no longer exists.
+  const handleLibraryChanged = useCallback(() => {
+    setSelectedFolderId(null)
+    setSelectedFolderName(null)
+    void refreshRoots()
+    requestEpochRef.current++
+    cacheRef.current = new Map()
+    pendingRef.current = new Set()
+    forceRerender((n) => n + 1)
+  }, [refreshRoots])
+
   const onVisibleRangeChange = useCallback(
     (start: number, end: number) => {
       const missingStart = start
@@ -772,6 +785,7 @@ export function IrModeShell(): React.ReactElement {
               libraryRootCount={roots.length}
               selectedFolderId={selectedFolderId}
               onSelectFolder={handleSelectFolder}
+              onLibraryChanged={handleLibraryChanged}
             />
           </div>
           <div

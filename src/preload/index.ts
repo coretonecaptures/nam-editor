@@ -483,6 +483,14 @@ const api = {
       variants: Array<{ id: string; name: string; isCurrent: boolean; isArchived: boolean; createdAt: string | null }>
     }>
   } | null> => ipcRenderer.invoke('irLibrary:getProjectDetailForFolder', folderId),
+  irLibraryPreviewFolderRemoval: (folderId: number): Promise<{ itemCount: number; folderCount: number }> =>
+    ipcRenderer.invoke('irLibrary:previewFolderRemoval', folderId),
+  irLibraryRemoveFolderFromCatalog: (folderId: number): Promise<{ itemsRemoved: number; foldersRemoved: number }> =>
+    ipcRenderer.invoke('irLibrary:removeFolderFromCatalog', folderId),
+  irLibraryPreviewLibraryRootRemoval: (libraryRootId: number): Promise<{ itemCount: number; folderCount: number }> =>
+    ipcRenderer.invoke('irLibrary:previewLibraryRootRemoval', libraryRootId),
+  irLibraryRemoveLibraryRoot: (libraryRootId: number): Promise<{ itemsRemoved: number; foldersRemoved: number }> =>
+    ipcRenderer.invoke('irLibrary:removeLibraryRoot', libraryRootId),
   irLibraryGetFolderDetail: (folderId: number): Promise<{
     id: number
     relativePath: string

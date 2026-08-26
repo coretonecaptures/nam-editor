@@ -32,6 +32,12 @@ import { sendToIrLab, irLabConnectorAvailable } from './irLabConnector'
 import { getLibraryOverview } from './irCatalog/libraryOverview'
 import { enrichLabProjects, getProjectDetailForFolder } from './irCatalog/labProjectEnrichment'
 import {
+  previewFolderRemoval,
+  removeFolderFromCatalog,
+  previewLibraryRootRemoval,
+  removeLibraryRoot
+} from './irCatalog/removeFromCatalog'
+import {
   listTags,
   getOrCreateTag,
   renameTag,
@@ -217,6 +223,23 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
 
   ipcMain.handle('irLibrary:getProjectDetailForFolder', (_event, folderId: number) => {
     return getProjectDetailForFolder(getDb(), folderId)
+  })
+
+  // Folder/root removal — "remove a folder and its children from the catalog, with a confirm
+  // dialog" (removeFromCatalog.ts's own header comment has the full reasoning). Preview handlers
+  // exist so the renderer's confirm dialog can show a real item count before the user commits,
+  // rather than a generic "are you sure?" with no idea of the blast radius.
+  ipcMain.handle('irLibrary:previewFolderRemoval', (_event, folderId: number) => {
+    return previewFolderRemoval(getDb(), folderId)
+  })
+  ipcMain.handle('irLibrary:removeFolderFromCatalog', (_event, folderId: number) => {
+    return removeFolderFromCatalog(getDb(), folderId)
+  })
+  ipcMain.handle('irLibrary:previewLibraryRootRemoval', (_event, libraryRootId: number) => {
+    return previewLibraryRootRemoval(getDb(), libraryRootId)
+  })
+  ipcMain.handle('irLibrary:removeLibraryRoot', (_event, libraryRootId: number) => {
+    return removeLibraryRoot(getDb(), libraryRootId)
   })
 
   ipcMain.handle(
