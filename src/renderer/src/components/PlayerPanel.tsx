@@ -1318,6 +1318,23 @@ export function PlayerPanel({
     wasLiveVisible.current = liveVisible
   }, [poppedOut, mode, autoStartLiveOnPopout, liveRunning, liveStarting, startLive])
 
+  // Escape leaves the full-screen rig. The Collapse button's own tooltip has always advertised
+  // "(Esc)", but nothing ever listened for it — so on Windows, where that button also sat
+  // underneath the native titleBarOverlay controls (see the popped-out title bar's padding), the
+  // advertised way out and the visible way out were BOTH unavailable and the rig was a dead end.
+  // Ignored while a text input has focus so it can't swallow a field's own Escape-to-cancel.
+  useEffect(() => {
+    if (!poppedOut) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return
+      const active = document.activeElement
+      if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) return
+      setPoppedOut(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [poppedOut])
+
   // Swap cabinet slot A on the running engine rather than restarting it — restarting would drop
   // the mic and reload the model, so you could never hear two cabs back to back. setIrSlot (not
   // the back-compat setIr) so slot B/blend survive a slot-A change untouched.
@@ -2622,13 +2639,13 @@ export function PlayerPanel({
                 : `No cabinet chosen yet \u2014 search the ${irCount.toLocaleString()} IRs in your library, or star the ones you use.`}
             </p>
           )}
-          {/* Second cabinet slot \u2014 Live mode only (LiveEngine.setIrSlot/setBlend); the offline
+          {/* Second cabinet slot — Live mode only (LiveEngine.setIrSlot/setBlend); the offline
               Preview render still only ever uses slot A/irPath, unchanged. Session-only, not part
               of the saved rig (see irBPath's own declaration comment). */}
           {liveMode && (
             <div className="mt-2.5 pt-2.5 border-t border-gray-200 dark:border-[var(--border-soft)]">
               <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500">Second cabinet (blend) \u2014 Live only</span>
+                <span className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500">Second cabinet (blend) — Live only</span>
                 {irBPath && (
                   <button
                     onClick={() => setIrBPath(null)}
@@ -2643,7 +2660,7 @@ export function PlayerPanel({
                 value={irBPath}
                 disabled={busy}
                 favoritesKind="cab"
-                placeholder="Choose a second cabinet to blend\u2026"
+                placeholder="Choose a second cabinet to blend…"
                 onChange={(ref) => setIrBPath(ref.path)}
               />
               {irBPath && (
@@ -3813,9 +3830,16 @@ export function PlayerPanel({
             className="flex items-center gap-3 flex-shrink-0"
             style={{
               height: 40,
-              // Clears the macOS window buttons, exactly as Toolbar.tsx does.
+              // Clears the native window buttons on BOTH platforms, exactly as Toolbar.tsx does
+              // (which reserves 155px on the right for Windows). macOS puts its traffic lights on
+              // the left; Windows' titleBarOverlay puts minimize/maximize/close on the RIGHT and
+              // draws them ABOVE the web content, so a right-aligned control with only 16px of
+              // padding sits underneath them and cannot be clicked at all. That is exactly what
+              // happened to this view's "Collapse" button — reported as "from the full screen live
+              // player i dont know how to get back to the main app", because on Windows there was
+              // genuinely no reachable way out.
               paddingLeft: window.api.platform === 'darwin' ? 88 : 16,
-              paddingRight: 16,
+              paddingRight: window.api.platform === 'darwin' ? 16 : 155,
               borderBottom: '1px solid var(--border-soft)'
             }}
           >
