@@ -44,7 +44,7 @@ interface TreeNode {
  * its own subtree, wrapped in a single synthetic "Library" top node once there's more than one
  * root to distinguish. A lone root skips the wrapper entirely — nothing to disambiguate yet, and
  * it keeps the single-root case visually identical to before this existed. */
-function buildTree(rows: FolderRow[]): { roots: TreeNode[]; allIds: number[] } {
+export function buildTree(rows: FolderRow[]): { roots: TreeNode[]; allIds: number[] } {
   const byRoot = new Map<number, { label: string; rows: FolderRow[] }>()
   for (const row of rows) {
     const group = byRoot.get(row.library_root_id) ?? { label: row.library_root_label, rows: [] }
@@ -133,6 +133,12 @@ function buildTree(rows: FolderRow[]): { roots: TreeNode[]; allIds: number[] } {
     isVirtual: true,
     children: perRootNodes
   }
+  // The virtual wrapper itself must be expandable too — omitted here, "Expand all" could never
+  // re-open it once collapsed (by "Collapse all", or by the user closing it directly), since a
+  // collapsed parent hides every descendant regardless of THEIR own expandedIds membership. That
+  // was the actual bug: expandAll works fine when only real folders are collapsed, but silently
+  // does nothing once the Library node itself is the thing that's closed.
+  allIds.push(libraryNode.id)
   return { roots: [libraryNode], allIds }
 }
 
