@@ -97,9 +97,9 @@ const CORE_FIELDS = [
 ] as const
 
 // ── Shared style tokens ──────────────────────────────────────────────────────
-const EYEBROW = 'text-[10px] font-semibold uppercase tracking-[0.07em] text-gray-400 dark:text-gray-500'
-const CARD = 'bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-3.5'
-const STAT_CARD = 'bg-gray-100 dark:bg-gray-800/60 rounded-xl p-3.5 flex flex-col gap-1'
+export const EYEBROW = 'text-[10px] font-semibold uppercase tracking-[0.07em] text-gray-400 dark:text-gray-500'
+export const CARD = 'bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-3.5'
+export const STAT_CARD = 'bg-gray-100 dark:bg-gray-800/60 rounded-xl p-3.5 flex flex-col gap-1'
 
 function gaugeColor(score: number): string {
   return score >= 85 ? '#22c55e' : score >= 70 ? '#14b8a6' : score >= 50 ? '#f59e0b' : '#ef4444'
@@ -119,6 +119,12 @@ function formatDateTime(ms: number): string | null {
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
+//
+// D1StatCard / D1BarList and the three style constants above are EXPORTED, not module-private:
+// IR mode's own overview (components/ir/IrLibraryOverview.tsx) renders the same report shape over
+// a different data source, and building a visually-parallel second set of stat cards and bar
+// lists there is exactly the kind of duplication that makes the two halves of the app look like
+// different products. Anything reused this way must stay free of NAM-specific types.
 
 function D1Health({ score, parts, label }: { score: number; parts: Array<{ label: string; pct: number; weight: string }>; label?: string }) {
   const color = gaugeColor(score)
@@ -153,7 +159,7 @@ function D1Health({ score, parts, label }: { score: number; parts: Array<{ label
   )
 }
 
-function D1StatCard({ label, value, sub, onClick }: {
+export function D1StatCard({ label, value, sub, onClick }: {
   label: string; value: string | number; sub?: string; onClick?: () => void
 }) {
   return (
@@ -170,7 +176,7 @@ function D1StatCard({ label, value, sub, onClick }: {
   )
 }
 
-function D1BarList({ title, rows, onRowClick, activeKey }: {
+export function D1BarList({ title, rows, onRowClick, activeKey }: {
   title: string
   rows: Array<{ key: string; label: string; count: number; color: string }>
   onRowClick?: (key: string) => void

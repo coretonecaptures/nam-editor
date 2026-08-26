@@ -9,6 +9,7 @@
  */
 import type { DatabaseSync } from 'node:sqlite'
 import { resolveFolderScopeIds } from './queryLibrary'
+import { formatSampleRate } from '../../shared/wavFormat'
 
 export interface FieldBreakdownEntry {
   value: string
@@ -26,6 +27,21 @@ export interface LibraryOverview {
   taggedCount: number
   manufacturerBreakdown: FieldBreakdownEntry[]
   microphoneBreakdown: FieldBreakdownEntry[]
+  speakerBreakdown: FieldBreakdownEntry[]
+  cabinetBreakdown: FieldBreakdownEntry[]
+  /** Technical make-up of the scope, from the WAV headers read at scan time. Entries are the
+   * distinct values with their counts, so the UI can show "how much of this library is 48k?"
+   * without a second query per value. */
+  sampleRateBreakdown: FieldBreakdownEntry[]
+  bitDepthBreakdown: FieldBreakdownEntry[]
+  channelsBreakdown: FieldBreakdownEntry[]
+  /** Bytes on disk across the scope, and how many items have no WAV header read yet (i.e. were
+   * imported before that existed and haven't been re-scanned). The second number is what makes
+   * an otherwise-empty format section explainable rather than looking broken. */
+  totalBytes: number
+  missingAudioInfoCount: number
+  /** IR Lab Projects anchored anywhere in this scope. */
+  projectCount: number
 }
 
 const BREAKDOWN_LIMIT = 8
@@ -42,11 +58,34 @@ function scopeWhereAndParams(db: DatabaseSync, libraryRootId: number, folderId: 
   return { where: `item.folder_id IN (${ids.map(() => '?').join(',')})`, params: ids }
 }
 
+/** Distinct values + counts for one ir_item column, biggest first. Shares fieldBreakdown's shape
+ * so the UI renders both kinds of row identically; kept separate only because these columns are
+ * numeric and want no folder-inheritance fallback. */
+function numericBreakdown(
+  db: DatabaseSync,
+  itemWhere: string,
+  itemParams: number[],
+  column: 'sample_rate' | 'bit_depth' | 'channels',
+  render: (value: number) => string
+): FieldBreakdownEntry[] {
+  const rows = db
+    .prepare(
+      `SELECT ${column} as value, COUNT(*) as count
+       FROM ir_item JOIN item ON item.id = ir_item.item_id
+       WHERE ${itemWhere} AND ${column} IS NOT NULL
+       GROUP BY ${column}
+       ORDER BY count DESC
+       LIMIT ?`
+    )
+    .all(...itemParams, BREAKDOWN_LIMIT) as Array<{ value: number; count: number }>
+  return rows.map((r) => ({ value: render(r.value), count: r.count }))
+}
+
 function fieldBreakdown(
   db: DatabaseSync,
   itemWhere: string,
   itemParams: number[],
-  field: 'manufacturer' | 'microphone'
+  field: 'manufacturer' | 'microphone' | 'speaker' | 'cabinet'
 ): FieldBreakdownEntry[] {
   return db
     .prepare(
@@ -106,6 +145,32 @@ export function getLibraryOverview(db: DatabaseSync, libraryRootId: number, fold
       .get(...itemParams) as { c: number }
   ).c
 
+  const totalBytes = (
+    db.prepare(`SELECT COALESCE(SUM(file_size), 0) c FROM item WHERE ${itemWhere}`).get(...itemParams) as { c: number }
+  ).c
+  // Items with no ir_item row at all, or one whose header columns are still null — both mean
+  // "not scanned since WAV-header reading existed".
+  const missingAudioInfoCount = (
+    db
+      .prepare(
+        `SELECT COUNT(*) c FROM item
+         WHERE ${itemWhere}
+           AND NOT EXISTS (
+             SELECT 1 FROM ir_item WHERE ir_item.item_id = item.id AND ir_item.sample_rate IS NOT NULL
+           )`
+      )
+      .get(...itemParams) as { c: number }
+  ).c
+  const projectCount = (
+    db
+      .prepare(
+        folderId == null
+          ? `SELECT COUNT(*) c FROM collection WHERE kind = 'ir_project' AND library_root_id = ?`
+          : `SELECT COUNT(*) c FROM collection WHERE kind = 'ir_project' AND folder_id IN (${resolveFolderScopeIds(db, folderId).map(() => '?').join(',') || 'NULL'})`
+      )
+      .get(...(folderId == null ? [libraryRootId] : resolveFolderScopeIds(db, folderId))) as { c: number }
+  ).c
+
   return {
     totalItems,
     totalFolders,
@@ -114,6 +179,16 @@ export function getLibraryOverview(db: DatabaseSync, libraryRootId: number, fold
     documentCount,
     taggedCount,
     manufacturerBreakdown: fieldBreakdown(db, itemWhere, itemParams, 'manufacturer'),
-    microphoneBreakdown: fieldBreakdown(db, itemWhere, itemParams, 'microphone')
+    microphoneBreakdown: fieldBreakdown(db, itemWhere, itemParams, 'microphone'),
+    speakerBreakdown: fieldBreakdown(db, itemWhere, itemParams, 'speaker'),
+    cabinetBreakdown: fieldBreakdown(db, itemWhere, itemParams, 'cabinet'),
+    sampleRateBreakdown: numericBreakdown(db, itemWhere, itemParams, 'sample_rate', formatSampleRate),
+    bitDepthBreakdown: numericBreakdown(db, itemWhere, itemParams, 'bit_depth', (v) => `${v}-bit`),
+    channelsBreakdown: numericBreakdown(db, itemWhere, itemParams, 'channels', (v) =>
+      v === 1 ? 'mono' : v === 2 ? 'stereo' : `${v}ch`
+    ),
+    totalBytes,
+    missingAudioInfoCount,
+    projectCount
   }
 }

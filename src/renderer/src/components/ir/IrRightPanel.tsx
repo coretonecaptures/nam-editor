@@ -28,12 +28,22 @@ export function IrRightPanel({
   libraryRootId,
   libraryRootPath,
   folderId,
-  folderName
+  folderName,
+  onFacet,
+  onAudioFacet,
+  activeFacets,
+  activeAudioFacets
 }: {
   libraryRootId: number | null
   libraryRootPath: string | null
   folderId: number | null
   folderName: string | null
+  /** Clicking a bar in the Overview report filters the browse list — the report is a way into the
+   * list, not a dead-end infographic. */
+  onFacet?: (field: 'manufacturer' | 'cabinet' | 'speaker' | 'microphone', value: string) => void
+  onAudioFacet?: (field: 'sampleRate' | 'bitDepth', value: number) => void
+  activeFacets?: { manufacturer?: string; cabinet?: string; speaker?: string; microphone?: string }
+  activeAudioFacets?: { sampleRate?: number; bitDepth?: number }
 }): React.ReactElement {
   const [tab, setTab] = useState<Tab>('overview')
   const [folderAbsPath, setFolderAbsPath] = useState<string | null>(null)
@@ -85,7 +95,17 @@ export function IrRightPanel({
         ))}
       </div>
       <div className="flex-1 min-h-0 overflow-hidden">
-        {tab === 'overview' && <IrLibraryOverview libraryRootId={libraryRootId} folderId={folderId} folderName={folderName} />}
+        {tab === 'overview' && (
+          <IrLibraryOverview
+            libraryRootId={libraryRootId}
+            folderId={folderId}
+            folderName={folderName}
+            onFacet={onFacet}
+            onAudioFacet={onAudioFacet}
+            activeFacets={activeFacets}
+            activeAudioFacets={activeAudioFacets}
+          />
+        )}
         {tab === 'project' && <IrProjectTab folderId={folderId} />}
         {tab === 'pack-info' && <IrFolderPanel folderId={folderId} />}
         {tab === 'gallery' && <IrGalleryTab absPath={effectiveAbsPath} />}

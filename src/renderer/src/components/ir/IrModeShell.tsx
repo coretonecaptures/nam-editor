@@ -4,6 +4,7 @@ import { IrFolderTree } from './IrFolderTree'
 import { IrRightPanel } from './IrRightPanel'
 import { IrMenuBar } from './IrMenuBar'
 import { ContextMenu } from '../ContextMenu'
+import { IrTray } from './IrTray'
 import { PlayerPanel } from '../PlayerPanel'
 import { loadNamFileForPlayback } from '../../utils/loadNamFile'
 import type { NamFile } from '../../types/nam'
@@ -465,6 +466,32 @@ export function IrModeShell(): React.ReactElement {
     }
   }, [refreshRoots])
 
+  /** Re-runs the full scan pipeline over every already-added root. See IrMenuBar's own comment for
+   * why this exists as its own action rather than relying on re-picking a folder. */
+  const handleRescan = useCallback(async () => {
+    if (roots.length === 0) return
+    setScanError(null)
+    setImportResult(null)
+    setScanning(true)
+    setScanProgress({ filesSeen: 0, foldersSeen: 0, elapsedMs: 0 })
+    try {
+      for (const root of roots) {
+        await window.api.irLibraryScan(root.path, root.label)
+      }
+      await refreshRoots()
+      // Bump the epoch so every cached page is refetched with the newly-populated columns.
+      requestEpochRef.current++
+      cacheRef.current = new Map()
+      pendingRef.current = new Set()
+      forceRerender((n) => n + 1)
+      setImportResult(`Rescanned ${roots.length} librar${roots.length === 1 ? 'y' : 'ies'}.`)
+    } catch (err) {
+      setScanError(String(err))
+    } finally {
+      setScanning(false)
+    }
+  }, [roots, refreshRoots])
+
   const onVisibleRangeChange = useCallback(
     (start: number, end: number) => {
       const missingStart = start
@@ -629,7 +656,13 @@ export function IrModeShell(): React.ReactElement {
 
   return (
     <div className="flex flex-col h-screen bg-app-bg text-nm-text overflow-hidden">
-      <IrMenuBar onAddLibraryFolder={handleAddFolder} onImportLabProjects={handleImportLabProjects} scanning={scanning} />
+      <IrMenuBar
+        onAddLibraryFolder={handleAddFolder}
+        onImportLabProjects={handleImportLabProjects}
+        onRescan={() => void handleRescan()}
+        canRescan={roots.length > 0}
+        scanning={scanning}
+      />
       <div className="flex items-center gap-3 px-4 py-2 border-b border-nm-border flex-shrink-0">
         <h1 className="text-sm font-semibold text-nm-text-2">IR Library</h1>
         <button
@@ -1044,45 +1077,39 @@ export function IrModeShell(): React.ReactElement {
                 libraryRootPath={activeRoot?.path ?? null}
                 folderId={selectedFolderId}
                 folderName={selectedFolderName}
+                onFacet={toggleFacet}
+                onAudioFacet={toggleAudioFacet}
+                activeFacets={facets}
+                activeAudioFacets={audioFacets}
               />
             )}
           </div>
         </div>
       )}
 
-      {trayRows.length > 0 && (
-        <div className="flex items-center gap-2 px-4 py-2 border-t border-nm-border bg-panel-2 flex-shrink-0">
-          <span className="text-xs text-nm-text-2 flex-shrink-0">Tray ({trayRows.length}/8)</span>
-          <div className="flex items-center gap-1 flex-1 min-w-0 overflow-x-auto">
-            {trayRows.map((row) => (
-              <span
-                key={row.id}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-field-bg border border-field-bd text-xs whitespace-nowrap flex-shrink-0"
-              >
-                {row.display_name}
-                <button
-                  onClick={() => window.api.irLibraryRemoveFromTray(row.id).then(refreshTray)}
-                  className="text-nm-text-3 hover:text-red-500"
-                  title="Remove from tray"
-                >
-                  ×
-                </button>
-              </span>
-            ))}
-          </div>
-          <button
-            onClick={sendTrayToIrLab}
-            disabled={!connectorAvailable || sendingTray}
-            title={connectorAvailable ? 'Send this tray to IR Lab’s Blender' : 'IR Lab connector not configured in this build'}
-            className="px-3 py-1 text-xs rounded bg-nm-accent hover:opacity-90 disabled:opacity-40 text-accent-fg flex-shrink-0"
-          >
-            {sendingTray ? 'Sending…' : 'Send to IR Lab'}
-          </button>
-        </div>
-      )}
-      {trayError && (
-        <div className="px-4 py-1 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 flex-shrink-0">{trayError}</div>
-      )}
+      <IrTray
+        rows={trayRows}
+        onRemove={(id) => void window.api.irLibraryRemoveFromTray(id).then(refreshTray)}
+        onClear={() => {
+          void Promise.all(trayRows.map((r) => window.api.irLibraryRemoveFromTray(r.id))).then(refreshTray)
+        }}
+        onPlay={(row) => {
+          const full = cacheRef.current.get(focusedIndex ?? -1)
+          // The tray row carries only id/name/path; openPlayer wants the full browse row. Use the
+          // cached one when it happens to be the same item, otherwise synthesise the minimum the
+          // player actually reads (name for the title, abs_path for the cabinet).
+          openPlayer(
+            full && full.id === row.id
+              ? full
+              : ({ ...row, relative_path: row.display_name } as unknown as IrItemRow),
+            false
+          )
+        }}
+        onSendToIrLab={() => void sendTrayToIrLab()}
+        connectorAvailable={connectorAvailable}
+        sending={sendingTray}
+        error={trayError}
+      />
 
       {contextMenu && (
         <ContextMenu

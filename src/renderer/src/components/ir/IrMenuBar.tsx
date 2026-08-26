@@ -59,10 +59,14 @@ function Menu({ label, items }: { label: string; items: MenuItem[] }): React.Rea
 export function IrMenuBar({
   onAddLibraryFolder,
   onImportLabProjects,
+  onRescan,
+  canRescan,
   scanning
 }: {
   onAddLibraryFolder: () => void
   onImportLabProjects: () => void
+  onRescan: () => void
+  canRescan: boolean
   scanning: boolean
 }): React.ReactElement {
   return (
@@ -76,6 +80,12 @@ export function IrMenuBar({
           // contains — Add Library Folder above already auto-detects/enriches Projects too, this
           // one additionally prunes any non-Project content on a fresh scan.
           { label: 'Import IR Lab Project(s)…', onClick: onImportLabProjects, disabled: scanning },
+          // Re-runs the whole pipeline over every already-added root. Needed because a scan is
+          // what reads each file's WAV header, applies vendor parsers and detects IR Lab
+          // Projects — so anything added to those passes after a library was first imported only
+          // reaches existing rows on a re-scan, and until this existed the only way to trigger one
+          // was to re-pick the same folder through Add Library Folder.
+          { label: 'Rescan Library', onClick: onRescan, disabled: scanning || !canRescan },
           // Stub per the ask ("build my packs for irs like i do NAM releases") — the `collection`
           // table already reserves kind='release' for this (plan section 2), but nothing builds a
           // release/pack-sheet from IR items yet. Honest disabled entry, not a fake button.

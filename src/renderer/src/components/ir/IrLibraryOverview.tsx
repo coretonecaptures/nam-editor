@@ -1,4 +1,8 @@
 import { useEffect, useState } from 'react'
+import { D1StatCard, D1BarList, CARD, EYEBROW } from '../FolderDashboard'
+import { formatSampleRate } from '../../../../shared/wavFormat'
+
+type Entry = { value: string; count: number }
 
 type Overview = {
   totalItems: number
@@ -7,59 +11,65 @@ type Overview = {
   ratedCount: number
   documentCount: number
   taggedCount: number
-  manufacturerBreakdown: Array<{ value: string; count: number }>
-  microphoneBreakdown: Array<{ value: string; count: number }>
+  manufacturerBreakdown: Entry[]
+  microphoneBreakdown: Entry[]
+  speakerBreakdown: Entry[]
+  cabinetBreakdown: Entry[]
+  sampleRateBreakdown: Entry[]
+  bitDepthBreakdown: Entry[]
+  channelsBreakdown: Entry[]
+  totalBytes: number
+  missingAudioInfoCount: number
+  projectCount: number
 }
 
-function Stat({ label, value }: { label: string; value: number }): React.ReactElement {
-  return (
-    <div className="flex flex-col">
-      <span className="text-lg font-semibold text-nm-text">{value.toLocaleString()}</span>
-      <span className="text-xs text-nm-text-3">{label}</span>
-    </div>
-  )
+/** Same palette family NAM Lab's own dashboard uses for its bar lists — assigned by position so a
+ * breakdown reads as a ranked set rather than an arbitrary rainbow. */
+const RANK_COLORS = ['#6366f1', '#8b5cf6', '#a855f7', '#c084fc', '#d8b4fe', '#e9d5ff', '#ede9fe', '#f5f3ff']
+const FORMAT_COLORS = ['#14b8a6', '#22c55e', '#84cc16', '#eab308', '#f59e0b', '#f97316', '#ef4444', '#ec4899']
+
+function toRows(entries: Entry[], colors: string[]): Array<{ key: string; label: string; count: number; color: string }> {
+  return entries.map((e, i) => ({ key: e.value, label: e.value, count: e.count, color: colors[i % colors.length] }))
 }
 
-/** Plain CSS bars, not a charting library — this is a handful of rows, not a real dashboard.
- * Widths are relative to the top entry in the same breakdown, not an absolute scale. */
-function BreakdownBars({ title, entries }: { title: string; entries: Array<{ value: string; count: number }> }): React.ReactElement | null {
-  if (entries.length === 0) return null
-  const max = entries[0].count
-  return (
-    <div>
-      <div className="text-xs text-nm-text-2 mb-1.5">{title}</div>
-      <div className="flex flex-col gap-1">
-        {entries.map((e) => (
-          <div key={e.value} className="flex items-center gap-2 text-xs">
-            <span className="w-24 flex-shrink-0 truncate text-nm-text" title={e.value}>
-              {e.value}
-            </span>
-            <div className="flex-1 h-3 bg-panel-2 rounded overflow-hidden">
-              <div className="h-full bg-nm-accent" style={{ width: `${Math.max(4, (e.count / max) * 100)}%` }} />
-            </div>
-            <span className="w-8 flex-shrink-0 text-right text-nm-text-3">{e.count}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit++
+  }
+  return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`
 }
 
 /**
- * Overview tab — a rollup report, same concept as NAM Lab's own Overview tab (screenshot supplied
- * by the user): clicking the root shows the whole library, clicking a folder shows that folder's
- * subtree scope only, via `libraryOverview.ts`'s now-generalized `folderId` parameter. Total
- * counts plus two breakdown bars (manufacturer, microphone) from whatever Phase 3's vendor
- * parsers have already populated — deliberately small, "a few graphs for now."
+ * Overview tab — a real report, built from NAM Lab's OWN dashboard pieces (`D1StatCard`,
+ * `D1BarList` and the `CARD`/`EYEBROW` styles exported from `FolderDashboard.tsx`) rather than a
+ * second, visually-parallel set of stat cards and bars. Same concept as NAM's folder Overview:
+ * clicking the root reports the whole library, clicking a folder reports that folder's subtree.
+ *
+ * Bars are click-to-filter where the browse list can actually act on them (manufacturer, cabinet,
+ * speaker, microphone, sample rate, bit depth) and inert where it can't — the report is a way into
+ * the list, not a dead-end infographic.
  */
 export function IrLibraryOverview({
   libraryRootId,
   folderId,
-  folderName
+  folderName,
+  onFacet,
+  onAudioFacet,
+  activeFacets,
+  activeAudioFacets
 }: {
   libraryRootId: number | null
   folderId?: number | null
   folderName?: string | null
+  onFacet?: (field: 'manufacturer' | 'cabinet' | 'speaker' | 'microphone', value: string) => void
+  onAudioFacet?: (field: 'sampleRate' | 'bitDepth', value: number) => void
+  activeFacets?: { manufacturer?: string; cabinet?: string; speaker?: string; microphone?: string }
+  activeAudioFacets?: { sampleRate?: number; bitDepth?: number }
 }): React.ReactElement {
   const [overview, setOverview] = useState<Overview | null>(null)
 
@@ -68,41 +78,100 @@ export function IrLibraryOverview({
       setOverview(null)
       return
     }
-    window.api.irLibraryGetLibraryOverview(libraryRootId, folderId ?? null).then(setOverview)
+    let cancelled = false
+    window.api.irLibraryGetLibraryOverview(libraryRootId, folderId ?? null).then((o) => {
+      if (!cancelled) setOverview(o as Overview)
+    })
+    return () => {
+      cancelled = true
+    }
   }, [libraryRootId, folderId])
 
   if (libraryRootId == null || !overview) {
     return <div className="p-3 text-xs text-nm-text-3">Add a library folder to see an overview.</div>
   }
 
+  const scoped = folderId != null && folderName
+  // Reverses formatSampleRate for the click-to-filter callback — the bar carries the rendered
+  // label ("44.1k"), but the query filters on the raw number.
+  const rateFromLabel = (label: string): number => Math.round(parseFloat(label) * 1000)
+  const depthFromLabel = (label: string): number => parseInt(label, 10)
+
   return (
-    <div className="p-3 flex flex-col gap-4 overflow-y-auto h-full">
-      <div className="text-sm font-medium text-nm-text truncate">
-        {folderId != null && folderName ? folderName : 'Library Overview'}
+    <div className="h-full overflow-y-auto p-3 flex flex-col gap-3">
+      <div className="flex flex-col gap-0.5">
+        <span className={EYEBROW}>{scoped ? 'Folder Report' : 'Library Report'}</span>
+        <span className="text-sm font-semibold text-nm-text truncate">{scoped ? folderName : 'Whole library'}</span>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <Stat label="IRs" value={overview.totalItems} />
-        <Stat label="Folders" value={overview.totalFolders} />
-        <Stat label="Favorites" value={overview.favoriteCount} />
-        <Stat label="Rated" value={overview.ratedCount} />
-        <Stat label="Tagged" value={overview.taggedCount} />
-        <Stat label="Vendor docs" value={overview.documentCount} />
+      <div className="grid grid-cols-2 gap-2">
+        <D1StatCard label="IRs" value={overview.totalItems} sub={formatBytes(overview.totalBytes)} />
+        <D1StatCard label="Folders" value={overview.totalFolders} />
+        <D1StatCard label="Favorites" value={overview.favoriteCount} />
+        <D1StatCard label="Rated" value={overview.ratedCount} />
+        <D1StatCard label="IR Lab Projects" value={overview.projectCount} sub={overview.projectCount ? 'with capture metadata' : undefined} />
+        <D1StatCard label="Vendor docs" value={overview.documentCount} />
       </div>
 
-      <BreakdownBars title="Top manufacturers" entries={overview.manufacturerBreakdown} />
-      <BreakdownBars title="Top microphones" entries={overview.microphoneBreakdown} />
-
-      {overview.manufacturerBreakdown.length === 0 && overview.microphoneBreakdown.length === 0 && (
-        <div className="text-xs text-nm-text-3 italic">
-          No breakdown yet — nothing in this scope has been tagged by a vendor parser or hand-entered.
+      {/* Technical make-up. Only rendered once something has actually been read from the files —
+          otherwise it says so, with the reason, instead of showing three empty cards. */}
+      {overview.sampleRateBreakdown.length > 0 ? (
+        <>
+          <D1BarList
+            title="Sample rate"
+            rows={toRows(overview.sampleRateBreakdown, FORMAT_COLORS)}
+            activeKey={activeAudioFacets?.sampleRate ? formatSampleRate(activeAudioFacets.sampleRate) : null}
+            onRowClick={onAudioFacet ? (key) => onAudioFacet('sampleRate', rateFromLabel(key)) : undefined}
+          />
+          <D1BarList
+            title="Bit depth"
+            rows={toRows(overview.bitDepthBreakdown, FORMAT_COLORS)}
+            activeKey={activeAudioFacets?.bitDepth ? `${activeAudioFacets.bitDepth}-bit` : null}
+            onRowClick={onAudioFacet ? (key) => onAudioFacet('bitDepth', depthFromLabel(key)) : undefined}
+          />
+          <D1BarList title="Channels" rows={toRows(overview.channelsBreakdown, FORMAT_COLORS)} />
+        </>
+      ) : (
+        <div className={`${CARD} flex flex-col gap-1`}>
+          <span className={EYEBROW}>Audio format</span>
+          <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">
+            Not read yet for {overview.missingAudioInfoCount.toLocaleString()} file
+            {overview.missingAudioInfoCount === 1 ? '' : 's'}. Sample rate, bit depth, channels and length come from
+            each file&apos;s own WAV header during a scan — run <span className="font-medium">File &rarr; Rescan Library</span> to
+            fill them in.
+          </p>
         </div>
       )}
 
-      {folderId == null && (
-        <div className="text-xs text-nm-text-3 pt-2 border-t border-nm-border-s">
-          Click a folder in the tree to see that folder's own rollup instead of the whole library.
-        </div>
+      <D1BarList
+        title="Top manufacturers"
+        rows={toRows(overview.manufacturerBreakdown, RANK_COLORS)}
+        activeKey={activeFacets?.manufacturer ?? null}
+        onRowClick={onFacet ? (key) => onFacet('manufacturer', key) : undefined}
+      />
+      <D1BarList
+        title="Top cabinets"
+        rows={toRows(overview.cabinetBreakdown, RANK_COLORS)}
+        activeKey={activeFacets?.cabinet ?? null}
+        onRowClick={onFacet ? (key) => onFacet('cabinet', key) : undefined}
+      />
+      <D1BarList
+        title="Top speakers"
+        rows={toRows(overview.speakerBreakdown, RANK_COLORS)}
+        activeKey={activeFacets?.speaker ?? null}
+        onRowClick={onFacet ? (key) => onFacet('speaker', key) : undefined}
+      />
+      <D1BarList
+        title="Top microphones"
+        rows={toRows(overview.microphoneBreakdown, RANK_COLORS)}
+        activeKey={activeFacets?.microphone ?? null}
+        onRowClick={onFacet ? (key) => onFacet('microphone', key) : undefined}
+      />
+
+      {overview.manufacturerBreakdown.length === 0 && overview.microphoneBreakdown.length === 0 && (
+        <p className="text-[11px] text-gray-400 dark:text-gray-600 italic">
+          Nothing in this scope has been recognised by a vendor parser or hand-entered yet.
+        </p>
       )}
     </div>
   )
