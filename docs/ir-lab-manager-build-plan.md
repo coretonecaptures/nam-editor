@@ -1455,6 +1455,76 @@ Fixed by clearing folder/root scope when a group is selected
 irCatalog 97 tests (2 new: multi-value facet OR, `listFacetOptions`/
 `listNumericFacetOptions` scoping), renderer 357 tests, build clean.
 
+## 12e. Reading IR Lab's own embedded WAV metadata (BWF bext chunk)
+
+"can you pull down the latest ir-lab from github from here? there was a
+feature added to write metadata (optionally) to wav files, for the purpose
+of using here". Pulled `C:\Users\Admin\ir-lab` (`main`, fast-forwarded) and
+read the two commits that landed it: `870ca7d` (the write) and `f5066b6`
+(its own doc, `docs/ir-lab-manager-shared-catalog-schema.md`, written
+specifically to tell the other two apps how to treat it) — spec confirmed
+from the real diff, not guessed.
+
+**What IR Lab writes** (opt-in, off by default — its absence means
+nothing): a standard BWF `bext` chunk via JUCE's
+`WavAudioFormat::createBWAVMetadata()`. `Originator` is always the literal
+`"IR Lab"`; `Description` holds `"Key: value | Key: value | ..."` pairs, in
+order Cabinet/Speaker/Microphone/Position/Notes/CaptureType, blank fields
+omitted. Never written to blend exports or the true-stereo pack file — only
+single-capture exports.
+
+**What was built here to read it, at zero extra I/O cost** — same
+principle as 12c's WAV-header reading: the bext chunk is tiny (~610 bytes
+fixed) and sits near the front of the file, so it's already inside the same
+64KB buffer `quickHash.ts` reads for every file.
+
+- `wavHeader.ts`'s chunk walk (already looking for `fmt `/`data`) now also
+  recognizes `bext` and extracts `Description`/`Originator` at their fixed
+  BWF byte offsets, trimmed at the first NUL rather than returning
+  fixed-width trailing garbage. Null/null on the ~all files without one.
+- `bwfCaptureMetadata.ts` (new): parses those two strings into actual
+  fields. Trusts `Originator === 'IR Lab'` as its signal before parsing
+  Description at all — the doc's own "cheap way to tell an IR Lab export
+  apart from a WAV tagged by something else" — so a foreign tool's bext
+  chunk is never misread as capture fields.
+- `fieldConfidence.ts` (new): the confidence-ladder writer
+  (`applyVendorParsers.ts`'s `upsertIrField`/`RANK` closure) extracted into
+  its own module so a new source doesn't reimplement "never overwrite
+  user_entered, never downgrade a higher-ranked field." A new rank,
+  `ir_lab_embedded`, sits directly below `ir_lab_native` — which is exactly
+  the doc's own precedence rule ("prefer the database row when one exists
+  and resolves... fall back to the embedded chunk only for a WAV with no
+  catalog row"): `ir_lab_native` (from `enrichLabProjects`, a live
+  `.SessionData` folder) always outranks it and is never downgraded by it;
+  `ir_lab_embedded` in turn outranks `vendor_parser`/`filename_inferred`
+  guesses, so a real IR Lab export's own metadata can't be clobbered by a
+  filename heuristic running afterward.
+- `importLibrary.ts` writes the embedded fields at scan time, right where
+  the WAV-header columns are already written from the same buffer:
+  cabinet/speaker/microphone/position/capture_type through the ladder
+  writer with source `ir_lab_embedded`; `notes` as a plain `item.notes`
+  overwrite (no confidence tracking on that column at all — matches
+  `labProjectEnrichment.ts`'s own existing convention for the same field).
+- `ir_item_field_source.source`'s CHECK constraint gained the new value.
+  SQLite can't ALTER a CHECK, so `runMigrations()` detects an existing
+  table missing it (by sniffing the stored CREATE TABLE text) and rebuilds
+  it: rename aside, recreate with the wider CHECK, copy rows across, drop
+  the old one — same technique as `collection.folder_id` and the FTS5
+  `item_search` rebuild earlier in this doc, applied to a CHECK instead of
+  a column or an FTS5 table.
+
+Not yet done: writing INTO exported WAVs from this side (NAM Lab is a
+consumer of IR Lab's captures, not a producer of new ones, so there's no
+symmetric "write bext back" need identified yet) — flagged here rather than
+silently scoped out.
+
+10 new tests (`wavHeader.test.ts`: bext extraction + NUL-trim;
+`bwfCaptureMetadata.test.ts`: field parsing, Originator trust check, blank
+fields omitted; `bwfEmbeddedMetadataScan.test.ts`: full scan-to-database
+round trip, foreign-Originator rejection, and the "vendor parser can't
+downgrade an embedded value" regression). irCatalog 107 tests total,
+renderer 357, build clean.
+
 ## 13. Open, non-blocking decisions
 
 - Exact IR Lab license enforcement point/timing — the user has already noted this can land before final release, independent of this plan.

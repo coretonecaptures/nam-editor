@@ -27,6 +27,30 @@ export interface WavHeader {
   /** Seconds, from the data chunk's declared size. Null when the data chunk header wasn't inside
    * the buffer we were given (very unusual — it implies >64KB of leading chunks). */
   durationSeconds: number | null
+  /** Raw BWF `bext` chunk fields (EBU Tech 3285), null-trimmed, if the chunk is present in the
+   * buffer — null/null when it's absent (most files). IR Lab writes its own capture metadata here
+   * as "Key: value | ..." pairs in Description with Originator fixed to "IR Lab"; see
+   * bwfCaptureMetadata.ts for the parser that turns these two strings into actual fields. The
+   * chunk is tiny (~610 bytes fixed) and, per BWF convention, sits near the front of the file, so
+   * it's always inside the same 64KB buffer this function already has in hand. */
+  bwfDescription: string | null
+  bwfOriginator: string | null
+}
+
+/** BWF bext chunk layout (EBU Tech 3285): fixed-width ASCII fields at fixed byte offsets within
+ * the chunk body. Only the two fields IR Lab actually writes into are read. */
+const BEXT_DESCRIPTION_OFFSET = 0
+const BEXT_DESCRIPTION_LENGTH = 256
+const BEXT_ORIGINATOR_OFFSET = 256
+const BEXT_ORIGINATOR_LENGTH = 32
+
+/** BWF string fields are fixed-width, right-padded with NUL bytes — trim at the first NUL rather
+ * than reading the full fixed width, which would otherwise return trailing garbage as text. */
+function readFixedAsciiField(buf: Buffer, start: number, length: number): string {
+  const end = Math.min(start + length, buf.length)
+  const nul = buf.indexOf(0, start)
+  const stop = nul !== -1 && nul < end ? nul : end
+  return buf.toString('ascii', start, stop).trim()
 }
 
 export function parseWavHeader(buf: Buffer): WavHeader | null {
@@ -42,6 +66,8 @@ export function parseWavHeader(buf: Buffer): WavHeader | null {
   let bitDepth = 0
   let byteRate = 0
   let dataBytes: number | null = null
+  let bwfDescription: string | null = null
+  let bwfOriginator: string | null = null
 
   // 8 = chunk id (4) + chunk size (4); a chunk header must fit entirely for the walk to continue.
   while (offset + 8 <= buf.length) {
@@ -63,6 +89,10 @@ export function parseWavHeader(buf: Buffer): WavHeader | null {
       sampleRate = buf.readUInt32LE(body + 4)
       byteRate = buf.readUInt32LE(body + 8)
       bitDepth = buf.readUInt16LE(body + 14)
+    } else if (chunkId === 'bext' && offset + 8 + BEXT_ORIGINATOR_OFFSET + BEXT_ORIGINATOR_LENGTH <= buf.length) {
+      const body = offset + 8
+      bwfDescription = readFixedAsciiField(buf, body + BEXT_DESCRIPTION_OFFSET, BEXT_DESCRIPTION_LENGTH)
+      bwfOriginator = readFixedAsciiField(buf, body + BEXT_ORIGINATOR_OFFSET, BEXT_ORIGINATOR_LENGTH)
     } else if (chunkId === 'data') {
       dataBytes = chunkSize
       // Everything after `data` is audio, not more chunk headers — stop rather than walking into
@@ -83,7 +113,7 @@ export function parseWavHeader(buf: Buffer): WavHeader | null {
   const effectiveByteRate = byteRate > 0 ? byteRate : (sampleRate * channels * bitDepth) / 8
   const durationSeconds = dataBytes !== null && effectiveByteRate > 0 ? dataBytes / effectiveByteRate : null
 
-  return { audioFormat, sampleRate, channels, bitDepth, durationSeconds }
+  return { audioFormat, sampleRate, channels, bitDepth, durationSeconds, bwfDescription, bwfOriginator }
 }
 
 export { describeWavHeader, formatSampleRate, wavSearchText } from '../../shared/wavFormat'

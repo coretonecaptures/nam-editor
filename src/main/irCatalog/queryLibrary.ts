@@ -136,7 +136,7 @@ export function listFacetOptions(
        GROUP BY ${field}
        ORDER BY count DESC, value ASC`
     )
-    .all(...params) as FacetOption<string>[]
+    .all(...params) as unknown as FacetOption<string>[]
 }
 
 /** Same idea as `listFacetOptions`, for the two numeric WAV-header columns. */
@@ -170,7 +170,7 @@ export function listNumericFacetOptions(
        GROUP BY ${column}
        ORDER BY value ASC`
     )
-    .all(...params) as FacetOption<number>[]
+    .all(...params) as unknown as FacetOption<number>[]
 }
 
 /**

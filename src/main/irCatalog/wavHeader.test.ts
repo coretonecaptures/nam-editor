@@ -1,6 +1,17 @@
 import { describe, it, expect } from 'vitest'
 import { parseWavHeader, describeWavHeader, formatSampleRate } from './wavHeader'
 
+/** Builds a real, spec-shaped `bext` chunk (EBU Tech 3285): fixed-width ASCII fields, NUL-padded,
+ * for the two IR Lab actually writes into. Field sizes match ir-lab's own WavIO.cpp/JUCE's
+ * createBWAVMetadata layout: Description 256 bytes, Originator 32 bytes, then the rest of the
+ * fixed 602-byte body zeroed (OriginatorReference/OriginationDate/etc. — irrelevant here). */
+function makeBextChunk(description: string, originator: string): { id: string; size: number; body: Buffer } {
+  const body = Buffer.alloc(602)
+  body.write(description, 0, 'ascii')
+  body.write(originator, 256, 'ascii')
+  return { id: 'bext', size: body.length, body }
+}
+
 /** Builds a minimal but REAL wav header: RIFF/WAVE + fmt + data, optionally with extra chunks
  * ahead of fmt (which real vendor packs do contain — LIST/INFO, JUNK, bext). */
 function makeWav(opts: {
@@ -9,7 +20,7 @@ function makeWav(opts: {
   sampleRate?: number
   bitDepth?: number
   dataBytes?: number
-  leadingChunks?: Array<{ id: string; size: number }>
+  leadingChunks?: Array<{ id: string; size: number; body?: Buffer }>
   byteRateOverride?: number
 }): Buffer {
   const {
@@ -27,6 +38,7 @@ function makeWav(opts: {
       const b = Buffer.alloc(8 + c.size + (c.size % 2))
       b.write(c.id, 0, 'ascii')
       b.writeUInt32LE(c.size, 4)
+      if (c.body) c.body.copy(b, 8)
       return b
     })
   )
@@ -107,6 +119,26 @@ describe('parseWavHeader', () => {
     const buf = makeWav({ leadingChunks: [{ id: 'JUNK', size: 4 }] })
     buf.writeUInt32LE(0xfffffff0, 16) // absurd size on the leading chunk
     expect(() => parseWavHeader(buf)).not.toThrow()
+  })
+
+  it('has null bwfDescription/bwfOriginator when there is no bext chunk — the common case', () => {
+    const h = parseWavHeader(makeWav({}))
+    expect(h!.bwfDescription).toBeNull()
+    expect(h!.bwfOriginator).toBeNull()
+  })
+
+  it('reads an IR Lab bext chunk regardless of what comes before it', () => {
+    const bext = makeBextChunk('Cabinet: Mesa 4x12 | Speaker: V30', 'IR Lab')
+    const h = parseWavHeader(makeWav({ leadingChunks: [{ id: 'JUNK', size: 20 }, bext] }))
+    expect(h!.bwfDescription).toBe('Cabinet: Mesa 4x12 | Speaker: V30')
+    expect(h!.bwfOriginator).toBe('IR Lab')
+  })
+
+  it('trims NUL padding rather than returning trailing garbage', () => {
+    const bext = makeBextChunk('Short', 'IR Lab')
+    const h = parseWavHeader(makeWav({ leadingChunks: [bext] }))
+    expect(h!.bwfDescription).toBe('Short')
+    expect(h!.bwfDescription!.length).toBe(5)
   })
 })
 

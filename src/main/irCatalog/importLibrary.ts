@@ -23,6 +23,8 @@ import { randomUUID } from 'node:crypto'
 import { walkWavLibrary, toPosixRel, type WalkEvent } from './scanWalk'
 import { computeQuickHash, type QuickScanResult } from './quickHash'
 import { wavSearchText } from './wavHeader'
+import { parseBwfCaptureMetadata } from './bwfCaptureMetadata'
+import { createIrFieldWriter } from './fieldConfidence'
 import { withoutLiveSearchTriggers } from './schema'
 import { mapPool } from './concurrency'
 
@@ -135,6 +137,13 @@ export async function importLibrary(
        audio_format = excluded.audio_format,
        audio_search = excluded.audio_search`
   )
+  // For IR Lab's own opt-in embedded WAV metadata (bwfCaptureMetadata.ts) — writes with
+  // source='ir_lab_embedded', ranked below ir_lab_native so a later enrichLabProjects pass (or an
+  // already-enriched item from a prior scan) always wins, but above vendor_parser/filename_inferred
+  // so applyVendorParsers running afterward can't downgrade a real IR Lab export back to a guess.
+  const embeddedFieldWriter = createIrFieldWriter(db)
+  const ensureIrItemForEmbedded = db.prepare(`INSERT OR IGNORE INTO ir_item (item_id) VALUES (?)`)
+
   let foldersInserted = 0
   let itemsInserted = 0
   let filesSeen = 0
@@ -186,6 +195,20 @@ export async function importLibrary(
           header.audioFormat,
           wavSearchText(header)
         )
+        // Read for free out of the same header buffer — see fieldConfidence.ts for how this
+        // ranks against applyVendorParsers.ts's guesses and labProjectEnrichment.ts's own writes.
+        const embedded = parseBwfCaptureMetadata(header.bwfDescription, header.bwfOriginator)
+        if (embedded) {
+          ensureIrItemForEmbedded.run(row.id) // upsertAudioInfo above already created it in practice, but not guaranteed if it throws mid-run
+          embeddedFieldWriter.write(row.id, 'cabinet', embedded.cabinet, 'ir_lab_embedded')
+          embeddedFieldWriter.write(row.id, 'speaker', embedded.speaker, 'ir_lab_embedded')
+          embeddedFieldWriter.write(row.id, 'microphone', embedded.microphone, 'ir_lab_embedded')
+          embeddedFieldWriter.write(row.id, 'position', embedded.position, 'ir_lab_embedded')
+          embeddedFieldWriter.write(row.id, 'capture_type', embedded.captureType, 'ir_lab_embedded')
+          // notes is a plain item column with no confidence tracking at all (matches
+          // labProjectEnrichment.ts's own convention for the same field) — last writer wins.
+          if (embedded.notes) db.prepare(`UPDATE item SET notes = ? WHERE id = ?`).run(embedded.notes, row.id)
+        }
       }
       markTouched.run(relPosix)
       itemsInserted++

@@ -13,18 +13,9 @@ import type { VendorParser, ParsedIrFields } from './types'
 import { ownhammerParser } from './ownhammer'
 import { redwirezParser } from './redwirez'
 import { genericVocabularyParser } from './genericVocabulary'
+import { createIrFieldWriter } from '../fieldConfidence'
 
 const STRUCTURAL_PARSERS: VendorParser[] = [ownhammerParser, redwirezParser]
-
-/** Lower is more trustworthy. user_entered is handled separately (see upsertIrField) — it's not
- * "rank 5 loses to everything," it's "never overwritten by anything, ever," per the plan's
- * explicit callout in section 3. */
-const RANK: Record<string, number> = {
-  ir_lab_native: 1,
-  vendor_documentation: 2,
-  vendor_parser: 3,
-  filename_inferred: 4
-}
 
 export interface VendorParseStats {
   itemsProcessed: number
@@ -51,28 +42,13 @@ export function applyVendorParsers(db: DatabaseSync, libraryRootId: number): Ven
   const structuralByFolder = new Map<number | null, VendorParser | null>()
 
   const ensureIrItem = db.prepare(`INSERT OR IGNORE INTO ir_item (item_id) VALUES (?)`)
-  const selectSource = db.prepare(`SELECT source FROM ir_item_field_source WHERE item_id = ? AND field = ?`)
-  const upsertSource = db.prepare(
-    `INSERT INTO ir_item_field_source (item_id, field, source) VALUES (?, ?, ?)
-     ON CONFLICT(item_id, field) DO UPDATE SET source = excluded.source`
-  )
+  const fieldWriter = createIrFieldWriter(db)
 
   let fieldsWritten = 0
 
-  const upsertIrField = (itemId: string, field: keyof ParsedIrFields, value: string, source: string): void => {
-    const existing = selectSource.get(itemId, field) as { source: string } | undefined
-    if (existing) {
-      if (existing.source === 'user_entered') return
-      if (RANK[source] > RANK[existing.source]) return // would downgrade — refuse
-    }
-    db.prepare(`UPDATE ir_item SET ${field} = ? WHERE item_id = ?`).run(value, itemId)
-    upsertSource.run(itemId, field, source)
-    fieldsWritten++
-  }
-
-  const writeFields = (itemId: string, fields: ParsedIrFields, source: string): void => {
+  const writeFields = (itemId: string, fields: ParsedIrFields, source: 'vendor_parser' | 'filename_inferred'): void => {
     for (const [field, value] of Object.entries(fields) as Array<[keyof ParsedIrFields, string | undefined]>) {
-      if (value) upsertIrField(itemId, field, value, source)
+      if (fieldWriter.write(itemId, field, value, source)) fieldsWritten++
     }
   }
 

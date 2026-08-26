@@ -139,8 +139,10 @@ CREATE TABLE IF NOT EXISTS ir_item (
 CREATE TABLE IF NOT EXISTS ir_item_field_source (
   item_id  TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
   field    TEXT NOT NULL,
+  -- 'ir_lab_embedded' = read from a WAV's own BWF bext chunk (bwfCaptureMetadata.ts) rather than
+  -- IR Lab's live session database -- see fieldConfidence.ts for where it sits in the ladder.
   source   TEXT NOT NULL CHECK (source IN (
-              'ir_lab_native', 'vendor_documentation', 'vendor_parser',
+              'ir_lab_native', 'ir_lab_embedded', 'vendor_documentation', 'vendor_parser',
               'filename_inferred', 'user_entered')),
   PRIMARY KEY (item_id, field)
 );
@@ -344,6 +346,32 @@ function runMigrations(db: DatabaseSync): void {
   const searchColumns = db.prepare(`PRAGMA table_info(item_search)`).all() as Array<{ name: string }>
   if (searchColumns.length > 0 && !searchColumns.some((c) => c.name === 'audio')) {
     db.exec(ITEM_SEARCH_DROP_SQL)
+  }
+
+  // ir_item_field_source's `source` CHECK constraint predates 'ir_lab_embedded' (WAV bext-chunk
+  // metadata). A CHECK can't be ALTERed in SQLite, so a table built before it is rebuilt: renamed
+  // aside, recreated with the wider CHECK, its rows copied across, the old one dropped. Detected
+  // by sniffing the stored CREATE TABLE text rather than trying an insert and catching the
+  // constraint failure.
+  const fieldSourceSql = (
+    db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ir_item_field_source'`).get() as
+      | { sql: string }
+      | undefined
+  )?.sql
+  if (fieldSourceSql && !fieldSourceSql.includes('ir_lab_embedded')) {
+    db.exec(`
+      ALTER TABLE ir_item_field_source RENAME TO ir_item_field_source_old;
+      CREATE TABLE ir_item_field_source (
+        item_id  TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
+        field    TEXT NOT NULL,
+        source   TEXT NOT NULL CHECK (source IN (
+                    'ir_lab_native', 'ir_lab_embedded', 'vendor_documentation', 'vendor_parser',
+                    'filename_inferred', 'user_entered')),
+        PRIMARY KEY (item_id, field)
+      );
+      INSERT INTO ir_item_field_source SELECT * FROM ir_item_field_source_old;
+      DROP TABLE ir_item_field_source_old;
+    `)
   }
 }
 
