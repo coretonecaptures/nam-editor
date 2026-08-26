@@ -68,14 +68,19 @@ function buildTree(rows: FolderRow[]): { roots: TreeNode[]; allIds: number[] } {
       childrenOf.set(row.parent_id, siblings)
     }
     // Children first (post-order) so a parent's totalCount can sum already-finalized children.
+    // Empty children (zero WAVs anywhere under them — no direct items, and nothing further down
+    // either) are dropped from display once their own total is known: a folder that exists only to
+    // hold a vendor's docs/images/session data, with no audio in it or beneath it, is clutter here,
+    // not a real navigation target.
     const attach = (node: TreeNode): void => {
-      node.children = (childrenOf.get(node.id) ?? []).sort((a, b) => a.name.localeCompare(b.name))
+      const rawChildren = (childrenOf.get(node.id) ?? []).sort((a, b) => a.name.localeCompare(b.name))
       let sum = node.directCount
-      for (const child of node.children) {
+      for (const child of rawChildren) {
         attach(child)
         sum += child.totalCount
       }
       node.totalCount = sum
+      node.children = rawChildren.filter((c) => c.totalCount > 0)
     }
 
     // The root's own folder row (relative_path === '') always exists (importLibrary creates it

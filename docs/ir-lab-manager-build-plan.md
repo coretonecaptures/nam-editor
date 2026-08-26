@@ -911,6 +911,27 @@ ear-fatigue reasoning already agreed on.
      rather than only ever showing what's beneath it — a flat root is now a real, clickable,
      correctly `is_lab_project`-flagged node; a root with real substructure still skips straight to
      its subfolders as before.
+   - **Folders with zero WAVs anywhere under them are now hidden from the tree entirely**
+     (`IrFolderTree.tsx`'s `attach()`, same pass as the fix above) — a subfolder that exists only
+     to hold a vendor's docs/images/session data, with no audio in it or beneath it, was clutter,
+     not a real navigation target.
+   - **Investigated directly against real imported Projects** (five real IR Lab Projects: Liquid
+     Sonics Seventh Heaven, Strymon Flint, Sunset Sound, TC Triple Delay, Ventris) after a report
+     that "the projects have no metadata at all." Confirmed via the real `catalog.db` and the
+     real `.SessionData` files on disk: `enrichLabProjects()` IS reading and matching correctly —
+     `capture_id`/`sample_rate`/`is_stereo` are populated, every capture is correctly linked into
+     its `collection`. The blank cabinet/speaker/microphone/position fields are not an extraction
+     bug — IR Lab's own `session.json` really does write those as empty strings
+     (`"metadata": {"cabinet": "", "speaker": "", "microphone": "", "position": "", "notes": ""}`)
+     for these five, because none of them are cabinet+mic captures at all — they're reverb/delay
+     pedal and plugin captures (a Strymon Flint pedal, a TC Triple Delay pedal, a Liquid Sonics
+     reverb plugin, etc.), where "cabinet/speaker/microphone" was never a field IR Lab's own UI
+     asked the user to fill in. The Project's actual name (`collection.name`, e.g. "Strymon
+     Flint") IS captured correctly and shown as the Project tab's header — the empty badges below
+     it are accurately reflecting genuinely-empty source data, not a bug. Open question, not yet
+     acted on: whether the Project tab should show something more relevant than blank cabinet/
+     speaker/mic labels for a non-cabinet capture (e.g. `analysis.json`'s `calibration.deviceName`,
+     or simply omitting fields that are empty at the source instead of showing them unset).
    - ~~`folder_document` doesn't extract any fields~~ — **built** (2026-08-25):
      `vendorDocExtraction.ts`'s `extractVendorDocumentFields()` runs every imported PDF/CSV/TXT
      through the SAME `genericVocabularyParser` the filename parser uses (manufacturer/speaker/
