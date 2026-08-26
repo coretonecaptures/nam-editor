@@ -309,6 +309,19 @@ interface PlayerPanelProps {
   /** A rig preset can carry its own amp capture — recalling one switches to it if it isn't
    *  already open. PlayerPanel doesn't own file-loading itself, so this delegates up. */
   onOpenAmpCapture?: (filePath: string) => void
+  /** Controlled cabinet IR. Omit entirely (NAM mode) and the panel owns its own cab choice through
+   *  its picker, exactly as before. Provide it (IR mode) and the cabinet is driven from outside —
+   *  clicking an IR in the browse list sets the cab here — with the picker reporting user changes
+   *  back through onCabIrPathChange instead of writing local state. `undefined` means
+   *  "uncontrolled"; `null` means "controlled, and currently nothing loaded". */
+  cabIrPath?: string | null
+  onCabIrPathChange?: (path: string | null) => void
+  /** Replaces the capture name shown in the header/eyebrow. IR mode is auditioning an IR THROUGH
+   *  an amp capture, so the IR's name is the useful headline there, not the amp's filename. */
+  titleOverride?: string
+  /** Extra content rendered directly under the header — IR mode puts its A/B slot + blend
+   *  controls here so they sit with the player rather than in a separate panel. */
+  headerExtra?: React.ReactNode
 }
 
 function toFileUrl(p: string): string {
@@ -502,7 +515,11 @@ export function PlayerPanel({
   liveJumpRequest = null,
   onLiveJumpHandled,
   libraryFiles = [],
-  onOpenAmpCapture
+  onOpenAmpCapture,
+  cabIrPath,
+  onCabIrPathChange,
+  titleOverride,
+  headerExtra
 }: PlayerPanelProps & { onClose: () => void }) {
   const [status, setStatus] = useState<PlayerStatus>('idle')
   const [errorMsg, setErrorMsg] = useState('')
@@ -653,7 +670,20 @@ export function PlayerPanel({
   const [diPrefs, setDiPrefs] = useState<DiPrefs>(loadDiPrefs)
 
   const [irCount, setIrCount] = useState(0)
-  const [irPath, setIrPath] = useState<string | null>(null)
+  // Cabinet IR is normally this panel's own state (NAM mode), but can be driven from outside when
+  // the `cabIrPath` prop is provided (IR mode, where clicking an IR in the browse list IS the cab
+  // choice). Everything downstream keeps reading `irPath` / calling `setIrPath` unchanged — the
+  // controlled/uncontrolled split lives entirely in these two definitions.
+  const [irPathLocal, setIrPathLocal] = useState<string | null>(null)
+  const cabIrControlled = cabIrPath !== undefined
+  const irPath = cabIrControlled ? cabIrPath : irPathLocal
+  const setIrPath = useCallback(
+    (next: string | null) => {
+      if (cabIrControlled) onCabIrPathChange?.(next)
+      else setIrPathLocal(next)
+    },
+    [cabIrControlled, onCabIrPathChange]
+  )
   const [irEnabled, setIrEnabled] = useState(() => captureNeedsCabIr(file.metadata.gear_type))
   const irManuallySetRef = useRef(false)
   // Second cabinet slot (Live mode only — LiveEngine.setIrSlot/setBlend) for blending two IRs.
@@ -674,7 +704,9 @@ export function PlayerPanel({
   const rafRef = useRef<number | null>(null)
 
   const m = file.metadata
-  const captureLabel = m.name || file.fileName
+  // titleOverride lets IR mode headline the IR being auditioned rather than the amp capture it's
+  // being played through — the amp is context there, the IR is the subject.
+  const captureLabel = titleOverride || m.name || file.fileName
 
   useEffect(() => {
     const element = panelRef.current
@@ -876,6 +908,10 @@ export function PlayerPanel({
       if (cancelled) return
       setIrCount(result.count)
       if (result.count === 0) return
+      // Never auto-restore over a cab the PARENT is driving (IR mode): there the cabinet is the
+      // IR the user just clicked, and silently replacing it with the last-remembered one would
+      // change what they're auditioning out from under them.
+      if (cabIrControlled) return
       // Persisted and shared, so the Tone Map's auditioning applies the same cab.
       setIrPath(lastIrPath ?? resolveRememberedIr(loadIrFavorites('cab')))
     })()
@@ -3989,6 +4025,8 @@ export function PlayerPanel({
           </svg>
         </button>
       </div>
+
+      {headerExtra}
 
       {/* ── Body */}
       <div className="flex-1 overflow-y-auto">

@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { VirtualList } from './VirtualList'
-import { useIrLiveAudition } from './useIrLiveAudition'
 import { IrFolderTree } from './IrFolderTree'
 import { IrRightPanel } from './IrRightPanel'
 import { IrMenuBar } from './IrMenuBar'
 import { ContextMenu } from '../ContextMenu'
+import { PlayerPanel } from '../PlayerPanel'
+import { loadNamFileForPlayback } from '../../utils/loadNamFile'
+import type { NamFile } from '../../types/nam'
+import guitarJackIcon from '../../assets/icons/guitar-jack.png'
+
+/** The amp capture IRs are auditioned through, remembered across restarts. */
+const AMP_CAPTURE_KEY = 'nam-lab-ir-mode-live-capture-path'
 
 type IrItemRow = {
   id: string
@@ -98,15 +104,22 @@ function splitPath(rel: string): { folder: string; name: string } {
 /**
  * Phase 2 — read-only browse + search over the IR catalog (docs/ir-lab-manager-build-plan.md
  * section 12, Phase 2), now showing Phase 3's vendor-parsed fields with confidence badges
- * (section 3) per field, and live audition (section 8b) — a row's play button hot-swaps the
- * cabinet on a real-time NAM-through-LiveEngine session (pick an amp capture once in the Live
- * tab), same mechanism and UI idiom as NAM Lab's own PlayerPanel Live mode, not the earlier
- * DI-render-once mechanism it replaced. Arrow-key navigation through the current filtered list
- * plays live too. Faceted filter chips (section 7) — clicking a row's manufacturer/cabinet/
- * speaker/microphone badge narrows the list to exactly that value (queryLibrary.ts's facet
- * WHERE clauses); clicking the same badge again clears it. Root switcher — a dropdown next to
- * search picks one library_root or "All roots" (folder tree only ever shows one root at a time,
- * but browse/search scope follows the same selection). No A/B audition yet (Phase 7).
+ * (section 3) per field.
+ *
+ * Audition renders NAM Lab's OWN `PlayerPanel` (section 8b) — the same component NAM mode uses,
+ * not a second player. Clicking a row's play button replaces the right panel with it, exactly the
+ * way NAM mode's list does, which brings all three of its views over as-is: the DI/Preview
+ * player, the inline Live player, and the full-screen Live rig (with its pop-out arrow, tuner,
+ * RIG presets and photoreal racks). The IR being auditioned drives PlayerPanel's cabinet through
+ * its `cabIrPath` controlled prop, and the amp capture it plays through is picked once and
+ * remembered. An earlier version of this file grew its own parallel player (a bespoke hook plus a
+ * thinner FX UI) — that was duplication of something already built and working, and was deleted
+ * rather than kept alongside.
+ *
+ * Faceted filter chips (section 7) — clicking a row's manufacturer/cabinet/speaker/microphone
+ * badge narrows the list to exactly that value (queryLibrary.ts's facet WHERE clauses); clicking
+ * the same badge again clears it. Root switcher — a dropdown next to search scopes browse/search
+ * to one library_root or all of them.
  */
 export function IrModeShell(): React.ReactElement {
   const [roots, setRoots] = useState<LibraryRoot[]>([])
@@ -173,7 +186,22 @@ export function IrModeShell(): React.ReactElement {
   // (e.g. a slow "all IRs" query resolving after the user already clicked into a folder).
   const requestEpochRef = useRef(0)
 
-  const live = useIrLiveAudition()
+  // ── Audition, via NAM Lab's own PlayerPanel (see this component's header comment).
+  // `playerIr` is the IR currently loaded into the player's cabinet AND the "is the player open"
+  // flag — the two are the same thing here, since the player only exists to audition an IR.
+  const [playerIr, setPlayerIr] = useState<IrItemRow | null>(null)
+  const [ampCapture, setAmpCapture] = useState<NamFile | null>(null)
+  const [ampCaptureError, setAmpCaptureError] = useState<string | null>(null)
+  // Bumped to ask PlayerPanel to jump straight to its full-screen rig — the same self-clearing
+  // one-shot protocol NAM Lab's list uses for its own "Play Live" button.
+  const [liveJumpRequest, setLiveJumpRequest] = useState<number | null>(null)
+  // Read straight from preload rather than App.tsx's state: settings.json is loaded synchronously
+  // in preload and exposed as window.api.initialSettings, so IR mode can read the very same
+  // library paths and FX presets NAM mode passes to PlayerPanel without needing the two React
+  // trees to share state (which they don't — see AppRoot.tsx).
+  const settings = (window.api.initialSettings ?? {}) as Record<string, unknown>
+  const str = (key: string): string | null => (typeof settings[key] === 'string' ? (settings[key] as string) || null : null)
+  const arr = <T,>(key: string): T[] => (Array.isArray(settings[key]) ? (settings[key] as T[]) : [])
 
   // Sparse cache keyed by row index within the current (root, search) result set — a 282K-row
   // catalog is never fetched or held in full, only the indices actually scrolled into view. Reset
@@ -278,11 +306,59 @@ export function IrModeShell(): React.ReactElement {
     return () => window.removeEventListener('click', dismiss)
   }, [groupsMenuOpen])
 
+  // The amp capture the IR is auditioned THROUGH. Picked once, remembered across restarts, and
+  // loaded lazily — the player can't open without one, so the first play prompts for it.
+  const ensureAmpCapture = useCallback(async (): Promise<NamFile | null> => {
+    if (ampCapture) return ampCapture
+    let path: string | null = null
+    try {
+      path = localStorage.getItem(AMP_CAPTURE_KEY)
+    } catch {
+      // Non-fatal — falls through to the picker.
+    }
+    if (!path) {
+      const picked = await window.api.openFiles()
+      if (picked.length === 0) return null
+      path = picked[0]
+      try {
+        localStorage.setItem(AMP_CAPTURE_KEY, path)
+      } catch {
+        // Non-fatal — worst case the choice doesn't survive a restart.
+      }
+    }
+    const loaded = await loadNamFileForPlayback(path)
+    if (!loaded) {
+      // A remembered path can go stale (file moved/deleted). Forget it so the next attempt asks
+      // again rather than failing identically forever.
+      try {
+        localStorage.removeItem(AMP_CAPTURE_KEY)
+      } catch {
+        // Non-fatal.
+      }
+      setAmpCaptureError(`Could not read the amp capture: ${path}`)
+      return null
+    }
+    setAmpCaptureError(null)
+    setAmpCapture(loaded)
+    return loaded
+  }, [ampCapture])
+
+  /** Opens the player on `row`. `jumpLive` mirrors NAM Lab's "Play Live" — straight to the
+   * full-screen rig instead of landing in Preview first. */
+  const openPlayer = useCallback(
+    async (row: IrItemRow, jumpLive: boolean) => {
+      const capture = await ensureAmpCapture()
+      if (!capture) return
+      setPlayerIr(row)
+      if (jumpLive) setLiveJumpRequest(Date.now())
+    },
+    [ensureAmpCapture]
+  )
+
   // New search, folder filter, or a completed scan invalidates every cached index — the same
-  // offset can now point at a different row. Deliberately does NOT stop live monitoring (unlike
-  // the old offline-DI audition this replaced) — live is a continuous session tied to the chosen
-  // amp capture, not to the current search/filter view; stopping it on every keystroke would be
-  // far more disruptive than the old mechanism's cheap-to-restart render.
+  // offset can now point at a different row. Deliberately does NOT close the player — it's tied
+  // to the IR being auditioned, not to the current browse view, and tearing down the live engine
+  // on every keystroke would be far more disruptive than leaving it playing.
   useEffect(() => {
     requestEpochRef.current++
     cacheRef.current = new Map()
@@ -291,8 +367,10 @@ export function IrModeShell(): React.ReactElement {
     forceRerender((n) => n + 1)
   }, [search, roots.length, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, selectedRootId])
 
-  // Arrow-key navigation through the current filtered list (plan section 8), plus Escape to stop.
-  // Ignored while a text input has focus so this doesn't fight the search box's own cursor keys.
+  // Arrow-key navigation through the current filtered list (plan section 8). While the player is
+  // open this also swaps the cabinet as you move, which is the whole point — step down the list
+  // and hear each IR. Ignored while a text input has focus so it doesn't fight the search box's
+  // own cursor keys.
   useEffect(() => {
     const handler = (e: KeyboardEvent): void => {
       const active = document.activeElement
@@ -306,19 +384,18 @@ export function IrModeShell(): React.ReactElement {
           const next = e.key === 'ArrowDown' ? Math.min(total - 1, base + 1) : Math.max(0, base - 1)
           const row = cacheRef.current.get(next)
           // Known rough edge: if `next` hasn't loaded into cacheRef yet (rapid jump ahead of
-          // what VirtualList has fetched), this silently doesn't play — no retry once it
+          // what VirtualList has fetched), the cab silently doesn't change — no retry once it
           // arrives. Acceptable for a first cut; revisit if it's actually annoying in practice.
-          if (row) void live.playItem(row)
+          // Only swaps an ALREADY-open player; arrowing around with it closed just moves focus.
+          if (row && playerIr) setPlayerIr(row)
           return next
         })
-      } else if (e.key === 'Escape') {
-        void live.stop()
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [total])
+  }, [total, playerIr])
 
   const handleAddFolder = useCallback(async () => {
     const folder = await window.api.openFolder()
@@ -614,25 +691,27 @@ export function IrModeShell(): React.ReactElement {
           </div>
         )}
         {hasAnyRoot && <span className="text-xs text-nm-text-3 flex-shrink-0">{total.toLocaleString()} IRs</span>}
-        {hasAnyRoot && (
+        {hasAnyRoot && ampCapture && (
           <button
-            onClick={() => (live.running ? void live.stop() : undefined)}
-            title={live.running ? 'Click to stop live monitoring' : live.capturePath ? live.captureName ?? undefined : 'Set an amp capture in the Live tab'}
-            className={`ml-auto px-2.5 py-1 text-xs rounded border flex-shrink-0 ${
-              live.running ? 'border-nm-accent text-nm-accent bg-active-bg' : 'border-field-bd text-nm-text-2 hover:bg-hov'
-            }`}
+            onClick={() => {
+              // Re-pick: forget the remembered capture so ensureAmpCapture prompts again.
+              try {
+                localStorage.removeItem(AMP_CAPTURE_KEY)
+              } catch {
+                // Non-fatal.
+              }
+              setAmpCapture(null)
+            }}
+            title={`Auditioning through ${ampCapture.filePath} — click to choose a different amp capture`}
+            className="ml-auto px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov flex-shrink-0 max-w-[220px] truncate"
           >
-            {live.starting
-              ? 'Starting…'
-              : live.running
-                ? `● Live — ${live.slotA?.display_name ?? '…'}${live.slotB ? ` / ${live.slotB.display_name}` : ''}`
-                : 'Live: off'}
+            Amp: {ampCapture.metadata.name || ampCapture.fileName}
           </button>
         )}
       </div>
-      {live.error && (
+      {ampCaptureError && (
         <div className="px-4 py-1 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 flex-shrink-0">
-          Live audition: {live.error}
+          {ampCaptureError}
         </div>
       )}
 
@@ -711,9 +790,7 @@ export function IrModeShell(): React.ReactElement {
               return <div className="h-full border-b border-nm-border-s" />
             }
             const { folder, name } = splitPath(row.relative_path)
-            const isSlotA = live.running && live.slotA?.id === row.id
-            const isSlotB = live.running && live.slotB?.id === row.id
-            const isPlaying = isSlotA || isSlotB
+            const isPlaying = playerIr?.id === row.id
             const isFocused = focusedIndex === index
             return (
               <div
@@ -725,42 +802,49 @@ export function IrModeShell(): React.ReactElement {
                 }}
                 className={`group h-full flex items-center gap-3 px-4 border-b border-nm-border-s hover:bg-hov ${isFocused ? 'bg-active-bg' : ''}`}
               >
-                {/* Same faint-at-rest, grows-solid-on-row-hover button NAM Lab's own FileList.tsx
-                    uses for its play button (same size, same triangle icon, same color/opacity/
-                    transition classes) — this is one action on one row in both apps, so it should
-                    look and behave identically, not like two different products. */}
+                {/* Play + Play Live, identical in size, icon, color and hover treatment to NAM
+                    Lab's own row buttons (FileList.tsx) — the same two actions on a row in both
+                    halves of the app, so they look and behave the same rather than like two
+                    different products. Faint at rest, growing to a solid filled circle on row
+                    hover. */}
                 <button
                   onClick={(e) => {
                     e.stopPropagation()
                     setFocusedIndex(index)
-                    if (isPlaying) void live.stop()
-                    else void live.playItem({ id: row.id, abs_path: row.abs_path, display_name: row.display_name }, 'A')
+                    void openPlayer(row, false)
                   }}
-                  disabled={!live.capturePath}
-                  title={
-                    live.capturePath
-                      ? isPlaying
-                        ? 'Stop live monitoring'
-                        : 'Audition this IR live (slot A) — right-click for slot B'
-                      : 'Set an amp capture in the Live tab first'
-                  }
-                  className={`flex-shrink-0 self-center w-9 h-9 rounded-full flex items-center justify-center opacity-40 group-hover:opacity-100 transition-all duration-150 disabled:opacity-20 disabled:pointer-events-none ${
-                    isPlaying
-                      ? isSlotB
-                        ? 'text-sky-500 dark:text-sky-400 hover:bg-sky-500 hover:text-white dark:hover:bg-sky-500 dark:hover:text-white'
-                        : 'text-red-500 dark:text-red-400 hover:bg-red-500 hover:text-white dark:hover:bg-red-500 dark:hover:text-white'
-                      : 'text-green-500 dark:text-green-400 hover:bg-green-500 hover:text-white dark:hover:bg-green-500 dark:hover:text-white hover:!bg-green-600'
+                  title="Play this IR through an amp capture"
+                  className={`flex-shrink-0 self-center w-9 h-9 rounded-full flex items-center justify-center group-hover:opacity-100 transition-all duration-150 text-green-500 dark:text-green-400 hover:bg-green-500 hover:text-white dark:hover:bg-green-500 dark:hover:text-white hover:!bg-green-600 ${
+                    isPlaying ? 'opacity-100' : 'opacity-40'
                   }`}
                 >
-                  {isPlaying ? (
-                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                      <rect x="6" y="6" width="12" height="12" rx="1.5" />
-                    </svg>
-                  ) : (
-                    <svg className="w-5 h-5 ml-0.5" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M8 5.14v14l11-7-11-7z" />
-                    </svg>
-                  )}
+                  <svg className="w-5 h-5 ml-0.5" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M8 5.14v14l11-7-11-7z" />
+                  </svg>
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setFocusedIndex(index)
+                    void openPlayer(row, true)
+                  }}
+                  title="Play Live — open straight to the full-screen rig"
+                  className="flex-shrink-0 self-center w-9 h-9 rounded-full flex items-center justify-center opacity-40 group-hover:opacity-100 text-pink-500 dark:text-pink-400 hover:bg-pink-500 hover:text-white dark:hover:bg-pink-500 dark:hover:text-white transition-all duration-150"
+                >
+                  <span
+                    className="block w-4 h-4"
+                    style={{
+                      backgroundColor: 'currentColor',
+                      WebkitMaskImage: `url(${guitarJackIcon})`,
+                      maskImage: `url(${guitarJackIcon})`,
+                      WebkitMaskSize: 'contain',
+                      maskSize: 'contain',
+                      WebkitMaskRepeat: 'no-repeat',
+                      maskRepeat: 'no-repeat',
+                      WebkitMaskPosition: 'center',
+                      maskPosition: 'center'
+                    }}
+                  />
                 </button>
                 <button
                   onClick={(e) => {
@@ -829,13 +913,49 @@ export function IrModeShell(): React.ReactElement {
             className="w-1 flex-shrink-0 cursor-col-resize hover:bg-nm-accent/40 active:bg-nm-accent/60 transition-colors"
           />
           <div style={{ width: panelWidth }} className="flex-shrink-0 overflow-hidden">
-            <IrRightPanel
-              libraryRootId={activeRootId}
-              libraryRootPath={activeRoot?.path ?? null}
-              folderId={selectedFolderId}
-              folderName={selectedFolderName}
-              live={live}
-            />
+            {/* The player REPLACES the tabs while it's open, exactly as NAM mode's own list does
+                (App.tsx renders PlayerPanel in place of the metadata editor) — its X closes back
+                to the tabs. Deliberately not keyed by IR: remounting per IR would tear down the
+                live engine and reload the DI/IR libraries on every click, which is precisely what
+                makes stepping through cabinets by ear impossible. The panel takes the new cabinet
+                through its controlled `cabIrPath` prop instead. */}
+            {playerIr && ampCapture ? (
+              <PlayerPanel
+                file={ampCapture}
+                titleOverride={playerIr.display_name.replace(/\.wav$/i, '')}
+                cabIrPath={playerIr.abs_path}
+                onCabIrPathChange={(path) => {
+                  // The player's own cab picker changed the IR out from under the browse list.
+                  // Nothing in the catalog matches an arbitrary picked path, so drop the list
+                  // linkage rather than showing a row as playing when it isn't.
+                  if (path !== playerIr.abs_path) setPlayerIr(null)
+                }}
+                onClose={() => {
+                  setPlayerIr(null)
+                  setLiveJumpRequest(null)
+                }}
+                diLibraryPath={str('diPreviewLibraryPath')}
+                irLibraryPath={str('irLibraryPath')}
+                reverbLibraryPath={str('reverbLibraryPath')}
+                delayLibraryPath={str('delayLibraryPath')}
+                irMix={typeof settings.irMix === 'number' ? (settings.irMix as number) : 1}
+                chorusPresets={arr('chorusPresets')}
+                delayPresets={arr('delayPresets')}
+                reverbPresets={arr('reverbPresets')}
+                echoLabPresets={arr('echoLabPresets')}
+                rigPresets={arr('rigPresets')}
+                autoStartLiveOnPopout={settings.autoStartLiveOnPopout === true}
+                liveJumpRequest={liveJumpRequest}
+                onLiveJumpHandled={() => setLiveJumpRequest(null)}
+              />
+            ) : (
+              <IrRightPanel
+                libraryRootId={activeRootId}
+                libraryRootPath={activeRoot?.path ?? null}
+                folderId={selectedFolderId}
+                folderName={selectedFolderName}
+              />
+            )}
           </div>
         </div>
       )}
@@ -885,22 +1005,8 @@ export function IrModeShell(): React.ReactElement {
               label: trayIds.has(contextMenu.row.id) ? 'Remove from Tray' : 'Add to Tray',
               onClick: () => toggleTray(contextMenu.row)
             },
-            {
-              label: 'Audition Live — Slot A',
-              onClick: () =>
-                void live.playItem(
-                  { id: contextMenu.row.id, abs_path: contextMenu.row.abs_path, display_name: contextMenu.row.display_name },
-                  'A'
-                )
-            },
-            {
-              label: 'Audition Live — Slot B (blend)',
-              onClick: () =>
-                void live.playItem(
-                  { id: contextMenu.row.id, abs_path: contextMenu.row.abs_path, display_name: contextMenu.row.display_name },
-                  'B'
-                )
-            },
+            { label: 'Play', onClick: () => void openPlayer(contextMenu.row, false) },
+            { label: 'Play Live', onClick: () => void openPlayer(contextMenu.row, true) },
             { label: 'Add to Group…', onClick: () => setAddToGroupRow(contextMenu.row) },
             { divider: true },
             // Placeholder for the rest of section 12's roadmap (collections beyond tray/groups,

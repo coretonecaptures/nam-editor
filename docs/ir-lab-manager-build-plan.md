@@ -1020,34 +1020,74 @@ through an amp capture, continuously, no DI file involved at all) with the
 cabinet swapped instead of the amp — not the separate, much simpler
 offline-DI mechanism this replaced.
 
-**Built, reusing `LiveEngine` directly (not a copy):**
+**FINAL SHAPE (2026-08-25): IR mode renders NAM Lab's own `PlayerPanel`.**
+Everything between here and the two-IR-blend section below describes an
+intermediate version that has since been **deleted**; it is kept only
+because the reasoning for deleting it matters.
 
-- `src/renderer/src/components/ir/useIrLiveAudition.ts` — new hook, but the
-  audio engine underneath it is the *exact same* `LiveEngine` class
-  (`src/renderer/src/utils/liveEngine.ts`) `PlayerPanel.tsx`'s own Live mode
-  uses. `start()` opens `LiveEngine` with a chosen amp capture's `.nam` file
-  (`modelJson`) and no IR yet; `playItem(item)` starts monitoring on first
-  use (or reuses the running engine) and calls `engine.setIr()` — the exact
-  method `PlayerPanel.tsx:1288-1304` already calls when you change cabs
-  mid-session in NAM mode, not a new mechanism. `wireIr()`
-  (`liveEngine.ts:2282`, called by `setIr`) already does the disconnect/
-  resample/gain-makeup dance needed to swap cabinets without dropping the
-  mic or reloading the amp model.
-- Amp capture picked once via `window.api.openFiles()` (same generic .nam
-  file dialog, persisted to localStorage), matching the decided answer:
-  "pick an amp capture first," same flow as NAM Lab's own Live mode.
-- `src/renderer/src/components/ir/IrLiveTab.tsx` — a new "Live" tab in
-  `IrRightPanel.tsx` (always available, not folder-scoped): capture picker,
-  play/stop transport reusing the *same* tape-cap artwork files NAM Lab's
-  player uses (`assets/transport/play-lit.png` etc., imported by the same
-  path, not copied), an output meter bar, and error display.
-- Row play buttons (`IrModeShell.tsx`) and arrow-key navigation now call
-  `live.playItem(row)` instead of the deleted offline mechanism; Escape
-  calls `live.stop()`. The header's old "Pick DI clip…" button is gone,
-  replaced by a compact live-status indicator. Deliberately does NOT stop
-  live monitoring on search/folder/filter changes (unlike the old mechanism,
-  which was cheap to restart) — live is a continuous session tied to the
-  chosen amp capture, independent of the current browse view.
+That intermediate version built IR mode a *parallel* player: a bespoke
+`useIrLiveAudition.ts` hook plus an `IrLiveTab.tsx` UI. It did correctly
+reuse the `LiveEngine` class itself — but it re-implemented the whole
+orchestration layer around it (start/stop lifecycle, device selection, FX
+state, meter polling) and shipped a thinner FX UI next to the real one.
+Called out directly, and correctly: *"why is this not just an absolute load
+of the existing code??? ... we should follow good design principles,
+abstraction, reusability ... not copy/paste ... this was the reason im not
+building a new app and using nam lab, because all of this work was already
+done."*
+
+The correct answer was that NAM Lab already had **three** finished player
+views, all of which IR mode wanted: the DI/Preview player, the inline Live
+player, and the full-screen Live rig. So IR mode now renders
+`PlayerPanel` itself, and gets all three verbatim — including the pop-out
+arrow, tuner, RIG presets, the photoreal racks, and the transport.
+
+What made that possible with no state-sharing refactor: **every prop
+`PlayerPanel` needs comes from `settings`, and settings are readable from
+any renderer tree.** `settings.json` is read synchronously in preload and
+exposed as `window.api.initialSettings`, so IR mode reads the same library
+paths and FX preset lists NAM mode passes down from `App.tsx` state,
+without the two trees needing to share anything.
+
+Built for this:
+
+- `src/renderer/src/utils/loadNamFile.ts` — `loadNamFileForPlayback()`,
+  turning the chosen amp-capture path into the `NamFile` `PlayerPanel`
+  needs. Deliberately NOT App.tsx's own library-loading path
+  (`applyParsedResults`), which also runs the metadata-defaults engine,
+  computes `autoFilledFields` and marks files dirty — editing concerns that
+  would wrongly imply unsaved changes on a capture nobody is editing.
+- Four new optional props on `PlayerPanel`, all omitted by NAM mode so its
+  behavior is byte-for-byte unchanged: `cabIrPath` / `onCabIrPathChange`
+  (controlled cabinet — IR mode drives the cab from the browse list rather
+  than the panel owning it), `titleOverride` (headline the IR being
+  auditioned rather than the amp it plays through), and `headerExtra`.
+  The controlled/uncontrolled split lives in exactly two lines where
+  `irPath`/`setIrPath` are defined; every one of the ~6 downstream call
+  sites is untouched.
+- `IrModeShell.tsx`: the player REPLACES the right-panel tabs while open,
+  the same way `App.tsx` renders `PlayerPanel` in place of the metadata
+  editor. Deliberately not keyed by IR — remounting per IR would tear down
+  the live engine and re-scan the DI/IR libraries on every click, which is
+  exactly what makes stepping through cabinets by ear impossible; the new
+  cabinet arrives through `cabIrPath` instead.
+- Rows gained **both** of NAM Lab's row buttons, same icons/colors/hover
+  treatment as `FileList.tsx`: green play (opens the player) and the pink
+  guitar-jack "Play Live" (jumps straight to the full-screen rig via the
+  same self-clearing `liveJumpRequest` one-shot protocol NAM mode uses).
+- Arrow keys still step the list, and now swap the cabinet as they go when
+  the player is open — the actual point of the feature.
+
+Deleted, not kept alongside: `IrLiveTab.tsx`, `useIrLiveAudition.ts`, and
+the Live tab in `IrRightPanel.tsx`.
+
+A side effect worth recording: `utils/liveEngineOwner.ts` was added earlier
+as a mutex between IR mode's engine and NAM mode's. With the duplicate
+engine gone, and `AppRoot.tsx` only ever mounting one mode at a time, there
+is now exactly one `PlayerPanel` and therefore one engine **by
+construction** — a strictly better outcome than the lock. The module is
+kept as a cheap assertion of that invariant, with its header comment
+rewritten so it can't be misread as evidence two engines are expected.
 
 **Two-IR blend — now built, in BOTH NAM mode and IR mode:**
 
@@ -1261,6 +1301,32 @@ Project-specific gate needed, matches the original note here.
 
 Deferred, explicitly out of scope until requested: acoustic/fingerprint
 similarity search, non-WAV formats, user-customizable parser definitions.
+
+## 12b. NAM Lab bugs found while bringing its player into IR mode
+
+Found and fixed while studying `PlayerPanel.tsx` to reuse it. Recorded here
+because two of the three were pre-existing NAM Lab bugs, not IR-mode ones.
+
+1. **The full-screen live rig was a dead end on Windows** (pre-existing,
+   user-reported: *"from the full screen live player i dont know how to get
+   back to the main app"*). Two independent causes, both real:
+   - The **Collapse** button sat underneath Windows' native window
+     controls. The popped-out title bar used `paddingRight: 16`
+     unconditionally, but on Windows `titleBarOverlay` (src/main/index.ts)
+     draws minimize/maximize/close as OS chrome *above* the web content at
+     the top right. `Toolbar.tsx` had already solved exactly this by
+     reserving 155px on non-mac; the rig title bar now does the same.
+   - **Escape never worked.** That button's tooltip has always read "Back
+     to the panel (Esc)", but nothing ever listened for the key — so the
+     advertised escape hatch didn't exist either. Now wired, and ignored
+     while a text input has focus so it can't swallow a field's own
+     Escape-to-cancel.
+2. **Literal `—` / `…` rendering as visible text** in the
+   second-cabinet (blend) section added earlier in this same session — a
+   bug I introduced, visible in the user's own screenshot as "SECOND
+   CABINET (BLEND) — LIVE ONLY". Those escapes are not processed
+   inside JSX text nodes or attribute strings; they need the real
+   characters.
 
 ## 13. Open, non-blocking decisions
 

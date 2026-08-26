@@ -1,17 +1,20 @@
 /**
- * Cross-tree LiveEngine mutex (docs/ir-lab-manager-build-plan.md section 8b, item 2 — the
- * "Cross-tree architecture gap"). `AppRoot.tsx` renders NAM mode (`App.tsx`/`PlayerPanel.tsx`) and
- * IR mode (`IrModeShell.tsx`) as siblings with no shared state, and each now owns its own
- * independent `LiveEngine` instance. Running both live at once means two separate audio contexts/
- * worklets fighting over the same microphone/interface — this module doesn't remove that
- * (a genuinely SHARED single instance would need lifting `LiveEngine` above `AppRoot`, a real
- * state-lifting refactor not attempted here), it just makes the two modes aware of each other so
- * one refuses to start while the other is already live, with an honest error instead of silent
- * device contention.
+ * Single-owner guard for `LiveEngine` (docs/ir-lab-manager-build-plan.md section 8b).
  *
- * Deliberately a plain module-level singleton, not React context — the two owners live in
- * completely separate component trees under `AppRoot`, so there is no common ancestor to host
- * context even if one were built for this alone.
+ * HISTORY, because the shape of this module only makes sense with it: IR mode briefly had its own
+ * parallel `LiveEngine` (a bespoke hook), so two independent engines could be alive at once,
+ * fighting over the same microphone. This started life as a mutex between those two owners. That
+ * duplication has since been deleted — IR mode now renders the same `PlayerPanel` NAM mode does,
+ * and `AppRoot.tsx` only ever mounts ONE of the two modes at a time, so there is exactly one
+ * `PlayerPanel`, and therefore exactly one engine, by construction.
+ *
+ * So this is no longer resolving contention between two real owners; it's a cheap assertion that
+ * the single-owner invariant still holds, and the place a second owner would have to announce
+ * itself if one is ever added. Kept rather than deleted for that reason — but it should NOT be
+ * read as evidence that two engines are expected.
+ *
+ * Deliberately a plain module-level singleton, not React context — a would-be second owner would
+ * live in a separate component tree under `AppRoot` with no common ancestor to host context.
  */
 export type LiveEngineOwnerId = 'nam' | 'ir-mode'
 
