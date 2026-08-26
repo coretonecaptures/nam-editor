@@ -385,6 +385,7 @@ const api = {
       file_size: number | null
       is_favorite: number
       rating: number | null
+      missing_since: string | null
       manufacturer: string | null
       manufacturer_source: string | null
       cabinet: string | null
@@ -491,6 +492,18 @@ const api = {
     ipcRenderer.invoke('irLibrary:previewLibraryRootRemoval', libraryRootId),
   irLibraryRemoveLibraryRoot: (libraryRootId: number): Promise<{ itemsRemoved: number; foldersRemoved: number }> =>
     ipcRenderer.invoke('irLibrary:removeLibraryRoot', libraryRootId),
+  irLibraryCheckItemAvailability: (itemId: string): Promise<{
+    fileMissing: boolean
+    missingScope?: 'item' | 'folder' | 'root'
+    missingFolderId?: number
+    missingFolderName?: string
+    libraryRootId: number
+    libraryRootLabel: string
+    affectedItemCount: number
+  }> => ipcRenderer.invoke('irLibrary:checkItemAvailability', itemId),
+  irLibraryRelinkLibraryRoot: (libraryRootId: number, newPath: string): Promise<void> =>
+    ipcRenderer.invoke('irLibrary:relinkLibraryRoot', libraryRootId, newPath),
+  irLibraryRemoveItemFromCatalog: (itemId: string): Promise<void> => ipcRenderer.invoke('irLibrary:removeItemFromCatalog', itemId),
   irLibraryGetFolderDetail: (folderId: number): Promise<{
     id: number
     relativePath: string

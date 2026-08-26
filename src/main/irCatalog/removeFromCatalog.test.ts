@@ -6,7 +6,13 @@ import { join } from 'node:path'
 import { createCoreSchema, finalizeIndexes } from './schema'
 import { importLibrary } from './importLibrary'
 import { enrichLabProjects } from './labProjectEnrichment'
-import { previewFolderRemoval, removeFolderFromCatalog, previewLibraryRootRemoval, removeLibraryRoot } from './removeFromCatalog'
+import {
+  previewFolderRemoval,
+  removeFolderFromCatalog,
+  previewLibraryRootRemoval,
+  removeLibraryRoot,
+  removeItemFromCatalog
+} from './removeFromCatalog'
 import { hasFts5 } from './sqliteCapabilities'
 
 const tmpDirs: string[] = []
@@ -113,6 +119,22 @@ describe.skipIf(!hasFts5())('removeFromCatalog', () => {
     // item_search is kept in sync live by the existing item_search_ad trigger -- not by a
     // finalizeIndexes() call this function never makes.
     expect((db.prepare(`SELECT COUNT(*) c FROM item_search`).get() as { c: number }).c).toBe(0)
+
+    db.close()
+  })
+
+  it('removeItemFromCatalog removes just the one item, leaving siblings intact', async () => {
+    const root = makeFixture()
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    await importLibrary(db, root, 'test-root')
+    finalizeIndexes(db)
+
+    const target = db.prepare(`SELECT id FROM item WHERE relative_path LIKE '%Combo.wav'`).get() as { id: string }
+    removeItemFromCatalog(db, target.id)
+
+    const remaining = db.prepare(`SELECT relative_path FROM item`).all() as Array<{ relative_path: string }>
+    expect(remaining.map((r) => r.relative_path).sort()).toEqual(['Ownhammer/Mesa V30/MD421 Edge.wav', 'Ownhammer/Mesa V30/SM57 Cone.wav'])
 
     db.close()
   })

@@ -62,6 +62,14 @@ export function previewLibraryRootRemoval(db: DatabaseSync, libraryRootId: numbe
   return { itemCount, folderCount }
 }
 
+/** Removes a single item — the `missingScope === 'item'` case from missingFileCheck.ts, where
+ * only the one file is gone and its folder structure is otherwise intact. Cascades ir_item/
+ * ir_item_field_source/item_tag/ir_derivative_variant/collection_item/asset_file(item_id) via
+ * their own `ON DELETE CASCADE`, and fires the existing `item_search_ad` trigger. */
+export function removeItemFromCatalog(db: DatabaseSync, itemId: string): void {
+  db.prepare(`DELETE FROM item WHERE id = ?`).run(itemId)
+}
+
 /** Stops tracking a whole added library folder (an "Add Library Folder…" root) — every folder,
  * item, and ir_project collection under it, and the library_root row itself. Never touches the
  * files on disk; run "Add Library Folder…" again on the same path to re-add it from scratch. */

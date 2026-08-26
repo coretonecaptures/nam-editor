@@ -35,8 +35,10 @@ import {
   previewFolderRemoval,
   removeFolderFromCatalog,
   previewLibraryRootRemoval,
-  removeLibraryRoot
+  removeLibraryRoot,
+  removeItemFromCatalog
 } from './irCatalog/removeFromCatalog'
+import { checkItemAvailability, relinkLibraryRoot } from './irCatalog/missingFileCheck'
 import {
   listTags,
   getOrCreateTag,
@@ -240,6 +242,23 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
   })
   ipcMain.handle('irLibrary:removeLibraryRoot', (_event, libraryRootId: number) => {
     return removeLibraryRoot(getDb(), libraryRootId)
+  })
+
+  // "Highlight the capture if someone tries to open one and realizes it doesn't exist" — checked
+  // once, at the moment a row is actually opened, not on a timer or per-render. See
+  // missingFileCheck.ts's own header comment for why this app follows Lightroom's "detect on
+  // demand" model rather than a live filesystem watcher.
+  ipcMain.handle('irLibrary:checkItemAvailability', (_event, itemId: string) => {
+    return checkItemAvailability(getDb(), itemId)
+  })
+
+  // "Find the folder and restore it" — repoints an existing root at its new location; the
+  // renderer immediately follows this with the normal 'irLibrary:scan' call to re-validate.
+  ipcMain.handle('irLibrary:relinkLibraryRoot', (_event, libraryRootId: number, newPath: string) => {
+    relinkLibraryRoot(getDb(), libraryRootId, newPath)
+  })
+  ipcMain.handle('irLibrary:removeItemFromCatalog', (_event, itemId: string) => {
+    removeItemFromCatalog(getDb(), itemId)
   })
 
   ipcMain.handle(

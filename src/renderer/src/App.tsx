@@ -486,6 +486,7 @@ declare global {
           file_size: number | null
           is_favorite: number
           rating: number | null
+          missing_since: string | null
           manufacturer: string | null
           manufacturer_source: string | null
           cabinet: string | null
@@ -574,6 +575,17 @@ declare global {
       irLibraryRemoveFolderFromCatalog: (folderId: number) => Promise<{ itemsRemoved: number; foldersRemoved: number }>
       irLibraryPreviewLibraryRootRemoval: (libraryRootId: number) => Promise<{ itemCount: number; folderCount: number }>
       irLibraryRemoveLibraryRoot: (libraryRootId: number) => Promise<{ itemsRemoved: number; foldersRemoved: number }>
+      irLibraryCheckItemAvailability: (itemId: string) => Promise<{
+        fileMissing: boolean
+        missingScope?: 'item' | 'folder' | 'root'
+        missingFolderId?: number
+        missingFolderName?: string
+        libraryRootId: number
+        libraryRootLabel: string
+        affectedItemCount: number
+      }>
+      irLibraryRelinkLibraryRoot: (libraryRootId: number, newPath: string) => Promise<void>
+      irLibraryRemoveItemFromCatalog: (itemId: string) => Promise<void>
       irLibraryGetLibraryOverview: (libraryRootId: number, folderId?: number | null) => Promise<{
         totalItems: number
         totalFolders: number

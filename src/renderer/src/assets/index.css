@@ -285,6 +285,7 @@ pre, code,
 .nam-chip.chip-ir-depth        { --c: #22c55e; }
 .nam-chip.chip-ir-channels     { --c: #64748b; }
 .nam-chip.chip-ir-length       { --c: #94a3b8; }
+.nam-chip.chip-ir-missing      { --c: #ef4444; }
 
 /* Tone chip colors */
 .nam-chip.chip-clean      { --c: #0ea5e9; }

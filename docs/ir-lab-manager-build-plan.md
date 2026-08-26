@@ -1709,6 +1709,64 @@ sibling folders/roots.
 
 irCatalog 117 tests (+5 this pass), renderer 357, build clean.
 
+## 12h. Detecting a missing file at open-time — highlight, and offer to remove or restore
+
+Direct follow-up to 12g's "how would we know if a file gets deleted, without
+constantly scanning": "highlight the capture if someone tries to open one
+and realizes it doesn't exist... maybe we could make it smarter, by
+searching up from the file to see if all files in the folder, or its
+parent(s), are also missing... alert the user, ask if they want to remove
+from the app or find the folder and restore it."
+
+Checked exactly once, at the moment `openPlayer` is actually invoked (Play/
+Play Live) — not a timer, not per-render, consistent with 12g's "detect on
+demand, not a live watcher" model. A single `fs.existsSync` round trip is
+imperceptible; it's not an OS dialog, so this doesn't reintroduce the
+earlier "why does play open a file picker" bug.
+
+- **`missingFileCheck.ts` (new)**: `checkItemAvailability(db, itemId)`
+  stats the item's own file first. If it exists, nothing else happens. If
+  not, it marks `missing_since` on the item immediately (so the row's own
+  "Missing" badge — new `chip-ir-missing` red pill — updates live, without
+  waiting for a rescan), then walks UP from the library root DOWN to the
+  item's folder (root first, then each subfolder in turn), stopping at the
+  **shallowest** missing ancestor. That's deliberate, not incidental: if a
+  whole cabinet subfolder got deleted, everything nested inside it is
+  necessarily also gone, but reporting the topmost missing folder is what
+  lets the dialog offer one action that actually fixes the real scope,
+  instead of reporting each descendant file as its own separate problem.
+  Three outcomes: `'item'` (just this file), `'folder'` (a subfolder and
+  everything in it), `'root'` (the whole added library folder is gone —
+  e.g. moved, renamed, or a drive letter changed).
+- **The dialog** (`IrModeShell.tsx`) explains which scope was hit, how many
+  other captures share it, and offers:
+  - **Remove from Catalog** — always available. Routes to whichever of
+    12g's existing functions matches the scope: the new
+    `removeItemFromCatalog` (one row) for `'item'`,
+    `removeFolderFromCatalog` for `'folder'`, `removeLibraryRoot` for
+    `'root'`.
+  - **Locate Folder…** — only offered for `'root'`. Opens the existing
+    native folder picker, then `relinkLibraryRoot` repoints
+    `library_root.path` at the new location (a plain `UPDATE` — `path` is
+    `UNIQUE`, so the very next scan against that same path resolves back
+    to this same root row via its existing `ON CONFLICT(path)` upsert,
+    re-validating every folder/item under the new location), followed
+    immediately by the normal scan pipeline to actually re-populate it.
+  - **Leave it** — dismisses with no action; the row stays flagged
+    `missing_since` until it either reappears on a later scan or the user
+    removes it.
+- **Why "Locate…" isn't offered for `'folder'`**: `relative_path` is
+  stored relative to `library_root.path`. A subfolder that moved to
+  somewhere NOT still nested under that same root path has no clean way to
+  be represented without either treating the whole root as having moved
+  (the `'root'` case above) or introducing per-item absolute-path
+  overrides — explicitly out of scope for this pass. Documented in
+  `relinkLibraryRoot`'s own comment, not silently unsupported.
+
+irCatalog 122 tests (+5: exists/not-missing no-op, item-scope, the
+shallowest-ancestor-not-deepest folder case, whole-root case, single-item
+removal), renderer 357, build clean.
+
 ## 13. Open, non-blocking decisions
 
 - Exact IR Lab license enforcement point/timing — the user has already noted this can land before final release, independent of this plan.

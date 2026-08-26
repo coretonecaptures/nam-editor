@@ -22,6 +22,7 @@ type IrItemRow = {
   file_size: number | null
   is_favorite: number
   rating: number | null
+  missing_since: string | null
   manufacturer: string | null
   manufacturer_source: string | null
   cabinet: string | null
@@ -235,6 +236,20 @@ export function IrModeShell(): React.ReactElement {
   // Bumped to ask PlayerPanel to jump straight to its full-screen rig — the same self-clearing
   // one-shot protocol NAM Lab's list uses for its own "Play Live" button.
   const [liveJumpRequest, setLiveJumpRequest] = useState<number | null>(null)
+  // "Highlight the capture if someone tries to open one and realizes it doesn't exist" — set when
+  // openPlayer's availability check finds the file gone, cleared on dismiss/action. Carries enough
+  // of the check result to render the right dialog copy and offer the right actions.
+  const [missingFileInfo, setMissingFileInfo] = useState<{
+    row: IrItemRow
+    jumpLive: boolean
+    missingScope: 'item' | 'folder' | 'root'
+    missingFolderId?: number
+    missingFolderName?: string
+    libraryRootId: number
+    libraryRootLabel: string
+    affectedItemCount: number
+  } | null>(null)
+  const [missingFileBusy, setMissingFileBusy] = useState(false)
   // Read straight from preload rather than App.tsx's state: settings.json is loaded synchronously
   // in preload and exposed as window.api.initialSettings, so IR mode can read the very same
   // library paths and FX presets NAM mode passes to PlayerPanel without needing the two React
@@ -394,8 +409,34 @@ export function IrModeShell(): React.ReactElement {
    * never does that (there, the row IS the capture), so the player opens immediately and asks for
    * the amp capture inline, in the panel, where the request has visible context. */
   const openPlayer = useCallback((row: IrItemRow, jumpLive: boolean) => {
-    setPlayerIr(row)
-    if (jumpLive) setLiveJumpRequest(Date.now())
+    // Checked at the moment of actually trying to open a capture — not on a timer, not for every
+    // row in view — matching this app's "detect on demand, not a live watcher" model
+    // (missingFileCheck.ts's own header comment has the full reasoning). A single stat() round
+    // trip is imperceptible; it's not an OS dialog, so this doesn't reintroduce the earlier
+    // file-picker-instead-of-player bug.
+    window.api.irLibraryCheckItemAvailability(row.id).then((result) => {
+      if (!result.fileMissing) {
+        setPlayerIr(row)
+        if (jumpLive) setLiveJumpRequest(Date.now())
+        return
+      }
+      setMissingFileInfo({
+        row,
+        jumpLive,
+        missingScope: result.missingScope!,
+        missingFolderId: result.missingFolderId,
+        missingFolderName: result.missingFolderName,
+        libraryRootId: result.libraryRootId,
+        libraryRootLabel: result.libraryRootLabel,
+        affectedItemCount: result.affectedItemCount
+      })
+      // The row's own badge should reflect this immediately, without waiting for a rescan —
+      // missingFileCheck.ts already set missing_since in the DB; bump the cache/epoch so the
+      // visible row re-renders with it.
+      requestEpochRef.current++
+      cacheRef.current = new Map()
+      forceRerender((n) => n + 1)
+    })
   }, [])
 
   // New search, folder filter, or a completed scan invalidates every cached index — the same
@@ -516,6 +557,44 @@ export function IrModeShell(): React.ReactElement {
     pendingRef.current = new Set()
     forceRerender((n) => n + 1)
   }, [refreshRoots])
+
+  // "Ask if they want to remove from the app or find the folder and restore it" — the two actions
+  // offered by the missing-file dialog. "Locate…" only ever shows for missingScope 'root' (see
+  // missingFileCheck.ts's relinkLibraryRoot for why a subfolder can't be cleanly relinked to an
+  // arbitrary new location, only a whole added root can).
+  const handleMissingFileAction = useCallback(
+    async (action: 'remove' | 'locate') => {
+      if (!missingFileInfo) return
+      setMissingFileBusy(true)
+      try {
+        if (action === 'remove') {
+          if (missingFileInfo.missingScope === 'item') {
+            await window.api.irLibraryRemoveItemFromCatalog(missingFileInfo.row.id)
+          } else if (missingFileInfo.missingScope === 'folder' && missingFileInfo.missingFolderId != null) {
+            await window.api.irLibraryRemoveFolderFromCatalog(missingFileInfo.missingFolderId)
+          } else if (missingFileInfo.missingScope === 'root') {
+            await window.api.irLibraryRemoveLibraryRoot(missingFileInfo.libraryRootId)
+          }
+        } else {
+          const newPath = await window.api.openFolder()
+          if (!newPath) return
+          await window.api.irLibraryRelinkLibraryRoot(missingFileInfo.libraryRootId, newPath)
+          const rootLabel = roots.find((r) => r.id === missingFileInfo.libraryRootId)?.label ?? null
+          setScanning(true)
+          try {
+            await window.api.irLibraryScan(newPath, rootLabel)
+          } finally {
+            setScanning(false)
+          }
+        }
+        handleLibraryChanged()
+      } finally {
+        setMissingFileBusy(false)
+        setMissingFileInfo(null)
+      }
+    },
+    [missingFileInfo, roots, handleLibraryChanged]
+  )
 
   const onVisibleRangeChange = useCallback(
     (start: number, end: number) => {
@@ -853,8 +932,17 @@ export function IrModeShell(): React.ReactElement {
                       overlapping the row below it (the bug reported from the previous build).
                       Anything past the available width is clipped by overflow-hidden rather than
                       wrapping down into the next row. */}
-                  {(row.sample_rate || row.channels || row.duration_seconds || row.manufacturer || row.cabinet || row.speaker || row.microphone) && (
+                  {(row.missing_since || row.sample_rate || row.channels || row.duration_seconds || row.manufacturer || row.cabinet || row.speaker || row.microphone) && (
                     <div className="flex items-center gap-1 overflow-hidden">
+                      {row.missing_since && (
+                        <span
+                          className="nam-chip chip-ir-missing flex-shrink-0"
+                          title={`File not found on disk since ${new Date(row.missing_since).toLocaleString()} — click Play to see options`}
+                        >
+                          <span className="nam-dot" />
+                          Missing
+                        </span>
+                      )}
                       {row.sample_rate ? (
                         <button
                           onClick={(e) => {
@@ -1089,6 +1177,72 @@ export function IrModeShell(): React.ReactElement {
         sending={sendingTray}
         error={trayError}
       />
+
+      {missingFileInfo && (
+        <div
+          className="fixed inset-0 z-[9990] bg-black/60 flex items-center justify-center"
+          onClick={() => !missingFileBusy && setMissingFileInfo(null)}
+        >
+          <div
+            className="bg-panel border border-nm-border rounded-xl p-5 w-[420px] flex flex-col gap-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-sm font-semibold text-nm-text">File not found</div>
+            <div className="text-xs text-nm-text-2 leading-relaxed">
+              {missingFileInfo.missingScope === 'item' && (
+                <>
+                  <span className="font-medium text-nm-text">"{missingFileInfo.row.display_name}"</span> couldn&apos;t be found on
+                  disk. Its containing folder is still there — just this one file appears to have been moved or deleted.
+                </>
+              )}
+              {missingFileInfo.missingScope === 'folder' && (
+                <>
+                  The folder <span className="font-medium text-nm-text">"{missingFileInfo.missingFolderName}"</span> couldn&apos;t
+                  be found on disk — it, and {missingFileInfo.affectedItemCount.toLocaleString()} capture
+                  {missingFileInfo.affectedItemCount === 1 ? '' : 's'} inside it, appear to have been moved or deleted together.
+                </>
+              )}
+              {missingFileInfo.missingScope === 'root' && (
+                <>
+                  The whole library folder <span className="font-medium text-nm-text">"{missingFileInfo.libraryRootLabel}"</span>{' '}
+                  couldn&apos;t be found on disk — all {missingFileInfo.affectedItemCount.toLocaleString()} captures in it appear to
+                  have moved (a rename, a relocated drive, or a changed drive letter) or been deleted.
+                </>
+              )}
+              <br />
+              <br />
+              {missingFileInfo.missingScope === 'root'
+                ? 'If it moved, locate its new folder to relink everything in place. Otherwise, remove it from the catalog.'
+                : 'Remove it from the catalog, or leave it — it stays marked "Missing" until it either reappears on a rescan or you remove it.'}
+            </div>
+            <div className="flex items-center justify-end gap-2 mt-1 flex-wrap">
+              <button
+                onClick={() => setMissingFileInfo(null)}
+                disabled={missingFileBusy}
+                className="px-3 py-1.5 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-50"
+              >
+                Leave it
+              </button>
+              {missingFileInfo.missingScope === 'root' && (
+                <button
+                  onClick={() => void handleMissingFileAction('locate')}
+                  disabled={missingFileBusy}
+                  className="px-3 py-1.5 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-50"
+                >
+                  {missingFileBusy ? 'Working…' : 'Locate Folder…'}
+                </button>
+              )}
+              <button
+                onClick={() => void handleMissingFileAction('remove')}
+                disabled={missingFileBusy}
+                className="px-3 py-1.5 text-xs rounded bg-red-600 hover:bg-red-700 text-white disabled:opacity-50"
+              >
+                {missingFileBusy ? 'Removing…' : 'Remove from Catalog'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {contextMenu && (
         <ContextMenu
