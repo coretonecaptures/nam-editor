@@ -712,17 +712,28 @@ export function IrModeShell(): React.ReactElement {
     setSelectedFolderName(null)
   }, [])
 
-  // Picking a group clears any folder/root scoping first. A group is deliberately cross-folder AND
-  // cross-root (tag.ts: "across anywhere in your library"), but the browse query ANDs folderId and
-  // libraryRootId with tagId — so with either still scoped, a group whose item lives outside that
-  // scope silently returned zero rows while the Groups menu still showed a non-zero item count.
-  // Reported exactly that way: "i see i have a group with 1 item, but when i click it, nothing
-  // shows in the list".
+  // Picking a group clears EVERY other narrowing filter first — folder/root scope, any facet
+  // chips, favorites/rated, and search text. A group is deliberately cross-folder AND cross-root
+  // (tag.ts: "across anywhere in your library"), but the browse query ANDs every active filter
+  // together — so with ANY of them still set, a group whose item doesn't also happen to match
+  // that leftover filter silently returned zero rows while the Groups menu still showed a
+  // non-zero item count. First reported for folder/root scope specifically ("i see i have a group
+  // with 1 item, but when i click it, nothing shows"); reported again after that fix ("filtering
+  // groups still does nothing") — the second report is what makes clearing folder/root alone not
+  // enough: whatever OTHER filter was still active (a facet chip, Favorites/Rated, leftover
+  // search text) was doing the exact same thing. Clicking a group should always show exactly its
+  // members, not its members ANDed with whatever was left over from browsing before.
   const selectTagFilter = useCallback((id: number | null) => {
     if (id != null) {
       setSelectedFolderId(null)
       setSelectedFolderName(null)
       setSelectedRootId(null)
+      setFacets({})
+      setAudioFacets({})
+      setFavoritesOnly(false)
+      setRatedOnly(false)
+      setSearchInput('')
+      setSearch('')
     }
     setTagFilterId(id)
   }, [])
@@ -757,8 +768,13 @@ export function IrModeShell(): React.ReactElement {
       let latest = panelWidth
       const onMove = (ev: MouseEvent): void => {
         // Panel is on the right, so dragging LEFT (negative delta) widens it — inverse of the
-        // tree handle's sign.
-        const next = Math.min(480, Math.max(180, startWidth - (ev.clientX - startX)))
+        // tree handle's sign. Bounded dynamically by the actual window width (same idea as NAM
+        // Lab's own App.tsx pane-resize logic) rather than a small fixed cap — 480px left the
+        // panel barely able to move at all before hitting its ceiling, reported directly ("seems
+        // i cant drag the right panel very far, give it way more space to move left"). 300px is
+        // reserved for the list column so it's narrowed, never squeezed to nothing.
+        const maxWidth = Math.max(180, window.innerWidth - treeWidth - 300)
+        const next = Math.min(maxWidth, Math.max(180, startWidth - (ev.clientX - startX)))
         latest = next
         setPanelWidth(next)
       }
@@ -770,7 +786,7 @@ export function IrModeShell(): React.ReactElement {
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
     },
-    [panelWidth]
+    [panelWidth, treeWidth]
   )
 
   return (

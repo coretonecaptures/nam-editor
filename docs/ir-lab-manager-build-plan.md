@@ -1781,3 +1781,30 @@ removal), renderer 357, build clean.
   alongside search, useful right after adding a new vendor pack to see what's actually in it),
   the data already supports it — `folder.parent_id` is a real tree edge (section 2) — so it's an
   additive UI feature, not a schema change, whichever phase it lands in.
+- **TODO, explicitly deferred by the user ("add a to do, will scope further later"): play a whole
+  group from the Selection Tray.** Ask was: a way to "play group" from the tray, opening the
+  player with prev/next buttons that cycle through exactly that group's members (not the full
+  browse list — `PlayerPanel`'s existing arrow-key row-stepping walks the CURRENT filtered browse
+  list, which isn't the same thing as a fixed, named set of IRs). Needs its own scoping pass before
+  building: does prev/next wrap around or stop at the ends; does opening it also apply the group
+  filter to the browse list underneath (so the two stay visually in sync) or leave browse alone;
+  does the tray needs its own "Play Group" entry point distinct from Groups' existing filter
+  button, since the tray and Groups are two different member-list concepts today.
+
+## 12i. Panel resize range, and the group filter not actually isolating group members
+
+Two bugs reported together, both real:
+
+- **"seems i cant drag the right panel very far, give it way more space to move left"**: the
+  panel's own resize handle capped it at a flat 480px regardless of window size — plenty of room
+  went unused on a wide window. Changed to a dynamic bound (`IrModeShell.tsx`'s
+  `onPanelDragStart`), matching NAM Lab's own App.tsx pane-resize convention: `window.innerWidth -
+  treeWidth - 300`, reserving 300px for the list column so it narrows rather than disappearing.
+- **"filtering groups still does nothing, i see an item in the group but its not in the list when
+  i click it"** — reported again after the earlier fix (12g's session) that cleared folder/root
+  scope on group selection. That fix was necessary but not sufficient: ANY other active filter —
+  a facet chip, Favorites/Rated, leftover search text — ANDs with `tagId` the same way folder/root
+  scope did, so a group's item could still be silently hidden by whatever the user had been
+  browsing with before clicking the group. `selectTagFilter` now clears every narrowing filter
+  (facets, audioFacets, favoritesOnly, ratedOnly, search) alongside folder/root scope, not just
+  the two that caused the first report — clicking a group should always show exactly its members.
