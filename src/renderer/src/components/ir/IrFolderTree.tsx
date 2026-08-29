@@ -288,7 +288,8 @@ export function IrFolderTree({
   libraryRootCount,
   selectedFolderId,
   onSelectFolder,
-  onLibraryChanged
+  onLibraryChanged,
+  onRescanRoot
 }: {
   libraryRootCount: number
   selectedFolderId: number | null
@@ -296,6 +297,11 @@ export function IrFolderTree({
   /** Called after a folder or whole root is actually removed, so the shell can clear the selected
    * folder if it was the one removed, refresh the root list, and refetch the browse list/Overview. */
   onLibraryChanged: () => void
+  /** Right-click "Rescan" -- there's no narrower per-subfolder scan in the pipeline (importLibrary
+   * walks a whole library_root each time), so this re-scans the clicked node's whole containing
+   * root regardless of whether the node itself IS that root or a subfolder under it. The shell owns
+   * the actual scan call/progress UI (same one "Rescan all" in the menu bar already drives). */
+  onRescanRoot: (libraryRootId: number) => void
 }): React.ReactElement {
   const [rows, setRows] = useState<FolderRow[]>([])
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set())
@@ -337,6 +343,12 @@ export function IrFolderTree({
 
   const expandAll = useCallback(() => setExpandedIds(new Set(allIds)), [allIds])
   const collapseAll = useCallback(() => setExpandedIds(new Set()), [])
+
+  const revealInExplorer = useCallback(async (node: TreeNode) => {
+    setContextMenu(null)
+    const detail = await window.api.irLibraryGetFolderDetail(node.id)
+    if (detail) window.api.revealFile(detail.absPath)
+  }, [])
 
   const openRemoveConfirm = useCallback((node: TreeNode) => {
     setContextMenu(null)
@@ -420,6 +432,17 @@ export function IrFolderTree({
           y={contextMenu.y}
           onClose={() => setContextMenu(null)}
           items={[
+            {
+              label: 'Rescan',
+              onClick: () => {
+                setContextMenu(null)
+                onRescanRoot(contextMenu.node.libraryRootId)
+              }
+            },
+            {
+              label: 'Reveal in Explorer',
+              onClick: () => void revealInExplorer(contextMenu.node)
+            },
             {
               label: contextMenu.node.isRootNode ? `Remove "${contextMenu.node.name}" from Library…` : `Remove "${contextMenu.node.name}" from Catalog…`,
               destructive: true,

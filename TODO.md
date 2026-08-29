@@ -1469,3 +1469,79 @@ sharing for exactly this file-type pairing.
 Scope this as its own project once IR Lab's write side exists, not before -- there is nothing to
 read yet, and the metadata schema (which fields, what they're called) should be decided jointly
 with IR Lab so both apps agree on one taxonomy rather than inventing two.
+
+## Future: import IR Lab's "NAM Capture" projects into the trainer queue (automated workflow)
+
+Not started -- blocked on IR Lab's own NAM Capture feature stabilizing (still being actively built
+on the Mac side as of 2026-08-29, 28 commits deep already: `docs/nam_capture_plan_2026-08-28.md`,
+`src/session/NamCaptureStore.h/.cpp`, `src/ui/NamCaptureWorkspace.cpp` in that repo). This section
+records the plan and the schema confirmed against that source tonight -- **re-verify against IR
+Lab's actual code before implementing anything**, the same discipline `labProjectEnrichment.ts`'s
+own header comment already follows for the (different, older) IR-capture schema, since this is
+explicitly not finalized yet.
+
+### The goal
+
+IR Lab's NAM Capture mode captures a DI/reamp pair (excitation played through real hardware or a
+plugin, the return recorded) with no IR-specific processing at all -- exactly the input/output WAV
+pair NAM Lab's own trainer already consumes as `inputPath`/`outputPath`. The end-to-end workflow:
+capture in IR Lab -> NAM Lab discovers it automatically -> queues it for training with zero manual
+file-picking -> once trained, IR Lab can show which of its captures already became a model.
+
+### What IR Lab already writes (confirmed against `NamCaptureStore.cpp`, 2026-08-29)
+
+One folder per capture, no nesting -- same convention as IR Lab's own IR captures
+(`docs/ir-lab-session-file-format.md`):
+
+```
+<project.outputRoot>/<sanitizedName>-<captureId>/
+    excitation.wav      -- 32-bit float mono, the DI/reference signal played
+    recording.wav        -- 32-bit float mono, same sample count, the captured return
+    nam-capture.json
+```
+
+`nam-capture.json`: `schemaVersion` (1), `captureId`, `captureName`, `createdAt`, `app` ("IR Lab"),
+`captureScope` ("Cabinet"/"Device"/"Software"), `excitation`/`recording` (relative filenames --
+explicit, not inferred from naming convention), `excitationSourceName`, `stimulusSha256` (optional,
+SHA-256 of the source stimulus file's bytes), `sampleRate`, `measuredLatencySamples`, `projectId`,
+`projectName`, and -- only present when true -- `synthetic` + `syntheticSourceIrName` for a DI x IR
+convolution render (a synthesized capture, not a real mic'd/device recording).
+
+The explicit `excitation`/`recording` field names are the important design win here: NAM Lab's
+existing folder-watcher has to infer the DI/reamp pairing from a naming convention today: this
+schema removes that guesswork entirely.
+
+### Proposed plan (NAM Lab side, once the schema is confirmed stable)
+
+1. **Discovery.** A new pass, sibling to `labProjectEnrichment.ts` but for this different schema --
+   scan a watched/scanned folder tree for `nam-capture.json` files (do not conflate with IR
+   captures' `session.json`/`analysis.json` shape, these are unrelated capture types from the same
+   app). Decide whether this lives in `irCatalog/` (cataloged like everything else IR Lab writes) or
+   is purely a trainer-queue feed with no catalog row of its own -- leaning toward the latter
+   initially, since "a NAM Capture becomes a model" is a training-pipeline concern, not a
+   browse/search one, and IR Lab's own plan doc says NAM Capture projects get "no metadata curation
+   UI" on IR Lab's side either.
+2. **Mapping to a trainer job.** `excitation.wav` -> `inputPath`, `recording.wav` -> `outputPath`,
+   `captureName` (sanitized) seeds the default model name, `sampleRate` cross-checked against
+   whatever the training profile expects. **Never auto-queue a `synthetic: true` capture** -- surface
+   it distinctly ("synthetic -- DI x IR convolution, not a real capture") since training on a
+   convolved render instead of an actual mic'd/device capture would silently produce a misleading
+   model, exactly the provenance concern IR Lab's own plan doc raises for this flag.
+3. **Auto-queue vs. review.** Given the ask is specifically an *automated* workflow: a setting
+   ("Auto-queue new NAM Captures found in watched folders", default off to start) that, when on,
+   queues a real (non-synthetic) capture the moment its `nam-capture.json` appears with no matching
+   `nam-lab-result.json` yet (see below) already next to it. Off by default: surface a reviewable
+   list instead ("N new NAM Captures found -- Queue selected"), same shape as the trainer's existing
+   manual-folder-run flow.
+4. **Feeding the result back to IR Lab.** Once a job sourced this way finishes, write a sidecar NAM
+   Lab owns exclusively -- `nam-lab-result.json` in the SAME capture folder, never written or edited
+   by IR Lab (single-writer-per-file, same principle `docs/ir-lab-manager-shared-catalog-schema.md`
+   already establishes for the shared catalog) -- recording `outputModelPath`, `architecture`,
+   `validationEsr`, `trainedAt`, and NAM Lab's own `trainerHistoryId` as a cross-reference into its
+   own `trainer-history.json` for full detail. IR Lab's side (not this app's job to build) can then
+   show "Trained ✓" against a capture purely by checking whether that file exists -- no coupling
+   beyond reading one JSON file, no shared database, no IPC between the two apps.
+5. **Re-verify the schema.** Before writing any of the above, diff `nam-capture.json`'s actual shape
+   against what's recorded here -- this was captured mid-build on 2026-08-29 and the plan docs in
+   that repo (`nam_capture_plan_2026-08-28.md`, `nam_capture_buildout_2026-08-28.md`) themselves
+   describe open questions still being resolved.

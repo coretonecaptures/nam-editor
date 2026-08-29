@@ -545,6 +545,37 @@ export function IrModeShell(): React.ReactElement {
     }
   }, [roots, refreshRoots])
 
+  /** Right-click "Rescan" on a single folder in the tree — scoped to just that folder's containing
+   * library_root, not every added root (that's handleRescan above, the menu-bar action). There's
+   * no narrower "just this subfolder" scan in the pipeline (importLibrary walks a whole
+   * library_root each time — see its own comment), so this re-runs the identical full-root scan
+   * handleRescan uses, just for the one root instead of looping over all of them. Practically a
+   * "rescan" and a "refresh" of that folder's subtree end up being the same operation here. */
+  const handleRescanRoot = useCallback(
+    async (libraryRootId: number) => {
+      const root = roots.find((r) => r.id === libraryRootId)
+      if (!root) return
+      setScanError(null)
+      setImportResult(null)
+      setScanning(true)
+      setScanProgress({ filesSeen: 0, foldersSeen: 0, elapsedMs: 0 })
+      try {
+        await window.api.irLibraryScan(root.path, root.label)
+        await refreshRoots()
+        requestEpochRef.current++
+        cacheRef.current = new Map()
+        pendingRef.current = new Set()
+        forceRerender((n) => n + 1)
+        setImportResult(`Rescanned "${root.label ?? root.path}".`)
+      } catch (err) {
+        setScanError(String(err))
+      } finally {
+        setScanning(false)
+      }
+    },
+    [roots, refreshRoots]
+  )
+
   // Fired by IrFolderTree after a folder or whole root is actually removed from the catalog
   // (removeFromCatalog.ts). The removed folder may have been the one currently selected/scoped —
   // clearing it here rather than leaving a stale folderId pointed at a row that no longer exists.
@@ -881,6 +912,7 @@ export function IrModeShell(): React.ReactElement {
               selectedFolderId={selectedFolderId}
               onSelectFolder={handleSelectFolder}
               onLibraryChanged={handleLibraryChanged}
+              onRescanRoot={handleRescanRoot}
             />
           </div>
           <div

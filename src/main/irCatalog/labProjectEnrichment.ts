@@ -7,9 +7,15 @@
  *
  *   <projectFolder>/<deliverable>.wav              -- flat, already a normal `item` row
  *   <projectFolder>/.SessionData/project.json       -- captureIndex: [{ captureId, outputFileName }]
- *   <projectFolder>/.SessionData/<captureId>/session.json                    -- metadata{cabinet,speaker,microphone,position,notes,captureType}
- *   <projectFolder>/.SessionData/<captureId>/captures/<captureId>/analysis.json -- measurement.sampleRate, isStereo, isTrueStereo
- *   <projectFolder>/.SessionData/<captureId>/variants.json                   -- edit-revision history, current/archived flags
+ *   <projectFolder>/.SessionData/<captureId>/session.json    -- metadata{cabinet,speaker,microphone,position,notes,captureType}
+ *   <projectFolder>/.SessionData/<captureId>/analysis.json   -- measurement.sampleRate, isStereo, isTrueStereo
+ *   <projectFolder>/.SessionData/<captureId>/variants.json   -- edit-revision history, current/archived flags
+ *
+ * The capture folder itself is flat as of ir-lab's 2026-08-27 Phase 2 storage redesign
+ * (session.json/analysis.json/variants.json as direct siblings, no nested `captures/<captureId>/`
+ * — confirmed against ir-lab's own docs/ir-lab-session-file-format.md, written for this parser to
+ * read directly). There is no migration for the old nested layout on ir-lab's side, so this parser
+ * doesn't need to fall back to it either.
  *
  * `.SessionData` is dot-prefixed, so scanWalk.ts already never walks into it — every deliverable
  * `item` row this pass enriches was already correctly selected by the ordinary scan, with zero
@@ -215,7 +221,7 @@ export function enrichLabProjects(db: DatabaseSync, libraryRootId: number): LabP
 
       const captureDir = join(sessionDataDir, entry.captureId)
       const session = readJson<SessionJson>(join(captureDir, 'session.json'))
-      const analysis = readJson<AnalysisJson>(join(captureDir, 'captures', entry.captureId, 'analysis.json'))
+      const analysis = readJson<AnalysisJson>(join(captureDir, 'analysis.json'))
       const variants = readJson<VariantJson[]>(join(captureDir, 'variants.json')) ?? []
 
       ensureIrItem.run(item.id)

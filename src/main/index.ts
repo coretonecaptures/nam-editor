@@ -2904,6 +2904,15 @@ function enrichTrainerCheckFailure(error: string, logs: string[]): string {
 }
 
 function deriveTrainerFailureFromLogs(logs: string[]): string {
+  // NAM prints "Replicate ESR is X." (and the other lines collectTrainerCheckFailureDetails
+  // matches on) on every run regardless of outcome -- it only prints the literal "Failed checks!"
+  // when data_check_output.passed is actually False (nam/train/core.py's train()). Without this
+  // gate, a crash that happens AFTER checks pass (e.g. a CUDA/PyTorch crash once real training has
+  // started) got misdiagnosed as "pre-training data checks failed" just because an ESR line was
+  // present in the recent log, masking the real crash and preempting the exit-code/signal decode
+  // this function's caller falls back to when it returns ''.
+  const hasActualCheckFailure = logs.some((entry) => /failed checks!/i.test(stripAnsi(entry)))
+  if (!hasActualCheckFailure) return ''
   const detailLines = collectTrainerCheckFailureDetails(logs)
   if (detailLines.length === 0) return ''
   return [

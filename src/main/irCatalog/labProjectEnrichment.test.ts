@@ -21,9 +21,11 @@ afterEach(() => {
 })
 
 /** Builds a fixture matching the exact on-disk layout IR Lab itself writes, confirmed against
- * the real ir-lab source this session (SessionStore.h/.cpp, ProjectStore.h/.cpp, Project.h) —
- * not guessed. One Project folder ("Marshall Session") with one capture/deliverable and two
- * variants (one current, one archived). */
+ * the real ir-lab source this session (SessionStore.h/.cpp, ProjectStore.h/.cpp, Project.h,
+ * docs/ir-lab-session-file-format.md) — not guessed. Capture folder is flat, per ir-lab's
+ * 2026-08-27 Phase 2 storage redesign (no nested captures/<captureId>/ subfolder). One Project
+ * folder ("Marshall Session") with one capture/deliverable and two variants (one current, one
+ * archived). */
 function makeProjectFixture(): { root: string; captureId: string } {
   const root = makeTmpDir()
   const projectDir = join(root, 'Marshall Session')
@@ -31,7 +33,7 @@ function makeProjectFixture(): { root: string; captureId: string } {
   const sessionDataDir = join(projectDir, '.SessionData')
   const captureDir = join(sessionDataDir, captureId)
   fs.mkdirSync(projectDir, { recursive: true })
-  fs.mkdirSync(join(captureDir, 'captures', captureId), { recursive: true })
+  fs.mkdirSync(captureDir, { recursive: true })
 
   // The flat deliverable — a normal .wav the ordinary scanner already picks up.
   fs.writeFileSync(join(projectDir, 'Marshall 412 SM57.wav'), 'x'.repeat(2000))
@@ -83,7 +85,7 @@ function makeProjectFixture(): { root: string; captureId: string } {
     })
   )
   fs.writeFileSync(
-    join(captureDir, 'captures', captureId, 'analysis.json'),
+    join(captureDir, 'analysis.json'),
     JSON.stringify({
       captureId,
       createdAt: '2026-08-01T00:00:00.000Z',
@@ -298,7 +300,7 @@ describe.skipIf(!hasFts5())('enrichLabProjects', () => {
     const captureId = 'capture-blank'
     const sessionDataDir = join(projectDir, '.SessionData')
     const captureDir = join(sessionDataDir, captureId)
-    fs.mkdirSync(join(captureDir, 'captures', captureId), { recursive: true })
+    fs.mkdirSync(captureDir, { recursive: true })
     fs.writeFileSync(join(projectDir, 'blank.wav'), 'z'.repeat(500))
     fs.writeFileSync(
       join(sessionDataDir, 'project.json'),
