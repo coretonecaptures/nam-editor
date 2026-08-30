@@ -2,23 +2,26 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ContextMenu } from '../ContextMenu'
 import { TRAINER_ARCHITECTURES } from '../../types/trainer'
 import type { NamProjectSummary, NamProjectDetail, NamCaptureRow } from '../../types/namProjects'
+import { goToTrainingBatches } from '../../appNav'
 
 /**
  * "NAM Projects" mode — the third top-level workspace (docs/nam-capture-import-plan-2026-08-29.md
  * §1). Read-only view over IR Lab NAM Capture projects already in the shared catalog (they enter
- * it through IR mode's "Add Library Folder", same as any other folder), plus one write action:
- * queue a whole project for training. Trained/untrained comes straight from each capture folder's
- * nam-lab-result.json, which the trainer-completion hook writes.
+ * it through IR mode's "Add Library Folder", same as any other folder), plus the write action:
+ * select captures (a whole project, a right-clicked one, or a multi-select) and stage them as a
+ * training batch, which lands you on the trainer's Batches page with the jobs sitting ready.
+ * Trained/untrained comes straight from each capture folder's nam-lab-result.json.
  *
- * Deliberately its own shell, not a fork of IrModeShell — IrItemRow is welded to IR columns
- * (cabinet/speaker/microphone) that don't apply here, and there's no audition/player half. The
- * three-region skeleton (header, left rail, centre list, right panel), the Tailwind tokens, the
- * blue-dot / nam-chip idioms, and the col-resize divider all match the other two modes.
+ * Its own shell, not a fork of IrModeShell — IrItemRow is welded to IR-only columns and there's
+ * no audition half. The three-region skeleton, Tailwind tokens, col-resize divider, filter
+ * boxes, status chips, and blue-dot / nam-chip idioms all match the other two modes.
  */
 
 const OUTPUT_ROOT_KEY = 'nam-lab-nam-projects-output-root'
 const ARCH_KEY = 'nam-lab-nam-projects-architecture'
 const EPOCHS_KEY = 'nam-lab-nam-projects-epochs'
+
+type StatusFilter = 'all' | 'untrained' | 'trained' | 'synthetic'
 
 function TrainedBadge({ trained }: { trained: boolean }): React.ReactElement {
   return (
@@ -36,9 +39,13 @@ function TrainedBadge({ trained }: { trained: boolean }): React.ReactElement {
 
 function CaptureRow({
   capture,
+  selected,
+  onToggleSelect,
   onContextMenu
 }: {
   capture: NamCaptureRow
+  selected: boolean
+  onToggleSelect: () => void
   onContextMenu: (c: NamCaptureRow, x: number, y: number) => void
 }): React.ReactElement {
   return (
@@ -47,13 +54,24 @@ function CaptureRow({
         e.preventDefault()
         onContextMenu(capture, e.clientX, e.clientY)
       }}
-      className="flex items-center gap-2 px-3 py-2 border-b border-nm-border-s text-xs hover:bg-hov"
+      className={`flex items-center gap-2 px-3 py-2 border-b border-nm-border-s text-xs ${
+        selected ? 'bg-active-bg' : 'hover:bg-hov'
+      }`}
     >
+      <input
+        type="checkbox"
+        checked={selected}
+        onChange={onToggleSelect}
+        onClick={(e) => e.stopPropagation()}
+        className="flex-shrink-0"
+      />
       <div className="flex-1 min-w-0 flex flex-col gap-0.5">
         <div className="truncate text-sm leading-tight text-nm-text">{capture.captureName}</div>
         <div className="flex items-center gap-2 text-[11px] text-nm-text-3">
           {capture.captureScope && <span>{capture.captureScope}</span>}
-          {capture.sampleRate != null && <span>{(capture.sampleRate / 1000).toFixed(capture.sampleRate % 1000 ? 1 : 0)}k</span>}
+          {capture.sampleRate != null && (
+            <span>{(capture.sampleRate / 1000).toFixed(capture.sampleRate % 1000 ? 1 : 0)}k</span>
+          )}
           {capture.measuredLatencySamples != null && <span>{capture.measuredLatencySamples} smp latency</span>}
           {capture.synthetic && (
             <span
@@ -83,16 +101,22 @@ function CaptureRow({
 function ProjectRailRow({
   project,
   selected,
-  onSelect
+  onSelect,
+  onContextMenu
 }: {
   project: NamProjectSummary
   selected: boolean
   onSelect: () => void
+  onContextMenu: (p: NamProjectSummary, x: number, y: number) => void
 }): React.ReactElement {
   const allTrained = project.captureCount > 0 && project.trainedCount === project.captureCount
   return (
     <button
       onClick={onSelect}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        onContextMenu(project, e.clientX, e.clientY)
+      }}
       className={`w-full text-left flex items-center gap-2 px-2.5 py-1.5 text-xs rounded ${
         selected ? 'bg-active-bg text-nm-accent' : 'hover:bg-hov text-nm-text'
       }`}
@@ -119,6 +143,35 @@ function DetailField({ label, value }: { label: string; value: string | null }):
   )
 }
 
+function StatusChip({
+  label,
+  active,
+  onClick
+}: {
+  label: string
+  active: boolean
+  onClick: () => void
+}): React.ReactElement {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-2 py-0.5 text-[11px] rounded-full border ${
+        active
+          ? 'bg-nm-accent text-accent-fg border-nm-accent'
+          : 'border-field-bd text-nm-text-2 hover:bg-hov'
+      }`}
+    >
+      {label}
+    </button>
+  )
+}
+
+/** A capture is batch-eligible if it isn't trained yet and both WAV paths resolved. Synthetic
+ * captures only count when includeSynthetic is on. */
+function isQueueEligible(c: NamCaptureRow, includeSynthetic: boolean): boolean {
+  return !c.trained && (includeSynthetic || !c.synthetic) && !!c.excitationPath && !!c.recordingPath
+}
+
 export function NamProjectsShell(): React.ReactElement {
   const [projects, setProjects] = useState<NamProjectSummary[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -127,7 +180,13 @@ export function NamProjectsShell(): React.ReactElement {
   const [scanning, setScanning] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [contextMenu, setContextMenu] = useState<{ capture: NamCaptureRow; x: number; y: number } | null>(null)
+  const [captureMenu, setCaptureMenu] = useState<{ capture: NamCaptureRow; x: number; y: number } | null>(null)
+  const [projectMenu, setProjectMenu] = useState<{ project: NamProjectSummary; x: number; y: number } | null>(null)
+
+  const [projectFilter, setProjectFilter] = useState('')
+  const [captureFilter, setCaptureFilter] = useState('')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [selectedCaptureIds, setSelectedCaptureIds] = useState<Set<string>>(new Set())
 
   const [railWidth, setRailWidth] = useState(240)
   const dragging = useRef(false)
@@ -183,7 +242,7 @@ export function NamProjectsShell(): React.ReactElement {
     try {
       const list = await window.api.irLibraryListNamProjects()
       setProjects(list)
-      setSelectedId((prev) => prev ?? list[0]?.collectionId ?? null)
+      setSelectedId((prev) => (prev && list.some((p) => p.collectionId === prev) ? prev : list[0]?.collectionId ?? null))
     } catch (err) {
       setError(String(err))
     } finally {
@@ -204,6 +263,7 @@ export function NamProjectsShell(): React.ReactElement {
   }, [])
 
   useEffect(() => {
+    setSelectedCaptureIds(new Set())
     if (selectedId) void refreshDetail(selectedId)
     else setDetail(null)
   }, [selectedId, refreshDetail])
@@ -224,6 +284,22 @@ export function NamProjectsShell(): React.ReactElement {
     }
   }, [])
 
+  const rescanAll = useCallback(async () => {
+    setError(null)
+    setMessage(null)
+    setScanning(true)
+    try {
+      const roots = await window.api.irLibraryListRoots()
+      for (const root of roots) await window.api.irLibraryScan(root.path, root.label)
+      await refreshProjects()
+      if (selectedId) await refreshDetail(selectedId)
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setScanning(false)
+    }
+  }, [refreshProjects, refreshDetail, selectedId])
+
   const handleAddFolder = useCallback(async () => {
     const folder = await window.api.openFolder()
     if (!folder) return
@@ -241,71 +317,111 @@ export function NamProjectsShell(): React.ReactElement {
     }
   }, [refreshProjects, refreshDetail, selectedId])
 
-  const handleRescanAll = useCallback(async () => {
-    setError(null)
-    setMessage(null)
-    setScanning(true)
-    try {
-      const roots = await window.api.irLibraryListRoots()
-      for (const root of roots) await window.api.irLibraryScan(root.path, root.label)
-      await refreshProjects()
-      if (selectedId) await refreshDetail(selectedId)
-    } catch (err) {
-      setError(String(err))
-    } finally {
-      setScanning(false)
-    }
-  }, [refreshProjects, refreshDetail, selectedId])
-
   const handleChooseOutput = useCallback(async () => {
     const folder = await window.api.openFolder()
     if (folder) setOutputRoot(folder)
   }, [])
 
-  const queueableCaptures = useMemo(() => {
+  // --- filtering ---
+  const visibleProjects = useMemo(() => {
+    const q = projectFilter.trim().toLowerCase()
+    return q ? projects.filter((p) => p.name.toLowerCase().includes(q)) : projects
+  }, [projects, projectFilter])
+
+  const visibleCaptures = useMemo(() => {
     if (!detail) return []
-    return detail.captures.filter((c) => !c.trained && (includeSynthetic || !c.synthetic) && c.excitationPath && c.recordingPath)
-  }, [detail, includeSynthetic])
+    const q = captureFilter.trim().toLowerCase()
+    return detail.captures.filter((c) => {
+      if (q && !c.captureName.toLowerCase().includes(q)) return false
+      if (statusFilter === 'trained') return c.trained
+      if (statusFilter === 'untrained') return !c.trained
+      if (statusFilter === 'synthetic') return c.synthetic
+      return true
+    })
+  }, [detail, captureFilter, statusFilter])
 
-  const handleQueueAll = useCallback(async () => {
-    if (!detail || queueableCaptures.length === 0) return
-    if (!outputRoot) {
-      setError('Choose a model output folder first.')
-      return
-    }
-    setQueueing(true)
-    setError(null)
-    setMessage(null)
-    try {
-      const res = await window.api.enqueueNamCaptureImport({
-        captures: queueableCaptures.map((c) => ({
-          excitationPath: c.excitationPath as string,
-          recordingPath: c.recordingPath as string,
-          captureId: c.captureId ?? c.itemId,
-          captureName: c.captureName,
-          captureFolderPath: c.captureFolderPath as string,
-          projectName: detail.name,
-          synthetic: c.synthetic
-        })),
-        finalModelRoot: outputRoot,
-        architecture,
-        epochs,
-        includeSynthetic
-      })
-      if (res.success) {
-        setMessage(`Queued ${res.queued ?? res.built ?? queueableCaptures.length} training job${(res.queued ?? 1) === 1 ? '' : 's'} for "${detail.name}". Watch progress in the Trainer tab.`)
-      } else {
-        setError(res.error ?? 'Could not queue training.')
+  const toggleCapture = useCallback((itemId: string) => {
+    setSelectedCaptureIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(itemId)) next.delete(itemId)
+      else next.add(itemId)
+      return next
+    })
+  }, [])
+
+  const selectAllVisible = useCallback(() => {
+    setSelectedCaptureIds((prev) => {
+      const next = new Set(prev)
+      const allSelected = visibleCaptures.every((c) => next.has(c.itemId))
+      for (const c of visibleCaptures) {
+        if (allSelected) next.delete(c.itemId)
+        else next.add(c.itemId)
       }
-    } catch (err) {
-      setError(String(err))
-    } finally {
-      setQueueing(false)
-    }
-  }, [detail, queueableCaptures, outputRoot, architecture, epochs, includeSynthetic])
+      return next
+    })
+  }, [visibleCaptures])
 
-  const revealCapture = useCallback((capture: NamCaptureRow) => {
-    setContextMenu(null)
+  const selectedCaptures = useMemo(
+    () => (detail ? detail.captures.filter((c) => selectedCaptureIds.has(c.itemId)) : []),
+    [detail, selectedCaptureIds]
+  )
+
+  // --- batch creation ---
+  const stageBatch = useCallback(
+    async (captures: NamCaptureRow[], labelSuffix: string) => {
+      if (!detail || captures.length === 0) return
+      if (!outputRoot) {
+        setError('Choose a model output folder first (right panel).')
+        return
+      }
+      const eligible = captures.filter((c) => isQueueEligible(c, true)) // include-synthetic gate handled per call site
+      if (eligible.length === 0) {
+        setError('Those captures are all trained already, or missing their WAV files.')
+        return
+      }
+      setQueueing(true)
+      setError(null)
+      setMessage(null)
+      try {
+        const res = await window.api.enqueueNamCaptureImport({
+          captures: eligible.map((c) => ({
+            excitationPath: c.excitationPath as string,
+            recordingPath: c.recordingPath as string,
+            captureId: c.captureId ?? c.itemId,
+            captureName: c.captureName,
+            captureFolderPath: c.captureFolderPath as string,
+            projectName: detail.name,
+            synthetic: c.synthetic
+          })),
+          finalModelRoot: outputRoot,
+          architecture,
+          epochs,
+          includeSynthetic: true, // eligible list already reflects the caller's intent
+          staged: true,
+          submissionLabel: `${detail.name} — ${labelSuffix}`
+        })
+        if (res.success) {
+          setMessage(`Staged ${res.built ?? eligible.length} job${(res.built ?? 1) === 1 ? '' : 's'} — opening the Batches page…`)
+          goToTrainingBatches()
+        } else {
+          setError(res.error ?? 'Could not stage the batch.')
+        }
+      } catch (err) {
+        setError(String(err))
+      } finally {
+        setQueueing(false)
+      }
+    },
+    [detail, outputRoot, architecture, epochs]
+  )
+
+  const projectEligible = useMemo(
+    () => (detail ? detail.captures.filter((c) => isQueueEligible(c, includeSynthetic)) : []),
+    [detail, includeSynthetic]
+  )
+
+  const revealCaptureFolder = useCallback((capture: NamCaptureRow) => {
+    setCaptureMenu(null)
     if (capture.captureFolderPath) window.api.revealFile(capture.captureFolderPath)
   }, [])
 
@@ -321,7 +437,7 @@ export function NamProjectsShell(): React.ReactElement {
           {scanning ? 'Scanning…' : 'Add Folder'}
         </button>
         <button
-          onClick={handleRescanAll}
+          onClick={rescanAll}
           disabled={scanning}
           className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-50"
         >
@@ -370,15 +486,32 @@ export function NamProjectsShell(): React.ReactElement {
         </div>
       ) : (
         <div className="flex-1 flex min-h-0">
-          <div style={{ width: railWidth }} className="flex-shrink-0 overflow-y-auto py-1.5 px-1.5 border-r border-nm-border-s">
-            {projects.map((p) => (
-              <ProjectRailRow
-                key={p.collectionId}
-                project={p}
-                selected={p.collectionId === selectedId}
-                onSelect={() => setSelectedId(p.collectionId)}
+          <div
+            style={{ width: railWidth }}
+            className="flex-shrink-0 flex flex-col min-h-0 border-r border-nm-border-s"
+          >
+            <div className="px-2 py-1.5 border-b border-nm-border-s flex-shrink-0">
+              <input
+                value={projectFilter}
+                onChange={(e) => setProjectFilter(e.target.value)}
+                placeholder="Filter projects…"
+                className="w-full text-xs px-1.5 py-0.5 rounded border border-field-bd bg-field-bg"
               />
-            ))}
+            </div>
+            <div className="flex-1 overflow-y-auto py-1.5 px-1.5">
+              {visibleProjects.map((p) => (
+                <ProjectRailRow
+                  key={p.collectionId}
+                  project={p}
+                  selected={p.collectionId === selectedId}
+                  onSelect={() => setSelectedId(p.collectionId)}
+                  onContextMenu={(project, x, y) => setProjectMenu({ project, x, y })}
+                />
+              ))}
+              {visibleProjects.length === 0 && (
+                <div className="px-2 py-2 text-[11px] text-nm-text-3">No projects match.</div>
+              )}
+            </div>
           </div>
           <div
             onMouseDown={() => {
@@ -389,23 +522,81 @@ export function NamProjectsShell(): React.ReactElement {
 
           <div className="flex-1 flex flex-col min-w-0 min-h-0">
             {detail && (
-              <div className="flex items-center gap-2 px-4 py-2 border-b border-nm-border flex-shrink-0">
-                <span className="text-sm font-medium text-nm-text truncate">{detail.name}</span>
-                <span className="text-xs text-nm-text-3">
-                  {detail.captureCount} capture{detail.captureCount === 1 ? '' : 's'}
-                  {detail.syntheticCount > 0 && ` · ${detail.syntheticCount} synthetic`}
-                </span>
-              </div>
+              <>
+                <div className="flex items-center gap-2 px-4 py-2 border-b border-nm-border flex-shrink-0">
+                  <span className="text-sm font-medium text-nm-text truncate">{detail.name}</span>
+                  <span className="text-xs text-nm-text-3">
+                    {detail.captureCount} capture{detail.captureCount === 1 ? '' : 's'}
+                    {detail.syntheticCount > 0 && ` · ${detail.syntheticCount} synthetic`}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 px-4 py-1.5 border-b border-nm-border-s flex-shrink-0">
+                  <input
+                    value={captureFilter}
+                    onChange={(e) => setCaptureFilter(e.target.value)}
+                    placeholder="Filter captures…"
+                    className="flex-1 min-w-0 text-xs px-1.5 py-0.5 rounded border border-field-bd bg-field-bg"
+                  />
+                  {(['all', 'untrained', 'trained', 'synthetic'] as const).map((s) => (
+                    <StatusChip
+                      key={s}
+                      label={s[0].toUpperCase() + s.slice(1)}
+                      active={statusFilter === s}
+                      onClick={() => setStatusFilter(s)}
+                    />
+                  ))}
+                </div>
+                {visibleCaptures.length > 0 && (
+                  <div className="flex items-center gap-2 px-4 py-1 border-b border-nm-border-s flex-shrink-0 text-[11px] text-nm-text-3">
+                    <label className="flex items-center gap-1.5">
+                      <input
+                        type="checkbox"
+                        checked={visibleCaptures.every((c) => selectedCaptureIds.has(c.itemId))}
+                        onChange={selectAllVisible}
+                      />
+                      Select all shown
+                    </label>
+                  </div>
+                )}
+              </>
             )}
             <div className="flex-1 overflow-y-auto">
-              {detail?.captures.map((c) => (
+              {visibleCaptures.map((c) => (
                 <CaptureRow
                   key={c.itemId}
                   capture={c}
-                  onContextMenu={(capture, x, y) => setContextMenu({ capture, x, y })}
+                  selected={selectedCaptureIds.has(c.itemId)}
+                  onToggleSelect={() => toggleCapture(c.itemId)}
+                  onContextMenu={(capture, x, y) => setCaptureMenu({ capture, x, y })}
                 />
               ))}
+              {detail && visibleCaptures.length === 0 && (
+                <div className="px-4 py-4 text-xs text-nm-text-3">No captures match this filter.</div>
+              )}
             </div>
+
+            {selectedCaptures.length > 0 && (
+              <div className="flex items-center gap-3 px-4 py-2 border-t border-nm-border bg-panel-2 flex-shrink-0">
+                <span className="text-xs text-nm-text-2">
+                  {selectedCaptures.length} selected
+                  {selectedCaptures.filter((c) => isQueueEligible(c, true)).length !== selectedCaptures.length &&
+                    ` (${selectedCaptures.filter((c) => isQueueEligible(c, true)).length} trainable)`}
+                </span>
+                <button
+                  onClick={() => stageBatch(selectedCaptures, `${selectedCaptures.length} selected`)}
+                  disabled={queueing}
+                  className="px-3 py-1 text-xs rounded bg-nm-accent hover:opacity-90 disabled:opacity-50 text-accent-fg"
+                >
+                  {queueing ? 'Staging…' : 'Create training batch'}
+                </button>
+                <button
+                  onClick={() => setSelectedCaptureIds(new Set())}
+                  className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="w-[320px] flex-shrink-0 border-l border-nm-border overflow-y-auto p-4 flex flex-col gap-4">
@@ -432,7 +623,7 @@ export function NamProjectsShell(): React.ReactElement {
                 </div>
 
                 <div className="border-t border-nm-border-s pt-3 flex flex-col gap-2.5">
-                  <span className="text-xs font-semibold text-nm-text-2">Queue for training</span>
+                  <span className="text-xs font-semibold text-nm-text-2">Training batch</span>
 
                   <label className="flex flex-col gap-1 text-[11px] text-nm-text-3">
                     Architecture
@@ -483,19 +674,20 @@ export function NamProjectsShell(): React.ReactElement {
                   )}
 
                   <button
-                    onClick={handleQueueAll}
-                    disabled={queueing || queueableCaptures.length === 0}
+                    onClick={() => stageBatch(projectEligible, `${projectEligible.length} untrained`)}
+                    disabled={queueing || projectEligible.length === 0}
                     className="px-3 py-1.5 text-xs rounded bg-nm-accent hover:opacity-90 disabled:opacity-50 text-accent-fg"
                   >
                     {queueing
-                      ? 'Queueing…'
-                      : queueableCaptures.length === 0
-                        ? 'Nothing to queue'
-                        : `Queue ${queueableCaptures.length} capture${queueableCaptures.length === 1 ? '' : 's'}`}
+                      ? 'Staging…'
+                      : projectEligible.length === 0
+                        ? 'Nothing to stage'
+                        : `Stage batch — ${projectEligible.length} untrained capture${projectEligible.length === 1 ? '' : 's'}`}
                   </button>
                   <span className="text-[11px] text-nm-text-3">
-                    Already-trained captures are skipped. Trained <code>.nam</code> files land in the folder above and each
-                    capture&apos;s trained badge flips on completion.
+                    Stages the jobs and opens the trainer&apos;s Batches page — nothing runs until you hit Start there.
+                    Already-trained captures are skipped; trained <code>.nam</code> files land in the folder above and each
+                    badge flips on completion.
                   </span>
                 </div>
               </>
@@ -504,21 +696,120 @@ export function NamProjectsShell(): React.ReactElement {
         </div>
       )}
 
-      {contextMenu && (
+      {captureMenu && (
         <ContextMenu
-          x={contextMenu.x}
-          y={contextMenu.y}
-          onClose={() => setContextMenu(null)}
+          x={captureMenu.x}
+          y={captureMenu.y}
+          onClose={() => setCaptureMenu(null)}
           items={[
             {
+              label: 'Create training batch from this capture',
+              onClick: () => {
+                const c = captureMenu.capture
+                setCaptureMenu(null)
+                void stageBatch([c], c.captureName)
+              }
+            },
+            {
+              label: selectedCaptureIds.has(captureMenu.capture.itemId) ? 'Remove from selection' : 'Add to selection',
+              onClick: () => {
+                toggleCapture(captureMenu.capture.itemId)
+                setCaptureMenu(null)
+              }
+            },
+            {
               label: 'Reveal in Explorer',
-              onClick: () => revealCapture(contextMenu.capture)
+              onClick: () => revealCaptureFolder(captureMenu.capture)
             },
             {
               label: 'Rescan all',
               onClick: () => {
-                setContextMenu(null)
-                void handleRescanAll()
+                setCaptureMenu(null)
+                void rescanAll()
+              }
+            }
+          ]}
+        />
+      )}
+
+      {projectMenu && (
+        <ContextMenu
+          x={projectMenu.x}
+          y={projectMenu.y}
+          onClose={() => setProjectMenu(null)}
+          items={[
+            {
+              label: 'Create training batch from project',
+              onClick: () => {
+                const p = projectMenu.project
+                setProjectMenu(null)
+                setSelectedId(p.collectionId)
+                // detail may not be loaded for this project yet — fetch, then stage its untrained set.
+                void (async () => {
+                  const d = await window.api.irLibraryGetNamProjectDetail(p.collectionId)
+                  if (!d) {
+                    setError('Could not load that project.')
+                    return
+                  }
+                  const eligible = d.captures.filter((c) => isQueueEligible(c, includeSynthetic))
+                  if (eligible.length === 0) {
+                    setError(`"${d.name}" has no untrainable captures (all trained, or WAVs missing).`)
+                    return
+                  }
+                  if (!outputRoot) {
+                    setError('Choose a model output folder first (right panel).')
+                    return
+                  }
+                  setQueueing(true)
+                  try {
+                    const res = await window.api.enqueueNamCaptureImport({
+                      captures: eligible.map((c) => ({
+                        excitationPath: c.excitationPath as string,
+                        recordingPath: c.recordingPath as string,
+                        captureId: c.captureId ?? c.itemId,
+                        captureName: c.captureName,
+                        captureFolderPath: c.captureFolderPath as string,
+                        projectName: d.name,
+                        synthetic: c.synthetic
+                      })),
+                      finalModelRoot: outputRoot,
+                      architecture,
+                      epochs,
+                      includeSynthetic: true,
+                      staged: true,
+                      submissionLabel: `${d.name} — ${eligible.length} untrained`
+                    })
+                    if (res.success) {
+                      setMessage(`Staged ${res.built ?? eligible.length} job${(res.built ?? 1) === 1 ? '' : 's'} — opening the Batches page…`)
+                      goToTrainingBatches()
+                    } else {
+                      setError(res.error ?? 'Could not stage the batch.')
+                    }
+                  } catch (err) {
+                    setError(String(err))
+                  } finally {
+                    setQueueing(false)
+                  }
+                })()
+              }
+            },
+            {
+              label: 'Reveal in Explorer',
+              onClick: () => {
+                const p = projectMenu.project
+                setProjectMenu(null)
+                void (async () => {
+                  const d = await window.api.irLibraryGetNamProjectDetail(p.collectionId)
+                  const folder = d?.captures.find((c) => c.captureFolderPath)?.captureFolderPath
+                  if (folder) window.api.revealFile(folder)
+                })()
+              }
+            },
+            {
+              label: 'Rescan all',
+              onClick: () => {
+                setProjectMenu(null)
+                void rescanAll()
               }
             }
           ]}
