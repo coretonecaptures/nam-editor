@@ -26,3 +26,4 @@ work/
 # got committed to master in 924cee7.)
 native/nam-wasm/deps/
 native/nam-wasm/build/
+/.nam-capture-fixture/
