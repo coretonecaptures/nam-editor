@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ContextMenu } from '../ContextMenu'
-import { TRAINER_ARCHITECTURES } from '../../types/trainer'
+import { TRAINER_ARCHITECTURES, BUILT_IN_CAPTURE_PROFILES } from '../../types/trainer'
 import type { NamProjectSummary, NamProjectDetail, NamCaptureRow } from '../../types/namProjects'
+import type { TrainerHistoryEntry } from '../../types/trainer'
 import { goToTrainingBatches } from '../../appNav'
+
+/** Friendly label for an architecture id ("standard" -> "Standard"), matching the Trainer tab. */
+const ARCH_LABEL: Record<string, string> = Object.fromEntries(
+  BUILT_IN_CAPTURE_PROFILES.map((p) => [p.id, p.name])
+)
 
 /**
  * "NAM Projects" mode — the third top-level workspace (docs/nam-capture-import-plan-2026-08-29.md
@@ -190,6 +196,9 @@ export function NamProjectsShell(): React.ReactElement {
 
   const [railWidth, setRailWidth] = useState(240)
   const dragging = useRef(false)
+  // Which nam-capture-import history entries we've already reacted to — so a finished training
+  // run refreshes the trained badges without a manual rescan, but only once per job.
+  const seenFinishedJobs = useRef<Set<string>>(new Set())
 
   const [architecture, setArchitecture] = useState<string>(() => {
     try {
@@ -267,6 +276,26 @@ export function NamProjectsShell(): React.ReactElement {
     if (selectedId) void refreshDetail(selectedId)
     else setDetail(null)
   }, [selectedId, refreshDetail])
+
+  // When a NAM-capture training run finishes, the main process has written nam-lab-result.json
+  // into the capture folder; getNamProjectDetail re-reads that sidecar every call, so a plain
+  // refetch flips the trained badges — no rescan needed. History arrives on its own channel
+  // (trainer:update's payload carries an empty history array).
+  useEffect(() => {
+    const off = window.api.onTrainerHistory((history: TrainerHistoryEntry[]) => {
+      const fresh = history.filter(
+        (h) =>
+          h.sourceMode === 'nam-capture-import' &&
+          h.status === 'success' &&
+          !seenFinishedJobs.current.has(h.historyId)
+      )
+      if (fresh.length === 0) return
+      for (const h of fresh) seenFinishedJobs.current.add(h.historyId)
+      void refreshProjects()
+      if (selectedId) void refreshDetail(selectedId)
+    })
+    return off
+  }, [selectedId, refreshProjects, refreshDetail])
 
   useEffect(() => {
     const move = (e: MouseEvent): void => {
@@ -634,7 +663,7 @@ export function NamProjectsShell(): React.ReactElement {
                     >
                       {TRAINER_ARCHITECTURES.map((a) => (
                         <option key={a} value={a}>
-                          {a}
+                          {ARCH_LABEL[a] ?? a}
                         </option>
                       ))}
                     </select>
