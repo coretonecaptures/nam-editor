@@ -31,7 +31,7 @@ import { addToTray, removeFromTray, listTray, isInTray } from './irCatalog/tray'
 import { sendToIrLab, irLabConnectorAvailable } from './irLabConnector'
 import { getLibraryOverview } from './irCatalog/libraryOverview'
 import { enrichLabProjects, getProjectDetailForFolder } from './irCatalog/labProjectEnrichment'
-import { enrichNamCaptures, listNamProjects, getNamProjectDetail } from './irCatalog/namCaptureEnrichment'
+import { enrichNamCaptures, listNamProjects, getNamProjectDetail, getNamLibraryOverview } from './irCatalog/namCaptureEnrichment'
 import {
   previewFolderRemoval,
   removeFolderFromCatalog,
@@ -245,6 +245,7 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
   ipcMain.handle('irLibrary:getNamProjectDetail', (_event, collectionId: string) => {
     return getNamProjectDetail(getDb(), collectionId)
   })
+  ipcMain.handle('irLibrary:getNamLibraryOverview', () => getNamLibraryOverview(getDb()))
 
   // Folder/root removal — "remove a folder and its children from the catalog, with a confirm
   // dialog" (removeFromCatalog.ts's own header comment has the full reasoning). Preview handlers

@@ -385,3 +385,78 @@ export function getNamProjectDetail(db: DatabaseSync, collectionId: string): Nam
     captures
   }
 }
+
+export interface NamLibraryOverview {
+  totalProjects: number
+  totalCaptures: number
+  trainedCaptures: number
+  untrainedCaptures: number
+  syntheticCaptures: number
+  /** Mean validation ESR across every trained capture that recorded one. null if none. */
+  avgTrainedEsr: number | null
+  byScope: Array<{ key: string; count: number }>
+  bySampleRate: Array<{ key: string; count: number }>
+  byArchitecture: Array<{ key: string; count: number }>
+  projects: Array<{
+    collectionId: string
+    name: string
+    captureCount: number
+    trainedCount: number
+    syntheticCount: number
+    avgTrainedEsr: number | null
+  }>
+}
+
+function tally(pairs: Array<string | null | undefined>): Array<{ key: string; count: number }> {
+  const m = new Map<string, number>()
+  for (const p of pairs) {
+    const key = p == null || p === '' ? 'unknown' : String(p)
+    m.set(key, (m.get(key) ?? 0) + 1)
+  }
+  return [...m.entries()].map(([key, count]) => ({ key, count })).sort((a, b) => b.count - a.count || a.key.localeCompare(b.key))
+}
+
+/**
+ * Library-wide NAM Capture coverage — backs the "Overview" panel and the copy-to-clipboard
+ * report in NAM Projects mode. Trained state + architecture + ESR come from each capture folder's
+ * nam-lab-result.json (read fresh, same as getNamProjectDetail), so this reflects disk truth
+ * without a rescan.
+ */
+export function getNamLibraryOverview(db: DatabaseSync): NamLibraryOverview {
+  const collections = db
+    .prepare(`SELECT id, name FROM collection WHERE kind = 'nam_project' ORDER BY name`)
+    .all() as Array<{ id: string; name: string }>
+
+  const captureStmt = db.prepare(CAPTURE_SELECT)
+  const allCaptures: NamCaptureRow[] = []
+  const projects: NamLibraryOverview['projects'] = []
+
+  for (const c of collections) {
+    const caps = (captureStmt.all(c.id) as Parameters<typeof mapCaptureRow>[0][]).map(mapCaptureRow)
+    allCaptures.push(...caps)
+    const trainedEsrs = caps.map((x) => x.result?.validationEsr).filter((v): v is number => typeof v === 'number')
+    projects.push({
+      collectionId: c.id,
+      name: c.name,
+      captureCount: caps.length,
+      trainedCount: caps.filter((x) => x.trained).length,
+      syntheticCount: caps.filter((x) => x.synthetic).length,
+      avgTrainedEsr: trainedEsrs.length ? trainedEsrs.reduce((a, b) => a + b, 0) / trainedEsrs.length : null
+    })
+  }
+
+  const allEsrs = allCaptures.map((x) => x.result?.validationEsr).filter((v): v is number => typeof v === 'number')
+
+  return {
+    totalProjects: collections.length,
+    totalCaptures: allCaptures.length,
+    trainedCaptures: allCaptures.filter((x) => x.trained).length,
+    untrainedCaptures: allCaptures.filter((x) => !x.trained).length,
+    syntheticCaptures: allCaptures.filter((x) => x.synthetic).length,
+    avgTrainedEsr: allEsrs.length ? allEsrs.reduce((a, b) => a + b, 0) / allEsrs.length : null,
+    byScope: tally(allCaptures.map((x) => x.captureScope)),
+    bySampleRate: tally(allCaptures.map((x) => (x.sampleRate != null ? `${x.sampleRate / 1000}k` : null))),
+    byArchitecture: tally(allCaptures.map((x) => x.result?.architecture)),
+    projects
+  }
+}

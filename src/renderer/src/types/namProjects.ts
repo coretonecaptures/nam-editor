@@ -52,3 +52,23 @@ export interface NamProjectDetail extends NamProjectSummary {
   projectNotes: string | null
   captures: NamCaptureRow[]
 }
+
+export interface NamLibraryOverview {
+  totalProjects: number
+  totalCaptures: number
+  trainedCaptures: number
+  untrainedCaptures: number
+  syntheticCaptures: number
+  avgTrainedEsr: number | null
+  byScope: Array<{ key: string; count: number }>
+  bySampleRate: Array<{ key: string; count: number }>
+  byArchitecture: Array<{ key: string; count: number }>
+  projects: Array<{
+    collectionId: string
+    name: string
+    captureCount: number
+    trainedCount: number
+    syntheticCount: number
+    avgTrainedEsr: number | null
+  }>
+}

@@ -5,7 +5,7 @@ import * as os from 'node:os'
 import { join } from 'node:path'
 import { createCoreSchema } from './schema'
 import { importLibrary } from './importLibrary'
-import { enrichNamCaptures, listNamProjects, getNamProjectDetail } from './namCaptureEnrichment'
+import { enrichNamCaptures, listNamProjects, getNamProjectDetail, getNamLibraryOverview } from './namCaptureEnrichment'
 import { writeNamLabResult } from './namCaptureResult'
 
 
@@ -185,5 +185,40 @@ describe('enrichNamCaptures', () => {
     expect(clean.result?.validationEsr).toBe(0.012)
     const crunch = detail.captures.find((c) => c.captureId === 'cap0002')!
     expect(crunch.trained).toBe(false)
+  })
+
+  it('getNamLibraryOverview aggregates coverage, breakdowns and per-project ESR', async () => {
+    const { root } = makeFixture()
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const stats = await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+    enrichNamCaptures(db, stats.libraryRootId)
+
+    writeNamLabResult(join(root, 'amp-a-clean-cap0001'), {
+      trainedAt: '2026-08-29T00:00:00.000Z', modelName: 'A Clean', architecture: 'a1',
+      validationEsr: 0.01, outputModelPath: 'x.nam', trainerJobId: 'j1'
+    })
+    writeNamLabResult(join(root, 'amp-a-crunch-cap0002'), {
+      trainedAt: '2026-08-29T00:00:00.000Z', modelName: 'A Crunch', architecture: 'a2',
+      validationEsr: 0.03, outputModelPath: 'y.nam', trainerJobId: 'j2'
+    })
+
+    const o = getNamLibraryOverview(db)
+    expect(o.totalProjects).toBe(2)
+    expect(o.totalCaptures).toBe(4)
+    expect(o.trainedCaptures).toBe(2)
+    expect(o.untrainedCaptures).toBe(2)
+    expect(o.syntheticCaptures).toBe(1)
+    expect(o.avgTrainedEsr).toBeCloseTo(0.02, 6)
+    expect(o.byScope).toEqual([{ key: 'Cabinet', count: 4 }])
+    expect(o.bySampleRate).toEqual([{ key: '48k', count: 4 }])
+    expect(o.byArchitecture.find((r) => r.key === 'a1')?.count).toBe(1)
+    expect(o.byArchitecture.find((r) => r.key === 'a2')?.count).toBe(1)
+    expect(o.byArchitecture.find((r) => r.key === 'unknown')?.count).toBe(2)
+    const ampA = o.projects.find((p) => p.name === 'Amp A')!
+    expect(ampA.trainedCount).toBe(2)
+    expect(ampA.avgTrainedEsr).toBeCloseTo(0.02, 6)
+    const ampB = o.projects.find((p) => p.name === 'Amp B')!
+    expect(ampB.avgTrainedEsr).toBeNull()
   })
 })

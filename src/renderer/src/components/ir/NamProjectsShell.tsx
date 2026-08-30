@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ContextMenu } from '../ContextMenu'
 import { TRAINER_ARCHITECTURES, BUILT_IN_CAPTURE_PROFILES } from '../../types/trainer'
-import type { NamProjectSummary, NamProjectDetail, NamCaptureRow } from '../../types/namProjects'
+import type { NamProjectSummary, NamProjectDetail, NamCaptureRow, NamLibraryOverview } from '../../types/namProjects'
 import type { TrainerHistoryEntry } from '../../types/trainer'
 import { goToTrainingBatches } from '../../appNav'
 
@@ -139,6 +139,66 @@ function ProjectRailRow({
   )
 }
 
+function StatTile({ label, value, tone }: { label: string; value: string | number; tone?: 'accent' | 'muted' }): React.ReactElement {
+  return (
+    <div className="flex flex-col gap-0.5 px-3 py-2 rounded border border-nm-border-s bg-panel-2 min-w-[96px]">
+      <span className="text-[10px] uppercase tracking-wide text-nm-text-3">{label}</span>
+      <span className={`text-lg font-semibold ${tone === 'accent' ? 'text-nm-accent' : tone === 'muted' ? 'text-nm-text-3' : 'text-nm-text'}`}>
+        {value}
+      </span>
+    </div>
+  )
+}
+
+function Breakdown({ title, rows }: { title: string; rows: Array<{ key: string; count: number }> }): React.ReactElement {
+  const max = Math.max(1, ...rows.map((r) => r.count))
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-[11px] font-semibold text-nm-text-2">{title}</span>
+      {rows.length === 0 && <span className="text-[11px] text-nm-text-3">—</span>}
+      {rows.map((r) => (
+        <div key={r.key} className="flex items-center gap-2 text-[11px]">
+          <span className="w-24 truncate text-nm-text-2">{r.key}</span>
+          <span className="flex-1 h-2 rounded bg-field-bg overflow-hidden">
+            <span className="block h-full bg-nm-accent/70" style={{ width: `${(r.count / max) * 100}%` }} />
+          </span>
+          <span className="w-8 text-right text-nm-text-3">{r.count}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function buildReport(o: NamLibraryOverview): string {
+  const pct = o.totalCaptures ? Math.round((o.trainedCaptures / o.totalCaptures) * 100) : 0
+  const lines: string[] = []
+  lines.push(`# NAM Capture training coverage`)
+  lines.push(``)
+  lines.push(`Generated ${new Date().toISOString()}`)
+  lines.push(``)
+  lines.push(`- Projects: ${o.totalProjects}`)
+  lines.push(`- Captures: ${o.totalCaptures}  (${o.trainedCaptures} trained / ${o.untrainedCaptures} untrained — ${pct}%)`)
+  lines.push(`- Synthetic captures: ${o.syntheticCaptures}`)
+  if (o.avgTrainedEsr != null) lines.push(`- Mean validation ESR (trained): ${o.avgTrainedEsr.toFixed(5)}`)
+  lines.push(``)
+  lines.push(`## By capture scope`)
+  for (const r of o.byScope) lines.push(`- ${r.key}: ${r.count}`)
+  lines.push(``)
+  lines.push(`## By sample rate`)
+  for (const r of o.bySampleRate) lines.push(`- ${r.key}: ${r.count}`)
+  lines.push(``)
+  lines.push(`## By trained architecture`)
+  for (const r of o.byArchitecture) lines.push(`- ${r.key}: ${r.count}`)
+  lines.push(``)
+  lines.push(`## Per project`)
+  lines.push(`| Project | Captures | Trained | Synthetic | Mean ESR |`)
+  lines.push(`| --- | --- | --- | --- | --- |`)
+  for (const p of o.projects) {
+    lines.push(`| ${p.name} | ${p.captureCount} | ${p.trainedCount} | ${p.syntheticCount} | ${p.avgTrainedEsr != null ? p.avgTrainedEsr.toFixed(5) : '—'} |`)
+  }
+  return lines.join('\n') + '\n'
+}
+
 function DetailField({ label, value }: { label: string; value: string | null }): React.ReactElement | null {
   if (!value) return null
   return (
@@ -189,6 +249,9 @@ export function NamProjectsShell(): React.ReactElement {
   const [captureMenu, setCaptureMenu] = useState<{ capture: NamCaptureRow; x: number; y: number } | null>(null)
   const [projectMenu, setProjectMenu] = useState<{ project: NamProjectSummary; x: number; y: number } | null>(null)
 
+  const [view, setView] = useState<'projects' | 'overview'>('projects')
+  const [overview, setOverview] = useState<NamLibraryOverview | null>(null)
+  const [reportCopied, setReportCopied] = useState(false)
   const [projectFilter, setProjectFilter] = useState('')
   const [captureFilter, setCaptureFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
@@ -270,6 +333,18 @@ export function NamProjectsShell(): React.ReactElement {
       setError(String(err))
     }
   }, [])
+
+  const refreshOverview = useCallback(async () => {
+    try {
+      setOverview(await window.api.irLibraryGetNamLibraryOverview())
+    } catch (err) {
+      setError(String(err))
+    }
+  }, [])
+
+  useEffect(() => {
+    if (view === 'overview') void refreshOverview()
+  }, [view, refreshOverview, projects])
 
   useEffect(() => {
     setSelectedCaptureIds(new Set())
@@ -472,6 +547,17 @@ export function NamProjectsShell(): React.ReactElement {
         >
           Rescan all
         </button>
+        <div className="flex rounded overflow-hidden border border-field-bd text-xs">
+          {(['projects', 'overview'] as const).map((v) => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              className={`px-2.5 py-1 ${view === v ? 'bg-nm-accent text-accent-fg' : 'bg-field-bg text-nm-text-2 hover:bg-hov'}`}
+            >
+              {v === 'projects' ? 'Projects' : 'Overview'}
+            </button>
+          ))}
+        </div>
         {projects.length > 0 && (
           <span className="text-xs text-nm-text-3 flex-shrink-0">
             {projects.length} project{projects.length === 1 ? '' : 's'} ·{' '}
@@ -512,6 +598,83 @@ export function NamProjectsShell(): React.ReactElement {
           >
             Add Folder
           </button>
+        </div>
+      ) : view === 'overview' ? (
+        <div className="flex-1 overflow-y-auto p-5">
+          {!overview ? (
+            <div className="text-sm text-nm-text-3">Loading overview…</div>
+          ) : (
+            <div className="flex flex-col gap-5 max-w-[860px]">
+              <div className="flex flex-wrap items-start gap-2">
+                <StatTile label="Projects" value={overview.totalProjects} />
+                <StatTile label="Captures" value={overview.totalCaptures} />
+                <StatTile label="Trained" value={overview.trainedCaptures} tone="accent" />
+                <StatTile label="Untrained" value={overview.untrainedCaptures} tone="muted" />
+                <StatTile label="Synthetic" value={overview.syntheticCaptures} tone="muted" />
+                <StatTile
+                  label="Coverage"
+                  value={overview.totalCaptures ? `${Math.round((overview.trainedCaptures / overview.totalCaptures) * 100)}%` : '—'}
+                />
+                <StatTile
+                  label="Mean ESR"
+                  value={overview.avgTrainedEsr != null ? overview.avgTrainedEsr.toFixed(4) : '—'}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                <Breakdown title="By capture scope" rows={overview.byScope} />
+                <Breakdown title="By sample rate" rows={overview.bySampleRate} />
+                <Breakdown title="By trained architecture" rows={overview.byArchitecture} />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-nm-text-2">Per project</span>
+                  <button
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(buildReport(overview))
+                        setReportCopied(true)
+                        setTimeout(() => setReportCopied(false), 1500)
+                      } catch {
+                        setError('Could not copy the report to the clipboard.')
+                      }
+                    }}
+                    className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov"
+                  >
+                    {reportCopied ? 'Copied ✓' : 'Copy report (Markdown)'}
+                  </button>
+                </div>
+                <div className="border border-nm-border-s rounded overflow-hidden">
+                  <div className="grid grid-cols-[1fr_repeat(4,72px)] text-[11px] bg-panel-2 text-nm-text-3 px-2 py-1">
+                    <span>Project</span>
+                    <span className="text-right">Caps</span>
+                    <span className="text-right">Trained</span>
+                    <span className="text-right">Synth</span>
+                    <span className="text-right">Mean ESR</span>
+                  </div>
+                  {overview.projects.map((p) => (
+                    <button
+                      key={p.collectionId}
+                      onClick={() => {
+                        setSelectedId(p.collectionId)
+                        setView('projects')
+                      }}
+                      className="w-full grid grid-cols-[1fr_repeat(4,72px)] text-xs px-2 py-1.5 border-t border-nm-border-s hover:bg-hov text-left"
+                    >
+                      <span className="truncate text-nm-text">{p.name}</span>
+                      <span className="text-right text-nm-text-2">{p.captureCount}</span>
+                      <span className="text-right text-nm-text-2">{p.trainedCount}</span>
+                      <span className="text-right text-nm-text-2">{p.syntheticCount}</span>
+                      <span className="text-right text-nm-text-3">
+                        {p.avgTrainedEsr != null ? p.avgTrainedEsr.toFixed(4) : '—'}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <div className="flex-1 flex min-h-0">

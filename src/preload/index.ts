@@ -578,7 +578,29 @@ const api = {
   // "NAM Projects" mode (docs/nam-capture-import-plan-2026-08-29.md §1).
   irLibraryListNamProjects: (): Promise<NamProjectSummaryShape[]> => ipcRenderer.invoke('irLibrary:listNamProjects'),
   irLibraryGetNamProjectDetail: (collectionId: string): Promise<NamProjectDetailShape | null> =>
-    ipcRenderer.invoke('irLibrary:getNamProjectDetail', collectionId)
+    ipcRenderer.invoke('irLibrary:getNamProjectDetail', collectionId),
+  irLibraryGetNamLibraryOverview: (): Promise<NamLibraryOverviewShape> =>
+    ipcRenderer.invoke('irLibrary:getNamLibraryOverview')
+}
+
+interface NamLibraryOverviewShape {
+  totalProjects: number
+  totalCaptures: number
+  trainedCaptures: number
+  untrainedCaptures: number
+  syntheticCaptures: number
+  avgTrainedEsr: number | null
+  byScope: Array<{ key: string; count: number }>
+  bySampleRate: Array<{ key: string; count: number }>
+  byArchitecture: Array<{ key: string; count: number }>
+  projects: Array<{
+    collectionId: string
+    name: string
+    captureCount: number
+    trainedCount: number
+    syntheticCount: number
+    avgTrainedEsr: number | null
+  }>
 }
 
 interface NamLabResultShape {

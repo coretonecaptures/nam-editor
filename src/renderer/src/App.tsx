@@ -407,7 +407,7 @@ function loadHistory(): HistoryEntry[] {
   }
 }
 import { FolderNode } from './types/librarian'
-import type { NamProjectSummary, NamProjectDetail } from './types/namProjects'
+import type { NamProjectSummary, NamProjectDetail, NamLibraryOverview } from './types/namProjects'
 import { consumePendingBatchNav } from './appNav'
 
 declare global {
@@ -652,6 +652,7 @@ declare global {
       irLibraryListTagsForItem: (itemId: string) => Promise<Array<{ id: number; name: string; itemCount: number }>>
       irLibraryListNamProjects: () => Promise<NamProjectSummary[]>
       irLibraryGetNamProjectDetail: (collectionId: string) => Promise<NamProjectDetail | null>
+      irLibraryGetNamLibraryOverview: () => Promise<NamLibraryOverview>
       enqueueNamCaptureImport: (req: {
         captures: Array<{
           excitationPath: string
