@@ -96,6 +96,38 @@ function CaptureRow({
             <span>{(capture.sampleRate / 1000).toFixed(capture.sampleRate % 1000 ? 1 : 0)}k</span>
           )}
           {capture.measuredLatencySamples != null && <span>{capture.measuredLatencySamples} smp latency</span>}
+          {capture.calibration && (capture.calibration.inputLevelDbu != null || capture.calibration.outputLevelDbu != null) && (
+            <span
+              className="text-emerald-600 dark:text-emerald-400"
+              title={
+                `Rig-calibrated` +
+                (capture.calibration.method ? ` (${capture.calibration.method}` : '') +
+                (capture.calibration.confidence ? `, ${capture.calibration.confidence})` : capture.calibration.method ? ')' : '') +
+                ` — input ${capture.calibration.inputLevelDbu ?? '?'} dBu, output ${capture.calibration.outputLevelDbu ?? '?'} dBu`
+              }
+            >
+              ⚑ cal {capture.calibration.inputLevelDbu ?? '?'}/{capture.calibration.outputLevelDbu ?? '?'} dBu
+            </span>
+          )}
+          {capture.suggested && (
+            <span
+              className="text-nm-text-3"
+              title={
+                'Model-metadata hints from IR Lab (seeded into the .nam after training):\n' +
+                [
+                  capture.suggested.modeledBy && `modeled by ${capture.suggested.modeledBy}`,
+                  capture.suggested.gearMake && `make ${capture.suggested.gearMake}`,
+                  capture.suggested.gearModel && `model ${capture.suggested.gearModel}`,
+                  capture.suggested.gearType && `type ${capture.suggested.gearType}`,
+                  capture.suggested.toneType && `tone ${capture.suggested.toneType}`
+                ]
+                  .filter(Boolean)
+                  .join('\n')
+              }
+            >
+              ⓘ hints
+            </span>
+          )}
           {capture.synthetic && (
             <span
               className="nam-chip opacity-60 flex-shrink-0"
@@ -253,6 +285,47 @@ function StatusChip({
  * captures only count when includeSynthetic is on. */
 function isQueueEligible(c: NamCaptureRow, includeSynthetic: boolean): boolean {
   return !c.trained && (includeSynthetic || !c.synthetic) && !!c.excitationPath && !!c.recordingPath
+}
+
+/** One capture -> the IPC batch-item shape (carries calibration dBu + suggested-metadata hints). */
+function toBatchItem(c: NamCaptureRow, projectName: string): {
+  excitationPath: string
+  recordingPath: string
+  captureId: string
+  captureName: string
+  captureFolderPath: string
+  projectName: string
+  synthetic: boolean
+  inputLevelDbu: number | null
+  outputLevelDbu: number | null
+  suggested: {
+    modeledBy: string | null
+    gearMake: string | null
+    gearModel: string | null
+    gearType: string | null
+    toneType: string | null
+  } | null
+} {
+  return {
+    excitationPath: c.excitationPath as string,
+    recordingPath: c.recordingPath as string,
+    captureId: c.captureId ?? c.itemId,
+    captureName: c.captureName,
+    captureFolderPath: c.captureFolderPath as string,
+    projectName,
+    synthetic: c.synthetic,
+    inputLevelDbu: c.calibration?.inputLevelDbu ?? null,
+    outputLevelDbu: c.calibration?.outputLevelDbu ?? null,
+    suggested: c.suggested
+      ? {
+          modeledBy: c.suggested.modeledBy,
+          gearMake: c.suggested.gearMake,
+          gearModel: c.suggested.gearModel,
+          gearType: c.suggested.gearType,
+          toneType: c.suggested.toneType
+        }
+      : null
+  }
 }
 
 export function NamProjectsShell(): React.ReactElement {
@@ -514,15 +587,7 @@ export function NamProjectsShell(): React.ReactElement {
       setMessage(null)
       try {
         const res = await window.api.enqueueNamCaptureImport({
-          captures: eligible.map((c) => ({
-            excitationPath: c.excitationPath as string,
-            recordingPath: c.recordingPath as string,
-            captureId: c.captureId ?? c.itemId,
-            captureName: c.captureName,
-            captureFolderPath: c.captureFolderPath as string,
-            projectName: detail.name,
-            synthetic: c.synthetic
-          })),
+          captures: eligible.map((c) => toBatchItem(c, detail.name)),
           finalModelRoot: outputRoot,
           architecture,
           epochs,
@@ -550,9 +615,12 @@ export function NamProjectsShell(): React.ReactElement {
     [detail, includeSynthetic]
   )
 
-  const revealCaptureFolder = useCallback((capture: NamCaptureRow) => {
+  const revealCapture = useCallback((capture: NamCaptureRow) => {
     setCaptureMenu(null)
-    if (capture.captureFolderPath) window.api.revealFile(capture.captureFolderPath)
+    // Prefer the recording WAV itself — Explorer/Finder highlights the file; the whole capture
+    // set (WAV, sidecar, result) sits right next to it in the flat "NAM Captures" folder.
+    const target = capture.recordingPath ?? capture.captureFolderPath
+    if (target) window.api.revealFile(target)
   }, [])
 
   return (
@@ -947,7 +1015,7 @@ export function NamProjectsShell(): React.ReactElement {
             },
             {
               label: 'Reveal in Explorer',
-              onClick: () => revealCaptureFolder(captureMenu.capture)
+              onClick: () => revealCapture(captureMenu.capture)
             },
             {
               label: 'Rescan all',
@@ -991,15 +1059,7 @@ export function NamProjectsShell(): React.ReactElement {
                   setQueueing(true)
                   try {
                     const res = await window.api.enqueueNamCaptureImport({
-                      captures: eligible.map((c) => ({
-                        excitationPath: c.excitationPath as string,
-                        recordingPath: c.recordingPath as string,
-                        captureId: c.captureId ?? c.itemId,
-                        captureName: c.captureName,
-                        captureFolderPath: c.captureFolderPath as string,
-                        projectName: d.name,
-                        synthetic: c.synthetic
-                      })),
+                      captures: eligible.map((c) => toBatchItem(c, d.name)),
                       finalModelRoot: outputRoot,
                       architecture,
                       epochs,

@@ -180,6 +180,15 @@ const api = {
       captureFolderPath: string
       projectName: string
       synthetic: boolean
+      inputLevelDbu?: number | null
+      outputLevelDbu?: number | null
+      suggested?: {
+        modeledBy?: string | null
+        gearMake?: string | null
+        gearModel?: string | null
+        gearType?: string | null
+        toneType?: string | null
+      } | null
     }>
     pythonPath?: string
     finalModelRoot: string
@@ -612,6 +621,22 @@ interface NamLabResultShape {
   outputModelPath: string
   trainerJobId: string
 }
+interface NamCaptureCalibrationShape {
+  inputLevelDbu: number | null
+  outputLevelDbu: number | null
+  method: string | null
+  confidence: string | null
+  profileName: string | null
+  calibratedAt: string | null
+}
+interface NamCaptureSuggestedShape {
+  name: string | null
+  modeledBy: string | null
+  gearMake: string | null
+  gearModel: string | null
+  gearType: string | null
+  toneType: string | null
+}
 interface NamCaptureRowShape {
   itemId: string
   captureId: string | null
@@ -625,6 +650,8 @@ interface NamCaptureRowShape {
   excitationPath: string | null
   recordingPath: string | null
   captureFolderPath: string | null
+  calibration: NamCaptureCalibrationShape | null
+  suggested: NamCaptureSuggestedShape | null
   trained: boolean
   result: NamLabResultShape | null
 }

@@ -662,6 +662,15 @@ declare global {
           captureFolderPath: string
           projectName: string
           synthetic: boolean
+          inputLevelDbu?: number | null
+          outputLevelDbu?: number | null
+          suggested?: {
+            modeledBy?: string | null
+            gearMake?: string | null
+            gearModel?: string | null
+            gearType?: string | null
+            toneType?: string | null
+          } | null
         }>
         pythonPath?: string
         finalModelRoot: string

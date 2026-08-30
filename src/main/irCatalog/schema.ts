@@ -125,11 +125,30 @@ CREATE TABLE IF NOT EXISTS nam_capture_item (
   synthetic                 INTEGER,
   synthetic_source_ir_name  TEXT,
   created_at                TEXT,
-  -- Resolved absolute paths from the JSON's own excitation/recording filename fields — never
-  -- assume the literal names excitation.wav/recording.wav. These are what make each capture's
-  -- DI/return pairing unambiguous for the per-capture trainer-queue path (plan §4).
+  -- Resolved absolute paths from the JSON's own excitation/recording fields — never assume a
+  -- filename. schemaVersion 2: excitation is a RELATIVE path that may start '../' (points into
+  -- <project>/_excitations/); resolve with path.join(sidecarDir, field). recording is a bare
+  -- filename in the same folder. These make each capture's DI/return pairing unambiguous for the
+  -- per-capture trainer-queue path (plan §4).
   excitation_path           TEXT,
-  recording_path            TEXT
+  recording_path            TEXT,
+  -- schemaVersion 2 optional 'calibration' block. inputLevelDbu/outputLevelDbu go into the
+  -- input_level_dbu/output_level_dbu columns above (they ARE NAM's own metadata keys, wanted
+  -- pre-train); the rest is provenance for the NAM Projects UI, not .nam fields.
+  calibration_method        TEXT,    -- 'guided' | 'precision'
+  calibration_confidence    TEXT,    -- 'quick-estimate' | 'interface-spec-verified' | 'meter-verified'
+  calibration_profile_name  TEXT,
+  calibrated_at             TEXT,
+  -- schemaVersion 2 optional 'modelMetadataSuggested' block — user-entered hints from IR Lab's
+  -- NAM Capture screen. Kept in dedicated suggested_* columns rather than the post-training
+  -- columns above: they are seeds threaded into training so persistTrainerMetadata writes them
+  -- into the .nam AFTER a run, never authoritative catalog metadata on their own.
+  suggested_name            TEXT,
+  suggested_modeled_by      TEXT,
+  suggested_gear_make       TEXT,
+  suggested_gear_model      TEXT,
+  suggested_gear_type       TEXT,
+  suggested_tone_type       TEXT
 );
 
 CREATE TABLE IF NOT EXISTS ir_item (
@@ -495,7 +514,18 @@ function runMigrations(db: DatabaseSync): void {
       ['synthetic_source_ir_name', 'TEXT'],
       ['created_at', 'TEXT'],
       ['excitation_path', 'TEXT'],
-      ['recording_path', 'TEXT']
+      ['recording_path', 'TEXT'],
+      // schemaVersion 2 additions (2026-08-30).
+      ['calibration_method', 'TEXT'],
+      ['calibration_confidence', 'TEXT'],
+      ['calibration_profile_name', 'TEXT'],
+      ['calibrated_at', 'TEXT'],
+      ['suggested_name', 'TEXT'],
+      ['suggested_modeled_by', 'TEXT'],
+      ['suggested_gear_make', 'TEXT'],
+      ['suggested_gear_model', 'TEXT'],
+      ['suggested_gear_type', 'TEXT'],
+      ['suggested_tone_type', 'TEXT']
     ] as const) {
       if (!have.has(name)) db.exec(`ALTER TABLE nam_capture_item ADD COLUMN ${name} ${type}`)
     }

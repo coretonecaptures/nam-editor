@@ -3327,6 +3327,11 @@ function createTrainerJob(payload: TrainerStartPayload, staged = false): Trainer
     namCaptureId: payload.namCaptureId ?? null,
     namCaptureName: payload.namCaptureName ?? null,
     namProjectName: payload.namProjectName ?? null,
+    namSuggestedModeledBy: payload.namSuggestedModeledBy ?? null,
+    namSuggestedGearMake: payload.namSuggestedGearMake ?? null,
+    namSuggestedGearModel: payload.namSuggestedGearModel ?? null,
+    namSuggestedGearType: payload.namSuggestedGearType ?? null,
+    namSuggestedToneType: payload.namSuggestedToneType ?? null,
     backupExisting: !!payload.backupExisting,
     appendModelArchitectureFolder,
     appendGraphArchitectureFolder,
@@ -3665,6 +3670,17 @@ async function buildTrainerPayloadsForNamCaptureImport(
     captureFolderPath: string
     projectName: string
     synthetic: boolean
+    // schemaVersion 2: calibration dBu (-> the .nam's input/output_level_dbu, wanted pre-train)
+    // and modelMetadataSuggested hints (-> seeded into the .nam post-train). All optional.
+    inputLevelDbu?: number | null
+    outputLevelDbu?: number | null
+    suggested?: {
+      modeledBy?: string | null
+      gearMake?: string | null
+      gearModel?: string | null
+      gearType?: string | null
+      toneType?: string | null
+    } | null
   }>,
   config: {
     pythonPath: string
@@ -3727,9 +3743,10 @@ async function buildTrainerPayloadsForNamCaptureImport(
       savePlot: true,
       silent: true,
       ignoreChecks: false,
-      modeledBy: trainerConfiguredModeledBy || null,
-      inputLevelDbu: trainerConfiguredInputLevelDbu,
-      outputLevelDbu: trainerConfiguredOutputLevelDbu,
+      // Capture's own calibration/hints win over the trainer-tab defaults when present.
+      modeledBy: capture.suggested?.modeledBy ?? (trainerConfiguredModeledBy || null),
+      inputLevelDbu: capture.inputLevelDbu ?? trainerConfiguredInputLevelDbu,
+      outputLevelDbu: capture.outputLevelDbu ?? trainerConfiguredOutputLevelDbu,
       profileId: null,
       profileName: capture.projectName || null,
       sourceMode: 'nam-capture-import',
@@ -3745,6 +3762,11 @@ async function buildTrainerPayloadsForNamCaptureImport(
       namCaptureId: capture.captureId,
       namCaptureName: capture.captureName,
       namProjectName: capture.projectName,
+      namSuggestedModeledBy: capture.suggested?.modeledBy ?? null,
+      namSuggestedGearMake: capture.suggested?.gearMake ?? null,
+      namSuggestedGearModel: capture.suggested?.gearModel ?? null,
+      namSuggestedGearType: capture.suggested?.gearType ?? null,
+      namSuggestedToneType: capture.suggested?.toneType ?? null,
       submissionId: config.submission?.id ?? null,
       submissionLabel: config.submission?.label ?? null,
       submissionCreatedAt: config.submission?.createdAt ?? null,
@@ -4271,9 +4293,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
           mse: trainerState.epochMse ?? null,
           mseLite: trainerState.epochMseLite ?? null,
           manualLatencySamples: job.latency,
-          // IR Lab NAM Capture provenance — a nam_lab-namespaced scratch block NAM itself
-          // ignores. Deliberately NOT gear_type/make/model/tone_type (those stay on the normal
-          // manual/Excel metadata workflow), just where this model came from.
+          // IR Lab NAM Capture provenance — a nam_lab-namespaced scratch block NAM itself ignores.
           namCaptureSource:
             job.sourceMode === 'nam-capture-import'
               ? {
@@ -4281,6 +4301,18 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
                   capture_name: job.namCaptureName ?? null,
                   project_name: job.namProjectName ?? null,
                   capture_folder: job.namCaptureFolderPath ?? null,
+                }
+              : null,
+          // schemaVersion 2 (decision C): seed the real .nam gear/tone metadata from the
+          // sidecar's modelMetadataSuggested hints when the capture carried them. Non-blank
+          // only; a blank hint leaves the field for the normal NAM Lab tagging workflow.
+          namCaptureSuggested:
+            job.sourceMode === 'nam-capture-import'
+              ? {
+                  gear_make: job.namSuggestedGearMake ?? null,
+                  gear_model: job.namSuggestedGearModel ?? null,
+                  gear_type: job.namSuggestedGearType ?? null,
+                  tone_type: job.namSuggestedToneType ?? null,
                 }
               : null,
         })
@@ -4296,18 +4328,18 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
       }
     }
 
-    // NAM Capture write-back (docs/nam-capture-import-plan-2026-08-29.md §3/§5). Drop
-    // nam-lab-result.json into the capture's own folder so the NAM Projects tree flips its
-    // trained badge and IR Lab can read status if it wants to. Best-effort — a failure here
-    // must never turn a successful training run into an error.
+    // NAM Capture write-back (docs/nam-capture-import-plan-2026-08-29.md §3/§5). schemaVersion 2:
+    // the sidecar is <dir>/<CaptureName>.nam-lab-result.json, keyed off the recording WAV path —
+    // which IS job.outputPath for a nam-capture-import job. Best-effort: a failure here must
+    // never turn a successful training run into an error.
     if (
       trainerState.status === 'success' &&
       job.sourceMode === 'nam-capture-import' &&
-      job.namCaptureFolderPath &&
+      job.outputPath &&
       trainerState.outputModelPath
     ) {
       try {
-        writeNamLabResult(job.namCaptureFolderPath, {
+        writeNamLabResult(job.outputPath, {
           trainedAt: trainerState.finishedAt ?? new Date().toISOString(),
           modelName: job.modelName,
           architecture: job.namMode,
@@ -5678,14 +5710,21 @@ function persistTrainerMetadata(
     mse: number | null
     mseLite: number | null
     manualLatencySamples: number | null
-    // IR Lab NAM Capture provenance. When set, written as one JSON object at
-    // metadata.nam_lab.source_capture — same nam_lab-only scratch namespace as the fields above,
-    // ignored by NAM. Never auto-fills gear_type/make/model/tone_type.
+    // IR Lab NAM Capture provenance — flat source_capture_* keys in metadata.nam_lab (NAM
+    // ignores that namespace).
     namCaptureSource?: {
       capture_id: string | null
       capture_name: string | null
       project_name: string | null
       capture_folder: string | null
+    } | null
+    // schemaVersion 2 (decision C): real .nam gear/tone fields seeded from the sidecar's
+    // modelMetadataSuggested hints. Non-blank keys only; blanks are left for NAM Lab tagging.
+    namCaptureSuggested?: {
+      gear_make: string | null
+      gear_model: string | null
+      gear_type: string | null
+      tone_type: string | null
     } | null
   }
 ): string {
@@ -5742,6 +5781,14 @@ function persistTrainerMetadata(
     patched = patchNamLabField(patched, 'source_capture_name', options.namCaptureSource.capture_name)
     patched = patchNamLabField(patched, 'source_project_name', options.namCaptureSource.project_name)
     patched = patchNamLabField(patched, 'source_capture_folder', options.namCaptureSource.capture_folder)
+  }
+  if (options.namCaptureSuggested) {
+    const s = options.namCaptureSuggested
+    // Real metadata.* keys (NAM reads these) — only when the hint was non-blank.
+    if (s.gear_make?.trim()) patched = patchMetadataField(patched, 'gear_make', s.gear_make.trim())
+    if (s.gear_model?.trim()) patched = patchMetadataField(patched, 'gear_model', s.gear_model.trim())
+    if (s.gear_type?.trim()) patched = patchMetadataField(patched, 'gear_type', s.gear_type.trim())
+    if (s.tone_type?.trim()) patched = patchMetadataField(patched, 'tone_type', s.tone_type.trim())
   }
   return applyTrainerMetadataConventions(patched, { architecture: options.architecture })
 }
@@ -7907,6 +7954,15 @@ app.whenReady().then(async () => {
           captureFolderPath: string
           projectName: string
           synthetic: boolean
+          inputLevelDbu?: number | null
+          outputLevelDbu?: number | null
+          suggested?: {
+            modeledBy?: string | null
+            gearMake?: string | null
+            gearModel?: string | null
+            gearType?: string | null
+            toneType?: string | null
+          } | null
         }>
         pythonPath?: string
         finalModelRoot: string

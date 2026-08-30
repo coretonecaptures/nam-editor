@@ -14,6 +14,24 @@ export interface NamLabResult {
   trainerJobId: string
 }
 
+export interface NamCaptureSuggestedMetadata {
+  name: string | null
+  modeledBy: string | null
+  gearMake: string | null
+  gearModel: string | null
+  gearType: string | null
+  toneType: string | null
+}
+
+export interface NamCaptureCalibration {
+  inputLevelDbu: number | null
+  outputLevelDbu: number | null
+  method: string | null
+  confidence: string | null
+  profileName: string | null
+  calibratedAt: string | null
+}
+
 export interface NamCaptureRow {
   itemId: string
   captureId: string | null
@@ -27,6 +45,8 @@ export interface NamCaptureRow {
   excitationPath: string | null
   recordingPath: string | null
   captureFolderPath: string | null
+  calibration: NamCaptureCalibration | null
+  suggested: NamCaptureSuggestedMetadata | null
   trained: boolean
   result: NamLabResult | null
 }

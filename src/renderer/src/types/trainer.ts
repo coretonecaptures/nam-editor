@@ -200,6 +200,13 @@ export interface TrainerStartPayload {
   namCaptureId?: string | null
   namCaptureName?: string | null
   namProjectName?: string | null
+  // schemaVersion 2: sidecar `modelMetadataSuggested` hints, seeded into the trained .nam's
+  // metadata by persistTrainerMetadata on success (decision C, 2026-08-30).
+  namSuggestedModeledBy?: string | null
+  namSuggestedGearMake?: string | null
+  namSuggestedGearModel?: string | null
+  namSuggestedGearType?: string | null
+  namSuggestedToneType?: string | null
   appendModelArchitectureFolder?: boolean
   appendGraphArchitectureFolder?: boolean
   appendProcessedArchitectureFolder?: boolean
@@ -270,6 +277,13 @@ export interface TrainerQueueJob {
   namCaptureId?: string | null
   namCaptureName?: string | null
   namProjectName?: string | null
+  // schemaVersion 2: sidecar `modelMetadataSuggested` hints, seeded into the trained .nam's
+  // metadata by persistTrainerMetadata on success (decision C, 2026-08-30).
+  namSuggestedModeledBy?: string | null
+  namSuggestedGearMake?: string | null
+  namSuggestedGearModel?: string | null
+  namSuggestedGearType?: string | null
+  namSuggestedToneType?: string | null
   backupExisting?: boolean
   appendModelArchitectureFolder?: boolean
   appendGraphArchitectureFolder?: boolean

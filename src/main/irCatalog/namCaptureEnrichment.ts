@@ -2,43 +2,46 @@
  * IR Lab NAM Capture enrichment — a fourth scan pass, sibling to (NOT an extension of)
  * labProjectEnrichment.ts. Runs in the same slot in the scan IPC handler, right after
  * enrichLabProjects. See docs/nam-capture-import-plan-2026-08-29.md §2 and IR Lab's
- * docs/nam_lab_metadata_handoff_2026-08-29.md for the confirmed data contract.
+ * docs/nam_lab_metadata_handoff_2026-08-29.md (both "UPDATE 2026-08-30" sections) for the
+ * confirmed data contract, authoritative in ir-lab's NamCaptureStore.cpp.
  *
- * IR Lab writes one flat folder per capture (no nesting):
+ * schemaVersion 2 on-disk layout (per project outputRoot):
  *
- *   <project.outputRoot>/<sanitizedName>-<captureId>/
- *       excitation.wav      -- 32-bit float mono DI/reference
- *       recording.wav        -- 32-bit float mono captured return, same sample count
- *       nam-capture.json      -- the metadata below
- *       nam-lab-result.json   -- written ONLY by this app once trained (namCaptureResult.ts)
+ *   <project>/_excitations/<stem>-<hash12>-<rate>hz.wav   shared, one per (excitation, rate)
+ *   <project>/NAM Captures/
+ *       <Capture Name>.wav                24-bit PCM mono, the captured return
+ *       <Capture Name>.nam-capture.json   sidecar, SAME BASENAME as the WAV
+ *       <Capture Name>.nam-lab-result.json  written ONLY by this app once trained
  *
- * excitation.wav / recording.wav are ordinary `item` rows already (importLibrary walks every
- * .wav). This pass finds the capture folder by its `nam-capture.json`, resolves the DI/return
- * pair from the JSON's OWN filename fields (never assumes the literal names), promotes the
- * return item to kind='nam_capture', inserts a bare nam_capture_item row plus the pre-training
- * columns, and groups captures into one collection(kind='nam_project') per distinct projectId —
- * grouped by the JSON's field, never by folder nesting depth.
+ * Every WAV is already an ordinary `item` row (importLibrary walks every .wav — the shared
+ * excitation lands as kind='ir', which stays as-is). This pass globs *.nam-capture.json in every
+ * folder (multiple per folder now — no per-capture subfolder), resolves the DI/return pair from
+ * the sidecar's own `excitation` (a RELATIVE path that may start '../', resolved against the
+ * sidecar's dir) and `recording` (bare filename) fields, promotes the return item to
+ * kind='nam_capture', inserts a bare nam_capture_item row plus the pre-training columns +
+ * calibration + suggested-metadata hints, and groups captures into one collection(kind=
+ * 'nam_project') per distinct projectId — the JSON's field, never folder nesting depth.
  *
- * This pass never creates or deletes `item` rows; like enrichLabProjects it only annotates rows
- * the ordinary scan already produced. nam-capture.json itself is not a .wav, so scanWalk never
- * touched it and there is no item-inclusion logic to add here.
+ * Clean break from the v1 per-folder `nam-capture.json` layout (both apps pre-release): only
+ * `*.nam-capture.json` sidecars are recognized. This pass never creates or deletes `item` rows.
  */
 import type { DatabaseSync } from 'node:sqlite'
 import * as fs from 'node:fs'
-import { join, basename } from 'node:path'
+import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { readNamLabResult, type NamLabResult } from './namCaptureResult'
 
-/** nam-capture.json — the subset this importer reads. Every field is absent-safe: an older
- * schemaVersion with fewer keys parses fine, missing keys read back undefined. */
+const SIDECAR_SUFFIX = '.nam-capture.json'
+
+/** nam-capture.json (schemaVersion 2). Every field is absent-safe. */
 interface NamCaptureJson {
   schemaVersion?: number
   captureId?: string
   captureName?: string
   createdAt?: string
-  captureScope?: string // 'Cabinet' | 'Device' | 'Software'
-  excitation?: string // explicit filename — resolve from this, never assume "excitation.wav"
-  recording?: string // explicit filename — resolve from this, never assume "recording.wav"
+  captureScope?: string // 'Cabinet' | 'CabOnly' | 'DirectAmp' | 'Device' | 'Software'
+  excitation?: string // relative path, may start '../' — resolve against the sidecar's own dir
+  recording?: string // bare filename in the sidecar's own dir
   excitationSourceName?: string
   stimulusSha256?: string
   sampleRate?: number
@@ -47,6 +50,23 @@ interface NamCaptureJson {
   projectName?: string
   synthetic?: boolean
   syntheticSourceIrName?: string
+  // schemaVersion 2 optional blocks.
+  calibration?: {
+    inputLevelDbu?: number
+    outputLevelDbu?: number
+    method?: string
+    confidence?: string
+    profileName?: string
+    calibratedAt?: string
+  }
+  modelMetadataSuggested?: {
+    name?: string
+    modeledBy?: string
+    gearMake?: string
+    gearModel?: string
+    gearType?: string
+    toneType?: string
+  }
 }
 
 /** Optional per-project details block (IR Lab's cheap ask #1 in the handoff doc). Read from
@@ -89,7 +109,11 @@ export function enrichNamCaptures(db: DatabaseSync, libraryRootId: number): NamC
     `UPDATE nam_capture_item SET
        capture_id = ?, capture_name = ?, project_id = ?, capture_scope = ?, sample_rate = ?,
        measured_latency_samples = ?, synthetic = ?, synthetic_source_ir_name = ?, created_at = ?,
-       excitation_path = ?, recording_path = ?
+       excitation_path = ?, recording_path = ?,
+       input_level_dbu = ?, output_level_dbu = ?,
+       calibration_method = ?, calibration_confidence = ?, calibration_profile_name = ?, calibrated_at = ?,
+       suggested_name = ?, suggested_modeled_by = ?, suggested_gear_make = ?, suggested_gear_model = ?,
+       suggested_gear_type = ?, suggested_tone_type = ?
      WHERE item_id = ?`
   )
   const findCollectionByProject = db.prepare(
@@ -117,94 +141,131 @@ export function enrichNamCaptures(db: DatabaseSync, libraryRootId: number): NamC
   const projectCollectionIds = new Map<string, string>()
   const seenProjectIds = new Set<string>()
 
+  const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+  const str = (v: unknown): string | null => {
+    if (typeof v !== 'string') return null
+    const t = v.trim()
+    return t.length ? t : null
+  }
+
   for (const folder of folders) {
     const absFolderPath = join(root.path, ...folder.relative_path.split('/').filter(Boolean))
-    const captureJsonPath = join(absFolderPath, 'nam-capture.json')
-    if (!fs.existsSync(captureJsonPath)) continue
+    let sidecarNames: string[]
+    try {
+      sidecarNames = fs.readdirSync(absFolderPath).filter((f) => f.endsWith(SIDECAR_SUFFIX))
+    } catch {
+      continue // folder vanished mid-scan
+    }
+    if (sidecarNames.length === 0) continue
 
-    const capture = readJson<NamCaptureJson>(captureJsonPath)
-    if (!capture) continue
+    for (const sidecarName of sidecarNames) {
+      const capture = readJson<NamCaptureJson>(join(absFolderPath, sidecarName))
+      if (!capture) continue
 
-    // Resolve the DI/return pair from the JSON's own filename fields. Fall back to the
-    // conventional names only when a field is missing (older schemaVersion), never in place of
-    // a field that's present.
-    const excitationName = capture.excitation || 'excitation.wav'
-    const recordingName = capture.recording || 'recording.wav'
-    const excitationAbs = join(absFolderPath, excitationName)
-    const recordingAbs = join(absFolderPath, recordingName)
+      // recording: bare filename in this same folder. Fall back to the sidecar's own stem
+      // (<stem>.nam-capture.json -> <stem>.wav) — IR Lab guarantees they share a basename.
+      const recordingName = str(capture.recording) ?? `${sidecarName.slice(0, -SIDECAR_SUFFIX.length)}.wav`
+      // excitation: a relative path that may start '../' (into <project>/_excitations/). join()
+      // normalizes the '..' against the sidecar's own directory.
+      const excitationField = str(capture.excitation)
+      const excitationAbs = excitationField ? join(absFolderPath, excitationField) : null
+      const recordingAbs = join(absFolderPath, recordingName)
 
-    const recordingRelPath = folder.relative_path ? `${folder.relative_path}/${recordingName}` : recordingName
-    const recordingItem = findItemByRelativePath.get(libraryRootId, recordingRelPath) as { id: string } | undefined
-    if (!recordingItem) continue // return WAV moved/deleted/never scanned — skip, don't error
+      const recordingRelPath = folder.relative_path ? `${folder.relative_path}/${recordingName}` : recordingName
+      const recordingItem = findItemByRelativePath.get(libraryRootId, recordingRelPath) as { id: string } | undefined
+      if (!recordingItem) continue // return WAV moved/deleted/never scanned — skip, don't error
 
-    const projectId = capture.projectId || `folder:${folder.relative_path}`
-    const projectName = capture.projectName || 'NAM Capture Project'
-    const isSynthetic = capture.synthetic === true
+      const projectId = str(capture.projectId) ?? `folder:${folder.relative_path}`
+      const projectName = str(capture.projectName) ?? 'NAM Capture Project'
+      const captureName = str(capture.captureName) ?? recordingName.replace(/\.wav$/i, '')
+      const isSynthetic = capture.synthetic === true
+      const cal = capture.calibration ?? {}
+      const hasHints = capture.modelMetadataSuggested != null
+      const hint = capture.modelMetadataSuggested ?? {}
 
-    setItemKind.run(recordingItem.id)
-    ensureNamCaptureItem.run(recordingItem.id)
-    updateNamCaptureFacts.run(
-      capture.captureId ?? null,
-      capture.captureName ?? basename(absFolderPath),
-      capture.projectId ?? null,
-      capture.captureScope ?? null,
-      capture.sampleRate ?? null,
-      Number.isFinite(capture.measuredLatencySamples) ? capture.measuredLatencySamples ?? null : null,
-      isSynthetic ? 1 : 0,
-      capture.syntheticSourceIrName ?? null,
-      capture.createdAt ?? null,
-      excitationAbs,
-      recordingAbs,
-      recordingItem.id
-    )
-    // Give the row a stable, human display name even when importLibrary named the item
-    // "recording.wav" — the capture's own name is far more useful in the tree/list.
-    db.prepare(`UPDATE item SET display_name = ? WHERE id = ?`).run(
-      capture.captureName ?? basename(absFolderPath),
-      recordingItem.id
-    )
+      setItemKind.run(recordingItem.id)
+      ensureNamCaptureItem.run(recordingItem.id)
+      updateNamCaptureFacts.run(
+        str(capture.captureId),
+        captureName,
+        str(capture.projectId),
+        str(capture.captureScope),
+        num(capture.sampleRate),
+        num(capture.measuredLatencySamples),
+        isSynthetic ? 1 : 0,
+        str(capture.syntheticSourceIrName),
+        str(capture.createdAt),
+        excitationAbs,
+        recordingAbs,
+        // calibration.inputLevelDbu/outputLevelDbu ARE NAM's own metadata keys — wanted pre-train
+        // (decision C). The rest is provenance for the UI.
+        num(cal.inputLevelDbu),
+        num(cal.outputLevelDbu),
+        str(cal.method),
+        str(cal.confidence),
+        str(cal.profileName),
+        str(cal.calibratedAt),
+        // modelMetadataSuggested — carried in suggested_* only; threaded into training so the
+        // .nam is seeded post-run, never authoritative catalog metadata (decision C). Written
+        // only when the sidecar actually had the block (suggested_name defaults to the capture
+        // name, so it can't be the "has hints" signal).
+        hasHints ? (str(hint.name) ?? captureName) : null,
+        str(hint.modeledBy),
+        str(hint.gearMake),
+        str(hint.gearModel),
+        str(hint.gearType),
+        str(hint.toneType),
+        recordingItem.id
+      )
+      // Human display name — importLibrary named the item after the WAV file; the capture name
+      // is what the tree/list should show (they usually match now, but not guaranteed).
+      db.prepare(`UPDATE item SET display_name = ? WHERE id = ?`).run(captureName, recordingItem.id)
 
-    // One collection row per distinct projectId. naming_template carries the raw projectId as
-    // the stable lookup key (collection has no dedicated project-id column and adding one is out
-    // of scope here); `name` is the display string.
-    let collectionId = projectCollectionIds.get(projectId)
-    if (!collectionId) {
-      collectionId = (findCollectionByProject.get(libraryRootId, projectId) as { id: string } | undefined)?.id
-      const projectDetails = readJson<NamProjectJson>(join(absFolderPath, '..', 'nam-project.json')) ??
-        readJson<NamProjectJson>(join(absFolderPath, 'nam-project.json'))
-      const detailValues = [
-        projectDetails?.cabinet || null,
-        projectDetails?.speaker || null,
-        projectDetails?.room || null,
-        projectDetails?.signalChain || null,
-        projectDetails?.description || null,
-        projectDetails?.projectNotes || null
-      ] as const
-      if (collectionId) {
-        updateCollectionDetails.run(projectName, folder.id, ...detailValues, collectionId)
-      } else {
-        collectionId = randomUUID()
-        insertCollection.run(
-          collectionId,
-          libraryRootId,
-          folder.id,
-          projectName,
-          projectId,
-          capture.createdAt ?? null,
-          ...detailValues
-        )
+      // One collection row per distinct projectId. naming_template carries the raw projectId as
+      // the stable lookup key (collection has no dedicated project-id column).
+      let collectionId = projectCollectionIds.get(projectId)
+      if (!collectionId) {
+        collectionId = (findCollectionByProject.get(libraryRootId, projectId) as { id: string } | undefined)?.id
+        // nam-project.json (handoff ask #1) was not implemented by IR Lab — project context now
+        // arrives via modelMetadataSuggested per capture. Still probe for the file in case that
+        // changes; harmless when absent.
+        const projectDetails =
+          readJson<NamProjectJson>(join(absFolderPath, '..', 'nam-project.json')) ??
+          readJson<NamProjectJson>(join(absFolderPath, 'nam-project.json'))
+        const detailValues = [
+          str(projectDetails?.cabinet),
+          str(projectDetails?.speaker),
+          str(projectDetails?.room),
+          str(projectDetails?.signalChain),
+          str(projectDetails?.description),
+          str(projectDetails?.projectNotes)
+        ] as const
+        if (collectionId) {
+          updateCollectionDetails.run(projectName, folder.id, ...detailValues, collectionId)
+        } else {
+          collectionId = randomUUID()
+          insertCollection.run(
+            collectionId,
+            libraryRootId,
+            folder.id,
+            projectName,
+            projectId,
+            str(capture.createdAt),
+            ...detailValues
+          )
+        }
+        projectCollectionIds.set(projectId, collectionId)
       }
-      projectCollectionIds.set(projectId, collectionId)
-    }
 
-    upsertCollectionItem.run(collectionId, recordingItem.id)
+      upsertCollectionItem.run(collectionId, recordingItem.id)
 
-    if (!seenProjectIds.has(projectId)) {
-      seenProjectIds.add(projectId)
-      projectsFound++
+      if (!seenProjectIds.has(projectId)) {
+        seenProjectIds.add(projectId)
+        projectsFound++
+      }
+      capturesEnriched++
+      if (isSynthetic) syntheticCaptures++
     }
-    capturesEnriched++
-    if (isSynthetic) syntheticCaptures++
   }
 
   return { projectsFound, capturesEnriched, syntheticCaptures }
@@ -212,6 +273,24 @@ export function enrichNamCaptures(db: DatabaseSync, libraryRootId: number): NamC
 
 /** One NAM Capture, as the "NAM Projects" tree/list needs it. Trained/untrained is derived
  * purely from the presence of nam-lab-result.json in the capture folder — no stored flag. */
+export interface NamCaptureSuggestedMetadata {
+  name: string | null
+  modeledBy: string | null
+  gearMake: string | null
+  gearModel: string | null
+  gearType: string | null
+  toneType: string | null
+}
+
+export interface NamCaptureCalibration {
+  inputLevelDbu: number | null
+  outputLevelDbu: number | null
+  method: string | null
+  confidence: string | null
+  profileName: string | null
+  calibratedAt: string | null
+}
+
 export interface NamCaptureRow {
   itemId: string
   captureId: string | null
@@ -224,7 +303,12 @@ export interface NamCaptureRow {
   createdAt: string | null
   excitationPath: string | null
   recordingPath: string | null
+  /** dirname of recordingPath — the "NAM Captures/" folder. Kept for "Reveal in Explorer". */
   captureFolderPath: string | null
+  /** schemaVersion 2: any non-empty part of the sidecar's `calibration` block. */
+  calibration: NamCaptureCalibration | null
+  /** schemaVersion 2: the sidecar's `modelMetadataSuggested` hints, threaded into training. */
+  suggested: NamCaptureSuggestedMetadata | null
   trained: boolean
   result: NamLabResult | null
 }
@@ -256,7 +340,7 @@ function folderPathFromRecording(recordingPath: string | null): string | null {
   return recordingPath.replace(/[\\/][^\\/]+$/, '')
 }
 
-function mapCaptureRow(row: {
+interface CaptureQueryRow {
   itemId: string
   captureId: string | null
   captureName: string | null
@@ -269,9 +353,42 @@ function mapCaptureRow(row: {
   excitationPath: string | null
   recordingPath: string | null
   displayName: string
-}): NamCaptureRow {
-  const captureFolderPath = folderPathFromRecording(row.recordingPath)
-  const result = captureFolderPath ? readNamLabResult(captureFolderPath) : null
+  inputLevelDbu: number | null
+  outputLevelDbu: number | null
+  calibrationMethod: string | null
+  calibrationConfidence: string | null
+  calibrationProfileName: string | null
+  calibratedAt: string | null
+  suggestedName: string | null
+  suggestedModeledBy: string | null
+  suggestedGearMake: string | null
+  suggestedGearModel: string | null
+  suggestedGearType: string | null
+  suggestedToneType: string | null
+}
+
+function mapCaptureRow(row: CaptureQueryRow): NamCaptureRow {
+  // schemaVersion 2: the sidecar is <dir>/<CaptureName>.nam-lab-result.json, keyed off the
+  // recording WAV path (no per-capture folder). readNamLabResult derives the sidecar name.
+  const result = row.recordingPath ? readNamLabResult(row.recordingPath) : null
+  const calibration: NamCaptureCalibration = {
+    inputLevelDbu: row.inputLevelDbu,
+    outputLevelDbu: row.outputLevelDbu,
+    method: row.calibrationMethod,
+    confidence: row.calibrationConfidence,
+    profileName: row.calibrationProfileName,
+    calibratedAt: row.calibratedAt
+  }
+  const suggested: NamCaptureSuggestedMetadata = {
+    name: row.suggestedName,
+    modeledBy: row.suggestedModeledBy,
+    gearMake: row.suggestedGearMake,
+    gearModel: row.suggestedGearModel,
+    gearType: row.suggestedGearType,
+    toneType: row.suggestedToneType
+  }
+  const hasCalibration = Object.values(calibration).some((v) => v != null)
+  const hasSuggested = Object.values(suggested).some((v) => v != null)
   return {
     itemId: row.itemId,
     captureId: row.captureId,
@@ -284,7 +401,9 @@ function mapCaptureRow(row: {
     createdAt: row.createdAt,
     excitationPath: row.excitationPath,
     recordingPath: row.recordingPath,
-    captureFolderPath,
+    captureFolderPath: folderPathFromRecording(row.recordingPath),
+    calibration: hasCalibration ? calibration : null,
+    suggested: hasSuggested ? suggested : null,
     trained: result != null,
     result
   }
@@ -295,7 +414,13 @@ const CAPTURE_SELECT = `
          nc.capture_id as captureId, nc.capture_name as captureName, nc.capture_scope as captureScope,
          nc.sample_rate as sampleRate, nc.measured_latency_samples as measuredLatencySamples,
          nc.synthetic as synthetic, nc.synthetic_source_ir_name as syntheticSourceIrName,
-         nc.created_at as createdAt, nc.excitation_path as excitationPath, nc.recording_path as recordingPath
+         nc.created_at as createdAt, nc.excitation_path as excitationPath, nc.recording_path as recordingPath,
+         nc.input_level_dbu as inputLevelDbu, nc.output_level_dbu as outputLevelDbu,
+         nc.calibration_method as calibrationMethod, nc.calibration_confidence as calibrationConfidence,
+         nc.calibration_profile_name as calibrationProfileName, nc.calibrated_at as calibratedAt,
+         nc.suggested_name as suggestedName, nc.suggested_modeled_by as suggestedModeledBy,
+         nc.suggested_gear_make as suggestedGearMake, nc.suggested_gear_model as suggestedGearModel,
+         nc.suggested_gear_type as suggestedGearType, nc.suggested_tone_type as suggestedToneType
   FROM collection_item
   JOIN item ON item.id = collection_item.item_id
   LEFT JOIN nam_capture_item nc ON nc.item_id = item.id
@@ -322,7 +447,7 @@ export function listNamProjects(db: DatabaseSync): NamProjectSummary[] {
 
   const captureStmt = db.prepare(CAPTURE_SELECT)
   return collections.map((c) => {
-    const captures = (captureStmt.all(c.id) as Parameters<typeof mapCaptureRow>[0][]).map(mapCaptureRow)
+    const captures = (captureStmt.all(c.id) as unknown as CaptureQueryRow[]).map(mapCaptureRow)
     return {
       collectionId: c.id,
       projectId: c.projectId,
@@ -365,7 +490,7 @@ export function getNamProjectDetail(db: DatabaseSync, collectionId: string): Nam
     | undefined
   if (!c) return null
 
-  const captures = (db.prepare(CAPTURE_SELECT).all(c.id) as Parameters<typeof mapCaptureRow>[0][]).map(mapCaptureRow)
+  const captures = (db.prepare(CAPTURE_SELECT).all(c.id) as unknown as CaptureQueryRow[]).map(mapCaptureRow)
   return {
     collectionId: c.id,
     projectId: c.projectId,
@@ -432,7 +557,7 @@ export function getNamLibraryOverview(db: DatabaseSync): NamLibraryOverview {
   const projects: NamLibraryOverview['projects'] = []
 
   for (const c of collections) {
-    const caps = (captureStmt.all(c.id) as Parameters<typeof mapCaptureRow>[0][]).map(mapCaptureRow)
+    const caps = (captureStmt.all(c.id) as unknown as CaptureQueryRow[]).map(mapCaptureRow)
     allCaptures.push(...caps)
     const trainedEsrs = caps.map((x) => x.result?.validationEsr).filter((v): v is number => typeof v === 'number')
     projects.push({
