@@ -188,7 +188,9 @@ const api = {
     thresholdEsr?: number | null
     latency?: number | null
     includeSynthetic?: boolean
-  }): Promise<{ success: boolean; error?: string; queued?: number; built?: number }> =>
+    staged?: boolean
+    submissionLabel?: string
+  }): Promise<{ success: boolean; error?: string; queued?: number; built?: number; submissionId?: string; staged?: boolean }> =>
     ipcRenderer.invoke('trainer:enqueueNamCaptureImport', req),
   unstageTrainerSubmission: (submissionId: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('trainer:unstageSubmission', submissionId),

@@ -408,6 +408,7 @@ function loadHistory(): HistoryEntry[] {
 }
 import { FolderNode } from './types/librarian'
 import type { NamProjectSummary, NamProjectDetail } from './types/namProjects'
+import { consumePendingBatchNav } from './appNav'
 
 declare global {
   interface Window {
@@ -668,7 +669,9 @@ declare global {
         thresholdEsr?: number | null
         latency?: number | null
         includeSynthetic?: boolean
-      }) => Promise<{ success: boolean; error?: string; queued?: number; built?: number }>
+        staged?: boolean
+        submissionLabel?: string
+      }) => Promise<{ success: boolean; error?: string; queued?: number; built?: number; submissionId?: string; staged?: boolean }>
       listWavSiblings: (filePath: string) => Promise<{ files: string[]; error?: string }>
       hashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
       hashFilesWithoutMetadata: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
@@ -1058,7 +1061,7 @@ export default function App() {
     setPlayerFile(file)
   }, [])
   const [settingsInitialTab, setSettingsInitialTab] = useState<'global' | 'defaults' | 'metadata' | 'pack' | 'player' | 'training' | 'ai' | 'companion' | undefined>(undefined)
-  const [trainingWorkspaceMode, setTrainingWorkspaceMode] = useState<'files' | 'folder' | 'queue' | 'history' | 'presets'>('files')
+  const [trainingWorkspaceMode, setTrainingWorkspaceMode] = useState<'files' | 'folder' | 'queue' | 'batches' | 'history' | 'presets'>('files')
   const [globalTrainerState, setGlobalTrainerState] = useState<TrainerStateSnapshot>(IDLE_TRAINER_STATE)
   const trainerWatcherAutoStartRecoveryRef = useRef('')
   const [toneStoreMounted, setToneStoreMounted] = useState(false)
@@ -4561,7 +4564,7 @@ INSTRUCTIONS:
     }
   }, [])
 
-  const handleOpenExperimentalTraining = (mode: 'files' | 'folder' | 'queue' | 'history' | 'presets' = 'files') => {
+  const handleOpenExperimentalTraining = (mode: 'files' | 'folder' | 'queue' | 'batches' | 'history' | 'presets' = 'files') => {
     setShowSettings(false)
     setShowDashboard(false)
     setHistoryOpen(false)
@@ -4579,6 +4582,13 @@ INSTRUCTIONS:
     }
     setStatus({ message: 'Opened the training workspace.', type: 'info' })
   }
+
+  // NamProjectsShell staged a batch and flipped us to NAM mode (via appNav). We were just
+  // mounted, so consume the one-shot intent here and jump straight to the Batches page.
+  useEffect(() => {
+    if (consumePendingBatchNav()) handleOpenExperimentalTraining('batches')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const handleTrainWavsFromCoverage = useCallback(async (wavPaths: string[]) => {
     if (!settings.enableExperimentalTraining) {

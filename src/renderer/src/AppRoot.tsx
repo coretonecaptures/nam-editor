@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import App from './App'
 import { IrModeShell } from './components/ir/IrModeShell'
 import { NamProjectsShell } from './components/ir/NamProjectsShell'
+import { onGoToTrainingBatches } from './appNav'
 
 type Mode = 'nam' | 'ir' | 'nam-projects'
 const MODE_KEY = 'nam-lab-app-mode'
@@ -34,6 +35,10 @@ export default function AppRoot(): React.ReactElement {
       // Non-fatal — worst case the toggle doesn't remember across restarts.
     }
   }, [mode])
+
+  // NamProjectsShell -> "create training batch" -> flip to NAM mode; App picks up the pending
+  // intent on mount (appNav.consumePendingBatchNav) and opens the trainer on Batches.
+  useEffect(() => onGoToTrainingBatches(() => setMode('nam')), [])
 
   const tab = (value: Mode, label: string): React.ReactElement => (
     <button

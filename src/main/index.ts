@@ -3674,6 +3674,9 @@ async function buildTrainerPayloadsForNamCaptureImport(
     thresholdEsr: number | null
     latency: number | null
     includeSynthetic: boolean
+    // When set, every built payload carries this submission so the jobs group as one named
+    // "batch" on the trainer's Batches page (staged) or Queue page (not staged).
+    submission?: { id: string; label: string; createdAt: string }
   }
 ): Promise<TrainerStartPayload[]> {
   const payloads: TrainerStartPayload[] = []
@@ -3742,6 +3745,9 @@ async function buildTrainerPayloadsForNamCaptureImport(
       namCaptureId: capture.captureId,
       namCaptureName: capture.captureName,
       namProjectName: capture.projectName,
+      submissionId: config.submission?.id ?? null,
+      submissionLabel: config.submission?.label ?? null,
+      submissionCreatedAt: config.submission?.createdAt ?? null,
       appendModelArchitectureFolder: false,
       appendGraphArchitectureFolder: false,
       appendProcessedArchitectureFolder: false,
@@ -7909,6 +7915,9 @@ app.whenReady().then(async () => {
         thresholdEsr?: number | null
         latency?: number | null
         includeSynthetic?: boolean
+        // Stage the jobs (Batches page, awaiting Start) instead of queueing them to run.
+        staged?: boolean
+        submissionLabel?: string
       }
     ) => {
       const pythonPath = (req.pythonPath ?? trainerConfiguredPythonPath ?? '').trim()
@@ -7916,6 +7925,11 @@ app.whenReady().then(async () => {
       if (!req.finalModelRoot?.trim()) return { success: false, error: 'Choose a model output folder.' }
       if (!Array.isArray(req.captures) || req.captures.length === 0) {
         return { success: false, error: 'No captures were provided.' }
+      }
+      const submission = {
+        id: `nam-capture-${crypto.randomUUID()}`,
+        label: req.submissionLabel?.trim() || `NAM Capture — ${req.captures.length} capture${req.captures.length === 1 ? '' : 's'}`,
+        createdAt: new Date().toISOString(),
       }
       const payloads = await buildTrainerPayloadsForNamCaptureImport(req.captures, {
         pythonPath,
@@ -7925,12 +7939,13 @@ app.whenReady().then(async () => {
         thresholdEsr: req.thresholdEsr ?? null,
         latency: req.latency ?? null,
         includeSynthetic: req.includeSynthetic ?? false,
+        submission,
       })
       if (payloads.length === 0) {
         return { success: false, error: 'Nothing to queue — every capture was synthetic, missing, or already excluded.' }
       }
-      const queued = await enqueueTrainingPayloads(payloads)
-      return { success: true, queued, built: payloads.length }
+      const queued = await enqueueTrainingPayloads(payloads, req.staged ?? false)
+      return { success: true, queued, built: payloads.length, submissionId: submission.id, staged: req.staged ?? false }
     }
   )
 

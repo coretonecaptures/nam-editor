@@ -99,7 +99,7 @@ interface Props {
   settings: AppSettings
   onSaveSettings: (settings: AppSettings) => void
   onClose?: () => void
-  initialRunMode?: 'files' | 'folder' | 'queue' | 'history' | 'presets'
+  initialRunMode?: 'files' | 'folder' | 'queue' | 'batches' | 'history' | 'presets'
   onOpenSetupGuide?: () => void
   onOpenSettings?: (tab?: 'global' | 'defaults' | 'metadata' | 'pack' | 'training') => void
 }
@@ -424,6 +424,7 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
   useEffect(() => {
     if (!initialRunMode) return
     if (initialRunMode === 'queue') setSection('queue')
+    else if (initialRunMode === 'batches') setSection('batches')
     else if (initialRunMode === 'history') setSection('history')
     else if (initialRunMode === 'presets') setSection('presets')
     else setSection('dashboard')
