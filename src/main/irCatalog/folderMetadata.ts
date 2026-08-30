@@ -136,7 +136,7 @@ export function listFolders(db: DatabaseSync, libraryRootId: number): FolderTree
               ) as is_lab_project
        FROM folder
        LEFT JOIN (
-         SELECT folder_id, COUNT(*) as c FROM item WHERE library_root_id = ? GROUP BY folder_id
+         SELECT folder_id, COUNT(*) as c FROM item WHERE library_root_id = ? AND kind = 'ir' GROUP BY folder_id
        ) counts ON counts.folder_id = folder.id
        WHERE folder.library_root_id = ?
        ORDER BY folder.relative_path`
@@ -172,7 +172,7 @@ export function listAllFolders(db: DatabaseSync): AllRootsFolderRow[] {
        FROM folder
        JOIN library_root ON library_root.id = folder.library_root_id
        LEFT JOIN (
-         SELECT folder_id, COUNT(*) as c FROM item GROUP BY folder_id
+         SELECT folder_id, COUNT(*) as c FROM item WHERE kind = 'ir' GROUP BY folder_id
        ) counts ON counts.folder_id = folder.id
        ORDER BY library_root.id, folder.relative_path`
     )

@@ -124,7 +124,7 @@ export function listFacetOptions(
   libraryRootId: number | null,
   folderId: number | null
 ): FacetOption<string>[] {
-  const clauses = [`${field} IS NOT NULL`]
+  const clauses = [`${field} IS NOT NULL`, `item.kind = 'ir'`]
   const params: SQLInputValue[] = []
   if (libraryRootId != null) {
     clauses.push('item.library_root_id = ?')
@@ -158,7 +158,7 @@ export function listNumericFacetOptions(
   folderId: number | null
 ): FacetOption<number>[] {
   const column = field === 'sampleRate' ? 'sample_rate' : 'bit_depth'
-  const clauses = [`${column} IS NOT NULL`]
+  const clauses = [`${column} IS NOT NULL`, `item.kind = 'ir'`]
   const params: SQLInputValue[] = []
   if (libraryRootId != null) {
     clauses.push('item.library_root_id = ?')
@@ -228,7 +228,11 @@ function buildWhereAndParams(
   options: QueryOptions,
   matchExpr: string | null
 ): { where: string; params: SQLInputValue[] } {
-  const clauses: string[] = []
+  // IR mode's browse list, counts and facets are IR-only. namCaptureEnrichment.ts promotes each
+  // capture's return WAV to item.kind='nam_capture' (leaving its ir_item WAV-header row behind),
+  // and those belong to the NAM Projects mode, not this list — without this they'd show up here
+  // with a blank cabinet/speaker/mic and a "recording" display name.
+  const clauses: string[] = [`item.kind = 'ir'`]
   const params: SQLInputValue[] = []
   if (options.libraryRootId != null) {
     clauses.push('item.library_root_id = ?')

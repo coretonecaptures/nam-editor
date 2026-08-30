@@ -50,12 +50,15 @@ const BREAKDOWN_LIMIT = 8
  * folder and its descendants" (folder scope) — same `item` WHERE shape either way so every stat
  * query below can stay a single flat prepared statement. */
 function scopeWhereAndParams(db: DatabaseSync, libraryRootId: number, folderId: number | null | undefined): { where: string; params: number[] } {
+  // The IR Library overview counts IRs only — a promoted nam_capture item (namCaptureEnrichment.ts)
+  // is a NAM Projects thing, not an IR. Every caller AND-joins this onto its own WHERE.
+  const kind = `item.kind = 'ir'`
   if (folderId == null) {
-    return { where: 'item.library_root_id = ?', params: [libraryRootId] }
+    return { where: `${kind} AND item.library_root_id = ?`, params: [libraryRootId] }
   }
   const ids = resolveFolderScopeIds(db, folderId)
   if (ids.length === 0) return { where: '0 = 1', params: [] }
-  return { where: `item.folder_id IN (${ids.map(() => '?').join(',')})`, params: ids }
+  return { where: `${kind} AND item.folder_id IN (${ids.map(() => '?').join(',')})`, params: ids }
 }
 
 /** Distinct values + counts for one ir_item column, biggest first. Shares fieldBreakdown's shape
