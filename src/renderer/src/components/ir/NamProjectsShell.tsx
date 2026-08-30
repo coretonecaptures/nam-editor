@@ -26,6 +26,23 @@ const ARCH_LABEL: Record<string, string> = Object.fromEntries(
 const OUTPUT_ROOT_KEY = 'nam-lab-nam-projects-output-root'
 const ARCH_KEY = 'nam-lab-nam-projects-architecture'
 const EPOCHS_KEY = 'nam-lab-nam-projects-epochs'
+const SELECTED_KEY = 'nam-lab-nam-projects-selected'
+const VIEW_KEY = 'nam-lab-nam-projects-view'
+
+function readStored(key: string): string {
+  try {
+    return localStorage.getItem(key) || ''
+  } catch {
+    return ''
+  }
+}
+function writeStored(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    /* non-fatal */
+  }
+}
 
 type StatusFilter = 'all' | 'untrained' | 'trained' | 'synthetic'
 
@@ -240,7 +257,7 @@ function isQueueEligible(c: NamCaptureRow, includeSynthetic: boolean): boolean {
 
 export function NamProjectsShell(): React.ReactElement {
   const [projects, setProjects] = useState<NamProjectSummary[]>([])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(() => readStored(SELECTED_KEY) || null)
   const [detail, setDetail] = useState<NamProjectDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [scanning, setScanning] = useState(false)
@@ -249,7 +266,9 @@ export function NamProjectsShell(): React.ReactElement {
   const [captureMenu, setCaptureMenu] = useState<{ capture: NamCaptureRow; x: number; y: number } | null>(null)
   const [projectMenu, setProjectMenu] = useState<{ project: NamProjectSummary; x: number; y: number } | null>(null)
 
-  const [view, setView] = useState<'projects' | 'overview'>('projects')
+  const [view, setView] = useState<'projects' | 'overview'>(() =>
+    readStored(VIEW_KEY) === 'overview' ? 'overview' : 'projects'
+  )
   const [overview, setOverview] = useState<NamLibraryOverview | null>(null)
   const [reportCopied, setReportCopied] = useState(false)
   const [projectFilter, setProjectFilter] = useState('')
@@ -325,6 +344,13 @@ export function NamProjectsShell(): React.ReactElement {
   useEffect(() => {
     void refreshProjects()
   }, [refreshProjects])
+
+  useEffect(() => {
+    if (selectedId) writeStored(SELECTED_KEY, selectedId)
+  }, [selectedId])
+  useEffect(() => {
+    writeStored(VIEW_KEY, view)
+  }, [view])
 
   const refreshDetail = useCallback(async (collectionId: string) => {
     try {
@@ -729,14 +755,24 @@ export function NamProjectsShell(): React.ReactElement {
                     placeholder="Filter captures…"
                     className="flex-1 min-w-0 text-xs px-1.5 py-0.5 rounded border border-field-bd bg-field-bg"
                   />
-                  {(['all', 'untrained', 'trained', 'synthetic'] as const).map((s) => (
-                    <StatusChip
-                      key={s}
-                      label={s[0].toUpperCase() + s.slice(1)}
-                      active={statusFilter === s}
-                      onClick={() => setStatusFilter(s)}
-                    />
-                  ))}
+                  {(['all', 'untrained', 'trained', 'synthetic'] as const).map((s) => {
+                    const n =
+                      s === 'all'
+                        ? detail.captures.length
+                        : s === 'trained'
+                          ? detail.captures.filter((c) => c.trained).length
+                          : s === 'untrained'
+                            ? detail.captures.filter((c) => !c.trained).length
+                            : detail.captures.filter((c) => c.synthetic).length
+                    return (
+                      <StatusChip
+                        key={s}
+                        label={`${s[0].toUpperCase() + s.slice(1)} ${n}`}
+                        active={statusFilter === s}
+                        onClick={() => setStatusFilter(s)}
+                      />
+                    )
+                  })}
                 </div>
                 {visibleCaptures.length > 0 && (
                   <div className="flex items-center gap-2 px-4 py-1 border-b border-nm-border-s flex-shrink-0 text-[11px] text-nm-text-3">
