@@ -106,7 +106,30 @@ CREATE TABLE IF NOT EXISTS nam_capture_item (
   trained_epochs    INTEGER, preset_name TEXT, loudness REAL, gain REAL,
   architecture      TEXT, mics TEXT, cabinet TEXT, cabinet_config TEXT,
   amp_channel       TEXT, boost_pedal TEXT, amp_settings TEXT,
-  pedal_settings    TEXT, amp_switches TEXT
+  pedal_settings    TEXT, amp_switches TEXT,
+  -- Pre-training facts, written by namCaptureEnrichment.ts straight from IR Lab's own
+  -- nam-capture.json (confirmed against NamCaptureStore.h/.cpp; see
+  -- docs/nam-capture-import-plan-2026-08-29.md §2). Everything above this line is post-training
+  -- metadata that only the trainer-completion path or the manual/Excel workflow ever fills;
+  -- everything below is known the moment the capture folder is scanned. The importer inserts a
+  -- bare row (item_id only) per capture so training-completion code has a row to UPDATE, and
+  -- fills these columns in the same pass.
+  capture_id                TEXT,    -- nam-capture.json captureId (stable, survives a rename)
+  capture_name              TEXT,    -- captureName
+  project_id                TEXT,    -- projectId — the grouping key, never folder nesting depth
+  capture_scope             TEXT,    -- 'Cabinet' | 'Device' | 'Software'
+  sample_rate               REAL,
+  measured_latency_samples  INTEGER,
+  -- Stored verbatim; NEVER silently equated with a real capture. Every downstream consumer
+  -- (queue-for-training default exclusion, the UI's visible flag) checks this explicitly.
+  synthetic                 INTEGER,
+  synthetic_source_ir_name  TEXT,
+  created_at                TEXT,
+  -- Resolved absolute paths from the JSON's own excitation/recording filename fields — never
+  -- assume the literal names excitation.wav/recording.wav. These are what make each capture's
+  -- DI/return pairing unambiguous for the per-capture trainer-queue path (plan §4).
+  excitation_path           TEXT,
+  recording_path            TEXT
 );
 
 CREATE TABLE IF NOT EXISTS ir_item (
@@ -194,7 +217,7 @@ CREATE TABLE IF NOT EXISTS ir_derivative_variant (
 
 CREATE TABLE IF NOT EXISTS collection (
   id                    TEXT PRIMARY KEY,
-  kind                  TEXT NOT NULL CHECK (kind IN ('ir_project', 'nam_pack', 'nam_bundle', 'release', 'tray')),
+  kind                  TEXT NOT NULL CHECK (kind IN ('ir_project', 'nam_project', 'nam_pack', 'nam_bundle', 'release', 'tray')),
   parent_id             TEXT REFERENCES collection(id),
   library_root_id       INTEGER REFERENCES library_root(id),
   -- Anchors an 'ir_project' collection to the folder IR Lab wrote it into
@@ -453,6 +476,64 @@ function runMigrations(db: DatabaseSync): void {
       INSERT INTO ir_item_field_source SELECT * FROM ir_item_field_source_old;
       DROP TABLE ir_item_field_source_old;
     `)
+  }
+
+  // nam_capture_item's pre-training columns (namCaptureEnrichment.ts / IR Lab NAM Capture import,
+  // docs/nam-capture-import-plan-2026-08-29.md §2). Added per-column so a DB that already has
+  // some of them isn't an error — same discipline as the ir_item block above.
+  const namCaptureColumns = db.prepare(`PRAGMA table_info(nam_capture_item)`).all() as Array<{ name: string }>
+  if (namCaptureColumns.length > 0) {
+    const have = new Set(namCaptureColumns.map((c) => c.name))
+    for (const [name, type] of [
+      ['capture_id', 'TEXT'],
+      ['capture_name', 'TEXT'],
+      ['project_id', 'TEXT'],
+      ['capture_scope', 'TEXT'],
+      ['sample_rate', 'REAL'],
+      ['measured_latency_samples', 'INTEGER'],
+      ['synthetic', 'INTEGER'],
+      ['synthetic_source_ir_name', 'TEXT'],
+      ['created_at', 'TEXT'],
+      ['excitation_path', 'TEXT'],
+      ['recording_path', 'TEXT']
+    ] as const) {
+      if (!have.has(name)) db.exec(`ALTER TABLE nam_capture_item ADD COLUMN ${name} ${type}`)
+    }
+  }
+
+  // collection.kind's CHECK predates 'nam_project' (IR Lab NAM Capture projects — plan §2). A
+  // CHECK can't be ALTERed in SQLite, so a table built before it is rebuilt: renamed aside,
+  // recreated with the widened CHECK, rows copied across (ids preserved, so every inbound FK
+  // stays valid), the old one dropped. foreign_keys is toggled off for the swap so the rename
+  // doesn't cascade into collection_item/checklist_item/etc. Detected by sniffing the stored
+  // CREATE TABLE text, same technique as the ir_item_field_source rebuild above.
+  const collectionSql = (
+    db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'collection'`).get() as
+      | { sql: string }
+      | undefined
+  )?.sql
+  if (collectionSql && !collectionSql.includes('nam_project')) {
+    const newBody = collectionSql
+      .slice(collectionSql.indexOf('(') + 1, collectionSql.lastIndexOf(')'))
+      .replace(
+        `CHECK (kind IN ('ir_project', 'nam_pack', 'nam_bundle', 'release', 'tray'))`,
+        `CHECK (kind IN ('ir_project', 'nam_project', 'nam_pack', 'nam_bundle', 'release', 'tray'))`
+      )
+    const oldCols = (db.prepare(`PRAGMA table_info(collection)`).all() as Array<{ name: string }>)
+      .map((c) => c.name)
+      .join(', ')
+    // No explicit BEGIN — runMigrations is called outside any transaction (getDb / the tests),
+    // and the other rebuilds in this function are bare db.exec too. foreign_keys OFF stops the
+    // RENAME from cascading into collection_item / checklist_item / delivery_* / asset_file;
+    // ids are copied unchanged so every one of those inbound references still resolves after.
+    db.exec('PRAGMA foreign_keys = OFF')
+    db.exec(`
+      ALTER TABLE collection RENAME TO collection_old;
+      CREATE TABLE collection (${newBody});
+      INSERT INTO collection (${oldCols}) SELECT ${oldCols} FROM collection_old;
+      DROP TABLE collection_old;
+    `)
+    db.exec('PRAGMA foreign_keys = ON')
   }
 }
 

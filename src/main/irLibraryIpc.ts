@@ -31,6 +31,7 @@ import { addToTray, removeFromTray, listTray, isInTray } from './irCatalog/tray'
 import { sendToIrLab, irLabConnectorAvailable } from './irLabConnector'
 import { getLibraryOverview } from './irCatalog/libraryOverview'
 import { enrichLabProjects, getProjectDetailForFolder } from './irCatalog/labProjectEnrichment'
+import { enrichNamCaptures, listNamProjects, getNamProjectDetail } from './irCatalog/namCaptureEnrichment'
 import {
   previewFolderRemoval,
   removeFolderFromCatalog,
@@ -148,6 +149,10 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     // root and enriches its already-correctly-scanned deliverable items with real IR Lab metadata.
     // Automatic on every scan, not just the dedicated "Import IR Lab Project(s)..." action below.
     enrichLabProjects(database, stats.libraryRootId)
+    // Fourth pass (docs/nam-capture-import-plan-2026-08-29.md §2) — detects any nam-capture.json
+    // under this root and groups the captures into nam_project collections. Automatic on every
+    // scan, same as enrichLabProjects above.
+    enrichNamCaptures(database, stats.libraryRootId)
     finalizeIndexes(database)
     safeSend('irLibrary:scanProgress', {
       filesSeen: stats.itemsInserted,
@@ -193,16 +198,22 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     reconcileMissingItems(database, stats.libraryRootId)
     applyVendorParsers(database, stats.libraryRootId)
     const enrichStats = enrichLabProjects(database, stats.libraryRootId)
+    enrichNamCaptures(database, stats.libraryRootId)
 
     let nonProjectItemsRemoved = 0
     if (!existingRoot) {
+      // Keep anything in an IR Lab Project folder, plus every folder that holds a NAM Capture
+      // (each NAM capture is its own folder, so the nam_project collection only anchors one of
+      // them — the kind='nam_capture' item check below is what protects the rest).
       const result = database
         .prepare(
-          `DELETE FROM item WHERE library_root_id = ? AND (folder_id IS NULL OR folder_id NOT IN (
+          `DELETE FROM item WHERE library_root_id = ? AND kind != 'nam_capture' AND (folder_id IS NULL OR folder_id NOT IN (
              SELECT folder_id FROM collection WHERE library_root_id = ? AND kind = 'ir_project' AND folder_id IS NOT NULL
+             UNION
+             SELECT folder_id FROM item WHERE library_root_id = ? AND kind = 'nam_capture' AND folder_id IS NOT NULL
            ))`
         )
-        .run(stats.libraryRootId, stats.libraryRootId)
+        .run(stats.libraryRootId, stats.libraryRootId, stats.libraryRootId)
       nonProjectItemsRemoved = Number(result.changes)
     }
     finalizeIndexes(database)
@@ -225,6 +236,14 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
 
   ipcMain.handle('irLibrary:getProjectDetailForFolder', (_event, folderId: number) => {
     return getProjectDetailForFolder(getDb(), folderId)
+  })
+
+  // "NAM Projects" mode (docs/nam-capture-import-plan-2026-08-29.md §1). listNamProjects backs
+  // the left rail; getNamProjectDetail backs the right panel. Both read trained/untrained purely
+  // from the presence of nam-lab-result.json in each capture folder — no stored flag to drift.
+  ipcMain.handle('irLibrary:listNamProjects', () => listNamProjects(getDb()))
+  ipcMain.handle('irLibrary:getNamProjectDetail', (_event, collectionId: string) => {
+    return getNamProjectDetail(getDb(), collectionId)
   })
 
   // Folder/root removal — "remove a folder and its children from the catalog, with a confirm
