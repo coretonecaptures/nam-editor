@@ -407,6 +407,7 @@ function loadHistory(): HistoryEntry[] {
   }
 }
 import { FolderNode } from './types/librarian'
+import type { NamProjectSummary, NamProjectDetail } from './types/namProjects'
 
 declare global {
   interface Window {
@@ -648,6 +649,26 @@ declare global {
       irLibraryAddItemToTag: (itemId: string, tagId: number) => Promise<{ success: boolean }>
       irLibraryRemoveItemFromTag: (itemId: string, tagId: number) => Promise<{ success: boolean }>
       irLibraryListTagsForItem: (itemId: string) => Promise<Array<{ id: number; name: string; itemCount: number }>>
+      irLibraryListNamProjects: () => Promise<NamProjectSummary[]>
+      irLibraryGetNamProjectDetail: (collectionId: string) => Promise<NamProjectDetail | null>
+      enqueueNamCaptureImport: (req: {
+        captures: Array<{
+          excitationPath: string
+          recordingPath: string
+          captureId: string
+          captureName: string
+          captureFolderPath: string
+          projectName: string
+          synthetic: boolean
+        }>
+        pythonPath?: string
+        finalModelRoot: string
+        architecture: string
+        epochs: number
+        thresholdEsr?: number | null
+        latency?: number | null
+        includeSynthetic?: boolean
+      }) => Promise<{ success: boolean; error?: string; queued?: number; built?: number }>
       listWavSiblings: (filePath: string) => Promise<{ files: string[]; error?: string }>
       hashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
       hashFilesWithoutMetadata: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>

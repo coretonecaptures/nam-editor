@@ -171,6 +171,25 @@ const api = {
     ipcRenderer.invoke('trainer:start', payload),
   enqueueTrainerRuns: (payloads: TrainerStartPayload[], opts?: { staged?: boolean }): Promise<{ success: boolean; error?: string; queued?: number }> =>
     ipcRenderer.invoke('trainer:enqueue', payloads, opts),
+  enqueueNamCaptureImport: (req: {
+    captures: Array<{
+      excitationPath: string
+      recordingPath: string
+      captureId: string
+      captureName: string
+      captureFolderPath: string
+      projectName: string
+      synthetic: boolean
+    }>
+    pythonPath?: string
+    finalModelRoot: string
+    architecture: string
+    epochs: number
+    thresholdEsr?: number | null
+    latency?: number | null
+    includeSynthetic?: boolean
+  }): Promise<{ success: boolean; error?: string; queued?: number; built?: number }> =>
+    ipcRenderer.invoke('trainer:enqueueNamCaptureImport', req),
   unstageTrainerSubmission: (submissionId: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('trainer:unstageSubmission', submissionId),
   stageTrainerJob: (jobId: string): Promise<{ success: boolean; error?: string }> =>
@@ -553,7 +572,57 @@ const api = {
   irLibraryRemoveItemFromTag: (itemId: string, tagId: number): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('irLibrary:removeItemFromTag', itemId, tagId),
   irLibraryListTagsForItem: (itemId: string): Promise<Array<{ id: number; name: string; itemCount: number }>> =>
-    ipcRenderer.invoke('irLibrary:listTagsForItem', itemId)
+    ipcRenderer.invoke('irLibrary:listTagsForItem', itemId),
+  // "NAM Projects" mode (docs/nam-capture-import-plan-2026-08-29.md §1).
+  irLibraryListNamProjects: (): Promise<NamProjectSummaryShape[]> => ipcRenderer.invoke('irLibrary:listNamProjects'),
+  irLibraryGetNamProjectDetail: (collectionId: string): Promise<NamProjectDetailShape | null> =>
+    ipcRenderer.invoke('irLibrary:getNamProjectDetail', collectionId)
+}
+
+interface NamLabResultShape {
+  schemaVersion: number
+  trainedAt: string
+  modelName: string
+  architecture: string
+  validationEsr: number | null
+  outputModelPath: string
+  trainerJobId: string
+}
+interface NamCaptureRowShape {
+  itemId: string
+  captureId: string | null
+  captureName: string
+  captureScope: string | null
+  sampleRate: number | null
+  measuredLatencySamples: number | null
+  synthetic: boolean
+  syntheticSourceIrName: string | null
+  createdAt: string | null
+  excitationPath: string | null
+  recordingPath: string | null
+  captureFolderPath: string | null
+  trained: boolean
+  result: NamLabResultShape | null
+}
+interface NamProjectSummaryShape {
+  collectionId: string
+  projectId: string
+  name: string
+  createdAt: string | null
+  libraryRootId: number
+  folderId: number | null
+  captureCount: number
+  trainedCount: number
+  syntheticCount: number
+}
+interface NamProjectDetailShape extends NamProjectSummaryShape {
+  cabinet: string | null
+  speaker: string | null
+  room: string | null
+  signalChain: string | null
+  description: string | null
+  projectNotes: string | null
+  captures: NamCaptureRowShape[]
 }
 
 if (process.contextIsolated) {

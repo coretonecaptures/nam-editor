@@ -6,6 +6,7 @@ import http from 'http'
 import crypto from 'crypto'
 import { findOuterMetadataMatch, findMatchingBrace, serializeJsonValue, escapeRe, patchMetadataFields } from './metadataPatcher'
 import { registerIrLibraryIpc } from './irLibraryIpc'
+import { writeNamLabResult } from './irCatalog/namCaptureResult'
 
 const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
 
@@ -133,7 +134,7 @@ interface MetadataWriteContext {
 
 type FolderWatchCopyOutcome = 'copied' | 'existing' | 'already-imported' | 'in-flight' | 'non-file' | 'timeout' | 'error' | 'dest-missing'
 
-type TrainingSourceMode = 'watcher' | 'manual-folder-run' | 'manual-direct'
+type TrainingSourceMode = 'watcher' | 'manual-folder-run' | 'manual-direct' | 'nam-capture-import'
 type TrainingSourcePostProcessMode = 'move' | 'copy' | 'keep'
 type TrainingLatencyMode = 'auto' | 'manual'
 type TrainingWatchInitialScanMode = 'process-existing' | 'new-only'
@@ -3322,6 +3323,10 @@ function createTrainerJob(payload: TrainerStartPayload, staged = false): Trainer
     submissionId: payload.submissionId ?? null,
     submissionLabel: payload.submissionLabel ?? null,
     submissionCreatedAt: payload.submissionCreatedAt ?? null,
+    namCaptureFolderPath: payload.namCaptureFolderPath ?? null,
+    namCaptureId: payload.namCaptureId ?? null,
+    namCaptureName: payload.namCaptureName ?? null,
+    namProjectName: payload.namProjectName ?? null,
     backupExisting: !!payload.backupExisting,
     appendModelArchitectureFolder,
     appendGraphArchitectureFolder,
@@ -3635,6 +3640,112 @@ async function buildTrainerPayloadsForProfile(
         appendProcessedArchitectureFolder: profile.architectures.length > 1,
       })
     }
+  }
+  return payloads
+}
+
+/**
+ * IR Lab NAM Capture import (docs/nam-capture-import-plan-2026-08-29.md §4). The mirror image of
+ * buildTrainerPayloadsForProfile: that one loops one shared `inputPath` (DI) against many
+ * `outputPath`s; here every capture brings its OWN excitation+recording pair, so pairing is
+ * per-item and the DI can't be hoisted out of the loop. Not a parameter tweak on the existing
+ * builder — a sibling.
+ *
+ * `synthetic: true` captures are skipped unless `includeSynthetic` is explicitly set (the UI
+ * surfaces that as a non-default opt-in, never silently included). Built payloads go straight
+ * into the unchanged enqueueTrainingPayloads / createTrainerJob path — both already default
+ * correctly against a new sourceMode value.
+ */
+async function buildTrainerPayloadsForNamCaptureImport(
+  captures: Array<{
+    excitationPath: string
+    recordingPath: string
+    captureId: string
+    captureName: string
+    captureFolderPath: string
+    projectName: string
+    synthetic: boolean
+  }>,
+  config: {
+    pythonPath: string
+    finalModelRoot: string
+    architecture: TrainerArchitecture
+    epochs: number
+    thresholdEsr: number | null
+    latency: number | null
+    includeSynthetic: boolean
+  }
+): Promise<TrainerStartPayload[]> {
+  const payloads: TrainerStartPayload[] = []
+  const pythonPath = config.pythonPath.trim()
+  const finalModelRoot = config.finalModelRoot.trim()
+  if (!pythonPath) { log('[nam-capture-import] skipped: python path empty'); return payloads }
+  if (!finalModelRoot) { log('[nam-capture-import] skipped: model output root empty'); return payloads }
+  if (!config.architecture) { log('[nam-capture-import] skipped: no architecture'); return payloads }
+
+  const isA2 = config.architecture === 'a2'
+  const profileCfg = isA2 ? null : lookupCaptureProfileConfig(config.architecture, trainerUserCaptureProfiles)
+
+  for (const capture of captures) {
+    if (capture.synthetic && !config.includeSynthetic) {
+      log(`[nam-capture-import] skipped synthetic capture "${capture.captureName}"`)
+      continue
+    }
+    const excitationPath = capture.excitationPath?.trim()
+    const recordingPath = capture.recordingPath?.trim()
+    if (!excitationPath || !recordingPath) { log(`[nam-capture-import] "${capture.captureName}" missing a path — skipping`); continue }
+    try {
+      await fs.promises.access(excitationPath)
+      await fs.promises.access(recordingPath)
+    } catch {
+      log(`[nam-capture-import] "${capture.captureName}" excitation/recording not on disk — skipping`)
+      continue
+    }
+    payloads.push({
+      pythonPath,
+      // Per-capture DI/return pair — this is the whole point of the sibling builder.
+      inputPath: excitationPath,
+      outputPath: recordingPath,
+      trainPath: finalModelRoot,
+      namMode: isA2 ? 'a2' : 'a1',
+      normalizeWav: trainerConfiguredNormalizeWav,
+      normalizeWavTargetDb: trainerConfiguredNormalizeWavTargetDb,
+      architecture: config.architecture,
+      waveNetConfig: profileCfg?.waveNetConfig ?? null,
+      lr: profileCfg?.lr ?? 0.004,
+      lrDecay: profileCfg?.lrDecay ?? 0.002,
+      batchSize: profileCfg?.batchSize ?? 16,
+      ny: profileCfg?.ny ?? 8192,
+      fitMrstft: profileCfg?.fitMrstft ?? true,
+      captureProfileId: isA2 ? null : config.architecture,
+      epochs: config.epochs,
+      latency: config.latency,
+      thresholdEsr: config.thresholdEsr,
+      savePlot: true,
+      silent: true,
+      ignoreChecks: false,
+      modeledBy: trainerConfiguredModeledBy || null,
+      inputLevelDbu: trainerConfiguredInputLevelDbu,
+      outputLevelDbu: trainerConfiguredOutputLevelDbu,
+      profileId: null,
+      profileName: capture.projectName || null,
+      sourceMode: 'nam-capture-import',
+      finalModelRoot,
+      processedWavRoot: '',
+      graphRoot: finalModelRoot,
+      graphRootResolved: false,
+      sourcePostProcess: 'keep',
+      // captureName has no {tokens}, so fillTrainerNamingTemplate passes it straight through
+      // sanitizeTrainerPathPart — the .nam is named after the capture, not "recording".
+      namingTemplate: capture.captureName || '{basename}',
+      namCaptureFolderPath: capture.captureFolderPath,
+      namCaptureId: capture.captureId,
+      namCaptureName: capture.captureName,
+      namProjectName: capture.projectName,
+      appendModelArchitectureFolder: false,
+      appendGraphArchitectureFolder: false,
+      appendProcessedArchitectureFolder: false,
+    })
   }
   return payloads
 }
@@ -4154,6 +4265,18 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
           mse: trainerState.epochMse ?? null,
           mseLite: trainerState.epochMseLite ?? null,
           manualLatencySamples: job.latency,
+          // IR Lab NAM Capture provenance — a nam_lab-namespaced scratch block NAM itself
+          // ignores. Deliberately NOT gear_type/make/model/tone_type (those stay on the normal
+          // manual/Excel metadata workflow), just where this model came from.
+          namCaptureSource:
+            job.sourceMode === 'nam-capture-import'
+              ? {
+                  capture_id: job.namCaptureId ?? null,
+                  capture_name: job.namCaptureName ?? null,
+                  project_name: job.namProjectName ?? null,
+                  capture_folder: job.namCaptureFolderPath ?? null,
+                }
+              : null,
         })
         JSON.parse(patched)
         suppressWatcher()
@@ -4163,6 +4286,33 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
         trainerState = {
           ...trainerState,
           logs: [...trainerState.logs, `Trainer metadata write warning: ${String(metadataError)}`].slice(-600),
+        }
+      }
+    }
+
+    // NAM Capture write-back (docs/nam-capture-import-plan-2026-08-29.md §3/§5). Drop
+    // nam-lab-result.json into the capture's own folder so the NAM Projects tree flips its
+    // trained badge and IR Lab can read status if it wants to. Best-effort — a failure here
+    // must never turn a successful training run into an error.
+    if (
+      trainerState.status === 'success' &&
+      job.sourceMode === 'nam-capture-import' &&
+      job.namCaptureFolderPath &&
+      trainerState.outputModelPath
+    ) {
+      try {
+        writeNamLabResult(job.namCaptureFolderPath, {
+          trainedAt: trainerState.finishedAt ?? new Date().toISOString(),
+          modelName: job.modelName,
+          architecture: job.namMode,
+          validationEsr: trainerState.validationEsr,
+          outputModelPath: trainerState.outputModelPath,
+          trainerJobId: job.jobId,
+        })
+      } catch (writebackError) {
+        trainerState = {
+          ...trainerState,
+          logs: [...trainerState.logs, `NAM Capture write-back warning: ${String(writebackError)}`].slice(-600),
         }
       }
     }
@@ -5522,6 +5672,15 @@ function persistTrainerMetadata(
     mse: number | null
     mseLite: number | null
     manualLatencySamples: number | null
+    // IR Lab NAM Capture provenance. When set, written as one JSON object at
+    // metadata.nam_lab.source_capture — same nam_lab-only scratch namespace as the fields above,
+    // ignored by NAM. Never auto-fills gear_type/make/model/tone_type.
+    namCaptureSource?: {
+      capture_id: string | null
+      capture_name: string | null
+      project_name: string | null
+      capture_folder: string | null
+    } | null
   }
 ): string {
   let patched = content
@@ -5567,6 +5726,16 @@ function persistTrainerMetadata(
   }
   if (options.architecture === 'a2' && options.mseLite != null) {
     patched = patchNamLabField(patched, 'a2_lite_mse', options.mseLite)
+  }
+  if (options.namCaptureSource) {
+    // Flat source_capture_* keys inside metadata.nam_lab rather than a nested object: this
+    // codebase's metadata writer is a surgical scalar text-patcher (patchNamLabField ->
+    // serializeJsonValue) with no nested-object support by design (CLAUDE.md). Same namespace,
+    // same NAM-ignores-it property, just spelled as sibling scalars.
+    patched = patchNamLabField(patched, 'source_capture_id', options.namCaptureSource.capture_id)
+    patched = patchNamLabField(patched, 'source_capture_name', options.namCaptureSource.capture_name)
+    patched = patchNamLabField(patched, 'source_project_name', options.namCaptureSource.project_name)
+    patched = patchNamLabField(patched, 'source_capture_folder', options.namCaptureSource.capture_folder)
   }
   return applyTrainerMetadataConventions(patched, { architecture: options.architecture })
 }
@@ -7714,6 +7883,56 @@ app.whenReady().then(async () => {
     const queued = await enqueueTrainingPayloads(validPayloads, opts?.staged ?? false)
     return { success: true, queued }
   })
+
+  // "Queue all for training" from the NAM Projects mode (docs/nam-capture-import-plan-2026-08-29.md
+  // §4). Builds one job per capture — each with its own excitation/recording pair — via the
+  // sibling payload builder, then feeds the unchanged enqueue path. pythonPath falls back to the
+  // trainer's configured default so the NAM Projects UI doesn't have to re-collect it.
+  ipcMain.handle(
+    'trainer:enqueueNamCaptureImport',
+    async (
+      _event,
+      req: {
+        captures: Array<{
+          excitationPath: string
+          recordingPath: string
+          captureId: string
+          captureName: string
+          captureFolderPath: string
+          projectName: string
+          synthetic: boolean
+        }>
+        pythonPath?: string
+        finalModelRoot: string
+        architecture: TrainerArchitecture
+        epochs: number
+        thresholdEsr?: number | null
+        latency?: number | null
+        includeSynthetic?: boolean
+      }
+    ) => {
+      const pythonPath = (req.pythonPath ?? trainerConfiguredPythonPath ?? '').trim()
+      if (!pythonPath) return { success: false, error: 'Set a Python path in the Trainer tab first.' }
+      if (!req.finalModelRoot?.trim()) return { success: false, error: 'Choose a model output folder.' }
+      if (!Array.isArray(req.captures) || req.captures.length === 0) {
+        return { success: false, error: 'No captures were provided.' }
+      }
+      const payloads = await buildTrainerPayloadsForNamCaptureImport(req.captures, {
+        pythonPath,
+        finalModelRoot: req.finalModelRoot,
+        architecture: req.architecture,
+        epochs: req.epochs,
+        thresholdEsr: req.thresholdEsr ?? null,
+        latency: req.latency ?? null,
+        includeSynthetic: req.includeSynthetic ?? false,
+      })
+      if (payloads.length === 0) {
+        return { success: false, error: 'Nothing to queue — every capture was synthetic, missing, or already excluded.' }
+      }
+      const queued = await enqueueTrainingPayloads(payloads)
+      return { success: true, queued, built: payloads.length }
+    }
+  )
 
   ipcMain.handle('trainer:setProfilesState', async (_event, payload: {
     pythonPath: string

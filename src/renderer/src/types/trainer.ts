@@ -182,7 +182,7 @@ export interface TrainerStartPayload {
   modeledBy?: string | null
   inputLevelDbu?: number | null
   outputLevelDbu?: number | null
-  sourceMode?: 'watcher' | 'manual-folder-run' | 'manual-direct'
+  sourceMode?: 'watcher' | 'manual-folder-run' | 'manual-direct' | 'nam-capture-import'
   finalModelRoot?: string | null
   processedWavRoot?: string | null
   graphRoot?: string | null
@@ -193,6 +193,13 @@ export interface TrainerStartPayload {
   submissionId?: string | null
   submissionLabel?: string | null
   submissionCreatedAt?: string | null
+  // IR Lab NAM Capture import (docs/nam-capture-import-plan-2026-08-29.md §4/§5). Only set when
+  // sourceMode === 'nam-capture-import': the capture folder to drop nam-lab-result.json into on
+  // success, and the capture's own id. Threaded through exactly like submissionId above.
+  namCaptureFolderPath?: string | null
+  namCaptureId?: string | null
+  namCaptureName?: string | null
+  namProjectName?: string | null
   appendModelArchitectureFolder?: boolean
   appendGraphArchitectureFolder?: boolean
   appendProcessedArchitectureFolder?: boolean
@@ -246,7 +253,7 @@ export interface TrainerQueueJob {
   modeledBy: string | null
   inputLevelDbu: number | null
   outputLevelDbu: number | null
-  sourceMode: 'watcher' | 'manual-folder-run' | 'manual-direct'
+  sourceMode: 'watcher' | 'manual-folder-run' | 'manual-direct' | 'nam-capture-import'
   finalModelRoot: string
   processedWavRoot: string
   graphRoot: string
@@ -259,6 +266,10 @@ export interface TrainerQueueJob {
   submissionId: string | null
   submissionLabel: string | null
   submissionCreatedAt: string | null
+  namCaptureFolderPath?: string | null
+  namCaptureId?: string | null
+  namCaptureName?: string | null
+  namProjectName?: string | null
   backupExisting?: boolean
   appendModelArchitectureFolder?: boolean
   appendGraphArchitectureFolder?: boolean
@@ -272,7 +283,7 @@ export interface TrainerHistoryEntry {
   timestamp: string
   profileId: string | null
   profileName: string | null
-  sourceMode: 'watcher' | 'manual-folder-run' | 'manual-direct'
+  sourceMode: 'watcher' | 'manual-folder-run' | 'manual-direct' | 'nam-capture-import'
   sourcePath: string
   sourceSizeBytes: number | null
   sourceMtimeMs: number | null
