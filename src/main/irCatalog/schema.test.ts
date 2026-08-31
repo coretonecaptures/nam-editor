@@ -79,6 +79,52 @@ describe('createCoreSchema — nam_project migration', () => {
 
     // Re-running is a no-op (CHECK already contains nam_project).
     expect(() => createCoreSchema(db)).not.toThrow()
+
+    // The rebuild must NOT leave debris tables behind (the original bug: a failed rebuild
+    // orphaned `collection_old`, wedging every subsequent scan with "no such table:
+    // collection_old").
+    const debris = db
+      .prepare(`SELECT name FROM sqlite_master WHERE name IN ('collection_old', 'collection_new')`)
+      .all()
+    expect(debris).toEqual([])
+
+    // The `collection` table this test started with predates the folder_id / Project Details
+    // ADD COLUMN migrations (they run earlier in runMigrations). The rebuild is driven off
+    // CORE_SCHEMA_SQL's canonical definition, so the rebuilt table has every current column —
+    // this is exactly the case that used to abort the migration ("INSERT names a column the
+    // rebuilt table lacks").
+    const cols = new Set(
+      (db.prepare(`PRAGMA table_info(collection)`).all() as Array<{ name: string }>).map((c) => c.name)
+    )
+    for (const c of ['folder_id', 'cabinet', 'speaker', 'amplifier', 'room', 'signal_chain', 'description', 'project_notes']) {
+      expect(cols.has(c)).toBe(true)
+    }
+    db.close()
+  })
+
+  it('recovers cleanly when a prior failed rebuild left an orphan collection_old', () => {
+    const db = new DatabaseSync(':memory:')
+    db.exec(`
+      CREATE TABLE library_root (id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE, label TEXT, watch_mode TEXT NOT NULL DEFAULT 'manual', created_at TEXT NOT NULL);
+      CREATE TABLE folder (id INTEGER PRIMARY KEY, library_root_id INTEGER NOT NULL, parent_id INTEGER, relative_path TEXT NOT NULL, notes TEXT, UNIQUE (library_root_id, relative_path));
+      CREATE TABLE item (id TEXT PRIMARY KEY, kind TEXT, library_root_id INTEGER NOT NULL, folder_id INTEGER, relative_path TEXT NOT NULL, display_name TEXT NOT NULL, indexed_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, UNIQUE (library_root_id, relative_path));
+      CREATE TABLE collection (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('ir_project', 'nam_pack', 'nam_bundle', 'release', 'tray')),
+        parent_id TEXT, library_root_id INTEGER, name TEXT NOT NULL, output_relative_path TEXT,
+        naming_template TEXT, created_at TEXT, last_used_at TEXT, is_builtin INTEGER NOT NULL DEFAULT 0
+      );
+      -- debris from the old broken migration
+      CREATE TABLE collection_old (id TEXT PRIMARY KEY, kind TEXT, name TEXT);
+      CREATE TABLE collection_item (collection_id TEXT NOT NULL, item_id TEXT NOT NULL, PRIMARY KEY (collection_id, item_id));
+    `)
+    db.prepare(`INSERT INTO collection (id, kind, name) VALUES ('c1', 'tray', 'Tray')`).run()
+
+    expect(() => createCoreSchema(db)).not.toThrow()
+
+    expect(db.prepare(`SELECT name FROM sqlite_master WHERE name = 'collection_old'`).get()).toBeUndefined()
+    db.prepare(`INSERT INTO collection (id, kind, name) VALUES ('c2', 'nam_project', 'NAM')`).run()
+    expect((db.prepare(`SELECT COUNT(*) c FROM collection`).get() as { c: number }).c).toBe(2)
     db.close()
   })
 })

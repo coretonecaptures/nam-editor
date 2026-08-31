@@ -531,38 +531,54 @@ function runMigrations(db: DatabaseSync): void {
     }
   }
 
-  // collection.kind's CHECK predates 'nam_project' (IR Lab NAM Capture projects — plan §2). A
-  // CHECK can't be ALTERed in SQLite, so a table built before it is rebuilt: renamed aside,
-  // recreated with the widened CHECK, rows copied across (ids preserved, so every inbound FK
-  // stays valid), the old one dropped. foreign_keys is toggled off for the swap so the rename
-  // doesn't cascade into collection_item/checklist_item/etc. Detected by sniffing the stored
-  // CREATE TABLE text, same technique as the ir_item_field_source rebuild above.
+  // collection.kind's CHECK predates 'nam_project' (IR Lab NAM Capture projects). A CHECK can't
+  // be ALTERed in SQLite, so the table is rebuilt.
+  //
+  // The first version of this sliced the *stored* CREATE TABLE text (older DBs store a shorter
+  // definition — collection predates the folder_id / cabinet / speaker / ... ADD COLUMN
+  // migrations above) while copying the *current* column list, so `INSERT INTO collection (...)`
+  // named columns the rebuilt table lacked and aborted mid-migration — leaving an orphan
+  // `collection_old` and a wedged catalog ("no such table: collection_old" on every scan).
+  //
+  // Rebuild from CORE_SCHEMA_SQL's own canonical definition (always current), copy only the
+  // columns present in BOTH tables, drop any orphan from a prior failed run first, and do the
+  // swap inside one transaction that rolls back cleanly on any failure.
   const collectionSql = (
     db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'collection'`).get() as
       | { sql: string }
       | undefined
   )?.sql
-  if (collectionSql && !collectionSql.includes('nam_project')) {
-    const newBody = collectionSql
-      .slice(collectionSql.indexOf('(') + 1, collectionSql.lastIndexOf(')'))
-      .replace(
-        `CHECK (kind IN ('ir_project', 'nam_pack', 'nam_bundle', 'release', 'tray'))`,
-        `CHECK (kind IN ('ir_project', 'nam_project', 'nam_pack', 'nam_bundle', 'release', 'tray'))`
-      )
-    const oldCols = (db.prepare(`PRAGMA table_info(collection)`).all() as Array<{ name: string }>)
-      .map((c) => c.name)
-      .join(', ')
-    // No explicit BEGIN — runMigrations is called outside any transaction (getDb / the tests),
-    // and the other rebuilds in this function are bare db.exec too. foreign_keys OFF stops the
-    // RENAME from cascading into collection_item / checklist_item / delivery_* / asset_file;
-    // ids are copied unchanged so every one of those inbound references still resolves after.
+  if (collectionSql && !collectionSql.includes("'nam_project'")) {
+    const canonical = /CREATE TABLE IF NOT EXISTS collection \(\n([\s\S]*?)\n\);/.exec(CORE_SCHEMA_SQL)
+    if (!canonical) throw new Error('nam_project migration: canonical `collection` definition not found in CORE_SCHEMA_SQL')
+    const canonicalBody = canonical[1]
+
+    const oldCols = new Set(
+      (db.prepare(`PRAGMA table_info(collection)`).all() as Array<{ name: string }>).map((c) => c.name)
+    )
+    db.exec('DROP TABLE IF EXISTS collection_old') // clean up an orphan from the old broken migration
+    db.exec('DROP TABLE IF EXISTS collection_new')
+    // foreign_keys must be toggled OUTSIDE a transaction (it's a no-op inside one). OFF stops the
+    // RENAME/DROP from cascading into collection_item / checklist_item / delivery_* / asset_file;
+    // ids are copied unchanged so every inbound reference still resolves afterward.
     db.exec('PRAGMA foreign_keys = OFF')
-    db.exec(`
-      ALTER TABLE collection RENAME TO collection_old;
-      CREATE TABLE collection (${newBody});
-      INSERT INTO collection (${oldCols}) SELECT ${oldCols} FROM collection_old;
-      DROP TABLE collection_old;
-    `)
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      db.exec(`CREATE TABLE collection_new (\n${canonicalBody}\n)`)
+      const sharedCols = (db.prepare(`PRAGMA table_info(collection_new)`).all() as Array<{ name: string }>)
+        .map((c) => c.name)
+        .filter((c) => oldCols.has(c))
+        .join(', ')
+      db.exec(`INSERT INTO collection_new (${sharedCols}) SELECT ${sharedCols} FROM collection`)
+      db.exec('DROP TABLE collection')
+      db.exec('ALTER TABLE collection_new RENAME TO collection')
+      db.exec('COMMIT')
+    } catch (err) {
+      db.exec('ROLLBACK')
+      db.exec('DROP TABLE IF EXISTS collection_new')
+      db.exec('PRAGMA foreign_keys = ON')
+      throw err
+    }
     db.exec('PRAGMA foreign_keys = ON')
   }
 }
