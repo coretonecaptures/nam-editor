@@ -7,6 +7,7 @@ import { createCoreSchema } from './schema'
 import { importLibrary } from './importLibrary'
 import { enrichNamCaptures, listNamProjects, getNamProjectDetail, getNamLibraryOverview } from './namCaptureEnrichment'
 import { writeNamLabResult, namLabResultPathFor } from './namCaptureResult'
+import { queryItems, countItems } from './queryLibrary'
 
 const tmpDirs: string[] = []
 function makeTmpDir(): string {
@@ -181,6 +182,20 @@ describe('enrichNamCaptures (schemaVersion 2)', () => {
     const crunch = detail.captures.find((c) => c.captureId === 'cap0002')!
     expect(crunch.calibration).toBeNull()
     expect(crunch.suggested).toBeNull()
+  })
+
+  it('keeps NAM recordings AND the shared _excitations WAV out of the IR browse/counts', async () => {
+    const { root } = makeFixture()
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const stats = await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+    enrichNamCaptures(db, stats.libraryRootId)
+
+    // 4 recordings (kind='nam_capture') + 2 shared excitations (kind='ir', in _excitations/).
+    expect(db.prepare(`SELECT COUNT(*) c FROM item`).get()).toEqual({ c: 6 })
+    // IR mode's browse sees none of them.
+    expect(queryItems(db, { offset: 0, limit: 50 })).toEqual([])
+    expect(countItems(db, { offset: 0, limit: 50 })).toBe(0)
   })
 
   it('is idempotent across repeated scans', async () => {

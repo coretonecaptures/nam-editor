@@ -5,6 +5,20 @@
  */
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 
+/**
+ * WHERE fragment for "this is a browsable IR" — used by every IR-mode read (browse list, counts,
+ * facets, folder-tree item counts, library overview). Two exclusions:
+ *  - kind = 'ir': namCaptureEnrichment.ts promotes each NAM capture's return WAV to
+ *    kind='nam_capture'; those belong to NAM Projects mode.
+ *  - the shared excitation: IR Lab (schemaVersion 2) drops one `v3_0_0-…hz.wav` per project into
+ *    a `_excitations/` folder. importLibrary scans it as a plain kind='ir' item, but it's IR
+ *    Lab's private capture cache (the `_` prefix is the convention), not user IR content — so it
+ *    stays out of the IR browse/tree/counts.
+ */
+export const IR_BROWSABLE_ITEM_SQL =
+  `item.kind = 'ir' AND item.folder_id NOT IN ` +
+  `(SELECT id FROM folder WHERE relative_path = '_excitations' OR relative_path LIKE '%/_excitations')`
+
 export interface ItemRow {
   id: string
   relative_path: string
@@ -124,7 +138,7 @@ export function listFacetOptions(
   libraryRootId: number | null,
   folderId: number | null
 ): FacetOption<string>[] {
-  const clauses = [`${field} IS NOT NULL`, `item.kind = 'ir'`]
+  const clauses = [`${field} IS NOT NULL`, IR_BROWSABLE_ITEM_SQL]
   const params: SQLInputValue[] = []
   if (libraryRootId != null) {
     clauses.push('item.library_root_id = ?')
@@ -158,7 +172,7 @@ export function listNumericFacetOptions(
   folderId: number | null
 ): FacetOption<number>[] {
   const column = field === 'sampleRate' ? 'sample_rate' : 'bit_depth'
-  const clauses = [`${column} IS NOT NULL`, `item.kind = 'ir'`]
+  const clauses = [`${column} IS NOT NULL`, IR_BROWSABLE_ITEM_SQL]
   const params: SQLInputValue[] = []
   if (libraryRootId != null) {
     clauses.push('item.library_root_id = ?')
@@ -232,7 +246,7 @@ function buildWhereAndParams(
   // capture's return WAV to item.kind='nam_capture' (leaving its ir_item WAV-header row behind),
   // and those belong to the NAM Projects mode, not this list — without this they'd show up here
   // with a blank cabinet/speaker/mic and a "recording" display name.
-  const clauses: string[] = [`item.kind = 'ir'`]
+  const clauses: string[] = [IR_BROWSABLE_ITEM_SQL]
   const params: SQLInputValue[] = []
   if (options.libraryRootId != null) {
     clauses.push('item.library_root_id = ?')

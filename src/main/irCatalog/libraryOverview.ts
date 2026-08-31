@@ -8,7 +8,7 @@
  * `queryLibrary.ts` uses for browse filtering, not a separate ad hoc walk.
  */
 import type { DatabaseSync } from 'node:sqlite'
-import { resolveFolderScopeIds } from './queryLibrary'
+import { resolveFolderScopeIds, IR_BROWSABLE_ITEM_SQL } from './queryLibrary'
 import { formatSampleRate } from '../../shared/wavFormat'
 
 export interface FieldBreakdownEntry {
@@ -52,7 +52,7 @@ const BREAKDOWN_LIMIT = 8
 function scopeWhereAndParams(db: DatabaseSync, libraryRootId: number, folderId: number | null | undefined): { where: string; params: number[] } {
   // The IR Library overview counts IRs only — a promoted nam_capture item (namCaptureEnrichment.ts)
   // is a NAM Projects thing, not an IR. Every caller AND-joins this onto its own WHERE.
-  const kind = `item.kind = 'ir'`
+  const kind = IR_BROWSABLE_ITEM_SQL
   if (folderId == null) {
     return { where: `${kind} AND item.library_root_id = ?`, params: [libraryRootId] }
   }
@@ -128,8 +128,15 @@ export function getLibraryOverview(db: DatabaseSync, libraryRootId: number, fold
     db.prepare(`SELECT COUNT(*) c FROM item WHERE ${itemWhere} AND rating IS NOT NULL`).get(...itemParams) as { c: number }
   ).c
 
-  const folderWhere = folderId == null ? 'folder.library_root_id = ?' : itemWhere.replace(/item\.folder_id/g, 'folder_document.folder_id')
-  const documentParams = folderId == null ? [libraryRootId] : itemParams
+  // folder_document has no `item` to filter on — scope it by folder id directly (the same
+  // resolved subtree). Deriving it from itemWhere by string-replace left `item.kind = 'ir'` and
+  // the `_excitations` NOT IN referencing a table that isn't in this query's FROM.
+  const docFolderIds = folderId == null ? [] : resolveFolderScopeIds(db, folderId)
+  const folderWhere =
+    folderId == null
+      ? 'folder.library_root_id = ?'
+      : `folder_document.folder_id IN (${docFolderIds.map(() => '?').join(',') || 'NULL'})`
+  const documentParams = folderId == null ? [libraryRootId] : docFolderIds
   const documentCount = (
     db
       .prepare(
