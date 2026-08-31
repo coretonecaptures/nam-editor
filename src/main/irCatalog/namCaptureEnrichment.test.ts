@@ -195,7 +195,7 @@ describe('enrichNamCaptures (schemaVersion 2)', () => {
     expect(db.prepare(`SELECT COUNT(*) c FROM item`).get()).toEqual({ c: 6 })
     // IR mode's browse sees none of them.
     expect(queryItems(db, { offset: 0, limit: 50 })).toEqual([])
-    expect(countItems(db, { offset: 0, limit: 50 })).toBe(0)
+    expect(countItems(db, {})).toBe(0)
   })
 
   it('is idempotent across repeated scans', async () => {

@@ -7,6 +7,7 @@ import crypto from 'crypto'
 import { findOuterMetadataMatch, findMatchingBrace, serializeJsonValue, escapeRe, patchMetadataFields } from './metadataPatcher'
 import { registerIrLibraryIpc } from './irLibraryIpc'
 import { writeNamLabResult } from './irCatalog/namCaptureResult'
+import { buildNamCaptureImportPayloads, type NamCaptureImportItem, type CaptureProfileConfig } from './namCaptureTraining'
 
 const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
 
@@ -1191,6 +1192,17 @@ interface TrainerStartPayload {
   // When true, Python backs up an existing target .nam to {name}.bak.nam before overwriting.
   // Set by the History "Retry failed" / "Retry batch" flow to protect previously-successful models.
   backupExisting?: boolean
+  // IR Lab NAM Capture import (sourceMode === 'nam-capture-import'). Mirror of the fields on
+  // src/shared/trainer.ts's TrainerStartPayload.
+  namCaptureFolderPath?: string | null
+  namCaptureId?: string | null
+  namCaptureName?: string | null
+  namProjectName?: string | null
+  namSuggestedModeledBy?: string | null
+  namSuggestedGearMake?: string | null
+  namSuggestedGearModel?: string | null
+  namSuggestedGearType?: string | null
+  namSuggestedToneType?: string | null
 }
 
 interface TrainerQueueJob {
@@ -1247,6 +1259,18 @@ interface TrainerQueueJob {
   submissionId: string | null
   submissionLabel: string | null
   submissionCreatedAt: string | null
+  // IR Lab NAM Capture import (sourceMode === 'nam-capture-import'). Mirror of the fields on
+  // src/shared/trainer.ts's TrainerQueueJob — this local copy is still separate pending a full
+  // de-dup of the two interface trees.
+  namCaptureFolderPath?: string | null
+  namCaptureId?: string | null
+  namCaptureName?: string | null
+  namProjectName?: string | null
+  namSuggestedModeledBy?: string | null
+  namSuggestedGearMake?: string | null
+  namSuggestedGearModel?: string | null
+  namSuggestedGearType?: string | null
+  namSuggestedToneType?: string | null
   backupExisting?: boolean
   appendModelArchitectureFolder?: boolean
   appendGraphArchitectureFolder?: boolean
@@ -3650,38 +3674,13 @@ async function buildTrainerPayloadsForProfile(
 }
 
 /**
- * IR Lab NAM Capture import (docs/nam-capture-import-plan-2026-08-29.md §4). The mirror image of
- * buildTrainerPayloadsForProfile: that one loops one shared `inputPath` (DI) against many
- * `outputPath`s; here every capture brings its OWN excitation+recording pair, so pairing is
- * per-item and the DI can't be hoisted out of the loop. Not a parameter tweak on the existing
- * builder — a sibling.
- *
- * `synthetic: true` captures are skipped unless `includeSynthetic` is explicitly set (the UI
- * surfaces that as a non-default opt-in, never silently included). Built payloads go straight
- * into the unchanged enqueueTrainingPayloads / createTrainerJob path — both already default
- * correctly against a new sourceMode value.
+ * IR Lab NAM Capture import — thin wrapper over the extracted, testable
+ * buildNamCaptureImportPayloads (src/main/namCaptureTraining.ts). Supplies the trainer-tab
+ * module state (trainerConfigured* + the capture-profile lookup) it can't reach on its own,
+ * and logs per-capture skips.
  */
 async function buildTrainerPayloadsForNamCaptureImport(
-  captures: Array<{
-    excitationPath: string
-    recordingPath: string
-    captureId: string
-    captureName: string
-    captureFolderPath: string
-    projectName: string
-    synthetic: boolean
-    // schemaVersion 2: calibration dBu (-> the .nam's input/output_level_dbu, wanted pre-train)
-    // and modelMetadataSuggested hints (-> seeded into the .nam post-train). All optional.
-    inputLevelDbu?: number | null
-    outputLevelDbu?: number | null
-    suggested?: {
-      modeledBy?: string | null
-      gearMake?: string | null
-      gearModel?: string | null
-      gearType?: string | null
-      toneType?: string | null
-    } | null
-  }>,
+  captures: NamCaptureImportItem[],
   config: {
     pythonPath: string
     finalModelRoot: string
@@ -3690,91 +3689,27 @@ async function buildTrainerPayloadsForNamCaptureImport(
     thresholdEsr: number | null
     latency: number | null
     includeSynthetic: boolean
-    // When set, every built payload carries this submission so the jobs group as one named
-    // "batch" on the trainer's Batches page (staged) or Queue page (not staged).
     submission?: { id: string; label: string; createdAt: string }
   }
 ): Promise<TrainerStartPayload[]> {
-  const payloads: TrainerStartPayload[] = []
-  const pythonPath = config.pythonPath.trim()
-  const finalModelRoot = config.finalModelRoot.trim()
-  if (!pythonPath) { log('[nam-capture-import] skipped: python path empty'); return payloads }
-  if (!finalModelRoot) { log('[nam-capture-import] skipped: model output root empty'); return payloads }
-  if (!config.architecture) { log('[nam-capture-import] skipped: no architecture'); return payloads }
-
-  const isA2 = config.architecture === 'a2'
-  const profileCfg = isA2 ? null : lookupCaptureProfileConfig(config.architecture, trainerUserCaptureProfiles)
-
-  for (const capture of captures) {
-    if (capture.synthetic && !config.includeSynthetic) {
-      log(`[nam-capture-import] skipped synthetic capture "${capture.captureName}"`)
-      continue
-    }
-    const excitationPath = capture.excitationPath?.trim()
-    const recordingPath = capture.recordingPath?.trim()
-    if (!excitationPath || !recordingPath) { log(`[nam-capture-import] "${capture.captureName}" missing a path — skipping`); continue }
-    try {
-      await fs.promises.access(excitationPath)
-      await fs.promises.access(recordingPath)
-    } catch {
-      log(`[nam-capture-import] "${capture.captureName}" excitation/recording not on disk — skipping`)
-      continue
-    }
-    payloads.push({
-      pythonPath,
-      // Per-capture DI/return pair — this is the whole point of the sibling builder.
-      inputPath: excitationPath,
-      outputPath: recordingPath,
-      trainPath: finalModelRoot,
-      namMode: isA2 ? 'a2' : 'a1',
+  const { payloads, skipped } = await buildNamCaptureImportPayloads(
+    captures,
+    config,
+    {
       normalizeWav: trainerConfiguredNormalizeWav,
       normalizeWavTargetDb: trainerConfiguredNormalizeWavTargetDb,
-      architecture: config.architecture,
-      waveNetConfig: profileCfg?.waveNetConfig ?? null,
-      lr: profileCfg?.lr ?? 0.004,
-      lrDecay: profileCfg?.lrDecay ?? 0.002,
-      batchSize: profileCfg?.batchSize ?? 16,
-      ny: profileCfg?.ny ?? 8192,
-      fitMrstft: profileCfg?.fitMrstft ?? true,
-      captureProfileId: isA2 ? null : config.architecture,
-      epochs: config.epochs,
-      latency: config.latency,
-      thresholdEsr: config.thresholdEsr,
-      savePlot: true,
-      silent: true,
-      ignoreChecks: false,
-      // Capture's own calibration/hints win over the trainer-tab defaults when present.
-      modeledBy: capture.suggested?.modeledBy ?? (trainerConfiguredModeledBy || null),
-      inputLevelDbu: capture.inputLevelDbu ?? trainerConfiguredInputLevelDbu,
-      outputLevelDbu: capture.outputLevelDbu ?? trainerConfiguredOutputLevelDbu,
-      profileId: null,
-      profileName: capture.projectName || null,
-      sourceMode: 'nam-capture-import',
-      finalModelRoot,
-      processedWavRoot: '',
-      graphRoot: finalModelRoot,
-      graphRootResolved: false,
-      sourcePostProcess: 'keep',
-      // captureName has no {tokens}, so fillTrainerNamingTemplate passes it straight through
-      // sanitizeTrainerPathPart — the .nam is named after the capture, not "recording".
-      namingTemplate: capture.captureName || '{basename}',
-      namCaptureFolderPath: capture.captureFolderPath,
-      namCaptureId: capture.captureId,
-      namCaptureName: capture.captureName,
-      namProjectName: capture.projectName,
-      namSuggestedModeledBy: capture.suggested?.modeledBy ?? null,
-      namSuggestedGearMake: capture.suggested?.gearMake ?? null,
-      namSuggestedGearModel: capture.suggested?.gearModel ?? null,
-      namSuggestedGearType: capture.suggested?.gearType ?? null,
-      namSuggestedToneType: capture.suggested?.toneType ?? null,
-      submissionId: config.submission?.id ?? null,
-      submissionLabel: config.submission?.label ?? null,
-      submissionCreatedAt: config.submission?.createdAt ?? null,
-      appendModelArchitectureFolder: false,
-      appendGraphArchitectureFolder: false,
-      appendProcessedArchitectureFolder: false,
-    })
-  }
+      modeledBy: trainerConfiguredModeledBy || null,
+      inputLevelDbu: trainerConfiguredInputLevelDbu,
+      outputLevelDbu: trainerConfiguredOutputLevelDbu,
+    },
+    // Cast bridges index.ts's local WaveNetConfig and src/shared/trainer's (structurally the
+    // same; nominal identity differs until the two interface trees are de-duped).
+    (architecture) =>
+      architecture === 'a2'
+        ? null
+        : (lookupCaptureProfileConfig(architecture, trainerUserCaptureProfiles) as CaptureProfileConfig | null)
+  )
+  for (const s of skipped) log(`[nam-capture-import] skipped "${s.captureName}" (${s.reason})`)
   return payloads
 }
 

@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import fs from 'fs'
 import path from 'path'
-import type { TrainerStartPayload, TrainerStateSnapshot, TrainerHistoryEntry, WatcherFileEntry } from '../renderer/src/types/trainer'
+import type { TrainerStartPayload, TrainerStateSnapshot, TrainerHistoryEntry, WatcherFileEntry } from '../shared/trainer'
 
 /** One mic slot's structured detail (labProjectEnrichment.ts's ProjectDetailMic) — shared by
  * irLibraryGetProjectDetailForFolder's two mic slots below. */
