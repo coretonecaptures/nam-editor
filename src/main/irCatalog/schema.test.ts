@@ -127,4 +127,45 @@ describe('createCoreSchema — nam_project migration', () => {
     expect((db.prepare(`SELECT COUNT(*) c FROM collection`).get() as { c: number }).c).toBe(2)
     db.close()
   })
+
+  it('repairs child tables whose FK references were rewritten to a now-missing collection_old', () => {
+    const db = new DatabaseSync(':memory:')
+    // Exactly the damage the original migration's `ALTER TABLE collection RENAME TO collection_old`
+    // left behind: `collection` exists, `collection_old` does not, but children still reference it.
+    db.exec(`
+      CREATE TABLE library_root (id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE, label TEXT, watch_mode TEXT NOT NULL DEFAULT 'manual', created_at TEXT NOT NULL);
+      CREATE TABLE folder (id INTEGER PRIMARY KEY, library_root_id INTEGER NOT NULL, parent_id INTEGER, relative_path TEXT NOT NULL, notes TEXT, UNIQUE (library_root_id, relative_path));
+      CREATE TABLE item (id TEXT PRIMARY KEY, kind TEXT, library_root_id INTEGER NOT NULL, folder_id INTEGER, relative_path TEXT NOT NULL, display_name TEXT NOT NULL, indexed_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, UNIQUE (library_root_id, relative_path));
+      CREATE TABLE collection (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('ir_project', 'nam_project', 'nam_pack', 'nam_bundle', 'release', 'tray')),
+        parent_id TEXT, library_root_id INTEGER, name TEXT NOT NULL, output_relative_path TEXT,
+        naming_template TEXT, created_at TEXT, last_used_at TEXT, is_builtin INTEGER NOT NULL DEFAULT 0,
+        folder_id INTEGER, cabinet TEXT, speaker TEXT, amplifier TEXT, room TEXT, signal_chain TEXT, description TEXT, project_notes TEXT
+      );
+      CREATE TABLE collection_item (
+        collection_id TEXT NOT NULL REFERENCES "collection_old"(id) ON DELETE CASCADE,
+        item_id TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
+        output_file_name TEXT, included INTEGER NOT NULL DEFAULT 1, override_name TEXT, position INTEGER,
+        PRIMARY KEY (collection_id, item_id)
+      );
+    `)
+    db.prepare(`INSERT INTO library_root (id, path, created_at) VALUES (1, 'C:\\fake', 'n')`).run()
+    db.prepare(`INSERT INTO item (id, kind, library_root_id, relative_path, display_name, indexed_at, last_seen_at) VALUES ('i1','ir',1,'a.wav','a.wav','n','n')`).run()
+    db.prepare(`INSERT INTO collection (id, kind, name) VALUES ('c1', 'ir_project', 'P')`).run()
+
+    // Before the fix: an FK-checked write into collection_item blows up.
+    db.exec('PRAGMA foreign_keys = ON')
+    expect(() => db.prepare(`INSERT INTO collection_item (collection_id, item_id) VALUES ('c1','i1')`).run()).toThrow(/collection_old/)
+
+    createCoreSchema(db)
+
+    const fixedSql = (db.prepare(`SELECT sql FROM sqlite_master WHERE name='collection_item'`).get() as { sql: string }).sql
+    expect(fixedSql).not.toContain('collection_old')
+    expect(fixedSql).toContain('REFERENCES collection(id)')
+    db.exec('PRAGMA foreign_keys = ON')
+    expect(() => db.prepare(`INSERT INTO collection_item (collection_id, item_id) VALUES ('c1','i1')`).run()).not.toThrow()
+    expect(db.prepare(`PRAGMA foreign_key_check`).all()).toEqual([])
+    db.close()
+  })
 })

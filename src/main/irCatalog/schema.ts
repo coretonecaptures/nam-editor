@@ -543,6 +543,16 @@ function runMigrations(db: DatabaseSync): void {
   // Rebuild from CORE_SCHEMA_SQL's own canonical definition (always current), copy only the
   // columns present in BOTH tables, drop any orphan from a prior failed run first, and do the
   // swap inside one transaction that rolls back cleanly on any failure.
+  //
+  // The ORIGINAL version also did `ALTER TABLE collection RENAME TO collection_old`. Since SQLite
+  // 3.25 the default `legacy_alter_table = OFF` makes RENAME rewrite every FK reference in OTHER
+  // tables' schema — so collection_item / checklist_item / delivery_target / delivery_matrix_row
+  // / asset_file all silently became `REFERENCES "collection_old"(id)`. When that run then
+  // aborted, those references were left dangling and every subsequent scan failed with
+  // "no such table: main.collection_old" on the first FK check. This version never renames the
+  // live `collection` (CREATE new -> DROP old -> RENAME new into place), forces
+  // legacy_alter_table = ON as belt-and-suspenders, AND repairs any DB already damaged by the
+  // old bug (see the collection_old-reference sweep after this block).
   const collectionSql = (
     db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'collection'`).get() as
       | { sql: string }
@@ -558,10 +568,11 @@ function runMigrations(db: DatabaseSync): void {
     )
     db.exec('DROP TABLE IF EXISTS collection_old') // clean up an orphan from the old broken migration
     db.exec('DROP TABLE IF EXISTS collection_new')
-    // foreign_keys must be toggled OUTSIDE a transaction (it's a no-op inside one). OFF stops the
-    // RENAME/DROP from cascading into collection_item / checklist_item / delivery_* / asset_file;
-    // ids are copied unchanged so every inbound reference still resolves afterward.
+    // Both pragmas must be toggled OUTSIDE a transaction (no-ops inside one). foreign_keys OFF so
+    // DROP collection doesn't trip its children; legacy_alter_table ON so the final RENAME can't
+    // rewrite anything.
     db.exec('PRAGMA foreign_keys = OFF')
+    db.exec('PRAGMA legacy_alter_table = ON')
     db.exec('BEGIN IMMEDIATE')
     try {
       db.exec(`CREATE TABLE collection_new (\n${canonicalBody}\n)`)
@@ -576,9 +587,44 @@ function runMigrations(db: DatabaseSync): void {
     } catch (err) {
       db.exec('ROLLBACK')
       db.exec('DROP TABLE IF EXISTS collection_new')
+      db.exec('PRAGMA legacy_alter_table = OFF')
       db.exec('PRAGMA foreign_keys = ON')
       throw err
     }
+    db.exec('PRAGMA legacy_alter_table = OFF')
+    db.exec('PRAGMA foreign_keys = ON')
+  }
+
+  // Repair DBs damaged by the original migration: it renamed `collection` to `collection_old`,
+  // which (legacy_alter_table OFF) rewrote the FK references in these five tables to a name that
+  // no longer exists. Rebuild each affected table with the reference pointed back at `collection`.
+  const brokenRefTables = db
+    .prepare(`SELECT name, sql FROM sqlite_master WHERE type = 'table' AND sql LIKE '%collection_old%'`)
+    .all() as Array<{ name: string; sql: string }>
+  if (brokenRefTables.length > 0) {
+    db.exec('PRAGMA foreign_keys = OFF')
+    db.exec('PRAGMA legacy_alter_table = ON')
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      for (const t of brokenRefTables) {
+        const fixedSql = t.sql.replace(/["`]?collection_old["`]?/g, 'collection')
+        const cols = (db.prepare(`PRAGMA table_info(${t.name})`).all() as Array<{ name: string }>)
+          .map((c) => c.name)
+          .join(', ')
+        db.exec(`DROP TABLE IF EXISTS ${t.name}__fkfix`)
+        db.exec(fixedSql.replace(new RegExp(`CREATE TABLE ["\`]?${t.name}["\`]?`), `CREATE TABLE ${t.name}__fkfix`))
+        db.exec(`INSERT INTO ${t.name}__fkfix (${cols}) SELECT ${cols} FROM ${t.name}`)
+        db.exec(`DROP TABLE ${t.name}`)
+        db.exec(`ALTER TABLE ${t.name}__fkfix RENAME TO ${t.name}`)
+      }
+      db.exec('COMMIT')
+    } catch (err) {
+      db.exec('ROLLBACK')
+      db.exec('PRAGMA legacy_alter_table = OFF')
+      db.exec('PRAGMA foreign_keys = ON')
+      throw err
+    }
+    db.exec('PRAGMA legacy_alter_table = OFF')
     db.exec('PRAGMA foreign_keys = ON')
   }
 }
