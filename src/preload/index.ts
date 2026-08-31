@@ -198,8 +198,9 @@ const api = {
     latency?: number | null
     includeSynthetic?: boolean
     staged?: boolean
+    priority?: 'normal' | 'next'
     submissionLabel?: string
-  }): Promise<{ success: boolean; error?: string; queued?: number; built?: number; submissionId?: string; staged?: boolean }> =>
+  }): Promise<{ success: boolean; error?: string; queued?: number; built?: number; submissionId?: string; staged?: boolean; ranNext?: boolean }> =>
     ipcRenderer.invoke('trainer:enqueueNamCaptureImport', req),
   unstageTrainerSubmission: (submissionId: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('trainer:unstageSubmission', submissionId),

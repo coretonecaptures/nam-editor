@@ -408,7 +408,7 @@ function loadHistory(): HistoryEntry[] {
 }
 import { FolderNode } from './types/librarian'
 import type { NamProjectSummary, NamProjectDetail, NamLibraryOverview } from './types/namProjects'
-import { consumePendingBatchNav } from './appNav'
+import { consumePendingTrainingNav } from './appNav'
 
 declare global {
   interface Window {
@@ -680,8 +680,9 @@ declare global {
         latency?: number | null
         includeSynthetic?: boolean
         staged?: boolean
+        priority?: 'normal' | 'next'
         submissionLabel?: string
-      }) => Promise<{ success: boolean; error?: string; queued?: number; built?: number; submissionId?: string; staged?: boolean }>
+      }) => Promise<{ success: boolean; error?: string; queued?: number; built?: number; submissionId?: string; staged?: boolean; ranNext?: boolean }>
       listWavSiblings: (filePath: string) => Promise<{ files: string[]; error?: string }>
       hashFiles: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
       hashFilesWithoutMetadata: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; hash?: string; error?: string }[]>
@@ -4593,10 +4594,11 @@ INSTRUCTIONS:
     setStatus({ message: 'Opened the training workspace.', type: 'info' })
   }
 
-  // NamProjectsShell staged a batch and flipped us to NAM mode (via appNav). We were just
-  // mounted, so consume the one-shot intent here and jump straight to the Batches page.
+  // NamProjectsShell staged/queued a batch and flipped us to NAM mode (via appNav). We were
+  // just mounted, so consume the one-shot intent here and jump straight to that section.
   useEffect(() => {
-    if (consumePendingBatchNav()) handleOpenExperimentalTraining('batches')
+    const section = consumePendingTrainingNav()
+    if (section) handleOpenExperimentalTraining(section)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

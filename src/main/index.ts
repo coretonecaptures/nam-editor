@@ -7973,6 +7973,10 @@ app.whenReady().then(async () => {
         includeSynthetic?: boolean
         // Stage the jobs (Batches page, awaiting Start) instead of queueing them to run.
         staged?: boolean
+        // 'next' hoists this batch to the front of the queue: runs after the current file if
+        // one is training, first when Resume is pressed if the queue is paused, immediately if
+        // idle. Ignored when staged (staged jobs can't be promoted).
+        priority?: 'normal' | 'next'
         submissionLabel?: string
       }
     ) => {
@@ -8000,8 +8004,28 @@ app.whenReady().then(async () => {
       if (payloads.length === 0) {
         return { success: false, error: 'Nothing to queue — every capture was synthetic, missing, or already excluded.' }
       }
-      const queued = await enqueueTrainingPayloads(payloads, req.staged ?? false)
-      return { success: true, queued, built: payloads.length, submissionId: submission.id, staged: req.staged ?? false }
+      const staged = req.staged ?? false
+      const queued = await enqueueTrainingPayloads(payloads, staged)
+
+      let ranNext = false
+      if (!staged && req.priority === 'next') {
+        // Hoist ahead of whatever's currently first in the queue. moveSubmissionBeforeSubmission
+        // also re-derives the sticky-batch override, so the running job's batch won't keep
+        // cutting in front of us. If nothing else is queued, this is a no-op and the normal
+        // pump below just starts us.
+        const firstQueued = trainerQueue.find((j) => j.status === 'queued' && j.submissionId !== submission.id)
+        if (firstQueued?.submissionId) {
+          ranNext = moveSubmissionBeforeSubmission(submission.id, firstQueued.submissionId)
+        }
+        // Only auto-start when idle and not paused — a running job finishes on its own and then
+        // picks us up; a paused queue must be Resumed by the user (we're just first in line now).
+        if (!trainerChild && !trainerPauseAfterCurrent && trainerState.status !== 'running' && trainerState.status !== 'starting') {
+          await pumpTrainerQueue()
+        }
+        emitTrainerState()
+      }
+
+      return { success: true, queued, built: payloads.length, submissionId: submission.id, staged, ranNext }
     }
   )
 

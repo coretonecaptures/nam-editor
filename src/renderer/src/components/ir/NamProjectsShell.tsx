@@ -3,7 +3,7 @@ import { ContextMenu } from '../ContextMenu'
 import { TRAINER_ARCHITECTURES, BUILT_IN_CAPTURE_PROFILES } from '../../types/trainer'
 import type { NamProjectSummary, NamProjectDetail, NamCaptureRow, NamLibraryOverview } from '../../types/namProjects'
 import type { TrainerHistoryEntry } from '../../types/trainer'
-import { goToTrainingBatches } from '../../appNav'
+import { goToTrainingBatches, goToTrainingQueue } from '../../appNav'
 
 /** Friendly label for an architecture id ("standard" -> "Standard"), matching the Trainer tab. */
 const ARCH_LABEL: Record<string, string> = Object.fromEntries(
@@ -336,6 +336,7 @@ export function NamProjectsShell(): React.ReactElement {
   const [scanning, setScanning] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [trainFailure, setTrainFailure] = useState<string | null>(null)
   const [captureMenu, setCaptureMenu] = useState<{ capture: NamCaptureRow; x: number; y: number } | null>(null)
   const [projectMenu, setProjectMenu] = useState<{ project: NamProjectSummary; x: number; y: number } | null>(null)
 
@@ -451,22 +452,32 @@ export function NamProjectsShell(): React.ReactElement {
     else setDetail(null)
   }, [selectedId, refreshDetail])
 
-  // When a NAM-capture training run finishes, the main process has written nam-lab-result.json
-  // into the capture folder; getNamProjectDetail re-reads that sidecar every call, so a plain
-  // refetch flips the trained badges — no rescan needed. History arrives on its own channel
-  // (trainer:update's payload carries an empty history array).
+  // NAM-capture training runs land here (trainer:update's own payload carries an empty history
+  // array — history is its own channel). On success: refetch, so the trained badges flip
+  // without a rescan (getNamProjectDetail re-reads nam-lab-result.json every call). On failure:
+  // surface it — otherwise a queued NAM batch can fail silently while you're in this view.
   useEffect(() => {
     const off = window.api.onTrainerHistory((history: TrainerHistoryEntry[]) => {
-      const fresh = history.filter(
-        (h) =>
-          h.sourceMode === 'nam-capture-import' &&
-          h.status === 'success' &&
-          !seenFinishedJobs.current.has(h.historyId)
+      const mine = history.filter(
+        (h) => h.sourceMode === 'nam-capture-import' && !seenFinishedJobs.current.has(h.historyId)
       )
-      if (fresh.length === 0) return
-      for (const h of fresh) seenFinishedJobs.current.add(h.historyId)
-      void refreshProjects()
-      if (selectedId) void refreshDetail(selectedId)
+      if (mine.length === 0) return
+      for (const h of mine) seenFinishedJobs.current.add(h.historyId)
+      const succeeded = mine.filter((h) => h.status === 'success')
+      const failed = mine.filter((h) => h.status === 'error')
+      if (succeeded.length > 0) {
+        void refreshProjects()
+        if (selectedId) void refreshDetail(selectedId)
+      }
+      if (failed.length > 0) {
+        const first = failed[0]
+        const name = first.finalModelName || first.sourcePath.replace(/^.*[\\/]/, '')
+        setTrainFailure(
+          failed.length === 1
+            ? `Training failed for "${name}": ${first.failureReason || 'see the Trainer tab'}`
+            : `${failed.length} NAM captures failed to train — first: "${name}" (${first.failureReason || 'see the Trainer tab'})`
+        )
+      }
     })
     return off
   }, [selectedId, refreshProjects, refreshDetail])
@@ -570,8 +581,8 @@ export function NamProjectsShell(): React.ReactElement {
   )
 
   // --- batch creation ---
-  const stageBatch = useCallback(
-    async (captures: NamCaptureRow[], labelSuffix: string) => {
+  const submitBatch = useCallback(
+    async (captures: NamCaptureRow[], labelSuffix: string, mode: 'stage' | 'runNext') => {
       if (!detail || captures.length === 0) return
       if (!outputRoot) {
         setError('Choose a model output folder first (right panel).')
@@ -592,14 +603,24 @@ export function NamProjectsShell(): React.ReactElement {
           architecture,
           epochs,
           includeSynthetic: true, // eligible list already reflects the caller's intent
-          staged: true,
+          staged: mode === 'stage',
+          priority: mode === 'runNext' ? 'next' : 'normal',
           submissionLabel: `${detail.name} — ${labelSuffix}`
         })
         if (res.success) {
-          setMessage(`Staged ${res.built ?? eligible.length} job${(res.built ?? 1) === 1 ? '' : 's'} — opening the Batches page…`)
-          goToTrainingBatches()
+          if (mode === 'stage') {
+            setMessage(`Staged ${res.built ?? eligible.length} job${(res.built ?? 1) === 1 ? '' : 's'} — opening the Batches page…`)
+            goToTrainingBatches()
+          } else {
+            setMessage(
+              `Queued ${res.built ?? eligible.length} job${(res.built ?? 1) === 1 ? '' : 's'} to run next` +
+                (res.ranNext ? ' (jumped ahead of the current queue)' : '') +
+                ' — opening the Queue…'
+            )
+            goToTrainingQueue()
+          }
         } else {
-          setError(res.error ?? 'Could not stage the batch.')
+          setError(res.error ?? 'Could not queue the batch.')
         }
       } catch (err) {
         setError(String(err))
@@ -608,6 +629,10 @@ export function NamProjectsShell(): React.ReactElement {
       }
     },
     [detail, outputRoot, architecture, epochs]
+  )
+  const stageBatch = useCallback(
+    (captures: NamCaptureRow[], labelSuffix: string) => submitBatch(captures, labelSuffix, 'stage'),
+    [submitBatch]
   )
 
   const projectEligible = useMemo(
@@ -664,6 +689,14 @@ export function NamProjectsShell(): React.ReactElement {
         <div className="flex items-center justify-between px-4 py-1 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 flex-shrink-0">
           <span>{error}</span>
           <button onClick={() => setError(null)} className="text-nm-text-3 hover:text-nm-text">
+            ×
+          </button>
+        </div>
+      )}
+      {trainFailure && (
+        <div className="flex items-center justify-between px-4 py-1 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 flex-shrink-0">
+          <span>{trainFailure}</span>
+          <button onClick={() => setTrainFailure(null)} className="text-nm-text-3 hover:text-nm-text">
             ×
           </button>
         </div>
@@ -883,7 +916,15 @@ export function NamProjectsShell(): React.ReactElement {
                   disabled={queueing}
                   className="px-3 py-1 text-xs rounded bg-nm-accent hover:opacity-90 disabled:opacity-50 text-accent-fg"
                 >
-                  {queueing ? 'Staging…' : 'Create training batch'}
+                  {queueing ? 'Working…' : 'Create training batch'}
+                </button>
+                <button
+                  onClick={() => submitBatch(selectedCaptures, `${selectedCaptures.length} selected`, 'runNext')}
+                  disabled={queueing}
+                  title="Queue these live and jump the line — runs after the current file, or first if the queue is paused"
+                  className="px-3 py-1 text-xs rounded border border-nm-accent/50 text-nm-accent hover:bg-nm-accent/10 disabled:opacity-50"
+                >
+                  Run next
                 </button>
                 <button
                   onClick={() => setSelectedCaptureIds(new Set())}
@@ -975,15 +1016,24 @@ export function NamProjectsShell(): React.ReactElement {
                     className="px-3 py-1.5 text-xs rounded bg-nm-accent hover:opacity-90 disabled:opacity-50 text-accent-fg"
                   >
                     {queueing
-                      ? 'Staging…'
+                      ? 'Working…'
                       : projectEligible.length === 0
                         ? 'Nothing to stage'
                         : `Stage batch — ${projectEligible.length} untrained capture${projectEligible.length === 1 ? '' : 's'}`}
                   </button>
+                  <button
+                    onClick={() => submitBatch(projectEligible, `${projectEligible.length} untrained`, 'runNext')}
+                    disabled={queueing || projectEligible.length === 0}
+                    title="Queue these live and jump the line — runs after the current file, or first if the queue is paused"
+                    className="px-3 py-1.5 text-xs rounded border border-nm-accent/50 text-nm-accent hover:bg-nm-accent/10 disabled:opacity-50"
+                  >
+                    Run next
+                  </button>
                   <span className="text-[11px] text-nm-text-3">
-                    Stages the jobs and opens the trainer&apos;s Batches page — nothing runs until you hit Start there.
-                    Already-trained captures are skipped; trained <code>.nam</code> files land in the folder above and each
-                    badge flips on completion.
+                    <strong>Stage</strong> parks the jobs on the Batches page — nothing runs until you hit Start there.
+                    <strong> Run next</strong> queues them live and jumps ahead of the current queue (after the running
+                    file finishes, or first when a paused queue resumes). Already-trained captures are skipped; trained{' '}
+                    <code>.nam</code> files land in the folder above and each badge flips on completion.
                   </span>
                 </div>
               </>
