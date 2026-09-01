@@ -407,7 +407,13 @@ function loadHistory(): HistoryEntry[] {
   }
 }
 import { FolderNode } from './types/librarian'
-import type { NamProjectSummary, NamProjectDetail, NamLibraryOverview } from './types/namProjects'
+import type {
+  NamProjectSummary,
+  NamProjectDetail,
+  NamLibraryOverview,
+  NamCaptureRow,
+  NamCaptureMetadataPatch
+} from './types/namProjects'
 import { consumePendingTrainingNav } from './appNav'
 
 declare global {
@@ -653,6 +659,9 @@ declare global {
       irLibraryListNamProjects: () => Promise<NamProjectSummary[]>
       irLibraryGetNamProjectDetail: (collectionId: string) => Promise<NamProjectDetail | null>
       irLibraryGetNamLibraryOverview: () => Promise<NamLibraryOverview>
+      irLibrarySetNamCaptureMetadata: (itemId: string, patch: NamCaptureMetadataPatch) => Promise<NamCaptureRow | null>
+      irLibraryRelinkNamModel: (itemId: string, newModelPath: string) => Promise<NamCaptureRow | null>
+      irLibraryFindNamModelCandidates: (modelName: string, roots: string[]) => Promise<string[]>
       enqueueNamCaptureImport: (req: {
         captures: Array<{
           excitationPath: string

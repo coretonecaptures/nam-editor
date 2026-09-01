@@ -31,7 +31,15 @@ import { addToTray, removeFromTray, listTray, isInTray } from './irCatalog/tray'
 import { sendToIrLab, irLabConnectorAvailable } from './irLabConnector'
 import { getLibraryOverview } from './irCatalog/libraryOverview'
 import { enrichLabProjects, getProjectDetailForFolder } from './irCatalog/labProjectEnrichment'
-import { enrichNamCaptures, listNamProjects, getNamProjectDetail, getNamLibraryOverview } from './irCatalog/namCaptureEnrichment'
+import {
+  enrichNamCaptures,
+  listNamProjects,
+  getNamProjectDetail,
+  getNamLibraryOverview,
+  setNamCaptureMetadata,
+  relinkNamCaptureModel,
+  findNamModelCandidates
+} from './irCatalog/namCaptureEnrichment'
 import {
   previewFolderRemoval,
   removeFolderFromCatalog,
@@ -246,6 +254,18 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     return getNamProjectDetail(getDb(), collectionId)
   })
   ipcMain.handle('irLibrary:getNamLibraryOverview', () => getNamLibraryOverview(getDb()))
+
+  // NAM Projects capture detail (docs/nam-projects-detail-design-2026-08-31.md §7/§6).
+  ipcMain.handle(
+    'irLibrary:setNamCaptureMetadata',
+    (_event, itemId: string, patch: Record<string, unknown>) => setNamCaptureMetadata(getDb(), itemId, patch)
+  )
+  ipcMain.handle('irLibrary:relinkNamModel', (_event, itemId: string, newModelPath: string) =>
+    relinkNamCaptureModel(getDb(), itemId, newModelPath)
+  )
+  ipcMain.handle('irLibrary:findNamModelCandidates', (_event, modelName: string, roots: string[]) =>
+    findNamModelCandidates(modelName, Array.isArray(roots) ? roots.filter((r) => typeof r === 'string') : [])
+  )
 
   // Folder/root removal — "remove a folder and its children from the catalog, with a confirm
   // dialog" (removeFromCatalog.ts's own header comment has the full reasoning). Preview handlers

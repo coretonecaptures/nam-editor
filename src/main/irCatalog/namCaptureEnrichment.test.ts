@@ -5,7 +5,7 @@ import * as os from 'node:os'
 import { join } from 'node:path'
 import { createCoreSchema } from './schema'
 import { importLibrary } from './importLibrary'
-import { enrichNamCaptures, listNamProjects, getNamProjectDetail, getNamLibraryOverview } from './namCaptureEnrichment'
+import { enrichNamCaptures, listNamProjects, getNamProjectDetail, getNamLibraryOverview, setNamCaptureMetadata } from './namCaptureEnrichment'
 import { writeNamLabResult, namLabResultPathFor } from './namCaptureResult'
 import { queryItems, countItems } from './queryLibrary'
 
@@ -270,5 +270,56 @@ describe('enrichNamCaptures (schemaVersion 2)', () => {
     const ampA = o.projects.find((p) => p.name === 'Amp A')!
     expect(ampA.avgTrainedEsr).toBeCloseTo(0.02, 6)
     expect(o.projects.find((p) => p.name === 'Amp B')!.avgTrainedEsr).toBeNull()
+  })
+
+  it('effective metadata defaults from the IR Lab hint, survives an edit and a rescan', async () => {
+    const { root } = makeFixture()
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const stats = await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+    enrichNamCaptures(db, stats.libraryRootId)
+
+    const ampA = listNamProjects(db).find((p) => p.name === 'Amp A')!
+    const clean = getNamProjectDetail(db, ampA.collectionId)!.captures.find((c) => c.captureId === 'cap0001')!
+    // cap0001 carries suggested + calibration -> effective defaults from them.
+    expect(clean.effective.gearType).toBe('amp_cab')
+    expect(clean.effective.inputLevelDbu).toBe(12.4)
+    expect(clean.metadataEdited).toBe(false)
+
+    // Edit gear_type; input dbu untouched.
+    const edited = setNamCaptureMetadata(db, clean.itemId, { gearType: 'preamp', gearMake: 'Suhr' })!
+    expect(edited.effective.gearType).toBe('preamp')
+    expect(edited.effective.gearMake).toBe('Suhr')
+    expect(edited.effective.inputLevelDbu).toBe(12.4)
+    expect(edited.metadataEdited).toBe(true)
+    // suggested (the IR Lab mirror) is unchanged.
+    expect(edited.suggested?.gearType).toBe('amp_cab')
+
+    // Rescan must NOT clobber the edit.
+    enrichNamCaptures(db, stats.libraryRootId)
+    const afterRescan = getNamProjectDetail(db, ampA.collectionId)!.captures.find((c) => c.captureId === 'cap0001')!
+    expect(afterRescan.effective.gearType).toBe('preamp')
+    expect(afterRescan.effective.gearMake).toBe('Suhr')
+
+    // A capture with no hint/calibration -> effective is all null, not "edited".
+    const bare = getNamProjectDetail(db, ampA.collectionId)!.captures.find((c) => c.captureId === 'cap0002')!
+    expect(bare.effective.gearType).toBeNull()
+    expect(bare.metadataEdited).toBe(false)
+  })
+
+  it('project detail carries the NAM Captures / _excitations dirs and finds folder images', async () => {
+    const { root } = makeFixture()
+    fs.writeFileSync(join(root, 'Amp A', 'rig-photo.jpg'), 'x')
+    fs.writeFileSync(join(root, 'Amp A', 'NAM Captures', 'settings.png'), 'x')
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const stats = await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+    enrichNamCaptures(db, stats.libraryRootId)
+
+    const ampA = listNamProjects(db).find((p) => p.name === 'Amp A')!
+    const d = getNamProjectDetail(db, ampA.collectionId)!
+    expect(d.namCapturesDir?.replace(/\\/g, '/').endsWith('/Amp A/NAM Captures')).toBe(true)
+    expect(d.excitationsDir?.replace(/\\/g, '/').endsWith('/Amp A/_excitations')).toBe(true)
+    expect(d.imagePaths.map((p) => p.replace(/\\/g, '/').split('/').pop()).sort()).toEqual(['rig-photo.jpg', 'settings.png'])
   })
 })

@@ -2,6 +2,13 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import fs from 'fs'
 import path from 'path'
 import type { TrainerStartPayload, TrainerStateSnapshot, TrainerHistoryEntry, WatcherFileEntry } from '../shared/trainer'
+import type {
+  NamProjectSummary,
+  NamProjectDetail,
+  NamLibraryOverview,
+  NamCaptureRow,
+  NamCaptureMetadataPatch
+} from '../shared/namProjects'
 
 /** One mic slot's structured detail (labProjectEnrichment.ts's ProjectDetailMic) — shared by
  * irLibraryGetProjectDetailForFolder's two mic slots below. */
@@ -585,96 +592,19 @@ const api = {
     ipcRenderer.invoke('irLibrary:removeItemFromTag', itemId, tagId),
   irLibraryListTagsForItem: (itemId: string): Promise<Array<{ id: number; name: string; itemCount: number }>> =>
     ipcRenderer.invoke('irLibrary:listTagsForItem', itemId),
-  // "NAM Projects" mode (docs/nam-capture-import-plan-2026-08-29.md §1).
-  irLibraryListNamProjects: (): Promise<NamProjectSummaryShape[]> => ipcRenderer.invoke('irLibrary:listNamProjects'),
-  irLibraryGetNamProjectDetail: (collectionId: string): Promise<NamProjectDetailShape | null> =>
+  // "NAM Projects" mode (docs/nam-capture-import-plan-2026-08-29.md §1,
+  // docs/nam-projects-detail-design-2026-08-31.md).
+  irLibraryListNamProjects: (): Promise<NamProjectSummary[]> => ipcRenderer.invoke('irLibrary:listNamProjects'),
+  irLibraryGetNamProjectDetail: (collectionId: string): Promise<NamProjectDetail | null> =>
     ipcRenderer.invoke('irLibrary:getNamProjectDetail', collectionId),
-  irLibraryGetNamLibraryOverview: (): Promise<NamLibraryOverviewShape> =>
-    ipcRenderer.invoke('irLibrary:getNamLibraryOverview')
-}
-
-interface NamLibraryOverviewShape {
-  totalProjects: number
-  totalCaptures: number
-  trainedCaptures: number
-  untrainedCaptures: number
-  syntheticCaptures: number
-  avgTrainedEsr: number | null
-  byScope: Array<{ key: string; count: number }>
-  bySampleRate: Array<{ key: string; count: number }>
-  byArchitecture: Array<{ key: string; count: number }>
-  projects: Array<{
-    collectionId: string
-    name: string
-    captureCount: number
-    trainedCount: number
-    syntheticCount: number
-    avgTrainedEsr: number | null
-  }>
-}
-
-interface NamLabResultShape {
-  schemaVersion: number
-  trainedAt: string
-  modelName: string
-  architecture: string
-  validationEsr: number | null
-  outputModelPath: string
-  trainerJobId: string
-}
-interface NamCaptureCalibrationShape {
-  inputLevelDbu: number | null
-  outputLevelDbu: number | null
-  method: string | null
-  confidence: string | null
-  profileName: string | null
-  calibratedAt: string | null
-}
-interface NamCaptureSuggestedShape {
-  name: string | null
-  modeledBy: string | null
-  gearMake: string | null
-  gearModel: string | null
-  gearType: string | null
-  toneType: string | null
-}
-interface NamCaptureRowShape {
-  itemId: string
-  captureId: string | null
-  captureName: string
-  captureScope: string | null
-  sampleRate: number | null
-  measuredLatencySamples: number | null
-  synthetic: boolean
-  syntheticSourceIrName: string | null
-  createdAt: string | null
-  excitationPath: string | null
-  recordingPath: string | null
-  captureFolderPath: string | null
-  calibration: NamCaptureCalibrationShape | null
-  suggested: NamCaptureSuggestedShape | null
-  trained: boolean
-  result: NamLabResultShape | null
-}
-interface NamProjectSummaryShape {
-  collectionId: string
-  projectId: string
-  name: string
-  createdAt: string | null
-  libraryRootId: number
-  folderId: number | null
-  captureCount: number
-  trainedCount: number
-  syntheticCount: number
-}
-interface NamProjectDetailShape extends NamProjectSummaryShape {
-  cabinet: string | null
-  speaker: string | null
-  room: string | null
-  signalChain: string | null
-  description: string | null
-  projectNotes: string | null
-  captures: NamCaptureRowShape[]
+  irLibraryGetNamLibraryOverview: (): Promise<NamLibraryOverview> =>
+    ipcRenderer.invoke('irLibrary:getNamLibraryOverview'),
+  irLibrarySetNamCaptureMetadata: (itemId: string, patch: NamCaptureMetadataPatch): Promise<NamCaptureRow | null> =>
+    ipcRenderer.invoke('irLibrary:setNamCaptureMetadata', itemId, patch),
+  irLibraryRelinkNamModel: (itemId: string, newModelPath: string): Promise<NamCaptureRow | null> =>
+    ipcRenderer.invoke('irLibrary:relinkNamModel', itemId, newModelPath),
+  irLibraryFindNamModelCandidates: (modelName: string, roots: string[]): Promise<string[]> =>
+    ipcRenderer.invoke('irLibrary:findNamModelCandidates', modelName, roots)
 }
 
 if (process.contextIsolated) {

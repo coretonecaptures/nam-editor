@@ -525,7 +525,15 @@ function runMigrations(db: DatabaseSync): void {
       ['suggested_gear_make', 'TEXT'],
       ['suggested_gear_model', 'TEXT'],
       ['suggested_gear_type', 'TEXT'],
-      ['suggested_tone_type', 'TEXT']
+      ['suggested_tone_type', 'TEXT'],
+      // 2026-08-31 detail-view additions (docs/nam-projects-detail-design-2026-08-31.md).
+      // The always-synced mirror of the sidecar's calibration dBu (the post-training
+      // input_level_dbu/output_level_dbu columns become the *effective*, user-editable values,
+      // default-filled from these on scan only while still NULL). Plus excitation provenance.
+      ['calibration_input_dbu', 'REAL'],
+      ['calibration_output_dbu', 'REAL'],
+      ['excitation_source_name', 'TEXT'],
+      ['stimulus_sha256', 'TEXT']
     ] as const) {
       if (!have.has(name)) db.exec(`ALTER TABLE nam_capture_item ADD COLUMN ${name} ${type}`)
     }

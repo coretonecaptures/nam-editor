@@ -1212,6 +1212,7 @@ interface TrainerQueueJob {
   inputPath: string
   outputPath: string
   trainPath: string
+  namMode: 'a1' | 'a2'
   architecture: string
   waveNetConfig: WaveNetConfig | null
   lr: number
@@ -4263,33 +4264,6 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
       }
     }
 
-    // NAM Capture write-back (docs/nam-capture-import-plan-2026-08-29.md §3/§5). schemaVersion 2:
-    // the sidecar is <dir>/<CaptureName>.nam-lab-result.json, keyed off the recording WAV path —
-    // which IS job.outputPath for a nam-capture-import job. Best-effort: a failure here must
-    // never turn a successful training run into an error.
-    if (
-      trainerState.status === 'success' &&
-      job.sourceMode === 'nam-capture-import' &&
-      job.outputPath &&
-      trainerState.outputModelPath
-    ) {
-      try {
-        writeNamLabResult(job.outputPath, {
-          trainedAt: trainerState.finishedAt ?? new Date().toISOString(),
-          modelName: job.modelName,
-          architecture: job.namMode,
-          validationEsr: trainerState.validationEsr,
-          outputModelPath: trainerState.outputModelPath,
-          trainerJobId: job.jobId,
-        })
-      } catch (writebackError) {
-        trainerState = {
-          ...trainerState,
-          logs: [...trainerState.logs, `NAM Capture write-back warning: ${String(writebackError)}`].slice(-600),
-        }
-      }
-    }
-
     const effectiveFinalStatus: TrainerStateSnapshot['status'] = trainerState.status
     const effectiveFinalError = trainerState.error
 
@@ -4306,6 +4280,34 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
         trainerState = {
           ...trainerState,
           logs: [...trainerState.logs, `Trainer graph promote warning: ${String(graphError)}`].slice(-600),
+        }
+      }
+
+      // NAM Capture write-back (docs/nam-capture-import-plan-2026-08-29.md §3/§5,
+      // docs/nam-projects-detail-design-2026-08-31.md §6). schemaVersion 2: sidecar is
+      // <dir>/<CaptureName>.nam-lab-result.json, keyed off the recording WAV = job.outputPath.
+      // Written AFTER the graph promote so graphPath is final. Best-effort — never fails the run.
+      if (job.sourceMode === 'nam-capture-import' && job.outputPath && trainerState.outputModelPath) {
+        try {
+          writeNamLabResult(job.outputPath, {
+            trainedAt: trainerState.finishedAt ?? new Date().toISOString(),
+            modelName: job.modelName,
+            architecture: job.namMode,
+            validationEsr: trainerState.validationEsr,
+            validationEsrFull:
+              job.namMode === 'a2' ? (trainerState.epochValidationEsrFull ?? null) : null,
+            validationEsrLite:
+              job.namMode === 'a2' ? (trainerState.epochValidationEsrLite ?? null) : null,
+            outputModelPath: trainerState.outputModelPath,
+            graphPath: promotedGraphPath || null,
+            trainerJobId: job.jobId,
+            sourceCaptureId: job.namCaptureId ?? null,
+          })
+        } catch (writebackError) {
+          trainerState = {
+            ...trainerState,
+            logs: [...trainerState.logs, `NAM Capture write-back warning: ${String(writebackError)}`].slice(-600),
+          }
         }
       }
       try {
