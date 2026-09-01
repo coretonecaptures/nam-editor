@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ContextMenu } from '../ContextMenu'
+import { ContextMenu, type ContextMenuItem } from '../ContextMenu'
 import { TRAINER_ARCHITECTURES, BUILT_IN_CAPTURE_PROFILES } from '../../types/trainer'
-import type { NamProjectSummary, NamProjectDetail, NamCaptureRow, NamLibraryOverview } from '../../types/namProjects'
+import { GEAR_TYPES, TONE_TYPES } from '../../types/nam'
+import type {
+  NamProjectSummary,
+  NamProjectDetail,
+  NamCaptureRow,
+  NamCaptureMetadataPatch,
+  NamLibraryOverview
+} from '../../types/namProjects'
 import type { TrainerHistoryEntry } from '../../types/trainer'
 import { goToTrainingBatches, goToTrainingQueue } from '../../appNav'
 
@@ -12,15 +19,16 @@ const ARCH_LABEL: Record<string, string> = Object.fromEntries(
 
 /**
  * "NAM Projects" mode — the third top-level workspace (docs/nam-capture-import-plan-2026-08-29.md
- * §1). Read-only view over IR Lab NAM Capture projects already in the shared catalog (they enter
- * it through IR mode's "Add Library Folder", same as any other folder), plus the write action:
- * select captures (a whole project, a right-clicked one, or a multi-select) and stage them as a
- * training batch, which lands you on the trainer's Batches page with the jobs sitting ready.
+ * §1, docs/nam-projects-detail-design-2026-08-31.md). Read-only view over IR Lab NAM Capture
+ * projects already in the shared catalog (they enter it through IR mode's "Add Library Folder"),
+ * plus two write actions: stage/queue captures as a training batch, and edit the per-capture
+ * "effective" model-metadata (gear/tone hints + calibration dBu) that seeds the trained .nam.
  * Trained/untrained comes straight from each capture folder's nam-lab-result.json.
  *
  * Its own shell, not a fork of IrModeShell — IrItemRow is welded to IR-only columns and there's
  * no audition half. The three-region skeleton, Tailwind tokens, col-resize divider, filter
- * boxes, status chips, and blue-dot / nam-chip idioms all match the other two modes.
+ * boxes, status chips, list/cards toggle, facet pills, and blue-dot / nam-chip idioms all match
+ * the other two modes.
  */
 
 const OUTPUT_ROOT_KEY = 'nam-lab-nam-projects-output-root'
@@ -28,6 +36,7 @@ const ARCH_KEY = 'nam-lab-nam-projects-architecture'
 const EPOCHS_KEY = 'nam-lab-nam-projects-epochs'
 const SELECTED_KEY = 'nam-lab-nam-projects-selected'
 const VIEW_KEY = 'nam-lab-nam-projects-view'
+const CAPTURE_VIEW_KEY = 'nam-lab-nam-projects-capture-view'
 
 function readStored(key: string): string {
   try {
@@ -46,6 +55,197 @@ function writeStored(key: string, value: string): void {
 
 type StatusFilter = 'all' | 'untrained' | 'trained' | 'synthetic'
 
+// --- formatting helpers ------------------------------------------------------
+
+/** local-file:// src for an on-disk image/graph (matches FolderGallery et al.), Windows-safe. */
+function fileSrc(p: string): string {
+  const norm = p.replace(/\\/g, '/')
+  return norm.startsWith('/') ? `local-file://${norm}` : `local-file:///${norm}`
+}
+
+function formatBytes(n: number | null | undefined): string {
+  if (n == null || !isFinite(n) || n <= 0) return '—'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let v = n
+  let u = 0
+  while (v >= 1024 && u < units.length - 1) {
+    v /= 1024
+    u++
+  }
+  return `${v < 10 && u > 0 ? v.toFixed(1) : Math.round(v)} ${units[u]}`
+}
+
+function fmtDate(iso: string | null | undefined): string | null {
+  if (!iso) return null
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return null
+  return d.toISOString().slice(0, 10)
+}
+
+function fmtDateTime(iso: string | null | undefined): string | null {
+  if (!iso) return null
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return null
+  const p = (n: number): string => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+/** "3d ago" / "just now" from an ISO string or epoch ms. */
+function relTime(input: string | number | null | undefined): string | null {
+  if (input == null) return null
+  const t = typeof input === 'number' ? input : new Date(input).getTime()
+  if (isNaN(t)) return null
+  const secs = Math.round((Date.now() - t) / 1000)
+  if (secs < 45) return 'just now'
+  const mins = Math.round(secs / 60)
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.round(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  const days = Math.round(hrs / 24)
+  if (days < 30) return `${days}d ago`
+  const months = Math.round(days / 30)
+  if (months < 12) return `${months}mo ago`
+  return `${Math.round(months / 12)}y ago`
+}
+
+function srLabel(sr: number | null | undefined): string | null {
+  if (sr == null) return null
+  return `${(sr / 1000).toFixed(sr % 1000 ? 1 : 0)}k`
+}
+
+/** "48k/24-bit · mono" — the shared audio-facts sub-line. */
+function audioLabel(c: NamCaptureRow): string {
+  const parts: string[] = []
+  const sr = srLabel(c.sampleRate)
+  if (sr && c.recordingBitDepth) parts.push(`${sr}/${c.recordingBitDepth}-bit`)
+  else if (sr) parts.push(sr)
+  else if (c.recordingBitDepth) parts.push(`${c.recordingBitDepth}-bit`)
+  if (c.recordingChannels === 1) parts.push('mono')
+  else if (c.recordingChannels === 2) parts.push('stereo')
+  else if (c.recordingChannels) parts.push(`${c.recordingChannels}ch`)
+  return parts.join(' · ')
+}
+
+function durationLabel(secs: number | null | undefined): string | null {
+  if (secs == null || !isFinite(secs) || secs <= 0) return null
+  const m = Math.floor(secs / 60)
+  const s = Math.round(secs % 60)
+  return `${m}:${String(s).padStart(2, '0')}`
+}
+
+function captureIsCalibrated(c: NamCaptureRow): boolean {
+  return !!c.calibration && (c.calibration.inputLevelDbu != null || c.calibration.outputLevelDbu != null)
+}
+
+function hasHints(c: NamCaptureRow): boolean {
+  const s = c.suggested
+  return !!s && !!(s.modeledBy || s.gearMake || s.gearModel || s.gearType || s.toneType)
+}
+function hintTip(c: NamCaptureRow): string {
+  const s = c.suggested
+  if (!s) return ''
+  return (
+    'Model-metadata hints from IR Lab (seed the effective metadata below):\n' +
+    [
+      s.modeledBy && `modeled by ${s.modeledBy}`,
+      s.gearMake && `make ${s.gearMake}`,
+      s.gearModel && `model ${s.gearModel}`,
+      s.gearType && `type ${s.gearType}`,
+      s.toneType && `tone ${s.toneType}`
+    ]
+      .filter(Boolean)
+      .join('\n')
+  )
+}
+
+function calChipTitle(c: NamCaptureRow): string {
+  const cal = c.calibration
+  if (!cal) return ''
+  return (
+    'Rig-calibrated' +
+    (cal.method ? ` (${cal.method}${cal.confidence ? `, ${cal.confidence}` : ''})` : '') +
+    ` — input ${cal.inputLevelDbu ?? '?'} dBu, output ${cal.outputLevelDbu ?? '?'} dBu`
+  )
+}
+
+// --- facets ----------------------------------------------------------------
+
+type FacetKey = 'scope' | 'sampleRate' | 'gearType' | 'toneType' | 'calibration' | 'architecture'
+type FacetState = Record<FacetKey, string[]>
+const EMPTY_FACETS: FacetState = {
+  scope: [],
+  sampleRate: [],
+  gearType: [],
+  toneType: [],
+  calibration: [],
+  architecture: []
+}
+
+function tally(vals: Array<string | null | undefined>): Array<{ value: string; count: number }> {
+  const m = new Map<string, number>()
+  for (const v of vals) if (v) m.set(v, (m.get(v) ?? 0) + 1)
+  return [...m.entries()]
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value))
+}
+
+interface AvailableFacets {
+  scope: Array<{ value: string; count: number }>
+  sampleRate: Array<{ value: string; count: number }>
+  gearType: Array<{ value: string; count: number }>
+  toneType: Array<{ value: string; count: number }>
+  architecture: Array<{ value: string; count: number }>
+  calibration: Array<{ value: string; count: number; label: string }>
+}
+
+function availableFacets(caps: NamCaptureRow[]): AvailableFacets {
+  const calibrated = caps.filter(captureIsCalibrated)
+  const calibration: AvailableFacets['calibration'] = []
+  if (calibrated.length > 0)
+    calibration.push({ value: 'calibrated', count: calibrated.length, label: 'Calibrated' })
+  if (calibrated.length < caps.length)
+    calibration.push({ value: 'uncalibrated', count: caps.length - calibrated.length, label: 'Uncalibrated' })
+  for (const { value, count } of tally(calibrated.map((c) => c.calibration?.confidence)))
+    calibration.push({ value: `conf:${value}`, count, label: value })
+  return {
+    scope: tally(caps.map((c) => c.captureScope)),
+    sampleRate: tally(caps.map((c) => srLabel(c.sampleRate))),
+    gearType: tally(caps.map((c) => c.effective.gearType)),
+    toneType: tally(caps.map((c) => c.effective.toneType)),
+    architecture: tally(caps.map((c) => c.result?.architecture)),
+    calibration
+  }
+}
+
+/** AND across facets, OR within a facet — matches IR mode's FieldBadge filter bar. */
+function matchesFacets(c: NamCaptureRow, f: FacetState): boolean {
+  if (f.scope.length && !(c.captureScope && f.scope.includes(c.captureScope))) return false
+  if (f.sampleRate.length) {
+    const s = srLabel(c.sampleRate)
+    if (!s || !f.sampleRate.includes(s)) return false
+  }
+  if (f.gearType.length && !(c.effective.gearType && f.gearType.includes(c.effective.gearType))) return false
+  if (f.toneType.length && !(c.effective.toneType && f.toneType.includes(c.effective.toneType))) return false
+  if (
+    f.architecture.length &&
+    !(c.result?.architecture && f.architecture.includes(c.result.architecture))
+  )
+    return false
+  if (f.calibration.length) {
+    const cal = captureIsCalibrated(c)
+    const ok = f.calibration.some((v) => {
+      if (v === 'calibrated') return cal
+      if (v === 'uncalibrated') return !cal
+      if (v.startsWith('conf:')) return cal && c.calibration?.confidence === v.slice(5)
+      return false
+    })
+    if (!ok) return false
+  }
+  return true
+}
+
+// --- small shared components ---------------------------------------------------
+
 function TrainedBadge({ trained }: { trained: boolean }): React.ReactElement {
   return (
     <span
@@ -60,72 +260,267 @@ function TrainedBadge({ trained }: { trained: boolean }): React.ReactElement {
   )
 }
 
-function CaptureRow({
-  capture,
-  selected,
-  onToggleSelect,
-  onContextMenu
+function Pill({
+  label,
+  count,
+  active,
+  onClick
 }: {
-  capture: NamCaptureRow
-  selected: boolean
-  onToggleSelect: () => void
-  onContextMenu: (c: NamCaptureRow, x: number, y: number) => void
+  label: string
+  count?: number
+  active: boolean
+  onClick: () => void
 }): React.ReactElement {
   return (
+    <button
+      onClick={onClick}
+      className={`px-1.5 py-0.5 text-[10px] rounded border ${
+        active
+          ? 'bg-nm-accent text-accent-fg border-nm-accent'
+          : 'border-field-bd text-nm-text-2 hover:bg-hov'
+      }`}
+    >
+      {label}
+      {count != null ? ` ${count}` : ''}
+    </button>
+  )
+}
+
+function FacetPills({
+  available,
+  active,
+  onToggle
+}: {
+  available: AvailableFacets
+  active: FacetState
+  onToggle: (key: FacetKey, value: string) => void
+}): React.ReactElement | null {
+  const groups = (
+    [
+      { key: 'scope', title: 'Scope', opts: available.scope },
+      { key: 'sampleRate', title: 'Rate', opts: available.sampleRate },
+      { key: 'gearType', title: 'Gear', opts: available.gearType },
+      { key: 'toneType', title: 'Tone', opts: available.toneType },
+      { key: 'calibration', title: 'Cal', opts: available.calibration },
+      { key: 'architecture', title: 'Arch', opts: available.architecture }
+    ] as Array<{
+      key: FacetKey
+      title: string
+      opts: Array<{ value: string; count: number; label?: string }>
+    }>
+  ).filter((g) => g.opts.length > 0)
+  if (groups.length === 0) return null
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1.5 border-b border-nm-border-s flex-shrink-0">
+      {groups.map((g) => (
+        <div key={g.key} className="flex items-center gap-1">
+          <span className="text-[10px] uppercase tracking-wide text-nm-text-3">{g.title}</span>
+          {g.opts.map((o) => (
+            <Pill
+              key={o.value}
+              label={o.label ?? o.value}
+              count={o.count}
+              active={active[g.key].includes(o.value)}
+              onClick={() => onToggle(g.key, o.value)}
+            />
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function CoverageBar({
+  trained,
+  total,
+  synthetic,
+  meanEsr
+}: {
+  trained: number
+  total: number
+  synthetic: number
+  meanEsr: number | null
+}): React.ReactElement {
+  const pct = total ? Math.round((trained / total) * 100) : 0
+  return (
+    <div className="flex items-center gap-3 text-[11px] text-nm-text-3 flex-wrap">
+      <span className="inline-flex h-2 w-40 rounded-full bg-field-bg overflow-hidden flex-shrink-0">
+        <span className="h-full bg-emerald-500/80" style={{ width: `${pct}%` }} />
+      </span>
+      <span className="text-nm-text-2">
+        {trained} / {total} trained
+      </span>
+      {synthetic > 0 && <span>{synthetic} synthetic</span>}
+      {meanEsr != null && <span>mean ESR {meanEsr.toFixed(4)}</span>}
+    </div>
+  )
+}
+
+function MakeupChips({ captures }: { captures: NamCaptureRow[] }): React.ReactElement | null {
+  const chips: string[] = []
+  for (const { value, count } of tally(captures.map((c) => srLabel(c.sampleRate))))
+    chips.push(`${value} ×${count}`)
+  for (const { value, count } of tally(captures.map((c) => (c.recordingBitDepth ? `${c.recordingBitDepth}-bit` : null))))
+    chips.push(count === captures.length ? value : `${value} ×${count}`)
+  const scope = tally(captures.map((c) => c.captureScope))
+  if (scope.length) chips.push(scope.map((s) => `${s.value} ×${s.count}`).join(' · '))
+  const calibrated = captures.filter(captureIsCalibrated)
+  if (calibrated.length > 0) {
+    const conf = tally(calibrated.map((c) => c.calibration?.confidence))
+    chips.push(
+      `${calibrated.length}/${captures.length} calibrated${conf[0] ? ` · mostly ${conf[0].value}` : ''}`
+    )
+  }
+  if (chips.length === 0) return null
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {chips.map((c, i) => (
+        <span
+          key={i}
+          className="px-1.5 py-0.5 text-[10px] rounded bg-field-bg text-nm-text-2 border border-nm-border-s"
+        >
+          {c}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function ProjectHeader({
+  detail,
+  onReveal
+}: {
+  detail: NamProjectDetail
+  onReveal: (path: string) => void
+}): React.ReactElement {
+  const esrs = detail.captures
+    .filter((c) => c.trained)
+    .map((c) => c.result?.validationEsr)
+    .filter((v): v is number => v != null)
+  const meanEsr = esrs.length ? esrs.reduce((a, b) => a + b, 0) / esrs.length : null
+  const created = fmtDate(detail.createdAt)
+  const hasProjectDetails =
+    detail.cabinet ||
+    detail.speaker ||
+    detail.room ||
+    detail.signalChain ||
+    detail.description ||
+    detail.projectNotes
+  return (
+    <div className="flex flex-col gap-2 px-4 py-3 border-b border-nm-border flex-shrink-0">
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="text-sm font-medium text-nm-text truncate">{detail.name}</span>
+        {created && <span className="text-[11px] text-nm-text-3">created {created}</span>}
+        {detail.namCapturesDir && (
+          <button
+            onClick={() => onReveal(detail.namCapturesDir as string)}
+            className="text-[11px] text-nm-accent hover:underline"
+          >
+            Reveal NAM Captures folder
+          </button>
+        )}
+        {detail.excitationsDir && (
+          <button
+            onClick={() => onReveal(detail.excitationsDir as string)}
+            className="text-[11px] text-nm-accent hover:underline"
+          >
+            Reveal _excitations
+          </button>
+        )}
+      </div>
+      <CoverageBar
+        trained={detail.trainedCount}
+        total={detail.captureCount}
+        synthetic={detail.syntheticCount}
+        meanEsr={meanEsr}
+      />
+      <MakeupChips captures={detail.captures} />
+      {hasProjectDetails ? (
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-nm-text-3">
+          {detail.cabinet && <span>cab {detail.cabinet}</span>}
+          {detail.speaker && <span>speaker {detail.speaker}</span>}
+          {detail.room && <span>room {detail.room}</span>}
+          {detail.signalChain && <span>chain {detail.signalChain}</span>}
+        </div>
+      ) : null}
+      {detail.imagePaths.length > 0 && (
+        <div className="flex gap-2 overflow-x-auto py-1">
+          {detail.imagePaths.map((p) => (
+            <img
+              key={p}
+              src={fileSrc(p)}
+              alt=""
+              onClick={() => void window.api.openFile(p)}
+              className="h-16 w-16 object-cover rounded border border-nm-border-s flex-shrink-0 cursor-pointer hover:opacity-80"
+              loading="lazy"
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CaptureRow({
+  capture,
+  checked,
+  active,
+  onToggleCheck,
+  onOpenDetail,
+  onMenu
+}: {
+  capture: NamCaptureRow
+  checked: boolean
+  active: boolean
+  onToggleCheck: () => void
+  onOpenDetail: () => void
+  onMenu: (c: NamCaptureRow, x: number, y: number) => void
+}): React.ReactElement {
+  const rel = relTime(capture.createdAt)
+  const eff = capture.effective
+  return (
     <div
+      onClick={onOpenDetail}
       onContextMenu={(e) => {
         e.preventDefault()
-        onContextMenu(capture, e.clientX, e.clientY)
+        onMenu(capture, e.clientX, e.clientY)
       }}
-      className={`flex items-center gap-2 px-3 py-2 border-b border-nm-border-s text-xs ${
-        selected ? 'bg-active-bg' : 'hover:bg-hov'
+      className={`flex items-center gap-2 px-3 py-2 border-b border-nm-border-s text-xs cursor-pointer ${
+        active
+          ? 'bg-active-bg ring-1 ring-inset ring-nm-accent/40'
+          : checked
+            ? 'bg-active-bg/60'
+            : 'hover:bg-hov'
       }`}
     >
       <input
         type="checkbox"
-        checked={selected}
-        onChange={onToggleSelect}
+        checked={checked}
+        onChange={onToggleCheck}
         onClick={(e) => e.stopPropagation()}
         className="flex-shrink-0"
       />
       <div className="flex-1 min-w-0 flex flex-col gap-0.5">
         <div className="truncate text-sm leading-tight text-nm-text">{capture.captureName}</div>
-        <div className="flex items-center gap-2 text-[11px] text-nm-text-3">
+        <div className="flex items-center gap-2 text-[11px] text-nm-text-3 flex-wrap">
           {capture.captureScope && <span>{capture.captureScope}</span>}
-          {capture.sampleRate != null && (
-            <span>{(capture.sampleRate / 1000).toFixed(capture.sampleRate % 1000 ? 1 : 0)}k</span>
-          )}
-          {capture.measuredLatencySamples != null && <span>{capture.measuredLatencySamples} smp latency</span>}
-          {capture.calibration && (capture.calibration.inputLevelDbu != null || capture.calibration.outputLevelDbu != null) && (
-            <span
-              className="text-emerald-600 dark:text-emerald-400"
-              title={
-                `Rig-calibrated` +
-                (capture.calibration.method ? ` (${capture.calibration.method}` : '') +
-                (capture.calibration.confidence ? `, ${capture.calibration.confidence})` : capture.calibration.method ? ')' : '') +
-                ` — input ${capture.calibration.inputLevelDbu ?? '?'} dBu, output ${capture.calibration.outputLevelDbu ?? '?'} dBu`
-              }
-            >
-              ⚑ cal {capture.calibration.inputLevelDbu ?? '?'}/{capture.calibration.outputLevelDbu ?? '?'} dBu
+          {audioLabel(capture) && <span>{audioLabel(capture)}</span>}
+          {capture.measuredLatencySamples != null && <span>{capture.measuredLatencySamples} smp</span>}
+          {captureIsCalibrated(capture) && (
+            <span className="text-emerald-600 dark:text-emerald-400" title={calChipTitle(capture)}>
+              ⚑ {eff.inputLevelDbu ?? capture.calibration?.inputLevelDbu ?? '?'}/
+              {eff.outputLevelDbu ?? capture.calibration?.outputLevelDbu ?? '?'} dBu
+              {capture.calibration?.confidence ? ` ${capture.calibration.confidence}` : ''}
             </span>
           )}
-          {capture.suggested && (
-            <span
-              className="text-nm-text-3"
-              title={
-                'Model-metadata hints from IR Lab (seeded into the .nam after training):\n' +
-                [
-                  capture.suggested.modeledBy && `modeled by ${capture.suggested.modeledBy}`,
-                  capture.suggested.gearMake && `make ${capture.suggested.gearMake}`,
-                  capture.suggested.gearModel && `model ${capture.suggested.gearModel}`,
-                  capture.suggested.gearType && `type ${capture.suggested.gearType}`,
-                  capture.suggested.toneType && `tone ${capture.suggested.toneType}`
-                ]
-                  .filter(Boolean)
-                  .join('\n')
-              }
-            >
+          {hasHints(capture) && (
+            <span className="text-nm-text-3" title={hintTip(capture)}>
               ⓘ hints
+            </span>
+          )}
+          {capture.metadataEdited && (
+            <span className="text-nm-accent" title="Model metadata edited in NAM Lab">
+              ✎ edited
             </span>
           )}
           {capture.synthetic && (
@@ -144,11 +539,172 @@ function CaptureRow({
         </div>
       </div>
       {capture.trained && capture.result?.validationEsr != null && (
-        <span className="text-[11px] text-nm-text-3 flex-shrink-0" title="Validation ESR of the trained model">
+        <span
+          className="text-[11px] text-nm-text-3 flex-shrink-0"
+          title="Validation ESR of the trained model"
+        >
           ESR {capture.result.validationEsr.toFixed(4)}
         </span>
       )}
+      {rel && (
+        <span
+          className="text-[11px] text-nm-text-3 flex-shrink-0 w-16 text-right"
+          title={fmtDateTime(capture.createdAt) ?? ''}
+        >
+          {rel}
+        </span>
+      )}
       <TrainedBadge trained={capture.trained} />
+      <button
+        onClick={(e) => {
+          e.stopPropagation()
+          onMenu(capture, e.clientX, e.clientY)
+        }}
+        className="flex-shrink-0 px-1 text-nm-text-3 hover:text-nm-text"
+        title="More…"
+      >
+        ⋯
+      </button>
+    </div>
+  )
+}
+
+function CaptureCard({
+  capture,
+  checked,
+  active,
+  onToggleCheck,
+  onOpenDetail,
+  onMenu,
+  onReveal,
+  onOpenModel,
+  onQueue
+}: {
+  capture: NamCaptureRow
+  checked: boolean
+  active: boolean
+  onToggleCheck: () => void
+  onOpenDetail: () => void
+  onMenu: (c: NamCaptureRow, x: number, y: number) => void
+  onReveal: () => void
+  onOpenModel: () => void
+  onQueue: () => void
+}): React.ReactElement {
+  const eff = capture.effective
+  const rel = relTime(capture.createdAt)
+  return (
+    <div
+      onClick={onOpenDetail}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        onMenu(capture, e.clientX, e.clientY)
+      }}
+      className={`flex flex-col rounded border text-xs cursor-pointer overflow-hidden ${
+        active ? 'border-nm-accent bg-active-bg' : 'border-nm-border-s bg-panel-2 hover:bg-hov'
+      }`}
+    >
+      <div className="flex items-center gap-2 px-2.5 py-2">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={onToggleCheck}
+          onClick={(e) => e.stopPropagation()}
+        />
+        <span className="flex-1 min-w-0 truncate text-sm text-nm-text">{capture.captureName}</span>
+        <TrainedBadge trained={capture.trained} />
+      </div>
+      <div className="px-2.5 pb-2 text-[11px] text-nm-text-3 flex flex-col gap-1">
+        <div className="flex flex-wrap gap-x-2">
+          {capture.captureScope && <span>{capture.captureScope}</span>}
+          {audioLabel(capture) && <span>{audioLabel(capture)}</span>}
+          {capture.measuredLatencySamples != null && <span>{capture.measuredLatencySamples} smp</span>}
+        </div>
+        {captureIsCalibrated(capture) && (
+          <div className="text-emerald-600 dark:text-emerald-400">
+            cal {eff.inputLevelDbu ?? capture.calibration?.inputLevelDbu ?? '?'} /{' '}
+            {eff.outputLevelDbu ?? capture.calibration?.outputLevelDbu ?? '?'} dBu
+            {capture.calibration?.method ? ` · ${capture.calibration.method}` : ''}
+          </div>
+        )}
+        {(eff.gearMake || eff.gearModel) && (
+          <div className="text-nm-text-2 truncate">
+            {[eff.gearMake, eff.gearModel].filter(Boolean).join(' · ')}
+          </div>
+        )}
+        {(eff.gearType || eff.toneType) && (
+          <div className="flex gap-1 flex-wrap">
+            {[eff.gearType, eff.toneType].filter(Boolean).map((t) => (
+              <span key={t as string} className="nam-chip">
+                {t}
+              </span>
+            ))}
+          </div>
+        )}
+        {capture.metadataEdited && <span className="text-nm-accent">✎ edited</span>}
+        {capture.synthetic && (
+          <span className="nam-chip opacity-60 self-start">
+            <span className="nam-dot" />
+            synthetic
+          </span>
+        )}
+      </div>
+      {capture.trained && (
+        <div className="border-t border-nm-border-s px-2.5 py-2 flex flex-col gap-1">
+          {capture.graphExists && capture.result?.graphPath && (
+            <img
+              src={fileSrc(capture.result.graphPath)}
+              alt="training graph"
+              className="w-full h-16 object-cover rounded bg-field-bg"
+              loading="lazy"
+            />
+          )}
+          <div className="flex items-center gap-2 text-[11px] text-nm-text-3 flex-wrap">
+            {capture.result?.architecture && <span>{capture.result.architecture}</span>}
+            {capture.result?.validationEsr != null && (
+              <span>ESR {capture.result.validationEsr.toFixed(4)}</span>
+            )}
+            {relTime(capture.result?.trainedAt) && <span>{relTime(capture.result?.trainedAt)}</span>}
+          </div>
+        </div>
+      )}
+      <div className="border-t border-nm-border-s px-2.5 py-1.5 flex items-center gap-3 text-[11px]">
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onReveal()
+          }}
+          className="text-nm-text-2 hover:text-nm-text"
+        >
+          Reveal WAV
+        </button>
+        {!capture.trained && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onQueue()
+            }}
+            className="text-nm-accent hover:underline"
+          >
+            Queue
+          </button>
+        )}
+        {capture.trained && capture.result?.outputModelPath && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onOpenModel()
+            }}
+            className="text-nm-text-2 hover:text-nm-text"
+          >
+            Open .nam
+          </button>
+        )}
+        {rel && (
+          <span className="ml-auto text-nm-text-3" title={fmtDateTime(capture.createdAt) ?? ''}>
+            captured {fmtDate(capture.createdAt)}
+          </span>
+        )}
+      </div>
     </div>
   )
 }
@@ -165,6 +721,7 @@ function ProjectRailRow({
   onContextMenu: (p: NamProjectSummary, x: number, y: number) => void
 }): React.ReactElement {
   const allTrained = project.captureCount > 0 && project.trainedCount === project.captureCount
+  const created = fmtDate(project.createdAt)
   return (
     <button
       onClick={onSelect}
@@ -180,7 +737,14 @@ function ProjectRailRow({
         className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${allTrained ? 'bg-emerald-500' : 'bg-blue-500'}`}
         title={allTrained ? 'Every capture trained' : 'Has untrained captures'}
       />
-      <span className="truncate flex-1">{project.name}</span>
+      <span className="flex-1 min-w-0">
+        <span className="block truncate">{project.name}</span>
+        {created && (
+          <span className={`block truncate text-[10px] ${selected ? 'text-nm-accent/70' : 'text-nm-text-3'}`}>
+            created {created}
+          </span>
+        )}
+      </span>
       <span className={`flex-shrink-0 ${selected ? 'text-nm-accent' : 'text-nm-text-3'}`}>
         {project.trainedCount}/{project.captureCount}
       </span>
@@ -188,18 +752,34 @@ function ProjectRailRow({
   )
 }
 
-function StatTile({ label, value, tone }: { label: string; value: string | number; tone?: 'accent' | 'muted' }): React.ReactElement {
+function StatTile({
+  label,
+  value,
+  tone
+}: {
+  label: string
+  value: string | number
+  tone?: 'accent' | 'muted'
+}): React.ReactElement {
   return (
     <div className="flex flex-col gap-0.5 px-3 py-2 rounded border border-nm-border-s bg-panel-2 min-w-[96px]">
       <span className="text-[10px] uppercase tracking-wide text-nm-text-3">{label}</span>
-      <span className={`text-lg font-semibold ${tone === 'accent' ? 'text-nm-accent' : tone === 'muted' ? 'text-nm-text-3' : 'text-nm-text'}`}>
+      <span
+        className={`text-lg font-semibold ${tone === 'accent' ? 'text-nm-accent' : tone === 'muted' ? 'text-nm-text-3' : 'text-nm-text'}`}
+      >
         {value}
       </span>
     </div>
   )
 }
 
-function Breakdown({ title, rows }: { title: string; rows: Array<{ key: string; count: number }> }): React.ReactElement {
+function Breakdown({
+  title,
+  rows
+}: {
+  title: string
+  rows: Array<{ key: string; count: number }>
+}): React.ReactElement {
   const max = Math.max(1, ...rows.map((r) => r.count))
   return (
     <div className="flex flex-col gap-1">
@@ -226,7 +806,9 @@ function buildReport(o: NamLibraryOverview): string {
   lines.push(`Generated ${new Date().toISOString()}`)
   lines.push(``)
   lines.push(`- Projects: ${o.totalProjects}`)
-  lines.push(`- Captures: ${o.totalCaptures}  (${o.trainedCaptures} trained / ${o.untrainedCaptures} untrained — ${pct}%)`)
+  lines.push(
+    `- Captures: ${o.totalCaptures}  (${o.trainedCaptures} trained / ${o.untrainedCaptures} untrained — ${pct}%)`
+  )
   lines.push(`- Synthetic captures: ${o.syntheticCaptures}`)
   if (o.avgTrainedEsr != null) lines.push(`- Mean validation ESR (trained): ${o.avgTrainedEsr.toFixed(5)}`)
   lines.push(``)
@@ -243,7 +825,9 @@ function buildReport(o: NamLibraryOverview): string {
   lines.push(`| Project | Captures | Trained | Synthetic | Mean ESR |`)
   lines.push(`| --- | --- | --- | --- | --- |`)
   for (const p of o.projects) {
-    lines.push(`| ${p.name} | ${p.captureCount} | ${p.trainedCount} | ${p.syntheticCount} | ${p.avgTrainedEsr != null ? p.avgTrainedEsr.toFixed(5) : '—'} |`)
+    lines.push(
+      `| ${p.name} | ${p.captureCount} | ${p.trainedCount} | ${p.syntheticCount} | ${p.avgTrainedEsr != null ? p.avgTrainedEsr.toFixed(5) : '—'} |`
+    )
   }
   return lines.join('\n') + '\n'
 }
@@ -281,14 +865,464 @@ function StatusChip({
   )
 }
 
+function Row({ label, children }: { label: string; children: React.ReactNode }): React.ReactElement {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[10px] uppercase tracking-wide text-nm-text-3">{label}</span>
+      <span className="text-xs text-nm-text break-words">{children}</span>
+    </div>
+  )
+}
+
+// --- editable model-metadata (effective columns) -----------------------------
+
+type MetaStringKey = 'modeledBy' | 'gearMake' | 'gearModel' | 'gearType' | 'toneType'
+
+const META_FIELDS: Array<{
+  k: MetaStringKey
+  label: string
+  opts?: readonly string[]
+}> = [
+  { k: 'modeledBy', label: 'Modeled by' },
+  { k: 'gearMake', label: 'Gear make' },
+  { k: 'gearModel', label: 'Gear model' },
+  { k: 'gearType', label: 'Gear type', opts: GEAR_TYPES },
+  { k: 'toneType', label: 'Tone type', opts: TONE_TYPES }
+]
+
+function MetadataEditor({
+  capture,
+  onSave
+}: {
+  capture: NamCaptureRow
+  onSave: (patch: NamCaptureMetadataPatch) => Promise<void>
+}): React.ReactElement {
+  const eff = capture.effective
+  const sug = capture.suggested
+  const [draft, setDraft] = useState<NamCaptureMetadataPatch>({})
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  useEffect(() => {
+    setDraft({})
+    setErr(null)
+  }, [capture.itemId])
+
+  const dirty = Object.keys(draft).length > 0
+  const valueOf = (k: (typeof META_FIELDS)[number]['k']): string =>
+    (k in draft ? (draft[k] as string | null) : eff[k]) ?? ''
+  const set = (k: (typeof META_FIELDS)[number]['k'], v: string): void =>
+    setDraft((d) => ({ ...d, [k]: v.trim() === '' ? null : v }))
+
+  return (
+    <div className="flex flex-col gap-2">
+      {META_FIELDS.map(({ k, label, opts }) => {
+        const value = valueOf(k)
+        const suggested = (sug ? sug[k] : null) as string | null
+        const editedFromSuggestion = (value || null) !== (suggested || null)
+        return (
+          <label key={k} className="flex flex-col gap-0.5 text-[11px] text-nm-text-3">
+            <span className="flex items-center gap-2">
+              {label}
+              {suggested != null && (
+                <span className={editedFromSuggestion ? 'text-nm-accent' : 'text-nm-text-3'}>
+                  {editedFromSuggestion ? 'edited' : 'from IR Lab'}
+                </span>
+              )}
+              {editedFromSuggestion && suggested != null && (
+                <button
+                  type="button"
+                  onClick={() => set(k, suggested)}
+                  className="text-nm-accent hover:underline"
+                >
+                  reset
+                </button>
+              )}
+            </span>
+            {opts ? (
+              <select
+                value={value}
+                onChange={(e) => set(k, e.target.value)}
+                className="px-2 py-1 text-xs rounded border border-field-bd bg-field-bg text-nm-text"
+              >
+                <option value="">—</option>
+                {opts.map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                value={value}
+                onChange={(e) => set(k, e.target.value)}
+                className="px-2 py-1 text-xs rounded border border-field-bd bg-field-bg text-nm-text"
+              />
+            )}
+          </label>
+        )
+      })}
+      {err && <span className="text-[11px] text-red-500">{err}</span>}
+      {dirty && (
+        <div className="flex gap-2">
+          <button
+            disabled={saving}
+            onClick={async () => {
+              setSaving(true)
+              setErr(null)
+              try {
+                await onSave(draft)
+                setDraft({})
+              } catch (e) {
+                setErr(String(e))
+              } finally {
+                setSaving(false)
+              }
+            }}
+            className="px-2.5 py-1 text-xs rounded bg-nm-accent text-accent-fg hover:opacity-90 disabled:opacity-50"
+          >
+            {saving ? 'Saving…' : 'Save metadata'}
+          </button>
+          <button
+            disabled={saving}
+            onClick={() => setDraft({})}
+            className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov"
+          >
+            Discard
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// --- trained .nam link (stat + auto-find + Locate) --------------------------
+
+function ModelFileLink({
+  capture,
+  onReveal,
+  onOpen,
+  onRelink,
+  onFindCandidates
+}: {
+  capture: NamCaptureRow
+  onReveal: (p: string) => void
+  onOpen: (p: string) => void
+  onRelink: (newPath: string) => Promise<void>
+  onFindCandidates: (modelName: string) => Promise<string[]>
+}): React.ReactElement {
+  const result = capture.result
+  const [candidates, setCandidates] = useState<string[] | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  useEffect(() => {
+    setCandidates(null)
+    setErr(null)
+  }, [capture.itemId])
+
+  if (!result?.outputModelPath)
+    return <span className="text-[11px] text-nm-text-3">No model path recorded.</span>
+
+  if (capture.modelFile != null) {
+    return (
+      <div className="flex flex-col gap-1 text-[11px]">
+        <span className="text-nm-text-2 break-all">{result.outputModelPath}</span>
+        <span className="text-nm-text-3">
+          {formatBytes(capture.modelFile.bytes)} · {relTime(capture.modelFile.mtimeMs)}
+        </span>
+        <div className="flex gap-3">
+          <button onClick={() => onOpen(result.outputModelPath)} className="text-nm-accent hover:underline">
+            Open
+          </button>
+          <button onClick={() => onReveal(result.outputModelPath)} className="text-nm-accent hover:underline">
+            Reveal in folder
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  const locate = async (): Promise<void> => {
+    const picked = await window.api.openFiles()
+    if (picked && picked[0]) {
+      try {
+        await onRelink(picked[0])
+      } catch (e) {
+        setErr(String(e))
+      }
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5 text-[11px]">
+      <span className="text-amber-600 dark:text-amber-400">
+        Model file moved or renamed — {result.outputModelPath}
+      </span>
+      {err && <span className="text-red-500">{err}</span>}
+      {candidates == null ? (
+        <div className="flex gap-3">
+          <button
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true)
+              setErr(null)
+              try {
+                const hits = await onFindCandidates(result.modelName || '')
+                setCandidates(hits)
+                if (hits.length === 1) await onRelink(hits[0])
+              } catch (e) {
+                setErr(String(e))
+              } finally {
+                setBusy(false)
+              }
+            }}
+            className="text-nm-accent hover:underline disabled:opacity-50"
+          >
+            {busy ? 'Searching…' : 'Auto-find'}
+          </button>
+          <button onClick={locate} className="text-nm-accent hover:underline">
+            Locate…
+          </button>
+        </div>
+      ) : candidates.length === 0 ? (
+        <div className="flex flex-col gap-1">
+          <span className="text-nm-text-3">No match found under the training output root.</span>
+          <button onClick={locate} className="text-nm-accent hover:underline self-start">
+            Locate…
+          </button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1">
+          {candidates.map((c) => (
+            <button
+              key={c}
+              onClick={() => void onRelink(c)}
+              className="text-left text-nm-accent hover:underline break-all"
+            >
+              Relink → {c}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// --- per-capture right panel ------------------------------------------------
+
+function CaptureDetailPanel({
+  capture,
+  projectId,
+  outputRoot,
+  architecture,
+  epochs,
+  onBack,
+  onReveal,
+  onOpen,
+  onQueue,
+  onEditMetadata,
+  onRelink,
+  onFindCandidates
+}: {
+  capture: NamCaptureRow
+  projectId: string
+  outputRoot: string
+  architecture: string
+  epochs: number
+  onBack: () => void
+  onReveal: (p: string) => void
+  onOpen: (p: string) => void
+  onQueue: (mode: 'stage' | 'runNext') => void
+  onEditMetadata: (patch: NamCaptureMetadataPatch) => Promise<void>
+  onRelink: (newPath: string) => Promise<void>
+  onFindCandidates: (modelName: string) => Promise<string[]>
+}): React.ReactElement {
+  const c = capture
+  const cal = c.calibration
+  const r = c.result
+  const exc = c.excitationPath
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-semibold text-nm-text-2 truncate">{c.captureName}</span>
+        <button onClick={onBack} className="text-[11px] text-nm-accent hover:underline flex-shrink-0">
+          ← Project
+        </button>
+      </div>
+
+      <section className="flex flex-col gap-2">
+        <span className="text-[11px] font-semibold text-nm-text-2">Files</span>
+        <Row label="Recording">
+          {c.recordingPath ? (
+            <span className="flex flex-col gap-0.5">
+              <span className="break-all">{c.recordingPath.replace(/^.*[\\/]/, '')}</span>
+              <span className="text-[11px] text-nm-text-3">
+                {[
+                  audioLabel(c),
+                  durationLabel(c.recordingDurationSec),
+                  formatBytes(c.recordingFile?.bytes)
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </span>
+              <button
+                onClick={() => onReveal(c.recordingPath as string)}
+                className="text-[11px] text-nm-accent hover:underline self-start"
+              >
+                Reveal
+              </button>
+            </span>
+          ) : (
+            '—'
+          )}
+        </Row>
+        <Row label="Excitation">
+          {exc ? (
+            <span className="flex flex-col gap-0.5">
+              <span className="break-all">{exc.replace(/^.*[\\/]/, '')}</span>
+              {c.excitationSourceName && (
+                <span className="text-[11px] text-nm-text-3">source {c.excitationSourceName}</span>
+              )}
+              {c.stimulusSha256 && (
+                <span className="text-[11px] text-nm-text-3">sha256 {c.stimulusSha256.slice(0, 12)}…</span>
+              )}
+              <button
+                onClick={() => onReveal(exc)}
+                className="text-[11px] text-nm-accent hover:underline self-start"
+              >
+                Reveal
+              </button>
+            </span>
+          ) : (
+            '—'
+          )}
+        </Row>
+      </section>
+
+      <section className="flex flex-col gap-2 border-t border-nm-border-s pt-3">
+        <span className="text-[11px] font-semibold text-nm-text-2">Timing</span>
+        {c.measuredLatencySamples != null && (
+          <Row label="Measured latency">{c.measuredLatencySamples} samples</Row>
+        )}
+        {fmtDateTime(c.createdAt) && <Row label="Captured">{fmtDateTime(c.createdAt)}</Row>}
+      </section>
+
+      {cal && (captureIsCalibrated(c) || cal.method) && (
+        <section className="flex flex-col gap-2 border-t border-nm-border-s pt-3">
+          <span className="text-[11px] font-semibold text-nm-text-2">Calibration</span>
+          {cal.method && <Row label="Method">{cal.method}</Row>}
+          {cal.confidence && <Row label="Confidence">{cal.confidence}</Row>}
+          {cal.profileName && <Row label="Profile">{cal.profileName}</Row>}
+          {fmtDateTime(cal.calibratedAt) && <Row label="Calibrated">{fmtDateTime(cal.calibratedAt)}</Row>}
+          <Row label="Levels">
+            input {cal.inputLevelDbu ?? '?'} dBu · output {cal.outputLevelDbu ?? '?'} dBu
+          </Row>
+          <span className="text-[11px] text-nm-text-3">
+            Embedded into the trained model as input_level_dbu / output_level_dbu.
+          </span>
+        </section>
+      )}
+
+      <section className="flex flex-col gap-2 border-t border-nm-border-s pt-3">
+        <span className="text-[11px] font-semibold text-nm-text-2">Model metadata</span>
+        <span className="text-[11px] text-nm-text-3">
+          Seeds the trained <code>.nam</code>. Defaults to IR Lab&apos;s suggestion; edits here are
+          what the model gets. Nothing is written back to nam-capture.json.
+        </span>
+        <MetadataEditor capture={c} onSave={onEditMetadata} />
+      </section>
+
+      <section className="flex flex-col gap-2 border-t border-nm-border-s pt-3">
+        <span className="text-[11px] font-semibold text-nm-text-2">Training</span>
+        {c.trained && r ? (
+          <>
+            <Row label="Model">{r.modelName || '—'}</Row>
+            <Row label="Architecture">{r.architecture || '—'}</Row>
+            {r.validationEsr != null && <Row label="Validation ESR">{r.validationEsr.toFixed(5)}</Row>}
+            {(r.validationEsrFull != null || r.validationEsrLite != null) && (
+              <Row label="Sub-model ESR">
+                {[
+                  r.validationEsrFull != null ? `Full ${r.validationEsrFull.toFixed(5)}` : null,
+                  r.validationEsrLite != null ? `Lite ${r.validationEsrLite.toFixed(5)}` : null
+                ]
+                  .filter(Boolean)
+                  .join('  ')}
+              </Row>
+            )}
+            {fmtDateTime(r.trainedAt) && (
+              <Row label="Trained">
+                {fmtDateTime(r.trainedAt)} ({relTime(r.trainedAt)})
+              </Row>
+            )}
+            {r.trainerJobId && <Row label="Trainer job">{r.trainerJobId}</Row>}
+            <Row label="Model file">
+              <ModelFileLink
+                capture={c}
+                onReveal={onReveal}
+                onOpen={onOpen}
+                onRelink={onRelink}
+                onFindCandidates={onFindCandidates}
+              />
+            </Row>
+            {c.graphExists && r.graphPath && (
+              <img
+                src={fileSrc(r.graphPath)}
+                alt="training graph"
+                className="w-full rounded border border-nm-border-s bg-field-bg"
+                loading="lazy"
+              />
+            )}
+          </>
+        ) : (
+          <>
+            <span className="text-[11px] text-nm-text-3">
+              Not trained yet. Uses architecture <strong>{ARCH_LABEL[architecture] ?? architecture}</strong>,{' '}
+              {epochs} epochs, output {outputRoot || '(choose a folder in the project view)'}.
+            </span>
+            <div className="flex gap-2">
+              <button
+                disabled={!outputRoot}
+                onClick={() => onQueue('stage')}
+                className="px-2.5 py-1 text-xs rounded bg-nm-accent text-accent-fg hover:opacity-90 disabled:opacity-50"
+              >
+                Queue this capture
+              </button>
+              <button
+                disabled={!outputRoot}
+                onClick={() => onQueue('runNext')}
+                className="px-2.5 py-1 text-xs rounded border border-nm-accent/50 text-nm-accent hover:bg-nm-accent/10 disabled:opacity-50"
+              >
+                Run next
+              </button>
+            </div>
+          </>
+        )}
+      </section>
+
+      <section className="flex flex-col gap-2 border-t border-nm-border-s pt-3">
+        <span className="text-[11px] font-semibold text-nm-text-2">Provenance</span>
+        <Row label="App">IR Lab</Row>
+        {c.captureId && <Row label="Capture id">{c.captureId}</Row>}
+        {projectId && <Row label="Project id">{projectId}</Row>}
+        {c.syntheticSourceIrName && <Row label="Synthetic source">{c.syntheticSourceIrName}</Row>}
+      </section>
+    </div>
+  )
+}
+
 /** A capture is batch-eligible if it isn't trained yet and both WAV paths resolved. Synthetic
  * captures only count when includeSynthetic is on. */
 function isQueueEligible(c: NamCaptureRow, includeSynthetic: boolean): boolean {
   return !c.trained && (includeSynthetic || !c.synthetic) && !!c.excitationPath && !!c.recordingPath
 }
 
-/** One capture -> the IPC batch-item shape (carries calibration dBu + suggested-metadata hints). */
-function toBatchItem(c: NamCaptureRow, projectName: string): {
+/** One capture -> the IPC batch-item shape. Carries the **effective** calibration dBu +
+ * model-metadata (falling back to IR Lab's suggestion) — that's what seeds the trained .nam. */
+function toBatchItem(
+  c: NamCaptureRow,
+  projectName: string
+): {
   excitationPath: string
   recordingPath: string
   captureId: string
@@ -306,6 +1340,16 @@ function toBatchItem(c: NamCaptureRow, projectName: string): {
     toneType: string | null
   } | null
 } {
+  const eff = c.effective
+  const pick = (a: string | null, b: string | null | undefined): string | null => a ?? b ?? null
+  const meta = {
+    modeledBy: pick(eff.modeledBy, c.suggested?.modeledBy),
+    gearMake: pick(eff.gearMake, c.suggested?.gearMake),
+    gearModel: pick(eff.gearModel, c.suggested?.gearModel),
+    gearType: pick(eff.gearType, c.suggested?.gearType),
+    toneType: pick(eff.toneType, c.suggested?.toneType)
+  }
+  const anyMeta = Object.values(meta).some((v) => v != null)
   return {
     excitationPath: c.excitationPath as string,
     recordingPath: c.recordingPath as string,
@@ -314,17 +1358,9 @@ function toBatchItem(c: NamCaptureRow, projectName: string): {
     captureFolderPath: c.captureFolderPath as string,
     projectName,
     synthetic: c.synthetic,
-    inputLevelDbu: c.calibration?.inputLevelDbu ?? null,
-    outputLevelDbu: c.calibration?.outputLevelDbu ?? null,
-    suggested: c.suggested
-      ? {
-          modeledBy: c.suggested.modeledBy,
-          gearMake: c.suggested.gearMake,
-          gearModel: c.suggested.gearModel,
-          gearType: c.suggested.gearType,
-          toneType: c.suggested.toneType
-        }
-      : null
+    inputLevelDbu: eff.inputLevelDbu ?? c.calibration?.inputLevelDbu ?? null,
+    outputLevelDbu: eff.outputLevelDbu ?? c.calibration?.outputLevelDbu ?? null,
+    suggested: anyMeta ? meta : null
   }
 }
 
@@ -343,12 +1379,17 @@ export function NamProjectsShell(): React.ReactElement {
   const [view, setView] = useState<'projects' | 'overview'>(() =>
     readStored(VIEW_KEY) === 'overview' ? 'overview' : 'projects'
   )
+  const [captureView, setCaptureView] = useState<'list' | 'cards'>(() =>
+    readStored(CAPTURE_VIEW_KEY) === 'cards' ? 'cards' : 'list'
+  )
   const [overview, setOverview] = useState<NamLibraryOverview | null>(null)
   const [reportCopied, setReportCopied] = useState(false)
   const [projectFilter, setProjectFilter] = useState('')
   const [captureFilter, setCaptureFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [facets, setFacets] = useState<FacetState>(EMPTY_FACETS)
   const [selectedCaptureIds, setSelectedCaptureIds] = useState<Set<string>>(new Set())
+  const [selectedCaptureId, setSelectedCaptureId] = useState<string | null>(null)
 
   const [railWidth, setRailWidth] = useState(240)
   const dragging = useRef(false)
@@ -407,7 +1448,9 @@ export function NamProjectsShell(): React.ReactElement {
     try {
       const list = await window.api.irLibraryListNamProjects()
       setProjects(list)
-      setSelectedId((prev) => (prev && list.some((p) => p.collectionId === prev) ? prev : list[0]?.collectionId ?? null))
+      setSelectedId((prev) =>
+        prev && list.some((p) => p.collectionId === prev) ? prev : list[0]?.collectionId ?? null
+      )
     } catch (err) {
       setError(String(err))
     } finally {
@@ -425,6 +1468,9 @@ export function NamProjectsShell(): React.ReactElement {
   useEffect(() => {
     writeStored(VIEW_KEY, view)
   }, [view])
+  useEffect(() => {
+    writeStored(CAPTURE_VIEW_KEY, captureView)
+  }, [captureView])
 
   const refreshDetail = useCallback(async (collectionId: string) => {
     try {
@@ -448,6 +1494,8 @@ export function NamProjectsShell(): React.ReactElement {
 
   useEffect(() => {
     setSelectedCaptureIds(new Set())
+    setSelectedCaptureId(null)
+    setFacets(EMPTY_FACETS)
     if (selectedId) void refreshDetail(selectedId)
     else setDetail(null)
   }, [selectedId, refreshDetail])
@@ -542,17 +1590,51 @@ export function NamProjectsShell(): React.ReactElement {
     return q ? projects.filter((p) => p.name.toLowerCase().includes(q)) : projects
   }, [projects, projectFilter])
 
+  const facetOptions = useMemo(() => availableFacets(detail?.captures ?? []), [detail])
+
   const visibleCaptures = useMemo(() => {
     if (!detail) return []
     const q = captureFilter.trim().toLowerCase()
     return detail.captures.filter((c) => {
-      if (q && !c.captureName.toLowerCase().includes(q)) return false
-      if (statusFilter === 'trained') return c.trained
-      if (statusFilter === 'untrained') return !c.trained
-      if (statusFilter === 'synthetic') return c.synthetic
+      if (q) {
+        const hay = [
+          c.captureName,
+          c.effective.gearMake,
+          c.effective.gearModel,
+          c.effective.modeledBy,
+          c.suggested?.gearMake,
+          c.suggested?.gearModel,
+          c.suggested?.modeledBy
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+        if (!hay.includes(q)) return false
+      }
+      if (statusFilter === 'trained' && !c.trained) return false
+      if (statusFilter === 'untrained' && c.trained) return false
+      if (statusFilter === 'synthetic' && !c.synthetic) return false
+      if (!matchesFacets(c, facets)) return false
       return true
     })
-  }, [detail, captureFilter, statusFilter])
+  }, [detail, captureFilter, statusFilter, facets])
+
+  const filtersActive =
+    captureFilter.trim() !== '' ||
+    statusFilter !== 'all' ||
+    Object.values(facets).some((a) => a.length > 0)
+
+  const toggleFacet = useCallback((key: FacetKey, value: string) => {
+    setFacets((f) => {
+      const cur = f[key]
+      return { ...f, [key]: cur.includes(value) ? cur.filter((v) => v !== value) : [...cur, value] }
+    })
+  }, [])
+  const clearFilters = useCallback(() => {
+    setFacets(EMPTY_FACETS)
+    setCaptureFilter('')
+    setStatusFilter('all')
+  }, [])
 
   const toggleCapture = useCallback((itemId: string) => {
     setSelectedCaptureIds((prev) => {
@@ -578,6 +1660,14 @@ export function NamProjectsShell(): React.ReactElement {
   const selectedCaptures = useMemo(
     () => (detail ? detail.captures.filter((c) => selectedCaptureIds.has(c.itemId)) : []),
     [detail, selectedCaptureIds]
+  )
+
+  const selectedCapture = useMemo(
+    () =>
+      detail && selectedCaptureId
+        ? detail.captures.find((c) => c.itemId === selectedCaptureId) ?? null
+        : null,
+    [detail, selectedCaptureId]
   )
 
   // --- batch creation ---
@@ -609,7 +1699,9 @@ export function NamProjectsShell(): React.ReactElement {
         })
         if (res.success) {
           if (mode === 'stage') {
-            setMessage(`Staged ${res.built ?? eligible.length} job${(res.built ?? 1) === 1 ? '' : 's'} — opening the Batches page…`)
+            setMessage(
+              `Staged ${res.built ?? eligible.length} job${(res.built ?? 1) === 1 ? '' : 's'} — opening the Batches page…`
+            )
             goToTrainingBatches()
           } else {
             setMessage(
@@ -648,6 +1740,98 @@ export function NamProjectsShell(): React.ReactElement {
     if (target) window.api.revealFile(target)
   }, [])
 
+  // --- editable metadata + trained-.nam relink ---
+  const applyUpdatedCapture = useCallback((row: NamCaptureRow | null) => {
+    if (!row) return
+    setDetail((d) =>
+      d ? { ...d, captures: d.captures.map((c) => (c.itemId === row.itemId ? row : c)) } : d
+    )
+  }, [])
+
+  const handleEditMetadata = useCallback(
+    async (itemId: string, patch: NamCaptureMetadataPatch) => {
+      const row = await window.api.irLibrarySetNamCaptureMetadata(itemId, patch)
+      applyUpdatedCapture(row)
+    },
+    [applyUpdatedCapture]
+  )
+  const handleRelinkModel = useCallback(
+    async (itemId: string, newPath: string) => {
+      const row = await window.api.irLibraryRelinkNamModel(itemId, newPath)
+      applyUpdatedCapture(row)
+    },
+    [applyUpdatedCapture]
+  )
+  const findCandidates = useCallback(
+    (modelName: string) =>
+      window.api.irLibraryFindNamModelCandidates(modelName, [outputRoot].filter(Boolean) as string[]),
+    [outputRoot]
+  )
+
+  const captureMenuItems = useCallback(
+    (capture: NamCaptureRow): ContextMenuItem[] => {
+      const items: ContextMenuItem[] = [
+        {
+          label: 'Open capture detail',
+          onClick: () => {
+            setSelectedCaptureId(capture.itemId)
+            setCaptureMenu(null)
+          }
+        },
+        {
+          label: 'Create training batch from this capture',
+          onClick: () => {
+            setCaptureMenu(null)
+            void stageBatch([capture], capture.captureName)
+          }
+        },
+        {
+          label: 'Run next (jump the queue)',
+          onClick: () => {
+            setCaptureMenu(null)
+            void submitBatch([capture], capture.captureName, 'runNext')
+          }
+        },
+        {
+          label: selectedCaptureIds.has(capture.itemId) ? 'Remove from selection' : 'Add to selection',
+          onClick: () => {
+            toggleCapture(capture.itemId)
+            setCaptureMenu(null)
+          }
+        },
+        { divider: true },
+        { label: 'Reveal WAV in Explorer', onClick: () => revealCapture(capture) }
+      ]
+      if (capture.trained && capture.result?.outputModelPath) {
+        const modelPath = capture.result.outputModelPath
+        items.push({
+          label: capture.modelFile ? 'Open .nam' : 'Open .nam (may be missing)',
+          onClick: () => {
+            void window.api.openFile(modelPath)
+            setCaptureMenu(null)
+          }
+        })
+        items.push({
+          label: 'Reveal .nam in folder',
+          onClick: () => {
+            window.api.revealFile(modelPath)
+            setCaptureMenu(null)
+          }
+        })
+      }
+      items.push({ divider: true })
+      items.push({
+        label: 'Rescan all',
+        onClick: () => {
+          setCaptureMenu(null)
+          void rescanAll()
+        }
+      })
+      return items
+    },
+    [selectedCaptureIds, stageBatch, submitBatch, toggleCapture, revealCapture, rescanAll]
+  )
+
   return (
     <div className="flex flex-col h-screen bg-app-bg text-nm-text overflow-hidden">
       <div className="flex items-center gap-3 px-4 py-2 border-b border-nm-border flex-shrink-0">
@@ -680,7 +1864,8 @@ export function NamProjectsShell(): React.ReactElement {
         {projects.length > 0 && (
           <span className="text-xs text-nm-text-3 flex-shrink-0">
             {projects.length} project{projects.length === 1 ? '' : 's'} ·{' '}
-            {projects.reduce((n, p) => n + p.trainedCount, 0)}/{projects.reduce((n, p) => n + p.captureCount, 0)} captures trained
+            {projects.reduce((n, p) => n + p.trainedCount, 0)}/
+            {projects.reduce((n, p) => n + p.captureCount, 0)} captures trained
           </span>
         )}
       </div>
@@ -711,7 +1896,9 @@ export function NamProjectsShell(): React.ReactElement {
       )}
 
       {loading ? (
-        <div className="flex-1 flex items-center justify-center text-sm text-nm-text-3">Loading NAM projects…</div>
+        <div className="flex-1 flex items-center justify-center text-sm text-nm-text-3">
+          Loading NAM projects…
+        </div>
       ) : projects.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center p-8 text-nm-text-2">
           <p className="text-sm">No NAM Capture projects in the catalog yet.</p>
@@ -740,7 +1927,11 @@ export function NamProjectsShell(): React.ReactElement {
                 <StatTile label="Synthetic" value={overview.syntheticCaptures} tone="muted" />
                 <StatTile
                   label="Coverage"
-                  value={overview.totalCaptures ? `${Math.round((overview.trainedCaptures / overview.totalCaptures) * 100)}%` : '—'}
+                  value={
+                    overview.totalCaptures
+                      ? `${Math.round((overview.trainedCaptures / overview.totalCaptures) * 100)}%`
+                      : '—'
+                  }
                 />
                 <StatTile
                   label="Mean ESR"
@@ -842,20 +2033,25 @@ export function NamProjectsShell(): React.ReactElement {
           <div className="flex-1 flex flex-col min-w-0 min-h-0">
             {detail && (
               <>
-                <div className="flex items-center gap-2 px-4 py-2 border-b border-nm-border flex-shrink-0">
-                  <span className="text-sm font-medium text-nm-text truncate">{detail.name}</span>
-                  <span className="text-xs text-nm-text-3">
-                    {detail.captureCount} capture{detail.captureCount === 1 ? '' : 's'}
-                    {detail.syntheticCount > 0 && ` · ${detail.syntheticCount} synthetic`}
-                  </span>
-                </div>
+                <ProjectHeader detail={detail} onReveal={(p) => window.api.revealFile(p)} />
                 <div className="flex items-center gap-2 px-4 py-1.5 border-b border-nm-border-s flex-shrink-0">
                   <input
                     value={captureFilter}
                     onChange={(e) => setCaptureFilter(e.target.value)}
-                    placeholder="Filter captures…"
+                    placeholder="Filter captures (name, gear, modeled-by)…"
                     className="flex-1 min-w-0 text-xs px-1.5 py-0.5 rounded border border-field-bd bg-field-bg"
                   />
+                  <div className="flex rounded overflow-hidden border border-field-bd text-[11px] flex-shrink-0">
+                    {(['list', 'cards'] as const).map((v) => (
+                      <button
+                        key={v}
+                        onClick={() => setCaptureView(v)}
+                        className={`px-2 py-1 ${captureView === v ? 'bg-nm-accent text-accent-fg' : 'bg-field-bg text-nm-text-2 hover:bg-hov'}`}
+                      >
+                        {v === 'list' ? 'List' : 'Cards'}
+                      </button>
+                    ))}
+                  </div>
                   {(['all', 'untrained', 'trained', 'synthetic'] as const).map((s) => {
                     const n =
                       s === 'all'
@@ -875,8 +2071,9 @@ export function NamProjectsShell(): React.ReactElement {
                     )
                   })}
                 </div>
-                {visibleCaptures.length > 0 && (
-                  <div className="flex items-center gap-2 px-4 py-1 border-b border-nm-border-s flex-shrink-0 text-[11px] text-nm-text-3">
+                <FacetPills available={facetOptions} active={facets} onToggle={toggleFacet} />
+                <div className="flex items-center gap-3 px-4 py-1 border-b border-nm-border-s flex-shrink-0 text-[11px] text-nm-text-3">
+                  {visibleCaptures.length > 0 && (
                     <label className="flex items-center gap-1.5">
                       <input
                         type="checkbox"
@@ -885,20 +2082,54 @@ export function NamProjectsShell(): React.ReactElement {
                       />
                       Select all shown
                     </label>
-                  </div>
-                )}
+                  )}
+                  <span>
+                    showing {visibleCaptures.length} of {detail.captures.length}
+                  </span>
+                  {filtersActive && (
+                    <button onClick={clearFilters} className="text-nm-accent hover:underline">
+                      Clear filters
+                    </button>
+                  )}
+                </div>
               </>
             )}
             <div className="flex-1 overflow-y-auto">
-              {visibleCaptures.map((c) => (
-                <CaptureRow
-                  key={c.itemId}
-                  capture={c}
-                  selected={selectedCaptureIds.has(c.itemId)}
-                  onToggleSelect={() => toggleCapture(c.itemId)}
-                  onContextMenu={(capture, x, y) => setCaptureMenu({ capture, x, y })}
-                />
-              ))}
+              {detail && captureView === 'cards' ? (
+                <div
+                  className="grid gap-2 p-3"
+                  style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}
+                >
+                  {visibleCaptures.map((c) => (
+                    <CaptureCard
+                      key={c.itemId}
+                      capture={c}
+                      checked={selectedCaptureIds.has(c.itemId)}
+                      active={c.itemId === selectedCaptureId}
+                      onToggleCheck={() => toggleCapture(c.itemId)}
+                      onOpenDetail={() => setSelectedCaptureId(c.itemId)}
+                      onMenu={(capture, x, y) => setCaptureMenu({ capture, x, y })}
+                      onReveal={() => revealCapture(c)}
+                      onOpenModel={() =>
+                        c.result?.outputModelPath && void window.api.openFile(c.result.outputModelPath)
+                      }
+                      onQueue={() => void stageBatch([c], c.captureName)}
+                    />
+                  ))}
+                </div>
+              ) : (
+                visibleCaptures.map((c) => (
+                  <CaptureRow
+                    key={c.itemId}
+                    capture={c}
+                    checked={selectedCaptureIds.has(c.itemId)}
+                    active={c.itemId === selectedCaptureId}
+                    onToggleCheck={() => toggleCapture(c.itemId)}
+                    onOpenDetail={() => setSelectedCaptureId(c.itemId)}
+                    onMenu={(capture, x, y) => setCaptureMenu({ capture, x, y })}
+                  />
+                ))
+              )}
               {detail && visibleCaptures.length === 0 && (
                 <div className="px-4 py-4 text-xs text-nm-text-3">No captures match this filter.</div>
               )}
@@ -908,7 +2139,8 @@ export function NamProjectsShell(): React.ReactElement {
               <div className="flex items-center gap-3 px-4 py-2 border-t border-nm-border bg-panel-2 flex-shrink-0">
                 <span className="text-xs text-nm-text-2">
                   {selectedCaptures.length} selected
-                  {selectedCaptures.filter((c) => isQueueEligible(c, true)).length !== selectedCaptures.length &&
+                  {selectedCaptures.filter((c) => isQueueEligible(c, true)).length !==
+                    selectedCaptures.length &&
                     ` (${selectedCaptures.filter((c) => isQueueEligible(c, true)).length} trainable)`}
                 </span>
                 <button
@@ -919,7 +2151,9 @@ export function NamProjectsShell(): React.ReactElement {
                   {queueing ? 'Working…' : 'Create training batch'}
                 </button>
                 <button
-                  onClick={() => submitBatch(selectedCaptures, `${selectedCaptures.length} selected`, 'runNext')}
+                  onClick={() =>
+                    submitBatch(selectedCaptures, `${selectedCaptures.length} selected`, 'runNext')
+                  }
                   disabled={queueing}
                   title="Queue these live and jump the line — runs after the current file, or first if the queue is paused"
                   className="px-3 py-1 text-xs rounded border border-nm-accent/50 text-nm-accent hover:bg-nm-accent/10 disabled:opacity-50"
@@ -937,7 +2171,22 @@ export function NamProjectsShell(): React.ReactElement {
           </div>
 
           <div className="w-[320px] flex-shrink-0 border-l border-nm-border overflow-y-auto p-4 flex flex-col gap-4">
-            {detail && (
+            {selectedCapture ? (
+              <CaptureDetailPanel
+                capture={selectedCapture}
+                projectId={detail?.projectId ?? ''}
+                outputRoot={outputRoot}
+                architecture={architecture}
+                epochs={epochs}
+                onBack={() => setSelectedCaptureId(null)}
+                onReveal={(p) => window.api.revealFile(p)}
+                onOpen={(p) => void window.api.openFile(p)}
+                onQueue={(mode) => submitBatch([selectedCapture], selectedCapture.captureName, mode)}
+                onEditMetadata={(patch) => handleEditMetadata(selectedCapture.itemId, patch)}
+                onRelink={(newPath) => handleRelinkModel(selectedCapture.itemId, newPath)}
+                onFindCandidates={(modelName) => findCandidates(modelName)}
+              />
+            ) : detail ? (
               <>
                 <div className="flex flex-col gap-2">
                   <span className="text-xs font-semibold text-nm-text-2">Project details</span>
@@ -957,6 +2206,10 @@ export function NamProjectsShell(): React.ReactElement {
                         No project details supplied by IR Lab (optional — nothing depends on them).
                       </span>
                     )}
+                  <span className="text-[11px] text-nm-text-3 pt-1">
+                    Select a capture to see its files, calibration, editable model metadata and
+                    training result.
+                  </span>
                 </div>
 
                 <div className="border-t border-nm-border-s pt-3 flex flex-col gap-2.5">
@@ -1006,7 +2259,8 @@ export function NamProjectsShell(): React.ReactElement {
                         checked={includeSynthetic}
                         onChange={(e) => setIncludeSynthetic(e.target.checked)}
                       />
-                      Include {detail.syntheticCount} synthetic capture{detail.syntheticCount === 1 ? '' : 's'}
+                      Include {detail.syntheticCount} synthetic capture
+                      {detail.syntheticCount === 1 ? '' : 's'}
                     </label>
                   )}
 
@@ -1022,7 +2276,9 @@ export function NamProjectsShell(): React.ReactElement {
                         : `Stage batch — ${projectEligible.length} untrained capture${projectEligible.length === 1 ? '' : 's'}`}
                   </button>
                   <button
-                    onClick={() => submitBatch(projectEligible, `${projectEligible.length} untrained`, 'runNext')}
+                    onClick={() =>
+                      submitBatch(projectEligible, `${projectEligible.length} untrained`, 'runNext')
+                    }
                     disabled={queueing || projectEligible.length === 0}
                     title="Queue these live and jump the line — runs after the current file, or first if the queue is paused"
                     className="px-3 py-1.5 text-xs rounded border border-nm-accent/50 text-nm-accent hover:bg-nm-accent/10 disabled:opacity-50"
@@ -1030,14 +2286,16 @@ export function NamProjectsShell(): React.ReactElement {
                     Run next
                   </button>
                   <span className="text-[11px] text-nm-text-3">
-                    <strong>Stage</strong> parks the jobs on the Batches page — nothing runs until you hit Start there.
-                    <strong> Run next</strong> queues them live and jumps ahead of the current queue (after the running
-                    file finishes, or first when a paused queue resumes). Already-trained captures are skipped; trained{' '}
-                    <code>.nam</code> files land in the folder above and each badge flips on completion.
+                    <strong>Stage</strong> parks the jobs on the Batches page — nothing runs until you
+                    hit Start there.
+                    <strong> Run next</strong> queues them live and jumps ahead of the current queue
+                    (after the running file finishes, or first when a paused queue resumes).
+                    Already-trained captures are skipped; trained <code>.nam</code> files land in the
+                    folder above and each badge flips on completion.
                   </span>
                 </div>
               </>
-            )}
+            ) : null}
           </div>
         </div>
       )}
@@ -1047,34 +2305,7 @@ export function NamProjectsShell(): React.ReactElement {
           x={captureMenu.x}
           y={captureMenu.y}
           onClose={() => setCaptureMenu(null)}
-          items={[
-            {
-              label: 'Create training batch from this capture',
-              onClick: () => {
-                const c = captureMenu.capture
-                setCaptureMenu(null)
-                void stageBatch([c], c.captureName)
-              }
-            },
-            {
-              label: selectedCaptureIds.has(captureMenu.capture.itemId) ? 'Remove from selection' : 'Add to selection',
-              onClick: () => {
-                toggleCapture(captureMenu.capture.itemId)
-                setCaptureMenu(null)
-              }
-            },
-            {
-              label: 'Reveal in Explorer',
-              onClick: () => revealCapture(captureMenu.capture)
-            },
-            {
-              label: 'Rescan all',
-              onClick: () => {
-                setCaptureMenu(null)
-                void rescanAll()
-              }
-            }
-          ]}
+          items={captureMenuItems(captureMenu.capture)}
         />
       )}
 
@@ -1118,7 +2349,9 @@ export function NamProjectsShell(): React.ReactElement {
                       submissionLabel: `${d.name} — ${eligible.length} untrained`
                     })
                     if (res.success) {
-                      setMessage(`Staged ${res.built ?? eligible.length} job${(res.built ?? 1) === 1 ? '' : 's'} — opening the Batches page…`)
+                      setMessage(
+                        `Staged ${res.built ?? eligible.length} job${(res.built ?? 1) === 1 ? '' : 's'} — opening the Batches page…`
+                      )
                       goToTrainingBatches()
                     } else {
                       setError(res.error ?? 'Could not stage the batch.')
@@ -1138,7 +2371,8 @@ export function NamProjectsShell(): React.ReactElement {
                 setProjectMenu(null)
                 void (async () => {
                   const d = await window.api.irLibraryGetNamProjectDetail(p.collectionId)
-                  const folder = d?.captures.find((c) => c.captureFolderPath)?.captureFolderPath
+                  const folder =
+                    d?.namCapturesDir ?? d?.captures.find((c) => c.captureFolderPath)?.captureFolderPath
                   if (folder) window.api.revealFile(folder)
                 })()
               }
