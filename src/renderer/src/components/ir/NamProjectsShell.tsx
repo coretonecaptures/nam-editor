@@ -1364,7 +1364,7 @@ function toBatchItem(
   }
 }
 
-export function NamProjectsShell(): React.ReactElement {
+export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = {}): React.ReactElement {
   const [projects, setProjects] = useState<NamProjectSummary[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(() => readStored(SELECTED_KEY) || null)
   const [detail, setDetail] = useState<NamProjectDetail | null>(null)
@@ -1833,7 +1833,7 @@ export function NamProjectsShell(): React.ReactElement {
   )
 
   return (
-    <div className="flex flex-col h-full bg-app-bg text-nm-text overflow-hidden">
+    <div className="flex flex-col h-screen bg-app-bg text-nm-text overflow-hidden">
       <div className="flex items-center gap-3 px-4 py-2 border-b border-nm-border flex-shrink-0">
         <h1 className="text-sm font-semibold text-nm-text-2">NAM Projects</h1>
         <button
@@ -1895,6 +1895,9 @@ export function NamProjectsShell(): React.ReactElement {
         </div>
       )}
 
+      <div className="flex flex-1 min-h-0">
+        {leftRail}
+        <div className="flex-1 flex flex-col min-w-0 min-h-0">
       {loading ? (
         <div className="flex-1 flex items-center justify-center text-sm text-nm-text-3">
           Loading NAM projects…
@@ -2299,6 +2302,8 @@ export function NamProjectsShell(): React.ReactElement {
           </div>
         </div>
       )}
+        </div>
+      </div>
 
       {captureMenu && (
         <ContextMenu

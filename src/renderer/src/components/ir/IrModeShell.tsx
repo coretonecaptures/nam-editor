@@ -145,7 +145,7 @@ function splitPath(rel: string): { folder: string; name: string } {
  * the same badge again clears it. Root switcher — a dropdown next to search scopes browse/search
  * to one library_root or all of them.
  */
-export function IrModeShell(): React.ReactElement {
+export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): React.ReactElement {
   const [roots, setRoots] = useState<LibraryRoot[]>([])
   const [scanning, setScanning] = useState(false)
   const [scanProgress, setScanProgress] = useState<{ filesSeen: number; foldersSeen: number; elapsedMs: number } | null>(null)
@@ -821,7 +821,7 @@ export function IrModeShell(): React.ReactElement {
   )
 
   return (
-    <div className="flex flex-col h-full bg-app-bg text-nm-text overflow-hidden">
+    <div className="flex flex-col h-screen bg-app-bg text-nm-text overflow-hidden">
       <IrMenuBar
         onAddLibraryFolder={handleAddFolder}
         onImportLabProjects={handleImportLabProjects}
@@ -897,6 +897,9 @@ export function IrModeShell(): React.ReactElement {
           </button>
         </div>
       )}
+      <div className="flex flex-1 min-h-0">
+        {leftRail}
+        <div className="flex-1 flex flex-col min-w-0 min-h-0">
       {!hasAnyRoot && !scanning ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center p-8 text-nm-text-2">
           <p className="text-sm">No IR library folders added yet.</p>
@@ -1201,6 +1204,8 @@ export function IrModeShell(): React.ReactElement {
           </div>
         </div>
       )}
+        </div>
+      </div>
 
       <IrTray
         rows={trayRows}

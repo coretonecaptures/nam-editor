@@ -1,13 +1,14 @@
 /**
- * Skinny horizontal mode bar — the persistent switcher between the app's three top-level
- * workspaces (NAM `.nam` editor, IR cabinet library, NAM Projects capture folders). Replaces
- * the floating `fixed top-10 right-3` overlay pill that used to live in AppRoot.
+ * Skinny vertical navigation rail — the persistent switcher between the app's three top-level
+ * workspaces (NAM `.nam` editor, IR cabinet library, NAM Projects capture folders). Replaces the
+ * floating `fixed top-10 right-3` overlay pill that used to live in AppRoot.
  *
- * Sits as a thin strip directly under the main toolbar (NAM mode) or at the top of the shell
- * (IR / NAM Projects) — it is a secondary bar, not window chrome, so it does not carry the app
- * wordmark; the NAM Lab logo stays in its established place in the toolbar.
+ * It is rendered *inside* each shell's working area, below that shell's own top bar — the top
+ * bar (and the NAM Lab wordmark in it) is never touched or covered, and the rail never occupies
+ * the top-left window corner. A ~44px column down the left edge, one square line-art icon per
+ * mode, the active one lit with a left accent bar (VS Code activity bar / Discord rail idiom).
  *
- * Icons are abstract line art in the app's standard idiom (`viewBox 0 0 24 24`, `fill="none"`,
+ * Icons follow the app's standard idiom (`viewBox 0 0 24 24`, `fill="none"`,
  * `stroke="currentColor"`, `strokeWidth 2`):
  *   NAM          → waveform bars (a model built from audio)
  *   IR           → speaker cabinet (impulse responses are cab captures)
@@ -51,22 +52,17 @@ const MODES: Array<{ mode: AppMode; label: string; hint: string; icon: React.Rea
   }
 ]
 
-export function ModeBar({
+export function ModeRail({
   mode,
-  onChange,
-  isMac
+  onChange
 }: {
   mode: AppMode
   onChange: (mode: AppMode) => void
-  /** true when this bar is the topmost element (IR / NAM Projects modes) and must clear the
-   * macOS traffic lights; false when it sits under the NAM-mode toolbar. */
-  isMac: boolean
 }): React.ReactElement {
   return (
     <nav
       aria-label="Workspace"
-      className="flex-shrink-0 h-9 flex items-center gap-1 px-2 bg-panel-2 border-b border-nm-border select-none"
-      style={{ WebkitAppRegion: 'drag', paddingLeft: isMac ? 76 : 8 } as React.CSSProperties}
+      className="flex-shrink-0 w-11 h-full flex flex-col items-center gap-1 pt-2 bg-panel-2 border-r border-nm-border select-none"
     >
       {MODES.map(({ mode: m, label, hint, icon }) => {
         const active = mode === m
@@ -78,15 +74,14 @@ export function ModeBar({
             title={hint}
             aria-label={label}
             aria-current={active ? 'page' : undefined}
-            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-            className={`relative w-7 h-7 rounded-md flex items-center justify-center transition-colors ${
+            className={`relative w-9 h-9 rounded-lg flex items-center justify-center transition-colors ${
               active
                 ? 'bg-active-bg text-nm-accent'
                 : 'text-nm-text-3 hover:text-nm-text hover:bg-hov'
             }`}
           >
             {active && (
-              <span className="absolute -bottom-[7px] left-1.5 right-1.5 h-0.5 rounded-full bg-nm-accent" />
+              <span className="absolute -left-2 top-1.5 bottom-1.5 w-0.5 rounded-full bg-nm-accent" />
             )}
             <span className="w-[18px] h-[18px]">{icon}</span>
           </button>

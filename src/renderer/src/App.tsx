@@ -917,7 +917,7 @@ const EMPTY_LIBRARIAN: LibrarianState = {
   selectedFolders: []
 }
 
-export default function App({ headerAccessory }: { headerAccessory?: React.ReactNode } = {}) {
+export default function App({ leftRail }: { leftRail?: React.ReactNode } = {}) {
   const [helpView, setHelpView] = useState<HelpModalTab | null>(null)
   const [files, setFiles] = useState<NamFile[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -5115,10 +5115,9 @@ INSTRUCTIONS:
         }}
       />
 
-      {headerAccessory}
-
-      {/* Content area: card view (left) + 3-panel / ToneStore (right) */}
+      {/* Content area: mode rail (far left) + card view + 3-panel / ToneStore */}
       <div className="flex flex-1 overflow-hidden">
+        {leftRail}
         {cardView && librarian.folderTree?.children && librarian.rootFolder && (
           <FolderCardView
             rootNode={librarian.folderTree}
