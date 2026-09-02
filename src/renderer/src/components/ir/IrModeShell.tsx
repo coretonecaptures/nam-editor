@@ -7,6 +7,7 @@ import { ContextMenu } from '../ContextMenu'
 import { IrTray } from './IrTray'
 import { IrFilterBar } from './IrFilterBar'
 import { PlayerPanel } from '../PlayerPanel'
+import { DataGrid, type DataGridColumn } from '../DataGrid'
 import { loadNamFileForPlayback } from '../../utils/loadNamFile'
 import type { NamFile } from '../../types/nam'
 import guitarJackIcon from '../../assets/icons/guitar-jack.png'
@@ -138,6 +139,28 @@ function splitPath(rel: string): { folder: string; name: string } {
   return { folder: parts.join(' / '), name: name.replace(/\.wav$/i, '') }
 }
 
+/** Columns for the optional DataGrid "Grid" view. `key`s that map to a backend sort column
+ * (queryLibrary.ts SORT_COLUMNS) are sortable; the descriptive facet columns are not (the
+ * facet filter bar above the list already covers narrowing by those). Column filtering is off
+ * in this grid — `disableColumnFilters` — for the same reason. */
+const chLabel = (n: number | null): string =>
+  n === 1 ? 'mono' : n === 2 ? 'stereo' : n ? `${n}ch` : ''
+const IR_GRID_COLUMNS: DataGridColumn<IrItemRow>[] = [
+  { key: 'name', label: 'Name', minWidth: 180, defaultWidth: 300, defaultVisible: true, getValue: (r) => splitPath(r.relative_path).name },
+  { key: 'folder', label: 'Folder', minWidth: 160, defaultVisible: false, sortable: false, getValue: (r) => splitPath(r.relative_path).folder },
+  { key: 'size', label: 'Size', minWidth: 80, defaultVisible: true, align: 'right', getValue: (r) => formatBytes(r.file_size), sortValue: (r) => r.file_size ?? -1 },
+  { key: 'rate', label: 'Sample rate', minWidth: 100, defaultVisible: true, getValue: (r) => (r.sample_rate ? formatSampleRate(r.sample_rate) : ''), sortValue: (r) => r.sample_rate ?? 0 },
+  { key: 'depth', label: 'Bit depth', minWidth: 84, defaultVisible: true, getValue: (r) => (r.bit_depth ? `${r.bit_depth}-bit` : ''), sortValue: (r) => r.bit_depth ?? 0 },
+  { key: 'channels', label: 'Channels', minWidth: 84, defaultVisible: false, sortable: false, getValue: (r) => chLabel(r.channels) },
+  { key: 'duration', label: 'Length', minWidth: 74, defaultVisible: false, align: 'right', getValue: (r) => (r.duration_seconds ? `${r.duration_seconds.toFixed(2)}s` : ''), sortValue: (r) => r.duration_seconds ?? -1 },
+  { key: 'manufacturer', label: 'Manufacturer', minWidth: 120, defaultVisible: true, sortable: false, getValue: (r) => r.manufacturer ?? '' },
+  { key: 'cabinet', label: 'Cabinet', minWidth: 130, defaultVisible: false, sortable: false, getValue: (r) => r.cabinet ?? '' },
+  { key: 'speaker', label: 'Speaker', minWidth: 120, defaultVisible: true, sortable: false, getValue: (r) => r.speaker ?? '' },
+  { key: 'microphone', label: 'Microphone', minWidth: 120, defaultVisible: true, sortable: false, getValue: (r) => r.microphone ?? '' },
+  { key: 'audio_format', label: 'Format', minWidth: 90, defaultVisible: false, sortable: false, getValue: (r) => r.audio_format ?? '' },
+  { key: 'missing', label: 'Missing', minWidth: 84, defaultVisible: false, getValue: (r) => (r.missing_since ? 'Missing' : ''), sortValue: (r) => (r.missing_since ? 1 : 0) }
+]
+
 /**
  * Phase 2 — read-only browse + search over the IR catalog (docs/ir-lab-manager-build-plan.md
  * section 12, Phase 2), now showing Phase 3's vendor-parsed fields with confidence badges
@@ -264,6 +287,17 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
       return k
     })
   }, [])
+
+  const [irListView, setIrListView] = useState<'list' | 'grid'>(() =>
+    localStorage.getItem('nam-lab-ir-list-view') === 'grid' ? 'grid' : 'list'
+  )
+  useEffect(() => {
+    try {
+      localStorage.setItem('nam-lab-ir-list-view', irListView)
+    } catch {
+      /* non-fatal */
+    }
+  }, [irListView])
 
   // ── Audition, via NAM Lab's own PlayerPanel (see this component's header comment).
   // `playerIr` is the IR currently loaded into the player's cabinet AND the "is the player open"
@@ -890,6 +924,19 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           Rescan
         </button>
         {hasAnyRoot && (
+          <div className="flex rounded overflow-hidden border border-field-bd text-xs flex-shrink-0">
+            {(['list', 'grid'] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => setIrListView(v)}
+                className={`px-2 py-1 ${irListView === v ? 'bg-nm-accent text-accent-fg' : 'bg-field-bg text-nm-text-2 hover:bg-hov'}`}
+              >
+                {v === 'list' ? 'List' : 'Grid'}
+              </button>
+            ))}
+          </div>
+        )}
+        {hasAnyRoot && irListView === 'list' && (
           <div className="flex items-center flex-shrink-0">
             <select
               value={sortKey}
@@ -1025,7 +1072,31 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
               }}
               refreshKey={requestEpochRef.current}
             />
-            <VirtualList
+            {irListView === 'grid' ? (
+              <DataGrid<IrItemRow>
+                rowCount={total}
+                getRow={(i) => cacheRef.current.get(i)}
+                onRangeChange={onVisibleRangeChange}
+                rowHeight={40}
+                getRowId={(r) => r.id}
+                columns={IR_GRID_COLUMNS}
+                storageKey="ir-library-grid"
+                disableColumnFilters
+                sort={{ key: sortKey, dir: sortDir }}
+                onSortChange={(k, d) => {
+                  if ((IR_SORT_KEYS as readonly string[]).includes(k)) {
+                    setSortKey(k as IrSortKey)
+                    setSortDir(d)
+                  }
+                }}
+                onRowOpen={(row) => openPlayer(row, false)}
+                onRowContextMenu={(row, x, y) =>
+                  setContextMenu({ x: Math.min(x, window.innerWidth - 224), y, row })
+                }
+                className="flex-1"
+              />
+            ) : (
+              <VirtualList
               total={total}
               rowHeight={ROW_HEIGHT}
               onVisibleRangeChange={onVisibleRangeChange}
@@ -1201,6 +1272,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
             )
           }}
             />
+            )}
           </div>
           <div
             onMouseDown={onPanelDragStart}

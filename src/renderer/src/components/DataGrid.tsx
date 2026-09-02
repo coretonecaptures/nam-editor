@@ -2,20 +2,23 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 /**
- * Generic, data-agnostic table grid — the reusable core lifted out of FileList.tsx's `GridView`
+ * Generic, data-agnostic grid — the reusable core lifted out of FileList.tsx's `GridView`
  * (docs: "extract this into a reusable component that we can use on IR and NAM Project lists").
  *
- * What it owns: the column model (visibility + order + width, all persisted per `storageKey`),
- * the column chooser, drag-to-reorder, drag-to-resize + double-click autosize, a per-column
- * filter popover (a "contains" text box OR a distinct-value checklist), sortable headers, and
- * click / ctrl-click / shift-range / ctrl-A / arrow-key selection.
+ * Owns: the column model (visibility + order + width, persisted per `storageKey`), the column
+ * chooser, drag-to-reorder, drag-to-resize + double-click autosize, a per-column filter popover
+ * (contains-text OR distinct-value checklist), sortable headers, and — when a selection model is
+ * supplied — click / ctrl-click / shift-range / ctrl-A / arrow selection.
  *
- * What it does NOT know: the row type. Every consumer supplies `columns` where each column has a
- * `getValue(row) => string` (used for filtering / the value checklist / autosize / the default
- * cell) and optionally `render(row)` and `sortValue(row)`. Row identity comes from `getRowId`.
+ * Does NOT know the row type. Consumers pass `columns` (each with `getValue(row) => string` plus
+ * optional `render` / `sortValue` / `align` / `filter` / `sortable`) and `getRowId`.
  *
- * Client-side only for now — it filters and sorts the `rows` array it is handed. Server-paged
- * consumers (IR view) need a controlled/virtualised mode; that's Phase 2.
+ * Two data modes:
+ *   • **client** (default): hand it the full `rows` array; it filters + sorts in memory.
+ *   • **controlled + virtualised**: pass `rowCount` + `getRow(index)` + `onRangeChange`. The grid
+ *     windows the DOM and asks for the ranges it needs; sorting is controlled via `sort` /
+ *     `onSortChange`, and per-column filters are surfaced via `onColumnFiltersChange` (or set
+ *     `disableColumnFilters` and filter outside the grid, as IR view does with its facet bar).
  */
 
 export type SortDir = 'asc' | 'desc'
@@ -28,20 +31,21 @@ export interface DataGridColumn<T> {
   defaultVisible: boolean
   /** Plain-text value — filtering, the value checklist, autosize, and the default cell. */
   getValue: (row: T) => string
-  /** Sort comparator value. Defaults to `getValue(row).toLowerCase()`. Return a number for
-   * numeric sort (NaN / null-ish should map to ±Infinity so blanks sink). */
+  /** Sort comparator value. Defaults to `getValue(row).toLowerCase()`. */
   sortValue?: (row: T) => string | number
-  /** Custom cell content. Defaults to the plain text of `getValue`. */
   render?: (row: T) => React.ReactNode
   align?: 'left' | 'right'
-  /** Free-text columns (comments, settings) — drop the distinct-value checklist, keep "contains". */
+  /** Column-filter popover mode. Default 'both'. */
   filter?: 'both' | 'text' | 'none'
+  /** Header click sorts. Default true. Set false for columns the backend can't sort by. */
+  sortable?: boolean
 }
 
 interface ColFilterState {
   text: string
   selected: string[]
 }
+export type ColumnFilters = Record<string, ColFilterState>
 
 function readLS(key: string): string {
   try {
@@ -60,6 +64,10 @@ function writeLS(key: string, value: string): void {
 
 export function DataGrid<T>({
   rows,
+  rowCount,
+  getRow,
+  onRangeChange,
+  rowHeight = 40,
   getRowId,
   columns,
   storageKey,
@@ -71,38 +79,51 @@ export function DataGrid<T>({
   rowActionsWidth = 84,
   sort,
   onSortChange,
+  disableColumnFilters,
+  onColumnFiltersChange,
   onVisibleRowsChange,
   emptyText = 'No rows',
   toolbar,
   className
 }: {
-  rows: T[]
+  /** Client mode: the full row set. Controlled mode: leave empty and pass rowCount/getRow. */
+  rows?: T[]
+  /** Controlled mode: total row count known to the backend. */
+  rowCount?: number
+  /** Controlled mode: random access into the windowed cache; undefined = not loaded yet. */
+  getRow?: (index: number) => T | undefined
+  /** Controlled mode: the grid needs rows [start, end). */
+  onRangeChange?: (start: number, end: number) => void
+  rowHeight?: number
   getRowId: (row: T) => string
   columns: DataGridColumn<T>[]
-  /** Namespaces the persisted column visibility / order / width / sort under this prefix. */
   storageKey: string
-  selectedIds: Set<string>
-  onSelectionChange: (ids: string[]) => void
+  /** Omit to render without a selection column. */
+  selectedIds?: Set<string>
+  onSelectionChange?: (ids: string[]) => void
   onRowOpen?: (row: T) => void
   onRowContextMenu?: (row: T, x: number, y: number) => void
-  /** Pinned leading cell (Play / menu / …). Omit for no actions column. */
   rowActions?: (row: T) => React.ReactNode
   rowActionsWidth?: number
-  /** Controlled sort. When provided, header clicks call `onSortChange` instead of local state —
-   * lets a parent share one sort across this grid and another view (e.g. a card grid). */
+  /** Controlled sort. Header clicks call `onSortChange` instead of local state. */
   sort?: { key: string; dir: SortDir }
   onSortChange?: (key: string, dir: SortDir) => void
-  /** Post-filter/sort rows in display order — for the parent's export / keyboard nav / counts. */
+  /** Hide the per-column filter affordance entirely (filtering happens outside the grid). */
+  disableColumnFilters?: boolean
+  /** Controlled mode: report column-filter changes so the parent can re-query. */
+  onColumnFiltersChange?: (filters: ColumnFilters) => void
   onVisibleRowsChange?: (rows: T[]) => void
   emptyText?: string
-  /** Extra controls rendered in the grid's own toolbar, left of the column chooser. */
   toolbar?: React.ReactNode
   className?: string
 }): React.ReactElement {
+  const controlled = rowCount != null && typeof getRow === 'function'
+  const allRows = rows ?? []
   const colByKey = useMemo(() => new Map(columns.map((c) => [c.key, c])), [columns])
   const allKeys = useMemo(() => columns.map((c) => c.key), [columns])
+  const selectable = !!(selectedIds && onSelectionChange)
 
-  // ── persisted column model ────────────────────────────────────────────────
+  // ── persisted column model ──────────────────────────────────────────────
   const [visibleCols, setVisibleCols] = useState<string[]>(() => {
     const stored = readLS(`${storageKey}:cols`)
     if (stored) {
@@ -130,7 +151,7 @@ export function DataGrid<T>({
   const sortKey = sort ? sort.key : localSort.key
   const sortDir: SortDir = sort ? sort.dir : localSort.dir
 
-  const [columnFilters, setColumnFilters] = useState<Record<string, ColFilterState>>({})
+  const [columnFilters, setColumnFilters] = useState<ColumnFilters>({})
 
   useEffect(() => {
     writeLS(`${storageKey}:cols`, visibleCols.join(','))
@@ -141,17 +162,22 @@ export function DataGrid<T>({
   useEffect(() => {
     if (!sort) writeLS(`${storageKey}:sort`, `${localSort.key ?? ''}:${localSort.dir}`)
   }, [localSort, sort, storageKey])
+  useEffect(() => {
+    onColumnFiltersChange?.(columnFilters)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [columnFilters])
 
   const activeColumns = useMemo(
     () => visibleCols.map((k) => colByKey.get(k)).filter((c): c is DataGridColumn<T> => c != null),
     [visibleCols, colByKey]
   )
 
-  // ── filter + sort pipeline (client-side) ──────────────────────────────────
+  // ── client-side filter + sort ───────────────────────────────────────────
   const filtered = useMemo(() => {
+    if (controlled) return allRows
     const entries = Object.entries(columnFilters).filter(([, s]) => s.text || s.selected.length)
-    if (entries.length === 0) return rows
-    return rows.filter((row) =>
+    if (entries.length === 0) return allRows
+    return allRows.filter((row) =>
       entries.every(([key, s]) => {
         const col = colByKey.get(key)
         if (!col) return true
@@ -160,10 +186,10 @@ export function DataGrid<T>({
         return v.toLowerCase().includes(s.text.toLowerCase())
       })
     )
-  }, [rows, columnFilters, colByKey])
+  }, [controlled, allRows, columnFilters, colByKey])
 
   const sorted = useMemo(() => {
-    if (!sortKey) return filtered
+    if (controlled || !sortKey) return filtered
     const col = colByKey.get(sortKey)
     if (!col) return filtered
     const val = col.sortValue ?? ((r: T) => col.getValue(r).toLowerCase())
@@ -175,55 +201,50 @@ export function DataGrid<T>({
       if (av > bv) return mul
       return getRowId(a) < getRowId(b) ? -1 : 1
     })
-  }, [filtered, sortKey, sortDir, colByKey, getRowId])
+  }, [controlled, filtered, sortKey, sortDir, colByKey, getRowId])
 
   useEffect(() => {
-    onVisibleRowsChange?.(sorted)
-  }, [sorted, onVisibleRowsChange])
+    if (!controlled) onVisibleRowsChange?.(sorted)
+  }, [controlled, sorted, onVisibleRowsChange])
+
+  const displayCount = controlled ? (rowCount as number) : sorted.length
 
   const handleSortClick = useCallback(
-    (key: string) => {
+    (col: DataGridColumn<T>) => {
+      if (col.sortable === false) return
+      const key = col.key
       const nextDir: SortDir = sortKey === key && sortDir === 'asc' ? 'desc' : 'asc'
-      if (onSortChange) onSortChange(key, sortKey === key ? nextDir : 'asc')
-      else setLocalSort({ key, dir: sortKey === key ? nextDir : 'asc' })
+      const dir = sortKey === key ? nextDir : 'asc'
+      if (onSortChange) onSortChange(key, dir)
+      else setLocalSort({ key, dir })
     },
     [sortKey, sortDir, onSortChange]
   )
 
-  // ── selection ────────────────────────────────────────────────────────────
+  // ── selection (client mode only) ────────────────────────────────────────
   const anchorRef = useRef<number>(-1)
-  const idList = useMemo(() => sorted.map(getRowId), [sorted, getRowId])
-
+  const idList = useMemo(() => (controlled ? [] : sorted.map(getRowId)), [controlled, sorted, getRowId])
   const selectOne = useCallback(
     (index: number, additive: boolean) => {
+      if (!selectable) return
       anchorRef.current = index
       const id = idList[index]
       if (additive) {
         const next = new Set(selectedIds)
-        if (next.has(id)) next.delete(id)
-        else next.add(id)
-        onSelectionChange([...next])
+        next.has(id) ? next.delete(id) : next.add(id)
+        onSelectionChange?.([...next])
       } else {
-        onSelectionChange([id])
+        onSelectionChange?.([id])
       }
     },
-    [idList, selectedIds, onSelectionChange]
+    [selectable, idList, selectedIds, onSelectionChange]
   )
-  const selectRangeTo = useCallback(
-    (index: number) => {
-      const from = anchorRef.current < 0 ? index : anchorRef.current
-      const [lo, hi] = from < index ? [from, index] : [index, from]
-      onSelectionChange(idList.slice(lo, hi + 1))
-    },
-    [idList, onSelectionChange]
-  )
-
-  const gridRef = useRef<HTMLDivElement>(null)
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (!selectable || controlled) return
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
         e.preventDefault()
-        onSelectionChange(idList)
+        onSelectionChange?.(idList)
         return
       }
       if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
@@ -233,12 +254,12 @@ export function DataGrid<T>({
         e.key === 'ArrowDown'
           ? Math.min(idList.length - 1, (cur < 0 ? -1 : cur) + 1)
           : Math.max(0, (cur < 0 ? 0 : cur) - 1)
-      if (nextIdx >= 0 && nextIdx < idList.length) selectOne(nextIdx, false)
+      if (nextIdx >= 0) selectOne(nextIdx, false)
     },
-    [idList, onSelectionChange, selectOne]
+    [selectable, controlled, idList, onSelectionChange, selectOne]
   )
 
-  // ── column resize / autosize ─────────────────────────────────────────────
+  // ── column resize / autosize ───────────────────────────────────────────
   const resizingRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null)
   const onResizeStart = useCallback(
     (e: React.MouseEvent, key: string) => {
@@ -267,23 +288,23 @@ export function DataGrid<T>({
       const ctx = document.createElement('canvas').getContext('2d')
       if (!ctx) return
       ctx.font = '600 11px ui-sans-serif,system-ui,sans-serif'
-      const headerW = 12 + ctx.measureText(col.label.toUpperCase()).width * 1.2 + 28 + 12 + 8
+      const headerW = 12 + ctx.measureText(col.label.toUpperCase()).width * 1.2 + 40
       ctx.font = '400 12px ui-sans-serif,system-ui,sans-serif'
       let dataW = 0
-      for (const row of rows) dataW = Math.max(dataW, ctx.measureText(col.getValue(row)).width + 32)
+      const sample = controlled ? [] : allRows
+      for (const row of sample) dataW = Math.max(dataW, ctx.measureText(col.getValue(row)).width + 32)
       setColWidths((prev) => ({ ...prev, [key]: Math.max(headerW, dataW, col.minWidth) }))
     },
-    [colByKey, rows]
+    [colByKey, allRows, controlled]
   )
 
-  // ── column reorder (drag the grip) ───────────────────────────────────────
-  const headerRefs = useRef<Record<string, HTMLTableCellElement | null>>({})
+  // ── column reorder ─────────────────────────────────────────────────────
+  const headerRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const [columnDrag, setColumnDrag] = useState<{ from: string; over: string | null; side: 'before' | 'after' } | null>(null)
   const columnDragRef = useRef(columnDrag)
   useEffect(() => {
     columnDragRef.current = columnDrag
   }, [columnDrag])
-
   const onGripMouseDown = useCallback(
     (e: React.MouseEvent, key: string) => {
       if (e.button !== 0 || resizingRef.current) return
@@ -326,12 +347,11 @@ export function DataGrid<T>({
     [activeColumns]
   )
 
-  // ── per-column filter popover ────────────────────────────────────────────
+  // ── per-column filter popover ──────────────────────────────────────────
   const [openFilterCol, setOpenFilterCol] = useState<string | null>(null)
   const [filterSearch, setFilterSearch] = useState('')
   const filterPopupRef = useRef<HTMLDivElement>(null)
   const filterAnchorRef = useRef<{ top: number; left: number; width: number } | null>(null)
-
   useEffect(() => {
     if (!openFilterCol) return
     const h = (e: MouseEvent): void => {
@@ -343,19 +363,18 @@ export function DataGrid<T>({
     window.addEventListener('mousedown', h)
     return () => window.removeEventListener('mousedown', h)
   }, [openFilterCol])
-
   const distinctValues = useCallback(
     (key: string): string[] => {
       const col = colByKey.get(key)
-      if (!col) return []
+      if (!col || controlled) return []
       const s = new Set<string>()
-      for (const row of rows) {
+      for (const row of allRows) {
         const v = col.getValue(row)
         if (v) s.add(v)
       }
       return [...s].sort()
     },
-    [colByKey, rows]
+    [colByKey, allRows, controlled]
   )
   const setColFilter = useCallback((key: string, state: ColFilterState) => {
     setColumnFilters((prev) => {
@@ -367,7 +386,7 @@ export function DataGrid<T>({
     })
   }, [])
 
-  // ── chooser ──────────────────────────────────────────────────────────────
+  // ── chooser ────────────────────────────────────────────────────────────
   const [chooserOpen, setChooserOpen] = useState(false)
   const chooserRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -379,13 +398,297 @@ export function DataGrid<T>({
     return () => window.removeEventListener('mousedown', h)
   }, [chooserOpen])
 
+  // ── virtualisation ─────────────────────────────────────────────────────
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [scrollTop, setScrollTop] = useState(0)
+  const [viewportH, setViewportH] = useState(0)
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const ro = new ResizeObserver((ents) => {
+      if (ents[0]) setViewportH(ents[0].contentRect.height)
+    })
+    ro.observe(el)
+    setViewportH(el.clientHeight)
+    return () => ro.disconnect()
+  }, [])
+  const overscan = 12
+  const firstIdx = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan)
+  const lastIdx = Math.min(displayCount, firstIdx + Math.ceil(viewportH / rowHeight) + overscan * 2)
+  useEffect(() => {
+    if (controlled && displayCount > 0) onRangeChange?.(firstIdx, lastIdx)
+  }, [controlled, firstIdx, lastIdx, displayCount, onRangeChange])
+
+  // ── layout ─────────────────────────────────────────────────────────────
+  const parts: string[] = []
+  if (rowActions) parts.push(`${rowActionsWidth}px`)
+  if (selectable) parts.push('28px')
+  for (const c of activeColumns) parts.push(`${colWidths[c.key]}px`)
+  const template = parts.join(' ')
+  const totalWidth = parts.reduce((s, p) => s + parseInt(p, 10), 0)
+
   const anyColFilter = Object.keys(columnFilters).length > 0
-  const actionsWidth = rowActions ? rowActionsWidth : 0
-  const tableWidth = activeColumns.reduce((s, c) => s + colWidths[c.key], 26 + actionsWidth)
+
+  const HeaderRow = (
+    <div
+      className="grid sticky top-0 z-10 bg-panel-2 border-b border-nm-border text-[10px] uppercase tracking-wide text-nm-text-3"
+      style={{ gridTemplateColumns: template, width: Math.max(totalWidth, 100) }}
+    >
+      {rowActions && <div />}
+      {selectable && (
+        <div className="flex items-center justify-center border-r border-nm-border-s">
+          <input
+            type="checkbox"
+            checked={!controlled && sorted.length > 0 && sorted.every((r) => selectedIds!.has(getRowId(r)))}
+            onChange={(e) => onSelectionChange?.(e.target.checked ? idList : [])}
+          />
+        </div>
+      )}
+      {activeColumns.map((col) => {
+        const state = columnFilters[col.key] ?? { text: '', selected: [] }
+        const hasFilter = !!(state.text || state.selected.length)
+        const isFilterOpen = openFilterCol === col.key
+        const canFilter = !disableColumnFilters && (col.filter ?? 'both') !== 'none'
+        return (
+          <div
+            key={col.key}
+            ref={(el) => {
+              headerRefs.current[col.key] = el
+            }}
+            className={`relative select-none border-r border-nm-border-s ${
+              columnDrag?.over === col.key ? 'bg-active-bg' : ''
+            }`}
+          >
+            <button
+              type="button"
+              onMouseDown={(e) => onGripMouseDown(e, col.key)}
+              title={`Drag to reorder ${col.label}`}
+              className="absolute left-0 top-0 z-20 flex h-full w-4 items-center justify-center border-r border-nm-border-s bg-panel-2 text-nm-text-3 cursor-grab active:cursor-grabbing hover:text-nm-text-2"
+            >
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01" />
+              </svg>
+            </button>
+            <div
+              className={`flex items-center gap-1 pl-6 pr-5 py-1.5 truncate ${
+                col.sortable === false ? '' : 'cursor-pointer'
+              }`}
+              onClick={() => handleSortClick(col)}
+            >
+              <span className="truncate">{col.label}</span>
+              {sortKey === col.key && <span className="flex-shrink-0 text-nm-accent">{sortDir === 'asc' ? '↑' : '↓'}</span>}
+            </div>
+            {columnDrag?.over === col.key && (
+              <div
+                className={`absolute top-0.5 bottom-0.5 w-0.5 rounded-full bg-nm-accent z-30 ${
+                  columnDrag.side === 'before' ? 'left-0' : 'right-0'
+                }`}
+              />
+            )}
+            {canFilter && (
+              <button
+                className={`absolute right-1.5 top-1/2 -translate-y-1/2 z-20 p-0.5 ${
+                  hasFilter ? 'text-nm-accent' : 'text-nm-text-3 hover:text-nm-text-2'
+                }`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (isFilterOpen) {
+                    setOpenFilterCol(null)
+                    setFilterSearch('')
+                  } else {
+                    const host = (e.currentTarget as HTMLElement).closest('div[class*="relative"]')
+                    if (host) {
+                      const r = host.getBoundingClientRect()
+                      filterAnchorRef.current = { top: r.bottom, left: r.left, width: r.width }
+                    }
+                    setOpenFilterCol(col.key)
+                    setFilterSearch('')
+                  }
+                }}
+                title={hasFilter ? 'Filter active — click to edit' : 'Filter column'}
+              >
+                <svg className="w-3 h-3" fill={hasFilter ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
+                </svg>
+              </button>
+            )}
+            {isFilterOpen &&
+              filterAnchorRef.current &&
+              createPortal(
+                (() => {
+                  const all = distinctValues(col.key)
+                  const shown = filterSearch
+                    ? all.filter((v) => v.toLowerCase().includes(filterSearch.toLowerCase()))
+                    : all
+                  const a = filterAnchorRef.current as { top: number; left: number; width: number }
+                  const mode = col.filter ?? 'both'
+                  return (
+                    <div
+                      ref={filterPopupRef}
+                      className="fixed bg-panel border border-nm-border rounded-lg shadow-xl z-[9999] flex flex-col normal-case tracking-normal"
+                      style={{ top: a.top + 2, left: a.left, minWidth: 200, maxHeight: 320, width: Math.max(a.width, 200) }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="p-1.5 border-b border-nm-border-s flex gap-1">
+                        <input
+                          autoFocus
+                          value={filterSearch}
+                          onChange={(e) => setFilterSearch(e.target.value)}
+                          placeholder="Search values…"
+                          className="flex-1 text-xs px-2 py-1 bg-field-bg border border-field-bd rounded focus:outline-none focus:border-nm-accent text-nm-text"
+                        />
+                        {hasFilter && (
+                          <button
+                            onClick={() => {
+                              setColFilter(col.key, { text: '', selected: [] })
+                              setOpenFilterCol(null)
+                            }}
+                            className="text-xs text-nm-accent hover:underline px-1.5 flex-shrink-0"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
+                      {mode !== 'text' && state.selected.length === 0 && (
+                        <div className="px-2 pt-1.5 pb-1 border-b border-nm-border-s">
+                          <input
+                            value={state.text}
+                            onChange={(e) => setColFilter(col.key, { ...state, text: e.target.value })}
+                            placeholder="Contains text…"
+                            className="w-full text-xs px-2 py-1 rounded border border-field-bd bg-field-bg text-nm-text focus:outline-none focus:border-nm-accent"
+                          />
+                        </div>
+                      )}
+                      {mode !== 'text' && (
+                        <div className="overflow-y-auto flex-1 py-1">
+                          {shown.length === 0 ? (
+                            <div className="px-3 py-2 text-xs text-nm-text-3">No values</div>
+                          ) : (
+                            shown.map((val) => (
+                              <label
+                                key={val}
+                                className="flex items-center gap-2 px-2.5 py-1 cursor-pointer hover:bg-hov text-xs text-nm-text"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={state.selected.includes(val)}
+                                  onChange={() => {
+                                    const next = state.selected.includes(val)
+                                      ? state.selected.filter((v) => v !== val)
+                                      : [...state.selected, val]
+                                    setColFilter(col.key, { text: '', selected: next })
+                                  }}
+                                  className="w-3 h-3 rounded border-field-bd flex-shrink-0"
+                                />
+                                <span className="truncate">{val}</span>
+                              </label>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })(),
+                document.body
+              )}
+            <div
+              className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-nm-accent/40 z-20"
+              onMouseDown={(e) => onResizeStart(e, col.key)}
+              onDoubleClick={(e) => {
+                e.preventDefault()
+                onAutoSize(col.key)
+              }}
+            />
+          </div>
+        )
+      })}
+    </div>
+  )
+
+  const renderRow = (row: T, index: number, style?: React.CSSProperties): React.ReactElement => {
+    const id = getRowId(row)
+    const isSel = selectable && selectedIds!.has(id)
+    return (
+      <div
+        key={id}
+        className={`grid border-b border-nm-border-s text-xs cursor-pointer ${
+          isSel ? 'bg-active-bg' : 'hover:bg-hov'
+        }`}
+        style={{ gridTemplateColumns: template, width: Math.max(totalWidth, 100), ...style }}
+        onClick={(e) => {
+          if (selectable && e.shiftKey) {
+            const from = anchorRef.current < 0 ? index : anchorRef.current
+            const [lo, hi] = from < index ? [from, index] : [index, from]
+            onSelectionChange?.(idList.slice(lo, hi + 1))
+          } else if (selectable && (e.ctrlKey || e.metaKey)) {
+            selectOne(index, true)
+          } else {
+            anchorRef.current = index
+            onRowOpen?.(row)
+          }
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          anchorRef.current = index
+          onRowContextMenu?.(row, e.clientX, e.clientY)
+        }}
+        onMouseDown={(e) => {
+          if (e.shiftKey) e.preventDefault()
+        }}
+      >
+        {rowActions && (
+          <div className="flex items-center justify-center border-r border-nm-border-s" onClick={(e) => e.stopPropagation()}>
+            {rowActions(row)}
+          </div>
+        )}
+        {selectable && (
+          <div className="flex items-center justify-center border-r border-nm-border-s">
+            <input
+              type="checkbox"
+              checked={isSel}
+              onChange={() => selectOne(index, true)}
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+        )}
+        {activeColumns.map((col) => (
+          <div
+            key={col.key}
+            className={`px-3 py-2 overflow-hidden border-r border-nm-border-s ${
+              col.align === 'right' ? 'text-right tabular-nums' : ''
+            }`}
+            title={col.getValue(row) || undefined}
+          >
+            <div className="truncate">
+              {col.render ? col.render(row) : col.getValue(row) || <span className="text-nm-text-3">—</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  const skeletonRow = (index: number): React.ReactElement => (
+    <div
+      key={`sk-${index}`}
+      className="grid border-b border-nm-border-s"
+      style={{ gridTemplateColumns: template, width: Math.max(totalWidth, 100), position: 'absolute', top: index * rowHeight, height: rowHeight }}
+    >
+      {rowActions && <div />}
+      {selectable && <div />}
+      {activeColumns.map((col) => (
+        <div key={col.key} className="px-3 py-2">
+          <div className="h-3 rounded bg-nm-border-s/60" />
+        </div>
+      ))}
+    </div>
+  )
+
+  const visIndices: number[] = []
+  if (controlled) for (let i = firstIdx; i < lastIdx; i++) visIndices.push(i)
 
   return (
     <div className={`flex flex-col min-h-0 ${className ?? ''}`}>
-      {/* toolbar: chooser + parent extras + filter-clear */}
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-nm-border-s flex-shrink-0 text-[11px]">
         {toolbar}
         <div className="ml-auto flex items-center gap-2">
@@ -394,7 +697,7 @@ export function DataGrid<T>({
               Clear column filters
             </button>
           )}
-          <span className="text-nm-text-3">{sorted.length}</span>
+          <span className="text-nm-text-3">{displayCount.toLocaleString()}</span>
           <div ref={chooserRef} className="relative">
             <button
               onClick={() => setChooserOpen((v) => !v)}
@@ -429,10 +732,7 @@ export function DataGrid<T>({
                   )
                 })}
                 <div className="border-t border-nm-border-s mt-1 pt-1 flex gap-3 px-3 py-1">
-                  <button
-                    onClick={() => setVisibleCols(allKeys.slice())}
-                    className="text-[11px] text-nm-accent hover:underline"
-                  >
+                  <button onClick={() => setVisibleCols(allKeys.slice())} className="text-[11px] text-nm-accent hover:underline">
                     Show all
                   </button>
                   <button
@@ -449,256 +749,32 @@ export function DataGrid<T>({
       </div>
 
       <div
-        ref={gridRef}
-        tabIndex={0}
+        ref={scrollRef}
+        tabIndex={selectable ? 0 : -1}
         onKeyDown={onKeyDown}
+        onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
         className="flex-1 overflow-auto focus:outline-none"
       >
-        <table className="text-xs border-collapse" style={{ width: Math.max(tableWidth, 100), tableLayout: 'fixed' }}>
-          <colgroup>
-            {rowActions && <col style={{ width: actionsWidth }} />}
-            <col style={{ width: 26 }} />
-            {activeColumns.map((c) => (
-              <col key={c.key} style={{ width: colWidths[c.key] }} />
-            ))}
-          </colgroup>
-          <thead className="sticky top-0 z-10">
-            <tr className="bg-panel-2">
-              {rowActions && <th className="border-b border-nm-border" />}
-              <th className="border-b border-r border-nm-border-s px-1 text-center">
-                <input
-                  type="checkbox"
-                  checked={sorted.length > 0 && sorted.every((r) => selectedIds.has(getRowId(r)))}
-                  onChange={(e) => onSelectionChange(e.target.checked ? idList : [])}
-                />
-              </th>
-              {activeColumns.map((col) => {
-                const filterMode = col.filter ?? 'both'
-                const state = columnFilters[col.key] ?? { text: '', selected: [] }
-                const hasFilter = !!(state.text || state.selected.length)
-                const isFilterOpen = openFilterCol === col.key
-                const dragOver = columnDrag?.over === col.key
-                return (
-                  <th
-                    key={col.key}
-                    ref={(el) => {
-                      headerRefs.current[col.key] = el
-                    }}
-                    className={`relative select-none border-b border-r border-nm-border-s text-left ${
-                      dragOver ? 'bg-active-bg' : 'bg-panel-2'
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      onMouseDown={(e) => onGripMouseDown(e, col.key)}
-                      title={`Drag to reorder ${col.label}`}
-                      className="absolute left-0 top-0 z-20 flex h-full w-5 items-center justify-center border-r border-nm-border-s bg-panel-2 text-nm-text-3 cursor-grab active:cursor-grabbing hover:text-nm-text-2"
-                    >
-                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01" />
-                      </svg>
-                    </button>
-                    <div
-                      className="flex items-center gap-1 pl-7 pr-6 py-1.5 whitespace-nowrap overflow-hidden cursor-pointer text-[10px] uppercase tracking-wide text-nm-text-3"
-                      onClick={() => handleSortClick(col.key)}
-                    >
-                      <span className="truncate">{col.label}</span>
-                      {sortKey === col.key && <span className="flex-shrink-0 text-nm-accent">{sortDir === 'asc' ? '↑' : '↓'}</span>}
-                    </div>
-                    {columnDrag?.over === col.key && (
-                      <div
-                        className={`absolute top-0.5 bottom-0.5 w-0.5 rounded-full bg-nm-accent z-30 ${
-                          columnDrag.side === 'before' ? 'left-0' : 'right-0'
-                        }`}
-                      />
-                    )}
-                    {filterMode !== 'none' && (
-                      <button
-                        className={`absolute right-1.5 top-1/2 -translate-y-1/2 z-20 p-0.5 ${
-                          hasFilter ? 'text-nm-accent' : 'text-nm-text-3 hover:text-nm-text-2'
-                        }`}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          if (isFilterOpen) {
-                            setOpenFilterCol(null)
-                            setFilterSearch('')
-                          } else {
-                            const th = (e.currentTarget as HTMLElement).closest('th')
-                            if (th) {
-                              const r = th.getBoundingClientRect()
-                              filterAnchorRef.current = { top: r.bottom, left: r.left, width: r.width }
-                            }
-                            setOpenFilterCol(col.key)
-                            setFilterSearch('')
-                          }
-                        }}
-                        title={hasFilter ? 'Filter active — click to edit' : 'Filter column'}
-                      >
-                        <svg className="w-3 h-3" fill={hasFilter ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
-                        </svg>
-                      </button>
-                    )}
-                    <div
-                      className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-nm-accent/40 z-20"
-                      onMouseDown={(e) => onResizeStart(e, col.key)}
-                      onDoubleClick={(e) => {
-                        e.preventDefault()
-                        onAutoSize(col.key)
-                      }}
-                    />
-                    {isFilterOpen &&
-                      filterAnchorRef.current &&
-                      createPortal(
-                        (() => {
-                          const all = distinctValues(col.key)
-                          const shown = filterSearch
-                            ? all.filter((v) => v.toLowerCase().includes(filterSearch.toLowerCase()))
-                            : all
-                          const a = filterAnchorRef.current as { top: number; left: number; width: number }
-                          return (
-                            <div
-                              ref={filterPopupRef}
-                              className="fixed bg-panel border border-nm-border rounded-lg shadow-xl z-[9999] flex flex-col"
-                              style={{ top: a.top + 2, left: a.left, minWidth: 200, maxHeight: 320, width: Math.max(a.width, 200) }}
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <div className="p-1.5 border-b border-nm-border-s flex gap-1">
-                                <input
-                                  autoFocus
-                                  value={filterSearch}
-                                  onChange={(e) => setFilterSearch(e.target.value)}
-                                  placeholder="Search values…"
-                                  className="flex-1 text-xs px-2 py-1 bg-field-bg border border-field-bd rounded focus:outline-none focus:border-nm-accent text-nm-text"
-                                />
-                                {hasFilter && (
-                                  <button
-                                    onClick={() => {
-                                      setColFilter(col.key, { text: '', selected: [] })
-                                      setOpenFilterCol(null)
-                                    }}
-                                    className="text-xs text-nm-accent hover:underline px-1.5 flex-shrink-0"
-                                  >
-                                    Clear
-                                  </button>
-                                )}
-                              </div>
-                              {filterMode !== 'text' && state.selected.length === 0 && (
-                                <div className="px-2 pt-1.5 pb-1 border-b border-nm-border-s">
-                                  <input
-                                    value={state.text}
-                                    onChange={(e) => setColFilter(col.key, { ...state, text: e.target.value })}
-                                    placeholder="Contains text…"
-                                    className="w-full text-xs px-2 py-1 rounded border border-field-bd bg-field-bg text-nm-text focus:outline-none focus:border-nm-accent"
-                                  />
-                                </div>
-                              )}
-                              {filterMode !== 'text' && (
-                                <div className="overflow-y-auto flex-1 py-1">
-                                  {shown.length === 0 ? (
-                                    <div className="px-3 py-2 text-xs text-nm-text-3">No values</div>
-                                  ) : (
-                                    shown.map((val) => (
-                                      <label
-                                        key={val}
-                                        className="flex items-center gap-2 px-2.5 py-1 cursor-pointer hover:bg-hov text-xs text-nm-text"
-                                      >
-                                        <input
-                                          type="checkbox"
-                                          checked={state.selected.includes(val)}
-                                          onChange={() => {
-                                            const next = state.selected.includes(val)
-                                              ? state.selected.filter((v) => v !== val)
-                                              : [...state.selected, val]
-                                            setColFilter(col.key, { text: '', selected: next })
-                                          }}
-                                          className="w-3 h-3 rounded border-field-bd flex-shrink-0"
-                                        />
-                                        <span className="truncate">{val}</span>
-                                      </label>
-                                    ))
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          )
-                        })(),
-                        document.body
-                      )}
-                  </th>
-                )
+        <div style={{ width: Math.max(totalWidth, 100) }}>
+          {HeaderRow}
+          {controlled ? (
+            <div style={{ height: displayCount * rowHeight, position: 'relative' }}>
+              {displayCount === 0 && (
+                <div className="absolute inset-x-0 top-0 text-center py-8 text-nm-text-3">{emptyText}</div>
+              )}
+              {visIndices.map((i) => {
+                const row = getRow!(i)
+                return row
+                  ? renderRow(row, i, { position: 'absolute', top: i * rowHeight, height: rowHeight })
+                  : skeletonRow(i)
               })}
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.length === 0 ? (
-              <tr>
-                <td
-                  colSpan={activeColumns.length + 1 + (rowActions ? 1 : 0)}
-                  className="text-center py-8 text-nm-text-3"
-                >
-                  {emptyText}
-                </td>
-              </tr>
-            ) : (
-              sorted.map((row, index) => {
-                const id = getRowId(row)
-                const isSel = selectedIds.has(id)
-                return (
-                  <tr
-                    key={id}
-                    className={`border-b border-nm-border-s cursor-pointer ${
-                      isSel ? 'bg-active-bg' : 'hover:bg-hov'
-                    }`}
-                    onClick={(e) => {
-                      if (e.shiftKey) selectRangeTo(index)
-                      else if (e.ctrlKey || e.metaKey) selectOne(index, true)
-                      else {
-                        anchorRef.current = index
-                        onRowOpen?.(row)
-                      }
-                    }}
-                    onContextMenu={(e) => {
-                      e.preventDefault()
-                      anchorRef.current = index
-                      onRowContextMenu?.(row, e.clientX, e.clientY)
-                    }}
-                    onMouseDown={(e) => {
-                      if (e.shiftKey) e.preventDefault()
-                    }}
-                  >
-                    {rowActions && (
-                      <td className="border-r border-nm-border-s text-center align-middle" onClick={(e) => e.stopPropagation()}>
-                        {rowActions(row)}
-                      </td>
-                    )}
-                    <td className="border-r border-nm-border-s px-1 text-center align-middle">
-                      <input
-                        type="checkbox"
-                        checked={isSel}
-                        onChange={() => selectOne(index, true)}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    </td>
-                    {activeColumns.map((col) => (
-                      <td
-                        key={col.key}
-                        className={`border-r border-nm-border-s px-3 py-1.5 overflow-hidden ${
-                          col.align === 'right' ? 'text-right tabular-nums' : ''
-                        }`}
-                        title={col.getValue(row) || undefined}
-                      >
-                        <div className="truncate">
-                          {col.render ? col.render(row) : col.getValue(row) || <span className="text-nm-text-3">—</span>}
-                        </div>
-                      </td>
-                    ))}
-                  </tr>
-                )
-              })
-            )}
-          </tbody>
-        </table>
+            </div>
+          ) : sorted.length === 0 ? (
+            <div className="text-center py-8 text-nm-text-3">{emptyText}</div>
+          ) : (
+            sorted.map((row, i) => renderRow(row, i))
+          )}
+        </div>
       </div>
     </div>
   )
