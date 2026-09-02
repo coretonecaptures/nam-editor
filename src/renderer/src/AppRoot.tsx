@@ -2,12 +2,12 @@ import { useEffect, useState } from 'react'
 import App from './App'
 import { IrModeShell } from './components/ir/IrModeShell'
 import { NamProjectsShell } from './components/ir/NamProjectsShell'
+import { ModeRail, type AppMode } from './components/ModeRail'
 import { onGoToTrainingBatches } from './appNav'
 
-type Mode = 'nam' | 'ir' | 'nam-projects'
 const MODE_KEY = 'nam-lab-app-mode'
 
-function readMode(): Mode {
+function readMode(): AppMode {
   try {
     const stored = localStorage.getItem(MODE_KEY)
     if (stored === 'ir' || stored === 'nam-projects') return stored
@@ -18,21 +18,22 @@ function readMode(): Mode {
 }
 
 /**
- * NAM / IR / NAM Projects top-level mode switcher (docs/ir-lab-manager-build-plan.md section 10,
- * docs/nam-capture-import-plan-2026-08-29.md §1). Deliberately a thin wrapper rather than folding
- * the toggle into App.tsx's own layout: App's root uses `h-screen` assuming it IS the viewport
- * root, and both other shells do the same — nesting any under a shared header/flex container would
- * shrink its available height incorrectly. The toggle is a floating overlay instead, so each mode
- * keeps its own full-height root untouched.
+ * NAM / IR / NAM Projects top-level switcher. The three shells each assume they own the viewport
+ * (`h-screen` roots), so instead of nesting them under a shared header we sit them in a flex row
+ * next to a fixed-width `ModeRail` on the left — the rail is a real sibling, the shell fills the
+ * rest at full height, and nothing about a shell's own layout changes.
+ *
+ * Keyboard: Cmd/Ctrl+1/2/3 jump between modes.
  */
 export default function AppRoot(): React.ReactElement {
-  const [mode, setMode] = useState<Mode>(readMode)
+  const [mode, setMode] = useState<AppMode>(readMode)
+  const isMac = window.api?.platform === 'darwin'
 
   useEffect(() => {
     try {
       localStorage.setItem(MODE_KEY, mode)
     } catch {
-      // Non-fatal — worst case the toggle doesn't remember across restarts.
+      // Non-fatal — worst case the rail doesn't remember across restarts.
     }
   }, [mode])
 
@@ -40,30 +41,25 @@ export default function AppRoot(): React.ReactElement {
   // intent on mount (appNav.consumePendingBatchNav) and opens the trainer on Batches.
   useEffect(() => onGoToTrainingBatches(() => setMode('nam')), [])
 
-  const tab = (value: Mode, label: string): React.ReactElement => (
-    <button
-      onClick={() => setMode(value)}
-      className={`px-2.5 py-1 ${mode === value ? 'bg-nm-accent text-accent-fg' : 'bg-field-bg text-nm-text-2 hover:bg-hov'}`}
-    >
-      {label}
-    </button>
-  )
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
+      if (e.key === '1') setMode('nam')
+      else if (e.key === '2') setMode('ir')
+      else if (e.key === '3') setMode('nam-projects')
+      else return
+      e.preventDefault()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   return (
-    <>
-      {mode === 'nam' ? <App /> : mode === 'ir' ? <IrModeShell /> : <NamProjectsShell />}
-      {/*
-        Windows: BrowserWindow uses titleBarStyle 'hidden' + a titleBarOverlay (src/main/index.ts
-        createWindow) -- Electron draws the real minimize/maximize/close buttons as OS-composited
-        chrome in the top-right ~32px, on top of any web content there, invisibly. macOS uses
-        'hiddenInset' instead, which puts traffic-light buttons top-LEFT. top-10 clears the
-        Windows overlay height (32px) with margin and is nowhere near the Mac traffic lights.
-      */}
-      <div className="fixed top-10 right-3 z-[100] flex rounded-md overflow-hidden border border-field-bd shadow-sm text-xs">
-        {tab('nam', 'NAM')}
-        {tab('ir', 'IR')}
-        {tab('nam-projects', 'NAM Projects')}
+    <div className="flex h-screen overflow-hidden">
+      <ModeRail mode={mode} onChange={setMode} isMac={isMac} />
+      <div className="flex-1 min-w-0 h-screen overflow-hidden">
+        {mode === 'nam' ? <App /> : mode === 'ir' ? <IrModeShell /> : <NamProjectsShell />}
       </div>
-    </>
+    </div>
   )
 }

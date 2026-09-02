@@ -21,6 +21,36 @@ Electron + React + TypeScript + Tailwind CSS desktop metadata editor for `.nam` 
 
 See `TODO.md` for all planned/pending work items.
 
+## Working practice — match what already exists, don't invent
+
+When asked for a UI feature by a generic name ("add cards", "add a tray", "add
+a rail", "add tabs", "add a filter bar"), **do not go straight to an
+implementation.** First:
+
+1. **Search the app for prior art.** `grep` for the concept across
+   `src/renderer/src/components` (and check sibling apps the user names —
+   "gear-locker", "card-locker/pokemon app" — for the *interaction* pattern).
+   Someone has usually built this idea already; find it and match it.
+2. **Follow the established design.** Same iconography, same tokens, same
+   affordances. Concretely:
+   - A view toggle is **icons, not words** — e.g. list/cards is a grid icon vs
+     a rows icon, never the literal text "Card" / "List".
+   - Icons are inline `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+     strokeWidth={2}>` line art (Heroicons-outline style). No emoji, no icon
+     font, no raster.
+   - Colours are design tokens (`bg-panel-2`, `border-nm-border`, `bg-active-bg`,
+     `text-nm-accent`, `text-accent-fg`, `bg-hov`, `text-nm-text-3`), never raw
+     Tailwind greys or hex.
+   - Cards: match `FolderCardView.tsx` and the `IrTray` card-locker pattern —
+     restrained borders, one accent, dense but not cramped. The first-pass
+     `CaptureCard` in `NamProjectsShell.tsx` is explicitly *not* the reference;
+     it needs to be brought in line with `FolderCardView`.
+3. **Re-implement, don't transplant.** Copy the *interaction* from another
+   codebase, rewrite it in this app's tokens and Tailwind conventions so it
+   reads as NAM Lab (see `IrTray.tsx`'s header comment for the standard).
+4. Only if there genuinely is no precedent, say so, then propose one approach
+   (not three) grounded in the nearest-neighbour pattern.
+
 ## Architecture
 ```
 src/main/index.ts       — Main process: file I/O, IPC handlers, window management
