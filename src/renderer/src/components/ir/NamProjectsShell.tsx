@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ContextMenu, type ContextMenuItem } from '../ContextMenu'
+import { NamLabCrumb } from '../NamLabCrumb'
 import { TRAINER_ARCHITECTURES, BUILT_IN_CAPTURE_PROFILES } from '../../types/trainer'
 import { GEAR_TYPES, TONE_TYPES } from '../../types/nam'
 import type {
@@ -591,7 +592,9 @@ function CaptureCard({
   onQueue: () => void
 }): React.ReactElement {
   const eff = capture.effective
-  const rel = relTime(capture.createdAt)
+  const gear = [eff.gearMake, eff.gearModel].filter(Boolean).join(' · ')
+  const chips = [eff.gearType, eff.toneType].filter(Boolean) as string[]
+  const hasGraph = capture.graphExists && !!capture.result?.graphPath
   return (
     <div
       onClick={onOpenDetail}
@@ -599,75 +602,108 @@ function CaptureCard({
         e.preventDefault()
         onMenu(capture, e.clientX, e.clientY)
       }}
-      className={`flex flex-col rounded border text-xs cursor-pointer overflow-hidden ${
-        active ? 'border-nm-accent bg-active-bg' : 'border-nm-border-s bg-panel-2 hover:bg-hov'
+      className={`flex flex-col rounded-xl border cursor-pointer transition-colors select-none overflow-hidden ${
+        active
+          ? 'border-nm-accent ring-1 ring-nm-accent/40 bg-panel'
+          : 'border-nm-border bg-panel hover:border-nm-text-3/50'
       }`}
     >
-      <div className="flex items-center gap-2 px-2.5 py-2">
-        <input
-          type="checkbox"
-          checked={checked}
-          onChange={onToggleCheck}
+      {/* media strip — training graph for a trained capture, quiet placeholder otherwise */}
+      <div className="w-full h-28 bg-field-bg flex items-center justify-center overflow-hidden relative">
+        {hasGraph ? (
+          <img
+            src={fileSrc(capture.result!.graphPath as string)}
+            alt="training graph"
+            className="w-full h-full object-cover"
+            loading="lazy"
+          />
+        ) : (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" className="w-8 h-8 text-nm-text-3/40">
+            <path d="M2 12h3l2-6 3 12 3-16 3 20 2-8 2 2h2" />
+          </svg>
+        )}
+        <label
+          className="absolute top-2 left-2 flex items-center"
           onClick={(e) => e.stopPropagation()}
-        />
-        <span className="flex-1 min-w-0 truncate text-sm text-nm-text">{capture.captureName}</span>
-        <TrainedBadge trained={capture.trained} />
-      </div>
-      <div className="px-2.5 pb-2 text-[11px] text-nm-text-3 flex flex-col gap-1">
-        <div className="flex flex-wrap gap-x-2">
-          {capture.captureScope && <span>{capture.captureScope}</span>}
-          {audioLabel(capture) && <span>{audioLabel(capture)}</span>}
-          {capture.measuredLatencySamples != null && <span>{capture.measuredLatencySamples} smp</span>}
-        </div>
-        {captureIsCalibrated(capture) && (
-          <div className="text-emerald-600 dark:text-emerald-400">
-            cal {eff.inputLevelDbu ?? capture.calibration?.inputLevelDbu ?? '?'} /{' '}
-            {eff.outputLevelDbu ?? capture.calibration?.outputLevelDbu ?? '?'} dBu
-            {capture.calibration?.method ? ` · ${capture.calibration.method}` : ''}
-          </div>
-        )}
-        {(eff.gearMake || eff.gearModel) && (
-          <div className="text-nm-text-2 truncate">
-            {[eff.gearMake, eff.gearModel].filter(Boolean).join(' · ')}
-          </div>
-        )}
-        {(eff.gearType || eff.toneType) && (
-          <div className="flex gap-1 flex-wrap">
-            {[eff.gearType, eff.toneType].filter(Boolean).map((t) => (
-              <span key={t as string} className="nam-chip">
-                {t}
-              </span>
-            ))}
-          </div>
-        )}
-        {capture.metadataEdited && <span className="text-nm-accent">✎ edited</span>}
+        >
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={onToggleCheck}
+            className="w-3.5 h-3.5 rounded border-field-bd bg-panel/80"
+          />
+        </label>
         {capture.synthetic && (
-          <span className="nam-chip opacity-60 self-start">
+          <span className="absolute top-2 right-2 nam-chip opacity-80 text-[10px]">
             <span className="nam-dot" />
             synthetic
           </span>
         )}
       </div>
-      {capture.trained && (
-        <div className="border-t border-nm-border-s px-2.5 py-2 flex flex-col gap-1">
-          {capture.graphExists && capture.result?.graphPath && (
-            <img
-              src={fileSrc(capture.result.graphPath)}
-              alt="training graph"
-              className="w-full h-16 object-cover rounded bg-field-bg"
-              loading="lazy"
-            />
-          )}
-          <div className="flex items-center gap-2 text-[11px] text-nm-text-3 flex-wrap">
+
+      <div className="px-3.5 py-3 flex flex-col gap-1.5">
+        <div className="flex items-start justify-between gap-2">
+          <div
+            className="text-sm font-medium leading-tight text-nm-text line-clamp-2"
+            title={capture.captureName}
+          >
+            {capture.captureName}
+          </div>
+          <TrainedBadge trained={capture.trained} />
+        </div>
+
+        <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-nm-text-3">
+          {capture.captureScope && <span>{capture.captureScope}</span>}
+          {audioLabel(capture) && <span>{audioLabel(capture)}</span>}
+          {capture.measuredLatencySamples != null && <span>{capture.measuredLatencySamples} smp</span>}
+        </div>
+
+        {captureIsCalibrated(capture) && (
+          <div className="text-xs text-emerald-600 dark:text-emerald-400">
+            cal {eff.inputLevelDbu ?? capture.calibration?.inputLevelDbu ?? '?'} /{' '}
+            {eff.outputLevelDbu ?? capture.calibration?.outputLevelDbu ?? '?'} dBu
+            {capture.calibration?.method ? ` · ${capture.calibration.method}` : ''}
+          </div>
+        )}
+
+        {gear && <div className="text-xs text-nm-text-2 truncate">{gear}</div>}
+
+        {(chips.length > 0 || capture.metadataEdited) && (
+          <div className="flex flex-wrap items-center gap-1 mt-0.5">
+            {chips.map((t) => (
+              <span key={t} className="nam-chip text-[10px]">
+                {t}
+              </span>
+            ))}
+            {capture.metadataEdited && (
+              <span className="text-[10px] text-nm-accent" title="Model metadata edited in NAM Lab">
+                ✎ edited
+              </span>
+            )}
+          </div>
+        )}
+
+        {capture.trained && (
+          <div className="flex flex-wrap items-center gap-x-2 text-[11px] text-nm-text-3 mt-0.5">
             {capture.result?.architecture && <span>{capture.result.architecture}</span>}
             {capture.result?.validationEsr != null && (
               <span>ESR {capture.result.validationEsr.toFixed(4)}</span>
             )}
             {relTime(capture.result?.trainedAt) && <span>{relTime(capture.result?.trainedAt)}</span>}
           </div>
-        </div>
-      )}
-      <div className="border-t border-nm-border-s px-2.5 py-1.5 flex items-center gap-3 text-[11px]">
+        )}
+
+        {fmtDate(capture.createdAt) && (
+          <div
+            className="text-[11px] text-nm-text-3"
+            title={fmtDateTime(capture.createdAt) ?? ''}
+          >
+            captured {fmtDate(capture.createdAt)}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-auto border-t border-nm-border-s px-3.5 py-2 flex items-center gap-3 text-xs">
         <button
           onClick={(e) => {
             e.stopPropagation()
@@ -698,11 +734,6 @@ function CaptureCard({
           >
             Open .nam
           </button>
-        )}
-        {rel && (
-          <span className="ml-auto text-nm-text-3" title={fmtDateTime(capture.createdAt) ?? ''}>
-            captured {fmtDate(capture.createdAt)}
-          </span>
         )}
       </div>
     </div>
@@ -1835,7 +1866,8 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   return (
     <div className="flex flex-col h-screen bg-app-bg text-nm-text overflow-hidden">
       <div className="flex items-center gap-3 px-4 py-2 border-b border-nm-border flex-shrink-0">
-        <h1 className="text-sm font-semibold text-nm-text-2">NAM Projects</h1>
+        <NamLabCrumb mode="nam-projects" />
+        <div className="w-px h-5 bg-nm-border-s flex-shrink-0" />
         <button
           onClick={handleAddFolder}
           disabled={scanning}
@@ -2100,8 +2132,8 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
             <div className="flex-1 overflow-y-auto">
               {detail && captureView === 'cards' ? (
                 <div
-                  className="grid gap-2 p-3"
-                  style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}
+                  className="grid gap-4 p-5 content-start"
+                  style={{ gridTemplateColumns: 'repeat(auto-fill, 264px)' }}
                 >
                   {visibleCaptures.map((c) => (
                     <CaptureCard
