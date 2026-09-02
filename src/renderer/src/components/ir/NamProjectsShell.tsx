@@ -38,6 +38,7 @@ const EPOCHS_KEY = 'nam-lab-nam-projects-epochs'
 const SELECTED_KEY = 'nam-lab-nam-projects-selected'
 const VIEW_KEY = 'nam-lab-nam-projects-view'
 const CAPTURE_VIEW_KEY = 'nam-lab-nam-projects-capture-view'
+const SORT_LS_KEY = 'nam-lab-nam-projects-sort'
 
 function readStored(key: string): string {
   try {
@@ -246,6 +247,140 @@ function matchesFacets(c: NamCaptureRow, f: FacetState): boolean {
 }
 
 // --- small shared components ---------------------------------------------------
+
+// --- sorting ---------------------------------------------------------------
+
+type SortKey = 'name' | 'created' | 'scope' | 'rate' | 'latency' | 'esr' | 'trained'
+type SortDir = 'asc' | 'desc'
+const SORT_KEYS: SortKey[] = ['name', 'created', 'scope', 'rate', 'latency', 'esr', 'trained']
+const SORT_LABELS: Record<SortKey, string> = {
+  name: 'Name',
+  created: 'Date',
+  scope: 'Scope',
+  rate: 'Sample rate',
+  latency: 'Latency',
+  esr: 'ESR',
+  trained: 'Trained state'
+}
+
+function sortValue(c: NamCaptureRow, key: SortKey): string | number {
+  switch (key) {
+    case 'name':
+      return c.captureName.toLowerCase()
+    case 'created':
+      return c.createdAt ? Date.parse(c.createdAt) || 0 : 0
+    case 'scope':
+      return (c.captureScope ?? '').toLowerCase()
+    case 'rate':
+      return c.sampleRate ?? 0
+    case 'latency':
+      return c.measuredLatencySamples ?? -1
+    case 'esr':
+      // untrained / no ESR sorts last on an ascending "best first"
+      return c.result?.validationEsr ?? Number.POSITIVE_INFINITY
+    case 'trained':
+      return c.trained ? 1 : 0
+  }
+}
+
+function sortCaptures(rows: NamCaptureRow[], key: SortKey, dir: SortDir): NamCaptureRow[] {
+  const mul = dir === 'asc' ? 1 : -1
+  return [...rows].sort((a, b) => {
+    const av = sortValue(a, key)
+    const bv = sortValue(b, key)
+    if (av < bv) return -mul
+    if (av > bv) return mul
+    return a.captureName.toLowerCase() < b.captureName.toLowerCase() ? -1 : 1
+  })
+}
+
+/** Column template shared by the list header and every list row so they stay aligned. */
+const LIST_GRID =
+  'grid grid-cols-[20px_minmax(150px,1fr)_86px_72px_52px_74px_92px_60px_22px] items-center gap-2'
+
+/** A single value rendered as a click-to-filter target (list-row scope / rate cells). */
+function FacetValueButton({
+  value,
+  active,
+  onClick
+}: {
+  value: string | null
+  active: boolean
+  onClick: () => void
+}): React.ReactElement {
+  if (!value) return <span className="text-nm-text-3">—</span>
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation()
+        onClick()
+      }}
+      title={`Filter by ${value}`}
+      className={`text-left truncate ${active ? 'text-nm-accent' : 'text-nm-text-2 hover:text-nm-accent'}`}
+    >
+      {value}
+    </button>
+  )
+}
+
+/** nam-chip that toggles a facet filter (card scope / rate / gear / tone chips). */
+function FacetChip({
+  label,
+  active,
+  onClick
+}: {
+  label: string
+  active: boolean
+  onClick: () => void
+}): React.ReactElement {
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation()
+        onClick()
+      }}
+      title={`Filter by ${label}`}
+      className={`nam-chip text-[10px] ${active ? 'ring-1 ring-nm-accent' : ''}`}
+    >
+      {label}
+    </button>
+  )
+}
+
+function CaptureListHeader({
+  sortKey,
+  sortDir,
+  onSort
+}: {
+  sortKey: SortKey
+  sortDir: SortDir
+  onSort: (k: SortKey) => void
+}): React.ReactElement {
+  const H = ({ k, label }: { k: SortKey; label: string }): React.ReactElement => (
+    <button
+      onClick={() => onSort(k)}
+      className={`text-left text-[10px] uppercase tracking-wide truncate ${
+        sortKey === k ? 'text-nm-accent' : 'text-nm-text-3 hover:text-nm-text-2'
+      }`}
+    >
+      {label}
+      {sortKey === k ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
+    </button>
+  )
+  return (
+    <div className={`${LIST_GRID} px-3 py-1.5 border-b border-nm-border bg-panel-2 flex-shrink-0 sticky top-0 z-10`}>
+      <span />
+      <H k="name" label="Name" />
+      <H k="scope" label="Scope" />
+      <H k="rate" label="Rate" />
+      <H k="latency" label="Lat" />
+      <H k="esr" label="ESR" />
+      <H k="trained" label="State" />
+      <H k="created" label="Date" />
+      <span />
+    </div>
+  )
+}
 
 function TrainedBadge({ trained }: { trained: boolean }): React.ReactElement {
   return (
@@ -468,7 +603,9 @@ function CaptureRow({
   active,
   onToggleCheck,
   onOpenDetail,
-  onMenu
+  onMenu,
+  onFacet,
+  isFacetActive
 }: {
   capture: NamCaptureRow
   checked: boolean
@@ -476,9 +613,18 @@ function CaptureRow({
   onToggleCheck: () => void
   onOpenDetail: () => void
   onMenu: (c: NamCaptureRow, x: number, y: number) => void
+  onFacet: (key: FacetKey, value: string) => void
+  isFacetActive: (key: FacetKey, value: string | null) => boolean
 }): React.ReactElement {
-  const rel = relTime(capture.createdAt)
   const eff = capture.effective
+  const gear = [eff.gearMake, eff.gearModel].filter(Boolean).join(' · ')
+  const srl = srLabel(capture.sampleRate)
+  const hasSub =
+    !!gear ||
+    captureIsCalibrated(capture) ||
+    hasHints(capture) ||
+    capture.metadataEdited ||
+    capture.synthetic
   return (
     <div
       onClick={onOpenDetail}
@@ -486,7 +632,7 @@ function CaptureRow({
         e.preventDefault()
         onMenu(capture, e.clientX, e.clientY)
       }}
-      className={`flex items-center gap-2 px-3 py-2 border-b border-nm-border-s text-xs cursor-pointer ${
+      className={`${LIST_GRID} px-3 py-1.5 border-b border-nm-border-s text-xs cursor-pointer ${
         active
           ? 'bg-active-bg ring-1 ring-inset ring-nm-accent/40'
           : checked
@@ -501,67 +647,70 @@ function CaptureRow({
         onClick={(e) => e.stopPropagation()}
         className="flex-shrink-0"
       />
-      <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+      <div className="min-w-0">
         <div className="truncate text-sm leading-tight text-nm-text">{capture.captureName}</div>
-        <div className="flex items-center gap-2 text-[11px] text-nm-text-3 flex-wrap">
-          {capture.captureScope && <span>{capture.captureScope}</span>}
-          {audioLabel(capture) && <span>{audioLabel(capture)}</span>}
-          {capture.measuredLatencySamples != null && <span>{capture.measuredLatencySamples} smp</span>}
-          {captureIsCalibrated(capture) && (
-            <span className="text-emerald-600 dark:text-emerald-400" title={calChipTitle(capture)}>
-              ⚑ {eff.inputLevelDbu ?? capture.calibration?.inputLevelDbu ?? '?'}/
-              {eff.outputLevelDbu ?? capture.calibration?.outputLevelDbu ?? '?'} dBu
-              {capture.calibration?.confidence ? ` ${capture.calibration.confidence}` : ''}
-            </span>
-          )}
-          {hasHints(capture) && (
-            <span className="text-nm-text-3" title={hintTip(capture)}>
-              ⓘ hints
-            </span>
-          )}
-          {capture.metadataEdited && (
-            <span className="text-nm-accent" title="Model metadata edited in NAM Lab">
-              ✎ edited
-            </span>
-          )}
-          {capture.synthetic && (
-            <span
-              className="nam-chip opacity-60 flex-shrink-0"
-              title={
-                capture.syntheticSourceIrName
-                  ? `Synthetic — generated from ${capture.syntheticSourceIrName}, not a real capture`
-                  : 'Synthetic — not a real capture'
-              }
-            >
-              <span className="nam-dot" />
-              synthetic
-            </span>
-          )}
-        </div>
+        {hasSub && (
+          <div className="flex items-center gap-1.5 text-[10px] text-nm-text-3 truncate">
+            {gear && <span className="truncate">{gear}</span>}
+            {captureIsCalibrated(capture) && (
+              <span
+                className="text-emerald-600 dark:text-emerald-400 flex-shrink-0"
+                title={calChipTitle(capture)}
+              >
+                ⚑ cal
+              </span>
+            )}
+            {hasHints(capture) && (
+              <span className="flex-shrink-0" title={hintTip(capture)}>
+                ⓘ
+              </span>
+            )}
+            {capture.metadataEdited && (
+              <span className="text-nm-accent flex-shrink-0" title="Model metadata edited in NAM Lab">
+                ✎
+              </span>
+            )}
+            {capture.synthetic && (
+              <span
+                className="flex-shrink-0"
+                title={
+                  capture.syntheticSourceIrName
+                    ? `Synthetic — generated from ${capture.syntheticSourceIrName}, not a real capture`
+                    : 'Synthetic — not a real capture'
+                }
+              >
+                synthetic
+              </span>
+            )}
+          </div>
+        )}
       </div>
-      {capture.trained && capture.result?.validationEsr != null && (
-        <span
-          className="text-[11px] text-nm-text-3 flex-shrink-0"
-          title="Validation ESR of the trained model"
-        >
-          ESR {capture.result.validationEsr.toFixed(4)}
-        </span>
-      )}
-      {rel && (
-        <span
-          className="text-[11px] text-nm-text-3 flex-shrink-0 w-16 text-right"
-          title={fmtDateTime(capture.createdAt) ?? ''}
-        >
-          {rel}
-        </span>
-      )}
+      <FacetValueButton
+        value={capture.captureScope}
+        active={isFacetActive('scope', capture.captureScope)}
+        onClick={() => capture.captureScope && onFacet('scope', capture.captureScope)}
+      />
+      <FacetValueButton
+        value={srl}
+        active={isFacetActive('sampleRate', srl)}
+        onClick={() => srl && onFacet('sampleRate', srl)}
+      />
+      <span className="text-nm-text-3 tabular-nums" title="Measured input→output latency">
+        {capture.measuredLatencySamples != null ? capture.measuredLatencySamples : '—'}
+      </span>
+      <span className="text-nm-text-3 tabular-nums" title="Validation ESR of the trained model">
+        {capture.result?.validationEsr != null ? capture.result.validationEsr.toFixed(4) : '—'}
+      </span>
       <TrainedBadge trained={capture.trained} />
+      <span className="text-nm-text-3 text-[11px] truncate" title={fmtDateTime(capture.createdAt) ?? ''}>
+        {relTime(capture.createdAt) ?? '—'}
+      </span>
       <button
         onClick={(e) => {
           e.stopPropagation()
           onMenu(capture, e.clientX, e.clientY)
         }}
-        className="flex-shrink-0 px-1 text-nm-text-3 hover:text-nm-text"
+        className="text-nm-text-3 hover:text-nm-text text-right"
         title="More…"
       >
         ⋯
@@ -579,7 +728,9 @@ function CaptureCard({
   onMenu,
   onReveal,
   onOpenModel,
-  onQueue
+  onQueue,
+  onFacet,
+  isFacetActive
 }: {
   capture: NamCaptureRow
   checked: boolean
@@ -590,10 +741,12 @@ function CaptureCard({
   onReveal: () => void
   onOpenModel: () => void
   onQueue: () => void
+  onFacet: (key: FacetKey, value: string) => void
+  isFacetActive: (key: FacetKey, value: string | null) => boolean
 }): React.ReactElement {
   const eff = capture.effective
   const gear = [eff.gearMake, eff.gearModel].filter(Boolean).join(' · ')
-  const chips = [eff.gearType, eff.toneType].filter(Boolean) as string[]
+  const srl = srLabel(capture.sampleRate)
   const hasGraph = capture.graphExists && !!capture.result?.graphPath
   return (
     <div
@@ -653,9 +806,22 @@ function CaptureCard({
           <TrainedBadge trained={capture.trained} />
         </div>
 
-        <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-nm-text-3">
-          {capture.captureScope && <span>{capture.captureScope}</span>}
-          {audioLabel(capture) && <span>{audioLabel(capture)}</span>}
+        <div className="flex flex-wrap items-center gap-1.5 gap-y-1 text-xs text-nm-text-3">
+          {capture.captureScope && (
+            <FacetChip
+              label={capture.captureScope}
+              active={isFacetActive('scope', capture.captureScope)}
+              onClick={() => onFacet('scope', capture.captureScope as string)}
+            />
+          )}
+          {srl && (
+            <FacetChip
+              label={srl}
+              active={isFacetActive('sampleRate', srl)}
+              onClick={() => onFacet('sampleRate', srl)}
+            />
+          )}
+          {capture.recordingBitDepth && <span>{capture.recordingBitDepth}-bit</span>}
           {capture.measuredLatencySamples != null && <span>{capture.measuredLatencySamples} smp</span>}
         </div>
 
@@ -669,13 +835,22 @@ function CaptureCard({
 
         {gear && <div className="text-xs text-nm-text-2 truncate">{gear}</div>}
 
-        {(chips.length > 0 || capture.metadataEdited) && (
+        {(eff.gearType || eff.toneType || capture.metadataEdited) && (
           <div className="flex flex-wrap items-center gap-1 mt-0.5">
-            {chips.map((t) => (
-              <span key={t} className="nam-chip text-[10px]">
-                {t}
-              </span>
-            ))}
+            {eff.gearType && (
+              <FacetChip
+                label={eff.gearType}
+                active={isFacetActive('gearType', eff.gearType)}
+                onClick={() => onFacet('gearType', eff.gearType as string)}
+              />
+            )}
+            {eff.toneType && (
+              <FacetChip
+                label={eff.toneType}
+                active={isFacetActive('toneType', eff.toneType)}
+                onClick={() => onFacet('toneType', eff.toneType as string)}
+              />
+            )}
             {capture.metadataEdited && (
               <span className="text-[10px] text-nm-accent" title="Model metadata edited in NAM Lab">
                 ✎ edited
@@ -1414,6 +1589,13 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   const [captureView, setCaptureView] = useState<'list' | 'cards'>(() =>
     readStored(CAPTURE_VIEW_KEY) === 'cards' ? 'cards' : 'list'
   )
+  const [sortKey, setSortKey] = useState<SortKey>(() => {
+    const k = readStored(SORT_LS_KEY).split(':')[0] as SortKey
+    return SORT_KEYS.includes(k) ? k : 'name'
+  })
+  const [sortDir, setSortDir] = useState<SortDir>(() =>
+    readStored(SORT_LS_KEY).split(':')[1] === 'desc' ? 'desc' : 'asc'
+  )
   const [overview, setOverview] = useState<NamLibraryOverview | null>(null)
   const [reportCopied, setReportCopied] = useState(false)
   const [projectFilter, setProjectFilter] = useState('')
@@ -1651,6 +1833,28 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
     })
   }, [detail, captureFilter, statusFilter, facets])
 
+  const sortedCaptures = useMemo(
+    () => sortCaptures(visibleCaptures, sortKey, sortDir),
+    [visibleCaptures, sortKey, sortDir]
+  )
+
+  useEffect(() => {
+    writeStored(SORT_LS_KEY, `${sortKey}:${sortDir}`)
+  }, [sortKey, sortDir])
+
+  // A header/chip click on the active key flips direction; a new key picks a sensible default
+  // direction (newest date / trained-first, otherwise A→Z / smallest-first).
+  const setSort = useCallback((k: SortKey) => {
+    setSortKey((prev) => {
+      if (prev === k) {
+        setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+        return prev
+      }
+      setSortDir(k === 'created' || k === 'trained' ? 'desc' : 'asc')
+      return k
+    })
+  }, [])
+
   const filtersActive =
     captureFilter.trim() !== '' ||
     statusFilter !== 'all' ||
@@ -1662,6 +1866,10 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
       return { ...f, [key]: cur.includes(value) ? cur.filter((v) => v !== value) : [...cur, value] }
     })
   }, [])
+  const isFacetActive = useCallback(
+    (key: FacetKey, value: string | null) => !!value && facets[key].includes(value),
+    [facets]
+  )
   const clearFilters = useCallback(() => {
     setFacets(EMPTY_FACETS)
     setCaptureFilter('')
@@ -2088,6 +2296,27 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                       </button>
                     ))}
                   </div>
+                  <div className="flex items-center flex-shrink-0">
+                    <select
+                      value={sortKey}
+                      onChange={(e) => setSort(e.target.value as SortKey)}
+                      title="Sort captures"
+                      className="text-[11px] px-1.5 py-1 rounded-l border border-field-bd bg-field-bg text-nm-text-2"
+                    >
+                      {SORT_KEYS.map((k) => (
+                        <option key={k} value={k}>
+                          Sort: {SORT_LABELS[k]}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+                      title={sortDir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'}
+                      className="text-[11px] px-1.5 py-1 rounded-r border border-l-0 border-field-bd text-nm-text-2 hover:bg-hov"
+                    >
+                      {sortDir === 'asc' ? '↑' : '↓'}
+                    </button>
+                  </div>
                   {(['all', 'untrained', 'trained', 'synthetic'] as const).map((s) => {
                     const n =
                       s === 'all'
@@ -2136,7 +2365,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                   className="grid gap-4 p-5 content-start"
                   style={{ gridTemplateColumns: 'repeat(auto-fill, 264px)' }}
                 >
-                  {visibleCaptures.map((c) => (
+                  {sortedCaptures.map((c) => (
                     <CaptureCard
                       key={c.itemId}
                       capture={c}
@@ -2150,23 +2379,32 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                         c.result?.outputModelPath && void window.api.openFile(c.result.outputModelPath)
                       }
                       onQueue={() => void stageBatch([c], c.captureName)}
+                      onFacet={toggleFacet}
+                      isFacetActive={isFacetActive}
                     />
                   ))}
                 </div>
               ) : (
-                visibleCaptures.map((c) => (
-                  <CaptureRow
-                    key={c.itemId}
-                    capture={c}
-                    checked={selectedCaptureIds.has(c.itemId)}
-                    active={c.itemId === selectedCaptureId}
-                    onToggleCheck={() => toggleCapture(c.itemId)}
-                    onOpenDetail={() => setSelectedCaptureId(c.itemId)}
-                    onMenu={(capture, x, y) => setCaptureMenu({ capture, x, y })}
-                  />
-                ))
+                <>
+                  {sortedCaptures.length > 0 && (
+                    <CaptureListHeader sortKey={sortKey} sortDir={sortDir} onSort={setSort} />
+                  )}
+                  {sortedCaptures.map((c) => (
+                    <CaptureRow
+                      key={c.itemId}
+                      capture={c}
+                      checked={selectedCaptureIds.has(c.itemId)}
+                      active={c.itemId === selectedCaptureId}
+                      onToggleCheck={() => toggleCapture(c.itemId)}
+                      onOpenDetail={() => setSelectedCaptureId(c.itemId)}
+                      onMenu={(capture, x, y) => setCaptureMenu({ capture, x, y })}
+                      onFacet={toggleFacet}
+                      isFacetActive={isFacetActive}
+                    />
+                  ))}
+                </>
               )}
-              {detail && visibleCaptures.length === 0 && (
+              {detail && sortedCaptures.length === 0 && (
                 <div className="px-4 py-4 text-xs text-nm-text-3">No captures match this filter.</div>
               )}
             </div>
