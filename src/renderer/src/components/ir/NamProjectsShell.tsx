@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ContextMenu, type ContextMenuItem } from '../ContextMenu'
 import { NamLabCrumb } from '../NamLabCrumb'
+import { DataGrid, type DataGridColumn } from '../DataGrid'
 import { TRAINER_ARCHITECTURES, BUILT_IN_CAPTURE_PROFILES } from '../../types/trainer'
 import { GEAR_TYPES, TONE_TYPES } from '../../types/nam'
 import type {
@@ -139,37 +140,6 @@ function captureIsCalibrated(c: NamCaptureRow): boolean {
   return !!c.calibration && (c.calibration.inputLevelDbu != null || c.calibration.outputLevelDbu != null)
 }
 
-function hasHints(c: NamCaptureRow): boolean {
-  const s = c.suggested
-  return !!s && !!(s.modeledBy || s.gearMake || s.gearModel || s.gearType || s.toneType)
-}
-function hintTip(c: NamCaptureRow): string {
-  const s = c.suggested
-  if (!s) return ''
-  return (
-    'Model-metadata hints from IR Lab (seed the effective metadata below):\n' +
-    [
-      s.modeledBy && `modeled by ${s.modeledBy}`,
-      s.gearMake && `make ${s.gearMake}`,
-      s.gearModel && `model ${s.gearModel}`,
-      s.gearType && `type ${s.gearType}`,
-      s.toneType && `tone ${s.toneType}`
-    ]
-      .filter(Boolean)
-      .join('\n')
-  )
-}
-
-function calChipTitle(c: NamCaptureRow): string {
-  const cal = c.calibration
-  if (!cal) return ''
-  return (
-    'Rig-calibrated' +
-    (cal.method ? ` (${cal.method}${cal.confidence ? `, ${cal.confidence}` : ''})` : '') +
-    ` — input ${cal.inputLevelDbu ?? '?'} dBu, output ${cal.outputLevelDbu ?? '?'} dBu`
-  )
-}
-
 // --- facets ----------------------------------------------------------------
 
 type FacetKey = 'scope' | 'sampleRate' | 'gearType' | 'toneType' | 'calibration' | 'architecture'
@@ -248,79 +218,62 @@ function matchesFacets(c: NamCaptureRow, f: FacetState): boolean {
 
 // --- small shared components ---------------------------------------------------
 
-// --- sorting ---------------------------------------------------------------
+// --- sorting + the shared DataGrid column model ---------------------------
 
-type SortKey = 'name' | 'created' | 'scope' | 'rate' | 'latency' | 'esr' | 'trained'
 type SortDir = 'asc' | 'desc'
-const SORT_KEYS: SortKey[] = ['name', 'created', 'scope', 'rate', 'latency', 'esr', 'trained']
-const SORT_LABELS: Record<SortKey, string> = {
-  name: 'Name',
-  created: 'Date',
-  scope: 'Scope',
-  rate: 'Sample rate',
-  latency: 'Latency',
-  esr: 'ESR',
-  trained: 'Trained state'
-}
 
-function sortValue(c: NamCaptureRow, key: SortKey): string | number {
-  switch (key) {
-    case 'name':
-      return c.captureName.toLowerCase()
-    case 'created':
-      return c.createdAt ? Date.parse(c.createdAt) || 0 : 0
-    case 'scope':
-      return (c.captureScope ?? '').toLowerCase()
-    case 'rate':
-      return c.sampleRate ?? 0
-    case 'latency':
-      return c.measuredLatencySamples ?? -1
-    case 'esr':
-      // untrained / no ESR sorts last on an ascending "best first"
-      return c.result?.validationEsr ?? Number.POSITIVE_INFINITY
-    case 'trained':
-      return c.trained ? 1 : 0
+const numOr = (n: number | null | undefined, fallback: number): number =>
+  n == null || !Number.isFinite(n) ? fallback : n
+
+/** Column definitions for the capture list's DataGrid. `getValue` is the text used for the
+ * per-column filter / value checklist / autosize / default cell; `sortValue` / `render` refine
+ * sorting and display. The card view sorts through the same defs (sortRows below). */
+export const CAPTURE_COLUMNS: DataGridColumn<NamCaptureRow>[] = [
+  { key: 'name', label: 'Name', minWidth: 160, defaultWidth: 260, defaultVisible: true, filter: 'text', getValue: (c) => c.captureName },
+  { key: 'scope', label: 'Scope', minWidth: 90, defaultVisible: true, getValue: (c) => c.captureScope ?? '' },
+  { key: 'rate', label: 'Rate', minWidth: 70, defaultVisible: true, getValue: (c) => srLabel(c.sampleRate) ?? '', sortValue: (c) => c.sampleRate ?? 0 },
+  { key: 'bitDepth', label: 'Bit depth', minWidth: 80, defaultVisible: false, getValue: (c) => (c.recordingBitDepth ? `${c.recordingBitDepth}-bit` : ''), sortValue: (c) => c.recordingBitDepth ?? 0 },
+  { key: 'channels', label: 'Channels', minWidth: 84, defaultVisible: false, getValue: (c) => (c.recordingChannels === 1 ? 'mono' : c.recordingChannels === 2 ? 'stereo' : c.recordingChannels ? `${c.recordingChannels}ch` : '') },
+  { key: 'duration', label: 'Length', minWidth: 70, defaultVisible: false, align: 'right', getValue: (c) => durationLabel(c.recordingDurationSec) ?? '', sortValue: (c) => numOr(c.recordingDurationSec, 0) },
+  { key: 'latency', label: 'Latency', minWidth: 74, defaultVisible: true, align: 'right', getValue: (c) => (c.measuredLatencySamples != null ? String(c.measuredLatencySamples) : ''), sortValue: (c) => c.measuredLatencySamples ?? -1 },
+  { key: 'calIn', label: 'Cal in (dBu)', minWidth: 96, defaultVisible: false, align: 'right', getValue: (c) => { const v = c.effective.inputLevelDbu ?? c.calibration?.inputLevelDbu; return v != null ? String(v) : '' }, sortValue: (c) => numOr(c.effective.inputLevelDbu ?? c.calibration?.inputLevelDbu, Number.POSITIVE_INFINITY) },
+  { key: 'calOut', label: 'Cal out (dBu)', minWidth: 96, defaultVisible: false, align: 'right', getValue: (c) => { const v = c.effective.outputLevelDbu ?? c.calibration?.outputLevelDbu; return v != null ? String(v) : '' }, sortValue: (c) => numOr(c.effective.outputLevelDbu ?? c.calibration?.outputLevelDbu, Number.POSITIVE_INFINITY) },
+  { key: 'calConfidence', label: 'Cal confidence', minWidth: 120, defaultVisible: false, getValue: (c) => c.calibration?.confidence ?? '' },
+  { key: 'gearMake', label: 'Gear make', minWidth: 120, defaultVisible: false, getValue: (c) => c.effective.gearMake ?? '' },
+  { key: 'gearModel', label: 'Gear model', minWidth: 120, defaultVisible: false, getValue: (c) => c.effective.gearModel ?? '' },
+  { key: 'gearType', label: 'Gear type', minWidth: 100, defaultVisible: false, getValue: (c) => c.effective.gearType ?? '' },
+  { key: 'toneType', label: 'Tone type', minWidth: 100, defaultVisible: false, getValue: (c) => c.effective.toneType ?? '' },
+  { key: 'modeledBy', label: 'Modeled by', minWidth: 130, defaultVisible: false, getValue: (c) => c.effective.modeledBy ?? '' },
+  { key: 'esr', label: 'ESR', minWidth: 74, defaultVisible: true, align: 'right', getValue: (c) => (c.result?.validationEsr != null ? c.result.validationEsr.toFixed(4) : ''), sortValue: (c) => c.result?.validationEsr ?? Number.POSITIVE_INFINITY },
+  { key: 'architecture', label: 'Arch', minWidth: 70, defaultVisible: false, getValue: (c) => c.result?.architecture ?? '' },
+  { key: 'trained', label: 'State', minWidth: 92, defaultVisible: true, getValue: (c) => (c.trained ? 'Trained' : 'Untrained'), sortValue: (c) => (c.trained ? 1 : 0), render: (c) => <TrainedBadge trained={c.trained} /> },
+  { key: 'edited', label: 'Edited', minWidth: 70, defaultVisible: false, getValue: (c) => (c.metadataEdited ? 'Yes' : '') },
+  { key: 'synthetic', label: 'Synthetic', minWidth: 84, defaultVisible: false, getValue: (c) => (c.synthetic ? 'Yes' : '') },
+  {
+    key: 'created',
+    label: 'Date',
+    minWidth: 90,
+    defaultVisible: true,
+    getValue: (c) => fmtDate(c.createdAt) ?? '',
+    sortValue: (c) => (c.createdAt ? Date.parse(c.createdAt) || 0 : 0),
+    render: (c) => <span title={fmtDateTime(c.createdAt) ?? ''}>{relTime(c.createdAt) ?? '—'}</span>
   }
-}
+]
 
-function sortCaptures(rows: NamCaptureRow[], key: SortKey, dir: SortDir): NamCaptureRow[] {
+/** Sort a row array through a DataGrid column's `sortValue` (or its text value) — used for the
+ * card view, which shares the column model but isn't rendered by DataGrid. */
+function sortRows<T>(rows: T[], columns: DataGridColumn<T>[], key: string, dir: SortDir): T[] {
+  const col = columns.find((c) => c.key === key)
+  if (!col) return rows
+  const val = col.sortValue ?? ((r: T) => col.getValue(r).toLowerCase())
   const mul = dir === 'asc' ? 1 : -1
   return [...rows].sort((a, b) => {
-    const av = sortValue(a, key)
-    const bv = sortValue(b, key)
+    const av = val(a)
+    const bv = val(b)
     if (av < bv) return -mul
     if (av > bv) return mul
-    return a.captureName.toLowerCase() < b.captureName.toLowerCase() ? -1 : 1
+    return 0
   })
-}
-
-/** Column template shared by the list header and every list row so they stay aligned. */
-const LIST_GRID =
-  'grid grid-cols-[20px_minmax(150px,1fr)_86px_72px_52px_74px_92px_60px_22px] items-center gap-2'
-
-/** A single value rendered as a click-to-filter target (list-row scope / rate cells). */
-function FacetValueButton({
-  value,
-  active,
-  onClick
-}: {
-  value: string | null
-  active: boolean
-  onClick: () => void
-}): React.ReactElement {
-  if (!value) return <span className="text-nm-text-3">—</span>
-  return (
-    <button
-      onClick={(e) => {
-        e.stopPropagation()
-        onClick()
-      }}
-      title={`Filter by ${value}`}
-      className={`text-left truncate ${active ? 'text-nm-accent' : 'text-nm-text-2 hover:text-nm-accent'}`}
-    >
-      {value}
-    </button>
-  )
 }
 
 /** nam-chip that toggles a facet filter (card scope / rate / gear / tone chips). */
@@ -344,41 +297,6 @@ function FacetChip({
     >
       {label}
     </button>
-  )
-}
-
-function CaptureListHeader({
-  sortKey,
-  sortDir,
-  onSort
-}: {
-  sortKey: SortKey
-  sortDir: SortDir
-  onSort: (k: SortKey) => void
-}): React.ReactElement {
-  const H = ({ k, label }: { k: SortKey; label: string }): React.ReactElement => (
-    <button
-      onClick={() => onSort(k)}
-      className={`text-left text-[10px] uppercase tracking-wide truncate ${
-        sortKey === k ? 'text-nm-accent' : 'text-nm-text-3 hover:text-nm-text-2'
-      }`}
-    >
-      {label}
-      {sortKey === k ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
-    </button>
-  )
-  return (
-    <div className={`${LIST_GRID} px-3 py-1.5 border-b border-nm-border bg-panel-2 flex-shrink-0 sticky top-0 z-10`}>
-      <span />
-      <H k="name" label="Name" />
-      <H k="scope" label="Scope" />
-      <H k="rate" label="Rate" />
-      <H k="latency" label="Lat" />
-      <H k="esr" label="ESR" />
-      <H k="trained" label="State" />
-      <H k="created" label="Date" />
-      <span />
-    </div>
   )
 }
 
@@ -593,128 +511,6 @@ function ProjectHeader({
           ))}
         </div>
       )}
-    </div>
-  )
-}
-
-function CaptureRow({
-  capture,
-  checked,
-  active,
-  onToggleCheck,
-  onOpenDetail,
-  onMenu,
-  onFacet,
-  isFacetActive
-}: {
-  capture: NamCaptureRow
-  checked: boolean
-  active: boolean
-  onToggleCheck: () => void
-  onOpenDetail: () => void
-  onMenu: (c: NamCaptureRow, x: number, y: number) => void
-  onFacet: (key: FacetKey, value: string) => void
-  isFacetActive: (key: FacetKey, value: string | null) => boolean
-}): React.ReactElement {
-  const eff = capture.effective
-  const gear = [eff.gearMake, eff.gearModel].filter(Boolean).join(' · ')
-  const srl = srLabel(capture.sampleRate)
-  const hasSub =
-    !!gear ||
-    captureIsCalibrated(capture) ||
-    hasHints(capture) ||
-    capture.metadataEdited ||
-    capture.synthetic
-  return (
-    <div
-      onClick={onOpenDetail}
-      onContextMenu={(e) => {
-        e.preventDefault()
-        onMenu(capture, e.clientX, e.clientY)
-      }}
-      className={`${LIST_GRID} px-3 py-1.5 border-b border-nm-border-s text-xs cursor-pointer ${
-        active
-          ? 'bg-active-bg ring-1 ring-inset ring-nm-accent/40'
-          : checked
-            ? 'bg-active-bg/60'
-            : 'hover:bg-hov'
-      }`}
-    >
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={onToggleCheck}
-        onClick={(e) => e.stopPropagation()}
-        className="flex-shrink-0"
-      />
-      <div className="min-w-0">
-        <div className="truncate text-sm leading-tight text-nm-text">{capture.captureName}</div>
-        {hasSub && (
-          <div className="flex items-center gap-1.5 text-[10px] text-nm-text-3 truncate">
-            {gear && <span className="truncate">{gear}</span>}
-            {captureIsCalibrated(capture) && (
-              <span
-                className="text-emerald-600 dark:text-emerald-400 flex-shrink-0"
-                title={calChipTitle(capture)}
-              >
-                ⚑ cal
-              </span>
-            )}
-            {hasHints(capture) && (
-              <span className="flex-shrink-0" title={hintTip(capture)}>
-                ⓘ
-              </span>
-            )}
-            {capture.metadataEdited && (
-              <span className="text-nm-accent flex-shrink-0" title="Model metadata edited in NAM Lab">
-                ✎
-              </span>
-            )}
-            {capture.synthetic && (
-              <span
-                className="flex-shrink-0"
-                title={
-                  capture.syntheticSourceIrName
-                    ? `Synthetic — generated from ${capture.syntheticSourceIrName}, not a real capture`
-                    : 'Synthetic — not a real capture'
-                }
-              >
-                synthetic
-              </span>
-            )}
-          </div>
-        )}
-      </div>
-      <FacetValueButton
-        value={capture.captureScope}
-        active={isFacetActive('scope', capture.captureScope)}
-        onClick={() => capture.captureScope && onFacet('scope', capture.captureScope)}
-      />
-      <FacetValueButton
-        value={srl}
-        active={isFacetActive('sampleRate', srl)}
-        onClick={() => srl && onFacet('sampleRate', srl)}
-      />
-      <span className="text-nm-text-3 tabular-nums" title="Measured input→output latency">
-        {capture.measuredLatencySamples != null ? capture.measuredLatencySamples : '—'}
-      </span>
-      <span className="text-nm-text-3 tabular-nums" title="Validation ESR of the trained model">
-        {capture.result?.validationEsr != null ? capture.result.validationEsr.toFixed(4) : '—'}
-      </span>
-      <TrainedBadge trained={capture.trained} />
-      <span className="text-nm-text-3 text-[11px] truncate" title={fmtDateTime(capture.createdAt) ?? ''}>
-        {relTime(capture.createdAt) ?? '—'}
-      </span>
-      <button
-        onClick={(e) => {
-          e.stopPropagation()
-          onMenu(capture, e.clientX, e.clientY)
-        }}
-        className="text-nm-text-3 hover:text-nm-text text-right"
-        title="More…"
-      >
-        ⋯
-      </button>
     </div>
   )
 }
@@ -1589,9 +1385,9 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   const [captureView, setCaptureView] = useState<'list' | 'cards'>(() =>
     readStored(CAPTURE_VIEW_KEY) === 'cards' ? 'cards' : 'list'
   )
-  const [sortKey, setSortKey] = useState<SortKey>(() => {
-    const k = readStored(SORT_LS_KEY).split(':')[0] as SortKey
-    return SORT_KEYS.includes(k) ? k : 'name'
+  const [sortKey, setSortKey] = useState<string>(() => {
+    const k = readStored(SORT_LS_KEY).split(':')[0]
+    return CAPTURE_COLUMNS.some((c) => c.key === k) ? k : 'name'
   })
   const [sortDir, setSortDir] = useState<SortDir>(() =>
     readStored(SORT_LS_KEY).split(':')[1] === 'desc' ? 'desc' : 'asc'
@@ -1833,8 +1629,10 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
     })
   }, [detail, captureFilter, statusFilter, facets])
 
+  // Only the card view sorts through this — the list view is a DataGrid, which sorts itself
+  // (controlled by the same sortKey/sortDir so both views agree).
   const sortedCaptures = useMemo(
-    () => sortCaptures(visibleCaptures, sortKey, sortDir),
+    () => sortRows(visibleCaptures, CAPTURE_COLUMNS, sortKey, sortDir),
     [visibleCaptures, sortKey, sortDir]
   )
 
@@ -1844,7 +1642,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
 
   // A header/chip click on the active key flips direction; a new key picks a sensible default
   // direction (newest date / trained-first, otherwise A→Z / smallest-first).
-  const setSort = useCallback((k: SortKey) => {
+  const setSort = useCallback((k: string) => {
     setSortKey((prev) => {
       if (prev === k) {
         setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
@@ -2299,13 +2097,13 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                   <div className="flex items-center flex-shrink-0">
                     <select
                       value={sortKey}
-                      onChange={(e) => setSort(e.target.value as SortKey)}
-                      title="Sort captures"
-                      className="text-[11px] px-1.5 py-1 rounded-l border border-field-bd bg-field-bg text-nm-text-2"
+                      onChange={(e) => setSort(e.target.value)}
+                      title="Sort captures (list-view column headers sort too)"
+                      className="text-[11px] px-1.5 py-1 rounded-l border border-field-bd bg-field-bg text-nm-text-2 max-w-[130px]"
                     >
-                      {SORT_KEYS.map((k) => (
-                        <option key={k} value={k}>
-                          Sort: {SORT_LABELS[k]}
+                      {CAPTURE_COLUMNS.map((c) => (
+                        <option key={c.key} value={c.key}>
+                          Sort: {c.label}
                         </option>
                       ))}
                     </select>
@@ -2359,8 +2157,8 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                 </div>
               </>
             )}
-            <div className="flex-1 overflow-y-auto">
-              {detail && captureView === 'cards' ? (
+            {detail && captureView === 'cards' ? (
+              <div className="flex-1 overflow-y-auto">
                 <div
                   className="grid gap-4 p-5 content-start"
                   style={{ gridTemplateColumns: 'repeat(auto-fill, 264px)' }}
@@ -2383,31 +2181,32 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                       isFacetActive={isFacetActive}
                     />
                   ))}
-                </div>
-              ) : (
-                <>
-                  {sortedCaptures.length > 0 && (
-                    <CaptureListHeader sortKey={sortKey} sortDir={sortDir} onSort={setSort} />
+                  {sortedCaptures.length === 0 && (
+                    <div className="col-span-full px-1 py-4 text-xs text-nm-text-3">
+                      No captures match this filter.
+                    </div>
                   )}
-                  {sortedCaptures.map((c) => (
-                    <CaptureRow
-                      key={c.itemId}
-                      capture={c}
-                      checked={selectedCaptureIds.has(c.itemId)}
-                      active={c.itemId === selectedCaptureId}
-                      onToggleCheck={() => toggleCapture(c.itemId)}
-                      onOpenDetail={() => setSelectedCaptureId(c.itemId)}
-                      onMenu={(capture, x, y) => setCaptureMenu({ capture, x, y })}
-                      onFacet={toggleFacet}
-                      isFacetActive={isFacetActive}
-                    />
-                  ))}
-                </>
-              )}
-              {detail && sortedCaptures.length === 0 && (
-                <div className="px-4 py-4 text-xs text-nm-text-3">No captures match this filter.</div>
-              )}
-            </div>
+                </div>
+              </div>
+            ) : (
+              <DataGrid<NamCaptureRow>
+                rows={visibleCaptures}
+                getRowId={(c) => c.itemId}
+                columns={CAPTURE_COLUMNS}
+                storageKey="nam-projects-captures"
+                selectedIds={selectedCaptureIds}
+                onSelectionChange={(ids) => setSelectedCaptureIds(new Set(ids))}
+                onRowOpen={(c) => setSelectedCaptureId(c.itemId)}
+                onRowContextMenu={(c, x, y) => setCaptureMenu({ capture: c, x, y })}
+                sort={{ key: sortKey, dir: sortDir }}
+                onSortChange={(k, d) => {
+                  setSortKey(k)
+                  setSortDir(d)
+                }}
+                emptyText="No captures match this filter."
+                className="flex-1"
+              />
+            )}
 
             {selectedCaptures.length > 0 && (
               <div className="flex items-center gap-3 px-4 py-2 border-t border-nm-border bg-panel-2 flex-shrink-0">
