@@ -333,6 +333,8 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
         sampleRate?: number | number[]
         bitDepth?: number | number[]
         channels?: number
+        sort?: string
+        sortDir?: 'asc' | 'desc'
         offset: number
         limit: number
       }

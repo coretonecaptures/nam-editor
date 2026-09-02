@@ -413,6 +413,8 @@ const api = {
     sampleRate?: number | number[]
     bitDepth?: number | number[]
     channels?: number
+    sort?: string
+    sortDir?: 'asc' | 'desc'
     offset: number
     limit: number
   }): Promise<{

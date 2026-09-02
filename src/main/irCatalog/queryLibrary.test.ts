@@ -80,6 +80,46 @@ describe.skipIf(!hasFts5())('queryLibrary', () => {
     db.close()
   })
 
+  it('sort: name defaults to path order, direction reverses it, unknown key falls back', () => {
+    const db = new DatabaseSync(':memory:')
+    createSchema(db)
+    seed(db) // relative_path: 'Marshall 412 SM57.wav', 'OwnHammer V30 - Blend.wav', 'plain.wav'
+
+    const asc = queryItems(db, { offset: 0, limit: 10 }).map((r) => r.relative_path)
+    expect(asc).toEqual([
+      'Marshall 412 SM57.wav',
+      'OwnHammer V30 - Blend.wav',
+      'plain.wav'
+    ])
+    expect(queryItems(db, { sort: 'name', sortDir: 'asc', offset: 0, limit: 10 }).map((r) => r.relative_path)).toEqual(asc)
+    expect(queryItems(db, { sort: 'name', sortDir: 'desc', offset: 0, limit: 10 }).map((r) => r.relative_path)).toEqual(
+      [...asc].reverse()
+    )
+    // an unrecognised key is ignored, not injected — still path order
+    expect(
+      queryItems(db, { sort: 'name; DROP TABLE item', offset: 0, limit: 10 }).map((r) => r.relative_path)
+    ).toEqual(asc)
+
+    db.close()
+  })
+
+  it('sort: favorite puts favorited rows first when descending', () => {
+    const db = new DatabaseSync(':memory:')
+    createSchema(db)
+    const { itemIds } = seed(db)
+    setFavorite(db, itemIds[2], true) // 'plain.wav', last in path order
+
+    const rows = queryItems(db, { sort: 'favorite', sortDir: 'desc', offset: 0, limit: 10 })
+    expect(rows[0].id).toBe(itemIds[2])
+    // the rest stay in path order behind it
+    expect(rows.slice(1).map((r) => r.relative_path)).toEqual([
+      'Marshall 412 SM57.wav',
+      'OwnHammer V30 - Blend.wav'
+    ])
+
+    db.close()
+  })
+
   it('folderId scopes results to that folder and its descendants, not siblings', () => {
     const db = new DatabaseSync(':memory:')
     createSchema(db)

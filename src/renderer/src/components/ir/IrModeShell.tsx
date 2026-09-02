@@ -44,6 +44,19 @@ type LibraryRoot = { id: number; path: string; label: string | null; watch_mode:
 const ROW_HEIGHT = 72
 const PAGE_SIZE = 200
 
+const IR_SORT_LS_KEY = 'nam-lab-ir-sort'
+const IR_SORT_KEYS = ['name', 'size', 'rate', 'depth', 'duration', 'favorite', 'missing'] as const
+type IrSortKey = (typeof IR_SORT_KEYS)[number]
+const IR_SORT_LABELS: Record<IrSortKey, string> = {
+  name: 'Name / path',
+  size: 'File size',
+  rate: 'Sample rate',
+  depth: 'Bit depth',
+  duration: 'Length',
+  favorite: 'Favorites first',
+  missing: 'Missing first'
+}
+
 /**
  * Confidence-ladder badge color (plan section 3) — "a small badge, not a modal," per field.
  * Only the two sources Phase 3's parsers actually produce are handled; ir_lab_native/
@@ -226,6 +239,31 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
   // was already selected gets thrown away instead of populating the cache with stale-context rows
   // (e.g. a slow "all IRs" query resolving after the user already clicked into a folder).
   const requestEpochRef = useRef(0)
+
+  const [sortKey, setSortKey] = useState<IrSortKey>(() => {
+    const k = (localStorage.getItem(IR_SORT_LS_KEY) || '').split(':')[0] as IrSortKey
+    return IR_SORT_KEYS.includes(k) ? k : 'name'
+  })
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() =>
+    (localStorage.getItem(IR_SORT_LS_KEY) || '').split(':')[1] === 'desc' ? 'desc' : 'asc'
+  )
+  useEffect(() => {
+    try {
+      localStorage.setItem(IR_SORT_LS_KEY, `${sortKey}:${sortDir}`)
+    } catch {
+      /* non-fatal */
+    }
+  }, [sortKey, sortDir])
+  const setSort = useCallback((k: IrSortKey) => {
+    setSortKey((prev) => {
+      if (prev === k) {
+        setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+        return prev
+      }
+      setSortDir(k === 'favorite' || k === 'missing' || k === 'size' ? 'desc' : 'asc')
+      return k
+    })
+  }, [])
 
   // ── Audition, via NAM Lab's own PlayerPanel (see this component's header comment).
   // `playerIr` is the IR currently loaded into the player's cabinet AND the "is the player open"
@@ -449,7 +487,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
     pendingRef.current = new Set()
     setFocusedIndex(null)
     forceRerender((n) => n + 1)
-  }, [search, roots.length, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, selectedRootId])
+  }, [search, roots.length, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, selectedRootId, sortKey, sortDir])
 
   // Arrow-key navigation through the current filtered list (plan section 8). While the player is
   // open this also swaps the cabinet as you move, which is the whole point — step down the list
@@ -659,6 +697,8 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           tagId: tagFilterId ?? undefined,
           ...facets,
           ...audioFacets,
+          sort: sortKey,
+          sortDir,
           offset: pageStart,
           limit: pageEnd - pageStart
         })
@@ -672,7 +712,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           pendingRef.current.delete(key)
         })
     },
-    [search, total, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, selectedRootId]
+    [search, total, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, selectedRootId, sortKey, sortDir]
   )
 
   // Fires once per search/folder/filter change to establish `total` even before the list scrolls
@@ -690,6 +730,8 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
         tagId: tagFilterId ?? undefined,
         ...facets,
         ...audioFacets,
+        sort: sortKey,
+        sortDir,
         offset: 0,
         limit: PAGE_SIZE
       })
@@ -699,7 +741,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
         res.rows.forEach((row, i) => cacheRef.current.set(i, row))
         forceRerender((n) => n + 1)
       })
-  }, [search, roots.length, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, selectedRootId])
+  }, [search, roots.length, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, selectedRootId, sortKey, sortDir])
 
   const toggleFavorite = useCallback((row: IrItemRow, index: number) => {
     const next = row.is_favorite ? 0 : 1
@@ -847,6 +889,29 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
         >
           Rescan
         </button>
+        {hasAnyRoot && (
+          <div className="flex items-center flex-shrink-0">
+            <select
+              value={sortKey}
+              onChange={(e) => setSort(e.target.value as IrSortKey)}
+              title="Sort the IR list"
+              className="text-xs px-1.5 py-1 rounded-l border border-field-bd bg-field-bg text-nm-text-2"
+            >
+              {IR_SORT_KEYS.map((k) => (
+                <option key={k} value={k}>
+                  Sort: {IR_SORT_LABELS[k]}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+              title={sortDir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'}
+              className="text-xs px-1.5 py-1 rounded-r border border-l-0 border-field-bd text-nm-text-2 hover:bg-hov"
+            >
+              {sortDir === 'asc' ? '↑' : '↓'}
+            </button>
+          </div>
+        )}
         {roots.length > 1 && (
           <select
             value={selectedRootId ?? ''}

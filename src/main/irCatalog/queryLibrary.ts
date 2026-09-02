@@ -97,8 +97,33 @@ export interface QueryOptions {
   sampleRate?: number | number[]
   bitDepth?: number | number[]
   channels?: number
+  /** Column to sort by — one of SORT_COLUMNS' keys. Anything else (or omitted) falls back to
+   * path order, the historical default. `sortDir` defaults to ascending. */
+  sort?: string
+  sortDir?: 'asc' | 'desc'
   offset: number
   limit: number
+}
+
+/** Whitelisted sort keys → SQL expression. Values come from here, never from the caller's
+ * string, so the ORDER BY interpolation below is injection-safe. Path order is the tiebreak on
+ * every one, so a scan is stable. */
+const SORT_COLUMNS: Record<string, string> = {
+  name: 'item.relative_path',
+  size: 'item.file_size',
+  rate: '(SELECT sample_rate FROM ir_item WHERE ir_item.item_id = item.id)',
+  depth: '(SELECT bit_depth FROM ir_item WHERE ir_item.item_id = item.id)',
+  duration: '(SELECT duration_seconds FROM ir_item WHERE ir_item.item_id = item.id)',
+  favorite: 'item.is_favorite',
+  missing: 'item.missing_since'
+}
+
+function orderByClause(options: Pick<QueryOptions, 'sort' | 'sortDir'>): string {
+  const col = (options.sort && SORT_COLUMNS[options.sort]) || SORT_COLUMNS.name
+  const dir = options.sortDir === 'desc' ? 'DESC' : 'ASC'
+  // NULLs last regardless of direction (an unmeasured rate / never-missing file shouldn't win the
+  // top slot), then path order as a stable tiebreak.
+  return `ORDER BY (${col}) IS NULL, (${col}) ${dir}, item.relative_path ASC`
 }
 
 /** `folderId` and every one of its descendants, via the same recursive-CTE shape used
@@ -351,7 +376,7 @@ export function queryItems(db: DatabaseSync, options: QueryOptions): ItemRow[] {
          GROUP BY collection_item.item_id
        ) proj ON proj.item_id = item.id
        ${where}
-       ORDER BY item.relative_path
+       ${orderByClause(options)}
        LIMIT ? OFFSET ?`
     )
     .all(...params, options.limit, options.offset) as unknown as ItemRow[]
