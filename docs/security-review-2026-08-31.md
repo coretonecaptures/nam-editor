@@ -178,6 +178,85 @@ in clear. This is the one place the app has a real secret.
 
 ---
 
+## S8 — Open-source posture + AI / search credential handling  ·  severity: informational (verified safe as designed)
+
+Added 2026-09-02, in response to: "the code is open source on GitHub — is our
+handling of AI keys for search still safe, the way we do it?"
+
+### Repo split (from `docs/ir-lab-manager-build-plan.md` §0, §13)
+
+| Piece | Visibility |
+| --- | --- |
+| `nam-editor` (this repo — shell, IR Lab Manager catalog/scan/audition/search/parsers, tray, `catalog.db`) | **Public, MIT** (`LICENSE` + `NOTICE.md` present) |
+| `ir-lab` (JUCE capture app) | Private — only registers the `irlab://` URL scheme and forwards an incoming request into its own `reopenSession()` |
+| Connector constants (`IR_LAB_URL_SCHEME` + payload field names) | Private, **injected at build time** via env var, same pattern as `CSC_KEY_PASSWORD`; never committed. A build from public source runs fully, minus "Send to IR Lab" silently no-opping. |
+
+Open, non-blocking (tracked in the plan, not this review): the exact IR Lab
+*content*-license enforcement point, and whether any future piece of IR mode
+becomes paid — both only change what gets injected into that private config
+later, not the public code.
+
+**Conclusion: being public is not a credential risk.** There is no
+app-/vendor-owned secret anywhere in the source. Every credential the app
+touches is the *user's own*, entered at runtime, stored encrypted per machine
+outside the repo. Publishing the source reveals only the *mechanism* (which
+provider endpoints, which header names) — the same information any API doc
+carries.
+
+### AI keys (`app:saveAiKey` / `app:aiEnrich` / `app:clearAiKey`, `index.ts` ~6322-6405)
+
+- Keys are **user-supplied** — the user pastes their own Anthropic / OpenAI
+  key. No shared key ships.
+- Stored at `userData/ai-key-<provider>.bin` via `safeStorage.encryptString`.
+  `storeAiKey` **throws rather than write plaintext** when
+  `safeStorage.isEncryptionAvailable()` is false — correct.
+- Read only in the main process. `aiEnrich` calls the provider from main with
+  the key in the header and returns **only the completion text**. There is no
+  `getAiKey` IPC, so the key never travels back to the renderer.
+- Provider hosts are hardcoded per provider (`api.anthropic.com`,
+  `api.openai.com`) — the renderer supplies only `provider` / `model` /
+  `prompt`, never a base URL.
+
+Minor hardening:
+
+1. **`readAiKey` has a dead plaintext fallback**
+   (`isEncryptionAvailable() ? decrypt : buf.toString('utf-8')`) that
+   contradicts `storeAiKey`'s refuse-plaintext stance. Nothing writes an
+   unencrypted `.bin`, so it's unreachable today — but make `readAiKey` also
+   return `null` when encryption is unavailable, so a planted plaintext file
+   can't be picked up.
+2. **`aiEnrich` is data egress**: the prompt is built in the renderer from a
+   capture's metadata and sent to the user's chosen third-party AI. It's
+   user-initiated and on the user's own account, but there is no in-UI
+   disclosure of *what* leaves the machine. Add a one-line "this sends these
+   fields to <provider>" note next to the button.
+3. If a **third provider** is ever added, keep it to a fixed `provider → host`
+   map in main — never accept an endpoint/base-URL from the renderer.
+
+### Tone3000 search / tokens (`loadTone3kTokens` / `saveTone3kTokens`)
+
+- OAuth access/refresh tokens for the user's **own** tone3000.com account.
+  `userData/tone3000-tokens.bin` via `safeStorage` **outside dev**; the
+  `!isDev` guard means a developer's real refresh token sits **plaintext** in
+  `userData` during `npm run dev`. Acceptable for a dev convenience, worth a
+  line in CONTRIBUTING so nobody is surprised.
+- Legacy plaintext `tone3000-tokens.json` is migrated to the `.bin` on load
+  and unlinked — good.
+- Token used only in main-process `net.fetch` with a `Bearer` header; confirm
+  it is never written to the plain log (`switchLogToUserData`) — the refresh
+  failure path logs `body.slice(0, 300)` of the *error response*, not the
+  token, which is fine.
+
+### Companion bridge (adjacent, not "search")
+
+`index.ts` runs a local HTTP server (`companionBridgeConfig.bindAddress`,
+`companionTokenMatches`, `Bearer` auth) for a companion app. Out of scope for
+the AI-key question but it is a live listening socket with its own auth — give
+it its own pass if the companion feature ships broadly (bind address default,
+token generation/rotation, what endpoints it exposes).
+
+---
+
 ## Priorities
 
 1. **S1** — add a CSP now, before any markdown/HTML rendering lands. Cheap,
