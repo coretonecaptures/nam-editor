@@ -608,8 +608,9 @@ function CaptureCard({
           : 'border-nm-border bg-panel hover:border-nm-text-3/50'
       }`}
     >
-      {/* media strip — training graph for a trained capture, quiet placeholder otherwise */}
-      <div className="w-full h-28 bg-field-bg flex items-center justify-center overflow-hidden relative">
+      {/* media strip — training graph for a trained capture, quiet placeholder otherwise.
+          aspect-video + the body padding below match FolderCardView's card proportions. */}
+      <div className="w-full aspect-video bg-field-bg flex items-center justify-center overflow-hidden relative">
         {hasGraph ? (
           <img
             src={fileSrc(capture.result!.graphPath as string)}
@@ -641,7 +642,7 @@ function CaptureCard({
         )}
       </div>
 
-      <div className="px-3.5 py-3 flex flex-col gap-1.5">
+      <div className="px-3 py-2.5 flex flex-col gap-1.5">
         <div className="flex items-start justify-between gap-2">
           <div
             className="text-sm font-medium leading-tight text-nm-text line-clamp-2"
@@ -703,7 +704,7 @@ function CaptureCard({
         )}
       </div>
 
-      <div className="mt-auto border-t border-nm-border-s px-3.5 py-2 flex items-center gap-3 text-xs">
+      <div className="mt-auto border-t border-nm-border-s px-3 py-2 flex items-center gap-3 text-xs">
         <button
           onClick={(e) => {
             e.stopPropagation()
