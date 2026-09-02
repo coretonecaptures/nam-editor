@@ -1833,7 +1833,7 @@ export function NamProjectsShell(): React.ReactElement {
   )
 
   return (
-    <div className="flex flex-col h-screen bg-app-bg text-nm-text overflow-hidden">
+    <div className="flex flex-col h-full bg-app-bg text-nm-text overflow-hidden">
       <div className="flex items-center gap-3 px-4 py-2 border-b border-nm-border flex-shrink-0">
         <h1 className="text-sm font-semibold text-nm-text-2">NAM Projects</h1>
         <button

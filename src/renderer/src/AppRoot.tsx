@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import App from './App'
 import { IrModeShell } from './components/ir/IrModeShell'
 import { NamProjectsShell } from './components/ir/NamProjectsShell'
-import { ModeRail, type AppMode } from './components/ModeRail'
+import { ModeBar, type AppMode } from './components/ModeBar'
 import { onGoToTrainingBatches } from './appNav'
 
 const MODE_KEY = 'nam-lab-app-mode'
@@ -18,10 +18,11 @@ function readMode(): AppMode {
 }
 
 /**
- * NAM / IR / NAM Projects top-level switcher. The three shells each assume they own the viewport
- * (`h-screen` roots), so instead of nesting them under a shared header we sit them in a flex row
- * next to a fixed-width `ModeRail` on the left — the rail is a real sibling, the shell fills the
- * rest at full height, and nothing about a shell's own layout changes.
+ * NAM / IR / NAM Projects top-level switcher. The three shells each assume they own the viewport,
+ * so rather than wrap them we hand NAM mode a `headerAccessory` (the `ModeBar` renders just below
+ * its toolbar) and, for the other two, stack the `ModeBar` above the shell in a flex column.
+ * Either way the skinny bar is a horizontal strip under the top menu, never a vertical rail, and
+ * the NAM Lab wordmark keeps its existing spot in the toolbar.
  *
  * Keyboard: Cmd/Ctrl+1/2/3 jump between modes.
  */
@@ -33,7 +34,7 @@ export default function AppRoot(): React.ReactElement {
     try {
       localStorage.setItem(MODE_KEY, mode)
     } catch {
-      // Non-fatal — worst case the rail doesn't remember across restarts.
+      // Non-fatal — worst case the bar doesn't remember across restarts.
     }
   }, [mode])
 
@@ -54,11 +55,19 @@ export default function AppRoot(): React.ReactElement {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  // isMac only matters when the bar is the topmost element (IR / NAM Projects) and has to clear
+  // the macOS traffic lights; under NAM mode's toolbar it never does.
+  const bar = (
+    <ModeBar mode={mode} onChange={setMode} isMac={mode === 'nam' ? false : isMac} />
+  )
+
+  if (mode === 'nam') return <App headerAccessory={bar} />
+
   return (
-    <div className="flex h-screen overflow-hidden">
-      <ModeRail mode={mode} onChange={setMode} isMac={isMac} />
-      <div className="flex-1 min-w-0 h-screen overflow-hidden">
-        {mode === 'nam' ? <App /> : mode === 'ir' ? <IrModeShell /> : <NamProjectsShell />}
+    <div className="flex flex-col h-screen overflow-hidden">
+      {bar}
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {mode === 'ir' ? <IrModeShell /> : <NamProjectsShell />}
       </div>
     </div>
   )

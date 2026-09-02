@@ -821,7 +821,7 @@ export function IrModeShell(): React.ReactElement {
   )
 
   return (
-    <div className="flex flex-col h-screen bg-app-bg text-nm-text overflow-hidden">
+    <div className="flex flex-col h-full bg-app-bg text-nm-text overflow-hidden">
       <IrMenuBar
         onAddLibraryFolder={handleAddFolder}
         onImportLabProjects={handleImportLabProjects}
