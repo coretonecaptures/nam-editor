@@ -1281,6 +1281,42 @@ Regression check: `grep -rn '="[^{][^"]*\\u[0-9a-fA-F]\{4\}' src --include="*.ts
 
 **Approach**: Same Node.js extraction script pattern used in poke-locker. Target `npx tsc --noEmit` clean before committing each file.
 
+## UI test harness
+
+**Status: not started. Priority: Medium — the IR Lab Manager branch (`feature/ir-lab-manager`)
+has shipped a lot of renderer surface with zero UI coverage.** Raised 2026-09-02: several sessions
+of grid / mode-rail / capture-card / DataGrid work landed verified only by `electron-vite build`
+succeeding, because there is no way to render a component here and look at it (unlike `ir-lab`'s
+`IRLabUiShot` offscreen renderer). Three tiers, do them in this order:
+
+1. **Component tests — do now.** `@testing-library/react` + `jsdom` under the existing `vitest`
+   (no new runner, no CI infra). jsdom does not lay out or paint, so this catches *logic and
+   wiring*, not visual regressions: renders-without-throwing, prop plumbing, conditional
+   rendering, interaction → callback. Highest-value first targets:
+   - `DataGrid.tsx` — sort toggle (asc→desc→asc, controlled vs local), column show/hide + order
+     persists to `localStorage`, per-column filter narrows rows (text + checklist), selection
+     (click / ctrl / shift-range / ctrl-A), `onVisibleRowsChange` fires with the sorted order,
+     controlled/virtualised mode asks for the right `onRangeChange` window.
+   - Pure helpers already extractable and untested: `NamProjectsShell`'s `matchesFacets` /
+     `availableFacets` / `sortRows` / `toBatchItem` / `CAPTURE_COLUMNS` getValue+sortValue,
+     `IrModeShell`'s `IR_GRID_COLUMNS`, the `relTime`/`formatBytes`/`audioLabel` formatters
+     (see also Modularization item — pull these into `*/lib/` files as part of this).
+   - `ModeRail` / `NamLabCrumb` — smoke render + mode-switch callback.
+   This is the concrete follow-through on the `docs/technical-debt-2026-08-31.md` D7 item.
+
+2. **A `?dev=components` gallery route — optional, cheap.** One page (behind a query param, dev
+   builds only) that renders `DataGrid`, `CaptureCard`, `ModeRail`, the IR grid, etc. against
+   fixture data with no `window.api` dependency. Lets a human eyeball a component in isolation
+   without clicking through the whole app, and gives tier 3 a stable target to screenshot.
+
+3. **Playwright + Electron E2E — defer until this branch is near merge.** The right tool for the
+   questions `build` can't answer ("does the rail clear the Windows titlebar overlay / the macOS
+   traffic lights", "does the 3-mode switch actually work end to end", "does the grid look right
+   at a narrow panel width") and for screenshot-diff visual regression. But it is real infra —
+   Electron+Playwright wiring, 3-OS CI runners, flake management — and should not block feature
+   work mid-branch. Wire it as part of the pre-merge hardening pass, alongside making `tsc` a
+   gate (`docs/technical-debt-2026-08-31.md` D1).
+
 ## Packaging and release
 
 - App icon files for Windows and macOS (`.ico` / `.icns`)
