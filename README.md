@@ -24,6 +24,8 @@ The app is currently unsigned. macOS will show a Gatekeeper warning; Windows wil
 
 On macOS, you may also see a system prompt related to secure storage / Keychain access. This is expected when NAM Lab reads or saves sensitive credentials such as Tone3000 login tokens or AI API keys. The app uses Electron `safeStorage` so those secrets are encrypted on your machine instead of being stored as plain text.
 
+**Building from source:** see [docs/building.md](docs/building.md).
+
 ---
 
 ## What It Does
