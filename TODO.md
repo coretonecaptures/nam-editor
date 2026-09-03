@@ -1281,6 +1281,12 @@ Regression check: `grep -rn '="[^{][^"]*\\u[0-9a-fA-F]\{4\}' src --include="*.ts
 
 **Approach**: Same Node.js extraction script pattern used in poke-locker. Target `npx tsc --noEmit` clean before committing each file.
 
+## IR Lab Manager — session handoff
+
+`feature/ir-lab-manager` work in progress. Cold-start guide + the deferred milestone list
+(FileList→DataGrid, S8 security hardening, CaptureCard size toggle, UI harness, pre-merge
+hardening) live in **`docs/ir-lab-manager-handoff-2026-09-02.md`**.
+
 ## UI test harness
 
 **Status: not started. Priority: Medium — the IR Lab Manager branch (`feature/ir-lab-manager`)
