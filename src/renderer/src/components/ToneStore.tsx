@@ -511,6 +511,9 @@ export function ToneStore({
             architecture: arch,
             format: plat || undefined,  // use new 'format' param; 'platform' kept as fallback in IPC handler
             sort: s,
+            // Browse another maker's catalogue -- the server-side `creators`
+            // filter (was: silently ignored for non-self usernames).
+            creators: requestedUsername ? [requestedUsername] : undefined,
           })
         : await (async () => {
             const commonParams = {
@@ -521,6 +524,7 @@ export function ToneStore({
               sizes: searchSizeValue ? [searchSizeValue] : undefined,
               format: plat || undefined,
               sort: s,
+              creators: requestedUsername ? [requestedUsername] : undefined,
             }
             const [legacyResult, a2Result] = await Promise.all([
               window.api.tone3000Search(commonParams),

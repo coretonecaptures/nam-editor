@@ -8935,7 +8935,7 @@ app.whenReady().then(async () => {
       .join(' ')
   }
 
-  ipcMain.handle('tone3000:search', async (_event, params: { query?: string; page?: number; pageSize?: number; gears?: string[]; sizes?: string[]; sort?: string; architecture?: string; platform?: string; format?: string }) => {
+  ipcMain.handle('tone3000:search', async (_event, params: { query?: string; page?: number; pageSize?: number; gears?: string[]; sizes?: string[]; sort?: string; architecture?: string; platform?: string; format?: string; creators?: string[]; tags?: string[]; makes?: string[]; calibrated?: boolean; verified?: boolean }) => {
     const valid = await ensureValidToken()
     if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
     const sp = new URLSearchParams()
@@ -8946,6 +8946,14 @@ app.whenReady().then(async () => {
     if (params.gears?.length) sp.set('gears', params.gears.join('_'))
     if (params.sizes?.length) sp.set('sizes', params.sizes.join('_'))
     if (params.architecture) sp.set('architecture', params.architecture)
+    // creators: comma-joined exact usernames -- lets you browse ANY maker's
+    // catalogue, not just your own. tags/makes: underscore-joined exact
+    // names (the API OR's them). calibrated/verified: pass through as 'true'.
+    if (params.creators?.length) sp.set('creators', params.creators.join(','))
+    if (params.tags?.length) sp.set('tags', params.tags.join('_'))
+    if (params.makes?.length) sp.set('makes', params.makes.join('_'))
+    if (params.calibrated) sp.set('calibrated', 'true')
+    if (params.verified) sp.set('verified', 'true')
     // Prefer the new 'format' param; fall back to 'platform' (still a valid alias per the API).
     if (params.format) sp.set('format', params.format)
     else if (params.platform) sp.set('platform', params.platform)
@@ -8966,26 +8974,97 @@ app.whenReady().then(async () => {
     }
   })
 
-  ipcMain.handle('tone3000:trending', async (_event, gear: string) => {
+  ipcMain.handle('tone3000:trending', async (_event, gear?: string) => {
     const valid = await ensureValidToken()
     if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
-    if (!gear) return { error: 'No gear selected' }
+    // gear is OPTIONAL per the live API -- an omitted gear returns the
+    // overall trending top-10. (Was rejected here with "No gear selected".)
     const sp = new URLSearchParams()
-    sp.set('gear', gear)
+    if (gear) sp.set('gear', gear)
+    const qs = sp.toString()
     try {
-      const res = await fetch(`${T3K_BASE}/api/v1/tones/trending?${sp}`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+      const res = await fetch(`${T3K_BASE}/api/v1/tones/trending${qs ? `?${qs}` : ''}`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
       if (!res.ok) {
         const body = await res.text().catch(() => '')
-        log(`tone3000 trending FAILED ${res.status} ${res.statusText} gear=${gear} body=${body.slice(0, 500)}`)
+        log(`tone3000 trending FAILED ${res.status} ${res.statusText} gear=${gear ?? '(all)'} body=${body.slice(0, 500)}`)
         return { error: `API error ${res.status}` }
       }
       const data = await res.json()
-      log(`tone3000 trending ok gear=${gear} ${describeToneResponse(data)}`)
+      log(`tone3000 trending ok gear=${gear ?? '(all)'} ${describeToneResponse(data)}`)
       return { ok: true, data }
     } catch (e) {
-      log(`tone3000 trending THREW gear=${gear} ${String(e)}`)
+      log(`tone3000 trending THREW gear=${gear ?? '(all)'} ${String(e)}`)
       return { error: String(e) }
     }
+  })
+
+  // Newest published site-wide -- flat top-10, no params, no paging.
+  ipcMain.handle('tone3000:latest', async () => {
+    const valid = await ensureValidToken()
+    if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
+    try {
+      const res = await fetch(`${T3K_BASE}/api/v1/tones/latest`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+      if (!res.ok) return { error: `API error ${res.status}` }
+      const data = await res.json()
+      log(`tone3000 latest ok ${describeToneResponse(data)}`)
+      return { ok: true, data }
+    } catch (e) { return { error: String(e) } }
+  })
+
+  // The signed-in user's own download history (paged, optional single gear).
+  ipcMain.handle('tone3000:downloaded', async (_event, params: { page?: number; pageSize?: number; gear?: string }) => {
+    const valid = await ensureValidToken()
+    if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
+    const sp = new URLSearchParams()
+    sp.set('page', String(params.page ?? 1))
+    sp.set('page_size', String(params.pageSize ?? 24))
+    if (params.gear) sp.set('gear', params.gear)
+    try {
+      const res = await fetch(`${T3K_BASE}/api/v1/tones/downloaded?${sp}`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+      if (!res.ok) return { error: `API error ${res.status}` }
+      return { ok: true, data: await res.json() }
+    } catch (e) { return { error: String(e) } }
+  })
+
+  // Make / tag taxonomy -- for filter pickers. Walk up to 12 pages
+  // (most-used first) so the list isn't just the first 25.
+  const taxonomy = async (kind: 'makes' | 'tags', params: { query?: string; sort?: string; maxPages?: number }) => {
+    const valid = await ensureValidToken()
+    if (!valid || !tone3kTokens) return { error: 'Not authenticated' as const }
+    const names: string[] = []
+    const seen = new Set<string>()
+    const maxPages = Math.min(Math.max(params.maxPages ?? 12, 1), 40)
+    for (let page = 1; page <= maxPages; page++) {
+      const sp = new URLSearchParams()
+      if (params.query) sp.set('query', params.query)
+      sp.set('sort', params.sort ?? 'tones')
+      sp.set('page', String(page))
+      sp.set('page_size', '25')
+      const res = await fetch(`${T3K_BASE}/api/v1/${kind}?${sp}`, { headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' } })
+      if (!res.ok) { if (page === 1) return { error: `API error ${res.status}` }; break }
+      const d = await res.json() as { data?: Array<{ name?: string }>; total?: number }
+      const rows = d.data ?? []
+      for (const row of rows) { const n = row?.name?.trim(); if (n && !seen.has(n)) { seen.add(n); names.push(n) } }
+      if (rows.length < 25) break
+      if (typeof d.total === 'number' && names.length >= d.total) break
+    }
+    return { ok: true as const, data: names }
+  }
+  ipcMain.handle('tone3000:makes', async (_event, params: { query?: string; sort?: string; maxPages?: number } = {}) => taxonomy('makes', params))
+  ipcMain.handle('tone3000:tags', async (_event, params: { query?: string; sort?: string; maxPages?: number } = {}) => taxonomy('tags', params))
+
+  // Favourite / un-favourite a tone from the app. Both idempotent server-side.
+  ipcMain.handle('tone3000:setFavorite', async (_event, toneId: number, favorite: boolean) => {
+    const valid = await ensureValidToken()
+    if (!valid || !tone3kTokens) return { error: 'Not authenticated' }
+    try {
+      const res = await fetch(`${T3K_BASE}/api/v1/tones/${toneId}/favorite`, {
+        method: favorite ? 'PUT' : 'DELETE',
+        headers: { Authorization: `Bearer ${tone3kTokens.accessToken}`, 'User-Agent': 'NAM-Lab' }
+      })
+      if (!res.ok && res.status !== 204) return { error: `API error ${res.status}` }
+      return { ok: true, favorite }
+    } catch (e) { return { error: String(e) } }
   })
 
   ipcMain.handle('tone3000:usersSearch', async (_event, params: { query: string; page?: number; pageSize?: number; sort?: string }) => {
