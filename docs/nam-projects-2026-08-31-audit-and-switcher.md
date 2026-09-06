@@ -94,14 +94,21 @@ Verification state at time of writing: `npx electron-vite build` clean;
 
 ### A4. Recommended follow-ups (not blockers)
 
-1. Add unit tests for `matchesFacets`, `availableFacets`, `toBatchItem`
-   (pure functions, no React needed — extract to a sibling `.ts` if desired).
-2. `setNamCaptureMetadata`: skip unknown keys instead of building broken SQL.
-3. Decide the "cleared field" semantics deliberately — either persist an
-   explicit "user cleared this" tombstone, or document that clear = revert-on-
-   next-scan in the UI copy.
-4. The optional rail sort (Newest / Least trained) is a small, high-signal add
-   for "what still needs work."
+1. ~~Add unit tests for `matchesFacets`, `availableFacets`, `toBatchItem`~~ —
+   **Done 2026-09-06** (`78acb00`). `isQueueEligible` picked up coverage too
+   while in there. Kept in-file (exported, not extracted to a sibling `.ts`)
+   rather than doing the Modularization split blind.
+2. ~~`setNamCaptureMetadata`: skip unknown keys instead of building broken
+   SQL.~~ — **Done 2026-09-06** (`9dd20da`), with a regression test.
+3. **Still open — needs a decision, not just code.** Decide the "cleared
+   field" semantics deliberately — either persist an explicit "user cleared
+   this" tombstone, or document that clear = revert-on-next-scan in the UI
+   copy. Left alone during the 2026-09-06 pass specifically because it's a
+   product decision, not a mechanical fix.
+4. ~~The optional rail sort (Newest / Least trained)~~ — **Done 2026-09-06**
+   (`52f244e`): `sortProjects()` + a `<select>` next to the project filter,
+   `Name` / `Newest` / `Least trained`, persisted per the file's usual
+   `readStored`/`writeStored` pattern.
 
 ---
 
