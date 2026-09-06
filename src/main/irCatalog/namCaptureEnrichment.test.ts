@@ -307,6 +307,28 @@ describe('enrichNamCaptures (schemaVersion 2)', () => {
     expect(bare.metadataEdited).toBe(false)
   })
 
+  it('setNamCaptureMetadata ignores an unrecognized key instead of throwing (S3)', async () => {
+    const { root } = makeFixture()
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const stats = await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+    enrichNamCaptures(db, stats.libraryRootId)
+
+    const ampA = listNamProjects(db).find((p) => p.name === 'Amp A')!
+    const clean = getNamProjectDetail(db, ampA.collectionId)!.captures.find((c) => c.captureId === 'cap0001')!
+
+    // A patch object carrying a key outside the whitelist (e.g. a stray/typo'd field, or a future
+    // renderer bug) must not build "undefined = ?" and throw a raw SQLite error -- it should be
+    // silently skipped, while a real key in the SAME patch still applies.
+    const patched = {
+      gearMake: 'Suhr',
+      notAColumn: 'whatever'
+    } as unknown as Parameters<typeof setNamCaptureMetadata>[2]
+    expect(() => setNamCaptureMetadata(db, clean.itemId, patched)).not.toThrow()
+    const edited = setNamCaptureMetadata(db, clean.itemId, patched)!
+    expect(edited.effective.gearMake).toBe('Suhr')
+  })
+
   it('project detail carries the NAM Captures / _excitations dirs and finds folder images', async () => {
     const { root } = makeFixture()
     fs.writeFileSync(join(root, 'Amp A', 'rig-photo.jpg'), 'x')

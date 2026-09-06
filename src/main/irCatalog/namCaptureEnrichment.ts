@@ -677,6 +677,10 @@ export function setNamCaptureMetadata(
   const sets: string[] = []
   const vals: Array<string | number | null> = []
   for (const [k, v] of Object.entries(patch) as Array<[keyof typeof patch, unknown]>) {
+    // The renderer only ever sends known keys (NamCaptureMetadataPatch), so this is latent, not
+    // live -- but an unrecognized key used to build `"undefined = ?"` and throw a raw SQLite
+    // error instead of just being ignored (security-review-2026-08-31.md S3). Skip it instead.
+    if (!(k in col)) continue
     sets.push(`${col[k]} = ?`)
     if (k === 'inputLevelDbu' || k === 'outputLevelDbu') {
       vals.push(typeof v === 'number' && Number.isFinite(v) ? v : null)
