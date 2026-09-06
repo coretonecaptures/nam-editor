@@ -39,6 +39,12 @@ const EPOCHS_KEY = 'nam-lab-nam-projects-epochs'
 const SELECTED_KEY = 'nam-lab-nam-projects-selected'
 const VIEW_KEY = 'nam-lab-nam-projects-view'
 const CAPTURE_VIEW_KEY = 'nam-lab-nam-projects-capture-view'
+// M4 (docs/ir-lab-manager-handoff-2026-09-02.md): port FolderCardView's
+// small/medium/large card-size toggle to CaptureCard. Same key-naming
+// convention as its neighbours above, same three px values as
+// FolderCardView's own CARD_PX ladder (180/264/336) so the two card
+// grids in this app read as the same control, not a lookalike.
+const CAPTURE_CARD_SIZE_KEY = 'nam-lab-nam-projects-capture-card-size'
 const SORT_LS_KEY = 'nam-lab-nam-projects-sort'
 
 function readStored(key: string): string {
@@ -1385,6 +1391,11 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   const [captureView, setCaptureView] = useState<'list' | 'cards'>(() =>
     readStored(CAPTURE_VIEW_KEY) === 'cards' ? 'cards' : 'list'
   )
+  const [captureCardSize, setCaptureCardSize] = useState<'small' | 'medium' | 'large'>(() => {
+    const saved = readStored(CAPTURE_CARD_SIZE_KEY)
+    return saved === 'small' || saved === 'medium' || saved === 'large' ? saved : 'medium'
+  })
+  const captureCardPx = captureCardSize === 'small' ? 180 : captureCardSize === 'large' ? 336 : 264
   const [sortKey, setSortKey] = useState<string>(() => {
     const k = readStored(SORT_LS_KEY).split(':')[0]
     return CAPTURE_COLUMNS.some((c) => c.key === k) ? k : 'name'
@@ -1481,6 +1492,9 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   useEffect(() => {
     writeStored(CAPTURE_VIEW_KEY, captureView)
   }, [captureView])
+  useEffect(() => {
+    writeStored(CAPTURE_CARD_SIZE_KEY, captureCardSize)
+  }, [captureCardSize])
 
   const refreshDetail = useCallback(async (collectionId: string) => {
     try {
@@ -2094,6 +2108,35 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                       </button>
                     ))}
                   </div>
+                  {captureView === 'cards' && (
+                    <div className="flex items-center rounded overflow-hidden border border-field-bd flex-shrink-0">
+                      {(['small', 'medium', 'large'] as const).map((size) => {
+                        const active = captureCardSize === size
+                        const rects = size === 'small'
+                          ? [[1, 1], [5, 1], [1, 5], [5, 5], [9, 1], [9, 5]]
+                          : size === 'medium'
+                            ? [[1, 1], [6, 1], [1, 6], [6, 6]]
+                            : [[1, 1], [6, 1]]
+                        return (
+                          <button
+                            key={size}
+                            title={size.charAt(0).toUpperCase() + size.slice(1)}
+                            onClick={() => setCaptureCardSize(size)}
+                            className={`px-1.5 py-1 transition-colors ${active
+                              ? 'bg-nm-accent text-accent-fg'
+                              : 'bg-field-bg text-nm-text-2 hover:bg-hov'
+                            }`}
+                          >
+                            <svg viewBox="0 0 12 12" className={size === 'small' ? 'w-3 h-3' : size === 'medium' ? 'w-3.5 h-3.5' : 'w-4 h-4'} fill="currentColor">
+                              {rects.map(([x, y], i) => (
+                                <rect key={i} x={x} y={y} width={size === 'small' ? 3 : size === 'medium' ? 4 : 10} height={size === 'small' ? 3 : size === 'medium' ? 4 : 10} rx="0.5" />
+                              ))}
+                            </svg>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
                   <div className="flex items-center flex-shrink-0">
                     <select
                       value={sortKey}
@@ -2161,7 +2204,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
               <div className="flex-1 overflow-y-auto">
                 <div
                   className="grid gap-4 p-5 content-start"
-                  style={{ gridTemplateColumns: 'repeat(auto-fill, 264px)' }}
+                  style={{ gridTemplateColumns: `repeat(auto-fill, ${captureCardPx}px)` }}
                 >
                   {sortedCaptures.map((c) => (
                     <CaptureCard
