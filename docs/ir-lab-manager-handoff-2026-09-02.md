@@ -7,10 +7,13 @@ branch **`feature/ir-lab-manager`** — do not merge to `main`, keep committing 
 
 ## Where things stand
 
-Recent shipped work (newest first), all pushed to `origin/feature/ir-lab-manager`:
+Recent shipped work (newest first). Everything except the top two rows (`0babfe0`, `d85a527` —
+committed locally 2026-09-06, not yet pushed) is on `origin/feature/ir-lab-manager`:
 
 | Commit | What |
 | --- | --- |
+| `0babfe0` | **M4 done** — CaptureCard small/medium/large size toggle |
+| `d85a527` | **M3 done** — S8 security hardening (readAiKey plaintext refusal, AI-egress disclosure, dev-mode Tone3000 token note) |
 | `6172201` | TODO: added a `## UI test harness` section (3 tiers) |
 | `0406fba` | `docs/security-review-2026-08-31.md` §S8 — open-source posture + AI/Tone3000 credential review |
 | `659534c` | DataGrid controlled + virtualised mode; **IR view got a List \| Grid toggle** |
@@ -56,7 +59,13 @@ npx tsc --noEmit -p tsconfig.node.json   # 35 errors — PRE-EXISTING BASELINE, 
 
 ## Upcoming milestones (deferred, not blocked)
 
-### M1 — Phase 1b: FileList adopts `DataGrid`
+**Status as of 2026-09-06: M3 and M4 done (see table above). M1, M2, M5, M6 still open** — M1/M2
+need `npm run dev` + a human (no offscreen render tool exists in this repo, see below); M2 also
+has a real open design question (the exact shape `DataGrid`'s `onColumnFiltersChange` should hand
+back for a multi-select facet column — not nailed down, resolve before wiring it up); M6 touches
+DB migrations and wants direct oversight, not a blind pass.
+
+### M1 — Phase 1b: FileList adopts `DataGrid` — OPEN
 
 **Why deferred:** `FileList.tsx` (2124 lines) is a central app view. Its `filtered` → `sorted`
 memos bake in `columnFilters` + `sortKey`, and those same memos feed four other things: the
@@ -83,7 +92,7 @@ Scope:
    chooser/resize/reorder persistence, per-column filter, CSV + XLSX export (visible + all cols),
    list-view path still works.
 
-### M2 — `DataGrid` external column-filter for IR grid (optional polish)
+### M2 — `DataGrid` external column-filter for IR grid (optional polish) — OPEN
 
 IR's Grid view currently has `disableColumnFilters` — the facet filter bar above the list covers
 narrowing. If per-column filter dropdowns in the grid are wanted: `DataGrid` already surfaces
@@ -92,7 +101,7 @@ narrowing. If per-column filter dropdowns in the grid are wanted: `DataGrid` alr
 feed each column's checklist from `window.api.irLibraryListFacetOptions` (main already has it,
 `IrFilterBar` already calls it). Columns that aren't facetable stay filter-less. Small, additive.
 
-### M3 — S8 security hardening (3 small items, from `security-review-2026-08-31.md` §S8)
+### M3 — S8 security hardening (3 small items, from `security-review-2026-08-31.md` §S8) — DONE (`d85a527`)
 
 1. **`readAiKey`** (`src/main/index.ts` ~6338): the `isEncryptionAvailable() ? decrypt :
    buf.toString('utf-8')` plaintext fallback contradicts `storeAiKey`'s refuse-plaintext stance.
@@ -106,14 +115,14 @@ feed each column's checklist from `window.api.irLibraryListFacetOptions` (main a
    **plaintext** in `userData` (the `!isDev &&` guard in `saveTone3kTokens`/`loadTone3kTokens`).
    Acceptable dev convenience — just document it so a contributor isn't surprised.
 
-### M4 — `CaptureCard` small/medium/large size toggle
+### M4 — `CaptureCard` small/medium/large size toggle — DONE (`0babfe0`)
 
 `FolderCardView` has a 3-size picker (180 / 264 / 336 px, dot-grid icon control in its header).
 `NamProjectsShell`'s `CaptureCard` is fixed at 264. Port the toggle: a `captureCardSize` state
 (persisted), swap the `gridTemplateColumns` px value, add the control to the capture toolbar next
 to the List/Cards toggle.
 
-### M5 — UI test harness (full detail already in `TODO.md` → `## UI test harness`)
+### M5 — UI test harness (full detail already in `TODO.md` → `## UI test harness`) — OPEN
 
 1. **Component tests now** — `@testing-library/react` + `jsdom` under existing `vitest`.
    First targets: `DataGrid` (sort/persist/filter/selection/virtualised-range), the untested pure
@@ -126,7 +135,7 @@ to the List/Cards toggle.
    OS, 3-mode switch end to end, narrow-panel layout, screenshot diffs). Real CI infra — bundle
    with making `tsc` a gate (D1).
 
-### M6 — pre-merge hardening pass (from `technical-debt-2026-08-31.md`)
+### M6 — pre-merge hardening pass (from `technical-debt-2026-08-31.md`) — OPEN
 
 Before `feature/ir-lab-manager` → `main`:
 - **D1 / D2**: land `trainer-types-dedup-plan-2026-08-31.md` (clears most of the 35 node errors);
@@ -148,5 +157,8 @@ npm ci   # if node_modules stale
 npx electron-vite build && npx vitest run     # confirm the baseline is green
 ```
 
-Then pick a milestone above. M3 (security hardening) and M4 (card size toggle) are small and
-self-contained. M1 (FileList → DataGrid) is the biggest and wants `npm run dev` open throughout.
+M3 and M4 are done (2026-09-06). Remaining, pick from: **M2** (needs `npm run dev` — resolve the
+`onColumnFiltersChange` shape question first, see M2's own section) is the smallest of what's
+left; **M5 tier 1** (component tests) needs no live UI and can start any time; **M1** (FileList →
+DataGrid) is the biggest and wants `npm run dev` open throughout; **M6** wants direct oversight
+(DB migrations).
