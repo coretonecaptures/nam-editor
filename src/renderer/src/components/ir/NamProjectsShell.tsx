@@ -148,8 +148,8 @@ function captureIsCalibrated(c: NamCaptureRow): boolean {
 
 // --- facets ----------------------------------------------------------------
 
-type FacetKey = 'scope' | 'sampleRate' | 'gearType' | 'toneType' | 'calibration' | 'architecture'
-type FacetState = Record<FacetKey, string[]>
+export type FacetKey = 'scope' | 'sampleRate' | 'gearType' | 'toneType' | 'calibration' | 'architecture'
+export type FacetState = Record<FacetKey, string[]>
 const EMPTY_FACETS: FacetState = {
   scope: [],
   sampleRate: [],
@@ -176,7 +176,7 @@ interface AvailableFacets {
   calibration: Array<{ value: string; count: number; label: string }>
 }
 
-function availableFacets(caps: NamCaptureRow[]): AvailableFacets {
+export function availableFacets(caps: NamCaptureRow[]): AvailableFacets {
   const calibrated = caps.filter(captureIsCalibrated)
   const calibration: AvailableFacets['calibration'] = []
   if (calibrated.length > 0)
@@ -196,7 +196,7 @@ function availableFacets(caps: NamCaptureRow[]): AvailableFacets {
 }
 
 /** AND across facets, OR within a facet — matches IR mode's FieldBadge filter bar. */
-function matchesFacets(c: NamCaptureRow, f: FacetState): boolean {
+export function matchesFacets(c: NamCaptureRow, f: FacetState): boolean {
   if (f.scope.length && !(c.captureScope && f.scope.includes(c.captureScope))) return false
   if (f.sampleRate.length) {
     const s = srLabel(c.sampleRate)
@@ -1322,13 +1322,13 @@ function CaptureDetailPanel({
 
 /** A capture is batch-eligible if it isn't trained yet and both WAV paths resolved. Synthetic
  * captures only count when includeSynthetic is on. */
-function isQueueEligible(c: NamCaptureRow, includeSynthetic: boolean): boolean {
+export function isQueueEligible(c: NamCaptureRow, includeSynthetic: boolean): boolean {
   return !c.trained && (includeSynthetic || !c.synthetic) && !!c.excitationPath && !!c.recordingPath
 }
 
 /** One capture -> the IPC batch-item shape. Carries the **effective** calibration dBu +
  * model-metadata (falling back to IR Lab's suggestion) — that's what seeds the trained .nam. */
-function toBatchItem(
+export function toBatchItem(
   c: NamCaptureRow,
   projectName: string
 ): {
