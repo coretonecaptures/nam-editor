@@ -6084,6 +6084,13 @@ async function saveTone3kTokens(): Promise<void> {
     const securePath = tone3kSecureTokensPath()
     // Kept symmetric with the dev bypass in loadTone3kTokens -- a dev build that encrypted on
     // save but skipped decryption on load would just fail to parse its own token file.
+    //
+    // NOTE FOR CONTRIBUTORS (security-review-2026-08-31.md S8, item 3): the `!isDev` guard means
+    // `npm run dev` ALWAYS writes Tone3000 refresh tokens to userData/tone3000-tokens.json in
+    // PLAINTEXT, regardless of whether safeStorage/OS keychain encryption is actually available on
+    // your machine. This is an accepted dev-convenience tradeoff, not a bug -- packaged/production
+    // builds (isDev === false) always encrypt via safeStorage when it's available. Don't be
+    // surprised to find a real refresh token in plaintext while running from source.
     if (!isDev && safeStorage.isEncryptionAvailable()) {
       await fs.promises.writeFile(securePath, safeStorage.encryptString(payload))
     } else {
@@ -6338,7 +6345,13 @@ app.whenReady().then(async () => {
     const p = aiKeyPath(provider)
     try {
       const buf = fs.readFileSync(p)
-      return safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(buf) : buf.toString('utf-8')
+      // storeAiKey() refuses to write a key at all when encryption is unavailable — reading
+      // should hold the same line. Falling back to a plaintext read here would let a *planted*
+      // plaintext ai-key-*.bin (dropped by another process, or left over from a build that once
+      // wrote plaintext) get silently picked up and used, contradicting storeAiKey's own
+      // refuse-plaintext stance. (security-review-2026-08-31.md S8, item 1)
+      if (!safeStorage.isEncryptionAvailable()) return null
+      return safeStorage.decryptString(buf)
     } catch {
       return null
     }

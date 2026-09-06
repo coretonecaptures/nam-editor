@@ -1989,6 +1989,14 @@ export function PackInfoEditor({
               </button>
             )}
             {hasAiKey && onGenerateAbout && (
+              <span
+                className="text-[10px] text-nm-text-3"
+                title="This sends the gear name, type, and any existing description/notes to your configured AI provider, using your saved API key."
+              >
+                Sends gear info to your AI provider
+              </span>
+            )}
+            {hasAiKey && onGenerateAbout && (
               <button
                 type="button"
                 disabled={aboutGenerating}
