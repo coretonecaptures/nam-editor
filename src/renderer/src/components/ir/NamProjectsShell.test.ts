@@ -3,6 +3,7 @@ import {
   availableFacets,
   isQueueEligible,
   matchesFacets,
+  sortProjects,
   toBatchItem,
   type FacetState
 } from './NamProjectsShell'
@@ -62,6 +63,33 @@ function makeCapture(overrides: Partial<NamCaptureRow> = {}): NamCaptureRow {
     ...overrides
   }
 }
+
+describe('sortProjects', () => {
+  const a = { name: 'Bravo', createdAt: '2026-09-01T00:00:00.000Z', captureCount: 4, trainedCount: 2 }
+  const b = { name: 'Alpha', createdAt: '2026-09-03T00:00:00.000Z', captureCount: 4, trainedCount: 0 }
+  const c = { name: 'Charlie', createdAt: null, captureCount: 0, trainedCount: 0 }
+
+  it('name: locale-alphabetical', () => {
+    expect(sortProjects([a, b, c], 'name').map((p) => p.name)).toEqual(['Alpha', 'Bravo', 'Charlie'])
+  })
+
+  it('newest: most recent createdAt first, missing date sorts last (not first)', () => {
+    expect(sortProjects([a, b, c], 'newest').map((p) => p.name)).toEqual(['Alpha', 'Bravo', 'Charlie'])
+  })
+
+  it('leastTrained: lowest trained-fraction first; an empty project (0/0) ranks as fully untrained', () => {
+    // a: 2/4 = 0.5, b: 0/4 = 0, c: 0/0 -> treated as 0 (no divide-by-zero, no NaN)
+    const sorted = sortProjects([a, b, c], 'leastTrained')
+    expect(sorted.map((p) => p.name)).toEqual(['Alpha', 'Charlie', 'Bravo'])
+  })
+
+  it('does not mutate the input array', () => {
+    const input = [a, b, c]
+    const copy = [...input]
+    sortProjects(input, 'name')
+    expect(input).toEqual(copy)
+  })
+})
 
 describe('matchesFacets', () => {
   it('with no active facets, matches everything', () => {

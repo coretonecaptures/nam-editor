@@ -45,6 +45,9 @@ const CAPTURE_VIEW_KEY = 'nam-lab-nam-projects-capture-view'
 // FolderCardView's own CARD_PX ladder (180/264/336) so the two card
 // grids in this app read as the same control, not a lookalike.
 const CAPTURE_CARD_SIZE_KEY = 'nam-lab-nam-projects-capture-card-size'
+// M-A4#4 (docs/nam-projects-2026-08-31-audit-and-switcher.md): the optional project-rail sort,
+// marked optional in the original design and never built until now.
+const PROJECT_SORT_KEY = 'nam-lab-nam-projects-project-sort'
 const SORT_LS_KEY = 'nam-lab-nam-projects-sort'
 
 function readStored(key: string): string {
@@ -193,6 +196,33 @@ export function availableFacets(caps: NamCaptureRow[]): AvailableFacets {
     architecture: tally(caps.map((c) => c.result?.architecture)),
     calibration
   }
+}
+
+/** Project-rail sort (design doc S9a, optional, previously unbuilt). `newest` treats a missing
+ * `createdAt` as oldest, not as "now" -- an unknown date should never sort to the top. `name` is
+ * a plain locale compare. `leastTrained` ranks the fewest-trained-fraction project first (0
+ * captures counts as fully "needs work", i.e. ranks like 0 trained), ties broken by name. */
+export function sortProjects<T extends { name: string; createdAt: string | null; captureCount: number; trainedCount: number }>(
+  projects: T[],
+  sort: 'name' | 'newest' | 'leastTrained'
+): T[] {
+  const sorted = [...projects]
+  if (sort === 'name') {
+    sorted.sort((a, b) => a.name.localeCompare(b.name))
+  } else if (sort === 'newest') {
+    sorted.sort((a, b) => {
+      const ta = a.createdAt ? Date.parse(a.createdAt) : -Infinity
+      const tb = b.createdAt ? Date.parse(b.createdAt) : -Infinity
+      return tb - ta || a.name.localeCompare(b.name)
+    })
+  } else {
+    sorted.sort((a, b) => {
+      const fa = a.captureCount > 0 ? a.trainedCount / a.captureCount : 0
+      const fb = b.captureCount > 0 ? b.trainedCount / b.captureCount : 0
+      return fa - fb || a.name.localeCompare(b.name)
+    })
+  }
+  return sorted
 }
 
 /** AND across facets, OR within a facet — matches IR mode's FieldBadge filter bar. */
@@ -1406,6 +1436,13 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   const [overview, setOverview] = useState<NamLibraryOverview | null>(null)
   const [reportCopied, setReportCopied] = useState(false)
   const [projectFilter, setProjectFilter] = useState('')
+  // Rail sort (design doc S9a, marked optional and never built): Name / Newest / Least trained.
+  // "Least trained" = fewest of a project's captures already trained -- surfaces "what still
+  // needs work" first, which is the point of the option per the design doc's own framing.
+  const [projectSort, setProjectSort] = useState<'name' | 'newest' | 'leastTrained'>(() => {
+    const saved = readStored(PROJECT_SORT_KEY)
+    return saved === 'newest' || saved === 'leastTrained' ? saved : 'name'
+  })
   const [captureFilter, setCaptureFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [facets, setFacets] = useState<FacetState>(EMPTY_FACETS)
@@ -1495,6 +1532,9 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   useEffect(() => {
     writeStored(CAPTURE_CARD_SIZE_KEY, captureCardSize)
   }, [captureCardSize])
+  useEffect(() => {
+    writeStored(PROJECT_SORT_KEY, projectSort)
+  }, [projectSort])
 
   const refreshDetail = useCallback(async (collectionId: string) => {
     try {
@@ -1611,8 +1651,9 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   // --- filtering ---
   const visibleProjects = useMemo(() => {
     const q = projectFilter.trim().toLowerCase()
-    return q ? projects.filter((p) => p.name.toLowerCase().includes(q)) : projects
-  }, [projects, projectFilter])
+    const filtered = q ? projects.filter((p) => p.name.toLowerCase().includes(q)) : projects
+    return sortProjects(filtered, projectSort)
+  }, [projects, projectFilter, projectSort])
 
   const facetOptions = useMemo(() => availableFacets(detail?.captures ?? []), [detail])
 
@@ -2056,13 +2097,23 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
             style={{ width: railWidth }}
             className="flex-shrink-0 flex flex-col min-h-0 border-r border-nm-border-s"
           >
-            <div className="px-2 py-1.5 border-b border-nm-border-s flex-shrink-0">
+            <div className="px-2 py-1.5 border-b border-nm-border-s flex-shrink-0 flex items-center gap-1.5">
               <input
                 value={projectFilter}
                 onChange={(e) => setProjectFilter(e.target.value)}
                 placeholder="Filter projects…"
-                className="w-full text-xs px-1.5 py-0.5 rounded border border-field-bd bg-field-bg"
+                className="flex-1 min-w-0 text-xs px-1.5 py-0.5 rounded border border-field-bd bg-field-bg"
               />
+              <select
+                value={projectSort}
+                onChange={(e) => setProjectSort(e.target.value as typeof projectSort)}
+                title="Sort projects"
+                className="text-[11px] px-1 py-0.5 rounded border border-field-bd bg-field-bg text-nm-text-2 flex-shrink-0"
+              >
+                <option value="name">Name</option>
+                <option value="newest">Newest</option>
+                <option value="leastTrained">Least trained</option>
+              </select>
             </div>
             <div className="flex-1 overflow-y-auto py-1.5 px-1.5">
               {visibleProjects.map((p) => (
