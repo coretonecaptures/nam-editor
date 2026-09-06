@@ -1491,7 +1491,20 @@ succeeding, because there is no way to render a component here and look at it (u
 
 ## Future: read IR Lab's embedded WAV metadata, IR library management
 
-Not started -- came up 2026-08-21 discussing whether cab-IR organization belongs in an app or in
+**Update 2026-09-06: the blocker described below is resolved, most of this is now built.** IR Lab
+shipped the bext write side (`ir-lab` commits `870ca7d`/`f5066b6`, then the 2026-08-26 Project/
+per-capture-mic model, `ir-lab/docs/ir-lab-manager-handoff-2026-08-26.md`) and this app reads it
+back (see build-plan.md §12e/§12f: `wavHeader.ts`, `bwfCaptureMetadata.ts`, `fieldConfidence.ts`,
+full `ir_lab_embedded`/`ir_lab_native`/`ir_lab_project` confidence-ladder inheritance). Faceted
+search/filter, audition-in-place, and waveform preview are all live in IR mode (`IrModeShell.tsx`,
+`IrFilterBar.tsx`). **What's still actually missing, per §12f's own "Known gaps"**: the browse-row
+`FieldBadge` UI and `IrLibraryOverview`'s breakdowns don't yet surface the 19 newer capture-level
+fields (per-mic type/pattern/zone/distance/angle, `speakerPosition`, `modeledMicrophone`,
+`presetKind`) or `amplifier`/`room` as filter-bar multiselects -- deliberately scoped out of that
+pass. Duplicate/near-duplicate detection is not built at all. Original 2026-08-21 framing kept
+below for context.
+
+Came up 2026-08-21 discussing whether cab-IR organization belongs in an app or in
 Finder/Explorer folders. IR Lab (sibling native app, same author, `Documents/GitHub/ir-lab`) already
 collects real capture metadata per IR at capture time (cabinet, speaker, microphone, position,
 notes) but today only bakes it into the exported filename, not into the WAV file itself. IR Lab has
@@ -1508,11 +1521,43 @@ what this kind of browser should feel like -- TONE3000 in particular is the dire
 `.nam`-and-IR library UI, since it already solves tag search + in-browser preview + community
 sharing for exactly this file-type pairing.
 
-Scope this as its own project once IR Lab's write side exists, not before -- there is nothing to
-read yet, and the metadata schema (which fields, what they're called) should be decided jointly
-with IR Lab so both apps agree on one taxonomy rather than inventing two.
+~~Scope this as its own project once IR Lab's write side exists, not before~~ -- done, see the
+2026-09-06 update above. Remaining scope is just the specific gaps it lists (facet/badge coverage
+for the newer fields, dedup detection), not a from-scratch project.
 
-## Future: import IR Lab's "NAM Capture" projects into the trainer queue (automated workflow)
+## ~~Future: import IR Lab's "NAM Capture" projects into the trainer queue~~ — DONE, this section was stale
+
+**Superseded.** This ticket described a plan that has since been fully built as the **NAM Projects**
+mode (`src/renderer/src/components/ir/NamProjectsShell.tsx`,
+`src/main/irCatalog/namCaptureEnrichment.ts`, `src/main/irCatalog/namCaptureResult.ts`,
+`src/main/namCaptureTraining.ts`) — discovery, trainer-queue mapping, synthetic-capture exclusion,
+and the `nam-lab-result.json` write-back are all shipped. Real implementation plan:
+`docs/nam-capture-import-plan-2026-08-29.md`. Left in place below **only as a historical record that
+this section is obsolete** -- re-verified 2026-09-06 against `ir-lab`'s current `main` (through
+commit `41cc12d`) while investigating unrelated NAM Projects to-dos; not blocking anything.
+
+**What changed on IR Lab's side since this was originally written (2026-08-29), confirmed against
+`ir-lab/docs/nam_lab_metadata_handoff_2026-08-29.md`'s own two dated updates and already reflected
+in the code above -- noted here only so the history isn't confusing to a future reader comparing
+this section's original text against reality:**
+- `nam-capture.json` moved to **schemaVersion 2** (`c3c5cda`, 2026-08-30): no more one-folder-
+  per-capture. Now `<project>/_excitations/<stem>-<hash12>-<rate>hz.wav` (shared, deduped by
+  content hash) + `<project>/NAM Captures/<Capture Name>.wav` + same-basename
+  `.nam-capture.json`/`.nam-lab-result.json`. `excitation` became a relative path that may start
+  `../`. Both WAVs are 24-bit PCM mono now (was 32-bit float).
+- The sidecar gained two optional blocks NAM Lab should read post-train (`a4927f9`, 2026-08-30):
+  `calibration` (`inputLevelDbu`/`outputLevelDbu`/`method`/`confidence`/`profileName`/
+  `calibratedAt`) and `modelMetadataSuggested` (`name`/`modeledBy`/`gearMake`/`gearModel`/
+  `gearType`/`toneType` -- user-entered hints from IR Lab's NAM Capture screen, non-blank keys
+  only). Both are already read by `namCaptureEnrichment.ts`.
+- A real, previously-live bug on IR Lab's side (`eaa88cf`, 2026-08-30, fixed before this app's
+  importer shipped): the recording/excitation length-match guarantee this plan's original text
+  assumed did NOT actually hold until that fix landed (training failed with a 2.5s length
+  mismatch). Not a live concern now, but worth knowing if `validation_esr`/length-sensitive
+  behavior is ever debugged against an old capture folder predating that fix.
+
+<details>
+<summary>Original 2026-08-29 ticket text (stale — kept for history only)</summary>
 
 Not started -- blocked on IR Lab's own NAM Capture feature stabilizing (still being actively built
 on the Mac side as of 2026-08-29, 28 commits deep already: `docs/nam_capture_plan_2026-08-28.md`,
@@ -1587,3 +1632,5 @@ schema removes that guesswork entirely.
    against what's recorded here -- this was captured mid-build on 2026-08-29 and the plan docs in
    that repo (`nam_capture_plan_2026-08-28.md`, `nam_capture_buildout_2026-08-28.md`) themselves
    describe open questions still being resolved.
+
+</details>
