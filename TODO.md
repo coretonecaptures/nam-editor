@@ -1346,6 +1346,27 @@ succeeding, because there is no way to render a component here and look at it (u
 - Review the broad preload / IPC surface and plan a narrower permission model before any store-distribution push. The preload currently exposes ~80 IPC channels â€” many of them broad filesystem operations (read/write/move/trash arbitrary paths). For app-store distribution this would need either: (a) per-channel scope/origin checks, (b) renderer-supplied paths restricted to user-selected dialogs/drops only, or (c) splitting trainer / library / Tone3000 IPC namespaces with separate preload scripts. Pending.
 - Evaluate whether `sandbox: false` can be tightened without breaking file management, trainer flows, or local image rendering. `contextIsolation: true` and `nodeIntegration: false` are already in place, which provide the strongest practical boundaries â€” but a true `sandbox: true` would force the preload to be sandboxed too (no `require` of arbitrary modules) and would need a refactor of the preload's `electron`/`webUtils` imports. Pending; do this as a separate test-heavy pass.
 
+### PRE-DISTRIBUTION GATE (`docs/security-review-2026-08-31.md` S1) -- do all three before any store/wide-release push, not before
+
+`local-file://` itself is partially hardened already (2026-09-06, `5ae8585` -- restricted to a
+fixed image-extension allowlist, closing the "read any file's raw contents" risk). The other two
+thirds of S1's own Fix list, plus the IPC item just above, are still open and deliberately grouped
+here as one pre-distribution checklist rather than left scattered, since none of the three is worth
+doing in isolation before a real distribution push is actually on the table:
+
+1. **Add a CSP** (`session.defaultSession.webRequest.onHeadersReceived`) -- `default-src 'self';
+   img-src 'self' local-file:; connect-src 'self' <known API hosts>; script-src 'self'`. Currently
+   zero CSP anywhere (no `<meta http-equiv>`, no header). Not exploitable today only because
+   nothing in the renderer renders untrusted markup yet (grep-verified: no
+   `dangerouslySetInnerHTML`, no markdown-to-HTML, no `innerHTML`) -- the moment a README/rich-text
+   panel starts rendering HTML, this stops being latent.
+2. **`sandbox: true`** on the `BrowserWindow` (currently `false`) -- needs the preload refactored
+   off `require`/direct `electron`/`webUtils` imports first; a real, test-heavy pass, not a flag
+   flip.
+3. **The IPC permission-model narrowing** described just above (per-channel scope checks vs.
+   renderer-restricted-to-dialog-paths vs. split preload scripts per feature area) -- still an open
+   design decision, not scoped to one approach yet.
+
 ## Pack Info and export
 
 - Pack Info export markdown: add support for indented / nested bullet lists in the PDF export parser
