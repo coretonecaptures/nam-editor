@@ -307,6 +307,39 @@ describe('enrichNamCaptures (schemaVersion 2)', () => {
     expect(bare.metadataEdited).toBe(false)
   })
 
+  it('clearing a string field ("") stays blank across a rescan; null still refills from the suggestion', async () => {
+    const { root } = makeFixture()
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const stats = await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+    enrichNamCaptures(db, stats.libraryRootId)
+
+    const ampA = listNamProjects(db).find((p) => p.name === 'Amp A')!
+    const clean = getNamProjectDetail(db, ampA.collectionId)!.captures.find((c) => c.captureId === 'cap0001')!
+    expect(clean.effective.gearType).toBe('amp_cab') // defaulted from the IR Lab suggestion
+
+    // A deliberate clear -- '', not null -- must survive a rescan (audit doc A4#3).
+    const cleared = setNamCaptureMetadata(db, clean.itemId, { gearType: '' })!
+    expect(cleared.effective.gearType).toBe('')
+    expect(cleared.metadataEdited).toBe(true)
+
+    enrichNamCaptures(db, stats.libraryRootId)
+    const afterRescan = getNamProjectDetail(db, ampA.collectionId)!.captures.find((c) => c.captureId === 'cap0001')!
+    expect(afterRescan.effective.gearType).toBe('') // still blank, not refilled
+
+    // Contrast: setNamCaptureMetadata can no longer produce a real SQL NULL at all (both '' and
+    // JS null collapse to the sticky '' sentinel now) -- there is no UI action that resets a field
+    // to genuinely "never touched" either. The only way a column is truly NULL is a row this
+    // function has never updated, which is exactly what enrichNamCaptures' own
+    // COALESCE(col, ?) still correctly fills from the suggestion -- demonstrated directly here
+    // (bypassing the public API, since it's no longer reachable through it) to confirm that
+    // pre-existing fill-on-first-scan behavior for an untouched row didn't regress.
+    db.prepare(`UPDATE nam_capture_item SET gear_type = NULL WHERE item_id = ?`).run(clean.itemId)
+    enrichNamCaptures(db, stats.libraryRootId)
+    const afterNullThenRescan = getNamProjectDetail(db, ampA.collectionId)!.captures.find((c) => c.captureId === 'cap0001')!
+    expect(afterNullThenRescan.effective.gearType).toBe('amp_cab')
+  })
+
   it('setNamCaptureMetadata ignores an unrecognized key instead of throwing (S3)', async () => {
     const { root } = makeFixture()
     const db = new DatabaseSync(':memory:')

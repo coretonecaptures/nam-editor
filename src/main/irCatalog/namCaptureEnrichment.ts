@@ -658,8 +658,27 @@ export function getNamProjectDetail(db: DatabaseSync, collectionId: string): Nam
 }
 
 /** Persist an edit to a capture's *effective* (editable) model metadata. Only the keys present
- * in `patch` are written; a key set to '' / null clears it (so a later scan re-defaults it from
- * the IR Lab suggestion). Returns the updated capture row. */
+ * in `patch` are written.
+ *
+ * Clearing a STRING field (modeledBy/gearMake/gearModel/gearType/toneType) is a permanent,
+ * sticky clear -- it writes an empty string, not SQL NULL, so it reads back as "blank" exactly
+ * like an unset field but is NOT NULL, and therefore survives a rescan. `updateNamCaptureFacts`'s
+ * `COALESCE(col, ?)` only ever fills a genuinely-NULL column with the IR Lab suggestion; an empty
+ * string is a real (if blank) value, so COALESCE leaves it alone. Before this, clearing wrote
+ * NULL, which put the field right back into "never touched" state and the very next rescan
+ * silently refilled it from the suggestion -- surprising, since every other edit in this same
+ * function sticks forever (audit doc nam-projects-2026-08-31-audit-and-switcher.md A4#3).
+ * A JS `null` in the patch is treated the same as `''` for a string field (both collapse to the
+ * sticky empty-string sentinel) -- this function has no way to write a real SQL NULL into an
+ * already-existing row any more, matching the fact that there is no "reset to untouched" UI
+ * action, only "clear" and "reset to suggestion" (which writes the suggested value itself).
+ *
+
+ * The numeric calibration fields (inputLevelDbu/outputLevelDbu) are NOT covered by this --
+ * SQLite's REAL columns have no clean non-NULL "intentionally blank" sentinel the way TEXT has
+ * '', so clearing one of those still writes NULL and still reverts on the next rescan. Documented
+ * limitation, not an oversight: a calibration number left blank is a much lower-stakes case than a
+ * wrong text guess sticking around (see A4#3's own framing), and there's no cheap fix available. */
 export function setNamCaptureMetadata(
   db: DatabaseSync,
   itemId: string,
@@ -685,8 +704,10 @@ export function setNamCaptureMetadata(
     if (k === 'inputLevelDbu' || k === 'outputLevelDbu') {
       vals.push(typeof v === 'number' && Number.isFinite(v) ? v : null)
     } else {
+      // '' is pushed as-is (not collapsed to null) -- see this function's own header comment on
+      // why an empty string is the deliberate, permanent-clear sentinel for a string column.
       const s = typeof v === 'string' ? v.trim() : ''
-      vals.push(s.length ? s : null)
+      vals.push(s)
     }
   }
   if (sets.length === 0) return getNamCaptureRow(db, itemId)

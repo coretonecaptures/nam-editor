@@ -950,8 +950,13 @@ function MetadataEditor({
   const dirty = Object.keys(draft).length > 0
   const valueOf = (k: (typeof META_FIELDS)[number]['k']): string =>
     (k in draft ? (draft[k] as string | null) : eff[k]) ?? ''
+  // '' (not null) for a deliberate clear -- namCaptureEnrichment.ts's setNamCaptureMetadata
+  // treats '' as a permanent, sticky blank (survives a rescan) and null as "never touched"
+  // (refills from the IR Lab suggestion on the next rescan). A field the operator actually typed
+  // into and cleared should stay blank, not quietly come back -- see that function's own header
+  // comment for the full reasoning (audit doc A4#3).
   const set = (k: (typeof META_FIELDS)[number]['k'], v: string): void =>
-    setDraft((d) => ({ ...d, [k]: v.trim() === '' ? null : v }))
+    setDraft((d) => ({ ...d, [k]: v.trim() === '' ? '' : v }))
 
   return (
     <div className="flex flex-col gap-2">
