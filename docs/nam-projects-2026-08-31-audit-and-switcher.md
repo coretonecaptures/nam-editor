@@ -100,11 +100,13 @@ Verification state at time of writing: `npx electron-vite build` clean;
    rather than doing the Modularization split blind.
 2. ~~`setNamCaptureMetadata`: skip unknown keys instead of building broken
    SQL.~~ — **Done 2026-09-06** (`9dd20da`), with a regression test.
-3. **Still open — needs a decision, not just code.** Decide the "cleared
-   field" semantics deliberately — either persist an explicit "user cleared
-   this" tombstone, or document that clear = revert-on-next-scan in the UI
-   copy. Left alone during the 2026-09-06 pass specifically because it's a
-   product decision, not a mechanical fix.
+3. ~~Decide the "cleared field" semantics deliberately.~~ — **Done 2026-09-06**
+   (`3023826`). Went with the cheap option once actually looked at closely,
+   not a full tombstone: a deliberate clear now writes `''` instead of `NULL`
+   for the string fields, and `COALESCE`'s existing NULL-only fill already
+   makes that stick forever with zero schema change. Numeric calibration
+   fields keep the old revert-on-scan behavior (documented limitation --
+   no clean non-NULL sentinel for a REAL column).
 4. ~~The optional rail sort (Newest / Least trained)~~ — **Done 2026-09-06**
    (`52f244e`): `sortProjects()` + a `<select>` next to the project filter,
    `Name` / `Newest` / `Least trained`, persisted per the file's usual

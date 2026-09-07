@@ -15,6 +15,17 @@ Severity is relative to that model. Nothing here is a live remote exploit.
 
 ## S1 — No CSP + unrestricted `local-file://` file read  ·  severity: medium (latent high)
 
+**Status 2026-09-06: the `local-file://` half of the Fix list below is partially done** (`5ae8585`)
+-- restricted to a fixed image-extension allowlist (.png/.jpg/.jpeg/.webp/.gif/.bmp/.avif),
+closing the "read arbitrary file CONTENTS" risk this section's own exploit example describes.
+Deliberately did NOT do a root-allowlist (fix item 2's other half) after finding a real gap: every
+call site is a plain `<img src>` as this doc already notes, but the images come from genuinely
+different trees -- catalog library roots AND the trainer's own separately-configured graph output
+(`job.graphRoot`/`finalModelRoot/_graphs`, unrelated to any library root) -- so a roots-only
+allowlist built from just the catalog would have silently broken trained-model graph previews.
+File-type restriction achieves the same disclosure-risk reduction without that gap. **Items 1 (CSP
+header) and 3 (`sandbox: true`) are still not done.**
+
 **What.** `src/renderer/index.html` sets **no** Content-Security-Policy (no
 `<meta http-equiv>`), and `src/main/*.ts` installs **no** `onHeadersReceived`
 CSP header. Separately, `src/main/index.ts:6196`:
