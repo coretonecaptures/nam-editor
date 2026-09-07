@@ -1546,6 +1546,71 @@ sharing for exactly this file-type pairing.
 2026-09-06 update above. Remaining scope is just the specific gaps it lists (facet/badge coverage
 for the newer fields, dedup detection), not a from-scratch project.
 
+## Future: trained-status resilience — fall back to trainer-history by captureId, not just the sidecar file
+
+**Not started. Not urgent** — raised 2026-09-07 discussing a real user workflow (captures made on a
+Mac in IR Lab, project folder copied to a PC, loaded here) and confirmed **not currently broken**
+for how that workflow is actually practiced. Written up so the idea isn't lost, not because
+anything is on fire.
+
+### The gap
+
+"Trained ✓" for a NAM Projects capture is decided by exactly one thing: whether
+`<Capture Name>.nam-lab-result.json` exists next to its WAV (`mapCaptureRow`'s
+`trained: result != null`, `namCaptureEnrichment.ts`). Nothing else is consulted. NAM Lab
+separately keeps its own local `trainer-history.json` (every training run it has ever done,
+independent of any project folder's own location) via `TrainerHistoryEntry`
+(`src/shared/trainer.ts`), but:
+
+- it's keyed by `sourcePath` + `sourceSizeBytes` + `sourceMtimeMs` — a byte-identical file that
+  gets copied to a new location, or just re-touched, no longer matches;
+- it does **not** currently store the capture's own IR Lab-assigned `captureId` at all, which is
+  the one identifier that stays stable across any number of copies, re-locations, or even a
+  different machine, because it's baked into `nam-capture.json` at capture time and carried into
+  `nam-lab-result.json`'s own `sourceCaptureId` field already (just not into `trainer-history.json`).
+
+So today, if a capture's `nam-lab-result.json` sidecar is ever lost (deleted, or overwritten by
+something that deletes destination-only files) the capture reads back as fully untrained, with no
+fallback anywhere in this app — even though NAM Lab itself trained it and still has the run in its
+own local history.
+
+### Why this isn't urgent
+
+Checked what actually deletes a destination-only file when copying a project folder onto an
+existing one of the same name: **ordinary Explorer drag/copy-paste and Finder drag/copy both merge
+by default** — they add new files, prompt to replace only for files that exist on both sides, and
+never touch a file (like `nam-lab-result.json`) that only exists in the destination. So the
+"Mac → PC merge-copy → Rescan" workflow that prompted this is already safe with no code change.
+The gap only bites with something that explicitly *mirrors* rather than merges: `rsync --delete`,
+`robocopy /MIR`, a one-way cloud-sync tool, or manually deleting the destination folder before
+re-copying. None of those are the described workflow.
+
+### Proposed fix, if/when it's worth building
+
+Two pieces, not a one-liner:
+
+1. **Stamp `captureId` into `trainer-history.json`.** Every training run whose source is a NAM
+   Projects capture (as opposed to a plain "Run WAVs"/"Run Folder" job with no IR Lab provenance)
+   should record that capture's own `captureId` on its `TrainerHistoryEntry`, alongside the
+   existing path/size/mtime fields (additive — those existing fields and their current dedup
+   consumers, `trainerQueueAlreadyHasSource`/`trainerHistoryAlreadyHasSource`, are untouched).
+2. **Fall back to a `captureId` history lookup when no sidecar is found, and auto-recreate the
+   sidecar rather than just faking the UI badge.** When `mapCaptureRow` finds no
+   `nam-lab-result.json` for a capture, before declaring it untrained, check whether
+   `trainer-history.json` has a successful entry for that capture's `captureId`; if so, write the
+   sidecar back out from the history record's own data (`outputModelPath`, `architecture`,
+   `validationEsr`, `trainedAt`, etc.) instead of only patching the in-memory row. Recreating the
+   real file, not just the displayed state, matters because it keeps "trained status lives with the
+   file itself" true for any FUTURE scan too — including one from a different machine or after a
+   fresh reinstall wiping `catalog.db` entirely, consistent with this app's own disposable-catalog
+   principle ("delete `catalog.db`, a rescan rebuilds everything") rather than making the local
+   database the one place this fact is remembered.
+
+**Needs a decision before building, not just code**: what should happen if the *reconstructed*
+sidecar can't be resolved cleanly (e.g. `outputModelPath` itself has also moved/gone missing) —
+show a degraded "trained, but the model file can't be found" state, or fall all the way back to
+today's plain "untrained"? Left open rather than guessed at.
+
 ## ~~Future: import IR Lab's "NAM Capture" projects into the trainer queue~~ — DONE, this section was stale
 
 **Superseded.** This ticket described a plan that has since been fully built as the **NAM Projects**
