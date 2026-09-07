@@ -8,6 +8,7 @@ import { findOuterMetadataMatch, findMatchingBrace, serializeJsonValue, escapeRe
 import { registerIrLibraryIpc } from './irLibraryIpc'
 import { writeNamLabResult } from './irCatalog/namCaptureResult'
 import { buildNamCaptureImportPayloads, type NamCaptureImportItem, type CaptureProfileConfig } from './namCaptureTraining'
+import { isAllowedLocalFilePath, localFileExtension } from './localFileGuard'
 
 const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
 
@@ -6200,9 +6201,35 @@ app.whenReady().then(async () => {
     LIVE_AUDIO_PERMISSIONS.has(permission)
   )
 
-  // Serve local filesystem files under local-file:// scheme
+  // Serve local filesystem files under local-file:// scheme -- images only.
+  //
+  // security-review-2026-08-31.md S1: this handler had no path validation at all, so ANY
+  // renderer code could read the bytes of ANY file on disk by constructing a local-file:// URL
+  // pointing at it (source, credentials, whatever) -- a real, broad file-disclosure primitive.
+  //
+  // A true "restrict to known roots" allowlist turned out to have a real gap once actually
+  // checked against this app's own code: every call site is a plain <img src=...> (confirmed by
+  // grepping every renderer usage -- FolderCardView/FolderGallery/MetadataEditor/PlayerPanel/
+  // PackInfoEditor/NamProjectsShell/CompanionInboxPanel covers), but the images themselves come
+  // from genuinely different, dynamically-growing trees: catalog library_root folders, AND
+  // trainer graph output (job.graphRoot / finalModelRoot/_graphs), which is a separately
+  // user-configured folder with no relationship to any added library root at all
+  // (promoteTrainerGraph, ~line 2660). A roots allowlist built from just the catalog would have
+  // silently broken trained-model graph previews -- a real regression with no offscreen render
+  // tool in this repo to catch it before a human did.
+  //
+  // So: restrict by FILE TYPE instead of by directory. Every real use here is an image; nothing
+  // legitimate needs this handler to serve anything else. This closes the actual disclosure risk
+  // (arbitrary file CONTENTS, e.g. source/config/credentials) without needing to enumerate every
+  // legitimate root correctly, and needs no live verification of the image-loading paths since
+  // none of them are touched.
   protocol.handle('local-file', (req) => {
-    const fileUrl = 'file://' + req.url.slice('local-file://'.length)
+    const rawPath = req.url.slice('local-file://'.length)
+    if (!isAllowedLocalFilePath(rawPath)) {
+      log(`local-file: refused non-image extension "${localFileExtension(rawPath)}" for ${rawPath.slice(0, 200)}`)
+      return new Response('Not Found', { status: 404 })
+    }
+    const fileUrl = 'file://' + rawPath
     return net.fetch(fileUrl)
   })
 
