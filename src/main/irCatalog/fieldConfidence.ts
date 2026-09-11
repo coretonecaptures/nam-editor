@@ -34,6 +34,14 @@ export interface IrFieldWriter {
   /** Returns true if the field was actually written; false if refused (already user_entered, or
    * already held by a source ranked equal-or-higher than the one being offered). */
   write(itemId: string, field: string, value: string | null | undefined, source: FieldSource): boolean
+  /** Clears an item-level override — parity backlog item 8. There's no history of what a parser
+   * guessed before the user overwrote it (the write above replaces in place), so "restore" can
+   * only mean "clear the item-level value and let folder inheritance show through again" —
+   * exactly what queryLibrary.ts's browse SELECT already does via
+   * `COALESCE(ir_item.field, folder_metadata_effective.value)`. Clearing the source row too (not
+   * just the value) is what lets a lower-ranked automated source write again on the next scan;
+   * leaving a stale 'user_entered' row there would keep blocking it even after the value is gone. */
+  clear(itemId: string, field: string): void
 }
 
 export function createIrFieldWriter(db: DatabaseSync): IrFieldWriter {
@@ -43,6 +51,10 @@ export function createIrFieldWriter(db: DatabaseSync): IrFieldWriter {
      ON CONFLICT(item_id, field) DO UPDATE SET source = excluded.source`
   )
   return {
+    clear(itemId, field) {
+      db.prepare(`UPDATE ir_item SET ${field} = NULL WHERE item_id = ?`).run(itemId)
+      db.prepare(`DELETE FROM ir_item_field_source WHERE item_id = ? AND field = ?`).run(itemId, field)
+    },
     write(itemId, field, value, source) {
       if (!value) return false
       const existing = selectSource.get(itemId, field) as { source: FieldSource } | undefined

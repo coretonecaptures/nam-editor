@@ -58,6 +58,26 @@ export function IrEditMetadataModal({
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [clearing, setClearing] = useState<string | null>(null)
+  // The parent's row cache refetches after onSaved(), but THIS modal keeps the `row` prop it
+  // opened with — React doesn't push a fresh object into an already-open modal. Tracked locally
+  // so the source label doesn't keep claiming a source that was just cleared until the modal is
+  // reopened; the real resolved value (inherited or blank) shows the next time it's opened.
+  const [clearedFields, setClearedFields] = useState<Set<string>>(new Set())
+
+  const clearField = async (field: string): Promise<void> => {
+    setClearing(field)
+    try {
+      const result = await window.api.irLibraryClearItemMetadata(row.id, field)
+      if (result.success) {
+        setDraft((d) => ({ ...d, [field]: '' }))
+        setClearedFields((s) => new Set(s).add(field))
+        onSaved() // refetches the row so the field re-resolves to its inherited value, if any
+      }
+    } finally {
+      setClearing(null)
+    }
+  }
 
   const save = async (): Promise<void> => {
     setSaving(true)
@@ -95,18 +115,34 @@ export function IrEditMetadataModal({
           {FIELDS.map((f) => {
             const sourceKey = `${f.key}_source` as keyof Row
             const source = row[sourceKey] as string | null
+            const cleared = clearedFields.has(f.key)
+            const hasOriginalValue = !!row[f.key]
             return (
               <label key={f.key} className="flex flex-col gap-1">
-                <span className="text-[11px] text-nm-text-3 flex items-center justify-between">
+                <span className="text-[11px] text-nm-text-3 flex items-center justify-between gap-2">
                   <span>{f.label}</span>
-                  <span className="text-nm-text-3">currently from {sourceLabel(source)}</span>
+                  <span className="text-nm-text-3 truncate">
+                    {cleared ? 'cleared — reopen to see the inherited value' : `currently from ${sourceLabel(source)}`}
+                  </span>
                 </span>
-                <input
-                  value={draft[f.key]}
-                  onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
-                  disabled={saving}
-                  className="px-2 py-1 text-xs rounded border border-field-bd bg-field-bg text-nm-text"
-                />
+                <div className="flex items-center gap-1.5">
+                  <input
+                    value={draft[f.key]}
+                    onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
+                    disabled={saving}
+                    className="flex-1 min-w-0 px-2 py-1 text-xs rounded border border-field-bd bg-field-bg text-nm-text"
+                  />
+                  {hasOriginalValue && !cleared && (
+                    <button
+                      onClick={() => void clearField(f.key)}
+                      disabled={saving || clearing === f.key}
+                      title="Clear this override and fall back to whatever the folder or a parser would otherwise give it"
+                      className="text-[11px] text-nm-text-3 hover:text-red-500 disabled:opacity-50 flex-shrink-0"
+                    >
+                      {clearing === f.key ? '…' : 'Clear'}
+                    </button>
+                  )}
+                </div>
               </label>
             )
           })}

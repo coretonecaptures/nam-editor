@@ -631,6 +631,8 @@ const api = {
     ipcRenderer.invoke('irLibrary:ensureDestinationFolder', libraryRootId, relativeFolderPath),
   irLibrarySetItemMetadata: (itemId: string, field: string, value: string): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('irLibrary:setItemMetadata', itemId, field, value),
+  irLibraryClearItemMetadata: (itemId: string, field: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('irLibrary:clearItemMetadata', itemId, field),
   irLibrarySendSessionToIrLab: (captureId: string): Promise<{ success: boolean; reason?: string }> =>
     ipcRenderer.invoke('irLibrary:sendSessionToIrLab', captureId),
   irLibrarySendProjectToIrLab: (projectId: string, preset?: string): Promise<{ success: boolean; reason?: string }> =>

@@ -224,14 +224,31 @@ still unconditionally sticky against every automated source), and the field show
 — shown per-field in the editor; a persistent badge on the browse row itself is item 8).
 
 ### 8. Provenance badges on item fields
-**Status:** open · **Size:** S · **Depends on:** 7
+**Status:** ✅ done 2026-09-11 · **Size:** S · **Depends on:** 7
 
-Show where each value came from — IR Lab native, embedded `bext`, vendor doc, parser, or
-the user — and let the user clear an override back to the inherited value. Flagged in TODO
-as a known gap from the §12f pass.
+The "every field carries its source" half was already built before this item — the browse row's
+`FieldBadge` has shown source via color/opacity and a tooltip since Phase 3's original pass, and
+item 7's editor modal now shows it per-field there too. The real gap, and the only new work: no
+way to clear an override.
 
-**Done when:** every displayed metadata field carries its source, and clearing an override
-restores the inherited value rather than emptying the field.
+Added `IrFieldWriter.clear(itemId, field)` — nulls the item-level value AND deletes its
+`ir_item_field_source` row (not just the value: a leftover `user_entered` row would keep blocking
+every automated source from ever writing that field again, even after the value itself was gone).
+There's no history of what an automated source guessed before the user overwrote it — the writer
+replaces in place — so "restore" can only mean "clear the item-level value and let
+`queryLibrary.ts`'s existing `COALESCE(ir_item.field, folder_metadata_effective.value)` show
+whatever the folder would otherwise give it." Exactly what the item's own wording asks for.
+
+"Clear" button per field in the editor modal, shown only when the field actually has a value.
+One real rough edge, documented rather than silently accepted: the modal keeps the `row` snapshot
+it opened with, so the "currently from …" label for a cleared field can't show the freshly-
+resolved value without the modal being reopened — tracked locally so it says "cleared — reopen to
+see the inherited value" instead of contradicting itself by still naming the old source.
+
+**Done when:** every displayed metadata field carries its source (✅, pre-existing), and clearing
+an override restores the inherited value rather than emptying the field (✅ — verified via
+`fieldConfidence.test.ts`'s "after clear(), a lower-ranked automated source can write again" case,
+which is exactly the mechanism that makes inheritance/re-resolution actually happen on rescan).
 
 ### 9. Multi-select batch metadata edit
 **Status:** open · **Size:** M · **Depends on:** 7

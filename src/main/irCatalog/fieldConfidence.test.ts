@@ -74,4 +74,25 @@ describe.skipIf(!hasFts5())('createIrFieldWriter', () => {
     expect(writer.write(itemId, 'cabinet', '', 'user_entered')).toBe(false)
     expect(writer.write(itemId, 'cabinet', null, 'user_entered')).toBe(false)
   })
+
+  it('clear() nulls the value and removes the source row', () => {
+    const { db, itemId } = makeDbWithOneItem()
+    const writer = createIrFieldWriter(db)
+    writer.write(itemId, 'cabinet', 'User Correction', 'user_entered')
+    writer.clear(itemId, 'cabinet')
+    expect(cabinetOf(db, itemId)).toBeNull()
+    const sourceRow = db.prepare(`SELECT source FROM ir_item_field_source WHERE item_id = ? AND field = 'cabinet'`).get(itemId)
+    expect(sourceRow).toBeUndefined()
+  })
+
+  it('after clear(), a lower-ranked automated source can write again', () => {
+    const { db, itemId } = makeDbWithOneItem()
+    const writer = createIrFieldWriter(db)
+    writer.write(itemId, 'cabinet', 'User Correction', 'user_entered')
+    writer.clear(itemId, 'cabinet')
+    // Before the fix this would matter: a leftover 'user_entered' source row would still block
+    // this write even after the value itself was cleared.
+    expect(writer.write(itemId, 'cabinet', 'Filename Guess', 'filename_inferred')).toBe(true)
+    expect(cabinetOf(db, itemId)).toBe('Filename Guess')
+  })
 })

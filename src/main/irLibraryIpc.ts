@@ -512,6 +512,12 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     if (!trimmed) return { success: false }
     return { success: createIrFieldWriter(getDb()).write(itemId, field, trimmed, 'user_entered') }
   })
+  // Clear an item-level override back to folder inheritance (parity backlog item 8).
+  ipcMain.handle('irLibrary:clearItemMetadata', (_event, itemId: string, field: string) => {
+    if (!EDITABLE_IR_FIELDS.has(field)) return { success: false }
+    createIrFieldWriter(getDb()).clear(itemId, field)
+    return { success: true }
+  })
   ipcMain.handle('irLibrary:sendSessionToIrLab', async (_event, captureId: string) => {
     if (!captureId) return { success: false, reason: 'No capture id for this item.' }
     return sendToIrLab({ kind: 'session', captureId })
