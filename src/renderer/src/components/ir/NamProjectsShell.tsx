@@ -9,6 +9,7 @@ import { loadNamFileForPlayback } from '../../utils/loadNamFile'
 import { PlayerPanel } from '../PlayerPanel'
 import { WavPreviewPlayer } from '../WavPreviewPlayer'
 import { IrProjectDefaultsModal } from './IrProjectDefaultsModal'
+import { IrBuildPackModal } from './IrBuildPackModal'
 import type {
   NamProjectSummary,
   NamProjectDetail,
@@ -522,11 +523,13 @@ function MakeupChips({ captures }: { captures: NamCaptureRow[] }): React.ReactEl
 function ProjectHeader({
   detail,
   onReveal,
-  onOpenProjectDefaults
+  onOpenProjectDefaults,
+  onOpenBuildPack
 }: {
   detail: NamProjectDetail
   onReveal: (path: string) => void
   onOpenProjectDefaults: () => void
+  onOpenBuildPack: () => void
 }): React.ReactElement {
   const esrs = detail.captures
     .filter((c) => c.trained)
@@ -596,6 +599,9 @@ function ProjectHeader({
           </button>
           <button onClick={onOpenProjectDefaults} className="text-[11px] text-nm-accent hover:underline">
             Set Project Defaults…
+          </button>
+          <button onClick={onOpenBuildPack} className="text-[11px] text-nm-accent hover:underline">
+            Build Pack…
           </button>
           {handoffStatus && <span className="text-[11px] text-nm-text-3">{handoffStatus}</span>}
         </div>
@@ -1555,6 +1561,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   const [showSettings, setShowSettings] = useState(false)
   const [playerFile, setPlayerFile] = useState<NamFile | null>(null)
   const [showProjectDefaults, setShowProjectDefaults] = useState(false)
+  const [showBuildPack, setShowBuildPack] = useState(false)
   const [playerError, setPlayerError] = useState<string | null>(null)
   const openModelInPlayer = useCallback(async (path: string) => {
     setPlayerError(null)
@@ -2200,6 +2207,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
           onApplied={() => void refreshDetail(detail.collectionId)}
         />
       )}
+      {showBuildPack && detail && <IrBuildPackModal detail={detail} onClose={() => setShowBuildPack(false)} />}
 
       {error && (
         <div className="flex items-center justify-between px-4 py-1 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 flex-shrink-0">
@@ -2381,6 +2389,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                   detail={detail}
                   onReveal={(p) => window.api.revealFile(p)}
                   onOpenProjectDefaults={() => setShowProjectDefaults(true)}
+                  onOpenBuildPack={() => setShowBuildPack(true)}
                 />
                 <div className="flex items-center gap-2 px-4 py-1.5 border-b border-nm-border-s flex-shrink-0">
                   <input

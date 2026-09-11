@@ -504,15 +504,36 @@ tolerates a renamed `outputFileName` and re-resolves by `captureId`, or NAM Lab 
 — not assumed.
 
 ### 16. Build a pack from a finished project
-**Status:** open · **Size:** L · **Depends on:** 14
+**Status:** ✅ done 2026-09-11 (thinner than spec, noted below) · **Size:** L → actually S · **Depends on:** 14
 
-A completed NAM Project is exactly a pack's worth of models, and NAM Lab already has the whole
-release pipeline — Pack Info, cover art, read-me, checklists, delivery targets, PDF and
-spreadsheet export. There is no path from one to the other. Add "Build pack from project",
-seeding Pack Info from the project's own metadata.
+"Build Pack…" in `ProjectHeader`, new `IrBuildPackModal.tsx`. Auto-detects the pack folder as the
+common parent directory of every trained capture's `outputModelPath`; if trained models don't
+share one folder, the field is left blank with a "Choose…" folder picker instead of guessing.
+Writes `nam-pack.json` (title/description/notes seeded from the project, merged onto any existing
+pack info already there — never blind-overwrites a folder that already has one) via the EXISTING,
+already-generic `window.api.writePackInfo` — no new IPC channel needed for that half at all. Export
+Sheet builds a plain HTML table (capture/architecture/validation ESR) and opens it through the
+existing `window.api.exportPackSheet`, same "no new channel" reason.
+
+**Turned out much thinner than the L estimate, because the release pipeline already being generic
+made most of the estimated size disappear**: `writePackInfo`/`readPackInfo`/`exportPackSheet` take
+a folder path and a plain object/HTML string — they don't care whether the caller is NAM mode's own
+FileList or NAM Projects mode. The size-L estimate assumed real integration work; there wasn't any
+once this was actually looked at.
+
+**Deliberately does NOT**: move or copy the trained model files anywhere (a pack, in this app, is
+folder metadata layered onto files already sitting where training put them — moving them is
+backlog-item-12-shaped work, not this item's), or open NAM mode's full visual `PackInfoEditor`
+(that component lives inside `App.tsx`'s own folder-tree navigation — a completely separate React
+tree per `AppRoot.tsx`'s own "each shell owns its whole viewport" design; switching to NAM mode and
+browsing to the written folder picks up the seeded `nam-pack.json` exactly as if it had been filled
+in there by hand — no extra plumbing needed for that to work, so none was built). Cover art,
+checklists and delivery targets are left for the user to fill in on that same next visit to NAM
+mode — seeding everything the project actually KNOWS (title/description/notes) is what "no
+retyping" asks for; a checklist and delivery targets aren't project knowledge to lose.
 
 **Done when:** a trained project produces a pack folder with populated Pack Info and an export
-sheet, with no retyping.
+sheet, with no retyping. ✅
 
 ### Not doing: moving captures between projects
 IR Lab owns project structure on disk. Reorganising captures across projects from here would
