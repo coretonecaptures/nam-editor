@@ -498,6 +498,8 @@ declare global {
           rating: number | null
           missing_since: string | null
           capture_id: string | null
+          folder_id: number | null
+          library_root_id: number
           manufacturer: string | null
           manufacturer_source: string | null
           cabinet: string | null

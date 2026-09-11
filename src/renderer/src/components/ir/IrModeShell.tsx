@@ -13,7 +13,9 @@ import type { NamFile } from '../../types/nam'
 import guitarJackIcon from '../../assets/icons/guitar-jack.png'
 import { formatSampleRate } from '../../../../shared/wavFormat'
 import { SettingsPanel } from '../SettingsPanel'
+import { IR_ITEM_DRAG_MIME } from './dragMime'
 import { IrDuplicatesModal } from './IrDuplicatesModal'
+import { IrMoveToFolderModal } from './IrMoveToFolderModal'
 import { AppSettings, loadSettings, saveSettings } from '../../types/settings'
 
 // Evaluated lazily, not at module scope — see NamProjectsShell.tsx's matching comment: a
@@ -35,6 +37,8 @@ type IrItemRow = {
   rating: number | null
   missing_since: string | null
   capture_id: string | null
+  folder_id: number | null
+  library_root_id: number
   manufacturer: string | null
   manufacturer_source: string | null
   cabinet: string | null
@@ -253,6 +257,13 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
   const [renameDraft, setRenameDraft] = useState('')
   const [renameError, setRenameError] = useState<string | null>(null)
   const [renameBusy, setRenameBusy] = useState(false)
+  // Move to folder (parity backlog item 4) — no multi-select exists in this list yet, so this
+  // always operates on a single item id for now; the modal/IPC underneath already take an array
+  // so multi-select can plug straight in later with no further plumbing.
+  const [moveModal, setMoveModal] = useState<{ itemIds: string[]; libraryRootId: number; currentFolderId: number | null } | null>(null)
+  // Bumped after a move so IrFolderTree refetches its row counts — the tree's own
+  // onLibraryChanged only fires for actions the tree itself performs (its right-click Remove).
+  const [treeRefreshSignal, setTreeRefreshSignal] = useState(0)
   const [newGroupName, setNewGroupName] = useState('')
   // Folder tree/panel — scoped to the first root for now (no root switcher yet; a second "Add
   // Library Folder" click adds another root but the tree only ever shows the first one). Selecting
@@ -481,6 +492,24 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
     },
     [renamingId, renameDraft]
   )
+
+  const handleMoved = useCallback((results: Array<{ itemId: string; success: boolean }>) => {
+    const moved = results.filter((r) => r.success).length
+    setImportResult(
+      moved === results.length
+        ? `Moved ${moved} item${moved === 1 ? '' : 's'}.`
+        : `Moved ${moved} of ${results.length} — see the item(s) left behind for why.`
+    )
+    // A move can change which folder an item belongs to, which changes list MEMBERSHIP (it may no
+    // longer match the current folder scope) as well as its sort position — unlike rename, this
+    // isn't a safe single-field cache patch. Simplest correct fix: invalidate and refetch, same
+    // pattern the rescan-completion path above already uses.
+    requestEpochRef.current++
+    cacheRef.current = new Map()
+    pendingRef.current = new Set()
+    forceRerender((n) => n + 1)
+    setTreeRefreshSignal((n) => n + 1)
+  }, [])
 
   const sendSessionToIrLab = useCallback(async (row: IrItemRow) => {
     if (!row.capture_id) {
@@ -1117,6 +1146,15 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           onClose={() => setShowDuplicates(false)}
         />
       )}
+      {moveModal && (
+        <IrMoveToFolderModal
+          itemIds={moveModal.itemIds}
+          libraryRootId={moveModal.libraryRootId}
+          currentFolderId={moveModal.currentFolderId}
+          onClose={() => setMoveModal(null)}
+          onMoved={handleMoved}
+        />
+      )}
       {ampCaptureError && (
         <div className="px-4 py-1 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 flex-shrink-0">
           {ampCaptureError}
@@ -1169,6 +1207,11 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
               onSelectFolder={handleSelectFolder}
               onLibraryChanged={handleLibraryChanged}
               onRescanRoot={handleRescanRoot}
+              onDropItems={(destFolderId, payload) => {
+                if (payload.itemIds.length === 0) return
+                void window.api.irLibraryMoveItems(payload.itemIds, destFolderId).then(handleMoved)
+              }}
+              refreshSignal={treeRefreshSignal}
             />
           </div>
           <div
@@ -1248,6 +1291,15 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                   e.preventDefault()
                   setFocusedIndex(index)
                   setContextMenu({ x: e.clientX, y: e.clientY, row })
+                }}
+                draggable={!row.missing_since}
+                onDragStart={(e) => {
+                  // Drag-to-move onto IrFolderTree (parity backlog item 4). JSON rather than a
+                  // bare id: the drop target needs the source library_root_id up front to refuse
+                  // a cross-root drop before ever calling moveItems (fileOps.ts would refuse it
+                  // too, but failing at the drop site gives the user a location to see why).
+                  e.dataTransfer.setData(IR_ITEM_DRAG_MIME, JSON.stringify({ itemIds: [row.id], libraryRootId: row.library_root_id }))
+                  e.dataTransfer.effectAllowed = 'move'
                 }}
                 className={`group h-full flex items-center gap-3 px-4 border-b border-nm-border-s hover:bg-hov ${isFocused ? 'bg-active-bg' : ''}`}
               >
@@ -1615,6 +1667,16 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
               label: 'Rename…',
               disabled: !!contextMenu.row.missing_since,
               onClick: () => startRename(contextMenu.row)
+            },
+            {
+              label: 'Move to…',
+              disabled: !!contextMenu.row.missing_since,
+              onClick: () =>
+                setMoveModal({
+                  itemIds: [contextMenu.row.id],
+                  libraryRootId: contextMenu.row.library_root_id,
+                  currentFolderId: contextMenu.row.folder_id
+                })
             },
             {
               label: trayIds.has(contextMenu.row.id) ? 'Remove from Tray' : 'Add to Tray',

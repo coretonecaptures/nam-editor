@@ -110,14 +110,36 @@ without a rescan. ✅ (patches the cache directly; `fileOps.ts`'s `UPDATE`-in-pl
 means the catalog side was already correct — this just needed the UI to not force a reload)
 
 ### 4. Move IRs to a folder
-**Status:** open · **Size:** M · **Depends on:** 2
+**Status:** ✅ done 2026-09-11 (single-item; see note) · **Size:** M · **Depends on:** 2
 
-Multi-select aware. Two entry points: a "Move to…" menu item opening the folder tree in a
-picker, and drag-and-drop onto the existing `IrFolderTree`. Moving into a folder that has
-its own `folder_metadata` must re-resolve the item's effective metadata afterwards.
+Both entry points built: context menu "Move to…" opens `IrMoveToFolderModal.tsx` (flat indented
+folder list scoped to the item's own library root — cross-root is refused by `fileOps.ts` itself,
+so the picker doesn't offer it — plus a "type a new path → Create & Move" path using
+`ensureDestinationFolder`), and drag-and-drop of a row directly onto a node in `IrFolderTree`.
 
-**Done when:** a multi-select move lands every file, the tree counts update, and inherited
-metadata reflects the new parent.
+**Scope note:** IR mode's list has no multi-select mechanism at all yet (no ctrl/shift/ctrl-A —
+only a single `focusedIndex`). Building general multi-select is a real feature in its own right,
+not a one-line addition, and wasn't separately called out as its own backlog item. Rather than
+block this item on building that first, both the modal and the IPC underneath already take an
+`itemIds: string[]` — multi-select can plug straight in later with zero changes to either. Added
+as a follow-on note rather than silently declaring this "done" against the original multi-select
+wording.
+
+Metadata re-resolution after a move needs no extra code: `folder_metadata_effective` is resolved
+at QUERY time (`COALESCE(ir_item.field, folder_metadata_effective.value)` in `queryLibrary.ts`),
+not cached on the item row, so a moved item's inherited fields are already correct the moment it's
+re-queried — which happens automatically, since a move invalidates and refetches the browse list.
+
+Tree counts needed one more piece than expected: `IrFolderTree`'s own `onLibraryChanged` only
+fires for actions the tree performs itself (its right-click Remove) — a move triggered from
+outside (the list, or this modal) had no way to tell the tree to refetch. Added a `refreshSignal`
+prop, bumped by `handleMoved`, so the tree's row counts don't go stale until an unrelated
+`libraryRootCount` change happens to touch it.
+
+**Done when:** a move lands the file, the tree counts update, and inherited metadata reflects the
+new parent (true by construction — `folder_metadata_effective` is resolved at query time, not
+cached on the item row, so a re-queried item already reflects its new parent). ✅ for single-item;
+multi-select is a follow-on.
 
 ### 5. Trash IRs
 **Status:** open · **Size:** S · **Depends on:** 2

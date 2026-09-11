@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
 import { ContextMenu } from '../ContextMenu'
+import { IR_ITEM_DRAG_MIME, type IrItemDragPayload } from './dragMime'
 
 type FolderRow = {
   id: number
@@ -194,7 +195,8 @@ function TreeRow({
   visibleIds,
   onSelect,
   onToggleExpand,
-  onContextMenu
+  onContextMenu,
+  onDropItems
 }: {
   node: TreeNode
   depth: number
@@ -204,13 +206,20 @@ function TreeRow({
   onSelect: (id: number, name: string) => void
   onToggleExpand: (id: number) => void
   onContextMenu: (node: TreeNode, x: number, y: number) => void
+  onDropItems?: (destFolderId: number, payload: IrItemDragPayload) => void
 }): React.ReactElement | null {
+  // Hook first, early return second — this component's visibility can flip between renders of the
+  // SAME instance (the search box filters visibleIds while the node stays mounted, keyed by
+  // node.id), so a hook called only on the "visible" branch violates the Rules of Hooks: React
+  // would see a different hook count between two renders of one instance.
+  const [dragOver, setDragOver] = useState(false)
   if (visibleIds && !visibleIds.has(node.id)) return null
   const hasChildren = node.children.length > 0
   // While searching, force every visible node open so matches are actually shown, not hidden
   // behind manual collapse state that predates the search.
   const expanded = visibleIds ? true : expandedIds.has(node.id)
   const isSelected = !node.isVirtual && selectedId === node.id
+  const isDropTarget = !node.isVirtual && !!onDropItems
   return (
     <div>
       <div
@@ -220,10 +229,34 @@ function TreeRow({
           e.preventDefault()
           onContextMenu(node, e.clientX, e.clientY)
         }}
+        onDragOver={(e) => {
+          if (!isDropTarget) return
+          e.preventDefault()
+          e.dataTransfer.dropEffect = 'move'
+        }}
+        onDragEnter={(e) => {
+          if (!isDropTarget) return
+          e.preventDefault()
+          setDragOver(true)
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          if (!isDropTarget) return
+          e.preventDefault()
+          setDragOver(false)
+          const raw = e.dataTransfer.getData(IR_ITEM_DRAG_MIME)
+          if (!raw) return
+          try {
+            const payload = JSON.parse(raw) as IrItemDragPayload
+            onDropItems!(node.id, payload)
+          } catch {
+            // Not our drag payload (e.g. an OS file drop) — ignore rather than throw.
+          }
+        }}
         style={{ paddingLeft: `${depth * 14 + 6}px` }}
         className={`flex items-center gap-1.5 py-0.5 pr-2 text-xs cursor-pointer rounded ${
           isSelected ? 'bg-active-bg text-nm-accent' : 'hover:bg-hov text-nm-text'
-        } ${node.isVirtual ? 'font-medium text-nm-text-2' : ''}`}
+        } ${node.isVirtual ? 'font-medium text-nm-text-2' : ''} ${dragOver ? 'ring-1 ring-nm-accent bg-active-bg' : ''}`}
       >
         {hasChildren ? (
           <button
@@ -260,6 +293,7 @@ function TreeRow({
               onSelect={onSelect}
               onToggleExpand={onToggleExpand}
               onContextMenu={onContextMenu}
+              onDropItems={onDropItems}
             />
           ))}
         </div>
@@ -289,7 +323,9 @@ export function IrFolderTree({
   selectedFolderId,
   onSelectFolder,
   onLibraryChanged,
-  onRescanRoot
+  onRescanRoot,
+  onDropItems,
+  refreshSignal
 }: {
   libraryRootCount: number
   selectedFolderId: number | null
@@ -302,6 +338,15 @@ export function IrFolderTree({
    * root regardless of whether the node itself IS that root or a subfolder under it. The shell owns
    * the actual scan call/progress UI (same one "Rescan all" in the menu bar already drives). */
   onRescanRoot: (libraryRootId: number) => void
+  /** Drag-to-move (parity backlog item 4): an IR row dropped onto a real folder node. Omit to
+   * disable drop targets entirely (no prop -> nothing is draggable-onto). */
+  onDropItems?: (destFolderId: number, payload: IrItemDragPayload) => void
+  /** Bump (any changing value) to force a row refetch from OUTSIDE the tree — e.g. after a
+   * rename/move/trash driven by the list view or the Move-to-folder modal, none of which the
+   * tree's own `onLibraryChanged` covers (that one only fires from actions the tree itself
+   * performs, like its own right-click Remove). Per-folder item counts would otherwise go stale
+   * until something unrelated happens to touch `libraryRootCount`. */
+  refreshSignal?: number
 }): React.ReactElement {
   const [rows, setRows] = useState<FolderRow[]>([])
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set())
@@ -327,7 +372,7 @@ export function IrFolderTree({
   useEffect(() => {
     refreshRows()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [libraryRootCount])
+  }, [libraryRootCount, refreshSignal])
 
   const { roots, allIds } = useMemo(() => buildTree(rows), [rows])
   const visibleIds = useMemo(() => computeVisibleIds(roots, treeSearch), [roots, treeSearch])
@@ -422,6 +467,7 @@ export function IrFolderTree({
             onSelect={onSelectFolder}
             onToggleExpand={toggleExpand}
             onContextMenu={(n, x, y) => setContextMenu({ node: n, x, y })}
+            onDropItems={onDropItems}
           />
         ))}
       </div>
