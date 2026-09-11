@@ -682,6 +682,17 @@ declare global {
       irLibraryRenameFolder: (folderId: number, newName: string, force?: boolean) => Promise<{ success: boolean; error?: string; itemsAffected?: number }>
       irLibraryDeleteFolder: (folderId: number) => Promise<{ success: boolean; error?: string; itemsAffected?: number }>
       irLibrarySetRootWatchMode: (libraryRootId: number, watchMode: 'manual' | 'watched') => Promise<{ success: boolean }>
+      irLibraryPreviewLibraryCleanup: (options: { libraryRootId: number | null; folderId: number | null; structureTemplate: string }) => Promise<{
+        rows: Array<{ itemId: string; currentRelativePath: string; newRelativePath: string | null; needsReview: boolean; missingTokens: string[] }>
+        readyCount: number
+        needsReviewCount: number
+        unchangedCount: number
+      }>
+      irLibraryRunLibraryCleanup: (
+        scope: { libraryRootId: number | null; folderId: number | null },
+        rows: Array<{ itemId: string; currentRelativePath: string; newRelativePath: string | null; needsReview: boolean; missingTokens: string[] }>,
+        mode: 'move' | 'copy'
+      ) => Promise<{ moved: number; copied: number; failed: Array<{ itemId: string; error: string }> }>
       irLibrarySetItemMetadata: (itemId: string, field: string, value: string) => Promise<{ success: boolean }>
       irLibraryClearItemMetadata: (itemId: string, field: string) => Promise<{ success: boolean }>
       irLibraryPromoteItemFieldToFolder: (itemId: string, field: string) => Promise<{ success: boolean; itemsCleared: number }>

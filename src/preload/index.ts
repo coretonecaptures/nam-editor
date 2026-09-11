@@ -640,6 +640,22 @@ const api = {
     ipcRenderer.invoke('irLibrary:deleteFolder', folderId),
   irLibrarySetRootWatchMode: (libraryRootId: number, watchMode: 'manual' | 'watched'): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('irLibrary:setRootWatchMode', libraryRootId, watchMode),
+  irLibraryPreviewLibraryCleanup: (options: {
+    libraryRootId: number | null
+    folderId: number | null
+    structureTemplate: string
+  }): Promise<{
+    rows: Array<{ itemId: string; currentRelativePath: string; newRelativePath: string | null; needsReview: boolean; missingTokens: string[] }>
+    readyCount: number
+    needsReviewCount: number
+    unchangedCount: number
+  }> => ipcRenderer.invoke('irLibrary:previewLibraryCleanup', options),
+  irLibraryRunLibraryCleanup: (
+    scope: { libraryRootId: number | null; folderId: number | null },
+    rows: Array<{ itemId: string; currentRelativePath: string; newRelativePath: string | null; needsReview: boolean; missingTokens: string[] }>,
+    mode: 'move' | 'copy'
+  ): Promise<{ moved: number; copied: number; failed: Array<{ itemId: string; error: string }> }> =>
+    ipcRenderer.invoke('irLibrary:runLibraryCleanup', scope, rows, mode),
   irLibrarySetItemMetadata: (itemId: string, field: string, value: string): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('irLibrary:setItemMetadata', itemId, field, value),
   irLibraryClearItemMetadata: (itemId: string, field: string): Promise<{ success: boolean }> =>

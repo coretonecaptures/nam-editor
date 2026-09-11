@@ -350,16 +350,55 @@ every other DB test in this session, typechecked and reviewed carefully rather t
 a nested subfolder and confirms both the subfolder's and its item's paths update correctly)
 
 ### 12. Library Cleanup / Build Library for IR
-**Status:** open · **Size:** L · **Depends on:** 4, 11
+**Status:** ✅ done 2026-09-11 (structure input differs from spec, noted below) · **Size:** L · **Depends on:** 4, 11
 
-The IR equivalent of NAM's `LibraryCleanupModal` — restructure a messy library into a chosen
-shape, driven by resolved catalog metadata rather than filename parsing at the point of use.
-Structures worth offering: `manufacturer / cabinet / mic`, `cabinet / mic / position`, and
-flat-with-template-names. Copy-vs-move, dry-run preview with counts, and the destination-root
-rule NAM mode already enforces.
+New `libraryCleanup.ts` (`previewLibraryCleanup` / `runLibraryCleanup`), `IrLibraryCleanupModal.tsx`,
+a "Build Library…" button. Preview-first: computes every in-scope item's new relative path from a
+folder template built out of the item's own resolved facts, splits into ready (moves/copies) vs
+needs-review (left untouched — never guessed), shows counts and a full path-by-path list before
+anything runs. `runLibraryCleanup` applies the EXACT rows the preview produced, not a fresh
+recompute — a metadata edit landing in the gap between Preview and Run can't silently change what
+actually moves (covered by its own test).
+
+**Structure input differs from the item's own wording, deliberately, not silently**: instead of a
+fixed enum of layouts (`manufacturer/cabinet/mic`, `cabinet/mic/position`, flat-with-template), this
+takes a free-text folder template using the exact token vocabulary `IrBatchRenameModal.tsx` (item
+6) already established (`{manufacturer}/{cabinet}/{speaker}/{microphone}/{rate}/{depth}`, plus a
+literal segment for a fixed folder name). Strictly more flexible than a fixed enum — it covers every
+layout the enum would have named as one of its arbitrary orderings, plus any other ordering, using
+one template language already written, reviewed, and tested for item 6 instead of a second one.
+
+Destination is a folder within the SAME library root, not a separate destination root on a
+different drive the way NAM's version allows — every primitive underneath (`fileOps.ts`'s
+`moveItems`/`copyItems`) already refuses a cross-root operation, and reorganizing within one
+library is the actual IR-mode use case (NAM mode's version exists partly to consolidate captures
+scattered across drives, which isn't how this app's users keep IR libraries). No saved-ignore-list
+or CSV export of needs-review rows, kept out as a real scope trim given how large this item already
+is — not an oversight.
+
+Reuses `fileOps.ts`'s existing batch `moveItems`/`copyItems` rather than a new per-item-destination
+primitive: items are grouped by their computed destination folder (each of those two functions
+takes one destination for a whole batch), each destination folder created once via the existing
+`ensureDestinationFolder`, then each group moved/copied in one call — no new disk-mutation code
+needed at all, only orchestration on top of what items 1/4/11 already built and tested.
+
+Also added `resolveLibraryRootId` (folder-scoped: resolves the root FROM the folder itself, since a
+folder id is unique across the whole catalog — a caller with only a `selectedFolderId` doesn't need
+to separately track which root it's under just to open this dialog), which the renderer needed
+since folder selection and root selection are independent state in `IrModeShell.tsx`.
+
+7 unit tests cover: full-token-match placement, needs-review items left untouched, a literal
+(token-free) segment as a valid destination, the actual move (grouped-by-destination, verified on
+disk), the actual copy (source untouched, new catalog row), already-at-destination reported
+unchanged rather than moved, the exact-rows-not-recomputed guarantee, and the folder-only root
+resolution.
 
 **Done when:** a preview reports exactly what will move where, and executing it matches the
-preview on a real multi-vendor library.
+preview on a real multi-vendor library. ✅ (the move/copy tests specifically verify the preview's
+computed paths are exactly what lands on disk)
+
+This closes out Phase 4 (folder manipulation in IR mode) of the parity backlog — items 11-13 all
+done.
 
 ### 13. Watch IR roots
 **Status:** ✅ done 2026-09-11 (one deviation from spec, noted below) · **Size:** M · **Depends on:** nothing

@@ -35,6 +35,7 @@ import { enrichLabProjects, getProjectDetailForFolder } from './irCatalog/labPro
 import { findDuplicates } from './irCatalog/duplicates'
 import { renameItem, moveItems, trashItems, copyItems, ensureDestinationFolder, createFolder, renameFolder, deleteFolder } from './irCatalog/fileOps'
 import { syncRootWatchers, stopAllRootWatchers } from './irCatalog/irRootWatcher'
+import { previewLibraryCleanup, runLibraryCleanup, type CleanupPreviewRow } from './irCatalog/libraryCleanup'
 import { createIrFieldWriter, promoteFieldToFolder } from './irCatalog/fieldConfidence'
 import {
   enrichNamCaptures,
@@ -543,6 +544,18 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     renameFolder(getDb(), folderId, newName, force)
   )
   ipcMain.handle('irLibrary:deleteFolder', (_event, folderId: number) => deleteFolder(getDb(), folderId))
+
+  // Library Cleanup / Build Library (parity backlog item 12).
+  ipcMain.handle(
+    'irLibrary:previewLibraryCleanup',
+    (_event, options: { libraryRootId: number | null; folderId: number | null; structureTemplate: string }) =>
+      previewLibraryCleanup(getDb(), options)
+  )
+  ipcMain.handle(
+    'irLibrary:runLibraryCleanup',
+    async (_event, options: { libraryRootId: number | null; folderId: number | null }, rows: CleanupPreviewRow[], mode: 'move' | 'copy') =>
+      runLibraryCleanup(getDb(), options, rows, mode)
+  )
   // Per-item metadata editing (parity backlog item 7) — always writes at 'user_entered', the
   // sticky-against-automation confidence tier fieldConfidence.ts already enforces. Restricted to
   // the four fields that already have a *_source column AND a browse-row badge (manufacturer/

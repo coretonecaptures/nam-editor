@@ -19,6 +19,7 @@ import { IrMoveToFolderModal } from './IrMoveToFolderModal'
 import { IrBatchRenameModal } from './IrBatchRenameModal'
 import { IrEditMetadataModal } from './IrEditMetadataModal'
 import { IrBatchMetadataEditModal } from './IrBatchMetadataEditModal'
+import { IrLibraryCleanupModal } from './IrLibraryCleanupModal'
 import { AppSettings, loadSettings, saveSettings } from '../../types/settings'
 
 // Evaluated lazily, not at module scope — see NamProjectsShell.tsx's matching comment: a
@@ -273,6 +274,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
   const [showBatchRename, setShowBatchRename] = useState(false)
   const [editMetadataRow, setEditMetadataRow] = useState<IrItemRow | null>(null)
   const [batchEditRows, setBatchEditRows] = useState<IrItemRow[] | null>(null)
+  const [showLibraryCleanup, setShowLibraryCleanup] = useState(false)
   // Multi-select (parity backlog item 9's real prerequisite — items 4/5/6 deliberately scoped to
   // single-item pending this, with the array-shaped IPC already in place). Ctrl/Cmd-click toggles,
   // Shift-click ranges from the last plain click — same convention as NAM mode's own FileList.tsx.
@@ -1138,6 +1140,16 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           </button>
         )}
         {hasAnyRoot && (
+          <button
+            onClick={() => setShowLibraryCleanup(true)}
+            disabled={selectedFolderId == null && selectedRootId == null}
+            className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-40"
+            title="Restructure this scope into a new folder layout, with a preview before anything moves"
+          >
+            Build Library…
+          </button>
+        )}
+        {hasAnyRoot && (
           <div className="flex rounded overflow-hidden border border-field-bd text-xs flex-shrink-0">
             {(['list', 'grid'] as const).map((v) => (
               <button
@@ -1248,6 +1260,21 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
             cacheRef.current = new Map()
             pendingRef.current = new Set()
             forceRerender((n) => n + 1)
+          }}
+        />
+      )}
+      {showLibraryCleanup && (selectedFolderId != null || selectedRootId != null) && (
+        <IrLibraryCleanupModal
+          libraryRootId={selectedRootId}
+          folderId={selectedFolderId}
+          scopeLabel={selectedFolderId != null ? `${selectedFolderName} and its subfolders` : roots.find((r) => r.id === selectedRootId)?.label || 'This library folder'}
+          onClose={() => setShowLibraryCleanup(false)}
+          onDone={() => {
+            requestEpochRef.current++
+            cacheRef.current = new Map()
+            pendingRef.current = new Set()
+            forceRerender((n) => n + 1)
+            setTreeRefreshSignal((n) => n + 1)
           }}
         />
       )}
