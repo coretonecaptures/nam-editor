@@ -16,6 +16,7 @@ import { SettingsPanel } from '../SettingsPanel'
 import { IR_ITEM_DRAG_MIME } from './dragMime'
 import { IrDuplicatesModal } from './IrDuplicatesModal'
 import { IrMoveToFolderModal } from './IrMoveToFolderModal'
+import { IrBatchRenameModal } from './IrBatchRenameModal'
 import { AppSettings, loadSettings, saveSettings } from '../../types/settings'
 
 // Evaluated lazily, not at module scope — see NamProjectsShell.tsx's matching comment: a
@@ -267,6 +268,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
   // Trash (parity backlog item 5) — single item for now, same multi-select scope note as move.
   const [trashConfirmRow, setTrashConfirmRow] = useState<IrItemRow | null>(null)
   const [trashBusy, setTrashBusy] = useState(false)
+  const [showBatchRename, setShowBatchRename] = useState(false)
   const [newGroupName, setNewGroupName] = useState('')
   // Folder tree/panel — scoped to the first root for now (no root switcher yet; a second "Add
   // Library Folder" click adds another root but the tree only ever shows the first one). Selecting
@@ -1092,6 +1094,16 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           </button>
         )}
         {hasAnyRoot && (
+          <button
+            onClick={() => setShowBatchRename(true)}
+            disabled={selectedFolderId == null}
+            className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-40"
+            title={selectedFolderId == null ? 'Select a folder in the tree first' : 'Rename every IR in this folder from a template'}
+          >
+            Batch Rename…
+          </button>
+        )}
+        {hasAnyRoot && (
           <div className="flex rounded overflow-hidden border border-field-bd text-xs flex-shrink-0">
             {(['list', 'grid'] as const).map((v) => (
               <button
@@ -1189,6 +1201,20 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           currentFolderId={moveModal.currentFolderId}
           onClose={() => setMoveModal(null)}
           onMoved={handleMoved}
+        />
+      )}
+      {showBatchRename && selectedFolderId != null && (
+        <IrBatchRenameModal
+          libraryRootId={selectedRootId}
+          folderId={selectedFolderId}
+          scopeLabel={`${selectedFolderName} and its subfolders`}
+          onClose={() => setShowBatchRename(false)}
+          onRenamed={() => {
+            requestEpochRef.current++
+            cacheRef.current = new Map()
+            pendingRef.current = new Set()
+            forceRerender((n) => n + 1)
+          }}
         />
       )}
       {trashConfirmRow && (

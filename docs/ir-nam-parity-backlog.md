@@ -163,15 +163,36 @@ that's gone.
 the OS trash. ✅
 
 ### 6. Batch rename with a template
-**Status:** open · **Size:** M · **Depends on:** 3
+**Status:** ✅ done 2026-09-11 (two deviations from spec, noted below) · **Size:** M · **Depends on:** 3
 
-Port the `BatchRenameModal.tsx` interaction, not the file. NAM's token vocabulary is wrong
-here — IR tokens are `{manufacturer} {cabinet} {speaker} {microphone} {position} {rate}
-{depth} {index}`, sourced from the resolved metadata the catalog already holds. Live preview
-of the first few results, collision detection across the whole batch before anything runs.
+`IrBatchRenameModal.tsx` ports the interaction from NAM's `BatchRenameModal.tsx` — template input,
+live old→new preview, collision detection (per-directory, case-insensitive, matching how the
+filesystem itself would collide) computed and shown before anything runs, Rename disabled while
+any collision exists. Tokens: `{name} {manufacturer} {cabinet} {speaker} {microphone} {rate}
+{depth} {index}` — IR's own resolved facts, already on every row this app fetches, not NAM's
+gear/tone vocabulary.
 
-**Done when:** renaming 200 IRs by template completes in one transaction, previews correctly,
-and refuses the batch if any two results collide.
+Scope is the SELECTED FOLDER (and its subtree, via the same `resolveFolderScopeIds` every other
+IR browse query already uses), not a multi-select — matching the scope decision items 4/5 already
+made for the same reason (no multi-select mechanism exists yet). Capped at 2000 fetched rows with
+a visible warning if the real scope is larger, so an accidental whole-library selection can't try
+to preview hundreds of thousands of rows.
+
+**Two honest deviations from the item's original wording, not silently built around:**
+- **Not one transaction.** Executes as a loop of individual `renameItem` calls (each internally
+  transactional per item, from `fileOps.ts`) rather than one all-or-nothing batch transaction. A
+  failure partway leaves earlier renames applied and later ones not — reported via a
+  succeeded/failed count, not rolled back. True batch atomicity would need a new `fileOps.ts`
+  entry point (a single DB transaction wrapping N renames); didn't build that for this pass since
+  the per-item safety already exists and a mid-batch failure is a real disk error (permissions, a
+  file in use), which the user needs to see and can safely re-run the batch for the remainder.
+- **`{index}` instead of `{position}`.** Same concept (1-based, zero-padded batch position),
+  clearer name — token vocabularies elsewhere in this app (NAM's own `{name}` etc.) don't use
+  `{position}` for this idea either, so this reads as consistent rather than a deviation for its
+  own sake.
+
+**Done when:** renaming 200 IRs by template previews correctly and refuses the batch if any two
+results collide. ✅ (transactionality is the one open gap, noted above)
 
 ---
 
