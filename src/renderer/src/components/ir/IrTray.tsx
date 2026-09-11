@@ -31,6 +31,7 @@ export function IrTray({
   onPlay,
   onSendToIrLab,
   connectorAvailable,
+  sendTitle,
   sending,
   error
 }: {
@@ -40,6 +41,8 @@ export function IrTray({
   onPlay?: (row: IrTrayRow) => void
   onSendToIrLab: () => void
   connectorAvailable: boolean
+  /** Tooltip for the send button — computed by the caller from live IR Lab status. */
+  sendTitle: string
   sending: boolean
   error: string | null
 }): React.ReactElement | null {
@@ -88,7 +91,7 @@ export function IrTray({
               <button
                 onClick={onSendToIrLab}
                 disabled={!connectorAvailable || sending}
-                title={connectorAvailable ? 'Send this tray to IR Lab’s Blender' : 'IR Lab connector not configured in this build'}
+                title={sendTitle}
                 className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-nm-accent text-accent-fg hover:opacity-90 disabled:opacity-40"
               >
                 {sending ? 'Sending…' : 'Send to IR Lab'}

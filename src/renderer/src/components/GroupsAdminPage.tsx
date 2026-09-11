@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { NamFile } from '../types/nam'
 import type { PlayGroup } from '../types/settings'
+import { describeIrLabAvailability, type IrLabStatus } from './ir/irLabStatusMessage'
 
 /**
  * Manage saved play groups — rename, delete, remove individual members, and jump into the player
@@ -19,7 +20,10 @@ export function GroupsAdminPage({
   onRename,
   onDelete,
   onRemoveMember,
-  onLoadToPlayer
+  onLoadToPlayer,
+  onSendToIrLab,
+  sendingGroupId,
+  sendResult
 }: {
   groups: PlayGroup[]
   files: NamFile[]
@@ -27,10 +31,20 @@ export function GroupsAdminPage({
   onDelete: (groupId: string) => void
   onRemoveMember: (groupId: string, filePath: string) => void
   onLoadToPlayer: (group: PlayGroup) => void
+  /** "Group -> IR Lab Player": hand this group's members to IR Lab as a namgroup manifest. */
+  onSendToIrLab: (group: PlayGroup) => void
+  sendingGroupId: string | null
+  sendResult: { groupId: string; message: string } | null
 }) {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
+  const [connectorAvailable, setConnectorAvailable] = useState(false)
+  const [irLabStatus, setIrLabStatus] = useState<IrLabStatus | null>(null)
+  useEffect(() => {
+    window.api.irLabConnectorAvailable().then(setConnectorAvailable)
+    window.api.irLibraryGetIrLabStatus().then(setIrLabStatus)
+  }, [])
 
   function resolvedCount(group: PlayGroup): number {
     return group.filePaths.filter((p) => files.some((f) => f.filePath === p)).length
@@ -108,6 +122,14 @@ export function GroupsAdminPage({
                     Load to player
                   </button>
                   <button
+                    className="flex-shrink-0 h-7 px-2.5 rounded text-xs font-medium border border-gray-200 dark:border-[var(--border)] text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-[var(--hover)] disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                    onClick={() => onSendToIrLab(group)}
+                    disabled={!connectorAvailable || total === 0 || sendingGroupId === group.id}
+                    title={describeIrLabAvailability(connectorAvailable, irLabStatus, 'Cycle this group in IR Lab Player').tooltip}
+                  >
+                    {sendingGroupId === group.id ? 'Sending…' : 'Send to IR Lab'}
+                  </button>
+                  <button
                     className="flex-shrink-0 h-7 px-2.5 rounded text-xs font-medium border border-gray-200 dark:border-[var(--border)] text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-[var(--hover)] transition-colors"
                     onClick={() => startRename(group)}
                   >
@@ -124,6 +146,10 @@ export function GroupsAdminPage({
                     Delete
                   </button>
                 </div>
+
+                {sendResult?.groupId === group.id && (
+                  <p className="px-4 pb-2 text-xs text-gray-500 dark:text-gray-400">{sendResult.message}</p>
+                )}
 
                 {expanded && (
                   <div className="border-t border-gray-200 dark:border-[var(--border)] px-4 py-2 flex flex-col gap-0.5">

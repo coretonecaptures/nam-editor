@@ -4987,6 +4987,27 @@ INSTRUCTIONS:
     })
   }, [settings])
 
+  // "Group -> IR Lab Player" (audit's flagship idea): hand a play group's members to IR Lab as a
+  // namgroup manifest it cycles through in one Live Audition NAM slot. Names come from the loaded
+  // NamFile when resolved so IR Lab's PREV/NEXT shows the same label this app does, not a raw path.
+  const [sendingGroupId, setSendingGroupId] = useState<string | null>(null)
+  const [groupSendResult, setGroupSendResult] = useState<{ groupId: string; message: string } | null>(null)
+  const handleSendGroupToIrLab = useCallback(async (group: PlayGroup) => {
+    setSendingGroupId(group.id)
+    setGroupSendResult(null)
+    try {
+      const items = group.filePaths.map((path) => {
+        const file = files.find((f) => f.filePath === path)
+        const name = file ? file.metadata.name?.trim() || file.fileName.replace(/\.nam$/i, '') : undefined
+        return { path, name }
+      })
+      const result = await window.api.irLibrarySendNamGroupToIrLab(items)
+      setGroupSendResult({ groupId: group.id, message: result.success ? 'Sent to IR Lab.' : result.reason ?? 'Failed to send to IR Lab.' })
+    } finally {
+      setSendingGroupId(null)
+    }
+  }, [files])
+
   // Close slide panel if selection is empty (and no batch edit active)
   if (gridSlideOpen && selectedFiles.length === 0 && batchFolder === null) setGridSlideOpen(false)
   const dirtyCount = files.filter((f) => f.isDirty).length
@@ -5634,6 +5655,9 @@ INSTRUCTIONS:
               onDelete={handleDeleteGroup}
               onRemoveMember={handleRemoveGroupMember}
               onLoadToPlayer={playGroup}
+              onSendToIrLab={(group) => void handleSendGroupToIrLab(group)}
+              sendingGroupId={sendingGroupId}
+              sendResult={groupSendResult}
             />
           ) : showDashboard ? (
             <div className="relative h-full flex flex-col">

@@ -10,6 +10,7 @@ import { PlayerPanel } from '../PlayerPanel'
 import { WavPreviewPlayer } from '../WavPreviewPlayer'
 import { IrProjectDefaultsModal } from './IrProjectDefaultsModal'
 import { IrBuildPackModal } from './IrBuildPackModal'
+import { describeIrLabAvailability, type IrLabStatus } from './irLabStatusMessage'
 import type {
   NamProjectSummary,
   NamProjectDetail,
@@ -547,9 +548,11 @@ function ProjectHeader({
   const [primaryImage, ...restImages] = detail.imagePaths
 
   const [connectorAvailable, setConnectorAvailable] = useState(false)
+  const [irLabStatus, setIrLabStatus] = useState<IrLabStatus | null>(null)
   const [handoffStatus, setHandoffStatus] = useState<string | null>(null)
   useEffect(() => {
     window.api.irLabConnectorAvailable().then(setConnectorAvailable)
+    window.api.irLibraryGetIrLabStatus().then(setIrLabStatus)
   }, [])
   const openProjectInIrLab = useCallback(async () => {
     const result = await window.api.irLibrarySendProjectToIrLab(detail.projectId)
@@ -592,7 +595,7 @@ function ProjectHeader({
           <button
             onClick={() => void openProjectInIrLab()}
             disabled={!connectorAvailable}
-            title={connectorAvailable ? 'Open this project in IR Lab, ready to capture another position' : 'IR Lab connector not configured in this build'}
+            title={describeIrLabAvailability(connectorAvailable, irLabStatus, 'Open this project, ready to capture another position').tooltip}
             className="text-[11px] text-nm-accent hover:underline disabled:opacity-40 disabled:no-underline"
           >
             Open in IR Lab
@@ -1290,9 +1293,11 @@ function CaptureDetailPanel({
   // Local rather than threaded from the shell — this panel is the only place either handoff
   // button lives, so there's no other consumer to plumb a shared prop for.
   const [connectorAvailable, setConnectorAvailable] = useState(false)
+  const [irLabStatus, setIrLabStatus] = useState<IrLabStatus | null>(null)
   const [handoffStatus, setHandoffStatus] = useState<string | null>(null)
   useEffect(() => {
     window.api.irLabConnectorAvailable().then(setConnectorAvailable)
+    window.api.irLibraryGetIrLabStatus().then(setIrLabStatus)
   }, [])
   useEffect(() => {
     setHandoffStatus(null)
@@ -1481,7 +1486,7 @@ function CaptureDetailPanel({
             <button
               onClick={() => void openSessionInIrLab()}
               disabled={!connectorAvailable}
-              title={connectorAvailable ? 'Reopen this capture in IR Lab' : 'IR Lab connector not configured in this build'}
+              title={describeIrLabAvailability(connectorAvailable, irLabStatus, 'Reopen this capture').tooltip}
               className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-40"
             >
               Open capture in IR Lab
@@ -1491,7 +1496,7 @@ function CaptureDetailPanel({
             <button
               onClick={() => void openProjectInIrLab()}
               disabled={!connectorAvailable}
-              title={connectorAvailable ? 'Open this project in IR Lab, ready to capture another position' : 'IR Lab connector not configured in this build'}
+              title={describeIrLabAvailability(connectorAvailable, irLabStatus, 'Open this project, ready to capture another position').tooltip}
               className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-40"
             >
               Open project in IR Lab

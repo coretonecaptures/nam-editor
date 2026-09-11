@@ -1313,9 +1313,15 @@ IR Lab's `bb2ece4` commit set up:
   `goToNamProject`/`onGoToNamProject`/`consumePendingNamProjectNav` (same shape as the existing
   training-batch nav); `AppRoot.tsx` flips to `nam-projects` mode and `NamProjectsShell.tsx` selects
   the project id on mount.
-- **Pending:** no UI button yet calls `sendNamGroupToIrLab` (needs a "Send to IR Lab" action on NAM
-  Projects' Play Groups / `PlayerPanel.tsx`), and `getIrLabStatus()` isn't surfaced anywhere (richer
-  "not installed" vs "not configured" messaging on the existing Open-in-IR-Lab buttons).
+**UI entry points — 2026-09-11, done.** Both follow-ups above are wired up now:
+- Play groups live in NAM mode (`GroupsAdminPage.tsx`, `App.tsx`), not NAM Projects — a "Send to
+  IR Lab" button next to "Load to player" on each group calls `sendNamGroupToIrLab` with the
+  group's resolved names, showing a per-group status line on success/failure.
+- `src/renderer/src/components/ir/irLabStatusMessage.ts` (`describeIrLabAvailability`, pure/tested)
+  is the one tooltip rule for every send/open button (`IrTray`, NAM Projects' session/project
+  open, the new group send): disabled + "not configured in this build" when the connector wasn't
+  compiled in; clickable but warns "hasn't reported running yet" when there's no status file;
+  names the license/trial state when installed-but-unlicensed; names the version when licensed.
 
 ## UI test harness
 

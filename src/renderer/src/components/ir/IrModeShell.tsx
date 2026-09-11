@@ -5,6 +5,7 @@ import { IrRightPanel } from './IrRightPanel'
 import { NamLabCrumb } from '../NamLabCrumb'
 import { ContextMenu } from '../ContextMenu'
 import { IrTray } from './IrTray'
+import { describeIrLabAvailability, type IrLabStatus } from './irLabStatusMessage'
 import { IrFilterBar } from './IrFilterBar'
 import { PlayerPanel } from '../PlayerPanel'
 import { DataGrid, type DataGridColumn } from '../DataGrid'
@@ -304,6 +305,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
   const [trayIds, setTrayIds] = useState<Set<string>>(new Set())
   const [trayRows, setTrayRows] = useState<Array<{ id: string; display_name: string; abs_path: string }>>([])
   const [connectorAvailable, setConnectorAvailable] = useState(false)
+  const [irLabStatus, setIrLabStatus] = useState<IrLabStatus | null>(null)
   const [sendingTray, setSendingTray] = useState(false)
   const [trayError, setTrayError] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; row: IrItemRow } | null>(null)
@@ -421,6 +423,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
   useEffect(() => {
     refreshTray()
     window.api.irLabConnectorAvailable().then(setConnectorAvailable)
+    window.api.irLibraryGetIrLabStatus().then(setIrLabStatus)
   }, [refreshTray])
 
   const refreshTags = useCallback(() => {
@@ -1810,6 +1813,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
         }}
         onSendToIrLab={() => void sendTrayToIrLab()}
         connectorAvailable={connectorAvailable}
+        sendTitle={describeIrLabAvailability(connectorAvailable, irLabStatus, 'Send this tray to IR Lab’s Blender').tooltip}
         sending={sendingTray}
         error={trayError}
       />
