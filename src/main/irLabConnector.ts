@@ -23,6 +23,15 @@ export type IrLabPayload =
   | { kind: 'session'; captureId: string }
   | { kind: 'blend'; items: string[] } // capped at 8 by the caller — see irCatalog/tray.ts
   | { kind: 'project'; id: string; preset?: string }
+  // Added 2026-09-11: IR Lab shipped its receiving side (commit bb2ece4, "NAM Lab integration:
+  // incoming nam/namgroup routes + outbound bridge") ahead of NAM Lab having a sender. Both are
+  // allowlisted against IR Lab's OWN configured `defaultNamFolder()` setting (LiveAuditionSettingsStore),
+  // same LOW-1 pattern as `blend`'s Cab IR/Reverb IR/DI roots — see irLabRoots.ts's matching check.
+  | { kind: 'nam'; file: string; slot?: number }
+  // manifestPath must itself live under IR Lab's defaultNamFolder (checked the same way as
+  // `file` above) — the manifest's own JSON content lists the actual items and is NOT part of
+  // this URL (a real group can run to dozens of paths, far past what a URL can hold).
+  | { kind: 'namgroup'; manifestPath: string; slot?: number }
 
 export interface IrLabSendResult {
   success: boolean
@@ -51,6 +60,16 @@ export function buildIrLabUrl(scheme: string, payload: IrLabPayload): string {
       path = 'project'
       params.set('id', payload.id)
       if (payload.preset) params.set('preset', payload.preset)
+      break
+    case 'nam':
+      path = 'nam'
+      params.set('file', payload.file)
+      if (payload.slot != null) params.set('slot', String(payload.slot))
+      break
+    case 'namgroup':
+      path = 'namgroup'
+      params.set('manifest', payload.manifestPath)
+      if (payload.slot != null) params.set('slot', String(payload.slot))
       break
   }
   return `${scheme}${path}?${params.toString()}`

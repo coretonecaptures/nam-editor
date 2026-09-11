@@ -11,21 +11,69 @@ import { stopAllRootWatchers } from './irCatalog/irRootWatcher'
 import { writeNamLabResult } from './irCatalog/namCaptureResult'
 import { buildNamCaptureImportPayloads, type NamCaptureImportItem, type CaptureProfileConfig } from './namCaptureTraining'
 import { isAllowedLocalFilePath, localFileExtension } from './localFileGuard'
+import { parseNamLabUrl } from './namLabUrl'
 
 const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
 
-// Enforce single instance — prevents double-launch on Windows (e.g. shell file association)
+// Set before mainWindow exists (a cold launch via the URL) or after (an already-running instance
+// handed it via second-instance). Consumed once ready-to-show fires — see createWindow() below —
+// same "hold the intent until the window can act on it" shape as appNav.ts's renderer-side
+// pendingSection, just on the main-process side of the same problem.
+let pendingNamLabProjectId: string | null = null
+
+function handleNamLabUrl(urlString: string): void {
+  const parsed = parseNamLabUrl(urlString)
+  if (!parsed) return
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
+    mainWindow.webContents.send('namlab:openProject', parsed.id)
+  } else {
+    pendingNamLabProjectId = parsed.id
+  }
+}
+
+// Electron's own documented dev-mode pattern: a packaged build can just register the app itself;
+// running unpackaged under `electron .` needs the exact exec path + script arg repeated back so
+// Windows/macOS know what to relaunch.
+if (process.defaultApp) {
+  if (process.argv.length >= 2) app.setAsDefaultProtocolClient('namlab', process.execPath, [resolve(process.argv[1])])
+} else {
+  app.setAsDefaultProtocolClient('namlab')
+}
+
+// macOS delivers a custom-scheme open as this event, potentially before app.whenReady() —
+// documented to register the listener as early as possible, hence top-level rather than inside
+// whenReady().then(...) further down.
+app.on('open-url', (event, urlString) => {
+  event.preventDefault()
+  handleNamLabUrl(urlString)
+})
+
+// Enforce single instance — prevents double-launch on Windows (e.g. shell file association),
+// and is also how Windows/Linux deliver a namlab:// open when NAM Lab is already running (as a
+// commandLine argv entry, not an 'open-url' event — that's macOS-only).
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, commandLine) => {
+    const namlabArg = commandLine.find((arg) => arg.startsWith('namlab://'))
+    if (namlabArg) {
+      handleNamLabUrl(namlabArg)
+      return
+    }
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore()
       mainWindow.focus()
     }
   })
 }
+
+// Cold launch on Windows/Linux: the OS passes the namlab:// URL as a plain argv entry, same as any
+// other "open with" association. macOS never reaches this path (open-url covers it there instead).
+const coldLaunchNamLabArg = process.argv.find((arg) => arg.startsWith('namlab://'))
+if (coldLaunchNamLabArg) handleNamLabUrl(coldLaunchNamLabArg)
 
 // Compares two semver strings; pre-release order: alpha < beta < rc < release
 // Returns positive if a > b, negative if a < b, 0 if equal
@@ -7747,6 +7795,15 @@ app.whenReady().then(async () => {
   ipcMain.handle('app:getPendingFiles', () => {
     const valid = pendingOpenPaths.splice(0).filter((p) => p.toLowerCase().endsWith('.nam') && fs.existsSync(p))
     return valid
+  })
+
+  // Same pull-model reasoning as app:getPendingFiles above, for a namlab://project?id=
+  // cold launch (IR Lab's "Manage in NAM Lab..." button) — pushing via webContents.send would
+  // race React's subscription on first launch.
+  ipcMain.handle('app:getPendingNamLabProject', () => {
+    const id = pendingNamLabProjectId
+    pendingNamLabProjectId = null
+    return id
   })
 
   // IPC: Open URL in default browser

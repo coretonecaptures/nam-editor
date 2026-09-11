@@ -11,6 +11,7 @@
 import { ipcMain, app, dialog, type BrowserWindow } from 'electron'
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
+import { writeFileSync } from 'node:fs'
 import { createCoreSchema, finalizeIndexes, itemSearchTableExists } from './irCatalog/schema'
 import { importLibrary } from './irCatalog/importLibrary'
 import { queryItems, countItems, setFavorite, setRating, listFacetOptions, listNumericFacetOptions } from './irCatalog/queryLibrary'
@@ -29,7 +30,8 @@ import { importFolderDocument, listFolderDocuments, deleteFolderDocument } from 
 import { extractVendorDocumentFields } from './irCatalog/vendorDocExtraction'
 import { addToTray, removeFromTray, listTray, isInTray } from './irCatalog/tray'
 import { sendToIrLab, irLabConnectorAvailable } from './irLabConnector'
-import { checkBlendAllowlist } from './irLabRoots'
+import { checkBlendAllowlist, checkNamAllowlist, readIrLabNamFolder } from './irLabRoots'
+import { readIrLabStatus } from './irLabStatus'
 import { getLibraryOverview } from './irCatalog/libraryOverview'
 import { enrichLabProjects, getProjectDetailForFolder } from './irCatalog/labProjectEnrichment'
 import { findDuplicates } from './irCatalog/duplicates'
@@ -492,6 +494,11 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
   ipcMain.handle('irLibrary:listTray', () => listTray(getDb()))
   ipcMain.handle('irLibrary:isInTray', (_event, itemId: string) => isInTray(getDb(), itemId))
   ipcMain.handle('irLibrary:irLabConnectorAvailable', () => irLabConnectorAvailable())
+  // Richer than the above: irLabConnectorAvailable() is a build-time question (was the URL scheme
+  // injected at all — a self-built, non-official copy of this app can never send regardless of
+  // what's installed). This is a runtime one — has IR Lab actually run on THIS machine, and what
+  // did it last report about itself (audit finding A3).
+  ipcMain.handle('irLibrary:getIrLabStatus', () => readIrLabStatus())
   ipcMain.handle('irLibrary:sendTrayToIrLab', async () => {
     const tray = listTray(getDb())
     if (tray.length === 0) return { success: false, reason: 'Tray is empty' }
@@ -607,6 +614,55 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
   ipcMain.handle('irLibrary:sendProjectToIrLab', async (_event, projectId: string, preset?: string) => {
     if (!projectId) return { success: false, reason: 'No project id for this item.' }
     return sendToIrLab({ kind: 'project', id: projectId, preset })
+  })
+  // "Group -> IR Lab Player" (the audit's flagship idea, backlog item I3): hand a curated set of
+  // .nam files to IR Lab's `namgroup` route (commit bb2ece4, shipped ahead of this side existing)
+  // as a manifest IR Lab cycles through in one Live Audition NAM slot via PREV/NEXT.
+  ipcMain.handle('irLibrary:sendNamGroupToIrLab', async (_event, items: Array<{ path: string; name?: string }>, slot?: number) => {
+    if (!items || items.length === 0) return { success: false, reason: 'Nothing to send — the group is empty.' }
+    const paths = items.map((i) => i.path)
+
+    // Pre-flight the SAME allowlist IR Lab's own ExternalHandoffRouter enforces
+    // (LiveAuditionSettingsStore::defaultNamFolder()) — catches the exact failure mode A2/I2
+    // already fixed for `blend` (a mismatch reported in the OTHER app, after this one already
+    // said "sent"), applied here to the nam/namgroup routes instead.
+    const check = checkNamAllowlist(paths)
+    if (check.noRootsConfigured) {
+      return {
+        success: false,
+        reason:
+          'IR Lab has no NAM folder configured yet, so it will reject this group. Open IR Lab → Live Audition ' +
+          'settings and set a NAM folder first.'
+      }
+    }
+    if (check.rejected.length > 0) {
+      const n = check.rejected.length
+      return {
+        success: false,
+        reason:
+          `${n} of ${paths.length} file${paths.length === 1 ? '' : 's'} ${n === 1 ? "isn't" : "aren't"} inside IR Lab's ` +
+          `configured NAM folder, so IR Lab would reject the whole group. Move ${n === 1 ? 'it' : 'them'} there, or add ` +
+          `this folder in IR Lab's Live Audition settings, then try again.`
+      }
+    }
+
+    // The manifest file itself must ALSO live under defaultNamFolder — IR Lab allowlists the
+    // manifest path exactly like a single .nam (ExternalHandoffRouter.cpp's own comment on the
+    // namgroup route). readIrLabNamFolder() is safe to call again here: checkNamAllowlist just
+    // confirmed it's set and every item resolves under it.
+    const namFolder = readIrLabNamFolder() as string
+    const manifestPath = join(namFolder, `nam-lab-group-${Date.now()}.json`)
+    try {
+      writeFileSync(
+        manifestPath,
+        JSON.stringify({ items: items.map((i) => ({ file: i.path, name: i.name ?? undefined })) }, null, 2),
+        'utf-8'
+      )
+    } catch (err) {
+      return { success: false, reason: `Could not write the group manifest: ${String(err)}` }
+    }
+
+    return sendToIrLab({ kind: 'namgroup', manifestPath, slot })
   })
   // "Reveal in folder" reuses the existing generic shell:revealFile channel (window.api.revealFile)
   // rather than a duplicate irLibrary:-prefixed one — it's a plain absolute-path reveal, nothing

@@ -43,6 +43,25 @@ describe('buildIrLabUrl', () => {
     const withoutPreset = buildIrLabUrl('irlab://', { kind: 'project', id: 'proj-1' })
     expect(withoutPreset).not.toContain('preset')
   })
+
+  it('builds a nam URL with file + optional slot', () => {
+    const url = buildIrLabUrl('irlab://', { kind: 'nam', file: 'C:\\NAM\\Amp.nam', slot: 1 })
+    expect(url.startsWith('irlab://nam?')).toBe(true)
+    const params = new URLSearchParams(url.split('?')[1])
+    expect(params.get('file')).toBe('C:\\NAM\\Amp.nam')
+    expect(params.get('slot')).toBe('1')
+
+    const withoutSlot = buildIrLabUrl('irlab://', { kind: 'nam', file: 'C:\\NAM\\Amp.nam' })
+    expect(withoutSlot).not.toContain('slot')
+  })
+
+  it('builds a namgroup URL carrying the manifest PATH, not the group contents', () => {
+    const url = buildIrLabUrl('irlab://', { kind: 'namgroup', manifestPath: 'C:\\NAM\\nam-lab-group-1.json', slot: 0 })
+    expect(url.startsWith('irlab://namgroup?')).toBe(true)
+    const params = new URLSearchParams(url.split('?')[1])
+    expect(params.get('manifest')).toBe('C:\\NAM\\nam-lab-group-1.json')
+    expect(params.get('slot')).toBe('0')
+  })
 })
 
 describe('irLabConnectorAvailable', () => {

@@ -22,6 +22,9 @@ import { join, resolve, sep } from 'node:path'
 import { readFileSync } from 'node:fs'
 
 const SETTINGS_KEYS = ['defaultCabIrFolder', 'defaultReverbIrFolder', 'defaultDiFolder'] as const
+// Added 2026-09-11 alongside IR Lab's `nam`/`namgroup` routes (commit bb2ece4) — same LOW-1
+// allowlist pattern, checked against this ONE setting instead of the blend route's three.
+const NAM_SETTINGS_KEY = 'defaultNamFolder' as const
 
 export function irLabSettingsFile(): string {
   return join(app.getPath('appData'), 'IR Lab', 'live-audition-settings.json')
@@ -44,11 +47,34 @@ export function parseIrLabAllowedRoots(json: string): string[] {
   return roots
 }
 
+/** Pure sibling of `parseIrLabAllowedRoots` for the single NAM-folder setting `nam`/`namgroup`
+ * are allowlisted against. Returns null rather than '' when unset, matching how
+ * `checkNamAllowlist` distinguishes "not configured" from "configured but this path isn't in it". */
+export function parseIrLabNamFolder(json: string): string | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(json)
+  } catch {
+    return null
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null
+  const value = (parsed as Record<string, unknown>)[NAM_SETTINGS_KEY]
+  return typeof value === 'string' && value.trim() ? value : null
+}
+
 export function readIrLabAllowedRoots(): string[] {
   try {
     return parseIrLabAllowedRoots(readFileSync(irLabSettingsFile(), 'utf-8'))
   } catch {
     return []
+  }
+}
+
+export function readIrLabNamFolder(): string | null {
+  try {
+    return parseIrLabNamFolder(readFileSync(irLabSettingsFile(), 'utf-8'))
+  } catch {
+    return null
   }
 }
 
@@ -83,5 +109,17 @@ export function checkBlendAllowlist(absPaths: string[], roots: string[] = readIr
   const allowed: string[] = []
   const rejected: string[] = []
   for (const p of absPaths) (isUnderAnyRoot(p, roots) ? allowed : rejected).push(p)
+  return { allowed, rejected, noRootsConfigured: false }
+}
+
+/** Same pre-flight idea as `checkBlendAllowlist`, for the `nam`/`namgroup` routes' single
+ * `defaultNamFolder` setting instead of the three Cab IR/Reverb IR/DI roots. */
+export function checkNamAllowlist(absPaths: string[], namFolder: string | null = readIrLabNamFolder()): BlendAllowlistCheck {
+  if (!namFolder) {
+    return { allowed: [], rejected: absPaths, noRootsConfigured: true }
+  }
+  const allowed: string[] = []
+  const rejected: string[] = []
+  for (const p of absPaths) (isUnderAnyRoot(p, [namFolder]) ? allowed : rejected).push(p)
   return { allowed, rejected, noRootsConfigured: false }
 }

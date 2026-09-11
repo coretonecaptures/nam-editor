@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseIrLabAllowedRoots, isUnderAnyRoot, checkBlendAllowlist } from './irLabRoots'
+import { parseIrLabAllowedRoots, parseIrLabNamFolder, isUnderAnyRoot, checkBlendAllowlist, checkNamAllowlist } from './irLabRoots'
 
 describe('parseIrLabAllowedRoots', () => {
   it('reads the three folder keys IR Lab itself writes', () => {
@@ -28,6 +28,24 @@ describe('parseIrLabAllowedRoots', () => {
 
   it('returns empty when the file has none of the three keys', () => {
     expect(parseIrLabAllowedRoots(JSON.stringify({ somethingElse: 'x' }))).toEqual([])
+  })
+})
+
+describe('parseIrLabNamFolder', () => {
+  it('reads the single defaultNamFolder key', () => {
+    expect(parseIrLabNamFolder(JSON.stringify({ defaultNamFolder: 'C:\\NAM' }))).toBe('C:\\NAM')
+  })
+
+  it('returns null when unset (empty string)', () => {
+    expect(parseIrLabNamFolder(JSON.stringify({ defaultNamFolder: '' }))).toBeNull()
+  })
+
+  it('returns null for malformed JSON rather than throwing', () => {
+    expect(parseIrLabNamFolder('{not json')).toBeNull()
+  })
+
+  it('returns null when the key is absent', () => {
+    expect(parseIrLabNamFolder(JSON.stringify({ defaultCabIrFolder: 'C:\\IRs\\Cab' }))).toBeNull()
   })
 })
 
@@ -77,5 +95,19 @@ describe('checkBlendAllowlist', () => {
     const result = checkBlendAllowlist(['C:\\IRs\\Cab\\a.wav', 'C:\\IRs\\Cab\\sub\\b.wav'], roots)
     expect(result.rejected).toEqual([])
     expect(result.allowed).toHaveLength(2)
+  })
+})
+
+describe('checkNamAllowlist', () => {
+  it('flags noRootsConfigured when defaultNamFolder is unset', () => {
+    const result = checkNamAllowlist(['C:\\NAM\\Amp.nam'], null)
+    expect(result.noRootsConfigured).toBe(true)
+    expect(result.rejected).toEqual(['C:\\NAM\\Amp.nam'])
+  })
+
+  it('splits allowed vs rejected against the one configured NAM folder', () => {
+    const result = checkNamAllowlist(['C:\\NAM\\Amp.nam', 'C:\\Elsewhere\\Other.nam'], 'C:\\NAM')
+    expect(result.allowed).toEqual(['C:\\NAM\\Amp.nam'])
+    expect(result.rejected).toEqual(['C:\\Elsewhere\\Other.nam'])
   })
 })

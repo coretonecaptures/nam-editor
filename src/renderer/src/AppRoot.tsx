@@ -3,7 +3,7 @@ import App from './App'
 import { IrModeShell } from './components/ir/IrModeShell'
 import { NamProjectsShell } from './components/ir/NamProjectsShell'
 import { ModeRail, type AppMode } from './components/ModeRail'
-import { onGoToTrainingBatches } from './appNav'
+import { onGoToTrainingBatches, onGoToNamProject, goToNamProject } from './appNav'
 
 const MODE_KEY = 'nam-lab-app-mode'
 
@@ -39,6 +39,19 @@ export default function AppRoot(): React.ReactElement {
   // NamProjectsShell -> "create training batch" -> flip to NAM mode; App picks up the pending
   // intent on mount (appNav.consumePendingBatchNav) and opens the trainer on Batches.
   useEffect(() => onGoToTrainingBatches(() => setMode('nam')), [])
+
+  // IR Lab's "Manage in NAM Lab..." button -> namlab://project?id=<x> -> main process resolves
+  // it and either pushes namlab:openProject (already running) or we pull it once on mount
+  // (cold launch, avoids the did-finish-load subscribe race). Either way it lands in appNav's
+  // pending-nav slot and flips this shell to NAM Projects mode.
+  useEffect(() => onGoToNamProject(() => setMode('nam-projects')), [])
+  useEffect(() => {
+    const unsubscribe = window.api.onNamLabOpenProject((projectId) => goToNamProject(projectId))
+    window.api.getPendingNamLabProject().then((projectId) => {
+      if (projectId) goToNamProject(projectId)
+    })
+    return unsubscribe
+  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {

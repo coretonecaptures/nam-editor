@@ -653,6 +653,12 @@ declare global {
       irLibraryListTray: () => Promise<Array<{ id: string; relative_path: string; display_name: string; abs_path: string; position: number }>>
       irLibraryIsInTray: (itemId: string) => Promise<boolean>
       irLabConnectorAvailable: () => Promise<boolean>
+      irLibraryGetIrLabStatus: () => Promise<{
+        installed: boolean
+        version: string | null
+        licenseState: 'licensed' | 'unlicensed' | 'unknown'
+        trialDaysRemaining: number | null
+      }>
       irLibrarySendTrayToIrLab: () => Promise<{ success: boolean; reason?: string }>
       irLibraryFindDuplicates: (options: { libraryRootId?: number | null; folderId?: number | null }) => Promise<{
         sets: Array<{
@@ -698,6 +704,7 @@ declare global {
       irLibraryPromoteItemFieldToFolder: (itemId: string, field: string) => Promise<{ success: boolean; itemsCleared: number }>
       irLibrarySendSessionToIrLab: (captureId: string) => Promise<{ success: boolean; reason?: string }>
       irLibrarySendProjectToIrLab: (projectId: string, preset?: string) => Promise<{ success: boolean; reason?: string }>
+      irLibrarySendNamGroupToIrLab: (items: Array<{ path: string; name?: string }>, slot?: number) => Promise<{ success: boolean; reason?: string }>
       irLibraryListTags: () => Promise<Array<{ id: number; name: string; itemCount: number }>>
       irLibraryGetOrCreateTag: (name: string) => Promise<number>
       irLibraryRenameTag: (tagId: number, name: string) => Promise<{ success: boolean }>
@@ -791,6 +798,8 @@ declare global {
       cleanOutdatedNamBot: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; error?: string; changed?: boolean }[]>
       getPendingFiles: () => Promise<string[]>
       onOpenFiles: (cb: (paths: string[]) => void) => () => void
+      getPendingNamLabProject: () => Promise<string | null>
+      onNamLabOpenProject: (cb: (projectId: string) => void) => () => void
       checkForUpdates: (includeRc: boolean) => Promise<{ hasUpdate?: boolean; latestVersion?: string; releaseUrl?: string; error?: string }>
       openExternal: (url: string) => Promise<void>
       showMessageBox: (options: { type?: 'none' | 'info' | 'error' | 'question' | 'warning'; title?: string; message: string; detail?: string; buttons: string[]; defaultId?: number; cancelId?: number; noLink?: boolean }) => Promise<{ response: number }>

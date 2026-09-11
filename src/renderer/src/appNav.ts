@@ -51,3 +51,38 @@ export function consumePendingTrainingNav(): TrainingNavSection | null {
   pendingSection = null
   return v
 }
+
+/**
+ * Same shape as the training-batch flow above, in the opposite direction: IR Lab's
+ * "Manage in NAM Lab..." button fires a `namlab://project?id=<id>` deep link, main/index.ts
+ * turns that into an `app:getPendingNamLabProject` pull (cold launch) or a
+ * `namlab:openProject` push (already running) — either way it lands here so AppRoot can flip
+ * to NAM Projects mode and NamProjectsShell can select the right project on mount.
+ */
+let pendingNamProjectId: string | null = null
+const namProjectListeners = new Set<() => void>()
+
+/** Called from App.tsx's main-process listener once a namlab:// URL resolves to a project id. */
+export function goToNamProject(projectId: string): void {
+  pendingNamProjectId = projectId
+  for (const l of namProjectListeners) {
+    try {
+      l()
+    } catch {
+      // A listener throwing must not stop the others or the caller.
+    }
+  }
+}
+
+/** AppRoot subscribes; the callback should switch to NAM Projects mode. Returns an unsubscribe fn. */
+export function onGoToNamProject(cb: () => void): () => void {
+  namProjectListeners.add(cb)
+  return () => namProjectListeners.delete(cb)
+}
+
+/** NamProjectsShell calls this once on mount; returns the project id to open, or null. One-shot. */
+export function consumePendingNamProjectNav(): string | null {
+  const v = pendingNamProjectId
+  pendingNamProjectId = null
+  return v
+}

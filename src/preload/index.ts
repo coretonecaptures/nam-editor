@@ -163,6 +163,12 @@ const api = {
   cleanOutdatedNamBot: (filePaths: string[]): Promise<{ filePath: string; success: boolean; error?: string; changed?: boolean }[]> =>
     ipcRenderer.invoke('file:cleanOutdatedNamBot', filePaths),
   getPendingFiles: (): Promise<string[]> => ipcRenderer.invoke('app:getPendingFiles'),
+  getPendingNamLabProject: (): Promise<string | null> => ipcRenderer.invoke('app:getPendingNamLabProject'),
+  onNamLabOpenProject: (cb: (projectId: string) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, projectId: string) => cb(projectId)
+    ipcRenderer.on('namlab:openProject', handler)
+    return () => ipcRenderer.removeListener('namlab:openProject', handler)
+  },
   checkForUpdates: (includeRc: boolean): Promise<{ hasUpdate?: boolean; latestVersion?: string; releaseUrl?: string; error?: string }> =>
     ipcRenderer.invoke('app:checkForUpdates', includeRc),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('app:openExternal', url),
@@ -583,6 +589,12 @@ const api = {
     ipcRenderer.invoke('irLibrary:listTray'),
   irLibraryIsInTray: (itemId: string): Promise<boolean> => ipcRenderer.invoke('irLibrary:isInTray', itemId),
   irLabConnectorAvailable: (): Promise<boolean> => ipcRenderer.invoke('irLibrary:irLabConnectorAvailable'),
+  irLibraryGetIrLabStatus: (): Promise<{
+    installed: boolean
+    version: string | null
+    licenseState: 'licensed' | 'unlicensed' | 'unknown'
+    trialDaysRemaining: number | null
+  }> => ipcRenderer.invoke('irLibrary:getIrLabStatus'),
   irLibrarySendTrayToIrLab: (): Promise<{ success: boolean; reason?: string }> =>
     ipcRenderer.invoke('irLibrary:sendTrayToIrLab'),
   irLibraryFindDuplicates: (options: {
@@ -666,6 +678,10 @@ const api = {
     ipcRenderer.invoke('irLibrary:sendSessionToIrLab', captureId),
   irLibrarySendProjectToIrLab: (projectId: string, preset?: string): Promise<{ success: boolean; reason?: string }> =>
     ipcRenderer.invoke('irLibrary:sendProjectToIrLab', projectId, preset),
+  irLibrarySendNamGroupToIrLab: (
+    items: Array<{ path: string; name?: string }>,
+    slot?: number
+  ): Promise<{ success: boolean; reason?: string }> => ipcRenderer.invoke('irLibrary:sendNamGroupToIrLab', items, slot),
   irLibraryListTags: (): Promise<Array<{ id: number; name: string; itemCount: number }>> =>
     ipcRenderer.invoke('irLibrary:listTags'),
   irLibraryGetOrCreateTag: (name: string): Promise<number> => ipcRenderer.invoke('irLibrary:getOrCreateTag', name),

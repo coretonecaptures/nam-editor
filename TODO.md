@@ -1295,6 +1295,28 @@ open item whose dependencies are done, one item per commit. Item 1 is a foundati
 mode's file operations must move the catalog row in the same transaction as the file, which is
 why the plain `file:rename`/`file:move` IPC can't just be called from there.
 
+**IR Lab two-way handoff — 2026-09-11, done.** Built the NAM-Lab-side half of the integration
+IR Lab's `bb2ece4` commit set up:
+- `irLabConnector.ts`'s `IrLabPayload` gained `nam`/`namgroup` kinds; `irLibrary:sendNamGroupToIrLab`
+  writes a manifest JSON into IR Lab's `defaultNamFolder` (pre-flighted via `irLabRoots.ts`'s
+  `checkNamAllowlist`) so a NAM Projects "Play group" can be cycled in IR Lab Player via
+  `irlab://namgroup?manifest=<path>&slot=<n>` — no UI entry point wired to it yet (see Pending below).
+- `irLabStatus.ts` reads IR Lab's `integration-status.json` (`installed`/`version`/`licenseState`/
+  `trialDaysRemaining`) via a new `irLibrary:getIrLabStatus` IPC — not yet consumed by any "Open in
+  IR Lab" button's messaging (also still open, see Pending below).
+- The reverse direction: IR Lab's "Manage in NAM Lab..." button fires `namlab://project?id=<x>`.
+  `src/main/namLabUrl.ts` (`parseNamLabUrl`, pure/tested) + `index.ts` now register
+  `app.setAsDefaultProtocolClient('namlab', ...)`, handle `open-url` (macOS) and argv/`second-instance`
+  parsing (Windows/Linux), and resolve to either a push (`namlab:openProject` IPC, already-running
+  case) or a pull (`app:getPendingNamLabProject`, cold-launch — mirrors the existing
+  `app:getPendingFiles` pattern to dodge the did-finish-load subscribe race). `appNav.ts` gained
+  `goToNamProject`/`onGoToNamProject`/`consumePendingNamProjectNav` (same shape as the existing
+  training-batch nav); `AppRoot.tsx` flips to `nam-projects` mode and `NamProjectsShell.tsx` selects
+  the project id on mount.
+- **Pending:** no UI button yet calls `sendNamGroupToIrLab` (needs a "Send to IR Lab" action on NAM
+  Projects' Play Groups / `PlayerPanel.tsx`), and `getIrLabStatus()` isn't surfaced anywhere (richer
+  "not installed" vs "not configured" messaging on the existing Open-in-IR-Lab buttons).
+
 ## UI test harness
 
 **Status: not started. Priority: Medium — the IR Lab Manager branch (`feature/ir-lab-manager`)

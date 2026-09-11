@@ -18,7 +18,7 @@ import type {
   NamLibraryOverview
 } from '../../types/namProjects'
 import type { TrainerHistoryEntry } from '../../types/trainer'
-import { goToTrainingBatches, goToTrainingQueue } from '../../appNav'
+import { goToTrainingBatches, goToTrainingQueue, consumePendingNamProjectNav } from '../../appNav'
 import { SettingsPanel } from '../SettingsPanel'
 import { AppSettings, loadSettings, saveSettings } from '../../types/settings'
 import { namGearChipClass, namToneChipClass } from '../../assets/gear'
@@ -1696,6 +1696,16 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   useEffect(() => {
     void refreshProjects()
   }, [refreshProjects])
+
+  // IR Lab's "Manage in NAM Lab..." button lands here via appNav's pending-nav slot (AppRoot
+  // already flipped mode to 'nam-projects' before this shell mounted). One-shot by construction.
+  useEffect(() => {
+    const projectId = consumePendingNamProjectNav()
+    if (projectId) {
+      setSelectedId(projectId)
+      setView('overview')
+    }
+  }, [])
 
   useEffect(() => {
     if (selectedId) writeStored(SELECTED_KEY, selectedId)
