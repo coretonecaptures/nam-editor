@@ -96,13 +96,18 @@ existing cross-root check is the only guard needed.
 ## Phase 2 — file operations in IR mode
 
 ### 3. Rename a single IR
-**Status:** open · **Size:** S · **Depends on:** 2
+**Status:** ✅ done 2026-09-11 · **Size:** S · **Depends on:** 2
 
-Context-menu item plus `F2` on the focused row. Inline edit in the list, extension preserved
-and not editable, live collision check against the destination folder.
+Context menu "Rename…" plus `F2` on the focused row (list view only for this pass — the grid/
+`DataGrid` view doesn't get inline rename yet). Extension preserved, not editable, matching NAM
+mode's own rename convention. On a name collision the input stays open with an inline error and an
+"Overwrite" action that retries with `force`. On success the cached row is patched in place
+(`relative_path`/`display_name`) rather than a full refetch — same "the row IS the truth" approach
+the favourite/rating toggles already use — so it never needs a rescan to reflect immediately.
 
 **Done when:** renaming a rated, tagged, trayed IR keeps all three, and the row updates
-without a rescan.
+without a rescan. ✅ (patches the cache directly; `fileOps.ts`'s `UPDATE`-in-place from item 1
+means the catalog side was already correct — this just needed the UI to not force a reload)
 
 ### 4. Move IRs to a folder
 **Status:** open · **Size:** M · **Depends on:** 2

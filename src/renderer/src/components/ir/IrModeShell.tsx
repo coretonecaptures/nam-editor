@@ -246,6 +246,13 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
   const [selectedRootId, setSelectedRootId] = useState<number | null>(null)
   const [addToGroupRow, setAddToGroupRow] = useState<IrItemRow | null>(null)
   const [showDuplicates, setShowDuplicates] = useState(false)
+  // Inline rename (parity backlog item 3) — F2 on the focused row or the context menu's Rename.
+  // itemId rather than index: the row can scroll/shift under a long rename, and the id is what
+  // both commit and cancel actually need.
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
+  const [renameError, setRenameError] = useState<string | null>(null)
+  const [renameBusy, setRenameBusy] = useState(false)
   const [newGroupName, setNewGroupName] = useState('')
   // Folder tree/panel — scoped to the first root for now (no root switcher yet; a second "Add
   // Library Folder" click adds another root but the tree only ever shows the first one). Selecting
@@ -428,6 +435,53 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
     [trayIds, refreshTray]
   )
 
+  const startRename = useCallback((row: IrItemRow) => {
+    setRenamingId(row.id)
+    setRenameDraft(splitPath(row.relative_path).name)
+    setRenameError(null)
+  }, [])
+
+  const cancelRename = useCallback(() => {
+    setRenamingId(null)
+    setRenameError(null)
+  }, [])
+
+  const commitRename = useCallback(
+    async (force = false) => {
+      if (!renamingId) return
+      const trimmed = renameDraft.trim()
+      if (!trimmed) {
+        setRenameError('Name cannot be empty.')
+        return
+      }
+      setRenameBusy(true)
+      setRenameError(null)
+      try {
+        const result = await window.api.irLibraryRenameItem(renamingId, trimmed, force)
+        if (!result.success) {
+          setRenameError(result.error ?? 'Rename failed.')
+          return
+        }
+        // Patch the cached row in place rather than a full refetch — same "the row IS the
+        // truth, don't reload the world for a one-field change" approach the favorite/rating
+        // toggles below already use.
+        for (const [index, cached] of cacheRef.current.entries()) {
+          if (cached.id === renamingId) {
+            const folderRel = cached.relative_path.includes('/') ? cached.relative_path.slice(0, cached.relative_path.lastIndexOf('/')) : ''
+            const newRelativePath = folderRel ? `${folderRel}/${trimmed}.wav` : `${trimmed}.wav`
+            cacheRef.current.set(index, { ...cached, relative_path: newRelativePath, display_name: `${trimmed}.wav` })
+            break
+          }
+        }
+        forceRerender((n) => n + 1)
+        setRenamingId(null)
+      } finally {
+        setRenameBusy(false)
+      }
+    },
+    [renamingId, renameDraft]
+  )
+
   const sendSessionToIrLab = useCallback(async (row: IrItemRow) => {
     if (!row.capture_id) {
       setImportResult('This IR has no IR Lab capture id — not something IR Lab captured, so there is no session to reopen.')
@@ -556,6 +610,15 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
       if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) return
       if (total === 0) return
 
+      if (e.key === 'F2' && focusedIndex != null) {
+        const row = cacheRef.current.get(focusedIndex)
+        if (row) {
+          e.preventDefault()
+          startRename(row)
+        }
+        return
+      }
+
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
         setFocusedIndex((current) => {
@@ -574,7 +637,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [total, playerIr])
+  }, [total, playerIr, focusedIndex, startRename])
 
   const handleAddFolder = useCallback(async () => {
     const folder = await window.api.openFolder()
@@ -1189,7 +1252,36 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                 className={`group h-full flex items-center gap-3 px-4 border-b border-nm-border-s hover:bg-hov ${isFocused ? 'bg-active-bg' : ''}`}
               >
                 <div className="flex-1 min-w-0 flex flex-col justify-center gap-1 py-1.5">
-                  <div className="text-sm truncate leading-tight">{name}</div>
+                  {renamingId === row.id ? (
+                    <div className="flex flex-col gap-0.5" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        autoFocus
+                        value={renameDraft}
+                        disabled={renameBusy}
+                        onChange={(e) => setRenameDraft(e.target.value)}
+                        onFocus={(e) => e.target.select()}
+                        onBlur={() => void commitRename()}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') { e.preventDefault(); void commitRename() }
+                          else if (e.key === 'Escape') { e.preventDefault(); cancelRename() }
+                          e.stopPropagation()
+                        }}
+                        className="text-sm px-1 py-0.5 -mx-1 rounded border border-nm-accent bg-field-bg text-nm-text w-full"
+                      />
+                      {renameError && (
+                        <div className="text-[11px] text-red-500 flex items-center gap-2">
+                          {renameError}
+                          {renameError.includes('already exists') && (
+                            <button onClick={() => void commitRename(true)} className="text-nm-accent hover:underline flex-shrink-0">
+                              Overwrite
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-sm truncate leading-tight">{name}</div>
+                  )}
                   {folder && <div className="text-[11px] text-nm-text-3 truncate leading-tight">{folder}</div>}
                   {/* Audio-format pills and gear pills share ONE non-wrapping row rather than each
                       stacking on its own line — the row is wide enough, and a fixed-height virtual
@@ -1519,6 +1611,11 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           onClose={() => setContextMenu(null)}
           items={[
             { label: 'Reveal in Folder', onClick: () => window.api.revealFile(contextMenu.row.abs_path) },
+            {
+              label: 'Rename…',
+              disabled: !!contextMenu.row.missing_since,
+              onClick: () => startRename(contextMenu.row)
+            },
             {
               label: trayIds.has(contextMenu.row.id) ? 'Remove from Tray' : 'Add to Tray',
               onClick: () => toggleTray(contextMenu.row)
