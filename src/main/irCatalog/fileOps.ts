@@ -68,10 +68,20 @@ function absPathOf(item: Pick<ResolvedItem, 'libraryRootPath' | 'relativePath'>)
 /** Walks a folder's relative path top-down, creating any missing `folder` rows exactly like the
  * scanner does (`importLibrary.ts`'s own `insertFolder`) — same ON CONFLICT upsert shape, so a
  * move into a not-yet-seen destination folder behaves identically to that folder having been
- * discovered by a scan. Returns the leaf folder's id, or null for the root itself (empty path). */
+ * discovered by a scan — AND the real directory on disk, via one `fs.mkdirSync(..., {recursive})`
+ * on the full path. Without this, a move/copy into a genuinely new path (the "Create & Move" path
+ * in `IrMoveToFolderModal.tsx`) would insert the catalog rows successfully and then fail the very
+ * next `fs.renameSync`/`fs.copyFileSync` with ENOENT, since Node requires a rename/copy
+ * destination's parent directory to already exist — caught while building item 11, which needed
+ * this same "create a real folder" primitive and is where this bug would have first been hit
+ * directly rather than indirectly through a move. Returns the leaf folder's id, or null for the
+ * root itself (empty path). */
 function ensureFolderPath(db: DatabaseSync, libraryRootId: number, relativeFolderPath: string): number | null {
   const posix = toPosixRel(relativeFolderPath).replace(/^\/+|\/+$/g, '')
   if (!posix) return null
+
+  const rootPath = (db.prepare(`SELECT path FROM library_root WHERE id = ?`).get(libraryRootId) as { path: string } | undefined)?.path
+  if (rootPath) fs.mkdirSync(join(rootPath, ...posix.split('/')), { recursive: true })
 
   const insertFolder = db.prepare(
     `INSERT INTO folder (library_root_id, parent_id, relative_path)
@@ -354,4 +364,160 @@ export async function copyItems(db: DatabaseSync, itemIds: string[], destFolderI
   }
 
   return results
+}
+
+// ---- folder operations (parity backlog item 11) --------------------------------------------------
+
+export interface FolderOpResult {
+  success: boolean
+  error?: string
+  /** How many descendant items had their relative_path updated — surfaced so a rename of a big
+   * subtree can say what it actually touched, not just "done." */
+  itemsAffected?: number
+}
+
+interface ResolvedFolder {
+  id: number
+  libraryRootId: number
+  libraryRootPath: string
+  parentId: number | null
+  relativePath: string
+}
+
+function resolveFolder(db: DatabaseSync, folderId: number): ResolvedFolder | null {
+  const row = db
+    .prepare(
+      `SELECT folder.id as id, folder.library_root_id as libraryRootId, library_root.path as libraryRootPath,
+              folder.parent_id as parentId, folder.relative_path as relativePath
+       FROM folder JOIN library_root ON library_root.id = folder.library_root_id
+       WHERE folder.id = ?`
+    )
+    .get(folderId) as ResolvedFolder | undefined
+  return row ?? null
+}
+
+/** Creates a real directory on disk plus its catalog row — same primitive `ensureFolderPath`
+ * above uses for a move's "type a new path" case, exposed directly for the IR tree's own
+ * "New Folder" action. `parentFolderId: null` means directly under the library root. */
+export function createFolder(db: DatabaseSync, libraryRootId: number, parentFolderId: number | null, name: string): FolderOpResult {
+  const trimmed = name.trim()
+  if (!trimmed) return { success: false, error: 'Name cannot be empty.' }
+  const parentRel = parentFolderId != null ? folderRelativePath(db, parentFolderId) : ''
+  const relativePath = parentRel ? `${parentRel}/${trimmed}` : trimmed
+  const rootPath = (db.prepare(`SELECT path FROM library_root WHERE id = ?`).get(libraryRootId) as { path: string } | undefined)?.path
+  if (!rootPath) return { success: false, error: 'Library root not found.' }
+  const absPath = join(rootPath, ...relativePath.split('/'))
+  if (fs.existsSync(absPath)) return { success: false, error: 'A folder with that name already exists.' }
+  try {
+    fs.mkdirSync(absPath, { recursive: true })
+  } catch (err) {
+    return { success: false, error: String(err) }
+  }
+  ensureFolderPath(db, libraryRootId, relativePath)
+  return { success: true }
+}
+
+/** Renames a folder on disk and cascades the `relative_path` change to every descendant folder
+ * AND item — none of their `parent_id`/`folder_id` values change (the hierarchy itself is
+ * untouched by a rename), only the path strings that encode where each one lives on disk. Walked
+ * via the recursive-CTE descendant set (ID lineage), not a string-prefix match on relative_path —
+ * a prefix match would wrongly catch a sibling like "Package" when renaming "Pack". */
+export function renameFolder(db: DatabaseSync, folderId: number, newName: string, force = false): FolderOpResult {
+  const folder = resolveFolder(db, folderId)
+  if (!folder) return { success: false, error: 'Folder not found.' }
+  const trimmed = newName.trim()
+  if (!trimmed) return { success: false, error: 'Name cannot be empty.' }
+
+  const parentRel = folder.parentId != null ? folderRelativePath(db, folder.parentId) : ''
+  const newRelativePath = parentRel ? `${parentRel}/${trimmed}` : trimmed
+  if (newRelativePath === folder.relativePath) return { success: true, itemsAffected: 0 }
+
+  const oldAbsPath = join(folder.libraryRootPath, ...folder.relativePath.split('/'))
+  const newAbsPath = join(folder.libraryRootPath, ...newRelativePath.split('/'))
+
+  try {
+    if (fs.existsSync(newAbsPath)) {
+      if (!force) return { success: false, error: 'A folder with that name already exists.' }
+      fs.rmSync(newAbsPath, { recursive: true, force: true })
+    }
+    fs.renameSync(oldAbsPath, newAbsPath)
+  } catch (err) {
+    return { success: false, error: String(err) }
+  }
+
+  const descendantFolders = db
+    .prepare(
+      `WITH RECURSIVE d(id, relative_path) AS (
+         SELECT id, relative_path FROM folder WHERE id = ?
+         UNION ALL
+         SELECT folder.id, folder.relative_path FROM folder JOIN d ON folder.parent_id = d.id
+       )
+       SELECT id, relative_path as relativePath FROM d`
+    )
+    .all(folderId) as Array<{ id: number; relativePath: string }>
+
+  const updateFolder = db.prepare(`UPDATE folder SET relative_path = ? WHERE id = ?`)
+  for (const f of descendantFolders) {
+    const suffix = f.relativePath === folder.relativePath ? '' : f.relativePath.slice(folder.relativePath.length)
+    updateFolder.run(newRelativePath + suffix, f.id)
+  }
+
+  const descendantFolderIds = descendantFolders.map((f) => f.id)
+  const items = db
+    .prepare(`SELECT id, relative_path as relativePath FROM item WHERE folder_id IN (${descendantFolderIds.map(() => '?').join(',')})`)
+    .all(...descendantFolderIds) as Array<{ id: string; relativePath: string }>
+  const updateItem = db.prepare(`UPDATE item SET relative_path = ? WHERE id = ?`)
+  for (const it of items) {
+    const suffix = it.relativePath.slice(folder.relativePath.length)
+    updateItem.run(newRelativePath + suffix, it.id)
+  }
+
+  return { success: true, itemsAffected: items.length }
+}
+
+/** Trashes the real folder (and everything in it) via the OS trash, then removes it and every
+ * descendant folder/item from the catalog. `ON DELETE CASCADE` on `ir_item`/`nam_capture_item`/
+ * `item_tag`/`collection_item` (schema.ts) takes each item's attached rows with it; explicit
+ * folder deletes here since `folder` has no such cascade defined for itself. */
+export async function deleteFolder(db: DatabaseSync, folderId: number): Promise<FolderOpResult> {
+  const folder = resolveFolder(db, folderId)
+  if (!folder) return { success: false, error: 'Folder not found.' }
+  const absPath = join(folder.libraryRootPath, ...folder.relativePath.split('/'))
+
+  try {
+    await deleteWithFallback(absPath)
+  } catch (err) {
+    return { success: false, error: String(err) }
+  }
+
+  const descendantFolderIds = (
+    db
+      .prepare(
+        `WITH RECURSIVE d(id) AS (
+           SELECT id FROM folder WHERE id = ?
+           UNION ALL
+           SELECT folder.id FROM folder JOIN d ON folder.parent_id = d.id
+         )
+         SELECT id FROM d`
+      )
+      .all(folderId) as Array<{ id: number }>
+  ).map((r) => r.id)
+
+  const itemCount = (
+    db
+      .prepare(`SELECT COUNT(*) as n FROM item WHERE folder_id IN (${descendantFolderIds.map(() => '?').join(',')})`)
+      .get(...descendantFolderIds) as { n: number }
+  ).n
+
+  db.prepare(`DELETE FROM item WHERE folder_id IN (${descendantFolderIds.map(() => '?').join(',')})`).run(...descendantFolderIds)
+
+  // folder.parent_id -> folder.id has no ON DELETE CASCADE, and foreign_keys is ON (schema.ts) —
+  // deleting a parent while a child row still references it is rejected. The recursive CTE above
+  // returns rows breadth-first (target, then its direct children, then grandchildren, ...);
+  // reversing that list deletes every row only after everything strictly deeper than it is already
+  // gone, which is exactly "children before their own parent" for every branch, not just one.
+  const deleteFolderRow = db.prepare(`DELETE FROM folder WHERE id = ?`)
+  for (const id of [...descendantFolderIds].reverse()) deleteFolderRow.run(id)
+
+  return { success: true, itemsAffected: itemCount }
 }

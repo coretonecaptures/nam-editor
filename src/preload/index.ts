@@ -629,6 +629,15 @@ const api = {
     ipcRenderer.invoke('irLibrary:copyItems', itemIds, destFolderId, force),
   irLibraryEnsureDestinationFolder: (libraryRootId: number, relativeFolderPath: string): Promise<number | null> =>
     ipcRenderer.invoke('irLibrary:ensureDestinationFolder', libraryRootId, relativeFolderPath),
+  irLibraryCreateFolder: (
+    libraryRootId: number,
+    parentFolderId: number | null,
+    name: string
+  ): Promise<{ success: boolean; error?: string }> => ipcRenderer.invoke('irLibrary:createFolder', libraryRootId, parentFolderId, name),
+  irLibraryRenameFolder: (folderId: number, newName: string, force?: boolean): Promise<{ success: boolean; error?: string; itemsAffected?: number }> =>
+    ipcRenderer.invoke('irLibrary:renameFolder', folderId, newName, force),
+  irLibraryDeleteFolder: (folderId: number): Promise<{ success: boolean; error?: string; itemsAffected?: number }> =>
+    ipcRenderer.invoke('irLibrary:deleteFolder', folderId),
   irLibrarySetItemMetadata: (itemId: string, field: string, value: string): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('irLibrary:setItemMetadata', itemId, field, value),
   irLibraryClearItemMetadata: (itemId: string, field: string): Promise<{ success: boolean }> =>

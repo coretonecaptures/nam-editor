@@ -354,6 +354,15 @@ export function IrFolderTree({
   const [contextMenu, setContextMenu] = useState<{ node: TreeNode; x: number; y: number } | null>(null)
   const [removeTarget, setRemoveTarget] = useState<{ node: TreeNode; itemCount: number; folderCount: number } | null>(null)
   const [removing, setRemoving] = useState(false)
+  // Folder create/rename/delete (parity backlog item 11).
+  const [newFolderTarget, setNewFolderTarget] = useState<TreeNode | null>(null)
+  const [newFolderName, setNewFolderName] = useState('')
+  const [newFolderError, setNewFolderError] = useState<string | null>(null)
+  const [renameTarget, setRenameTarget] = useState<TreeNode | null>(null)
+  const [renameName, setRenameName] = useState('')
+  const [renameError, setRenameError] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ node: TreeNode; itemCount: number; folderCount: number } | null>(null)
+  const [folderOpBusy, setFolderOpBusy] = useState(false)
 
   const refreshRows = useCallback(() => {
     if (libraryRootCount === 0) {
@@ -395,6 +404,20 @@ export function IrFolderTree({
     if (detail) window.api.revealFile(detail.absPath)
   }, [])
 
+  const openNewFolderDialog = useCallback((node: TreeNode) => {
+    setContextMenu(null)
+    setNewFolderName('')
+    setNewFolderError(null)
+    setNewFolderTarget(node)
+  }, [])
+
+  const openRenameDialog = useCallback((node: TreeNode) => {
+    setContextMenu(null)
+    setRenameName(node.name)
+    setRenameError(null)
+    setRenameTarget(node)
+  }, [])
+
   const openRemoveConfirm = useCallback((node: TreeNode) => {
     setContextMenu(null)
     const preview = node.isRootNode
@@ -417,6 +440,67 @@ export function IrFolderTree({
     refreshRows()
     onLibraryChanged()
   }, [removeTarget, refreshRows, onLibraryChanged])
+
+  const confirmNewFolder = useCallback(async () => {
+    if (!newFolderTarget) return
+    setFolderOpBusy(true)
+    setNewFolderError(null)
+    try {
+      // A root node's own id doubles as the parent folder id to create under (folder.id for the
+      // root-itself row) — a non-root node's id is likewise just its own folder id, so this is
+      // never conditional on isRootNode the way remove/rename are.
+      const result = await window.api.irLibraryCreateFolder(newFolderTarget.libraryRootId, newFolderTarget.id, newFolderName)
+      if (!result.success) {
+        setNewFolderError(result.error ?? 'Could not create that folder.')
+        return
+      }
+      setNewFolderTarget(null)
+      setNewFolderName('')
+      refreshRows()
+      onLibraryChanged()
+    } finally {
+      setFolderOpBusy(false)
+    }
+  }, [newFolderTarget, newFolderName, refreshRows, onLibraryChanged])
+
+  const confirmRename = useCallback(async () => {
+    if (!renameTarget) return
+    setFolderOpBusy(true)
+    setRenameError(null)
+    try {
+      const result = await window.api.irLibraryRenameFolder(renameTarget.id, renameName)
+      if (!result.success) {
+        setRenameError(result.error ?? 'Could not rename that folder.')
+        return
+      }
+      setRenameTarget(null)
+      refreshRows()
+      onLibraryChanged()
+    } finally {
+      setFolderOpBusy(false)
+    }
+  }, [renameTarget, renameName, refreshRows, onLibraryChanged])
+
+  const openDeleteConfirm = useCallback((node: TreeNode) => {
+    setContextMenu(null)
+    // Reuses the same preview call "Remove from Catalog" uses — item 11's own wording ("deleting a
+    // non-empty folder must be explicit about how many items go with it") is exactly what that
+    // preview already exists to answer.
+    window.api.irLibraryPreviewFolderRemoval(node.id).then((p) => setDeleteTarget({ node, itemCount: p.itemCount, folderCount: p.folderCount }))
+  }, [])
+
+  const confirmDelete = useCallback(async () => {
+    if (!deleteTarget) return
+    setFolderOpBusy(true)
+    try {
+      await window.api.irLibraryDeleteFolder(deleteTarget.node.id)
+      setDeleteTarget(null)
+      refreshRows()
+      onLibraryChanged()
+    } finally {
+      setFolderOpBusy(false)
+    }
+  }, [deleteTarget, refreshRows, onLibraryChanged])
 
   if (libraryRootCount === 0) {
     return <div className="p-3 text-xs text-nm-text-3">Add a library folder to see its structure.</div>
@@ -490,12 +574,106 @@ export function IrFolderTree({
               onClick: () => void revealInExplorer(contextMenu.node)
             },
             {
+              label: 'New Subfolder…',
+              onClick: () => openNewFolderDialog(contextMenu.node)
+            },
+            // Renaming/deleting the library root folder itself is a different, riskier operation
+            // (relocating what the whole library_root row points at) already partially covered by
+            // the existing relink-root flow elsewhere — kept out of this tree's own menu rather
+            // than overloading "Rename" with two very different meanings depending on node type.
+            ...(contextMenu.node.isRootNode
+              ? []
+              : [
+                  {
+                    label: 'Rename…',
+                    onClick: () => openRenameDialog(contextMenu.node)
+                  },
+                  {
+                    label: 'Delete Folder (and its files)…',
+                    destructive: true,
+                    onClick: () => openDeleteConfirm(contextMenu.node)
+                  }
+                ]),
+            {
               label: contextMenu.node.isRootNode ? `Remove "${contextMenu.node.name}" from Library…` : `Remove "${contextMenu.node.name}" from Catalog…`,
               destructive: true,
               onClick: () => openRemoveConfirm(contextMenu.node)
             }
           ]}
         />
+      )}
+
+      {newFolderTarget && (
+        <div className="fixed inset-0 z-[9990] bg-black/60 flex items-center justify-center" onClick={() => !folderOpBusy && setNewFolderTarget(null)}>
+          <div className="bg-panel border border-nm-border rounded-xl p-5 w-[340px] flex flex-col gap-3" onClick={(e) => e.stopPropagation()}>
+            <div className="text-sm font-semibold text-nm-text">New subfolder in "{newFolderTarget.name}"</div>
+            <input
+              autoFocus
+              value={newFolderName}
+              onChange={(e) => setNewFolderName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') void confirmNewFolder() }}
+              disabled={folderOpBusy}
+              className="px-2 py-1.5 text-sm rounded border border-field-bd bg-field-bg text-nm-text"
+            />
+            {newFolderError && <div className="text-[11px] text-red-500">{newFolderError}</div>}
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setNewFolderTarget(null)} disabled={folderOpBusy} className="px-3 py-1.5 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-50">
+                Cancel
+              </button>
+              <button onClick={() => void confirmNewFolder()} disabled={folderOpBusy || !newFolderName.trim()} className="px-3 py-1.5 text-xs rounded bg-nm-accent text-accent-fg hover:opacity-90 disabled:opacity-50">
+                {folderOpBusy ? 'Creating…' : 'Create'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {renameTarget && (
+        <div className="fixed inset-0 z-[9990] bg-black/60 flex items-center justify-center" onClick={() => !folderOpBusy && setRenameTarget(null)}>
+          <div className="bg-panel border border-nm-border rounded-xl p-5 w-[340px] flex flex-col gap-3" onClick={(e) => e.stopPropagation()}>
+            <div className="text-sm font-semibold text-nm-text">Rename folder</div>
+            <input
+              autoFocus
+              value={renameName}
+              onChange={(e) => setRenameName(e.target.value)}
+              onFocus={(e) => e.target.select()}
+              onKeyDown={(e) => { if (e.key === 'Enter') void confirmRename() }}
+              disabled={folderOpBusy}
+              className="px-2 py-1.5 text-sm rounded border border-field-bd bg-field-bg text-nm-text"
+            />
+            {renameError && <div className="text-[11px] text-red-500">{renameError}</div>}
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setRenameTarget(null)} disabled={folderOpBusy} className="px-3 py-1.5 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-50">
+                Cancel
+              </button>
+              <button onClick={() => void confirmRename()} disabled={folderOpBusy || !renameName.trim()} className="px-3 py-1.5 text-xs rounded bg-nm-accent text-accent-fg hover:opacity-90 disabled:opacity-50">
+                {folderOpBusy ? 'Renaming…' : 'Rename'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div className="fixed inset-0 z-[9990] bg-black/60 flex items-center justify-center" onClick={() => !folderOpBusy && setDeleteTarget(null)}>
+          <div className="bg-panel border border-nm-border rounded-xl p-5 w-[380px] flex flex-col gap-3" onClick={(e) => e.stopPropagation()}>
+            <div className="text-sm font-semibold text-nm-text">Delete Folder</div>
+            <div className="text-xs text-nm-text-2 leading-relaxed">
+              Delete <span className="font-medium text-nm-text">"{deleteTarget.node.name}"</span> and everything in it?
+              This sends the whole folder — {deleteTarget.itemCount} item{deleteTarget.itemCount === 1 ? '' : 's'} across{' '}
+              {deleteTarget.folderCount} folder{deleteTarget.folderCount === 1 ? '' : 's'} — to the OS Trash and removes it
+              from the catalog. You can recover it from the OS Trash, but re-adding it to the catalog needs a rescan.
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setDeleteTarget(null)} disabled={folderOpBusy} className="px-3 py-1.5 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-50">
+                Cancel
+              </button>
+              <button onClick={() => void confirmDelete()} disabled={folderOpBusy} className="px-3 py-1.5 text-xs rounded bg-red-600 hover:bg-red-700 text-white disabled:opacity-50">
+                {folderOpBusy ? 'Deleting…' : 'Delete Folder'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {removeTarget && (

@@ -7,7 +7,7 @@ import { createCoreSchema, finalizeIndexes } from './schema'
 import { importLibrary } from './importLibrary'
 import { setFavorite, setRating } from './queryLibrary'
 import { getOrCreateTag, addItemToTag, listTagsForItem } from './tag'
-import { renameItem, moveItems, trashItems, copyItems, ensureDestinationFolder } from './fileOps'
+import { renameItem, moveItems, trashItems, copyItems, ensureDestinationFolder, createFolder, renameFolder, deleteFolder } from './fileOps'
 import { hasFts5 } from './sqliteCapabilities'
 
 const tmpDirs: string[] = []
@@ -169,5 +169,118 @@ describe.skipIf(!hasFts5())('fileOps', () => {
     const [result] = await moveItems(db, [itemId], otherFolderId)
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/across library roots/)
+  })
+
+  it('ensureDestinationFolder creates the real directory on disk, not just the catalog row', async () => {
+    // Regression test: this used to be DB-only, which meant a subsequent fs.renameSync into the
+    // new folder (the "Create & Move" path in IrMoveToFolderModal.tsx) would fail with ENOENT the
+    // very first time it was actually exercised against a real directory that didn't already
+    // exist — caught by code review while building item 11, not by this test failing, since this
+    // dev machine can't run FTS5 tests locally. Written so it WOULD have caught it.
+    const { db, root, libraryRootId } = await setUpLibrary()
+    ensureDestinationFolder(db, libraryRootId, 'Brand/New/Path')
+    expect(fs.existsSync(join(root, 'Brand', 'New', 'Path'))).toBe(true)
+  })
+
+  describe('createFolder', () => {
+    it('creates a real directory and a catalog row under the library root', async () => {
+      const { db, root, libraryRootId } = await setUpLibrary()
+      const result = createFolder(db, libraryRootId, null, 'NewFolder')
+      expect(result.success).toBe(true)
+      expect(fs.existsSync(join(root, 'NewFolder'))).toBe(true)
+      const row = db.prepare(`SELECT id FROM folder WHERE relative_path = 'NewFolder'`).get()
+      expect(row).toBeDefined()
+    })
+
+    it('refuses when the directory already exists', async () => {
+      const { db, libraryRootId } = await setUpLibrary()
+      expect(createFolder(db, libraryRootId, null, 'PackA').success).toBe(false)
+    })
+
+    it('refuses an empty name', async () => {
+      const { db, libraryRootId } = await setUpLibrary()
+      expect(createFolder(db, libraryRootId, null, '   ').success).toBe(false)
+    })
+  })
+
+  describe('renameFolder', () => {
+    it('renames on disk and updates the folder row', async () => {
+      const { db, root } = await setUpLibrary()
+      const folderId = (db.prepare(`SELECT id FROM folder WHERE relative_path = 'PackA'`).get() as { id: number }).id
+      const result = renameFolder(db, folderId, 'PackB')
+      expect(result.success).toBe(true)
+      expect(fs.existsSync(join(root, 'PackB'))).toBe(true)
+      expect(fs.existsSync(join(root, 'PackA'))).toBe(false)
+      const row = db.prepare(`SELECT relative_path as relativePath FROM folder WHERE id = ?`).get(folderId) as { relativePath: string }
+      expect(row.relativePath).toBe('PackB')
+    })
+
+    it('cascades to every descendant folder and item — not just the renamed folder itself', async () => {
+      const { db, root } = await setUpLibrary()
+      fs.mkdirSync(join(root, 'PackA', 'Sub'), { recursive: true })
+      fs.writeFileSync(join(root, 'PackA', 'Sub', 'nested.wav'), 'z'.repeat(500))
+      // Re-scan so the new subfolder/file are in the catalog before the rename.
+      await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+      finalizeIndexes(db)
+
+      const packAId = (db.prepare(`SELECT id FROM folder WHERE relative_path = 'PackA'`).get() as { id: number }).id
+      const result = renameFolder(db, packAId, 'PackB')
+      expect(result.success).toBe(true)
+      expect(result.itemsAffected).toBe(2) // Marshall412.wav + nested.wav
+
+      const subRow = db.prepare(`SELECT relative_path as relativePath FROM folder WHERE relative_path LIKE 'PackB%' AND relative_path != 'PackB'`).get() as
+        | { relativePath: string }
+        | undefined
+      expect(subRow?.relativePath).toBe('PackB/Sub')
+
+      const nestedItem = db.prepare(`SELECT relative_path as relativePath FROM item WHERE relative_path LIKE '%nested.wav'`).get() as {
+        relativePath: string
+      }
+      expect(nestedItem.relativePath).toBe('PackB/Sub/nested.wav')
+
+      // A sibling folder whose name happens to start with the same characters ("PackA" is not a
+      // prefix of anything else here, but this asserts the rename used ID lineage, not a string-
+      // prefix match, by checking the exact resulting path rather than a substring).
+      expect(fs.existsSync(join(root, 'PackB', 'Sub', 'nested.wav'))).toBe(true)
+    })
+
+    it('refuses a destination that already exists, without force', async () => {
+      const { db, root } = await setUpLibrary()
+      fs.mkdirSync(join(root, 'Taken'), { recursive: true })
+      const folderId = (db.prepare(`SELECT id FROM folder WHERE relative_path = 'PackA'`).get() as { id: number }).id
+      const result = renameFolder(db, folderId, 'Taken')
+      expect(result.success).toBe(false)
+      expect(fs.existsSync(join(root, 'PackA'))).toBe(true) // unchanged
+    })
+  })
+
+  describe('deleteFolder', () => {
+    it('trashes the directory and removes the folder and its items from the catalog', async () => {
+      const { db, root } = await setUpLibrary()
+      const folderId = (db.prepare(`SELECT id FROM folder WHERE relative_path = 'PackA'`).get() as { id: number }).id
+      const itemId = itemIdFor(db, 'Marshall412.wav')
+
+      const result = await deleteFolder(db, folderId)
+      expect(result.success).toBe(true)
+      expect(result.itemsAffected).toBe(1)
+      expect(fs.existsSync(join(root, 'PackA'))).toBe(false)
+      expect(db.prepare(`SELECT id FROM folder WHERE id = ?`).get(folderId)).toBeUndefined()
+      expect(db.prepare(`SELECT id FROM item WHERE id = ?`).get(itemId)).toBeUndefined()
+    })
+
+    it('deletes a multi-level subtree without a foreign-key error (children before parents)', async () => {
+      const { db, root } = await setUpLibrary()
+      fs.mkdirSync(join(root, 'PackA', 'Sub', 'Deeper'), { recursive: true })
+      fs.writeFileSync(join(root, 'PackA', 'Sub', 'Deeper', 'nested.wav'), 'z'.repeat(500))
+      await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+      finalizeIndexes(db)
+
+      const packAId = (db.prepare(`SELECT id FROM folder WHERE relative_path = 'PackA'`).get() as { id: number }).id
+      const result = await deleteFolder(db, packAId)
+      expect(result.success).toBe(true)
+      expect(result.itemsAffected).toBe(2)
+      const remainingFolders = db.prepare(`SELECT COUNT(*) as n FROM folder WHERE relative_path LIKE 'PackA%'`).get() as { n: number }
+      expect(remainingFolders.n).toBe(0)
+    })
   })
 })

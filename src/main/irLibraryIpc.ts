@@ -33,7 +33,7 @@ import { checkBlendAllowlist } from './irLabRoots'
 import { getLibraryOverview } from './irCatalog/libraryOverview'
 import { enrichLabProjects, getProjectDetailForFolder } from './irCatalog/labProjectEnrichment'
 import { findDuplicates } from './irCatalog/duplicates'
-import { renameItem, moveItems, trashItems, copyItems, ensureDestinationFolder } from './irCatalog/fileOps'
+import { renameItem, moveItems, trashItems, copyItems, ensureDestinationFolder, createFolder, renameFolder, deleteFolder } from './irCatalog/fileOps'
 import { createIrFieldWriter, promoteFieldToFolder } from './irCatalog/fieldConfidence'
 import {
   enrichNamCaptures,
@@ -499,6 +499,14 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
   ipcMain.handle('irLibrary:ensureDestinationFolder', (_event, libraryRootId: number, relativeFolderPath: string) =>
     ensureDestinationFolder(getDb(), libraryRootId, relativeFolderPath)
   )
+  // Folder create/rename/delete (parity backlog item 11).
+  ipcMain.handle('irLibrary:createFolder', (_event, libraryRootId: number, parentFolderId: number | null, name: string) =>
+    createFolder(getDb(), libraryRootId, parentFolderId, name)
+  )
+  ipcMain.handle('irLibrary:renameFolder', (_event, folderId: number, newName: string, force?: boolean) =>
+    renameFolder(getDb(), folderId, newName, force)
+  )
+  ipcMain.handle('irLibrary:deleteFolder', (_event, folderId: number) => deleteFolder(getDb(), folderId))
   // Per-item metadata editing (parity backlog item 7) — always writes at 'user_entered', the
   // sticky-against-automation confidence tier fieldConfidence.ts already enforces. Restricted to
   // the four fields that already have a *_source column AND a browse-row badge (manufacturer/

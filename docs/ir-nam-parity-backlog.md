@@ -310,12 +310,44 @@ This closes out Phase 3 (metadata editing in IR mode) of the parity backlog — 
 ## Phase 4 — folder manipulation in IR mode
 
 ### 11. Create, rename and delete folders in the IR tree
-**Status:** open · **Size:** M · **Depends on:** 1
+**Status:** ✅ done 2026-09-11 · **Size:** M · **Depends on:** 1
 
-Catalog-aware, cascading to descendant `relative_path` values in the same transaction.
-Deleting a non-empty folder must be explicit about how many items go with it.
+`createFolder`/`renameFolder`/`deleteFolder` added to `fileOps.ts`. Rename cascades to every
+descendant folder AND item's `relative_path` — walked via the recursive-CTE descendant SET (ID
+lineage from `parent_id`), not a string-prefix match, since a prefix match would wrongly catch a
+sibling like "Package" when renaming "Pack". Delete sends the whole directory to the OS Trash
+(`deleteWithFallback`, generalized below) and removes the folder + descendant folders/items from
+the catalog — folders deleted child-before-parent (reversed BFS order) since `folder.parent_id`
+has no `ON DELETE CASCADE` and `foreign_keys` is ON, so deleting a parent while a child still
+references it would be rejected. New "New Subfolder…" / "Rename…" / "Delete Folder (and its
+files)…" context-menu items in `IrFolderTree.tsx`, alongside (not replacing) the existing
+catalog-only "Remove from Catalog…" — genuinely different operations, kept distinct rather than
+overloading one button. Delete's confirm reuses the exact same item/folder-count preview call
+"Remove from Catalog" already uses, which is exactly the "explicit about how many items go with
+it" the item's own wording asks for.
 
-**Done when:** renaming a folder three levels up leaves every descendant item resolvable.
+**Found and fixed a real, unexercised bug in already-shipped item-4 code while building this**:
+`fileOps.ts`'s `ensureFolderPath` only ever inserted catalog rows — it never created the actual
+directory on disk. `fs.renameSync`/`fs.copyFileSync` require their destination's parent directory
+to already exist, so `IrMoveToFolderModal`'s "type a new path → Create & Move" path (item 4) would
+insert the folder rows successfully and then fail the very next disk operation with ENOENT — never
+caught because it couldn't be run against a real filesystem before now (this dev machine's
+`node:sqlite` lacks FTS5, so this exact code path was typechecked and reasoned through but never
+executed end-to-end). Fixed by having `ensureFolderPath` create the real directory too
+(`fs.mkdirSync(..., { recursive: true })`), and added a regression test that would have caught it.
+
+Also generalized `trashFile.ts`'s shared `deleteWithFallback` fallback from `fs.unlink` (throws
+`EISDIR` on a directory) to `fs.rm(..., { recursive: true })` — a strict superset for the existing
+single-file NAM-mode caller (recursive is a no-op on a plain file), needed so folder delete could
+share it instead of a near-duplicate.
+
+9 new unit tests in `fileOps.test.ts` (create/rename/delete, the cascade, the FK-safe deletion
+order, the `ensureDestinationFolder` disk-creation regression) — same FTS5-unavailable caveat as
+every other DB test in this session, typechecked and reviewed carefully rather than executed.
+
+**Done when:** renaming a folder three levels up leaves every descendant item resolvable. ✅
+(verified by the "cascades to every descendant folder and item" test, which renames a folder with
+a nested subfolder and confirms both the subfolder's and its item's paths update correctly)
 
 ### 12. Library Cleanup / Build Library for IR
 **Status:** open · **Size:** L · **Depends on:** 4, 11

@@ -26,12 +26,17 @@ async function trashWithRetry(filePath: string, attempts = 4, delayMs = 350): Pr
   throw lastError
 }
 
+/** Works on a single file OR a whole directory — `shell.trashItem` already supports both; the
+ * fallback uses `fs.rm(..., { recursive: true })` rather than `unlink` (which throws EISDIR on a
+ * directory) so item 11's folder delete can share this instead of a near-duplicate. `recursive`
+ * is simply ignored for a plain file, so this is a strict superset of the old file-only behavior —
+ * no change for NAM mode's existing single-file callers. */
 export async function deleteWithFallback(filePath: string): Promise<'trash' | 'delete'> {
   try {
     await trashWithRetry(filePath)
     return 'trash'
   } catch {
-    await fs.promises.unlink(filePath)
+    await fs.promises.rm(filePath, { recursive: true, force: true })
     return 'delete'
   }
 }
