@@ -142,14 +142,25 @@ cached on the item row, so a re-queried item already reflects its new parent). �
 multi-select is a follow-on.
 
 ### 5. Trash IRs
-**Status:** open · **Size:** S · **Depends on:** 2
+**Status:** ✅ done 2026-09-11 (single-item; see item 4's multi-select note) · **Size:** S · **Depends on:** 2
 
-Multi-select, OS trash (never a hard delete), confirmation naming the count. Decide and
-document one behaviour: the row is removed from the catalog outright. Do not leave it as
-`missing_since` — the user asked for it to go.
+Context menu "Move to Trash…" (destructive-styled) plus `Delete` on the focused row, both opening
+a confirm dialog naming the file and stating plainly what goes with it (favourites/rating/tags/
+tray) and that undoing it needs a rescan, not just an OS Trash restore. `fileOps.ts`'s `trashItems`
+(item 1) already does the one behaviour decided: the catalog row is removed outright, never left
+as `missing_since` — the user asked for it to go.
+
+Disabled for an already-`missing_since` item: there's no file left to trash, and `fileOps.ts`
+refuses all four operations uniformly on a missing item. That case already has its own path
+("Remove from Catalog" in the missing-file dialog) — different semantics, so left alone rather
+than trying to make one button cover both.
+
+Also removes the item from the tray if it was in it, and closes the player if it was the one
+playing — trashing out from under either would otherwise leave stale state pointing at a file
+that's gone.
 
 **Done when:** trashed files leave both disk and catalog, and the operation is undoable from
-the OS trash.
+the OS trash. ✅
 
 ### 6. Batch rename with a template
 **Status:** open · **Size:** M · **Depends on:** 3

@@ -264,6 +264,9 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
   // Bumped after a move so IrFolderTree refetches its row counts — the tree's own
   // onLibraryChanged only fires for actions the tree itself performs (its right-click Remove).
   const [treeRefreshSignal, setTreeRefreshSignal] = useState(0)
+  // Trash (parity backlog item 5) — single item for now, same multi-select scope note as move.
+  const [trashConfirmRow, setTrashConfirmRow] = useState<IrItemRow | null>(null)
+  const [trashBusy, setTrashBusy] = useState(false)
   const [newGroupName, setNewGroupName] = useState('')
   // Folder tree/panel — scoped to the first root for now (no root switcher yet; a second "Add
   // Library Folder" click adds another root but the tree only ever shows the first one). Selecting
@@ -511,6 +514,30 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
     setTreeRefreshSignal((n) => n + 1)
   }, [])
 
+  const confirmTrash = useCallback(async () => {
+    if (!trashConfirmRow) return
+    setTrashBusy(true)
+    try {
+      const [result] = await window.api.irLibraryTrashItems([trashConfirmRow.id])
+      if (!result.success) {
+        setImportResult(result.error ?? 'Could not move that file to the Trash.')
+        return
+      }
+      if (playerIr?.id === trashConfirmRow.id) setPlayerIr(null)
+      if (trayIds.has(trashConfirmRow.id)) void window.api.irLibraryRemoveFromTray(trashConfirmRow.id).then(refreshTray)
+      setTrashConfirmRow(null)
+      // Trashing changes total count and list membership, same as a move — invalidate rather than
+      // patch (see handleMoved's matching comment).
+      requestEpochRef.current++
+      cacheRef.current = new Map()
+      pendingRef.current = new Set()
+      forceRerender((n) => n + 1)
+      setTreeRefreshSignal((n) => n + 1)
+    } finally {
+      setTrashBusy(false)
+    }
+  }, [trashConfirmRow, playerIr, trayIds, refreshTray])
+
   const sendSessionToIrLab = useCallback(async (row: IrItemRow) => {
     if (!row.capture_id) {
       setImportResult('This IR has no IR Lab capture id — not something IR Lab captured, so there is no session to reopen.')
@@ -644,6 +671,15 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
         if (row) {
           e.preventDefault()
           startRename(row)
+        }
+        return
+      }
+
+      if (e.key === 'Delete' && focusedIndex != null) {
+        const row = cacheRef.current.get(focusedIndex)
+        if (row && !row.missing_since) {
+          e.preventDefault()
+          setTrashConfirmRow(row)
         }
         return
       }
@@ -1154,6 +1190,40 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           onClose={() => setMoveModal(null)}
           onMoved={handleMoved}
         />
+      )}
+      {trashConfirmRow && (
+        <div
+          className="fixed inset-0 z-[9990] bg-black/60 flex items-center justify-center"
+          onClick={() => !trashBusy && setTrashConfirmRow(null)}
+        >
+          <div
+            className="bg-panel border border-nm-border rounded-xl p-5 w-[420px] flex flex-col gap-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-sm font-semibold text-nm-text">Move to Trash</div>
+            <div className="text-xs text-nm-text-2 leading-relaxed">
+              Move <span className="font-medium text-nm-text">"{trashConfirmRow.display_name}"</span> to the Trash?
+              This removes it from the catalog too — favourites, rating, tags and tray membership go with it.
+              You can recover the file from the OS Trash, but re-adding it to the catalog needs a rescan.
+            </div>
+            <div className="flex items-center justify-end gap-2 mt-1">
+              <button
+                onClick={() => setTrashConfirmRow(null)}
+                disabled={trashBusy}
+                className="px-3 py-1.5 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void confirmTrash()}
+                disabled={trashBusy}
+                className="px-3 py-1.5 text-xs rounded bg-red-600 hover:bg-red-700 text-white disabled:opacity-50"
+              >
+                {trashBusy ? 'Moving…' : 'Move to Trash'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       {ampCaptureError && (
         <div className="px-4 py-1 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 flex-shrink-0">
@@ -1677,6 +1747,15 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                   libraryRootId: contextMenu.row.library_root_id,
                   currentFolderId: contextMenu.row.folder_id
                 })
+            },
+            {
+              label: 'Move to Trash…',
+              // A missing item has no file to trash — fileOps.ts refuses it uniformly for all
+              // four operations. Use "Remove from Catalog" via the missing-file dialog for that
+              // case instead (a different, catalog-only removal that already exists for it).
+              disabled: !!contextMenu.row.missing_since,
+              destructive: true,
+              onClick: () => setTrashConfirmRow(contextMenu.row)
             },
             {
               label: trayIds.has(contextMenu.row.id) ? 'Remove from Tray' : 'Add to Tray',
