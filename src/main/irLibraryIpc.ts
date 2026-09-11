@@ -34,7 +34,7 @@ import { getLibraryOverview } from './irCatalog/libraryOverview'
 import { enrichLabProjects, getProjectDetailForFolder } from './irCatalog/labProjectEnrichment'
 import { findDuplicates } from './irCatalog/duplicates'
 import { renameItem, moveItems, trashItems, copyItems, ensureDestinationFolder } from './irCatalog/fileOps'
-import { createIrFieldWriter } from './irCatalog/fieldConfidence'
+import { createIrFieldWriter, promoteFieldToFolder } from './irCatalog/fieldConfidence'
 import {
   enrichNamCaptures,
   listNamProjects,
@@ -517,6 +517,19 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     if (!EDITABLE_IR_FIELDS.has(field)) return { success: false }
     createIrFieldWriter(getDb()).clear(itemId, field)
     return { success: true }
+  })
+  // "Apply this value to the whole folder" (parity backlog item 10). Resolved server-side from
+  // itemId rather than trusting a client-supplied folderId/value — the item's own current
+  // ir_item.<field> and folder_id are the only honest source of "what am I actually promoting."
+  ipcMain.handle('irLibrary:promoteItemFieldToFolder', (_event, itemId: string, field: string) => {
+    if (!EDITABLE_IR_FIELDS.has(field)) return { success: false, itemsCleared: 0 }
+    const database = getDb()
+    const row = database
+      .prepare(`SELECT item.folder_id as folderId, ir_item.${field} as value FROM item JOIN ir_item ON ir_item.item_id = item.id WHERE item.id = ?`)
+      .get(itemId) as { folderId: number | null; value: string | null } | undefined
+    if (!row || row.folderId == null || !row.value) return { success: false, itemsCleared: 0 }
+    const { itemsCleared } = promoteFieldToFolder(database, row.folderId, field, row.value)
+    return { success: true, itemsCleared }
   })
   ipcMain.handle('irLibrary:sendSessionToIrLab', async (_event, captureId: string) => {
     if (!captureId) return { success: false, reason: 'No capture id for this item.' }

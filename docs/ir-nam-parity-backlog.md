@@ -276,13 +276,34 @@ fields get written, to every selected item, always at the `user_entered` tier fr
 **Done when:** setting one field across 50 selected IRs leaves their other fields untouched. ✅
 
 ### 10. Push an item value up to its folder
-**Status:** open · **Size:** S · **Depends on:** 7
+**Status:** ✅ done 2026-09-11 · **Size:** S · **Depends on:** 7
 
-"Apply this value to the whole folder" — the inverse of inheritance, and the fast path for
-correcting a pack whose parser got one field wrong everywhere.
+New `promoteFieldToFolder(db, folderId, field, value)` in `fieldConfidence.ts`, next to the writer
+it's the natural complement of: writes one `folder_metadata` row via the existing
+`setFolderMetadata` (which already handles the descendant-cascade recompute), then walks the
+folder's subtree (`resolveFolderScopeIds` — folder + every descendant, the same scope
+`folder_metadata` inheritance itself uses) clearing any item-level override that ALREADY equals
+the promoted value. Not unconditional: an item deliberately overridden to something ELSE is left
+alone — only genuinely redundant overrides (inheritance would now give the same value anyway) get
+cleared, which is what the item's own wording asks for.
+
+Resolved server-side rather than trusting a client-supplied folderId/value: the IPC handler reads
+the item's own current `folder_id` and field value directly, so "push to folder" can only ever
+promote what the item's row actually says right now.
+
+"Push to folder" button in `IrEditMetadataModal.tsx`, disabled when there's an unsaved edit in that
+field (forces Save first, so what gets promoted is never different from what's actually stored) —
+reports how many other items had a redundant override cleared, so the action isn't a silent
+side-effect.
+
+4 unit tests in `promoteFieldToFolder.test.ts`: a sibling with no override now inherits the
+promoted value, an item that already matched has its override cleared, an item deliberately set to
+something different is left alone, and the promotion cascades into a subfolder.
 
 **Done when:** promoting a value writes one `folder_metadata` row and drops the now-redundant
-per-item overrides.
+per-item overrides. ✅
+
+This closes out Phase 3 (metadata editing in IR mode) of the parity backlog — items 7-10 all done.
 
 ---
 

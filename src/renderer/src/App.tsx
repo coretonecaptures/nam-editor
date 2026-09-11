@@ -680,6 +680,7 @@ declare global {
       irLibraryEnsureDestinationFolder: (libraryRootId: number, relativeFolderPath: string) => Promise<number | null>
       irLibrarySetItemMetadata: (itemId: string, field: string, value: string) => Promise<{ success: boolean }>
       irLibraryClearItemMetadata: (itemId: string, field: string) => Promise<{ success: boolean }>
+      irLibraryPromoteItemFieldToFolder: (itemId: string, field: string) => Promise<{ success: boolean; itemsCleared: number }>
       irLibrarySendSessionToIrLab: (captureId: string) => Promise<{ success: boolean; reason?: string }>
       irLibrarySendProjectToIrLab: (projectId: string, preset?: string) => Promise<{ success: boolean; reason?: string }>
       irLibraryListTags: () => Promise<Array<{ id: number; name: string; itemCount: number }>>

@@ -633,6 +633,8 @@ const api = {
     ipcRenderer.invoke('irLibrary:setItemMetadata', itemId, field, value),
   irLibraryClearItemMetadata: (itemId: string, field: string): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('irLibrary:clearItemMetadata', itemId, field),
+  irLibraryPromoteItemFieldToFolder: (itemId: string, field: string): Promise<{ success: boolean; itemsCleared: number }> =>
+    ipcRenderer.invoke('irLibrary:promoteItemFieldToFolder', itemId, field),
   irLibrarySendSessionToIrLab: (captureId: string): Promise<{ success: boolean; reason?: string }> =>
     ipcRenderer.invoke('irLibrary:sendSessionToIrLab', captureId),
   irLibrarySendProjectToIrLab: (projectId: string, preset?: string): Promise<{ success: boolean; reason?: string }> =>

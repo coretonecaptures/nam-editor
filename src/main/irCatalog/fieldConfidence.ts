@@ -11,6 +11,8 @@
  * RANK lookup at all; see that file's own comment.
  */
 import type { DatabaseSync } from 'node:sqlite'
+import { setFolderMetadata } from './folderMetadata'
+import { resolveFolderScopeIds } from './queryLibrary'
 
 export type FieldSource =
   | 'ir_lab_native'
@@ -42,6 +44,44 @@ export interface IrFieldWriter {
    * just the value) is what lets a lower-ranked automated source write again on the next scan;
    * leaving a stale 'user_entered' row there would keep blocking it even after the value is gone. */
   clear(itemId: string, field: string): void
+}
+
+/**
+ * "Apply this value to the whole folder" — parity backlog item 10, the inverse of inheritance and
+ * the fast path for correcting a pack whose parser got one field wrong on every item at once,
+ * instead of fixing them one at a time through item 7's editor.
+ *
+ * Writes ONE `folder_metadata` row (via the existing `setFolderMetadata`, which already handles
+ * the descendant-cascade recompute — see that function's own comment) at the `user_entered` tier,
+ * then clears every item-level override in the folder's subtree whose value already equals what
+ * was just promoted — those are now REDUNDANT (inheritance already gives them the same value), not
+ * cleared unconditionally: an item deliberately overridden to something ELSE stays untouched. This
+ * is the one place in the app that reaches across from an item-level action into folder_metadata,
+ * so it lives here next to the writer it's the natural complement of, not in queryLibrary.ts.
+ */
+export function promoteFieldToFolder(
+  db: DatabaseSync,
+  folderId: number,
+  field: string,
+  value: string
+): { itemsCleared: number } {
+  setFolderMetadata(db, folderId, field, value, 'user_entered')
+
+  const subtreeFolderIds = resolveFolderScopeIds(db, folderId)
+  if (subtreeFolderIds.length === 0) return { itemsCleared: 0 }
+
+  const redundant = db
+    .prepare(
+      `SELECT ir_item.item_id as itemId
+       FROM ir_item
+       JOIN item ON item.id = ir_item.item_id
+       WHERE item.folder_id IN (${subtreeFolderIds.map(() => '?').join(',')}) AND ir_item.${field} = ?`
+    )
+    .all(...subtreeFolderIds, value) as Array<{ itemId: string }>
+
+  const writer = createIrFieldWriter(db)
+  for (const row of redundant) writer.clear(row.itemId, field)
+  return { itemsCleared: redundant.length }
 }
 
 export function createIrFieldWriter(db: DatabaseSync): IrFieldWriter {

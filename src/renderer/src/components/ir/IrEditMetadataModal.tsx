@@ -64,6 +64,28 @@ export function IrEditMetadataModal({
   // so the source label doesn't keep claiming a source that was just cleared until the modal is
   // reopened; the real resolved value (inherited or blank) shows the next time it's opened.
   const [clearedFields, setClearedFields] = useState<Set<string>>(new Set())
+  const [promoting, setPromoting] = useState<string | null>(null)
+  const [promoteMessage, setPromoteMessage] = useState<string | null>(null)
+
+  const pushToFolder = async (field: string): Promise<void> => {
+    setPromoting(field)
+    setPromoteMessage(null)
+    try {
+      const result = await window.api.irLibraryPromoteItemFieldToFolder(row.id, field)
+      if (result.success) {
+        setPromoteMessage(
+          result.itemsCleared > 0
+            ? `Applied to the folder — ${result.itemsCleared} other item${result.itemsCleared === 1 ? '' : 's'} already matched and had its own override cleared as redundant.`
+            : 'Applied to the folder.'
+        )
+        onSaved()
+      } else {
+        setPromoteMessage('Could not apply this to the folder.')
+      }
+    } finally {
+      setPromoting(null)
+    }
+  }
 
   const clearField = async (field: string): Promise<void> => {
     setClearing(field)
@@ -117,6 +139,7 @@ export function IrEditMetadataModal({
             const source = row[sourceKey] as string | null
             const cleared = clearedFields.has(f.key)
             const hasOriginalValue = !!row[f.key]
+            const hasUnsavedChange = draft[f.key].trim() !== (row[f.key] ?? '')
             return (
               <label key={f.key} className="flex flex-col gap-1">
                 <span className="text-[11px] text-nm-text-3 flex items-center justify-between gap-2">
@@ -133,14 +156,24 @@ export function IrEditMetadataModal({
                     className="flex-1 min-w-0 px-2 py-1 text-xs rounded border border-field-bd bg-field-bg text-nm-text"
                   />
                   {hasOriginalValue && !cleared && (
-                    <button
-                      onClick={() => void clearField(f.key)}
-                      disabled={saving || clearing === f.key}
-                      title="Clear this override and fall back to whatever the folder or a parser would otherwise give it"
-                      className="text-[11px] text-nm-text-3 hover:text-red-500 disabled:opacity-50 flex-shrink-0"
-                    >
-                      {clearing === f.key ? '…' : 'Clear'}
-                    </button>
+                    <>
+                      <button
+                        onClick={() => void pushToFolder(f.key)}
+                        disabled={saving || hasUnsavedChange || promoting === f.key}
+                        title={hasUnsavedChange ? 'Save this field first' : 'Apply this value to the whole folder — items that already match get their own now-redundant override cleared'}
+                        className="text-[11px] text-nm-text-3 hover:text-nm-accent disabled:opacity-50 flex-shrink-0"
+                      >
+                        {promoting === f.key ? '…' : 'Push to folder'}
+                      </button>
+                      <button
+                        onClick={() => void clearField(f.key)}
+                        disabled={saving || clearing === f.key}
+                        title="Clear this override and fall back to whatever the folder or a parser would otherwise give it"
+                        className="text-[11px] text-nm-text-3 hover:text-red-500 disabled:opacity-50 flex-shrink-0"
+                      >
+                        {clearing === f.key ? '…' : 'Clear'}
+                      </button>
+                    </>
                   )}
                 </div>
               </label>
@@ -148,6 +181,7 @@ export function IrEditMetadataModal({
           })}
         </div>
 
+        {promoteMessage && <div className="px-4 pb-2 text-[11px] text-nm-text-2">{promoteMessage}</div>}
         {error && <div className="px-4 pb-2 text-[11px] text-red-500">{error}</div>}
 
         <div className="px-4 py-3 border-t border-nm-border-s flex justify-end gap-2">
