@@ -232,11 +232,11 @@ export function IrFilterBar({
       <div className="px-3 pb-2 flex gap-1.5 flex-wrap items-center">
         <button
           onClick={onToggleFavoritesOnly}
-          className={`nam-chip ${favoritesOnly ? 'chip-ir-manufacturer' : 'chip-ir-channels opacity-60'}`}
+          className={`nam-chip ${favoritesOnly ? 'chip-ir-manufacturer' : 'chip-ir-neutral opacity-60'}`}
         >
           <span className="nam-dot" />★ Favorites
         </button>
-        <button onClick={onToggleRatedOnly} className={`nam-chip ${ratedOnly ? 'chip-ir-manufacturer' : 'chip-ir-channels opacity-60'}`}>
+        <button onClick={onToggleRatedOnly} className={`nam-chip ${ratedOnly ? 'chip-ir-manufacturer' : 'chip-ir-neutral opacity-60'}`}>
           <span className="nam-dot" />
           Rated
         </button>

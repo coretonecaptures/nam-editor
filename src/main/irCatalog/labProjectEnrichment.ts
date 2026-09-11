@@ -225,7 +225,12 @@ export function enrichLabProjects(db: DatabaseSync, libraryRootId: number): LabP
       const variants = readJson<VariantJson[]>(join(captureDir, 'variants.json')) ?? []
 
       ensureIrItem.run(item.id)
-      db.prepare(`UPDATE ir_item SET capture_id = ? WHERE item_id = ? AND capture_id IS NULL`).run(entry.captureId, item.id)
+      // The deliverable a captureId points at can be renamed/re-exported between scans (IR Lab
+      // writes a new master/derivative for the same capture), leaving a stale item row still
+      // holding this captureId. Release it there first — capture_id is UNIQUE, so re-assigning it
+      // to the current deliverable without this would throw on rescan.
+      db.prepare(`UPDATE ir_item SET capture_id = NULL WHERE capture_id = ? AND item_id != ?`).run(entry.captureId, item.id)
+      db.prepare(`UPDATE ir_item SET capture_id = ? WHERE item_id = ?`).run(entry.captureId, item.id)
 
       const meta = session?.metadata
       writeField(item.id, 'cabinet', meta?.cabinet)

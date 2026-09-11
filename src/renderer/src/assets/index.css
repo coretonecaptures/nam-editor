@@ -227,6 +227,16 @@ pre, code,
 .dark ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
 
 /* ============================================================
+   NAM PROJECTS — muted-tier lift
+   This workspace runs denser and smaller than NAM mode (11-12px sub-lines on capture cards:
+   audio facts, gear, captured date), where the shared --text-2/--text-3 greys stop being
+   comfortably readable. Lifted here only, as a token override on the shell root, so NAM mode
+   keeps its calibrated values. Light theme moves the other way — darker, not brighter.
+   ============================================================ */
+.nam-projects-scope { --text-2: #b9c2cd; --text-3: #c6ced8; }
+[data-theme="light"] .nam-projects-scope { --text-2: #48525f; --text-3: #515b68; }
+
+/* ============================================================
    CHIPS — gear / tone type tags
    [data-chip] on <html>: soft | solid | minimal
    Each chip has a --c color var set by class (amp, overdrive, etc.)
@@ -255,6 +265,23 @@ pre, code,
 [data-chip="solid"] .nam-chip { background: var(--c); color: #fff; font-weight: 600; }
 [data-chip="solid"] .nam-chip .nam-dot { display: none; }
 
+/* neon: dark pill, colored outline + glow instead of a filled background */
+[data-chip="neon"] .nam-chip {
+  background: color-mix(in srgb, var(--c) 12%, var(--panel-2, #14181f));
+  color: color-mix(in srgb, var(--c) 88%, #fff);
+  border: 1px solid color-mix(in srgb, var(--c) 70%, transparent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--c) 45%, transparent);
+  font-weight: 600;
+}
+[data-chip="neon"] .nam-chip .nam-dot { display: none; }
+[data-chip="neon"] .nam-chip.opacity-60 {
+  background: transparent;
+  color: var(--text-2, #98a2af);
+  border-color: var(--border, #2a2f3a);
+  box-shadow: none;
+}
+[data-theme="light"][data-chip="neon"] .nam-chip { color: color-mix(in srgb, var(--c) 70%, #000); }
+
 /* minimal: dot + neutral label, no background */
 [data-chip="minimal"] .nam-chip {
   background: transparent; color: var(--text-2, #98a2af);
@@ -277,15 +304,23 @@ pre, code,
    Deliberately reuse the .nam-chip system above rather than a parallel badge: that gives IR chips
    the same geometry AND makes them follow the user's global soft/solid/minimal chip setting, so
    both halves of the app restyle together instead of drifting apart. */
-.nam-chip.chip-ir-manufacturer { --c: #6366f1; }
-.nam-chip.chip-ir-cabinet      { --c: #3b82f6; }
-.nam-chip.chip-ir-speaker      { --c: #a855f7; }
-.nam-chip.chip-ir-mic          { --c: #ec4899; }
-.nam-chip.chip-ir-rate         { --c: #14b8a6; }
-.nam-chip.chip-ir-depth        { --c: #22c55e; }
-.nam-chip.chip-ir-channels     { --c: #64748b; }
-.nam-chip.chip-ir-length       { --c: #94a3b8; }
-.nam-chip.chip-ir-missing      { --c: #ef4444; }
+.nam-chip.chip-ir-manufacturer { --c: #f97316; } /* matches chip-amp */
+.nam-chip.chip-ir-cabinet      { --c: #3b82f6; } /* matches chip-amp_cab / chip-creator */
+.nam-chip.chip-ir-speaker      { --c: #a855f7; } /* matches chip-amp_pedal_cab / chip-fuzz */
+.nam-chip.chip-ir-mic          { --c: #f43f5e; } /* matches chip-preamp / chip-distortion */
+.nam-chip.chip-ir-rate         { --c: #14b8a6; } /* matches chip-studio */
+.nam-chip.chip-ir-depth        { --c: #22c55e; } /* matches chip-pedal */
+.nam-chip.chip-ir-channels     { --c: #eab308; } /* matches chip-pedal_amp */
+.nam-chip.chip-ir-length       { --c: #0ea5e9; } /* matches chip-clean */
+.nam-chip.chip-ir-missing      { --c: #ef4444; } /* matches chip-hi_gain */
+.nam-chip.chip-ir-neutral      { --c: #6b7280; } /* matches chip-other — inactive/off toggle state only */
+
+/* NAM Projects facet chip colors (capture cards + project header makeup summary).
+   Same reuse-the-chip-system rationale as the IR chips above — gear/tone facets reuse
+   namGearChipClass/namToneChipClass's own chip-* classes so they match exactly. */
+.nam-chip.chip-nam-scope  { --c: #14b8a6; } /* matches chip-studio / chip-ir-rate */
+.nam-chip.chip-nam-rate   { --c: #0ea5e9; } /* matches chip-clean */
+.nam-chip.chip-nam-cal    { --c: #22c55e; } /* matches chip-pedal */
 
 /* Tone chip colors */
 .nam-chip.chip-clean      { --c: #0ea5e9; }

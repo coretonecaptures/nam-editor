@@ -30,6 +30,9 @@ export interface ItemRow {
    * full rescan's own reconciliation pass — never means "checked and it's fine" when null, only
    * "not currently known to be missing." */
   missing_since: string | null
+  /** IR Lab's own stable captureId (labProjectEnrichment.ts), null for anything not enriched from
+   * an IR Lab Project. The one value the `irlab://session?captureId=` handoff route needs. */
+  capture_id: string | null
   // Phase 3 (vendor parsers) fields — all null until applyVendorParsers has run for this item's
   // library_root. `*_source` is the confidence-ladder provenance (section 3) for the UI badge;
   // null alongside a null value means "no parser touched this field," not "checked and blank."
@@ -334,6 +337,7 @@ export function queryItems(db: DatabaseSync, options: QueryOptions): ItemRow[] {
       `SELECT item.id as id, item.relative_path as relative_path, item.display_name as display_name,
               item.file_size as file_size, item.is_favorite as is_favorite, item.rating as rating,
               item.missing_since as missing_since,
+              ir_item.capture_id as capture_id,
               COALESCE(ir_item.manufacturer, mfr_fme.value) as manufacturer,
               COALESCE(mfr_src.source, mfr_fme.source) as manufacturer_source,
               -- 3-way fallback (2026-08-26 metadata model): the item's own value, then the owning

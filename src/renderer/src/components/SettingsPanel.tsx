@@ -591,6 +591,7 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab, onOpenTra
                     { id: 'soft',    label: 'Soft',    desc: 'Tinted background' },
                     { id: 'solid',   label: 'Solid',   desc: 'Filled color' },
                     { id: 'minimal', label: 'Minimal', desc: 'Dot + label' },
+                    { id: 'neon',    label: 'Neon',    desc: 'Glowing outline' },
                   ] as const).map((cc) => {
                     const active = (draft.chipStyle ?? (draft.solidPillColors ? 'solid' : 'soft')) === cc.id
                     return (

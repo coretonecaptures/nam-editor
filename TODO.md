@@ -1287,6 +1287,14 @@ Regression check: `grep -rn '="[^{][^"]*\\u[0-9a-fA-F]\{4\}' src --include="*.ts
 (FileList→DataGrid, S8 security hardening, CaptureCard size toggle, UI harness, pre-merge
 hardening) live in **`docs/ir-lab-manager-handoff-2026-09-02.md`**.
 
+**Parity backlog: `docs/ir-nam-parity-backlog.md`.** Numbered, ordered queue for porting NAM
+mode's file / metadata / folder manipulation into the IR and NAM Projects workspaces (rename,
+move, trash, batch rename, per-item + batch metadata editing, folder ops, IR Library Cleanup,
+watched roots, duplicates, spreadsheet round-trip, suggestion rules). Work the lowest-numbered
+open item whose dependencies are done, one item per commit. Item 1 is a foundation item — IR
+mode's file operations must move the catalog row in the same transaction as the file, which is
+why the plain `file:rename`/`file:move` IPC can't just be called from there.
+
 ## UI test harness
 
 **Status: not started. Priority: Medium — the IR Lab Manager branch (`feature/ir-lab-manager`)

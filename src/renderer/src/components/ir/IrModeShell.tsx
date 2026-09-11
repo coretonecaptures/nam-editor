@@ -12,6 +12,16 @@ import { loadNamFileForPlayback } from '../../utils/loadNamFile'
 import type { NamFile } from '../../types/nam'
 import guitarJackIcon from '../../assets/icons/guitar-jack.png'
 import { formatSampleRate } from '../../../../shared/wavFormat'
+import { SettingsPanel } from '../SettingsPanel'
+import { IrDuplicatesModal } from './IrDuplicatesModal'
+import { AppSettings, loadSettings, saveSettings } from '../../types/settings'
+
+// Evaluated lazily, not at module scope — see NamProjectsShell.tsx's matching comment: a
+// module-level `window.api` read crashes under a plain-Node test importing this file's pure
+// helpers, no `window` present.
+function isMacPlatform(): boolean {
+  return typeof window !== 'undefined' && window.api?.platform === 'darwin'
+}
 
 /** The amp capture IRs are auditioned through, remembered across restarts. */
 const AMP_CAPTURE_KEY = 'nam-lab-ir-mode-live-capture-path'
@@ -24,6 +34,7 @@ type IrItemRow = {
   is_favorite: number
   rating: number | null
   missing_since: string | null
+  capture_id: string | null
   manufacturer: string | null
   manufacturer_source: string | null
   cabinet: string | null
@@ -182,6 +193,8 @@ const IR_GRID_COLUMNS: DataGridColumn<IrItemRow>[] = [
  * to one library_root or all of them.
  */
 export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): React.ReactElement {
+  const [showSettings, setShowSettings] = useState(false)
+  const [appSettings, setAppSettings] = useState<AppSettings>(loadSettings)
   const [roots, setRoots] = useState<LibraryRoot[]>([])
   const [scanning, setScanning] = useState(false)
   const [scanProgress, setScanProgress] = useState<{ filesSeen: number; foldersSeen: number; elapsedMs: number } | null>(null)
@@ -232,6 +245,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
   // Root switcher — null means "All roots" (today's default: browse/search span every root).
   const [selectedRootId, setSelectedRootId] = useState<number | null>(null)
   const [addToGroupRow, setAddToGroupRow] = useState<IrItemRow | null>(null)
+  const [showDuplicates, setShowDuplicates] = useState(false)
   const [newGroupName, setNewGroupName] = useState('')
   // Folder tree/panel — scoped to the first root for now (no root switcher yet; a second "Add
   // Library Folder" click adds another root but the tree only ever shows the first one). Selecting
@@ -413,6 +427,15 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
     },
     [trayIds, refreshTray]
   )
+
+  const sendSessionToIrLab = useCallback(async (row: IrItemRow) => {
+    if (!row.capture_id) {
+      setImportResult('This IR has no IR Lab capture id — not something IR Lab captured, so there is no session to reopen.')
+      return
+    }
+    const result = await window.api.irLibrarySendSessionToIrLab(row.capture_id)
+    setImportResult(result.success ? 'Opened in IR Lab.' : result.reason ?? 'Failed to open in IR Lab.')
+  }, [])
 
   const sendTrayToIrLab = useCallback(async () => {
     setSendingTray(true)
@@ -899,7 +922,15 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
 
   return (
     <div className="flex flex-col h-screen bg-app-bg text-nm-text overflow-hidden">
-      <div className="flex items-center gap-3 px-4 py-2 border-b border-nm-border flex-shrink-0">
+      <div
+        className="flex items-center py-2 border-b border-nm-border flex-shrink-0"
+        style={{
+          paddingLeft: isMacPlatform() ? '80px' : '16px',
+          paddingRight: isMacPlatform() ? '16px' : '155px',
+          WebkitAppRegion: 'drag'
+        } as React.CSSProperties}
+      >
+      <div className="flex items-center gap-3 flex-1 min-w-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
         <NamLabCrumb mode="ir" />
         <div className="w-px h-5 bg-nm-border-s flex-shrink-0" />
         <button
@@ -923,6 +954,15 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
         >
           Rescan
         </button>
+        {hasAnyRoot && (
+          <button
+            onClick={() => setShowDuplicates(true)}
+            className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov"
+            title="Find byte-identical IRs across this scope"
+          >
+            Duplicates
+          </button>
+        )}
         {hasAnyRoot && (
           <div className="flex rounded overflow-hidden border border-field-bd text-xs flex-shrink-0">
             {(['list', 'grid'] as const).map((v) => (
@@ -975,16 +1015,45 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           </select>
         )}
         {hasAnyRoot && <span className="text-xs text-nm-text-3 flex-shrink-0">{total.toLocaleString()} IRs</span>}
-        {hasAnyRoot && ampCapture && (
+        <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+          {hasAnyRoot && ampCapture && (
+            <button
+              onClick={() => void chooseAmpCapture()}
+              title={`Auditioning through ${ampCapture.filePath} — click to choose a different amp capture`}
+              className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov flex-shrink-0 max-w-[220px] truncate"
+            >
+              Amp: {ampCapture.metadata.name || ampCapture.fileName}
+            </button>
+          )}
           <button
-            onClick={() => void chooseAmpCapture()}
-            title={`Auditioning through ${ampCapture.filePath} — click to choose a different amp capture`}
-            className="ml-auto px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov flex-shrink-0 max-w-[220px] truncate"
+            onClick={() => setShowSettings(true)}
+            className={`tb-menu-btn ${showSettings ? 'active' : ''}`}
+            title="Settings"
           >
-            Amp: {ampCapture.metadata.name || ampCapture.fileName}
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            Settings
           </button>
-        )}
+        </div>
       </div>
+      </div>
+      {showSettings && (
+        <SettingsPanel
+          settings={appSettings}
+          onSave={(s) => { setAppSettings(s); saveSettings(s); setShowSettings(false) }}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
+      {showDuplicates && (
+        <IrDuplicatesModal
+          libraryRootId={selectedRootId}
+          folderId={selectedFolderId}
+          scopeLabel={selectedFolderId != null ? `${selectedFolderName} and its subfolders` : selectedRootId != null ? roots.find((r) => r.id === selectedRootId)?.label || 'This library folder' : 'Whole library'}
+          onClose={() => setShowDuplicates(false)}
+        />
+      )}
       {ampCaptureError && (
         <div className="px-4 py-1 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 flex-shrink-0">
           {ampCaptureError}
@@ -1458,10 +1527,14 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
             { label: 'Play Live', onClick: () => openPlayer(contextMenu.row, true) },
             { label: 'Add to Group…', onClick: () => setAddToGroupRow(contextMenu.row) },
             { divider: true },
-            // Placeholder for the rest of section 12's roadmap (collections beyond tray/groups,
-            // IR Lab handoff beyond blend) — an honest disabled row rather than inventing menu
-            // items that don't do anything yet.
-            { label: 'More actions coming soon', disabled: true }
+            // The other IR Lab handoff route (blend/tray was already wired) — only meaningful for
+            // an IR Lab-native capture, so it's disabled rather than hidden for anything else, same
+            // as the rest of this menu's disabled-not-missing convention.
+            {
+              label: 'Open in IR Lab',
+              disabled: !connectorAvailable || !contextMenu.row.capture_id,
+              onClick: () => void sendSessionToIrLab(contextMenu.row)
+            }
           ]}
         />
       )}

@@ -29,8 +29,11 @@ import { importFolderDocument, listFolderDocuments, deleteFolderDocument } from 
 import { extractVendorDocumentFields } from './irCatalog/vendorDocExtraction'
 import { addToTray, removeFromTray, listTray, isInTray } from './irCatalog/tray'
 import { sendToIrLab, irLabConnectorAvailable } from './irLabConnector'
+import { checkBlendAllowlist } from './irLabRoots'
 import { getLibraryOverview } from './irCatalog/libraryOverview'
 import { enrichLabProjects, getProjectDetailForFolder } from './irCatalog/labProjectEnrichment'
+import { findDuplicates } from './irCatalog/duplicates'
+import { renameItem, moveItems, trashItems, copyItems, ensureDestinationFolder } from './irCatalog/fileOps'
 import {
   enrichNamCaptures,
   listNamProjects,
@@ -442,7 +445,66 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
   ipcMain.handle('irLibrary:sendTrayToIrLab', async () => {
     const tray = listTray(getDb())
     if (tray.length === 0) return { success: false, reason: 'Tray is empty' }
-    return sendToIrLab({ kind: 'blend', items: tray.map((row) => row.abs_path) })
+    const absPaths = tray.map((row) => row.abs_path)
+
+    // Pre-flight IR Lab's OWN allowlist (security audit 2026-08-31, LOW-1: blend only accepts
+    // paths under IR Lab's configured Cab IR / Reverb IR / DI folders) so a mismatch shows up as a
+    // message in THIS app, not as a silent drop reported by the other one after the user already
+    // thinks it worked. See irLabRoots.ts for exactly what this reads and why.
+    const check = checkBlendAllowlist(absPaths)
+    if (check.noRootsConfigured) {
+      return {
+        success: false,
+        reason:
+          'IR Lab has no Cab IR, Reverb IR, or DI folder configured yet, so it will reject every item ' +
+          'you send. Open IR Lab → Live Audition settings and set at least one of those folders first.'
+      }
+    }
+    if (check.rejected.length > 0) {
+      const n = check.rejected.length
+      return {
+        success: false,
+        reason:
+          `${n} of ${absPaths.length} tray item${absPaths.length === 1 ? '' : 's'} ` +
+          `${n === 1 ? "isn't" : "aren't"} inside any of IR Lab's configured Cab IR / Reverb IR / DI ` +
+          `folders, so IR Lab would silently drop ${n === 1 ? 'it' : 'them'}. Move ${n === 1 ? 'it' : 'them'} ` +
+          `into one of those folders, or add this folder in IR Lab's Live Audition settings, then try again.`
+      }
+    }
+
+    return sendToIrLab({ kind: 'blend', items: absPaths })
+  })
+  // The other two handoff routes IR Lab's ExternalHandoffRouter has always supported
+  // (irlab://session, irlab://project) — build plan section 11. Both payloads are just IDs IR Lab
+  // already knows how to resolve through its own SessionStore/ProjectStore; nothing catalog-
+  // specific to look up here beyond what the caller already has on screen (a capture's captureId,
+  // a project's real IR Lab projectId — namCaptureEnrichment.ts's `naming_template` column).
+  ipcMain.handle('irLibrary:findDuplicates', (_event, options: { libraryRootId?: number | null; folderId?: number | null }) =>
+    findDuplicates(getDb(), options)
+  )
+  // Catalog-transactional file operations (parity backlog item 1/2) — see fileOps.ts's own header
+  // for why these can't just be the plain disk-only file:rename/file:move/file:trash/file:copy
+  // channels NAM mode uses.
+  ipcMain.handle('irLibrary:renameItem', (_event, itemId: string, newBaseName: string, force?: boolean) =>
+    renameItem(getDb(), itemId, newBaseName, force)
+  )
+  ipcMain.handle('irLibrary:moveItems', (_event, itemIds: string[], destFolderId: number | null, force?: boolean) =>
+    moveItems(getDb(), itemIds, destFolderId, force)
+  )
+  ipcMain.handle('irLibrary:trashItems', (_event, itemIds: string[]) => trashItems(getDb(), itemIds))
+  ipcMain.handle('irLibrary:copyItems', (_event, itemIds: string[], destFolderId: number | null, force?: boolean) =>
+    copyItems(getDb(), itemIds, destFolderId, force)
+  )
+  ipcMain.handle('irLibrary:ensureDestinationFolder', (_event, libraryRootId: number, relativeFolderPath: string) =>
+    ensureDestinationFolder(getDb(), libraryRootId, relativeFolderPath)
+  )
+  ipcMain.handle('irLibrary:sendSessionToIrLab', async (_event, captureId: string) => {
+    if (!captureId) return { success: false, reason: 'No capture id for this item.' }
+    return sendToIrLab({ kind: 'session', captureId })
+  })
+  ipcMain.handle('irLibrary:sendProjectToIrLab', async (_event, projectId: string, preset?: string) => {
+    if (!projectId) return { success: false, reason: 'No project id for this item.' }
+    return sendToIrLab({ kind: 'project', id: projectId, preset })
   })
   // "Reveal in folder" reuses the existing generic shell:revealFile channel (window.api.revealFile)
   // rather than a duplicate irLibrary:-prefixed one — it's a plain absolute-path reveal, nothing

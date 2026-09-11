@@ -426,6 +426,7 @@ const api = {
       is_favorite: number
       rating: number | null
       missing_since: string | null
+      capture_id: string | null
       manufacturer: string | null
       manufacturer_source: string | null
       cabinet: string | null
@@ -582,6 +583,54 @@ const api = {
   irLabConnectorAvailable: (): Promise<boolean> => ipcRenderer.invoke('irLibrary:irLabConnectorAvailable'),
   irLibrarySendTrayToIrLab: (): Promise<{ success: boolean; reason?: string }> =>
     ipcRenderer.invoke('irLibrary:sendTrayToIrLab'),
+  irLibraryFindDuplicates: (options: {
+    libraryRootId?: number | null
+    folderId?: number | null
+  }): Promise<{
+    sets: Array<{
+      contentHash: string
+      fileSize: number | null
+      reclaimableBytes: number
+      members: Array<{
+        itemId: string
+        relativePath: string
+        displayName: string
+        absPath: string
+        fileSize: number | null
+        isFavorite: boolean
+        rating: number | null
+        metadataCompleteness: number
+      }>
+    }>
+    totalReclaimableBytes: number
+    unhashedCount: number
+  }> => ipcRenderer.invoke('irLibrary:findDuplicates', options),
+  irLibraryRenameItem: (
+    itemId: string,
+    newBaseName: string,
+    force?: boolean
+  ): Promise<{ itemId: string; success: boolean; error?: string; newAbsPath?: string }> =>
+    ipcRenderer.invoke('irLibrary:renameItem', itemId, newBaseName, force),
+  irLibraryMoveItems: (
+    itemIds: string[],
+    destFolderId: number | null,
+    force?: boolean
+  ): Promise<Array<{ itemId: string; success: boolean; error?: string; newAbsPath?: string }>> =>
+    ipcRenderer.invoke('irLibrary:moveItems', itemIds, destFolderId, force),
+  irLibraryTrashItems: (itemIds: string[]): Promise<Array<{ itemId: string; success: boolean; error?: string }>> =>
+    ipcRenderer.invoke('irLibrary:trashItems', itemIds),
+  irLibraryCopyItems: (
+    itemIds: string[],
+    destFolderId: number | null,
+    force?: boolean
+  ): Promise<Array<{ itemId: string; success: boolean; error?: string; newAbsPath?: string; newItemId?: string }>> =>
+    ipcRenderer.invoke('irLibrary:copyItems', itemIds, destFolderId, force),
+  irLibraryEnsureDestinationFolder: (libraryRootId: number, relativeFolderPath: string): Promise<number | null> =>
+    ipcRenderer.invoke('irLibrary:ensureDestinationFolder', libraryRootId, relativeFolderPath),
+  irLibrarySendSessionToIrLab: (captureId: string): Promise<{ success: boolean; reason?: string }> =>
+    ipcRenderer.invoke('irLibrary:sendSessionToIrLab', captureId),
+  irLibrarySendProjectToIrLab: (projectId: string, preset?: string): Promise<{ success: boolean; reason?: string }> =>
+    ipcRenderer.invoke('irLibrary:sendProjectToIrLab', projectId, preset),
   irLibraryListTags: (): Promise<Array<{ id: number; name: string; itemCount: number }>> =>
     ipcRenderer.invoke('irLibrary:listTags'),
   irLibraryGetOrCreateTag: (name: string): Promise<number> => ipcRenderer.invoke('irLibrary:getOrCreateTag', name),

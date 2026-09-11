@@ -6,6 +6,7 @@ import http from 'http'
 import crypto from 'crypto'
 import { findOuterMetadataMatch, findMatchingBrace, serializeJsonValue, escapeRe, patchMetadataFields } from './metadataPatcher'
 import { registerIrLibraryIpc } from './irLibraryIpc'
+import { deleteWithFallback } from './trashFile'
 import { writeNamLabResult } from './irCatalog/namCaptureResult'
 import { buildNamCaptureImportPayloads, type NamCaptureImportItem, type CaptureProfileConfig } from './namCaptureTraining'
 import { isAllowedLocalFilePath, localFileExtension } from './localFileGuard'
@@ -4823,31 +4824,6 @@ async function getDeleteBehavior(filePaths: string[]): Promise<{ permanentOnly: 
   }
 }
 
-async function trashWithRetry(filePath: string, attempts = 4, delayMs = 350): Promise<void> {
-  let lastError: unknown
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      await shell.trashItem(process.platform === 'win32' ? filePath.replace(/\//g, '\\') : filePath)
-      return
-    } catch (err) {
-      lastError = err
-      if (attempt < attempts - 1) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs))
-      }
-    }
-  }
-  throw lastError
-}
-
-async function deleteWithFallback(filePath: string): Promise<'trash' | 'delete'> {
-  try {
-    await trashWithRetry(filePath)
-    return 'trash'
-  } catch {
-    await fs.promises.unlink(filePath)
-    return 'delete'
-  }
-}
 
 function isNestedPath(parentPath: string, childPath: string): boolean {
   const parent = normalizePath(parentPath).replace(/[\\/]+$/, '').toLowerCase()

@@ -4,6 +4,10 @@ import { NamLabCrumb } from '../NamLabCrumb'
 import { DataGrid, type DataGridColumn } from '../DataGrid'
 import { TRAINER_ARCHITECTURES, BUILT_IN_CAPTURE_PROFILES } from '../../types/trainer'
 import { GEAR_TYPES, TONE_TYPES } from '../../types/nam'
+import type { NamFile } from '../../types/nam'
+import { loadNamFileForPlayback } from '../../utils/loadNamFile'
+import { PlayerPanel } from '../PlayerPanel'
+import { WavPreviewPlayer } from '../WavPreviewPlayer'
 import type {
   NamProjectSummary,
   NamProjectDetail,
@@ -13,6 +17,17 @@ import type {
 } from '../../types/namProjects'
 import type { TrainerHistoryEntry } from '../../types/trainer'
 import { goToTrainingBatches, goToTrainingQueue } from '../../appNav'
+import { SettingsPanel } from '../SettingsPanel'
+import { AppSettings, loadSettings, saveSettings } from '../../types/settings'
+import { namGearChipClass, namToneChipClass } from '../../assets/gear'
+import { ScaledImage } from '../ScaledImage'
+
+// Evaluated lazily (not at module scope): this file's pure helpers (matchesFacets, sortRows, …)
+// are imported directly by NamProjectsShell.test.ts under plain Node, no `window` — a module-
+// level `window.api` read would crash that import before any test body runs.
+function isMacPlatform(): boolean {
+  return typeof window !== 'undefined' && window.api?.platform === 'darwin'
+}
 
 /** Friendly label for an architecture id ("standard" -> "Standard"), matching the Trainer tab. */
 const ARCH_LABEL: Record<string, string> = Object.fromEntries(
@@ -149,6 +164,18 @@ function captureIsCalibrated(c: NamCaptureRow): boolean {
   return !!c.calibration && (c.calibration.inputLevelDbu != null || c.calibration.outputLevelDbu != null)
 }
 
+/**
+ * Calibration levels are MEASURED by IR Lab's guided calibration, not typed in, so they arrive as
+ * full-precision doubles ("17.497903575995384"). Interpolating one straight into a string prints
+ * every significant digit. 0.1 dB is already finer than interface calibration is meaningful to.
+ * `grid` keeps the trailing ".0" so right-aligned columns scan as a column; inline text drops it.
+ */
+function fmtDbu(v: number | null | undefined, style: 'inline' | 'grid' = 'inline'): string | null {
+  if (v == null || !isFinite(v)) return null
+  const fixed = v.toFixed(1)
+  return style === 'grid' ? fixed : fixed.replace(/\.0$/, '')
+}
+
 // --- facets ----------------------------------------------------------------
 
 export type FacetKey = 'scope' | 'sampleRate' | 'gearType' | 'toneType' | 'calibration' | 'architecture'
@@ -272,8 +299,8 @@ export const CAPTURE_COLUMNS: DataGridColumn<NamCaptureRow>[] = [
   { key: 'channels', label: 'Channels', minWidth: 84, defaultVisible: false, getValue: (c) => (c.recordingChannels === 1 ? 'mono' : c.recordingChannels === 2 ? 'stereo' : c.recordingChannels ? `${c.recordingChannels}ch` : '') },
   { key: 'duration', label: 'Length', minWidth: 70, defaultVisible: false, align: 'right', getValue: (c) => durationLabel(c.recordingDurationSec) ?? '', sortValue: (c) => numOr(c.recordingDurationSec, 0) },
   { key: 'latency', label: 'Latency', minWidth: 74, defaultVisible: true, align: 'right', getValue: (c) => (c.measuredLatencySamples != null ? String(c.measuredLatencySamples) : ''), sortValue: (c) => c.measuredLatencySamples ?? -1 },
-  { key: 'calIn', label: 'Cal in (dBu)', minWidth: 96, defaultVisible: false, align: 'right', getValue: (c) => { const v = c.effective.inputLevelDbu ?? c.calibration?.inputLevelDbu; return v != null ? String(v) : '' }, sortValue: (c) => numOr(c.effective.inputLevelDbu ?? c.calibration?.inputLevelDbu, Number.POSITIVE_INFINITY) },
-  { key: 'calOut', label: 'Cal out (dBu)', minWidth: 96, defaultVisible: false, align: 'right', getValue: (c) => { const v = c.effective.outputLevelDbu ?? c.calibration?.outputLevelDbu; return v != null ? String(v) : '' }, sortValue: (c) => numOr(c.effective.outputLevelDbu ?? c.calibration?.outputLevelDbu, Number.POSITIVE_INFINITY) },
+  { key: 'calIn', label: 'Cal in (dBu)', minWidth: 96, defaultVisible: false, align: 'right', getValue: (c) => fmtDbu(c.effective.inputLevelDbu ?? c.calibration?.inputLevelDbu, 'grid') ?? '', sortValue: (c) => numOr(c.effective.inputLevelDbu ?? c.calibration?.inputLevelDbu, Number.POSITIVE_INFINITY) },
+  { key: 'calOut', label: 'Cal out (dBu)', minWidth: 96, defaultVisible: false, align: 'right', getValue: (c) => fmtDbu(c.effective.outputLevelDbu ?? c.calibration?.outputLevelDbu, 'grid') ?? '', sortValue: (c) => numOr(c.effective.outputLevelDbu ?? c.calibration?.outputLevelDbu, Number.POSITIVE_INFINITY) },
   { key: 'calConfidence', label: 'Cal confidence', minWidth: 120, defaultVisible: false, getValue: (c) => c.calibration?.confidence ?? '' },
   { key: 'gearMake', label: 'Gear make', minWidth: 120, defaultVisible: false, getValue: (c) => c.effective.gearMake ?? '' },
   { key: 'gearModel', label: 'Gear model', minWidth: 120, defaultVisible: false, getValue: (c) => c.effective.gearModel ?? '' },
@@ -316,11 +343,13 @@ function sortRows<T>(rows: T[], columns: DataGridColumn<T>[], key: string, dir: 
 function FacetChip({
   label,
   active,
-  onClick
+  onClick,
+  colorClass = ''
 }: {
   label: string
   active: boolean
   onClick: () => void
+  colorClass?: string
 }): React.ReactElement {
   return (
     <button
@@ -329,7 +358,7 @@ function FacetChip({
         onClick()
       }}
       title={`Filter by ${label}`}
-      className={`nam-chip text-[10px] ${active ? 'ring-1 ring-nm-accent' : ''}`}
+      className={`nam-chip ${colorClass} text-[10px] ${active ? 'ring-1 ring-nm-accent' : ''}`}
     >
       {label}
     </button>
@@ -354,21 +383,23 @@ function Pill({
   label,
   count,
   active,
-  onClick
+  onClick,
+  colorClass = ''
 }: {
   label: string
   count?: number
   active: boolean
   onClick: () => void
+  colorClass?: string
 }): React.ReactElement {
   return (
     <button
       onClick={onClick}
-      className={`px-1.5 py-0.5 text-[10px] rounded border ${
+      className={
         active
-          ? 'bg-nm-accent text-accent-fg border-nm-accent'
-          : 'border-field-bd text-nm-text-2 hover:bg-hov'
-      }`}
+          ? 'px-1.5 py-0.5 text-[10px] rounded border bg-nm-accent text-accent-fg border-nm-accent'
+          : `nam-chip ${colorClass} text-[10px] opacity-70 hover:opacity-100`
+      }
     >
       {label}
       {count != null ? ` ${count}` : ''}
@@ -412,6 +443,19 @@ function FacetPills({
               count={o.count}
               active={active[g.key].includes(o.value)}
               onClick={() => onToggle(g.key, o.value)}
+              colorClass={
+                g.key === 'gearType'
+                  ? namGearChipClass(o.value)
+                  : g.key === 'toneType'
+                    ? namToneChipClass(o.value)
+                    : g.key === 'scope'
+                      ? 'chip-nam-scope'
+                      : g.key === 'sampleRate'
+                        ? 'chip-nam-rate'
+                        : g.key === 'calibration'
+                          ? 'chip-nam-cal'
+                          : 'chip-ir-neutral'
+              }
             />
           ))}
         </div>
@@ -447,29 +491,27 @@ function CoverageBar({
 }
 
 function MakeupChips({ captures }: { captures: NamCaptureRow[] }): React.ReactElement | null {
-  const chips: string[] = []
+  const chips: Array<{ label: string; colorClass: string }> = []
   for (const { value, count } of tally(captures.map((c) => srLabel(c.sampleRate))))
-    chips.push(`${value} ×${count}`)
+    chips.push({ label: `${value} ×${count}`, colorClass: 'chip-nam-rate' })
   for (const { value, count } of tally(captures.map((c) => (c.recordingBitDepth ? `${c.recordingBitDepth}-bit` : null))))
-    chips.push(count === captures.length ? value : `${value} ×${count}`)
+    chips.push({ label: count === captures.length ? value : `${value} ×${count}`, colorClass: 'chip-ir-depth' })
   const scope = tally(captures.map((c) => c.captureScope))
-  if (scope.length) chips.push(scope.map((s) => `${s.value} ×${s.count}`).join(' · '))
+  if (scope.length) chips.push({ label: scope.map((s) => `${s.value} ×${s.count}`).join(' · '), colorClass: 'chip-nam-scope' })
   const calibrated = captures.filter(captureIsCalibrated)
   if (calibrated.length > 0) {
     const conf = tally(calibrated.map((c) => c.calibration?.confidence))
-    chips.push(
-      `${calibrated.length}/${captures.length} calibrated${conf[0] ? ` · mostly ${conf[0].value}` : ''}`
-    )
+    chips.push({
+      label: `${calibrated.length}/${captures.length} calibrated${conf[0] ? ` · mostly ${conf[0].value}` : ''}`,
+      colorClass: 'chip-nam-cal'
+    })
   }
   if (chips.length === 0) return null
   return (
     <div className="flex flex-wrap gap-1.5">
       {chips.map((c, i) => (
-        <span
-          key={i}
-          className="px-1.5 py-0.5 text-[10px] rounded bg-field-bg text-nm-text-2 border border-nm-border-s"
-        >
-          {c}
+        <span key={i} className={`nam-chip ${c.colorClass} text-[10px]`}>
+          {c.label}
         </span>
       ))}
     </div>
@@ -496,57 +538,92 @@ function ProjectHeader({
     detail.signalChain ||
     detail.description ||
     detail.projectNotes
+  const [primaryImage, ...restImages] = detail.imagePaths
+
+  const [connectorAvailable, setConnectorAvailable] = useState(false)
+  const [handoffStatus, setHandoffStatus] = useState<string | null>(null)
+  useEffect(() => {
+    window.api.irLabConnectorAvailable().then(setConnectorAvailable)
+  }, [])
+  const openProjectInIrLab = useCallback(async () => {
+    const result = await window.api.irLibrarySendProjectToIrLab(detail.projectId)
+    setHandoffStatus(result.success ? 'Opened in IR Lab.' : result.reason ?? 'Failed to open in IR Lab.')
+  }, [detail.projectId])
+
   return (
-    <div className="flex flex-col gap-2 px-4 py-3 border-b border-nm-border flex-shrink-0">
-      <div className="flex items-center gap-3 flex-wrap">
-        <span className="text-sm font-medium text-nm-text truncate">{detail.name}</span>
-        {created && <span className="text-[11px] text-nm-text-3">created {created}</span>}
-        {detail.namCapturesDir && (
+    <div className="flex items-start gap-3 px-4 py-3 border-b border-nm-border flex-shrink-0">
+      {primaryImage && (
+        <ScaledImage
+          src={fileSrc(primaryImage)}
+          width={288}
+          height={192}
+          fit="contain"
+          onClick={() => void window.api.openFile(primaryImage)}
+          title="Open full size"
+          className="rounded border border-nm-border-s bg-field-bg flex-shrink-0 cursor-pointer hover:opacity-80"
+        />
+      )}
+      <div className="flex flex-col gap-2 min-w-0 flex-1">
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-sm font-medium text-nm-text truncate">{detail.name}</span>
+          {created && <span className="text-[11px] text-nm-text-3">created {created}</span>}
+          {detail.namCapturesDir && (
+            <button
+              onClick={() => onReveal(detail.namCapturesDir as string)}
+              className="text-[11px] text-nm-accent hover:underline"
+            >
+              Reveal NAM Captures folder
+            </button>
+          )}
+          {detail.excitationsDir && (
+            <button
+              onClick={() => onReveal(detail.excitationsDir as string)}
+              className="text-[11px] text-nm-accent hover:underline"
+            >
+              Reveal _excitations
+            </button>
+          )}
           <button
-            onClick={() => onReveal(detail.namCapturesDir as string)}
-            className="text-[11px] text-nm-accent hover:underline"
+            onClick={() => void openProjectInIrLab()}
+            disabled={!connectorAvailable}
+            title={connectorAvailable ? 'Open this project in IR Lab, ready to capture another position' : 'IR Lab connector not configured in this build'}
+            className="text-[11px] text-nm-accent hover:underline disabled:opacity-40 disabled:no-underline"
           >
-            Reveal NAM Captures folder
+            Open in IR Lab
           </button>
-        )}
-        {detail.excitationsDir && (
-          <button
-            onClick={() => onReveal(detail.excitationsDir as string)}
-            className="text-[11px] text-nm-accent hover:underline"
-          >
-            Reveal _excitations
-          </button>
+          {handoffStatus && <span className="text-[11px] text-nm-text-3">{handoffStatus}</span>}
+        </div>
+        <CoverageBar
+          trained={detail.trainedCount}
+          total={detail.captureCount}
+          synthetic={detail.syntheticCount}
+          meanEsr={meanEsr}
+        />
+        <MakeupChips captures={detail.captures} />
+        {hasProjectDetails ? (
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-nm-text-3">
+            {detail.cabinet && <span>cab {detail.cabinet}</span>}
+            {detail.speaker && <span>speaker {detail.speaker}</span>}
+            {detail.room && <span>room {detail.room}</span>}
+            {detail.signalChain && <span>chain {detail.signalChain}</span>}
+          </div>
+        ) : null}
+        {restImages.length > 0 && (
+          <div className="flex gap-2 overflow-x-auto py-1">
+            {restImages.map((p) => (
+              <ScaledImage
+                key={p}
+                src={fileSrc(p)}
+                width={96}
+                height={64}
+                fit="contain"
+                onClick={() => void window.api.openFile(p)}
+                className="rounded border border-nm-border-s bg-field-bg flex-shrink-0 cursor-pointer hover:opacity-80"
+              />
+            ))}
+          </div>
         )}
       </div>
-      <CoverageBar
-        trained={detail.trainedCount}
-        total={detail.captureCount}
-        synthetic={detail.syntheticCount}
-        meanEsr={meanEsr}
-      />
-      <MakeupChips captures={detail.captures} />
-      {hasProjectDetails ? (
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-nm-text-3">
-          {detail.cabinet && <span>cab {detail.cabinet}</span>}
-          {detail.speaker && <span>speaker {detail.speaker}</span>}
-          {detail.room && <span>room {detail.room}</span>}
-          {detail.signalChain && <span>chain {detail.signalChain}</span>}
-        </div>
-      ) : null}
-      {detail.imagePaths.length > 0 && (
-        <div className="flex gap-2 overflow-x-auto py-1">
-          {detail.imagePaths.map((p) => (
-            <img
-              key={p}
-              src={fileSrc(p)}
-              alt=""
-              onClick={() => void window.api.openFile(p)}
-              className="h-16 w-16 object-cover rounded border border-nm-border-s flex-shrink-0 cursor-pointer hover:opacity-80"
-              loading="lazy"
-            />
-          ))}
-        </div>
-      )}
     </div>
   )
 }
@@ -644,6 +721,7 @@ function CaptureCard({
               label={capture.captureScope}
               active={isFacetActive('scope', capture.captureScope)}
               onClick={() => onFacet('scope', capture.captureScope as string)}
+              colorClass="chip-nam-scope"
             />
           )}
           {srl && (
@@ -651,6 +729,7 @@ function CaptureCard({
               label={srl}
               active={isFacetActive('sampleRate', srl)}
               onClick={() => onFacet('sampleRate', srl)}
+              colorClass="chip-nam-rate"
             />
           )}
           {capture.recordingBitDepth && <span>{capture.recordingBitDepth}-bit</span>}
@@ -659,8 +738,8 @@ function CaptureCard({
 
         {captureIsCalibrated(capture) && (
           <div className="text-xs text-emerald-600 dark:text-emerald-400">
-            cal {eff.inputLevelDbu ?? capture.calibration?.inputLevelDbu ?? '?'} /{' '}
-            {eff.outputLevelDbu ?? capture.calibration?.outputLevelDbu ?? '?'} dBu
+            cal {fmtDbu(eff.inputLevelDbu ?? capture.calibration?.inputLevelDbu) ?? '?'} /{' '}
+            {fmtDbu(eff.outputLevelDbu ?? capture.calibration?.outputLevelDbu) ?? '?'} dBu
             {capture.calibration?.method ? ` · ${capture.calibration.method}` : ''}
           </div>
         )}
@@ -674,6 +753,7 @@ function CaptureCard({
                 label={eff.gearType}
                 active={isFacetActive('gearType', eff.gearType)}
                 onClick={() => onFacet('gearType', eff.gearType as string)}
+                colorClass={namGearChipClass(eff.gearType)}
               />
             )}
             {eff.toneType && (
@@ -681,6 +761,7 @@ function CaptureCard({
                 label={eff.toneType}
                 active={isFacetActive('toneType', eff.toneType)}
                 onClick={() => onFacet('toneType', eff.toneType as string)}
+                colorClass={namToneChipClass(eff.toneType)}
               />
             )}
             {capture.metadataEdited && (
@@ -1046,12 +1127,14 @@ function ModelFileLink({
   capture,
   onReveal,
   onOpen,
+  onPlay,
   onRelink,
   onFindCandidates
 }: {
   capture: NamCaptureRow
   onReveal: (p: string) => void
   onOpen: (p: string) => void
+  onPlay: (p: string) => void
   onRelink: (newPath: string) => Promise<void>
   onFindCandidates: (modelName: string) => Promise<string[]>
 }): React.ReactElement {
@@ -1076,6 +1159,9 @@ function ModelFileLink({
           {formatBytes(capture.modelFile.bytes)} · {relTime(capture.modelFile.mtimeMs)}
         </span>
         <div className="flex gap-3">
+          <button onClick={() => onPlay(result.outputModelPath)} className="text-nm-accent hover:underline font-medium">
+            Play
+          </button>
           <button onClick={() => onOpen(result.outputModelPath)} className="text-nm-accent hover:underline">
             Open
           </button>
@@ -1164,6 +1250,7 @@ function CaptureDetailPanel({
   onBack,
   onReveal,
   onOpen,
+  onPlay,
   onQueue,
   onEditMetadata,
   onRelink,
@@ -1177,6 +1264,7 @@ function CaptureDetailPanel({
   onBack: () => void
   onReveal: (p: string) => void
   onOpen: (p: string) => void
+  onPlay: (p: string) => void
   onQueue: (mode: 'stage' | 'runNext') => void
   onEditMetadata: (patch: NamCaptureMetadataPatch) => Promise<void>
   onRelink: (newPath: string) => Promise<void>
@@ -1186,6 +1274,29 @@ function CaptureDetailPanel({
   const cal = c.calibration
   const r = c.result
   const exc = c.excitationPath
+
+  // Local rather than threaded from the shell — this panel is the only place either handoff
+  // button lives, so there's no other consumer to plumb a shared prop for.
+  const [connectorAvailable, setConnectorAvailable] = useState(false)
+  const [handoffStatus, setHandoffStatus] = useState<string | null>(null)
+  useEffect(() => {
+    window.api.irLabConnectorAvailable().then(setConnectorAvailable)
+  }, [])
+  useEffect(() => {
+    setHandoffStatus(null)
+  }, [capture.itemId])
+
+  const openSessionInIrLab = useCallback(async () => {
+    if (!c.captureId) return
+    const result = await window.api.irLibrarySendSessionToIrLab(c.captureId)
+    setHandoffStatus(result.success ? 'Opened in IR Lab.' : result.reason ?? 'Failed to open in IR Lab.')
+  }, [c.captureId])
+
+  const openProjectInIrLab = useCallback(async () => {
+    const result = await window.api.irLibrarySendProjectToIrLab(projectId)
+    setHandoffStatus(result.success ? 'Opened in IR Lab.' : result.reason ?? 'Failed to open in IR Lab.')
+  }, [projectId])
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-2">
@@ -1216,6 +1327,7 @@ function CaptureDetailPanel({
               >
                 Reveal
               </button>
+              <WavPreviewPlayer path={c.recordingPath} label="Return (recorded through the amp)" />
             </span>
           ) : (
             '—'
@@ -1237,6 +1349,7 @@ function CaptureDetailPanel({
               >
                 Reveal
               </button>
+              <WavPreviewPlayer path={exc} label="DI (excitation sweep)" />
             </span>
           ) : (
             '—'
@@ -1260,7 +1373,7 @@ function CaptureDetailPanel({
           {cal.profileName && <Row label="Profile">{cal.profileName}</Row>}
           {fmtDateTime(cal.calibratedAt) && <Row label="Calibrated">{fmtDateTime(cal.calibratedAt)}</Row>}
           <Row label="Levels">
-            input {cal.inputLevelDbu ?? '?'} dBu · output {cal.outputLevelDbu ?? '?'} dBu
+            input {fmtDbu(cal.inputLevelDbu) ?? '?'} dBu · output {fmtDbu(cal.outputLevelDbu) ?? '?'} dBu
           </Row>
           <span className="text-[11px] text-nm-text-3">
             Embedded into the trained model as input_level_dbu / output_level_dbu.
@@ -1305,6 +1418,7 @@ function CaptureDetailPanel({
                 capture={c}
                 onReveal={onReveal}
                 onOpen={onOpen}
+                onPlay={onPlay}
                 onRelink={onRelink}
                 onFindCandidates={onFindCandidates}
               />
@@ -1350,6 +1464,29 @@ function CaptureDetailPanel({
         {c.captureId && <Row label="Capture id">{c.captureId}</Row>}
         {projectId && <Row label="Project id">{projectId}</Row>}
         {c.syntheticSourceIrName && <Row label="Synthetic source">{c.syntheticSourceIrName}</Row>}
+        <div className="flex flex-wrap gap-2 pt-1">
+          {c.captureId && (
+            <button
+              onClick={() => void openSessionInIrLab()}
+              disabled={!connectorAvailable}
+              title={connectorAvailable ? 'Reopen this capture in IR Lab' : 'IR Lab connector not configured in this build'}
+              className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-40"
+            >
+              Open capture in IR Lab
+            </button>
+          )}
+          {projectId && (
+            <button
+              onClick={() => void openProjectInIrLab()}
+              disabled={!connectorAvailable}
+              title={connectorAvailable ? 'Open this project in IR Lab, ready to capture another position' : 'IR Lab connector not configured in this build'}
+              className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-40"
+            >
+              Open project in IR Lab
+            </button>
+          )}
+        </div>
+        {handoffStatus && <span className="text-[11px] text-nm-text-3">{handoffStatus}</span>}
       </section>
     </div>
   )
@@ -1409,6 +1546,27 @@ export function toBatchItem(
 }
 
 export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = {}): React.ReactElement {
+  const [showSettings, setShowSettings] = useState(false)
+  const [playerFile, setPlayerFile] = useState<NamFile | null>(null)
+  const [playerError, setPlayerError] = useState<string | null>(null)
+  const openModelInPlayer = useCallback(async (path: string) => {
+    setPlayerError(null)
+    const loaded = await loadNamFileForPlayback(path)
+    if (!loaded) {
+      setPlayerError(`Could not read the model: ${path}`)
+      return
+    }
+    setPlayerFile(loaded)
+  }, [])
+  // Read straight from preload, same as IrModeShell's own player wiring — settings.json is loaded
+  // synchronously in preload and exposed as window.api.initialSettings, so this doesn't need the
+  // two React trees (this shell vs App.tsx's) to share state to get the FX library paths/presets
+  // PlayerPanel wants. Named settingsRaw, not settings — that name is already the AppSettings
+  // state SettingsPanel above uses.
+  const settingsRaw = (window.api.initialSettings ?? {}) as Record<string, unknown>
+  const str = (key: string): string | null => (typeof settingsRaw[key] === 'string' ? (settingsRaw[key] as string) || null : null)
+  const arr = <T,>(key: string): T[] => (Array.isArray(settingsRaw[key]) ? (settingsRaw[key] as T[]) : [])
+  const [settings, setSettings] = useState<AppSettings>(loadSettings)
   const [projects, setProjects] = useState<NamProjectSummary[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(() => readStored(SELECTED_KEY) || null)
   const [detail, setDetail] = useState<NamProjectDetail | null>(null)
@@ -1931,8 +2089,16 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   )
 
   return (
-    <div className="flex flex-col h-screen bg-app-bg text-nm-text overflow-hidden">
-      <div className="flex items-center gap-3 px-4 py-2 border-b border-nm-border flex-shrink-0">
+    <div className="nam-projects-scope flex flex-col h-screen bg-app-bg text-nm-text overflow-hidden">
+      <div
+        className="flex items-center py-2 border-b border-nm-border flex-shrink-0"
+        style={{
+          paddingLeft: isMacPlatform() ? '80px' : '16px',
+          paddingRight: isMacPlatform() ? '16px' : '155px',
+          WebkitAppRegion: 'drag'
+        } as React.CSSProperties}
+      >
+      <div className="flex items-center gap-3 flex-1 min-w-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
         <NamLabCrumb mode="nam-projects" />
         <div className="w-px h-5 bg-nm-border-s flex-shrink-0" />
         <button
@@ -1967,7 +2133,58 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
             {projects.reduce((n, p) => n + p.captureCount, 0)} captures trained
           </span>
         )}
+        <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+          <button
+            onClick={() => setShowSettings(true)}
+            className={`tb-menu-btn ${showSettings ? 'active' : ''}`}
+            title="Settings"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            Settings
+          </button>
+        </div>
       </div>
+      </div>
+      {showSettings && (
+        <SettingsPanel
+          settings={settings}
+          onSave={(s) => { setSettings(s); saveSettings(s); setShowSettings(false) }}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
+
+      {/* Full-viewport overlay rather than swapping the main content area in place — PlayerPanel
+          is a real instrument (FX rig, presets, live tab) that needs guaranteed full space, and
+          this shell's content region sits behind a long loading/empty/normal ternary that isn't
+          worth threading a fourth branch through. Same closable-overlay shape as the
+          addToGroupRow/missingFileInfo dialogs elsewhere in this file, just full-screen. */}
+      {playerFile && (
+        <div className="fixed inset-0 z-[500] bg-app-bg flex flex-col">
+          <PlayerPanel
+            file={playerFile}
+            onClose={() => setPlayerFile(null)}
+            diLibraryPath={str('diPreviewLibraryPath')}
+            irLibraryPath={str('irLibraryPath')}
+            reverbLibraryPath={str('reverbLibraryPath')}
+            delayLibraryPath={str('delayLibraryPath')}
+            irMix={typeof settingsRaw.irMix === 'number' ? (settingsRaw.irMix as number) : 1}
+            chorusPresets={arr('chorusPresets')}
+            delayPresets={arr('delayPresets')}
+            reverbPresets={arr('reverbPresets')}
+            echoLabPresets={arr('echoLabPresets')}
+            rigPresets={arr('rigPresets')}
+          />
+        </div>
+      )}
+      {playerError && (
+        <div className="fixed bottom-4 right-4 z-[600] bg-panel border border-red-500/40 text-red-500 text-xs rounded-lg px-3 py-2 shadow-lg flex items-center gap-3">
+          {playerError}
+          <button onClick={() => setPlayerError(null)} className="text-nm-text-3 hover:text-nm-text">×</button>
+        </div>
+      )}
 
       {error && (
         <div className="flex items-center justify-between px-4 py-1 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 flex-shrink-0">
@@ -2353,6 +2570,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                 onBack={() => setSelectedCaptureId(null)}
                 onReveal={(p) => window.api.revealFile(p)}
                 onOpen={(p) => void window.api.openFile(p)}
+                onPlay={(p) => void openModelInPlayer(p)}
                 onQueue={(mode) => submitBatch([selectedCapture], selectedCapture.captureName, mode)}
                 onEditMetadata={(patch) => handleEditMetadata(selectedCapture.itemId, patch)}
                 onRelink={(newPath) => handleRelinkModel(selectedCapture.itemId, newPath)}

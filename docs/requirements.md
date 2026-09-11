@@ -117,6 +117,47 @@ Update both when features land.
 - [ ] Checklist row sync button too small / too far
 - [ ] Training queue status line misleading for single active run
 
+## IR Mode
+
+Backfilled 2026-09-11 after the IR Lab Integration Audit found the largest addition in the app's
+history untracked here. Full detail: `docs/ir-lab-manager-build-plan.md`,
+`docs/ir-lab-manager-handoff-2026-09-02.md`, `docs/ir-nam-parity-backlog.md` (numbered work queue
+for everything below marked open).
+
+- [x] SQLite/WAL catalog (`catalog.db`), batched import, cancelable scan with progress
+- [x] FTS5 search, quick hash + content hash, missing-file reconciliation, root relink
+- [x] Vendor parsers (generic + Ownhammer + RedWirez), BWF `bext` read-back, 5-level confidence ladder
+- [x] Folder metadata with ancestor inheritance, notes, vendor doc import + AI field extraction
+- [x] Virtualized list and grid (`DataGrid`), facets, favourites, ratings, groups (tags)
+- [x] Quick audition through a chosen NAM amp capture (the NAM↔IR crossover hook)
+- [x] Tray capped at 8 (matches IR Lab's `blendPreviewSlotCount`), Send to IR Lab (`blend` route)
+- [x] IR Lab handoff: `session` and `project` routes wired (context menu / detail panel), pre-flight check against IR Lab's own configured Cab IR / Reverb IR / DI folders before sending
+- [x] Duplicate detection over `content_hash` — report + reveal, ranked by metadata completeness
+- [ ] File operations: rename, move, trash, copy, batch rename — parity backlog items 1-6
+- [ ] Per-item and batch metadata editing at the `user_entered` confidence tier — items 7, 9, 10
+- [ ] Provenance badges on item fields (source + clear-override) — item 8
+- [ ] Folder create/rename/delete, Library Cleanup / Build Library for IR — items 11, 12
+- [ ] Watch `library_root.watch_mode = 'watched'` roots (column exists, nothing reads it) — item 13
+- [ ] Spreadsheet export/import of the IR catalog — items 18, 19
+- [ ] Metadata suggestion rule engine ported to IR filenames — item 20
+- [ ] A/B audition, saved searches beyond groups — deferred in the original build plan §12.7
+
+## NAM Projects
+
+- [x] Reads IR Lab's `.SessionData` (project/session/analysis/variants), imports NAM Capture projects into the catalog
+- [x] Project list, coverage bar, library overview, capture cards + columnar grid, facet filtering
+- [x] Per-capture metadata seeds (gear, tone, calibration dBu), calibration levels formatted to 1 decimal (`fmtDbu`)
+- [x] Trained state, validation ESR, sub-model ESR, training graph, model relink
+- [x] Stage batch / run-next queue jump, multi-select, straight into the Training Panel
+- [x] Project cover image (letterboxed, moiré-free downscale via `ScaledImage`)
+- [x] IR Lab handoff: "Open capture/project in IR Lab" from the detail panel and project header
+- [ ] Player in NAM Projects — no way to hear the DI, the return, or the trained model without leaving the app — backlog item C1 / I4
+- [ ] Project-level metadata cascade reusing IR mode's folder inheritance, instead of per-capture only — item 14
+- [ ] Capture rename — needs IR Lab-side coordination first (a capture is WAV + sidecars + `project.json`'s `captureIndex` entry) — item 15
+- [ ] Build a pack from a finished project, reusing Pack Info / cover / checklist / export — item 16
+- [ ] Comparison view across a project's captures (ESR, architecture, epochs side by side)
+- [ ] Trained-status resilience: fall back to trainer-history by `captureId` when the sidecar is missing, not just the file check — see TODO.md 2026-09-07
+
 ## Security / Distribution Hardening
 
 - [ ] Protect Tone3000 OAuth tokens with `safeStorage` instead of plain JSON-at-rest storage.

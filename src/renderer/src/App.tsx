@@ -497,6 +497,7 @@ declare global {
           is_favorite: number
           rating: number | null
           missing_since: string | null
+          capture_id: string | null
           manufacturer: string | null
           manufacturer_source: string | null
           cabinet: string | null
@@ -651,6 +652,32 @@ declare global {
       irLibraryIsInTray: (itemId: string) => Promise<boolean>
       irLabConnectorAvailable: () => Promise<boolean>
       irLibrarySendTrayToIrLab: () => Promise<{ success: boolean; reason?: string }>
+      irLibraryFindDuplicates: (options: { libraryRootId?: number | null; folderId?: number | null }) => Promise<{
+        sets: Array<{
+          contentHash: string
+          fileSize: number | null
+          reclaimableBytes: number
+          members: Array<{
+            itemId: string
+            relativePath: string
+            displayName: string
+            absPath: string
+            fileSize: number | null
+            isFavorite: boolean
+            rating: number | null
+            metadataCompleteness: number
+          }>
+        }>
+        totalReclaimableBytes: number
+        unhashedCount: number
+      }>
+      irLibraryRenameItem: (itemId: string, newBaseName: string, force?: boolean) => Promise<{ itemId: string; success: boolean; error?: string; newAbsPath?: string }>
+      irLibraryMoveItems: (itemIds: string[], destFolderId: number | null, force?: boolean) => Promise<Array<{ itemId: string; success: boolean; error?: string; newAbsPath?: string }>>
+      irLibraryTrashItems: (itemIds: string[]) => Promise<Array<{ itemId: string; success: boolean; error?: string }>>
+      irLibraryCopyItems: (itemIds: string[], destFolderId: number | null, force?: boolean) => Promise<Array<{ itemId: string; success: boolean; error?: string; newAbsPath?: string; newItemId?: string }>>
+      irLibraryEnsureDestinationFolder: (libraryRootId: number, relativeFolderPath: string) => Promise<number | null>
+      irLibrarySendSessionToIrLab: (captureId: string) => Promise<{ success: boolean; reason?: string }>
+      irLibrarySendProjectToIrLab: (projectId: string, preset?: string) => Promise<{ success: boolean; reason?: string }>
       irLibraryListTags: () => Promise<Array<{ id: number; name: string; itemCount: number }>>
       irLibraryGetOrCreateTag: (name: string) => Promise<number>
       irLibraryRenameTag: (tagId: number, name: string) => Promise<{ success: boolean }>

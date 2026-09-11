@@ -351,7 +351,7 @@ export interface AppSettings {
   theme: 'dark' | 'light' | 'charcoal'
   uiTheme: 'dark' | 'midnight' | 'blue' | 'charcoal' | 'light'
   uiAccent: 'indigo' | 'violet' | 'sky' | 'emerald' | 'orange'
-  chipStyle: 'soft' | 'solid' | 'minimal'
+  chipStyle: 'soft' | 'solid' | 'minimal' | 'neon'
   defaultView: 'list' | 'grid'
   solidPillColors: boolean
 
