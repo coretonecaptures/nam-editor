@@ -715,6 +715,58 @@ export function setNamCaptureMetadata(
   return getNamCaptureRow(db, itemId)
 }
 
+/**
+ * "Set project defaults" — parity backlog item 14: every capture in a project typically shares an
+ * amp, cab and modeller, and today each has to be set per capture by hand.
+ *
+ * Deviates from the item's own architecture, deliberately: the item calls for reusing
+ * `folder_metadata`/`folder_metadata_effective` (IR mode's live, resolved-at-query-time
+ * inheritance). That table's field vocabulary and resolution path both belong to `ir_item`
+ * (manufacturer/cabinet/speaker/microphone via `queryLibrary.ts`'s COALESCE-in-the-SELECT) — wiring
+ * a SECOND, differently-named field set (modeled_by/gear_make/gear_model/gear_type/tone_type)
+ * through that same live-resolution machinery means editing `CAPTURE_SELECT` (the large, working,
+ * already-complex query `getNamProjectDetail`/`listNamProjects` both depend on) to LEFT JOIN
+ * through `collection_item` to the project's own folder — real surgery on code this session hasn't
+ * otherwise touched, for a live-inheritance guarantee `nam_capture_item` doesn't actually need: per
+ * this file's own `setNamCaptureMetadata` doc comment, effective fields are already a "seed once,
+ * then sticky" model (`''` is a permanent clear sentinel, distinct from untouched `NULL`), not a
+ * live-resolved one anywhere else in this file. A fill-once action fits that existing model
+ * exactly, rather than introducing the one live-inheritance field set in an otherwise
+ * seed-and-stick file.
+ *
+ * Only ever fills a column that is genuinely `NULL` (untouched) — never a column already holding
+ * `''` (the sticky "cleared" sentinel) or a real value (a per-capture override). That IS "a
+ * per-capture override wins", just enforced at apply time rather than at read time.
+ */
+export function applyProjectDefaults(
+  db: DatabaseSync,
+  collectionId: string,
+  patch: Partial<Pick<NamCaptureEffectiveMetadata, 'modeledBy' | 'gearMake' | 'gearModel' | 'gearType' | 'toneType'>>
+): { itemsFilled: number } {
+  const col: Record<string, string> = {
+    modeledBy: 'modeled_by',
+    gearMake: 'gear_make',
+    gearModel: 'gear_model',
+    gearType: 'gear_type',
+    toneType: 'tone_type'
+  }
+  let itemsFilled = 0
+  for (const [k, v] of Object.entries(patch)) {
+    if (!(k in col)) continue
+    const value = typeof v === 'string' ? v.trim() : ''
+    if (!value) continue // nothing to fill an empty column with
+    const result = db
+      .prepare(
+        `UPDATE nam_capture_item SET ${col[k]} = ?
+         WHERE item_id IN (SELECT item_id FROM collection_item WHERE collection_id = ?)
+         AND ${col[k]} IS NULL`
+      )
+      .run(value, collectionId)
+    itemsFilled += (result.changes as number) ?? 0
+  }
+  return { itemsFilled }
+}
+
 /** One capture row by item id (for returning the fresh state after an edit / relink). */
 export function getNamCaptureRow(db: DatabaseSync, itemId: string): NamCaptureRow | null {
   const row = db

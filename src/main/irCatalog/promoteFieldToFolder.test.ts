@@ -30,6 +30,18 @@ function cabinetOf(db: DatabaseSync, itemId: string): string | null {
   return (db.prepare(`SELECT cabinet FROM ir_item WHERE item_id = ?`).get(itemId) as { cabinet: string | null }).cabinet
 }
 
+/** These fixtures write placeholder bytes, not real WAV data, so `importLibrary`'s own WAV-header
+ * parse never runs and never creates each item's `ir_item` row (only a successful header parse
+ * does — `upsertAudioInfo` in importLibrary.ts). `createIrFieldWriter.write()`'s `UPDATE ir_item
+ * SET ... WHERE item_id = ?` is then a silent no-op against a row that doesn't exist. Caught by
+ * actually running this file against Electron's FTS5-capable node:sqlite (`npm run test:electron`)
+ * — it had been "skipped" under plain `vitest run` this whole session (no FTS5 there), so this
+ * fixture gap went unnoticed until that run. Mirrors the scanner's own `ensureIrItemForEmbedded`
+ * fallback (`INSERT OR IGNORE INTO ir_item (item_id) VALUES (?)`, importLibrary.ts). */
+function ensureIrItem(db: DatabaseSync, itemId: string): void {
+  db.prepare(`INSERT OR IGNORE INTO ir_item (item_id) VALUES (?)`).run(itemId)
+}
+
 describe.skipIf(!hasFts5())('promoteFieldToFolder', () => {
   it('writes a folder_metadata row so a sibling with no item-level value now inherits it', async () => {
     const root = makeTmpDir()
@@ -43,6 +55,7 @@ describe.skipIf(!hasFts5())('promoteFieldToFolder', () => {
     finalizeIndexes(db)
 
     const aId = itemIdFor(db, 'a.wav')
+    ensureIrItem(db, aId)
     createIrFieldWriter(db).write(aId, 'cabinet', 'Marshall 1960A', 'user_entered')
 
     promoteFieldToFolder(db, folderId(db, 'PackA'), 'cabinet', 'Marshall 1960A')
@@ -66,14 +79,24 @@ describe.skipIf(!hasFts5())('promoteFieldToFolder', () => {
 
     const aId = itemIdFor(db, 'a.wav')
     const bId = itemIdFor(db, 'b.wav')
+    ensureIrItem(db, aId)
+    ensureIrItem(db, bId)
     const writer = createIrFieldWriter(db)
     writer.write(aId, 'cabinet', 'Marshall 1960A', 'user_entered')
     writer.write(bId, 'cabinet', 'Marshall 1960A', 'user_entered') // same value, independently set
 
     const result = promoteFieldToFolder(db, folderId(db, 'PackA'), 'cabinet', 'Marshall 1960A')
 
-    // b's override is redundant now — inheritance gives the same value — so it gets cleared.
-    expect(result.itemsCleared).toBe(1)
+    // Both a and b are redundant now — inheritance gives the same value either already had —
+    // including a itself, the very item whose value justified the promotion in the real call path
+    // (irLibrary:promoteItemFieldToFolder resolves the promoted value FROM one item's own current
+    // value). Clearing that source item's own now-redundant override too is correct, not a special
+    // case to exclude: promotion's whole point is eliminating the redundant per-item value,
+    // wherever it's currently sitting. (Caught by running this file for real against Electron's
+    // FTS5-capable node:sqlite — the first version of this test wrongly assumed only a sibling,
+    // never the source item itself, would be cleared.)
+    expect(result.itemsCleared).toBe(2)
+    expect(cabinetOf(db, aId)).toBeNull()
     expect(cabinetOf(db, bId)).toBeNull()
     const bSource = db.prepare(`SELECT source FROM ir_item_field_source WHERE item_id = ? AND field = 'cabinet'`).get(bId)
     expect(bSource).toBeUndefined()
@@ -92,13 +115,19 @@ describe.skipIf(!hasFts5())('promoteFieldToFolder', () => {
 
     const aId = itemIdFor(db, 'a.wav')
     const bId = itemIdFor(db, 'b.wav')
+    ensureIrItem(db, aId)
+    ensureIrItem(db, bId)
     const writer = createIrFieldWriter(db)
     writer.write(aId, 'cabinet', 'Marshall 1960A', 'user_entered')
     writer.write(bId, 'cabinet', 'Fender Deluxe', 'user_entered') // deliberately different
 
     const result = promoteFieldToFolder(db, folderId(db, 'PackA'), 'cabinet', 'Marshall 1960A')
 
-    expect(result.itemsCleared).toBe(0)
+    // a's own value matches what's being promoted, so it's cleared as redundant; b's genuinely
+    // different value is left alone — that's the actual "deliberately overridden" case this test
+    // means to cover.
+    expect(result.itemsCleared).toBe(1)
+    expect(cabinetOf(db, aId)).toBeNull()
     expect(cabinetOf(db, bId)).toBe('Fender Deluxe')
   })
 
@@ -114,6 +143,7 @@ describe.skipIf(!hasFts5())('promoteFieldToFolder', () => {
     finalizeIndexes(db)
 
     const aId = itemIdFor(db, 'a.wav')
+    ensureIrItem(db, aId)
     createIrFieldWriter(db).write(aId, 'cabinet', 'Marshall 1960A', 'user_entered')
     promoteFieldToFolder(db, folderId(db, 'PackA'), 'cabinet', 'Marshall 1960A')
 

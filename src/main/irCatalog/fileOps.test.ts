@@ -133,9 +133,14 @@ describe.skipIf(!hasFts5())('fileOps', () => {
     const { db, root } = await setUpLibrary()
     const itemId = itemIdFor(db, 'Marshall412.wav')
 
-    // Force the catalog UPDATE to fail by dropping the item row out from under it mid-operation --
-    // simulates "disk succeeded, DB failed" without needing to fake a real SQLite error.
-    db.exec(`DROP TABLE item`)
+    // Force the catalog UPDATE specifically to fail, while leaving the earlier SELECT (resolveItem
+    // reading the item's current path/folder before the rename even starts) working normally.
+    // Dropping the whole `item` table (the original approach here) breaks THAT read too, so
+    // renameItem fails before ever touching the disk — not the "disk succeeded, DB failed" case
+    // this test means to cover. Caught by actually running this file against Electron's
+    // FTS5-capable node:sqlite (`npm run test:electron`), not by local review — plain `vitest run`
+    // has no FTS5 here, so this file was silently skipped all session until that run.
+    db.exec(`CREATE TRIGGER block_item_update BEFORE UPDATE ON item BEGIN SELECT RAISE(ABORT, 'simulated DB failure'); END`)
 
     const result = await renameItem(db, itemId, 'WontStick')
     expect(result.success).toBe(false)
