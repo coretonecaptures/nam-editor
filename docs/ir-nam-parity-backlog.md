@@ -110,20 +110,18 @@ without a rescan. ✅ (patches the cache directly; `fileOps.ts`'s `UPDATE`-in-pl
 means the catalog side was already correct — this just needed the UI to not force a reload)
 
 ### 4. Move IRs to a folder
-**Status:** ✅ done 2026-09-11 (single-item; see note) · **Size:** M · **Depends on:** 2
+**Status:** ✅ done 2026-09-11 · **Size:** M · **Depends on:** 2
 
 Both entry points built: context menu "Move to…" opens `IrMoveToFolderModal.tsx` (flat indented
 folder list scoped to the item's own library root — cross-root is refused by `fileOps.ts` itself,
 so the picker doesn't offer it — plus a "type a new path → Create & Move" path using
 `ensureDestinationFolder`), and drag-and-drop of a row directly onto a node in `IrFolderTree`.
 
-**Scope note:** IR mode's list has no multi-select mechanism at all yet (no ctrl/shift/ctrl-A —
-only a single `focusedIndex`). Building general multi-select is a real feature in its own right,
-not a one-line addition, and wasn't separately called out as its own backlog item. Rather than
-block this item on building that first, both the modal and the IPC underneath already take an
-`itemIds: string[]` — multi-select can plug straight in later with zero changes to either. Added
-as a follow-on note rather than silently declaring this "done" against the original multi-select
-wording.
+Landed single-item first — IR mode's list had no multi-select mechanism at all yet — with both the
+modal and the IPC underneath already taking `itemIds: string[]` so multi-select could plug straight
+in later. Item 9 is where that actually happened: multi-select now exists, and Move (along with
+Trash and drag-and-drop) is retrofitted to act on the whole selection when the right-clicked/
+dragged row is part of one. See item 9 for the mechanism itself.
 
 Metadata re-resolution after a move needs no extra code: `folder_metadata_effective` is resolved
 at QUERY time (`COALESCE(ir_item.field, folder_metadata_effective.value)` in `queryLibrary.ts`),
@@ -136,16 +134,15 @@ outside (the list, or this modal) had no way to tell the tree to refetch. Added 
 prop, bumped by `handleMoved`, so the tree's row counts don't go stale until an unrelated
 `libraryRootCount` change happens to touch it.
 
-**Done when:** a move lands the file, the tree counts update, and inherited metadata reflects the
-new parent (true by construction — `folder_metadata_effective` is resolved at query time, not
-cached on the item row, so a re-queried item already reflects its new parent). ✅ for single-item;
-multi-select is a follow-on.
+**Done when:** a multi-select move lands every file, the tree counts update, and inherited
+metadata reflects the new parent. ✅
 
 ### 5. Trash IRs
-**Status:** ✅ done 2026-09-11 (single-item; see item 4's multi-select note) · **Size:** S · **Depends on:** 2
+**Status:** ✅ done 2026-09-11 · **Size:** S · **Depends on:** 2
 
-Context menu "Move to Trash…" (destructive-styled) plus `Delete` on the focused row, both opening
-a confirm dialog naming the file and stating plainly what goes with it (favourites/rating/tags/
+Context menu "Move to Trash…" (destructive-styled) plus `Delete`, both multi-select aware (acts on
+the whole selection when the triggering row is part of one — item 9's retrofit) and both opening a
+confirm dialog naming the file(s) and stating plainly what goes with them (favourites/rating/tags/
 tray) and that undoing it needs a rescan, not just an OS Trash restore. `fileOps.ts`'s `trashItems`
 (item 1) already does the one behaviour decided: the catalog row is removed outright, never left
 as `missing_since` — the user asked for it to go.
@@ -251,12 +248,32 @@ an override restores the inherited value rather than emptying the field (✅ —
 which is exactly the mechanism that makes inheritance/re-resolution actually happen on rescan).
 
 ### 9. Multi-select batch metadata edit
-**Status:** open · **Size:** M · **Depends on:** 7
+**Status:** ✅ done 2026-09-11 · **Size:** M · **Depends on:** 7
 
-Port the `BatchEditor` / `MultiSelectEditor` idiom: mixed values shown as such, only
-explicitly touched fields written, count of affected items stated before applying.
+**This item is why multi-select finally got built.** Items 4-6 deliberately scoped to single-item
+with a note that the array-shaped IPC was already in place for it — item 9 is the first one where
+"operate on one item via a right-click" doesn't make sense by definition. Built the actual
+mechanism rather than deferring again: Ctrl/Cmd-click toggles a row, Shift-click ranges from the
+last plain click (`selectionAnchorRef`, same convention as NAM mode's own `FileList.tsx`). No
+Ctrl+A — documented as deliberate, not missing: this list is paginated against a live query, not a
+loaded array, so "select all" would mean "everything matching the current filter" (unbounded,
+could be tens of thousands of rows in a real library) rather than "everything on screen," and
+building a version that silently means something narrower than it looks like it means is worse
+than not having the shortcut.
 
-**Done when:** setting one field across 50 selected IRs leaves their other fields untouched.
+Once a row is part of a multi-selection, right-clicking it (or the context menu's own selection
+check) makes Move/Trash/Edit Metadata act on the WHOLE selection instead of just the clicked row —
+retrofitted onto items 4/5, closing their own "single-item for now" scope note rather than leaving
+it open. Drag-and-drop (item 4) also now carries the full selection when dragging a selected row.
+Rename (item 3) stays single-item only — renaming N files to the same base name doesn't mean
+anything; that's what item 6's batch-rename-with-a-template is for.
+
+`IrBatchMetadataEditModal.tsx` ports NAM's `BatchEditor.tsx` idiom exactly: a checkbox per field
+enables it for the batch, its text input is disabled until checked — "type it, check it to apply,"
+not a mixed-values display trying to represent each item's differing existing value. Only checked
+fields get written, to every selected item, always at the `user_entered` tier from item 7.
+
+**Done when:** setting one field across 50 selected IRs leaves their other fields untouched. ✅
 
 ### 10. Push an item value up to its folder
 **Status:** open · **Size:** S · **Depends on:** 7

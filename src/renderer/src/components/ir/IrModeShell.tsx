@@ -18,6 +18,7 @@ import { IrDuplicatesModal } from './IrDuplicatesModal'
 import { IrMoveToFolderModal } from './IrMoveToFolderModal'
 import { IrBatchRenameModal } from './IrBatchRenameModal'
 import { IrEditMetadataModal } from './IrEditMetadataModal'
+import { IrBatchMetadataEditModal } from './IrBatchMetadataEditModal'
 import { AppSettings, loadSettings, saveSettings } from '../../types/settings'
 
 // Evaluated lazily, not at module scope — see NamProjectsShell.tsx's matching comment: a
@@ -266,11 +267,22 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
   // Bumped after a move so IrFolderTree refetches its row counts — the tree's own
   // onLibraryChanged only fires for actions the tree itself performs (its right-click Remove).
   const [treeRefreshSignal, setTreeRefreshSignal] = useState(0)
-  // Trash (parity backlog item 5) — single item for now, same multi-select scope note as move.
-  const [trashConfirmRow, setTrashConfirmRow] = useState<IrItemRow | null>(null)
+  // Trash (parity backlog item 5) — multi-select aware once selectedIds (below) exists.
+  const [trashConfirmRows, setTrashConfirmRows] = useState<IrItemRow[] | null>(null)
   const [trashBusy, setTrashBusy] = useState(false)
   const [showBatchRename, setShowBatchRename] = useState(false)
   const [editMetadataRow, setEditMetadataRow] = useState<IrItemRow | null>(null)
+  const [batchEditRows, setBatchEditRows] = useState<IrItemRow[] | null>(null)
+  // Multi-select (parity backlog item 9's real prerequisite — items 4/5/6 deliberately scoped to
+  // single-item pending this, with the array-shaped IPC already in place). Ctrl/Cmd-click toggles,
+  // Shift-click ranges from the last plain click — same convention as NAM mode's own FileList.tsx.
+  // No Ctrl+A: this list is paginated/virtualized against a live query, not a fully-loaded array,
+  // so "select all" would need to mean "everything matching the current filter" (unbounded, could
+  // be tens of thousands of rows) rather than "everything on screen" — deliberately left out
+  // rather than building a version of it that silently means something narrower than it looks like
+  // it means.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const selectionAnchorRef = useRef(-1)
   const [newGroupName, setNewGroupName] = useState('')
   // Folder tree/panel — scoped to the first root for now (no root switcher yet; a second "Add
   // Library Folder" click adds another root but the tree only ever shows the first one). Selecting
@@ -511,6 +523,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
     // longer match the current folder scope) as well as its sort position — unlike rename, this
     // isn't a safe single-field cache patch. Simplest correct fix: invalidate and refetch, same
     // pattern the rescan-completion path above already uses.
+    setSelectedIds(new Set())
     requestEpochRef.current++
     cacheRef.current = new Map()
     pendingRef.current = new Set()
@@ -519,17 +532,28 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
   }, [])
 
   const confirmTrash = useCallback(async () => {
-    if (!trashConfirmRow) return
+    if (!trashConfirmRows || trashConfirmRows.length === 0) return
     setTrashBusy(true)
     try {
-      const [result] = await window.api.irLibraryTrashItems([trashConfirmRow.id])
-      if (!result.success) {
-        setImportResult(result.error ?? 'Could not move that file to the Trash.')
+      const ids = trashConfirmRows.map((r) => r.id)
+      const results = await window.api.irLibraryTrashItems(ids)
+      const succeededIds = new Set(results.filter((r) => r.success).map((r) => r.itemId))
+      const failed = results.filter((r) => !r.success)
+      if (succeededIds.size === 0) {
+        setImportResult(failed[0]?.error ?? 'Could not move that to the Trash.')
         return
       }
-      if (playerIr?.id === trashConfirmRow.id) setPlayerIr(null)
-      if (trayIds.has(trashConfirmRow.id)) void window.api.irLibraryRemoveFromTray(trashConfirmRow.id).then(refreshTray)
-      setTrashConfirmRow(null)
+      if (playerIr && succeededIds.has(playerIr.id)) setPlayerIr(null)
+      for (const id of succeededIds) {
+        if (trayIds.has(id)) void window.api.irLibraryRemoveFromTray(id).then(refreshTray)
+      }
+      setImportResult(
+        failed.length === 0
+          ? `Moved ${succeededIds.size} item${succeededIds.size === 1 ? '' : 's'} to the Trash.`
+          : `Moved ${succeededIds.size} to the Trash, ${failed.length} failed.`
+      )
+      setSelectedIds(new Set())
+      setTrashConfirmRows(null)
       // Trashing changes total count and list membership, same as a move — invalidate rather than
       // patch (see handleMoved's matching comment).
       requestEpochRef.current++
@@ -540,7 +564,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
     } finally {
       setTrashBusy(false)
     }
-  }, [trashConfirmRow, playerIr, trayIds, refreshTray])
+  }, [trashConfirmRows, playerIr, trayIds, refreshTray])
 
   const sendSessionToIrLab = useCallback(async (row: IrItemRow) => {
     if (!row.capture_id) {
@@ -680,10 +704,18 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
       }
 
       if (e.key === 'Delete' && focusedIndex != null) {
+        if (selectedIds.size > 1) {
+          const rows = [...cacheRef.current.values()].filter((r) => selectedIds.has(r.id) && !r.missing_since)
+          if (rows.length > 0) {
+            e.preventDefault()
+            setTrashConfirmRows(rows)
+          }
+          return
+        }
         const row = cacheRef.current.get(focusedIndex)
         if (row && !row.missing_since) {
           e.preventDefault()
-          setTrashConfirmRow(row)
+          setTrashConfirmRows([row])
         }
         return
       }
@@ -706,7 +738,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [total, playerIr, focusedIndex, startRename])
+  }, [total, playerIr, focusedIndex, startRename, selectedIds])
 
   const handleAddFolder = useCallback(async () => {
     const folder = await window.api.openFolder()
@@ -1232,10 +1264,22 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           }}
         />
       )}
-      {trashConfirmRow && (
+      {batchEditRows && batchEditRows.length > 0 && (
+        <IrBatchMetadataEditModal
+          itemIds={batchEditRows.map((r) => r.id)}
+          onClose={() => setBatchEditRows(null)}
+          onSaved={() => {
+            requestEpochRef.current++
+            cacheRef.current = new Map()
+            pendingRef.current = new Set()
+            forceRerender((n) => n + 1)
+          }}
+        />
+      )}
+      {trashConfirmRows && trashConfirmRows.length > 0 && (
         <div
           className="fixed inset-0 z-[9990] bg-black/60 flex items-center justify-center"
-          onClick={() => !trashBusy && setTrashConfirmRow(null)}
+          onClick={() => !trashBusy && setTrashConfirmRows(null)}
         >
           <div
             className="bg-panel border border-nm-border rounded-xl p-5 w-[420px] flex flex-col gap-3"
@@ -1243,13 +1287,17 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           >
             <div className="text-sm font-semibold text-nm-text">Move to Trash</div>
             <div className="text-xs text-nm-text-2 leading-relaxed">
-              Move <span className="font-medium text-nm-text">"{trashConfirmRow.display_name}"</span> to the Trash?
-              This removes it from the catalog too — favourites, rating, tags and tray membership go with it.
-              You can recover the file from the OS Trash, but re-adding it to the catalog needs a rescan.
+              {trashConfirmRows.length === 1 ? (
+                <>Move <span className="font-medium text-nm-text">"{trashConfirmRows[0].display_name}"</span> to the Trash?</>
+              ) : (
+                <>Move <span className="font-medium text-nm-text">{trashConfirmRows.length} items</span> to the Trash?</>
+              )}{' '}
+              This removes {trashConfirmRows.length === 1 ? 'it' : 'them'} from the catalog too — favourites, rating, tags and tray membership go with {trashConfirmRows.length === 1 ? 'it' : 'them'}.
+              You can recover the file{trashConfirmRows.length === 1 ? '' : 's'} from the OS Trash, but re-adding {trashConfirmRows.length === 1 ? 'it' : 'them'} to the catalog needs a rescan.
             </div>
             <div className="flex items-center justify-end gap-2 mt-1">
               <button
-                onClick={() => setTrashConfirmRow(null)}
+                onClick={() => setTrashConfirmRows(null)}
                 disabled={trashBusy}
                 className="px-3 py-1.5 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-50"
               >
@@ -1395,11 +1443,46 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
             const { folder, name } = splitPath(row.relative_path)
             const isPlaying = playerIr?.id === row.id
             const isFocused = focusedIndex === index
+            const isSelected = selectedIds.has(row.id)
+            // With nothing multi-selected, the single focused row still highlights (unchanged
+            // single-select behavior); once a real multi-selection exists, selection membership
+            // takes over as the highlight so "which rows will Move/Trash/Edit act on" stays legible.
+            const isHighlighted = selectedIds.size > 0 ? isSelected : isFocused
             return (
               <div
-                onClick={() => setFocusedIndex(index)}
+                onClick={(e) => {
+                  if (e.shiftKey && selectionAnchorRef.current >= 0) {
+                    const lo = Math.min(selectionAnchorRef.current, index)
+                    const hi = Math.max(selectionAnchorRef.current, index)
+                    const ranged = new Set<string>()
+                    for (let i = lo; i <= hi; i++) {
+                      const r = cacheRef.current.get(i)
+                      if (r) ranged.add(r.id)
+                    }
+                    setSelectedIds(ranged)
+                  } else if (e.ctrlKey || e.metaKey) {
+                    setSelectedIds((prev) => {
+                      const next = new Set(prev)
+                      if (next.has(row.id)) next.delete(row.id)
+                      else next.add(row.id)
+                      return next
+                    })
+                    selectionAnchorRef.current = index
+                  } else {
+                    setSelectedIds(new Set())
+                    selectionAnchorRef.current = index
+                  }
+                  setFocusedIndex(index)
+                }}
                 onContextMenu={(e) => {
                   e.preventDefault()
+                  // Right-clicking a row already inside a multi-selection keeps the whole
+                  // selection (so the menu's actions apply to all of it); right-clicking outside
+                  // one replaces it with just this row — same convention as NAM mode's FileList.
+                  if (!selectedIds.has(row.id)) {
+                    setSelectedIds(new Set())
+                    selectionAnchorRef.current = index
+                  }
                   setFocusedIndex(index)
                   setContextMenu({ x: e.clientX, y: e.clientY, row })
                 }}
@@ -1409,10 +1492,13 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                   // bare id: the drop target needs the source library_root_id up front to refuse
                   // a cross-root drop before ever calling moveItems (fileOps.ts would refuse it
                   // too, but failing at the drop site gives the user a location to see why).
-                  e.dataTransfer.setData(IR_ITEM_DRAG_MIME, JSON.stringify({ itemIds: [row.id], libraryRootId: row.library_root_id }))
+                  // Dragging a row that's part of the current multi-selection carries the whole
+                  // selection; dragging any other row carries just that one.
+                  const draggedIds = selectedIds.has(row.id) && selectedIds.size > 1 ? [...selectedIds] : [row.id]
+                  e.dataTransfer.setData(IR_ITEM_DRAG_MIME, JSON.stringify({ itemIds: draggedIds, libraryRootId: row.library_root_id }))
                   e.dataTransfer.effectAllowed = 'move'
                 }}
-                className={`group h-full flex items-center gap-3 px-4 border-b border-nm-border-s hover:bg-hov ${isFocused ? 'bg-active-bg' : ''}`}
+                className={`group h-full flex items-center gap-3 px-4 border-b border-nm-border-s hover:bg-hov ${isHighlighted ? 'bg-active-bg' : ''}`}
               >
                 <div className="flex-1 min-w-0 flex flex-col justify-center gap-1 py-1.5">
                   {renamingId === row.id ? (
@@ -1767,7 +1853,16 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
         </div>
       )}
 
-      {contextMenu && (
+      {contextMenu && (() => {
+        // Multi-select-aware: if the right-clicked row is part of an active multi-selection with
+        // more than one item, Move/Trash/Edit act on the whole selection — otherwise just this row.
+        const menuRows = selectedIds.has(contextMenu.row.id) && selectedIds.size > 1
+          ? [...cacheRef.current.values()].filter((r) => selectedIds.has(r.id))
+          : [contextMenu.row]
+        const menuIds = menuRows.map((r) => r.id)
+        const suffix = menuIds.length > 1 ? ` (${menuIds.length})` : ''
+        const anyMissing = menuRows.some((r) => r.missing_since)
+        return (
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
@@ -1776,31 +1871,31 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
             { label: 'Reveal in Folder', onClick: () => window.api.revealFile(contextMenu.row.abs_path) },
             {
               label: 'Rename…',
-              disabled: !!contextMenu.row.missing_since,
+              disabled: !!contextMenu.row.missing_since || menuIds.length > 1,
               onClick: () => startRename(contextMenu.row)
             },
             {
-              label: 'Move to…',
-              disabled: !!contextMenu.row.missing_since,
+              label: `Move to…${suffix}`,
+              disabled: anyMissing,
               onClick: () =>
                 setMoveModal({
-                  itemIds: [contextMenu.row.id],
+                  itemIds: menuIds,
                   libraryRootId: contextMenu.row.library_root_id,
-                  currentFolderId: contextMenu.row.folder_id
+                  currentFolderId: menuIds.length === 1 ? contextMenu.row.folder_id : null
                 })
             },
             {
-              label: 'Edit Metadata…',
-              onClick: () => setEditMetadataRow(contextMenu.row)
+              label: `Edit Metadata…${suffix}`,
+              onClick: () => (menuRows.length > 1 ? setBatchEditRows(menuRows) : setEditMetadataRow(contextMenu.row))
             },
             {
-              label: 'Move to Trash…',
+              label: `Move to Trash…${suffix}`,
               // A missing item has no file to trash — fileOps.ts refuses it uniformly for all
               // four operations. Use "Remove from Catalog" via the missing-file dialog for that
               // case instead (a different, catalog-only removal that already exists for it).
-              disabled: !!contextMenu.row.missing_since,
+              disabled: anyMissing,
               destructive: true,
-              onClick: () => setTrashConfirmRow(contextMenu.row)
+              onClick: () => setTrashConfirmRows(menuRows)
             },
             {
               label: trayIds.has(contextMenu.row.id) ? 'Remove from Tray' : 'Add to Tray',
@@ -1820,7 +1915,8 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
             }
           ]}
         />
-      )}
+        )
+      })()}
 
       {addToGroupRow && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40" onClick={() => setAddToGroupRow(null)}>
