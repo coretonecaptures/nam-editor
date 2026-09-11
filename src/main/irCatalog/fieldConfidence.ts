@@ -47,7 +47,12 @@ export function createIrFieldWriter(db: DatabaseSync): IrFieldWriter {
       if (!value) return false
       const existing = selectSource.get(itemId, field) as { source: FieldSource } | undefined
       if (existing) {
-        if (existing.source === 'user_entered') return false
+        // "user_entered is sticky" means sticky against AUTOMATION, not against the user editing
+        // their own correction a second time (item 7 — the per-item metadata editor's whole job
+        // is letting them do exactly that). Neither existing caller (importLibrary.ts,
+        // applyVendorParsers.ts) ever passes source: 'user_entered', so this only changes
+        // behavior for the interactive edit path that needed it.
+        if (existing.source === 'user_entered' && source !== 'user_entered') return false
         if (source !== 'user_entered' && FIELD_SOURCE_RANK[source] > FIELD_SOURCE_RANK[existing.source as Exclude<FieldSource, 'user_entered'>]) {
           return false
         }

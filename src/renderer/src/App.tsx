@@ -678,6 +678,7 @@ declare global {
       irLibraryTrashItems: (itemIds: string[]) => Promise<Array<{ itemId: string; success: boolean; error?: string }>>
       irLibraryCopyItems: (itemIds: string[], destFolderId: number | null, force?: boolean) => Promise<Array<{ itemId: string; success: boolean; error?: string; newAbsPath?: string; newItemId?: string }>>
       irLibraryEnsureDestinationFolder: (libraryRootId: number, relativeFolderPath: string) => Promise<number | null>
+      irLibrarySetItemMetadata: (itemId: string, field: string, value: string) => Promise<{ success: boolean }>
       irLibrarySendSessionToIrLab: (captureId: string) => Promise<{ success: boolean; reason?: string }>
       irLibrarySendProjectToIrLab: (projectId: string, preset?: string) => Promise<{ success: boolean; reason?: string }>
       irLibraryListTags: () => Promise<Array<{ id: number; name: string; itemCount: number }>>

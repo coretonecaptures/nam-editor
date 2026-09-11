@@ -34,6 +34,7 @@ import { getLibraryOverview } from './irCatalog/libraryOverview'
 import { enrichLabProjects, getProjectDetailForFolder } from './irCatalog/labProjectEnrichment'
 import { findDuplicates } from './irCatalog/duplicates'
 import { renameItem, moveItems, trashItems, copyItems, ensureDestinationFolder } from './irCatalog/fileOps'
+import { createIrFieldWriter } from './irCatalog/fieldConfidence'
 import {
   enrichNamCaptures,
   listNamProjects,
@@ -498,6 +499,19 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
   ipcMain.handle('irLibrary:ensureDestinationFolder', (_event, libraryRootId: number, relativeFolderPath: string) =>
     ensureDestinationFolder(getDb(), libraryRootId, relativeFolderPath)
   )
+  // Per-item metadata editing (parity backlog item 7) — always writes at 'user_entered', the
+  // sticky-against-automation confidence tier fieldConfidence.ts already enforces. Restricted to
+  // the four fields that already have a *_source column AND a browse-row badge (manufacturer/
+  // cabinet/speaker/microphone) — `position` exists on ir_item too but isn't selected in the
+  // browse query yet, so there'd be nothing to show a "current value" against; add it here (and
+  // to queryLibrary.ts's SELECT) together, not as a silent half-feature.
+  const EDITABLE_IR_FIELDS = new Set(['manufacturer', 'cabinet', 'speaker', 'microphone'])
+  ipcMain.handle('irLibrary:setItemMetadata', (_event, itemId: string, field: string, value: string) => {
+    if (!EDITABLE_IR_FIELDS.has(field)) return { success: false }
+    const trimmed = value.trim()
+    if (!trimmed) return { success: false }
+    return { success: createIrFieldWriter(getDb()).write(itemId, field, trimmed, 'user_entered') }
+  })
   ipcMain.handle('irLibrary:sendSessionToIrLab', async (_event, captureId: string) => {
     if (!captureId) return { success: false, reason: 'No capture id for this item.' }
     return sendToIrLab({ kind: 'session', captureId })

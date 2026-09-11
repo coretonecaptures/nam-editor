@@ -199,18 +199,29 @@ results collide. ✅ (transactionality is the one open gap, noted above)
 ## Phase 3 — metadata editing in IR mode
 
 ### 7. Per-item metadata editor
-**Status:** open · **Size:** M · **Depends on:** nothing
+**Status:** ✅ done 2026-09-11 · **Size:** M · **Depends on:** nothing
 
-The biggest single gap: metadata can be set on a folder and inherited, but a single IR whose
-mic was mis-parsed cannot be corrected. Add an editable panel for the focused item writing at
-`user_entered`.
+Context menu "Edit Metadata…" opens `IrEditMetadataModal.tsx` — manufacturer/cabinet/speaker/
+microphone (the four with an existing `*_source` column and browse-row badge; `position` exists
+on `ir_item` too but isn't selected in the browse query yet, so there was nothing to show a
+current value against — left as a clearly-noted gap rather than half-wiring it), each field
+labeled with where its current value came from, writing only fields actually changed.
 
-The write rules already exist — `fieldConfidence.ts` ranks `ir_lab_native` (1) above
-vendor documentation (3), and treats `user_entered` as sticky: nothing automated ever
-overwrites it. Only the UI is missing.
+**Found and fixed a real bug in `fieldConfidence.ts` while reusing it** — its writer refused a
+SECOND `user_entered` write once a field was already `user_entered` (`if (existing.source ===
+'user_entered') return false`, unconditional). That rule was written to keep automation from
+overwriting a user's correction, but as written it also blocked the user from ever fixing their
+own typo again — never caught before because neither existing caller (`importLibrary.ts`,
+`applyVendorParsers.ts`) ever passes `user_entered` as the incoming source; item 7's edit path is
+the first one that does. Fixed to `existing.source === 'user_entered' && source !== 'user_entered'`
+— automation still blocked, a person editing their own correction again now works. Added
+`fieldConfidence.test.ts` (didn't exist before), 7 cases covering rank ordering both directions,
+`user_entered` blocking automation, `user_entered` overwriting `user_entered` (the fix), and empty-
+value refusal.
 
-**Done when:** editing a parser-derived field sticks through a full rescan, and the field
-shows its source.
+**Done when:** editing a parser-derived field sticks through a full rescan (✅ — `user_entered` is
+still unconditionally sticky against every automated source), and the field shows its source (✅
+— shown per-field in the editor; a persistent badge on the browse row itself is item 8).
 
 ### 8. Provenance badges on item fields
 **Status:** open · **Size:** S · **Depends on:** 7

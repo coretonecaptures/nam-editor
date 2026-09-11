@@ -17,6 +17,7 @@ import { IR_ITEM_DRAG_MIME } from './dragMime'
 import { IrDuplicatesModal } from './IrDuplicatesModal'
 import { IrMoveToFolderModal } from './IrMoveToFolderModal'
 import { IrBatchRenameModal } from './IrBatchRenameModal'
+import { IrEditMetadataModal } from './IrEditMetadataModal'
 import { AppSettings, loadSettings, saveSettings } from '../../types/settings'
 
 // Evaluated lazily, not at module scope — see NamProjectsShell.tsx's matching comment: a
@@ -269,6 +270,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
   const [trashConfirmRow, setTrashConfirmRow] = useState<IrItemRow | null>(null)
   const [trashBusy, setTrashBusy] = useState(false)
   const [showBatchRename, setShowBatchRename] = useState(false)
+  const [editMetadataRow, setEditMetadataRow] = useState<IrItemRow | null>(null)
   const [newGroupName, setNewGroupName] = useState('')
   // Folder tree/panel — scoped to the first root for now (no root switcher yet; a second "Add
   // Library Folder" click adds another root but the tree only ever shows the first one). Selecting
@@ -1217,6 +1219,19 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           }}
         />
       )}
+      {editMetadataRow && (
+        <IrEditMetadataModal
+          row={editMetadataRow}
+          displayName={editMetadataRow.display_name}
+          onClose={() => setEditMetadataRow(null)}
+          onSaved={() => {
+            requestEpochRef.current++
+            cacheRef.current = new Map()
+            pendingRef.current = new Set()
+            forceRerender((n) => n + 1)
+          }}
+        />
+      )}
       {trashConfirmRow && (
         <div
           className="fixed inset-0 z-[9990] bg-black/60 flex items-center justify-center"
@@ -1773,6 +1788,10 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                   libraryRootId: contextMenu.row.library_root_id,
                   currentFolderId: contextMenu.row.folder_id
                 })
+            },
+            {
+              label: 'Edit Metadata…',
+              onClick: () => setEditMetadataRow(contextMenu.row)
             },
             {
               label: 'Move to Trash…',
