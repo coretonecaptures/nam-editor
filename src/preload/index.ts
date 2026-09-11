@@ -638,6 +638,8 @@ const api = {
     ipcRenderer.invoke('irLibrary:renameFolder', folderId, newName, force),
   irLibraryDeleteFolder: (folderId: number): Promise<{ success: boolean; error?: string; itemsAffected?: number }> =>
     ipcRenderer.invoke('irLibrary:deleteFolder', folderId),
+  irLibrarySetRootWatchMode: (libraryRootId: number, watchMode: 'manual' | 'watched'): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('irLibrary:setRootWatchMode', libraryRootId, watchMode),
   irLibrarySetItemMetadata: (itemId: string, field: string, value: string): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('irLibrary:setItemMetadata', itemId, field, value),
   irLibraryClearItemMetadata: (itemId: string, field: string): Promise<{ success: boolean }> =>

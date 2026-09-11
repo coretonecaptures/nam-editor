@@ -349,6 +349,13 @@ export function IrFolderTree({
   refreshSignal?: number
 }): React.ReactElement {
   const [rows, setRows] = useState<FolderRow[]>([])
+  // Watch mode (parity backlog item 13) lives on library_root, not folder — a separate small
+  // fetch rather than adding it to every row `listAllFolders` returns for every folder in the
+  // tree, when only the root nodes ever need it.
+  const [rootWatchModes, setRootWatchModes] = useState<Map<number, string>>(new Map())
+  const refreshRootWatchModes = useCallback(() => {
+    window.api.irLibraryListRoots().then((roots) => setRootWatchModes(new Map(roots.map((r) => [r.id, r.watch_mode]))))
+  }, [])
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set())
   const [treeSearch, setTreeSearch] = useState('')
   const [contextMenu, setContextMenu] = useState<{ node: TreeNode; x: number; y: number } | null>(null)
@@ -380,6 +387,7 @@ export function IrFolderTree({
 
   useEffect(() => {
     refreshRows()
+    refreshRootWatchModes()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [libraryRootCount, refreshSignal])
 
@@ -403,6 +411,17 @@ export function IrFolderTree({
     const detail = await window.api.irLibraryGetFolderDetail(node.id)
     if (detail) window.api.revealFile(detail.absPath)
   }, [])
+
+  const toggleRootWatchMode = useCallback(
+    async (node: TreeNode) => {
+      setContextMenu(null)
+      const current = rootWatchModes.get(node.libraryRootId) ?? 'manual'
+      const next = current === 'watched' ? 'manual' : 'watched'
+      await window.api.irLibrarySetRootWatchMode(node.libraryRootId, next)
+      refreshRootWatchModes()
+    },
+    [rootWatchModes, refreshRootWatchModes]
+  )
 
   const openNewFolderDialog = useCallback((node: TreeNode) => {
     setContextMenu(null)
@@ -573,6 +592,16 @@ export function IrFolderTree({
               label: 'Reveal in Explorer',
               onClick: () => void revealInExplorer(contextMenu.node)
             },
+            // Watching only makes sense at the root level — a subfolder doesn't have its own
+            // library_root row to flip watch_mode on (parity backlog item 13).
+            ...(contextMenu.node.isRootNode
+              ? [
+                  {
+                    label: (rootWatchModes.get(contextMenu.node.libraryRootId) ?? 'manual') === 'watched' ? 'Stop Watching for Changes' : 'Watch for Changes',
+                    onClick: () => void toggleRootWatchMode(contextMenu.node)
+                  }
+                ]
+              : []),
             {
               label: 'New Subfolder…',
               onClick: () => openNewFolderDialog(contextMenu.node)

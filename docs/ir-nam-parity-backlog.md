@@ -362,15 +362,39 @@ rule NAM mode already enforces.
 preview on a real multi-vendor library.
 
 ### 13. Watch IR roots
-**Status:** open · **Size:** M · **Depends on:** nothing
+**Status:** ✅ done 2026-09-11 (one deviation from spec, noted below) · **Size:** M · **Depends on:** nothing
 
-`library_root.watch_mode` exists with a `'manual' | 'watched'` CHECK constraint and nothing
-reads it. Bind a watcher to roots marked `watched`, debounced, running an incremental scan of
-the changed subtree rather than the whole root. This is what makes an IR Lab "finished
-exports" folder appear without a manual Rescan — called out by name in the build plan §4.
+New `irRootWatcher.ts`: `fs.watch` per root marked `watch_mode = 'watched'`, debounced 2.5s,
+recovering with a retry after an `error` event (a network-drive drop being the realistic case) the
+same way `main/index.ts`'s existing training-folder watcher already handles it — an unhandled
+`error` on an `fs.watch` `EventEmitter` crashes the whole process, not just that watcher.
+`syncRootWatchers`/`stopAllRootWatchers` reconcile the active watcher set against the DB (called at
+startup, on watch-mode toggle, and on root add/remove/relink) and are torn down cleanly in
+`will-quit`. "Watch for Changes" / "Stop Watching for Changes" toggle in the root's context menu in
+`IrFolderTree.tsx`.
+
+**One deviation from the item's own wording, not silently built around:** this triggers a FULL
+rescan of the changed root, not a true incremental scan of just the changed subtree.
+`importLibrary.ts` has no partial-import primitive today, and building one (surgical re-parse of
+one subtree without re-walking/re-hashing the rest of a potentially huge root) is a materially
+larger project than this item on its own — extracted the existing full-rescan pipeline out of the
+`irLibrary:scan` handler into a shared `rescanRoot` so the watcher runs the exact same one, not a
+second copy of it. Costs more CPU per change than a true incremental scan would; doesn't change
+correctness, and both halves of the item's own "done when" (below) hold regardless.
+
+`fs.watch(..., { recursive: true })` isn't supported by Linux's inotify backend — falls back to
+top-level-only there (documented in the module's own header, not silently degraded); a new file
+inside an existing subfolder won't be picked up on Linux, a new top-level pack folder will be.
+
+No automated tests for this file: meaningfully testing real `fs.watch` + debounce timing needs
+either a real filesystem and real timers (slow, flaky in CI) or a fake-timer/fs mock elaborate
+enough that it mostly tests the mock — a real cost/value call, not an oversight. `rescanRoot`
+itself is just the same pipeline the (untested-the-same-way, pre-existing) manual-scan handler
+already runs.
 
 **Done when:** dropping a WAV into a watched root makes it appear in the list without user
-action, and the watcher survives a root going temporarily offline.
+action (✅ — via the debounced full rescan), and the watcher survives a root going temporarily
+offline (✅ — the `error`-event retry).
 
 ---
 

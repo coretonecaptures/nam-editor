@@ -34,6 +34,7 @@ import { getLibraryOverview } from './irCatalog/libraryOverview'
 import { enrichLabProjects, getProjectDetailForFolder } from './irCatalog/labProjectEnrichment'
 import { findDuplicates } from './irCatalog/duplicates'
 import { renameItem, moveItems, trashItems, copyItems, ensureDestinationFolder, createFolder, renameFolder, deleteFolder } from './irCatalog/fileOps'
+import { syncRootWatchers, stopAllRootWatchers } from './irCatalog/irRootWatcher'
 import { createIrFieldWriter, promoteFieldToFolder } from './irCatalog/fieldConfidence'
 import {
   enrichNamCaptures,
@@ -147,7 +148,9 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
   // a long time) and reconciliation above already ran with whatever hashes existed at scan time;
   // a slow-arriving content_hash only improves the NEXT reconciliation pass's tier-1 accuracy, not
   // this one's.
-  ipcMain.handle('irLibrary:scan', async (_event, folderPath: string, label: string | null) => {
+  // Extracted so the watcher (item 13 — syncRootWatchers below) can run the exact same pipeline a
+  // manual Rescan does, instead of a second, drifting copy of it.
+  const rescanRoot = async (folderPath: string, label: string | null) => {
     const database = getDb()
     const stats = await importLibrary(database, folderPath, label, {
       onProgress: (p) => {
@@ -187,6 +190,36 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     }
 
     return stats
+  }
+
+  // Watched roots (parity backlog item 13) — library_root.watch_mode had existed since the
+  // original schema with nothing ever reading it. watcherLog avoids importing main/index.ts's own
+  // `log()` (that file is the Electron entry point; importing anything from it here would create
+  // a real circular import, since index.ts already imports this file — see trashFile.ts's matching
+  // comment for the same reasoning applied to deleteWithFallback).
+  const watcherLog = (msg: string): void => console.error(`[IR root watcher] ${msg}`)
+  const resyncWatchers = (): void => {
+    // Full teardown + rebuild rather than a diff against path — `syncRootWatchers` only compares
+    // watch_mode/existence by id, so a relinked root's watcher (same id, changed path) wouldn't
+    // otherwise notice its target moved. Only called on an actual change (startup, watch-mode
+    // toggle, root add/remove/relink), never per-render, so the cost is negligible.
+    stopAllRootWatchers()
+    syncRootWatchers(
+      getDb(),
+      (_rootId, rootPath) => {
+        void rescanRoot(rootPath, null).catch((err) => watcherLog(`rescan of "${rootPath}" failed: ${String(err)}`))
+      },
+      watcherLog
+    )
+  }
+  resyncWatchers()
+
+  ipcMain.handle('irLibrary:scan', async (_event, folderPath: string, label: string | null) => rescanRoot(folderPath, label))
+
+  ipcMain.handle('irLibrary:setRootWatchMode', (_event, libraryRootId: number, watchMode: 'manual' | 'watched') => {
+    getDb().prepare(`UPDATE library_root SET watch_mode = ? WHERE id = ?`).run(watchMode, libraryRootId)
+    resyncWatchers()
+    return { success: true }
   })
 
   // "Import IR Lab Project(s)..." (plan section 8c/§4) -- a distinct File-menu action for pointing
@@ -285,7 +318,9 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     return previewLibraryRootRemoval(getDb(), libraryRootId)
   })
   ipcMain.handle('irLibrary:removeLibraryRoot', (_event, libraryRootId: number) => {
-    return removeLibraryRoot(getDb(), libraryRootId)
+    const result = removeLibraryRoot(getDb(), libraryRootId)
+    resyncWatchers() // stop watching a root that no longer exists
+    return result
   })
 
   // "Highlight the capture if someone tries to open one and realizes it doesn't exist" — checked
@@ -300,6 +335,7 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
   // renderer immediately follows this with the normal 'irLibrary:scan' call to re-validate.
   ipcMain.handle('irLibrary:relinkLibraryRoot', (_event, libraryRootId: number, newPath: string) => {
     relinkLibraryRoot(getDb(), libraryRootId, newPath)
+    resyncWatchers() // a watched root's watcher must move to the new path, not keep watching the old one
   })
   ipcMain.handle('irLibrary:removeItemFromCatalog', (_event, itemId: string) => {
     removeItemFromCatalog(getDb(), itemId)

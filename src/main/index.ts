@@ -7,6 +7,7 @@ import crypto from 'crypto'
 import { findOuterMetadataMatch, findMatchingBrace, serializeJsonValue, escapeRe, patchMetadataFields } from './metadataPatcher'
 import { registerIrLibraryIpc } from './irLibraryIpc'
 import { deleteWithFallback } from './trashFile'
+import { stopAllRootWatchers } from './irCatalog/irRootWatcher'
 import { writeNamLabResult } from './irCatalog/namCaptureResult'
 import { buildNamCaptureImportPayloads, type NamCaptureImportItem, type CaptureProfileConfig } from './namCaptureTraining'
 import { isAllowedLocalFilePath, localFileExtension } from './localFileGuard'
@@ -9442,6 +9443,7 @@ app.on('will-quit', () => {
     folderWatcher = null
   }
   closeFolderWatchers()
+  stopAllRootWatchers()
 })
 
 app.on('window-all-closed', () => {
