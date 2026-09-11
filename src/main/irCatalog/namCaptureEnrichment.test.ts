@@ -5,7 +5,7 @@ import * as os from 'node:os'
 import { join } from 'node:path'
 import { createCoreSchema } from './schema'
 import { importLibrary } from './importLibrary'
-import { enrichNamCaptures, listNamProjects, getNamProjectDetail, getNamLibraryOverview, setNamCaptureMetadata } from './namCaptureEnrichment'
+import { enrichNamCaptures, listNamProjects, getNamProjectDetail, getNamLibraryOverview, setNamCaptureMetadata, applyProjectDefaults } from './namCaptureEnrichment'
 import { writeNamLabResult, namLabResultPathFor } from './namCaptureResult'
 import { queryItems, countItems } from './queryLibrary'
 
@@ -376,5 +376,105 @@ describe('enrichNamCaptures (schemaVersion 2)', () => {
     expect(d.namCapturesDir?.replace(/\\/g, '/').endsWith('/Amp A/NAM Captures')).toBe(true)
     expect(d.excitationsDir?.replace(/\\/g, '/').endsWith('/Amp A/_excitations')).toBe(true)
     expect(d.imagePaths.map((p) => p.replace(/\\/g, '/').split('/').pop()).sort()).toEqual(['rig-photo.jpg', 'settings.png'])
+  })
+})
+
+describe('applyProjectDefaults (parity backlog item 14)', () => {
+  it('fills a genuinely untouched (NULL) field on every capture in the project', async () => {
+    const { root } = makeFixture()
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const stats = await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+    enrichNamCaptures(db, stats.libraryRootId)
+
+    // `suggested: true` in the fixture (cap0001 only) DOES seed the real effective columns, not
+    // just the separate suggested_* hint columns — enrichNamCaptures's own updateNamCaptureFacts
+    // statement does `gear_make = COALESCE(gear_make, ?)` etc. straight from the suggested block
+    // on first scan (namCaptureEnrichment.ts:113-129). So cap0001 already has real gearMake/
+    // toneType ('Fender'/'crunch') the moment it's scanned; cap0002 (no suggested block) starts
+    // genuinely NULL on both. Confirmed by first getting this test's expectation wrong the other
+    // way (assuming suggested never seeds effective) and having test:electron's real FTS5 run
+    // catch the mismatch — not by re-reading the source more carefully up front.
+    const ampA = listNamProjects(db).find((p) => p.name === 'Amp A')!
+    const result = applyProjectDefaults(db, ampA.collectionId, { gearMake: 'Friedman', toneType: 'crunch' })
+    // cap0001: both already set (from the suggested seed) -> untouched. cap0002: both NULL -> fill.
+    expect(result.itemsFilled).toBe(2)
+
+    const detail = getNamProjectDetail(db, ampA.collectionId)!
+    const clean = detail.captures.find((c) => c.captureId === 'cap0001')!
+    const crunch = detail.captures.find((c) => c.captureId === 'cap0002')!
+    expect(clean.effective.gearMake).toBe('Fender') // untouched -- the suggested-seeded value
+    expect(clean.effective.toneType).toBe('crunch') // untouched -- also suggested-seeded
+    expect(crunch.effective.gearMake).toBe('Friedman') // filled -- was genuinely NULL
+    expect(crunch.effective.toneType).toBe('crunch') // filled -- was genuinely NULL
+  })
+
+  it('never overwrites a per-capture value that already exists, filled or user-set', async () => {
+    const { root } = makeFixture()
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const stats = await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+    enrichNamCaptures(db, stats.libraryRootId)
+
+    const ampA = listNamProjects(db).find((p) => p.name === 'Amp A')!
+    const detailBefore = getNamProjectDetail(db, ampA.collectionId)!
+    const clean = detailBefore.captures.find((c) => c.captureId === 'cap0001')!
+    const crunch = detailBefore.captures.find((c) => c.captureId === 'cap0002')!
+    setNamCaptureMetadata(db, clean.itemId, { gearMake: 'Already Set' })
+    setNamCaptureMetadata(db, crunch.itemId, { gearMake: 'Deliberately Chosen' })
+
+    const result = applyProjectDefaults(db, ampA.collectionId, { gearMake: 'Friedman' })
+    expect(result.itemsFilled).toBe(0) // both captures already have their own gearMake
+
+    const detailAfter = getNamProjectDetail(db, ampA.collectionId)!
+    expect(detailAfter.captures.find((c) => c.captureId === 'cap0002')!.effective.gearMake).toBe('Deliberately Chosen')
+  })
+
+  it('never overwrites a deliberately-cleared (empty string) field either', async () => {
+    const { root } = makeFixture()
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const stats = await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+    enrichNamCaptures(db, stats.libraryRootId)
+
+    const ampA = listNamProjects(db).find((p) => p.name === 'Amp A')!
+    const detailBefore = getNamProjectDetail(db, ampA.collectionId)!
+    const clean = detailBefore.captures.find((c) => c.captureId === 'cap0001')!
+    setNamCaptureMetadata(db, clean.itemId, { toneType: '' }) // deliberate clear, not NULL
+
+    const result = applyProjectDefaults(db, ampA.collectionId, { toneType: 'overdrive' })
+    // cap0001's toneType is '' (cleared, not NULL) -- must stay untouched; cap0002's is genuinely
+    // NULL, so only it fills.
+    expect(result.itemsFilled).toBe(1)
+    const detailAfter = getNamProjectDetail(db, ampA.collectionId)!
+    expect(detailAfter.captures.find((c) => c.captureId === 'cap0001')!.effective.toneType).toBe('')
+    expect(detailAfter.captures.find((c) => c.captureId === 'cap0002')!.effective.toneType).toBe('overdrive')
+  })
+
+  it('scopes to the one project — a sibling project is untouched', async () => {
+    const { root } = makeFixture()
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const stats = await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+    enrichNamCaptures(db, stats.libraryRootId)
+
+    const ampA = listNamProjects(db).find((p) => p.name === 'Amp A')!
+    const ampB = listNamProjects(db).find((p) => p.name === 'Amp B')!
+    applyProjectDefaults(db, ampA.collectionId, { gearMake: 'Friedman' })
+
+    const bDetail = getNamProjectDetail(db, ampB.collectionId)!
+    for (const c of bDetail.captures) expect(c.effective.gearMake).toBeNull()
+  })
+
+  it('ignores a blank/whitespace-only patch value', async () => {
+    const { root } = makeFixture()
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const stats = await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+    enrichNamCaptures(db, stats.libraryRootId)
+
+    const ampA = listNamProjects(db).find((p) => p.name === 'Amp A')!
+    const result = applyProjectDefaults(db, ampA.collectionId, { gearMake: '   ' })
+    expect(result.itemsFilled).toBe(0)
   })
 })

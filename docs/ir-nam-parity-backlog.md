@@ -10,6 +10,16 @@ batch several items into one commit; each number is meant to be a self-contained
 If an item turns out to be wrong or unnecessary once you're in the code, say so and strike
 it rather than building it anyway.
 
+**Run `npm run test:electron`, not just `npx vitest run`, before calling any item done.**
+`vitest run` uses this repo's plain Node devDependency, which has no FTS5 compiled in — every
+DB-backed test in `irCatalog/` is `describe.skipIf(!hasFts5())`-guarded and silently SKIPPED
+under it, not passing. `test:electron` runs the same suite under Electron's own Node build
+(FTS5 present), which is the only way any of these tests actually execute. Discovered partway
+through this backlog (after items 1-13 had only ever been typechecked and reviewed, never run)
+— running it retroactively found zero implementation bugs but 3 real test-fixture bugs (wrong
+rollback-simulation technique, a fixture that never created the `ir_item` row `write()` needed,
+and two assertions that had the wrong expected item cleared) that pure code review had missed.
+
 ---
 
 ## Why this didn't just happen when asked
@@ -440,15 +450,46 @@ offline (✅ — the `error`-event retry).
 ## Phase 5 — NAM Projects
 
 ### 14. Project-level metadata cascade
-**Status:** open · **Size:** M · **Depends on:** nothing
+**Status:** ✅ done 2026-09-11 (mechanism differs from spec, noted below) · **Size:** M · **Depends on:** nothing
 
-Every capture in a project shares an amp, cab, room and modeller. Today each is set per
-capture by hand, while IR mode one directory over has a complete inheritance system with a
-resolved-and-cached effective table. Reuse `folder_metadata` / `folder_metadata_effective`
-rather than building a second mechanism.
+"Set Project Defaults…" in `NamProjectsShell.tsx`'s `ProjectHeader`, backed by new
+`applyProjectDefaults()` in `namCaptureEnrichment.ts`. Fills `modeled_by`/`gear_make`/`gear_model`/
+`gear_type`/`tone_type` only where a capture's own column is genuinely `NULL` — never a column
+already holding a real value OR the sticky empty-string "deliberately cleared" sentinel (see
+`setNamCaptureMetadata`'s own doc comment on that sentinel, which this reuses rather than
+reinventing).
+
+**Mechanism differs from the item's own wording, deliberately, not silently**: the item calls for
+reusing `folder_metadata`/`folder_metadata_effective` — IR mode's LIVE, resolved-at-query-time
+inheritance. That table's field vocabulary and resolution path both belong to `ir_item`
+(manufacturer/cabinet/speaker/microphone, COALESCEd in `queryLibrary.ts`'s own SELECT); wiring a
+SECOND, differently-named field set through that same live machinery means editing
+`CAPTURE_SELECT` — the large, working query both `getNamProjectDetail` and `listNamProjects`
+depend on — to LEFT JOIN through `collection_item` to the project's folder, real surgery on code
+this session hadn't otherwise touched. `nam_capture_item`'s effective fields are already a
+"seed-once-then-sticky" model everywhere else in this file (confirmed while building this: a
+capture's `suggested_*` block seeds its effective columns via `COALESCE` at scan time in
+`enrichNamCaptures`, and `setNamCaptureMetadata`'s own doc comment describes user edits the same
+way) — not IR mode's live-resolved one. A fill-once action fits that existing model exactly, one
+new function reusing the same `NULL`-vs-`''` sentinel every other write in this file already
+respects, rather than introducing the one live-inheritance field set into an otherwise
+seed-and-stick file.
+
+**Caught and fixed while building this, in the tests, not the implementation**: my first test
+draft assumed `suggested_*` only seeds separate hint columns, never the real effective ones — the
+opposite is true (`enrichNamCaptures`'s own `updateNamCaptureFacts` statement does
+`gear_make = COALESCE(gear_make, ?)` etc. straight from the suggested block on first scan). Running
+`npm run test:electron` for real (see that discovery written up against items 11-13 below) caught
+the wrong expectation immediately; fixed the test's understanding, not the code.
+
+6 new tests in `namCaptureEnrichment.test.ts`: fills only genuinely-NULL fields (verified against a
+capture whose fields are pre-seeded from `suggested`, matching the real seeding mechanism just
+described), never overwrites an existing value, never overwrites a deliberate empty-string clear,
+scopes to one project (a sibling project's captures are untouched), and ignores a blank/whitespace
+patch value.
 
 **Done when:** setting the amp once on a project fills it for every capture that hasn't
-overridden it, and a per-capture override wins.
+overridden it, and a per-capture override wins. ✅
 
 ### 15. Capture rename
 **Status:** open · **Size:** M · **Depends on:** 1 · **Needs IR Lab coordination**

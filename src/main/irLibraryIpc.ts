@@ -44,7 +44,8 @@ import {
   getNamLibraryOverview,
   setNamCaptureMetadata,
   relinkNamCaptureModel,
-  findNamModelCandidates
+  findNamModelCandidates,
+  applyProjectDefaults
 } from './irCatalog/namCaptureEnrichment'
 import {
   previewFolderRemoval,
@@ -303,6 +304,17 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
   )
   ipcMain.handle('irLibrary:findNamModelCandidates', (_event, modelName: string, roots: string[]) =>
     findNamModelCandidates(modelName, Array.isArray(roots) ? roots.filter((r) => typeof r === 'string') : [])
+  )
+  // "Set project defaults" (parity backlog item 14) — fills only the captures in this project
+  // that don't already have their own value for a given field; never overwrites an existing
+  // per-capture value (including a deliberate empty-string clear).
+  ipcMain.handle(
+    'irLibrary:applyProjectDefaults',
+    (
+      _event,
+      collectionId: string,
+      patch: Partial<{ modeledBy: string; gearMake: string; gearModel: string; gearType: string; toneType: string }>
+    ) => applyProjectDefaults(getDb(), collectionId, patch)
   )
 
   // Folder/root removal — "remove a folder and its children from the catalog, with a confirm

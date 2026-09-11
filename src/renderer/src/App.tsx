@@ -709,6 +709,10 @@ declare global {
       irLibraryGetNamProjectDetail: (collectionId: string) => Promise<NamProjectDetail | null>
       irLibraryGetNamLibraryOverview: () => Promise<NamLibraryOverview>
       irLibrarySetNamCaptureMetadata: (itemId: string, patch: NamCaptureMetadataPatch) => Promise<NamCaptureRow | null>
+      irLibraryApplyProjectDefaults: (
+        collectionId: string,
+        patch: Partial<{ modeledBy: string; gearMake: string; gearModel: string; gearType: string; toneType: string }>
+      ) => Promise<{ itemsFilled: number }>
       irLibraryRelinkNamModel: (itemId: string, newModelPath: string) => Promise<NamCaptureRow | null>
       irLibraryFindNamModelCandidates: (modelName: string, roots: string[]) => Promise<string[]>
       enqueueNamCaptureImport: (req: {

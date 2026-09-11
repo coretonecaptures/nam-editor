@@ -8,6 +8,7 @@ import type { NamFile } from '../../types/nam'
 import { loadNamFileForPlayback } from '../../utils/loadNamFile'
 import { PlayerPanel } from '../PlayerPanel'
 import { WavPreviewPlayer } from '../WavPreviewPlayer'
+import { IrProjectDefaultsModal } from './IrProjectDefaultsModal'
 import type {
   NamProjectSummary,
   NamProjectDetail,
@@ -520,10 +521,12 @@ function MakeupChips({ captures }: { captures: NamCaptureRow[] }): React.ReactEl
 
 function ProjectHeader({
   detail,
-  onReveal
+  onReveal,
+  onOpenProjectDefaults
 }: {
   detail: NamProjectDetail
   onReveal: (path: string) => void
+  onOpenProjectDefaults: () => void
 }): React.ReactElement {
   const esrs = detail.captures
     .filter((c) => c.trained)
@@ -590,6 +593,9 @@ function ProjectHeader({
             className="text-[11px] text-nm-accent hover:underline disabled:opacity-40 disabled:no-underline"
           >
             Open in IR Lab
+          </button>
+          <button onClick={onOpenProjectDefaults} className="text-[11px] text-nm-accent hover:underline">
+            Set Project Defaults…
           </button>
           {handoffStatus && <span className="text-[11px] text-nm-text-3">{handoffStatus}</span>}
         </div>
@@ -1548,6 +1554,7 @@ export function toBatchItem(
 export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = {}): React.ReactElement {
   const [showSettings, setShowSettings] = useState(false)
   const [playerFile, setPlayerFile] = useState<NamFile | null>(null)
+  const [showProjectDefaults, setShowProjectDefaults] = useState(false)
   const [playerError, setPlayerError] = useState<string | null>(null)
   const openModelInPlayer = useCallback(async (path: string) => {
     setPlayerError(null)
@@ -2185,6 +2192,14 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
           <button onClick={() => setPlayerError(null)} className="text-nm-text-3 hover:text-nm-text">×</button>
         </div>
       )}
+      {showProjectDefaults && detail && (
+        <IrProjectDefaultsModal
+          collectionId={detail.collectionId}
+          projectName={detail.name}
+          onClose={() => setShowProjectDefaults(false)}
+          onApplied={() => void refreshDetail(detail.collectionId)}
+        />
+      )}
 
       {error && (
         <div className="flex items-center justify-between px-4 py-1 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 flex-shrink-0">
@@ -2362,7 +2377,11 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
           <div className="flex-1 flex flex-col min-w-0 min-h-0">
             {detail && (
               <>
-                <ProjectHeader detail={detail} onReveal={(p) => window.api.revealFile(p)} />
+                <ProjectHeader
+                  detail={detail}
+                  onReveal={(p) => window.api.revealFile(p)}
+                  onOpenProjectDefaults={() => setShowProjectDefaults(true)}
+                />
                 <div className="flex items-center gap-2 px-4 py-1.5 border-b border-nm-border-s flex-shrink-0">
                   <input
                     value={captureFilter}

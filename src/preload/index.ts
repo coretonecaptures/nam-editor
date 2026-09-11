@@ -687,6 +687,10 @@ const api = {
     ipcRenderer.invoke('irLibrary:getNamLibraryOverview'),
   irLibrarySetNamCaptureMetadata: (itemId: string, patch: NamCaptureMetadataPatch): Promise<NamCaptureRow | null> =>
     ipcRenderer.invoke('irLibrary:setNamCaptureMetadata', itemId, patch),
+  irLibraryApplyProjectDefaults: (
+    collectionId: string,
+    patch: Partial<{ modeledBy: string; gearMake: string; gearModel: string; gearType: string; toneType: string }>
+  ): Promise<{ itemsFilled: number }> => ipcRenderer.invoke('irLibrary:applyProjectDefaults', collectionId, patch),
   irLibraryRelinkNamModel: (itemId: string, newModelPath: string): Promise<NamCaptureRow | null> =>
     ipcRenderer.invoke('irLibrary:relinkNamModel', itemId, newModelPath),
   irLibraryFindNamModelCandidates: (modelName: string, roots: string[]): Promise<string[]> =>
