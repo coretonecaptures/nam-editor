@@ -142,6 +142,17 @@ const CAPTURE_STATUS_TEXT: Record<CaptureStatus, string> = {
   failed: 'text-red-500',
   missing: 'text-orange-500'
 }
+// CaptureCard's top-border accent (design_handoff_nam_projects' "border-top: 2px solid <status
+// color>" data-card treatment) — border-* utilities, not text-*/bg-* (Tailwind doesn't share
+// color-property variants across those, so this is its own map, not a rename of the ones above).
+const CAPTURE_STATUS_BORDER: Record<CaptureStatus, string> = {
+  untrained: 'border-t-nm-text-3/40',
+  queued: 'border-t-indigo-500',
+  training: 'border-t-amber-500',
+  trained: 'border-t-emerald-500',
+  failed: 'border-t-red-500',
+  missing: 'border-t-orange-500'
+}
 
 // --- formatting helpers ------------------------------------------------------
 
@@ -356,7 +367,18 @@ const numOr = (n: number | null | undefined, fallback: number): number =>
  * A function of `queueJobs` (not a static array) so the `trained`/status column's render can
  * derive each row's live status — `deriveCaptureStatus` needs the current queue snapshot, which
  * only exists inside the component, not at module scope. */
-export function buildCaptureColumns(queueJobs: TrainerQueueJob[]): DataGridColumn<NamCaptureRow>[] {
+export interface CaptureRowActions {
+  onQueue: (c: NamCaptureRow) => void
+  onOpenModel: (c: NamCaptureRow) => void
+  onGoLive: () => void
+  onRemoveJob: (jobId: string) => void
+  onRetryJob: (jobId: string) => void
+  onReveal: (c: NamCaptureRow) => void
+}
+
+export function buildCaptureColumns(queueJobs: TrainerQueueJob[], actions: CaptureRowActions): DataGridColumn<NamCaptureRow>[] {
+  const findJob = (c: NamCaptureRow): TrainerQueueJob | undefined =>
+    queueJobs.find((j) => j.namCaptureId === (c.captureId ?? c.itemId))
   return [
   { key: 'name', label: 'Name', minWidth: 160, defaultWidth: 260, defaultVisible: true, filter: 'text', getValue: (c) => c.captureName },
   { key: 'scope', label: 'Scope', minWidth: 90, defaultVisible: true, getValue: (c) => c.captureScope ?? '' },
@@ -394,6 +416,28 @@ export function buildCaptureColumns(queueJobs: TrainerQueueJob[]): DataGridColum
     getValue: (c) => fmtDate(c.createdAt) ?? '',
     sortValue: (c) => (c.createdAt ? Date.parse(c.createdAt) || 0 : 0),
     render: (c) => <span title={fmtDateTime(c.createdAt) ?? ''}>{relTime(c.createdAt) ?? '—'}</span>
+  },
+  {
+    key: 'action',
+    label: 'Actions',
+    minWidth: 86,
+    defaultVisible: true,
+    align: 'right',
+    getValue: (c) => {
+      const status = deriveCaptureStatus(c, queueJobs)
+      return status === 'trained' ? 'Open .nam' : status === 'training' ? 'Live run' : status === 'queued' ? 'Remove' : status === 'failed' ? 'Retry' : status === 'missing' ? 'Relink' : 'Queue'
+    },
+    render: (c) => {
+      const status = deriveCaptureStatus(c, queueJobs)
+      const job = findJob(c)
+      const linkClass = 'text-[11px] font-semibold text-nm-accent hover:underline'
+      if (status === 'trained') return <button className={linkClass} onClick={() => actions.onOpenModel(c)}>Open .nam</button>
+      if (status === 'training') return <button className={linkClass} onClick={() => actions.onGoLive()}>Live run</button>
+      if (status === 'queued' && job) return <button className={linkClass} onClick={() => actions.onRemoveJob(job.jobId)}>Remove</button>
+      if (status === 'failed' && job) return <button className={linkClass} onClick={() => actions.onRetryJob(job.jobId)}>Retry</button>
+      if (status === 'missing') return <button className={linkClass} title="No file on disk to relink to yet — reveals the expected folder" onClick={() => actions.onReveal(c)}>Relink</button>
+      return <button className={linkClass} onClick={() => actions.onQueue(c)}>Queue</button>
+    }
   }
   ]
 }
@@ -796,7 +840,9 @@ function CaptureCard({
         e.preventDefault()
         onMenu(capture, e.clientX, e.clientY)
       }}
-      className={`flex flex-col rounded-xl border cursor-pointer transition-colors select-none overflow-hidden ${
+      className={`flex flex-col rounded-xl border border-t-2 cursor-pointer transition-colors select-none overflow-hidden ${
+        CAPTURE_STATUS_BORDER[status]
+      } ${
         active
           ? 'border-nm-accent ring-1 ring-nm-accent/40 bg-panel'
           : 'border-nm-border bg-panel hover:border-nm-text-3/50'
@@ -934,26 +980,43 @@ function CaptureCard({
         >
           Reveal WAV
         </button>
-        {!capture.trained && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              onQueue()
-            }}
-            className="text-nm-accent hover:underline"
-          >
-            Queue
+        {status === 'trained' && capture.result?.outputModelPath && (
+          <button onClick={(e) => { e.stopPropagation(); onOpenModel() }} className="text-nm-text-2 hover:text-nm-text">
+            Open .nam
           </button>
         )}
-        {capture.trained && capture.result?.outputModelPath && (
+        {status === 'training' && (
+          <button onClick={(e) => { e.stopPropagation(); goToTrainingQueue() }} className="text-nm-accent hover:underline">
+            Live run
+          </button>
+        )}
+        {status === 'queued' && (
           <button
             onClick={(e) => {
               e.stopPropagation()
-              onOpenModel()
+              const job = queueJobs.find((j) => j.namCaptureId === (capture.captureId ?? capture.itemId))
+              if (job) void window.api.removeTrainerJob(job.jobId)
             }}
             className="text-nm-text-2 hover:text-nm-text"
           >
-            Open .nam
+            Remove
+          </button>
+        )}
+        {status === 'failed' && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              const job = queueJobs.find((j) => j.namCaptureId === (capture.captureId ?? capture.itemId))
+              if (job) void window.api.retryTrainerJob(job.jobId)
+            }}
+            className="text-nm-accent hover:underline"
+          >
+            Retry
+          </button>
+        )}
+        {status === 'untrained' && (
+          <button onClick={(e) => { e.stopPropagation(); onQueue() }} className="text-nm-accent hover:underline">
+            Queue
           </button>
         )}
       </div>
@@ -2290,8 +2353,6 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
     })
   }, [detail, captureFilter, statusFilter, syntheticOnly, queueJobs, facets])
 
-  const captureColumns = useMemo(() => buildCaptureColumns(queueJobs), [queueJobs])
-
   // Live-run strip data — the first capture of THIS project currently training, plus whichever of
   // its own other captures are queued/staged behind it (queueJobs' own array order is the queue
   // order, same assumption TrainingPanel.tsx's live-run view already makes).
@@ -2319,13 +2380,6 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
       .filter((h) => h.sourceMode === 'nam-capture-import' && paths.has(h.sourcePath))
       .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp))
   }, [detail, trainerHistory])
-
-  // Only the card view sorts through this — the list view is a DataGrid, which sorts itself
-  // (controlled by the same sortKey/sortDir so both views agree).
-  const sortedCaptures = useMemo(
-    () => sortRows(visibleCaptures, captureColumns, sortKey, sortDir),
-    [visibleCaptures, captureColumns, sortKey, sortDir]
-  )
 
   useEffect(() => {
     writeStored(SORT_LS_KEY, `${sortKey}:${sortDir}`)
@@ -2528,6 +2582,30 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
     const target = capture.recordingPath ?? capture.captureFolderPath
     if (target) window.api.revealFile(target)
   }, [])
+
+  // Capture table/card "Actions" column (Phase 5) — declared after stageBatch/revealCapture
+  // (both above) since it closes over them.
+  const captureRowActions: CaptureRowActions = useMemo(
+    () => ({
+      onQueue: (c) => void stageBatch([c], c.captureName),
+      onOpenModel: (c) => {
+        if (c.result?.outputModelPath) void window.api.openFile(c.result.outputModelPath)
+      },
+      onGoLive: () => goToTrainingQueue(),
+      onRemoveJob: (jobId) => void window.api.removeTrainerJob(jobId),
+      onRetryJob: (jobId) => void window.api.retryTrainerJob(jobId),
+      onReveal: (c) => revealCapture(c)
+    }),
+    [stageBatch, revealCapture]
+  )
+  const captureColumns = useMemo(() => buildCaptureColumns(queueJobs, captureRowActions), [queueJobs, captureRowActions])
+
+  // Only the card view sorts through this — the list view is a DataGrid, which sorts itself
+  // (controlled by the same sortKey/sortDir so both views agree).
+  const sortedCaptures = useMemo(
+    () => sortRows(visibleCaptures, captureColumns, sortKey, sortDir),
+    [visibleCaptures, captureColumns, sortKey, sortDir]
+  )
 
   // --- editable metadata + trained-.nam relink ---
   const applyUpdatedCapture = useCallback((row: NamCaptureRow | null) => {
