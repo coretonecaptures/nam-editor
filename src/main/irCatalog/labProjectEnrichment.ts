@@ -149,16 +149,24 @@ export function enrichLabProjects(db: DatabaseSync, libraryRootId: number): LabP
   )
   const insertCollection = db.prepare(
     `INSERT INTO collection (
-       id, kind, library_root_id, folder_id, name, created_at,
+       id, kind, library_root_id, folder_id, name, naming_template, created_at,
        cabinet, speaker, amplifier, room, signal_chain, description, project_notes
-     ) VALUES (?, 'ir_project', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     ) VALUES (?, 'ir_project', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
   // Always re-applied from project.json on every scan — there's no NAM Lab Manager UI yet that
   // hand-edits a Project's own details, so unlike ir_item's confidence ladder there's nothing to
   // protect from being overwritten here.
+  //
+  // naming_template carries project.json's own `id` — IR Lab's real, originally-generated
+  // ProjectStore UUID, not this row's own PK (which for a pre-existing row may be a UUID this app
+  // invented itself before this column was populated; see this file's header + the coverage
+  // planner's own module for why the two id spaces must not be confused). Reusing `naming_template`
+  // rather than adding a new column mirrors namCaptureEnrichment.ts's identical repurposing of it
+  // for kind='nam_project' rows — same column, same "the real external project id" meaning, just a
+  // different collection kind.
   const updateCollectionDetails = db.prepare(
-    `UPDATE collection SET name = ?, cabinet = ?, speaker = ?, amplifier = ?, room = ?,
-       signal_chain = ?, description = ?, project_notes = ? WHERE id = ?`
+    `UPDATE collection SET name = ?, naming_template = ?, cabinet = ?, speaker = ?, amplifier = ?,
+       room = ?, signal_chain = ?, description = ?, project_notes = ? WHERE id = ?`
   )
   const findItemByRelativePath = db.prepare(
     `SELECT id FROM item WHERE library_root_id = ? AND relative_path = ?`
@@ -199,9 +207,17 @@ export function enrichLabProjects(db: DatabaseSync, libraryRootId: number): LabP
       project.projectNotes || null
     ] as const
 
+    // IR Lab's own real project id, when project.json carries one — see updateCollectionDetails'
+    // own comment above for why this is stored in naming_template rather than replacing this
+    // row's PK. Only genuinely missing (older SessionData export) falls back to null, not to this
+    // app's own invented collectionId — a null here means "no real id available yet", not "same
+    // as our local id", which the coverage planner (and anything else reading this column later)
+    // needs to be able to tell apart.
+    const irLabProjectId = project.id || null
+
     let collectionId = (findCollectionByFolder.get(folder.id) as { id: string } | undefined)?.id
     if (collectionId) {
-      updateCollectionDetails.run(project.name ?? 'IR Lab Project', ...projectDetails, collectionId)
+      updateCollectionDetails.run(project.name ?? 'IR Lab Project', irLabProjectId, ...projectDetails, collectionId)
     } else {
       collectionId = randomUUID()
       insertCollection.run(
@@ -209,6 +225,7 @@ export function enrichLabProjects(db: DatabaseSync, libraryRootId: number): LabP
         libraryRootId,
         folder.id,
         project.name ?? 'IR Lab Project',
+        irLabProjectId,
         project.createdAt ?? null,
         ...projectDetails
       )

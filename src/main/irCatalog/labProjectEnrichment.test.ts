@@ -206,6 +206,51 @@ describe.skipIf(!hasFts5())('enrichLabProjects', () => {
     db.close()
   })
 
+  it("captures project.json's own id into naming_template, not this app's invented collection PK", async () => {
+    const { root } = makeProjectFixture()
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const stats = await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+    finalizeIndexes(db)
+
+    enrichLabProjects(db, stats.libraryRootId)
+
+    const collection = db
+      .prepare(`SELECT id, naming_template FROM collection WHERE kind = 'ir_project'`)
+      .get() as { id: string; naming_template: string | null }
+    // Fixture's project.json has id: 'project-1' (see makeProjectFixture above) — the coverage
+    // planner (and anything else needing IR Lab's real project id) must read THIS, never
+    // collection.id, which is a UUID this app invents itself and IR Lab's ProjectStore has never
+    // heard of.
+    expect(collection.naming_template).toBe('project-1')
+    expect(collection.id).not.toBe('project-1')
+
+    db.close()
+  })
+
+  it('leaves naming_template null when project.json has no id (older SessionData export)', async () => {
+    const root = makeTmpDir()
+    const projectDir = join(root, 'No Id Session')
+    const sessionDataDir = join(projectDir, '.SessionData')
+    fs.mkdirSync(sessionDataDir, { recursive: true })
+    fs.writeFileSync(join(projectDir, 'Old.wav'), 'y'.repeat(500))
+    fs.writeFileSync(join(sessionDataDir, 'project.json'), JSON.stringify({ name: 'No Id Session', captureIndex: [] }))
+
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const stats = await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+    finalizeIndexes(db)
+
+    enrichLabProjects(db, stats.libraryRootId)
+
+    const collection = db
+      .prepare(`SELECT naming_template FROM collection WHERE kind = 'ir_project'`)
+      .get() as { naming_template: string | null }
+    expect(collection.naming_template).toBeNull()
+
+    db.close()
+  })
+
   it('ir_lab_native fields survive a subsequent applyVendorParsers pass unchanged', async () => {
     const { root } = makeProjectFixture()
     const db = new DatabaseSync(':memory:')
