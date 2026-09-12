@@ -343,8 +343,27 @@ CREATE INDEX IF NOT EXISTS idx_item_folder    ON item(folder_id);
 CREATE INDEX IF NOT EXISTS idx_item_missing   ON item(missing_since) WHERE missing_since IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_item_quickhash ON item(quick_hash) WHERE quick_hash IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_item_hash      ON item(content_hash) WHERE content_hash IS NOT NULL;
+-- favorite/rating cover queryLibrary.ts's favoritesOnly/ratedOnly WHERE clauses. Partial (like
+-- idx_item_missing/hash above) since both predicates only ever test the "interesting" side --
+-- favoritesOnly never asks WHERE is_favorite = 0, ratedOnly never asks WHERE rating IS NULL.
+CREATE INDEX IF NOT EXISTS idx_item_favorite  ON item(is_favorite) WHERE is_favorite = 1;
+CREATE INDEX IF NOT EXISTS idx_item_rating    ON item(rating) WHERE rating IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_variant_item ON ir_derivative_variant(item_id);
+
+-- queryLibrary.ts's listFacetOptions() GROUP BYs each of these directly against ir_item at
+-- whatever scope the caller passed (often the whole library, no folder/root filter) -- at a
+-- real ~600K-item library (2026-09-11 field report) that's a full-table scan per facet chip
+-- list with no index, on every folder selection change.
+CREATE INDEX IF NOT EXISTS idx_ir_item_manufacturer ON ir_item(manufacturer);
+CREATE INDEX IF NOT EXISTS idx_ir_item_cabinet      ON ir_item(cabinet);
+CREATE INDEX IF NOT EXISTS idx_ir_item_speaker      ON ir_item(speaker);
+CREATE INDEX IF NOT EXISTS idx_ir_item_microphone   ON ir_item(microphone);
+
+-- item_tag's PRIMARY KEY (item_id, tag_id) only covers "which tags does this item have" lookups.
+-- queryLibrary.ts's tag filter goes the other direction (WHERE tag_id = ? -> item_ids), which
+-- that composite PK can't serve without a full item_tag scan.
+CREATE INDEX IF NOT EXISTS idx_item_tag_tag ON item_tag(tag_id);
 
 CREATE INDEX IF NOT EXISTS idx_asset_item       ON asset_file(item_id);
 CREATE INDEX IF NOT EXISTS idx_asset_collection ON asset_file(collection_id);
