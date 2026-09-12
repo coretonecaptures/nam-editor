@@ -742,6 +742,17 @@ const api = {
     ipcRenderer.invoke('irLibrary:removeItemFromTag', itemId, tagId),
   irLibraryListTagsForItem: (itemId: string): Promise<Array<{ id: number; name: string; itemCount: number }>> =>
     ipcRenderer.invoke('irLibrary:listTagsForItem', itemId),
+  irLibraryListSavedSearches: (): Promise<Array<{ id: string; name: string; filterJson: string; position: number }>> =>
+    ipcRenderer.invoke('irLibrary:listSavedSearches'),
+  irLibraryCreateSavedSearch: (
+    name: string,
+    filterJson: string
+  ): Promise<{ id: string; name: string; filterJson: string; position: number }> =>
+    ipcRenderer.invoke('irLibrary:createSavedSearch', name, filterJson),
+  irLibraryRenameSavedSearch: (id: string, name: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('irLibrary:renameSavedSearch', id, name),
+  irLibraryDeleteSavedSearch: (id: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('irLibrary:deleteSavedSearch', id),
   // "NAM Projects" mode (docs/nam-capture-import-plan-2026-08-29.md §1,
   // docs/nam-projects-detail-design-2026-08-31.md).
   irLibraryListNamProjects: (): Promise<NamProjectSummary[]> => ipcRenderer.invoke('irLibrary:listNamProjects'),

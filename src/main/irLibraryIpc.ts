@@ -66,6 +66,7 @@ import {
   removeItemFromTag,
   listTagsForItem
 } from './irCatalog/tag'
+import { listSavedSearches, createSavedSearch, renameSavedSearch, deleteSavedSearch } from './irCatalog/savedSearches'
 
 let db: DatabaseSync | null = null
 // Guards against two overlapping background content_hash runs for the same root — a second
@@ -738,4 +739,19 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     return { success: true }
   })
   ipcMain.handle('irLibrary:listTagsForItem', (_event, itemId: string) => listTagsForItem(getDb(), itemId))
+
+  // Saved searches (audit finding B6) — a named filter/facet combination, re-run live rather than
+  // a static item list (see savedSearches.ts header comment for the distinction from a Group).
+  ipcMain.handle('irLibrary:listSavedSearches', () => listSavedSearches(getDb()))
+  ipcMain.handle('irLibrary:createSavedSearch', (_event, name: string, filterJson: string) =>
+    createSavedSearch(getDb(), name, filterJson)
+  )
+  ipcMain.handle('irLibrary:renameSavedSearch', (_event, id: string, name: string) => {
+    renameSavedSearch(getDb(), id, name)
+    return { success: true }
+  })
+  ipcMain.handle('irLibrary:deleteSavedSearch', (_event, id: string) => {
+    deleteSavedSearch(getDb(), id)
+    return { success: true }
+  })
 }

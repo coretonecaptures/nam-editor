@@ -286,6 +286,19 @@ CREATE TABLE IF NOT EXISTS item_tag (
   PRIMARY KEY (item_id, tag_id)
 );
 
+-- Saved searches (audit finding B6) — a named, reusable filter/facet combination, distinct from
+-- a tag/group (a static list of specific items): applying one re-runs the same query against
+-- whatever the catalog looks like right now. filter_json is the exact same shape queryItems()
+-- takes minus offset/limit, serialized whole rather than split into columns since the filter
+-- shape (facets, technical filters) already changes independently of this table's own schema.
+CREATE TABLE IF NOT EXISTS saved_search (
+  id           TEXT PRIMARY KEY,
+  name         TEXT NOT NULL,
+  filter_json  TEXT NOT NULL,
+  created_at   TEXT NOT NULL,
+  position     INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS checklist_item (
   id              TEXT PRIMARY KEY,
   collection_id   TEXT NOT NULL REFERENCES collection(id) ON DELETE CASCADE,

@@ -311,6 +311,18 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
   const [showExportMenu, setShowExportMenu] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [exportNotice, setExportNotice] = useState<string | null>(null)
+
+  // Saved searches (audit finding B6) — a named filter/facet combination, re-run live against
+  // whatever the catalog looks like now, distinct from a Group (a static list of specific items).
+  const [savedSearches, setSavedSearches] = useState<Array<{ id: string; name: string; filterJson: string }>>([])
+  const [showSavedSearches, setShowSavedSearches] = useState(false)
+  const [savingSearchName, setSavingSearchName] = useState<string | null>(null)
+  const refreshSavedSearches = useCallback(() => {
+    window.api.irLibraryListSavedSearches().then(setSavedSearches)
+  }, [])
+  useEffect(() => {
+    refreshSavedSearches()
+  }, [refreshSavedSearches])
   const [trayError, setTrayError] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; row: IrItemRow } | null>(null)
   const [panelWidth, setPanelWidth] = useState(() => {
@@ -1006,6 +1018,56 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
     [selectedRootId, search, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, sortKey, sortDir]
   )
 
+  // Same filter shape queryItems() takes (minus offset/limit) — the one payload both export and
+  // saved searches serialize, so a saved search reapplies exactly what was on screen when saved.
+  const currentFilterPayload = useCallback(
+    () => ({
+      libraryRootId: selectedRootId,
+      folderId: selectedFolderId,
+      search: search || undefined,
+      favoritesOnly: favoritesOnly || undefined,
+      minRating: ratedOnly ? 1 : undefined,
+      tagId: tagFilterId ?? undefined,
+      ...facets,
+      ...audioFacets,
+      sort: sortKey,
+      sortDir
+    }),
+    [selectedRootId, selectedFolderId, search, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, sortKey, sortDir]
+  )
+
+  const applySavedSearch = useCallback((filterJson: string) => {
+    setShowSavedSearches(false)
+    let parsed: ReturnType<typeof currentFilterPayload>
+    try {
+      parsed = JSON.parse(filterJson)
+    } catch {
+      return
+    }
+    setSelectedRootId(parsed.libraryRootId ?? null)
+    setSelectedFolderId(parsed.folderId ?? null)
+    setSearch(parsed.search ?? '')
+    setFavoritesOnly(Boolean(parsed.favoritesOnly))
+    setRatedOnly(parsed.minRating != null)
+    setTagFilterId(parsed.tagId ?? null)
+    setFacets({ manufacturer: parsed.manufacturer, cabinet: parsed.cabinet, speaker: parsed.speaker, microphone: parsed.microphone })
+    setAudioFacets({ sampleRate: parsed.sampleRate, bitDepth: parsed.bitDepth })
+    setSortKey((parsed.sort as IrSortKey) ?? 'name')
+    setSortDir(parsed.sortDir ?? 'asc')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const saveCurrentSearch = useCallback(
+    async (name: string) => {
+      const trimmed = name.trim()
+      if (!trimmed) return
+      await window.api.irLibraryCreateSavedSearch(trimmed, JSON.stringify(currentFilterPayload()))
+      setSavingSearchName(null)
+      refreshSavedSearches()
+    },
+    [currentFilterPayload, refreshSavedSearches]
+  )
+
   const toggleFavorite = useCallback((row: IrItemRow, index: number) => {
     const next = row.is_favorite ? 0 : 1
     cacheRef.current.set(index, { ...row, is_favorite: next })
@@ -1188,6 +1250,71 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           >
             Build Library…
           </button>
+        )}
+        {hasAnyRoot && (
+          <div className="relative flex-shrink-0">
+            <button
+              onClick={() => setShowSavedSearches((v) => !v)}
+              className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov"
+              title="Saved searches — re-run a named filter/facet combination"
+            >
+              Saved Searches…
+            </button>
+            {showSavedSearches && (
+              <div
+                onMouseLeave={() => setShowSavedSearches(false)}
+                className="absolute right-0 top-full mt-1 w-64 bg-panel border border-field-bd rounded shadow-xl z-50 py-1"
+              >
+                {savedSearches.length === 0 && savingSearchName === null && (
+                  <div className="px-3 py-2 text-xs text-nm-text-3">No saved searches yet.</div>
+                )}
+                {savedSearches.map((s) => (
+                  <div key={s.id} className="flex items-center gap-1 px-1">
+                    <button
+                      onClick={() => applySavedSearch(s.filterJson)}
+                      className="flex-1 text-left px-2 py-1.5 text-xs text-nm-text-2 hover:bg-hov truncate"
+                      title={s.name}
+                    >
+                      {s.name}
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (window.confirm(`Delete saved search "${s.name}"?`)) {
+                          void window.api.irLibraryDeleteSavedSearch(s.id).then(refreshSavedSearches)
+                        }
+                      }}
+                      title="Delete"
+                      className="flex-shrink-0 w-5 h-5 rounded text-nm-text-3 hover:text-red-500 flex items-center justify-center"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+                <div className="border-t border-field-bd my-1" />
+                {savingSearchName === null ? (
+                  <button
+                    onClick={() => setSavingSearchName('')}
+                    className="w-full text-left px-3 py-1.5 text-xs text-nm-accent hover:bg-hov"
+                  >
+                    + Save current filter…
+                  </button>
+                ) : (
+                  <input
+                    autoFocus
+                    value={savingSearchName}
+                    placeholder="Name this search…"
+                    onChange={(e) => setSavingSearchName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') void saveCurrentSearch(savingSearchName)
+                      if (e.key === 'Escape') setSavingSearchName(null)
+                    }}
+                    onBlur={() => (savingSearchName.trim() ? void saveCurrentSearch(savingSearchName) : setSavingSearchName(null))}
+                    className="w-[calc(100%-16px)] mx-2 my-1 h-7 rounded border border-field-bd bg-field-bg text-xs px-2 text-nm-text"
+                  />
+                )}
+              </div>
+            )}
+          </div>
         )}
         {hasAnyRoot && (
           <div className="relative flex-shrink-0">

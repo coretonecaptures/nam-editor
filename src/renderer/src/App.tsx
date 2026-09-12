@@ -759,6 +759,10 @@ declare global {
       irLibraryAddItemToTag: (itemId: string, tagId: number) => Promise<{ success: boolean }>
       irLibraryRemoveItemFromTag: (itemId: string, tagId: number) => Promise<{ success: boolean }>
       irLibraryListTagsForItem: (itemId: string) => Promise<Array<{ id: number; name: string; itemCount: number }>>
+      irLibraryListSavedSearches: () => Promise<Array<{ id: string; name: string; filterJson: string; position: number }>>
+      irLibraryCreateSavedSearch: (name: string, filterJson: string) => Promise<{ id: string; name: string; filterJson: string; position: number }>
+      irLibraryRenameSavedSearch: (id: string, name: string) => Promise<{ success: boolean }>
+      irLibraryDeleteSavedSearch: (id: string) => Promise<{ success: boolean }>
       irLibraryListNamProjects: () => Promise<NamProjectSummary[]>
       irLibraryGetNamProjectDetail: (collectionId: string) => Promise<NamProjectDetail | null>
       irLibraryGetNamLibraryOverview: () => Promise<NamLibraryOverview>
