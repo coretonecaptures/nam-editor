@@ -374,6 +374,16 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
   // `playerIr` is the IR currently loaded into the player's cabinet AND the "is the player open"
   // flag — the two are the same thing here, since the player only exists to audition an IR.
   const [playerIr, setPlayerIr] = useState<IrItemRow | null>(null)
+
+  // A/B audition (audit finding B6 / idea 5) — play two IRs back-to-back under blind labels,
+  // pick a winner, reveal after. Ratings accumulate as a by-product of a comparison people
+  // already want to do, rather than asking anyone to sit and rate the whole library up front.
+  // Deliberately reuses the SAME live PlayerPanel instance below via its controlled `cabIrPath`
+  // prop (see that render site's own comment on why remounting per-IR would kill the live
+  // engine) — flipping abActive just swaps which of the two rows plays.
+  const [abPair, setAbPair] = useState<{ a: IrItemRow; b: IrItemRow } | null>(null)
+  const [abActive, setAbActive] = useState<'a' | 'b'>('a')
+  const [abRevealed, setAbRevealed] = useState(false)
   const [ampCapture, setAmpCapture] = useState<NamFile | null>(null)
   const [ampCaptureError, setAmpCaptureError] = useState<string | null>(null)
   // Bumped to ask PlayerPanel to jump straight to its full-screen rig — the same self-clearing
@@ -692,6 +702,50 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
       forceRerender((n) => n + 1)
     })
   }, [])
+
+  const startAbAudition = useCallback(() => {
+    if (selectedIds.size !== 2) return
+    const [id1, id2] = [...selectedIds]
+    const rows = [...cacheRef.current.values()]
+    const row1 = rows.find((r) => r.id === id1)
+    const row2 = rows.find((r) => r.id === id2)
+    if (!row1 || !row2) return
+    // Randomize which selected row lands on A vs B — the whole point is that the user can't
+    // infer the answer from selection order.
+    const [a, b] = Math.random() < 0.5 ? [row1, row2] : [row2, row1]
+    setAbPair({ a, b })
+    setAbActive('a')
+    setAbRevealed(false)
+    openPlayer(a, false)
+  }, [selectedIds, openPlayer])
+
+  const pickAbWinner = useCallback(
+    (winner: 'a' | 'b') => {
+      if (!abPair) return
+      const row = winner === 'a' ? abPair.a : abPair.b
+      const nextRating = Math.min(5, (row.rating ?? 0) + 1)
+      void window.api.irLibrarySetRating(row.id, nextRating).then(() => {
+        requestEpochRef.current++
+        cacheRef.current = new Map()
+        forceRerender((n) => n + 1)
+      })
+      setAbRevealed(true)
+    },
+    [abPair]
+  )
+
+  const closeAbAudition = useCallback(() => {
+    setAbPair(null)
+    setAbRevealed(false)
+    setPlayerIr(null)
+  }, [])
+
+  // Flipping the blind A/B toggle swaps which row the (already-live) player points at.
+  useEffect(() => {
+    if (!abPair) return
+    openPlayer(abActive === 'a' ? abPair.a : abPair.b, false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [abActive])
 
   // New search, folder filter, or a completed scan invalidates every cached index — the same
   // offset can now point at a different row. Deliberately does NOT close the player — it's tied
@@ -1249,6 +1303,16 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
             title="Restructure this scope into a new folder layout, with a preview before anything moves"
           >
             Build Library…
+          </button>
+        )}
+        {hasAnyRoot && (
+          <button
+            onClick={startAbAudition}
+            disabled={selectedIds.size !== 2}
+            className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-40"
+            title={selectedIds.size === 2 ? 'Blind A/B audition between the two selected IRs' : 'Select exactly two IRs (Ctrl/Cmd-click) to A/B audition them'}
+          >
+            A/B Audition
           </button>
         )}
         {hasAnyRoot && (
@@ -1938,34 +2002,77 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                 makes stepping through cabinets by ear impossible. The panel takes the new cabinet
                 through its controlled `cabIrPath` prop instead. */}
             {playerIr && ampCapture ? (
-              <PlayerPanel
-                file={ampCapture}
-                titleOverride={playerIr.display_name.replace(/\.wav$/i, '')}
-                cabIrPath={playerIr.abs_path}
-                onCabIrPathChange={(path) => {
-                  // The player's own cab picker changed the IR out from under the browse list.
-                  // Nothing in the catalog matches an arbitrary picked path, so drop the list
-                  // linkage rather than showing a row as playing when it isn't.
-                  if (path !== playerIr.abs_path) setPlayerIr(null)
-                }}
-                onClose={() => {
-                  setPlayerIr(null)
-                  setLiveJumpRequest(null)
-                }}
-                diLibraryPath={str('diPreviewLibraryPath')}
-                irLibraryPath={str('irLibraryPath')}
-                reverbLibraryPath={str('reverbLibraryPath')}
-                delayLibraryPath={str('delayLibraryPath')}
-                irMix={typeof settings.irMix === 'number' ? (settings.irMix as number) : 1}
-                chorusPresets={arr('chorusPresets')}
-                delayPresets={arr('delayPresets')}
-                reverbPresets={arr('reverbPresets')}
-                echoLabPresets={arr('echoLabPresets')}
-                rigPresets={arr('rigPresets')}
-                autoStartLiveOnPopout={settings.autoStartLiveOnPopout === true}
-                liveJumpRequest={liveJumpRequest}
-                onLiveJumpHandled={() => setLiveJumpRequest(null)}
-              />
+              <div className="relative h-full">
+                {abPair && (
+                  <div className="absolute top-0 inset-x-0 z-20 flex items-center gap-2 px-4 py-2 bg-panel-2 border-b border-nm-border">
+                    {(['a', 'b'] as const).map((label) => (
+                      <button
+                        key={label}
+                        onClick={() => setAbActive(label)}
+                        className={`px-3 py-1 text-xs font-semibold rounded ${abActive === label ? 'bg-nm-accent text-accent-fg' : 'border border-field-bd text-nm-text-2 hover:bg-hov'}`}
+                      >
+                        {label.toUpperCase()}
+                        {abRevealed && (label === 'a' ? abPair.a : abPair.b).display_name && (
+                          <span className="ml-1.5 font-normal opacity-80">
+                            — {(label === 'a' ? abPair.a : abPair.b).display_name.replace(/\.wav$/i, '')}
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                    <span className="flex-1" />
+                    {!abRevealed ? (
+                      <>
+                        <span className="text-[11px] text-nm-text-3">Pick the winner —</span>
+                        <button onClick={() => pickAbWinner('a')} className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov">
+                          A wins
+                        </button>
+                        <button onClick={() => pickAbWinner('b')} className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov">
+                          B wins
+                        </button>
+                      </>
+                    ) : (
+                      <span className="text-[11px] text-green-600 dark:text-green-400">Rating bumped — pick a new pair, or</span>
+                    )}
+                    <button onClick={closeAbAudition} className="text-nm-text-3 hover:text-nm-text text-xs">
+                      Exit A/B
+                    </button>
+                  </div>
+                )}
+                <div className={abPair ? 'h-full pt-11' : 'h-full'}>
+                  <PlayerPanel
+                    file={ampCapture}
+                    titleOverride={playerIr.display_name.replace(/\.wav$/i, '')}
+                    cabIrPath={playerIr.abs_path}
+                    onCabIrPathChange={(path) => {
+                      // The player's own cab picker changed the IR out from under the browse list.
+                      // Nothing in the catalog matches an arbitrary picked path, so drop the list
+                      // linkage rather than showing a row as playing when it isn't.
+                      if (path !== playerIr.abs_path) {
+                        setPlayerIr(null)
+                        setAbPair(null)
+                      }
+                    }}
+                    onClose={() => {
+                      setPlayerIr(null)
+                      setLiveJumpRequest(null)
+                      setAbPair(null)
+                    }}
+                    diLibraryPath={str('diPreviewLibraryPath')}
+                    irLibraryPath={str('irLibraryPath')}
+                    reverbLibraryPath={str('reverbLibraryPath')}
+                    delayLibraryPath={str('delayLibraryPath')}
+                    irMix={typeof settings.irMix === 'number' ? (settings.irMix as number) : 1}
+                    chorusPresets={arr('chorusPresets')}
+                    delayPresets={arr('delayPresets')}
+                    reverbPresets={arr('reverbPresets')}
+                    echoLabPresets={arr('echoLabPresets')}
+                    rigPresets={arr('rigPresets')}
+                    autoStartLiveOnPopout={settings.autoStartLiveOnPopout === true}
+                    liveJumpRequest={liveJumpRequest}
+                    onLiveJumpHandled={() => setLiveJumpRequest(null)}
+                  />
+                </div>
+              </div>
             ) : playerIr ? (
               /* Player requested, but there's no amp capture to play the IR through yet. Ask for
                  it HERE, in the panel, with the IR you clicked named right above the button —
