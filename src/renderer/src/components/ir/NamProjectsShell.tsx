@@ -764,12 +764,17 @@ function LiveRunStrip({ capture, job, queuedNext }: { capture: NamCaptureRow; jo
   const epochCurrent = job.progressEpochCurrent
   const epochTotal = job.progressEpochTotal ?? job.epochs
   const pct = epochTotal ? Math.min(100, Math.round(((epochCurrent ?? 0) / epochTotal) * 100)) : 0
+  // Elapsed-time extrapolation from job.startedAt/progressPercent — the SAME formula
+  // TrainingPanel.tsx's own single-job `eta` memo uses. `progressRate` is it/s (batches per
+  // second, per TrainingPanel's own "at N it/s" label) — dividing epochs-remaining by that would
+  // silently produce a nonsense ETA, off by however many batches make up one epoch.
   const eta =
-    job.progressRate && epochCurrent != null && epochTotal
+    job.startedAt && typeof job.progressPercent === 'number' && job.progressPercent > 0
       ? (() => {
-          const remaining = epochTotal - epochCurrent
-          const secs = remaining / job.progressRate!
-          const mins = Math.round(secs / 60)
+          const elapsed = Date.now() - new Date(job.startedAt as string).getTime()
+          const remainingMs = elapsed / (job.progressPercent! / 100) - elapsed
+          if (remainingMs <= 0) return null
+          const mins = Math.ceil(remainingMs / 60_000)
           return mins > 0 ? `${mins}m left` : '<1m left'
         })()
       : null
@@ -1067,7 +1072,7 @@ function ProjectRailRow({
   )
 }
 
-type ProjectStateFilter = 'all' | 'inProgress' | 'complete'
+type ProjectStateFilter = 'all' | 'inProgress' | 'complete' | 'needsFixing'
 
 /** Projects index (design_handoff_nam_projects Screen 1) — shown when no project is selected,
  * replacing the old silent auto-select-first-project behavior. List/Cards toggle, independent of
@@ -1079,6 +1084,7 @@ type ProjectStateFilter = 'all' | 'inProgress' | 'complete'
  * place to show it; until then it only distinguishes trained vs. untrained. */
 function ProjectsIndex({
   projects,
+  queueJobs,
   filter,
   onFilterChange,
   stateFilter,
@@ -1093,6 +1099,7 @@ function ProjectsIndex({
   busy
 }: {
   projects: NamProjectSummary[]
+  queueJobs: TrainerQueueJob[]
   filter: string
   onFilterChange: (v: string) => void
   stateFilter: ProjectStateFilter
@@ -1106,8 +1113,17 @@ function ProjectsIndex({
   onTrainAllUntrained: () => void
   busy: boolean
 }): React.ReactElement {
-  const projectState = (p: NamProjectSummary): 'complete' | 'inProgress' =>
-    p.captureCount > 0 && p.trainedCount === p.captureCount ? 'complete' : 'inProgress'
+  // Best-effort: TrainerQueueJob.namProjectName is the only join key available at this level
+  // (project SUMMARIES carry no capture ids to match against, unlike a loaded project's own
+  // capture rows) — a project whose name happens to collide with another's could double-count.
+  // Good enough for "does this project currently need attention", not a precise ledger.
+  const projectHasFailedJob = (p: NamProjectSummary): boolean =>
+    queueJobs.some((j) => j.sourceMode === 'nam-capture-import' && j.status === 'error' && j.namProjectName === p.name)
+
+  const projectState = (p: NamProjectSummary): 'complete' | 'inProgress' | 'needsFixing' => {
+    if (projectHasFailedJob(p)) return 'needsFixing'
+    return p.captureCount > 0 && p.trainedCount === p.captureCount ? 'complete' : 'inProgress'
+  }
 
   const filtered = projects.filter((p) => {
     if (filter && !p.name.toLowerCase().includes(filter.toLowerCase())) return false
@@ -1119,15 +1135,37 @@ function ProjectsIndex({
   const totalCaptures = projects.reduce((n, p) => n + p.captureCount, 0)
   const totalTrained = projects.reduce((n, p) => n + p.trainedCount, 0)
   const totalUntrained = totalCaptures - totalTrained
+  // Capture-level (not project-level) — directly countable from the live queue itself, no
+  // per-project name-matching needed for these two.
+  const capturesTraining = queueJobs.filter((j) => j.sourceMode === 'nam-capture-import' && (j.status === 'running' || j.status === 'starting')).length
+  const capturesFailed = queueJobs.filter((j) => j.sourceMode === 'nam-capture-import' && j.status === 'error').length
 
   const stateCounts = {
     all: projects.length,
     inProgress: projects.filter((p) => projectState(p) === 'inProgress').length,
-    complete: projects.filter((p) => projectState(p) === 'complete').length
+    complete: projects.filter((p) => projectState(p) === 'complete').length,
+    needsFixing: projects.filter((p) => projectState(p) === 'needsFixing').length
   }
 
+  const [previewId, setPreviewId] = useState<string | null>(null)
+  const [previewDetail, setPreviewDetail] = useState<NamProjectDetail | null>(null)
+  useEffect(() => {
+    if (!previewId) {
+      setPreviewDetail(null)
+      return
+    }
+    let cancelled = false
+    void window.api.irLibraryGetNamProjectDetail(previewId).then((d) => {
+      if (!cancelled) setPreviewDetail(d)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [previewId])
+
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    <div className="flex-1 flex min-h-0">
+      <div className="flex-1 flex flex-col min-h-0">
       {/* Hero band */}
       <div className="flex items-start justify-between gap-4 px-5 pt-[18px] pb-4 border-b border-nm-border-s flex-shrink-0">
         <div>
@@ -1140,7 +1178,8 @@ function ProjectsIndex({
           <StatTile label="Projects" value={projects.length} />
           <StatTile label="Captures" value={totalCaptures} />
           <StatTile label="Trained" value={totalTrained} tone="accent" />
-          <StatTile label="Untrained" value={totalUntrained} tone="muted" />
+          <StatTile label="Training" value={capturesTraining} tone={capturesTraining > 0 ? 'training' : 'muted'} />
+          <StatTile label="Need fixing" value={capturesFailed} tone={capturesFailed > 0 ? 'failed' : 'muted'} />
         </div>
       </div>
 
@@ -1156,7 +1195,8 @@ function ProjectsIndex({
           [
             ['all', `All ${stateCounts.all}`],
             ['inProgress', `In progress ${stateCounts.inProgress}`],
-            ['complete', `Complete ${stateCounts.complete}`]
+            ['complete', `Complete ${stateCounts.complete}`],
+            ['needsFixing', `Needs fixing ${stateCounts.needsFixing}`]
           ] as const
         ).map(([key, label]) => (
           <button
@@ -1193,20 +1233,33 @@ function ProjectsIndex({
         </div>
       </div>
 
-      {/* Project grid/list */}
+      {/* Project grid/list — single click selects (feeds the right rail preview), double click
+          or the "Open ->" link navigates. Mirrors FolderCardView's own click/double-click split. */}
       <div className="flex-1 overflow-y-auto">
         {visible.length === 0 ? (
           <div className="p-8 text-center text-xs text-nm-text-3">No projects match.</div>
         ) : view === 'list' ? (
           <div className="flex flex-col px-5 py-3 gap-1">
             {visible.map((p) => (
-              <ProjectIndexListRow key={p.collectionId} project={p} onOpen={() => onOpenProject(p.collectionId)} />
+              <ProjectIndexListRow
+                key={p.collectionId}
+                project={p}
+                selected={p.collectionId === previewId}
+                onSelect={() => setPreviewId(p.collectionId)}
+                onOpen={() => onOpenProject(p.collectionId)}
+              />
             ))}
           </div>
         ) : (
           <div className="flex flex-wrap gap-4 px-5 py-4">
             {visible.map((p) => (
-              <ProjectIndexCard key={p.collectionId} project={p} onOpen={() => onOpenProject(p.collectionId)} />
+              <ProjectIndexCard
+                key={p.collectionId}
+                project={p}
+                selected={p.collectionId === previewId}
+                onSelect={() => setPreviewId(p.collectionId)}
+                onOpen={() => onOpenProject(p.collectionId)}
+              />
             ))}
           </div>
         )}
@@ -1235,16 +1288,73 @@ function ProjectsIndex({
           </button>
         </div>
       </div>
+      </div>
+
+      {previewId && (
+        <div className="w-[302px] flex-shrink-0 border-l border-nm-border overflow-y-auto p-4 flex flex-col gap-3">
+          {!previewDetail ? (
+            <span className="text-xs text-nm-text-3">Loading…</span>
+          ) : (
+            <>
+              <div>
+                <div className="text-[13px] font-semibold text-nm-text truncate">{previewDetail.name}</div>
+                {previewDetail.namCapturesDir && (
+                  <div className="text-[10.5px] font-mono text-nm-text-3 truncate mt-0.5" title={previewDetail.namCapturesDir}>
+                    {previewDetail.namCapturesDir}
+                  </div>
+                )}
+              </div>
+              <div className="border-t border-nm-border-s pt-2.5 flex flex-col gap-1">
+                <DetailField label="Cabinet" value={previewDetail.cabinet} />
+                <DetailField label="Speaker" value={previewDetail.speaker} />
+                <DetailField label="Room" value={previewDetail.room} />
+                <DetailField label="Notes" value={previewDetail.projectNotes} />
+              </div>
+              <div className="flex flex-col gap-1.5 mt-1">
+                {previewDetail.namCapturesDir && (
+                  <button
+                    onClick={() => window.api.revealFile(previewDetail.namCapturesDir as string)}
+                    className="h-7 px-2.5 rounded text-[11.5px] border border-field-bd text-nm-text-2 hover:bg-hov text-left"
+                  >
+                    Reveal NAM Captures folder
+                  </button>
+                )}
+                <button
+                  onClick={() => onOpenProject(previewDetail.collectionId)}
+                  className="h-7 px-2.5 rounded text-[11.5px] font-medium bg-nm-accent text-accent-fg hover:opacity-90 text-left"
+                >
+                  Open project →
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   )
 }
 
-function ProjectIndexListRow({ project, onOpen }: { project: NamProjectSummary; onOpen: () => void }): React.ReactElement {
+function ProjectIndexListRow({
+  project,
+  selected,
+  onSelect,
+  onOpen
+}: {
+  project: NamProjectSummary
+  selected: boolean
+  onSelect: () => void
+  onOpen: () => void
+}): React.ReactElement {
   const pct = project.captureCount ? Math.round((project.trainedCount / project.captureCount) * 100) : 0
   return (
-    <button
-      onClick={onOpen}
-      className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-hov border border-transparent hover:border-nm-border-s"
+    <div
+      onClick={onSelect}
+      onDoubleClick={onOpen}
+      role="button"
+      tabIndex={0}
+      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-left cursor-pointer border ${
+        selected ? 'bg-active-bg border-nm-accent/40' : 'border-transparent hover:bg-hov hover:border-nm-border-s'
+      }`}
     >
       <div className="flex-1 min-w-0">
         <div className="text-[12.5px] font-semibold text-nm-text truncate">{project.name}</div>
@@ -1263,18 +1373,41 @@ function ProjectIndexListRow({ project, onOpen }: { project: NamProjectSummary; 
         </span>
       </div>
       <span className="w-20 flex-shrink-0 text-right text-[10px] text-nm-text-3">{relTime(project.createdAt) ?? '—'}</span>
-      <span className="w-10 flex-shrink-0 text-right text-[11px] font-semibold text-nm-accent">Open →</span>
-    </button>
+      <button
+        onClick={(e) => {
+          e.stopPropagation()
+          onOpen()
+        }}
+        className="w-10 flex-shrink-0 text-right text-[11px] font-semibold text-nm-accent hover:underline"
+      >
+        Open →
+      </button>
+    </div>
   )
 }
 
-function ProjectIndexCard({ project, onOpen }: { project: NamProjectSummary; onOpen: () => void }): React.ReactElement {
+function ProjectIndexCard({
+  project,
+  selected,
+  onSelect,
+  onOpen
+}: {
+  project: NamProjectSummary
+  selected: boolean
+  onSelect: () => void
+  onOpen: () => void
+}): React.ReactElement {
   const pct = project.captureCount ? Math.round((project.trainedCount / project.captureCount) * 100) : 0
   const created = fmtDate(project.createdAt)
   return (
-    <button
-      onClick={onOpen}
-      className="w-[326px] flex-shrink-0 text-left rounded-xl border border-nm-border bg-panel hover:border-nm-accent/50 overflow-hidden"
+    <div
+      onClick={onSelect}
+      onDoubleClick={onOpen}
+      role="button"
+      tabIndex={0}
+      className={`w-[326px] flex-shrink-0 text-left rounded-xl border cursor-pointer overflow-hidden ${
+        selected ? 'border-nm-accent/50 bg-[color:var(--panel-2)]' : 'border-nm-border bg-panel hover:border-nm-accent/50'
+      }`}
     >
       <div className="h-[104px] border-b border-nm-border bg-field-bg flex items-center justify-center overflow-hidden">
         {project.coverImagePath ? (
@@ -1307,10 +1440,18 @@ function ProjectIndexCard({ project, onOpen }: { project: NamProjectSummary; onO
           <span className="text-[10px] font-mono text-nm-text-3">
             {created ? `created ${created}` : ''}
           </span>
-          <span className="text-[11px] font-semibold text-nm-accent">Open →</span>
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onOpen()
+            }}
+            className="text-[11px] font-semibold text-nm-accent hover:underline"
+          >
+            Open →
+          </button>
         </div>
       </div>
-    </button>
+    </div>
   )
 }
 
@@ -1321,16 +1462,22 @@ function StatTile({
 }: {
   label: string
   value: string | number
-  tone?: 'accent' | 'muted'
+  tone?: 'accent' | 'muted' | 'training' | 'failed'
 }): React.ReactElement {
+  const toneClass =
+    tone === 'accent'
+      ? 'text-nm-accent'
+      : tone === 'muted'
+        ? 'text-nm-text-3'
+        : tone === 'training'
+          ? 'text-amber-500'
+          : tone === 'failed'
+            ? 'text-red-500'
+            : 'text-nm-text'
   return (
     <div className="flex flex-col gap-0.5 px-3 py-2 rounded border border-nm-border-s bg-panel-2 min-w-[96px]">
       <span className="text-[10px] uppercase tracking-wide text-nm-text-3">{label}</span>
-      <span
-        className={`text-lg font-semibold ${tone === 'accent' ? 'text-nm-accent' : tone === 'muted' ? 'text-nm-text-3' : 'text-nm-text'}`}
-      >
-        {value}
-      </span>
+      <span className={`text-lg font-semibold ${toneClass}`}>{value}</span>
     </div>
   )
 }
@@ -2945,6 +3092,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
       ) : selectedId === null ? (
         <ProjectsIndex
           projects={projects}
+          queueJobs={queueJobs}
           filter={projectFilter}
           onFilterChange={setProjectFilter}
           stateFilter={projectStateFilter}
