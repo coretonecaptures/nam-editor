@@ -71,6 +71,8 @@ const SORT_LS_KEY = 'nam-lab-nam-projects-sort'
 // shown when selectedId is null, independent of captureView (which is the per-project capture
 // grid's own list/cards toggle).
 const INDEX_VIEW_KEY = 'nam-lab-nam-projects-index-view'
+// Right-rail tabs (design_handoff_nam_projects) — Details | Train | History.
+const RAIL_TAB_KEY = 'nam-lab-nam-projects-rail-tab'
 
 function readStored(key: string): string {
   try {
@@ -1959,6 +1961,15 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   // Live trainer-queue snapshot (design_handoff_nam_projects) — this shell previously only learned
   // about a capture's training state after the fact, via onTrainerHistory on job completion.
   const [queueJobs, setQueueJobs] = useState<TrainerQueueJob[]>([])
+  // History tab (design_handoff_nam_projects) — full trainer history, filtered per-project by
+  // matching each capture's own recordingPath against a history entry's sourcePath (the one join
+  // key TrainerHistoryEntry actually carries; unlike TrainerQueueJob it has no namCaptureId/
+  // namProjectName of its own).
+  const [trainerHistory, setTrainerHistory] = useState<TrainerHistoryEntry[]>([])
+  const [railTab, setRailTab] = useState<'details' | 'train' | 'history'>(() => {
+    const saved = readStored(RAIL_TAB_KEY)
+    return saved === 'train' || saved === 'history' ? saved : 'details'
+  })
   const [captureMenu, setCaptureMenu] = useState<{ capture: NamCaptureRow; x: number; y: number } | null>(null)
   const [projectMenu, setProjectMenu] = useState<{ project: NamProjectSummary; x: number; y: number } | null>(null)
 
@@ -2107,6 +2118,9 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   useEffect(() => {
     writeStored(INDEX_VIEW_KEY, indexView)
   }, [indexView])
+  useEffect(() => {
+    writeStored(RAIL_TAB_KEY, railTab)
+  }, [railTab])
 
   const refreshDetail = useCallback(async (collectionId: string) => {
     try {
@@ -2142,6 +2156,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   // surface it — otherwise a queued NAM batch can fail silently while you're in this view.
   useEffect(() => {
     const off = window.api.onTrainerHistory((history: TrainerHistoryEntry[]) => {
+      setTrainerHistory(history)
       const mine = history.filter(
         (h) => h.sourceMode === 'nam-capture-import' && !seenFinishedJobs.current.has(h.historyId)
       )
@@ -2172,7 +2187,10 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   useEffect(() => {
     let disposed = false
     void window.api.getTrainerState().then((state) => {
-      if (!disposed) setQueueJobs(state.queue)
+      if (!disposed) {
+        setQueueJobs(state.queue)
+        setTrainerHistory(state.history ?? [])
+      }
     })
     const off = window.api.onTrainerUpdate((state) => {
       if (!disposed) setQueueJobs(state.queue)
@@ -2293,6 +2311,14 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
     }
     return null
   }, [detail, queueJobs])
+
+  const projectHistory = useMemo(() => {
+    if (!detail) return []
+    const paths = new Set(detail.captures.map((c) => c.recordingPath).filter((p): p is string => !!p))
+    return trainerHistory
+      .filter((h) => h.sourceMode === 'nam-capture-import' && paths.has(h.sourcePath))
+      .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp))
+  }, [detail, trainerHistory])
 
   // Only the card view sorts through this — the list view is a DataGrid, which sorts itself
   // (controlled by the same sortKey/sortDir so both views agree).
@@ -3117,8 +3143,158 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
             )}
           </div>
 
-          <div className="w-[320px] flex-shrink-0 border-l border-nm-border overflow-y-auto p-4 flex flex-col gap-4">
-            {selectedCapture ? (
+          <div className="w-[320px] flex-shrink-0 border-l border-nm-border flex flex-col min-h-0">
+            {detail && (
+              <div className="flex gap-0.5 px-2.5 pt-2.5 flex-shrink-0 border-b border-nm-border">
+                {(['details', 'train', 'history'] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setRailTab(tab)}
+                    className={`flex-1 h-7 rounded-t-md text-[11.5px] font-semibold capitalize ${
+                      railTab === tab ? 'bg-panel-2 text-nm-text' : 'text-nm-text-3 hover:text-nm-text-2'
+                    }`}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+            {!detail ? null : railTab === 'train' ? (
+              <div className="flex flex-col gap-2.5">
+                <span className="text-xs font-semibold text-nm-text-2">Batch settings</span>
+
+                <label className="flex flex-col gap-1 text-[11px] text-nm-text-3">
+                  Architecture
+                  <select
+                    value={architecture}
+                    onChange={(e) => setArchitecture(e.target.value)}
+                    className="px-2 py-1 text-xs rounded border border-field-bd bg-field-bg text-nm-text"
+                  >
+                    {TRAINER_ARCHITECTURES.map((a) => (
+                      <option key={a} value={a}>
+                        {ARCH_LABEL[a] ?? a}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="flex flex-col gap-1 text-[11px] text-nm-text-3">
+                  Epochs
+                  <input
+                    type="number"
+                    min={1}
+                    value={epochs}
+                    onChange={(e) => setEpochs(Math.max(1, Number(e.target.value) || 1))}
+                    className="px-2 py-1 text-xs rounded border border-field-bd bg-field-bg text-nm-text"
+                  />
+                </label>
+
+                <div className="flex flex-col gap-1 text-[11px] text-nm-text-3">
+                  Model output folder
+                  <button
+                    onClick={handleChooseOutput}
+                    title={outputRoot || 'Choose a folder for the trained .nam files'}
+                    className="px-2 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov text-left truncate"
+                  >
+                    {outputRoot || 'Choose folder…'}
+                  </button>
+                </div>
+
+                {detail.syntheticCount > 0 && (
+                  <label className="flex items-center gap-2 text-[11px] text-nm-text-2">
+                    <input
+                      type="checkbox"
+                      checked={includeSynthetic}
+                      onChange={(e) => setIncludeSynthetic(e.target.checked)}
+                    />
+                    Include {detail.syntheticCount} synthetic capture
+                    {detail.syntheticCount === 1 ? '' : 's'}
+                  </label>
+                )}
+
+                {queueJobs.some(
+                  (j) =>
+                    (j.status === 'queued' || j.status === 'staged') &&
+                    detail.captures.some((c) => (c.captureId ?? c.itemId) === j.namCaptureId)
+                ) && (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-nm-text-3">Queue preview</span>
+                    {queueJobs
+                      .filter(
+                        (j) =>
+                          (j.status === 'queued' || j.status === 'staged' || j.status === 'running' || j.status === 'starting') &&
+                          detail.captures.some((c) => (c.captureId ?? c.itemId) === j.namCaptureId)
+                      )
+                      .map((j, i) => (
+                        <div key={j.jobId} className="flex items-center gap-2 py-1 border-b border-nm-border-s text-[11px]">
+                          <span className="w-3.5 flex-shrink-0 text-nm-text-3 font-mono">{i + 1}</span>
+                          <span className="flex-1 min-w-0 truncate text-nm-text-2">{j.namCaptureName ?? j.modelName}</span>
+                          <span className={`flex-shrink-0 font-mono text-[10px] ${j.status === 'running' || j.status === 'starting' ? 'text-amber-500' : 'text-nm-text-3'}`}>
+                            {j.status === 'running' || j.status === 'starting' ? 'running' : j.status}
+                          </span>
+                        </div>
+                      ))}
+                  </div>
+                )}
+
+                <button
+                  onClick={() => stageBatch(projectEligible, `${projectEligible.length} untrained`)}
+                  disabled={queueing || projectEligible.length === 0}
+                  className="px-3 py-1.5 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-50"
+                >
+                  {queueing
+                    ? 'Working…'
+                    : projectEligible.length === 0
+                      ? 'Nothing to stage'
+                      : `Stage batch — ${projectEligible.length} untrained capture${projectEligible.length === 1 ? '' : 's'}`}
+                </button>
+                <button
+                  onClick={() =>
+                    submitBatch(projectEligible, `${projectEligible.length} untrained`, 'runNext')
+                  }
+                  disabled={queueing || projectEligible.length === 0}
+                  title="Queue these live and jump the line — runs after the current file, or first if the queue is paused"
+                  className="px-3 py-1.5 text-xs rounded bg-nm-accent hover:opacity-90 disabled:opacity-50 text-accent-fg"
+                >
+                  Run next
+                </button>
+                <span className="text-[11px] text-nm-text-3">
+                  <strong>Stage</strong> parks the jobs on the Batches page — nothing runs until you
+                  hit Start there.
+                  <strong> Run next</strong> queues them live and jumps ahead of the current queue
+                  (after the running file finishes, or first when a paused queue resumes).
+                  Already-trained captures are skipped; trained <code>.nam</code> files land in the
+                  folder above and each badge flips on completion.
+                </span>
+              </div>
+            ) : railTab === 'history' ? (
+              projectHistory.length === 0 ? (
+                <span className="text-xs text-nm-text-3">No completed training runs for this project yet.</span>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {projectHistory.map((h) => (
+                    <div key={h.historyId} className="flex flex-col gap-0.5 pb-2 border-b border-nm-border-s text-[11px]">
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                            h.status === 'success' ? 'bg-emerald-500' : h.status === 'error' ? 'bg-red-500' : 'bg-nm-text-3'
+                          }`}
+                        />
+                        <span className="font-semibold text-nm-text truncate">{h.finalModelName || h.sourcePath.replace(/^.*[\\/]/, '')}</span>
+                      </div>
+                      <span className="text-nm-text-3 font-mono">
+                        {relTime(h.timestamp)} · {h.architecture}
+                        {h.validationEsr != null ? ` · ESR ${h.validationEsr.toFixed(4)}` : ''}
+                      </span>
+                      {h.status === 'error' && h.failureReason && (
+                        <span className="text-red-500">{h.failureReason}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )
+            ) : selectedCapture ? (
               <CaptureDetailPanel
                 capture={selectedCapture}
                 projectId={detail?.projectId ?? ''}
@@ -3134,116 +3310,32 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                 onRelink={(newPath) => handleRelinkModel(selectedCapture.itemId, newPath)}
                 onFindCandidates={(modelName) => findCandidates(modelName)}
               />
-            ) : detail ? (
-              <>
-                <div className="flex flex-col gap-2">
-                  <span className="text-xs font-semibold text-nm-text-2">Project details</span>
-                  <DetailField label="Cabinet" value={detail.cabinet} />
-                  <DetailField label="Speaker" value={detail.speaker} />
-                  <DetailField label="Room" value={detail.room} />
-                  <DetailField label="Signal chain" value={detail.signalChain} />
-                  <DetailField label="Description" value={detail.description} />
-                  <DetailField label="Notes" value={detail.projectNotes} />
-                  {!detail.cabinet &&
-                    !detail.speaker &&
-                    !detail.room &&
-                    !detail.signalChain &&
-                    !detail.description &&
-                    !detail.projectNotes && (
-                      <span className="text-xs text-nm-text-3">
-                        No project details supplied by IR Lab (optional — nothing depends on them).
-                      </span>
-                    )}
-                  <span className="text-[11px] text-nm-text-3 pt-1">
-                    Select a capture to see its files, calibration, editable model metadata and
-                    training result.
-                  </span>
-                </div>
-
-                <div className="border-t border-nm-border-s pt-3 flex flex-col gap-2.5">
-                  <span className="text-xs font-semibold text-nm-text-2">Training batch</span>
-
-                  <label className="flex flex-col gap-1 text-[11px] text-nm-text-3">
-                    Architecture
-                    <select
-                      value={architecture}
-                      onChange={(e) => setArchitecture(e.target.value)}
-                      className="px-2 py-1 text-xs rounded border border-field-bd bg-field-bg text-nm-text"
-                    >
-                      {TRAINER_ARCHITECTURES.map((a) => (
-                        <option key={a} value={a}>
-                          {ARCH_LABEL[a] ?? a}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="flex flex-col gap-1 text-[11px] text-nm-text-3">
-                    Epochs
-                    <input
-                      type="number"
-                      min={1}
-                      value={epochs}
-                      onChange={(e) => setEpochs(Math.max(1, Number(e.target.value) || 1))}
-                      className="px-2 py-1 text-xs rounded border border-field-bd bg-field-bg text-nm-text"
-                    />
-                  </label>
-
-                  <div className="flex flex-col gap-1 text-[11px] text-nm-text-3">
-                    Model output folder
-                    <button
-                      onClick={handleChooseOutput}
-                      title={outputRoot || 'Choose a folder for the trained .nam files'}
-                      className="px-2 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov text-left truncate"
-                    >
-                      {outputRoot || 'Choose folder…'}
-                    </button>
-                  </div>
-
-                  {detail.syntheticCount > 0 && (
-                    <label className="flex items-center gap-2 text-[11px] text-nm-text-2">
-                      <input
-                        type="checkbox"
-                        checked={includeSynthetic}
-                        onChange={(e) => setIncludeSynthetic(e.target.checked)}
-                      />
-                      Include {detail.syntheticCount} synthetic capture
-                      {detail.syntheticCount === 1 ? '' : 's'}
-                    </label>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <span className="text-xs font-semibold text-nm-text-2">Project details</span>
+                <DetailField label="Cabinet" value={detail.cabinet} />
+                <DetailField label="Speaker" value={detail.speaker} />
+                <DetailField label="Room" value={detail.room} />
+                <DetailField label="Signal chain" value={detail.signalChain} />
+                <DetailField label="Description" value={detail.description} />
+                <DetailField label="Notes" value={detail.projectNotes} />
+                {!detail.cabinet &&
+                  !detail.speaker &&
+                  !detail.room &&
+                  !detail.signalChain &&
+                  !detail.description &&
+                  !detail.projectNotes && (
+                    <span className="text-xs text-nm-text-3">
+                      No project details supplied by IR Lab (optional — nothing depends on them).
+                    </span>
                   )}
-
-                  <button
-                    onClick={() => stageBatch(projectEligible, `${projectEligible.length} untrained`)}
-                    disabled={queueing || projectEligible.length === 0}
-                    className="px-3 py-1.5 text-xs rounded bg-nm-accent hover:opacity-90 disabled:opacity-50 text-accent-fg"
-                  >
-                    {queueing
-                      ? 'Working…'
-                      : projectEligible.length === 0
-                        ? 'Nothing to stage'
-                        : `Stage batch — ${projectEligible.length} untrained capture${projectEligible.length === 1 ? '' : 's'}`}
-                  </button>
-                  <button
-                    onClick={() =>
-                      submitBatch(projectEligible, `${projectEligible.length} untrained`, 'runNext')
-                    }
-                    disabled={queueing || projectEligible.length === 0}
-                    title="Queue these live and jump the line — runs after the current file, or first if the queue is paused"
-                    className="px-3 py-1.5 text-xs rounded border border-nm-accent/50 text-nm-accent hover:bg-nm-accent/10 disabled:opacity-50"
-                  >
-                    Run next
-                  </button>
-                  <span className="text-[11px] text-nm-text-3">
-                    <strong>Stage</strong> parks the jobs on the Batches page — nothing runs until you
-                    hit Start there.
-                    <strong> Run next</strong> queues them live and jumps ahead of the current queue
-                    (after the running file finishes, or first when a paused queue resumes).
-                    Already-trained captures are skipped; trained <code>.nam</code> files land in the
-                    folder above and each badge flips on completion.
-                  </span>
-                </div>
-              </>
-            ) : null}
+                <span className="text-[11px] text-nm-text-3 pt-1">
+                  Select a capture to see its files, calibration, editable model metadata and
+                  training result.
+                </span>
+              </div>
+            )}
+            </div>
           </div>
         </div>
       )}
