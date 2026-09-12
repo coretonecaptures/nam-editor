@@ -28,7 +28,7 @@ import {
 } from './irCatalog/folderMetadata'
 import { importFolderDocument, listFolderDocuments, deleteFolderDocument } from './irCatalog/folderDocuments'
 import { extractVendorDocumentFields } from './irCatalog/vendorDocExtraction'
-import { addToTray, removeFromTray, listTray, isInTray } from './irCatalog/tray'
+import { addToTray, removeFromTray, listTray, isInTray, reorderTray } from './irCatalog/tray'
 import { sendToIrLab, irLabConnectorAvailable } from './irLabConnector'
 import { checkBlendAllowlist, checkNamAllowlist, readIrLabNamFolder } from './irLabRoots'
 import { readIrLabStatus } from './irLabStatus'
@@ -493,6 +493,12 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
   })
   ipcMain.handle('irLibrary:listTray', () => listTray(getDb()))
   ipcMain.handle('irLibrary:isInTray', (_event, itemId: string) => isInTray(getDb(), itemId))
+  // Audit finding B5 — slot position maps to a Blender control, so drag-to-reorder in the tray
+  // drawer needs to persist, not just reorder the in-memory list until the next listTray() call.
+  ipcMain.handle('irLibrary:reorderTray', (_event, orderedItemIds: string[]) => {
+    reorderTray(getDb(), orderedItemIds)
+    return { success: true }
+  })
   ipcMain.handle('irLibrary:irLabConnectorAvailable', () => irLabConnectorAvailable())
   // Richer than the above: irLabConnectorAvailable() is a build-time question (was the URL scheme
   // injected at all — a self-built, non-official copy of this app can never send regardless of

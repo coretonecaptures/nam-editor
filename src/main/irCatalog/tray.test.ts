@@ -5,7 +5,7 @@ import * as os from 'node:os'
 import { join, sep } from 'node:path'
 import { createCoreSchema } from './schema'
 import { importLibrary } from './importLibrary'
-import { addToTray, removeFromTray, isInTray, listTray, TRAY_CAPACITY } from './tray'
+import { addToTray, removeFromTray, isInTray, listTray, reorderTray, TRAY_CAPACITY } from './tray'
 import { hasFts5 } from './sqliteCapabilities'
 
 const tmpDirs: string[] = []
@@ -100,6 +100,35 @@ describe.skipIf(!hasFts5())('tray', () => {
     for (const row of tray) {
       expect(row.abs_path).toContain(row.relative_path.replace(/\//g, sep))
     }
+
+    db.close()
+  })
+
+  it('reorderTray rewrites positions to match the given order', async () => {
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const ids = await seedItems(db, 3)
+
+    addToTray(db, ids[0])
+    addToTray(db, ids[1])
+    addToTray(db, ids[2])
+
+    reorderTray(db, [ids[2], ids[0], ids[1]])
+    expect(listTray(db).map((r) => r.id)).toEqual([ids[2], ids[0], ids[1]])
+
+    db.close()
+  })
+
+  it('reorderTray ignores an id no longer in the tray instead of corrupting the rest', async () => {
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const ids = await seedItems(db, 3)
+
+    addToTray(db, ids[0])
+    addToTray(db, ids[1])
+
+    reorderTray(db, [ids[1], ids[2], ids[0]])
+    expect(listTray(db).map((r) => r.id)).toEqual([ids[1], ids[0]])
 
     db.close()
   })

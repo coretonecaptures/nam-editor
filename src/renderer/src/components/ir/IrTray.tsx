@@ -29,6 +29,7 @@ export function IrTray({
   onRemove,
   onClear,
   onPlay,
+  onReorder,
   onSendToIrLab,
   connectorAvailable,
   sendTitle,
@@ -39,6 +40,10 @@ export function IrTray({
   onRemove: (id: string) => void
   onClear: () => void
   onPlay?: (row: IrTrayRow) => void
+  /** Drag-to-reorder (audit finding B5 — slot position maps to a Blender control the user is
+   * about to reach for, so insertion order alone isn't good enough). Called with the full
+   * reordered id list once a drag completes. */
+  onReorder: (orderedIds: string[]) => void
   onSendToIrLab: () => void
   connectorAvailable: boolean
   /** Tooltip for the send button — computed by the caller from live IR Lab status. */
@@ -47,8 +52,24 @@ export function IrTray({
   error: string | null
 }): React.ReactElement | null {
   const [open, setOpen] = useState(false)
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
   if (rows.length === 0) return null
   const count = rows.length
+
+  function handleDrop(targetIndex: number): void {
+    if (dragIndex === null || dragIndex === targetIndex) {
+      setDragIndex(null)
+      setDragOverIndex(null)
+      return
+    }
+    const next = rows.map((r) => r.id)
+    const [moved] = next.splice(dragIndex, 1)
+    next.splice(targetIndex, 0, moved)
+    onReorder(next)
+    setDragIndex(null)
+    setDragOverIndex(null)
+  }
 
   return createPortal(
     <>
@@ -108,7 +129,29 @@ export function IrTray({
 
             <div className="flex-1 overflow-y-auto">
               {rows.map((row, i) => (
-                <div key={row.id} className="flex items-center gap-2.5 px-4 py-2 border-b border-nm-border-s">
+                <div
+                  key={row.id}
+                  draggable
+                  onDragStart={() => setDragIndex(i)}
+                  onDragOver={(e) => {
+                    e.preventDefault()
+                    if (dragOverIndex !== i) setDragOverIndex(i)
+                  }}
+                  onDragEnd={() => {
+                    setDragIndex(null)
+                    setDragOverIndex(null)
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    handleDrop(i)
+                  }}
+                  className={`flex items-center gap-2.5 px-4 py-2 border-b border-nm-border-s cursor-grab active:cursor-grabbing ${dragOverIndex === i && dragIndex !== null && dragIndex !== i ? 'bg-active-bg' : ''}`}
+                >
+                  <svg className="w-3 h-3 flex-shrink-0 text-nm-text-3" viewBox="0 0 24 24" fill="currentColor">
+                    <circle cx="9" cy="6" r="1.4" /><circle cx="15" cy="6" r="1.4" />
+                    <circle cx="9" cy="12" r="1.4" /><circle cx="15" cy="12" r="1.4" />
+                    <circle cx="9" cy="18" r="1.4" /><circle cx="15" cy="18" r="1.4" />
+                  </svg>
                   <span className="w-5 flex-shrink-0 text-[11px] font-mono text-nm-text-3 text-right">{i + 1}</span>
                   <div className="flex-1 min-w-0">
                     <div className="text-xs text-nm-text truncate" title={row.abs_path}>

@@ -1808,6 +1808,11 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
         onClear={() => {
           void Promise.all(trayRows.map((r) => window.api.irLibraryRemoveFromTray(r.id))).then(refreshTray)
         }}
+        onReorder={(orderedIds) => {
+          // Optimistic — reflect the drop immediately rather than waiting on the round trip.
+          setTrayRows((prev) => orderedIds.map((id) => prev.find((r) => r.id === id)).filter((r): r is typeof prev[number] => r != null))
+          void window.api.irLibraryReorderTray(orderedIds)
+        }}
         onPlay={(row) => {
           const full = cacheRef.current.get(focusedIndex ?? -1)
           // The tray row carries only id/name/path; openPlayer wants the full browse row. Use the

@@ -652,6 +652,7 @@ declare global {
       irLibraryRemoveFromTray: (itemId: string) => Promise<{ success: boolean }>
       irLibraryListTray: () => Promise<Array<{ id: string; relative_path: string; display_name: string; abs_path: string; position: number }>>
       irLibraryIsInTray: (itemId: string) => Promise<boolean>
+      irLibraryReorderTray: (orderedItemIds: string[]) => Promise<{ success: boolean }>
       irLabConnectorAvailable: () => Promise<boolean>
       irLibraryGetIrLabStatus: () => Promise<{
         installed: boolean

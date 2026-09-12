@@ -79,6 +79,28 @@ export function isInTray(db: DatabaseSync, itemId: string): boolean {
   )
 }
 
+/**
+ * Reassigns positions 0..N-1 in the given order (audit finding B5 — slot position maps to a
+ * Blender control the user is about to reach for, so insertion order isn't good enough). Silently
+ * ignores any id not currently in the tray rather than erroring, since a stale drag payload (item
+ * removed by another action mid-drag) shouldn't be able to corrupt the rest of the ordering.
+ */
+export function reorderTray(db: DatabaseSync, orderedItemIds: string[]): void {
+  const trayId = getOrCreateTrayId(db)
+  const current = new Set(
+    (db.prepare(`SELECT item_id FROM collection_item WHERE collection_id = ?`).all(trayId) as Array<{
+      item_id: string
+    }>).map((r) => r.item_id)
+  )
+  const stmt = db.prepare(`UPDATE collection_item SET position = ? WHERE collection_id = ? AND item_id = ?`)
+  let position = 0
+  for (const itemId of orderedItemIds) {
+    if (!current.has(itemId)) continue
+    stmt.run(position, trayId, itemId)
+    position++
+  }
+}
+
 export function listTray(db: DatabaseSync): TrayItemRow[] {
   const trayId = getOrCreateTrayId(db)
   const rows = db

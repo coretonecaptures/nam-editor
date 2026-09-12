@@ -588,6 +588,8 @@ const api = {
   irLibraryListTray: (): Promise<Array<{ id: string; relative_path: string; display_name: string; abs_path: string; position: number }>> =>
     ipcRenderer.invoke('irLibrary:listTray'),
   irLibraryIsInTray: (itemId: string): Promise<boolean> => ipcRenderer.invoke('irLibrary:isInTray', itemId),
+  irLibraryReorderTray: (orderedItemIds: string[]): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('irLibrary:reorderTray', orderedItemIds),
   irLabConnectorAvailable: (): Promise<boolean> => ipcRenderer.invoke('irLibrary:irLabConnectorAvailable'),
   irLibraryGetIrLabStatus: (): Promise<{
     installed: boolean
