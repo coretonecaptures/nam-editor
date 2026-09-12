@@ -1153,16 +1153,25 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           </button>
         )}
         {hasAnyRoot && (
-          <div className="flex rounded overflow-hidden border border-field-bd text-xs flex-shrink-0">
-            {(['list', 'grid'] as const).map((v) => (
-              <button
-                key={v}
-                onClick={() => setIrListView(v)}
-                className={`px-2 py-1 ${irListView === v ? 'bg-nm-accent text-accent-fg' : 'bg-field-bg text-nm-text-2 hover:bg-hov'}`}
-              >
-                {v === 'list' ? 'List' : 'Grid'}
-              </button>
-            ))}
+          <div className="flex rounded overflow-hidden border border-field-bd flex-shrink-0">
+            <button
+              onClick={() => setIrListView('list')}
+              title="List view"
+              className={`p-1.5 ${irListView === 'list' ? 'bg-nm-accent text-accent-fg' : 'bg-field-bg text-nm-text-2 hover:bg-hov'}`}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+            <button
+              onClick={() => setIrListView('grid')}
+              title="Grid view"
+              className={`p-1.5 ${irListView === 'grid' ? 'bg-nm-accent text-accent-fg' : 'bg-field-bg text-nm-text-2 hover:bg-hov'}`}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18M10 3v18M14 3v18" />
+              </svg>
+            </button>
           </div>
         )}
         {hasAnyRoot && irListView === 'list' && (

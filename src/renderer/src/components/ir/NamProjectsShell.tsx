@@ -2413,16 +2413,25 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                     placeholder="Filter captures (name, gear, modeled-by)…"
                     className="flex-1 min-w-0 text-xs px-1.5 py-0.5 rounded border border-field-bd bg-field-bg"
                   />
-                  <div className="flex rounded overflow-hidden border border-field-bd text-[11px] flex-shrink-0">
-                    {(['list', 'cards'] as const).map((v) => (
-                      <button
-                        key={v}
-                        onClick={() => setCaptureView(v)}
-                        className={`px-2 py-1 ${captureView === v ? 'bg-nm-accent text-accent-fg' : 'bg-field-bg text-nm-text-2 hover:bg-hov'}`}
-                      >
-                        {v === 'list' ? 'List' : 'Cards'}
-                      </button>
-                    ))}
+                  <div className="flex rounded overflow-hidden border border-field-bd flex-shrink-0">
+                    <button
+                      onClick={() => setCaptureView('list')}
+                      title="List view"
+                      className={`p-1.5 ${captureView === 'list' ? 'bg-nm-accent text-accent-fg' : 'bg-field-bg text-nm-text-2 hover:bg-hov'}`}
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={() => setCaptureView('cards')}
+                      title="Card view"
+                      className={`p-1.5 ${captureView === 'cards' ? 'bg-nm-accent text-accent-fg' : 'bg-field-bg text-nm-text-2 hover:bg-hov'}`}
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18M10 3v18M14 3v18" />
+                      </svg>
+                    </button>
                   </div>
                   {captureView === 'cards' && (
                     <div className="flex items-center rounded overflow-hidden border border-field-bd flex-shrink-0">
