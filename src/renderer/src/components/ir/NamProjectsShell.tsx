@@ -100,7 +100,10 @@ type StatusFilter = 'all' | CaptureStatus
  * via onTrainerHistory), so `queued`/`training`/`failed` are new here, not a relabeling.
  * `namCaptureId` (set on the queue job via toBatchItem's `captureId: c.captureId ?? c.itemId`) is
  * the join key back to a specific capture — same identity NAM Capture import jobs already use. */
-export function deriveCaptureStatus(capture: NamCaptureRow, queueJobs: TrainerQueueJob[]): CaptureStatus {
+export function deriveCaptureStatus(
+  capture: Pick<NamCaptureRow, 'trained' | 'excitationPath' | 'recordingPath' | 'captureId' | 'itemId'>,
+  queueJobs: TrainerQueueJob[]
+): CaptureStatus {
   if (capture.trained) return 'trained'
   if (!capture.excitationPath || !capture.recordingPath) return 'missing'
   const key = capture.captureId ?? capture.itemId
@@ -230,6 +233,17 @@ function durationLabel(secs: number | null | undefined): string | null {
   const m = Math.floor(secs / 60)
   const s = Math.round(secs % 60)
   return `${m}:${String(s).padStart(2, '0')}`
+}
+
+/** "48 kHz · 24-bit" summarizing every distinct sample rate / bit depth across a project's
+ * captures (the Projects index preview rail's "Rate / depth" stat) — null when neither is known. */
+function rateDepthLabel(captures: Array<Pick<NamCaptureRow, 'sampleRate' | 'recordingBitDepth'>>): string | null {
+  const rates = [...new Set(captures.map((c) => c.sampleRate).filter((v): v is number => v != null))]
+  const depths = [...new Set(captures.map((c) => c.recordingBitDepth).filter((v): v is number => v != null))]
+  if (!rates.length && !depths.length) return null
+  const rateStr = rates.map((r) => `${r / 1000} kHz`).join(' / ')
+  const depthStr = depths.map((d) => `${d}-bit`).join(' / ')
+  return [rateStr, depthStr].filter(Boolean).join(' · ')
 }
 
 function captureIsCalibrated(c: NamCaptureRow): boolean {
@@ -463,12 +477,17 @@ function FacetChip({
   label,
   active,
   onClick,
-  colorClass = ''
+  colorClass = '',
+  dot = false
 }: {
   label: string
   active: boolean
   onClick: () => void
   colorClass?: string
+  /** Dot + label, no fill — for gearType/toneType, per design_handoff_nam_projects' explicit
+   * chip-treatment rule (see the `.chip-force-minimal` CSS comment). Scope chips leave this off
+   * and stay a solid tinted badge, following the user's global chip-style setting as before. */
+  dot?: boolean
 }): React.ReactElement {
   return (
     <button
@@ -477,8 +496,9 @@ function FacetChip({
         onClick()
       }}
       title={`Filter by ${label}`}
-      className={`nam-chip ${colorClass} text-[10px] ${active ? 'ring-1 ring-nm-accent' : ''}`}
+      className={`nam-chip ${colorClass} ${dot ? 'chip-force-minimal' : ''} text-[10px] ${active ? 'ring-1 ring-nm-accent' : ''}`}
     >
+      {dot && <span className="nam-dot" />}
       {label}
     </button>
   )
@@ -501,13 +521,16 @@ function Pill({
   count,
   active,
   onClick,
-  colorClass = ''
+  colorClass = '',
+  dot = false
 }: {
   label: string
   count?: number
   active: boolean
   onClick: () => void
   colorClass?: string
+  /** Dot + label, no fill — see FacetChip's own doc comment; same rule, same reason. */
+  dot?: boolean
 }): React.ReactElement {
   return (
     <button
@@ -515,9 +538,10 @@ function Pill({
       className={
         active
           ? 'px-1.5 py-0.5 text-[10px] rounded border bg-nm-accent text-accent-fg border-nm-accent'
-          : `nam-chip ${colorClass} text-[10px] opacity-70 hover:opacity-100`
+          : `nam-chip ${colorClass} ${dot ? 'chip-force-minimal' : ''} text-[10px] opacity-70 hover:opacity-100`
       }
     >
+      {dot && !active && <span className="nam-dot" />}
       {label}
       {count != null ? ` ${count}` : ''}
     </button>
@@ -937,6 +961,7 @@ function CaptureCard({
                 active={isFacetActive('gearType', eff.gearType)}
                 onClick={() => onFacet('gearType', eff.gearType as string)}
                 colorClass={namGearChipClass(eff.gearType)}
+                dot
               />
             )}
             {eff.toneType && (
@@ -945,6 +970,7 @@ function CaptureCard({
                 active={isFacetActive('toneType', eff.toneType)}
                 onClick={() => onFacet('toneType', eff.toneType as string)}
                 colorClass={namToneChipClass(eff.toneType)}
+                dot
               />
             )}
             {capture.metadataEdited && (
@@ -1096,6 +1122,7 @@ function ProjectsIndex({
   onOpenProject,
   onStageAllUntrained,
   onTrainAllUntrained,
+  onOpenProjectDefaults,
   busy
 }: {
   projects: NamProjectSummary[]
@@ -1111,18 +1138,29 @@ function ProjectsIndex({
   onOpenProject: (collectionId: string) => void
   onStageAllUntrained: () => void
   onTrainAllUntrained: () => void
+  onOpenProjectDefaults: (collectionId: string, name: string) => void
   busy: boolean
 }): React.ReactElement {
-  // Best-effort: TrainerQueueJob.namProjectName is the only join key available at this level
-  // (project SUMMARIES carry no capture ids to match against, unlike a loaded project's own
-  // capture rows) — a project whose name happens to collide with another's could double-count.
-  // Good enough for "does this project currently need attention", not a precise ledger.
-  const projectHasFailedJob = (p: NamProjectSummary): boolean =>
-    queueJobs.some((j) => j.sourceMode === 'nam-capture-import' && j.status === 'error' && j.namProjectName === p.name)
+  // Precise, per-capture status rollup (not a name-based best-effort match) — each summary now
+  // carries the minimal capture facts deriveCaptureStatus needs, matched against the same live
+  // queueJobs stream the open-project view uses.
+  const projectBreakdown = (p: NamProjectSummary): Record<CaptureStatus, number> => {
+    const counts: Record<CaptureStatus, number> = {
+      untrained: 0,
+      queued: 0,
+      training: 0,
+      trained: 0,
+      failed: 0,
+      missing: 0
+    }
+    for (const c of p.captures) counts[deriveCaptureStatus(c, queueJobs)]++
+    return counts
+  }
 
   const projectState = (p: NamProjectSummary): 'complete' | 'inProgress' | 'needsFixing' => {
-    if (projectHasFailedJob(p)) return 'needsFixing'
-    return p.captureCount > 0 && p.trainedCount === p.captureCount ? 'complete' : 'inProgress'
+    const counts = projectBreakdown(p)
+    if (counts.failed > 0 || counts.missing > 0) return 'needsFixing'
+    return p.captureCount > 0 && counts.trained === p.captureCount ? 'complete' : 'inProgress'
   }
 
   const filtered = projects.filter((p) => {
@@ -1240,10 +1278,19 @@ function ProjectsIndex({
           <div className="p-8 text-center text-xs text-nm-text-3">No projects match.</div>
         ) : view === 'list' ? (
           <div className="flex flex-col px-5 py-3 gap-1">
+            <div className="flex items-center gap-3 px-3 pb-1.5 text-[10px] uppercase tracking-wide text-nm-text-3">
+              <span className="flex-1 min-w-0">Project</span>
+              <span className="w-[168px] flex-shrink-0">Gear / Tone</span>
+              <span className="w-32 flex-shrink-0">Progress</span>
+              <span className="w-[196px] flex-shrink-0">Breakdown</span>
+              <span className="w-16 flex-shrink-0 text-right">Scanned</span>
+              <span className="w-10 flex-shrink-0" />
+            </div>
             {visible.map((p) => (
               <ProjectIndexListRow
                 key={p.collectionId}
                 project={p}
+                breakdown={projectBreakdown(p)}
                 selected={p.collectionId === previewId}
                 onSelect={() => setPreviewId(p.collectionId)}
                 onOpen={() => onOpenProject(p.collectionId)}
@@ -1256,6 +1303,7 @@ function ProjectsIndex({
               <ProjectIndexCard
                 key={p.collectionId}
                 project={p}
+                breakdown={projectBreakdown(p)}
                 selected={p.collectionId === previewId}
                 onSelect={() => setPreviewId(p.collectionId)}
                 onOpen={() => onOpenProject(p.collectionId)}
@@ -1304,12 +1352,37 @@ function ProjectsIndex({
                   </div>
                 )}
               </div>
-              <div className="border-t border-nm-border-s pt-2.5 flex flex-col gap-1">
+              <div className="border-t border-nm-border-s pt-2.5 flex flex-col gap-1.5">
+                <DetailField label="Captures" value={String(previewDetail.captureCount)} />
+                <DetailField label="Rate / depth" value={rateDepthLabel(previewDetail.captures)} />
+                <DetailField
+                  label="Calibration"
+                  value={`${previewDetail.captures.filter(captureIsCalibrated).length} / ${previewDetail.captureCount}`}
+                />
+                <DetailField
+                  label="Excitations"
+                  value={
+                    [...new Set(previewDetail.captures.map((c) => c.excitationSourceName).filter((v): v is string => !!v))].join(
+                      ' · '
+                    ) || null
+                  }
+                />
+                <DetailField
+                  label="Size on disk"
+                  value={formatBytes(
+                    previewDetail.captures.reduce((n, c) => n + (c.recordingFile?.bytes ?? 0) + (c.modelFile?.bytes ?? 0), 0)
+                  )}
+                />
                 <DetailField label="Cabinet" value={previewDetail.cabinet} />
                 <DetailField label="Speaker" value={previewDetail.speaker} />
                 <DetailField label="Room" value={previewDetail.room} />
-                <DetailField label="Notes" value={previewDetail.projectNotes} />
               </div>
+              {previewDetail.projectNotes && (
+                <div className="border-t border-nm-border-s pt-2.5">
+                  <div className="text-[11px] uppercase tracking-wide text-nm-text-3 mb-1">Notes from IR Lab</div>
+                  <div className="text-xs text-nm-text-2 leading-snug">{previewDetail.projectNotes}</div>
+                </div>
+              )}
               <div className="flex flex-col gap-1.5 mt-1">
                 {previewDetail.namCapturesDir && (
                   <button
@@ -1319,6 +1392,12 @@ function ProjectsIndex({
                     Reveal NAM Captures folder
                   </button>
                 )}
+                <button
+                  onClick={() => onOpenProjectDefaults(previewDetail.collectionId, previewDetail.name)}
+                  className="h-7 px-2.5 rounded text-[11.5px] border border-field-bd text-nm-text-2 hover:bg-hov text-left"
+                >
+                  Project defaults…
+                </button>
                 <button
                   onClick={() => onOpenProject(previewDetail.collectionId)}
                   className="h-7 px-2.5 rounded text-[11.5px] font-medium bg-nm-accent text-accent-fg hover:opacity-90 text-left"
@@ -1334,13 +1413,75 @@ function ProjectsIndex({
   )
 }
 
+/** dot+count label used for capture-status */
+const BREAKDOWN_ORDER: CaptureStatus[] = ['trained', 'training', 'queued', 'untrained', 'failed', 'missing']
+const BREAKDOWN_LABEL: Record<CaptureStatus, string> = {
+  untrained: 'untrained',
+  queued: 'queued',
+  training: 'training',
+  trained: 'trained',
+  failed: 'need fixing',
+  missing: 'missing WAV'
+}
+
+function ProjectBreakdown({ counts }: { counts: Record<CaptureStatus, number> }): React.ReactElement {
+  const entries = BREAKDOWN_ORDER.filter((s) => counts[s] > 0)
+  if (entries.length === 0) return <span className="text-[10px] text-nm-text-3">—</span>
+  return (
+    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5">
+      {entries.map((s) => (
+        <span key={s} className={`flex items-center gap-1 text-[10px] ${CAPTURE_STATUS_TEXT[s]}`}>
+          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${CAPTURE_STATUS_DOT[s]}`} />
+          {counts[s]} {BREAKDOWN_LABEL[s]}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+/** Non-interactive display chips for the Projects index — captureScope stays a solid tinted
+ * badge (it comes from the capture type), gearType/toneType render dot+label per this handoff's
+ * global chip rule (see `.chip-force-minimal` in assets/index.css). Capped so a project with many
+ * distinct values doesn't blow out the row. */
+function ProjectFacetChips({
+  scope,
+  gearTypes,
+  toneTypes
+}: {
+  scope: string | null
+  gearTypes: string[]
+  toneTypes: string[]
+}): React.ReactElement {
+  const gear = gearTypes.slice(0, 2)
+  const tone = toneTypes.slice(0, 1)
+  return (
+    <div className="flex flex-wrap items-center gap-1 min-w-0">
+      {scope && <span className="nam-chip chip-nam-scope text-[10px]">{scope}</span>}
+      {gear.map((g) => (
+        <span key={`g-${g}`} className={`nam-chip chip-force-minimal ${namGearChipClass(g)} text-[10px]`}>
+          <span className="nam-dot" />
+          {g}
+        </span>
+      ))}
+      {tone.map((t) => (
+        <span key={`t-${t}`} className={`nam-chip chip-force-minimal ${namToneChipClass(t)} text-[10px]`}>
+          <span className="nam-dot" />
+          {t}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 function ProjectIndexListRow({
   project,
+  breakdown,
   selected,
   onSelect,
   onOpen
 }: {
   project: NamProjectSummary
+  breakdown: Record<CaptureStatus, number>
   selected: boolean
   onSelect: () => void
   onOpen: () => void
@@ -1364,6 +1505,9 @@ function ProjectIndexListRow({
           </div>
         )}
       </div>
+      <div className="w-[168px] flex-shrink-0">
+        <ProjectFacetChips scope={project.scope} gearTypes={project.gearTypes} toneTypes={project.toneTypes} />
+      </div>
       <div className="w-32 flex-shrink-0 flex items-center gap-2">
         <span className="flex-1 h-[5px] rounded-full bg-field-bg overflow-hidden">
           <span className="block h-full bg-emerald-500/80" style={{ width: `${pct}%` }} />
@@ -1372,7 +1516,10 @@ function ProjectIndexListRow({
           {project.trainedCount}/{project.captureCount}
         </span>
       </div>
-      <span className="w-20 flex-shrink-0 text-right text-[10px] text-nm-text-3">{relTime(project.createdAt) ?? '—'}</span>
+      <div className="w-[196px] flex-shrink-0">
+        <ProjectBreakdown counts={breakdown} />
+      </div>
+      <span className="w-16 flex-shrink-0 text-right text-[10px] text-nm-text-3">{relTime(project.createdAt) ?? '—'}</span>
       <button
         onClick={(e) => {
           e.stopPropagation()
@@ -1388,11 +1535,13 @@ function ProjectIndexListRow({
 
 function ProjectIndexCard({
   project,
+  breakdown,
   selected,
   onSelect,
   onOpen
 }: {
   project: NamProjectSummary
+  breakdown: Record<CaptureStatus, number>
   selected: boolean
   onSelect: () => void
   onOpen: () => void
@@ -1428,6 +1577,9 @@ function ProjectIndexCard({
             {[project.cabinet, project.speaker].filter(Boolean).join(' · ')}
           </div>
         )}
+        <div className="mt-2">
+          <ProjectFacetChips scope={project.scope} gearTypes={project.gearTypes} toneTypes={project.toneTypes} />
+        </div>
         <div className="flex items-center gap-2.5 mt-[11px]">
           <span className="flex-1 h-[5px] rounded-full bg-field-bg overflow-hidden">
             <span className="block h-full bg-emerald-500/80" style={{ width: `${pct}%` }} />
@@ -1435,6 +1587,9 @@ function ProjectIndexCard({
           <span className="text-[11.5px] font-semibold text-nm-text flex-shrink-0">
             {project.trainedCount} / {project.captureCount} trained
           </span>
+        </div>
+        <div className="mt-2">
+          <ProjectBreakdown counts={breakdown} />
         </div>
         <div className="flex items-center justify-between mt-3 pt-[11px] border-t border-nm-border-s">
           <span className="text-[10px] font-mono text-nm-text-3">
@@ -2139,7 +2294,9 @@ export function toBatchItem(
 export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = {}): React.ReactElement {
   const [showSettings, setShowSettings] = useState(false)
   const [playerFile, setPlayerFile] = useState<NamFile | null>(null)
-  const [showProjectDefaults, setShowProjectDefaults] = useState(false)
+  // Target-based (not a plain boolean) so both the open-project header AND the Projects index
+  // preview rail (no `detail` loaded there) can open the same modal for whichever project.
+  const [projectDefaultsTarget, setProjectDefaultsTarget] = useState<{ collectionId: string; name: string } | null>(null)
   const [showBuildPack, setShowBuildPack] = useState(false)
   const [playerError, setPlayerError] = useState<string | null>(null)
   const openModelInPlayer = useCallback(async (path: string) => {
@@ -2952,12 +3109,15 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
           <button onClick={() => setPlayerError(null)} className="text-nm-text-3 hover:text-nm-text">×</button>
         </div>
       )}
-      {showProjectDefaults && detail && (
+      {projectDefaultsTarget && (
         <IrProjectDefaultsModal
-          collectionId={detail.collectionId}
-          projectName={detail.name}
-          onClose={() => setShowProjectDefaults(false)}
-          onApplied={() => void refreshDetail(detail.collectionId)}
+          collectionId={projectDefaultsTarget.collectionId}
+          projectName={projectDefaultsTarget.name}
+          onClose={() => setProjectDefaultsTarget(null)}
+          onApplied={() => {
+            if (detail && detail.collectionId === projectDefaultsTarget.collectionId) void refreshDetail(detail.collectionId)
+            void refreshProjects()
+          }}
         />
       )}
       {showBuildPack && detail && <IrBuildPackModal detail={detail} onClose={() => setShowBuildPack(false)} />}
@@ -3104,6 +3264,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
           onOpenProject={setSelectedId}
           onStageAllUntrained={() => void stageOrTrainAllUntrained('stage')}
           onTrainAllUntrained={() => void stageOrTrainAllUntrained('runNext')}
+          onOpenProjectDefaults={(collectionId, name) => setProjectDefaultsTarget({ collectionId, name })}
           busy={queueing}
         />
       ) : (
@@ -3158,7 +3319,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                 <ProjectHeader
                   detail={detail}
                   onReveal={(p) => window.api.revealFile(p)}
-                  onOpenProjectDefaults={() => setShowProjectDefaults(true)}
+                  onOpenProjectDefaults={() => setProjectDefaultsTarget({ collectionId: detail.collectionId, name: detail.name })}
                   onOpenBuildPack={() => setShowBuildPack(true)}
                 />
                 {liveRun && <LiveRunStrip capture={liveRun.capture} job={liveRun.job} queuedNext={liveRun.queuedNext} />}

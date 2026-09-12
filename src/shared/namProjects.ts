@@ -99,6 +99,22 @@ export interface NamProjectSummary {
   /** First image found in the project's own folder or its NAM Captures/ dir, or null — same
    * search `NamProjectDetail.imagePaths` does, just stopping at one for a lightweight cover. */
   coverImagePath: string | null
+  /** Distinct effective gearType/toneType values across this project's captures (dedup, non-null
+   * only) — the Projects index card/row's gear/tone dot-chip row. */
+  gearTypes: string[]
+  toneTypes: string[]
+  /** Most common non-null captureScope across this project's captures, or null. */
+  scope: string | null
+  /** Minimal per-capture facts — just enough for `deriveCaptureStatus` to compute a live
+   * queued/training/failed/missing breakdown client-side (against the live `queueJobs` stream)
+   * without a full per-project detail fetch for every row in the index. */
+  captures: Array<{
+    itemId: string
+    captureId: string | null
+    trained: boolean
+    excitationPath: string | null
+    recordingPath: string | null
+  }>
 }
 
 export interface NamProjectDetail extends NamProjectSummary {

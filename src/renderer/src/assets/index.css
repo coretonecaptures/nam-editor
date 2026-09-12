@@ -288,6 +288,21 @@ pre, code,
   padding-left: 0; padding-right: 6px; font-weight: 500;
 }
 
+/* Force the "minimal" (dot + neutral label, no fill) treatment regardless of the user's global
+   soft/solid/neon/minimal chip-style setting (design_handoff_nam_projects: "gearType and toneType
+   are free-text metadata the user may never fill in... render them as a colored dot + label only,
+   no fill... Do not give gear/tone a filled background" -- a per-field design rule, not a theme
+   preference, so it has to win over whatever [data-chip] mode is active). Scope chips are
+   deliberately NOT given this class -- they stay a solid tinted badge and keep following the
+   global chip-style setting as before. */
+.nam-chip.chip-force-minimal {
+  background: transparent !important;
+  color: var(--text-2, #98a2af) !important;
+  padding-left: 0;
+  font-weight: 500;
+}
+.nam-chip.chip-force-minimal .nam-dot { display: block !important; }
+
 /* Gear chip colors */
 .nam-chip.chip-amp           { --c: #f97316; }
 .nam-chip.chip-amp_cab       { --c: #3b82f6; }

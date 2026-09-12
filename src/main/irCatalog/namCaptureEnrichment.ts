@@ -381,6 +381,19 @@ export interface NamProjectSummary {
   captureCount: number
   trainedCount: number
   syntheticCount: number
+  cabinet: string | null
+  speaker: string | null
+  coverImagePath: string | null
+  gearTypes: string[]
+  toneTypes: string[]
+  scope: string | null
+  captures: Array<{
+    itemId: string
+    captureId: string | null
+    trained: boolean
+    excitationPath: string | null
+    recordingPath: string | null
+  }>
 }
 
 export interface NamProjectDetail extends NamProjectSummary {
@@ -602,6 +615,7 @@ export function listNamProjects(db: DatabaseSync): NamProjectSummary[] {
   return collections.map((c) => {
     const captures = (captureStmt.all(c.id) as unknown as CaptureQueryRow[]).map(mapCaptureRow)
     const { namCapturesDir, projectDir } = resolveProjectDirs(captures)
+    const scopeTally = tally(captures.map((x) => x.captureScope)).filter((t) => t.key !== 'unknown')
     return {
       collectionId: c.id,
       projectId: c.projectId,
@@ -614,7 +628,17 @@ export function listNamProjects(db: DatabaseSync): NamProjectSummary[] {
       syntheticCount: captures.filter((x) => x.synthetic).length,
       cabinet: c.cabinet,
       speaker: c.speaker,
-      coverImagePath: findFirstProjectImage(namCapturesDir, projectDir)
+      coverImagePath: findFirstProjectImage(namCapturesDir, projectDir),
+      gearTypes: [...new Set(captures.map((x) => x.effective.gearType).filter((v): v is string => !!v))],
+      toneTypes: [...new Set(captures.map((x) => x.effective.toneType).filter((v): v is string => !!v))],
+      scope: scopeTally[0]?.key ?? null,
+      captures: captures.map((x) => ({
+        itemId: x.itemId,
+        captureId: x.captureId,
+        trained: x.trained,
+        excitationPath: x.excitationPath,
+        recordingPath: x.recordingPath
+      }))
     }
   })
 }
