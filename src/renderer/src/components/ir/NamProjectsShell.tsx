@@ -2365,7 +2365,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   const [projectFilter, setProjectFilter] = useState('')
   // Projects index (design_handoff_nam_projects Screen 1) — shown when selectedId is null.
   const [indexView, setIndexView] = useState<'list' | 'cards'>(() =>
-    readStored(INDEX_VIEW_KEY) === 'cards' ? 'cards' : 'list'
+    readStored(INDEX_VIEW_KEY) === 'list' ? 'list' : 'cards'
   )
   const [projectStateFilter, setProjectStateFilter] = useState<'all' | 'inProgress' | 'complete' | 'needsFixing'>('all')
   // Rail sort (design doc S9a, marked optional and never built): Name / Newest / Least trained.
