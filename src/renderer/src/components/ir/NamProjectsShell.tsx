@@ -18,7 +18,7 @@ import type {
   NamCaptureMetadataPatch,
   NamLibraryOverview
 } from '../../types/namProjects'
-import type { TrainerHistoryEntry } from '../../types/trainer'
+import type { TrainerHistoryEntry, TrainerQueueJob } from '../../types/trainer'
 import { goToTrainingBatches, goToTrainingQueue, consumePendingNamProjectNav } from '../../appNav'
 import { SettingsPanel } from '../SettingsPanel'
 import { AppSettings, loadSettings, saveSettings } from '../../types/settings'
@@ -87,7 +87,59 @@ function writeStored(key: string, value: string): void {
   }
 }
 
-type StatusFilter = 'all' | 'untrained' | 'trained' | 'synthetic'
+// Expanded status vocabulary (design_handoff_nam_projects) — `synthetic` is deliberately NOT one
+// of these: it's an orthogonal flag a capture can carry regardless of training state (kept as its
+// own toggle in the filter row), not a lifecycle stage.
+export type CaptureStatus = 'untrained' | 'queued' | 'training' | 'trained' | 'failed' | 'missing'
+type StatusFilter = 'all' | CaptureStatus
+
+/** Derives a capture's live status from its own `trained` flag plus the trainer's queue state —
+ * this shell had no live-queue signal at all before (only a post-hoc refetch on job completion
+ * via onTrainerHistory), so `queued`/`training`/`failed` are new here, not a relabeling.
+ * `namCaptureId` (set on the queue job via toBatchItem's `captureId: c.captureId ?? c.itemId`) is
+ * the join key back to a specific capture — same identity NAM Capture import jobs already use. */
+export function deriveCaptureStatus(capture: NamCaptureRow, queueJobs: TrainerQueueJob[]): CaptureStatus {
+  if (capture.trained) return 'trained'
+  if (!capture.excitationPath || !capture.recordingPath) return 'missing'
+  const key = capture.captureId ?? capture.itemId
+  const job = queueJobs.find((j) => j.namCaptureId === key)
+  if (job) {
+    if (job.status === 'running' || job.status === 'starting') return 'training'
+    if (job.status === 'error') return 'failed'
+    if (job.status === 'staged' || job.status === 'queued') return 'queued'
+    // 'success'/'canceled' fall through to 'untrained' below — success is reflected via
+    // capture.trained once onTrainerHistory triggers a refetch; canceled reverts silently.
+  }
+  return 'untrained'
+}
+
+const CAPTURE_STATUS_LABEL: Record<CaptureStatus, string> = {
+  untrained: 'Untrained',
+  queued: 'Queued',
+  training: 'Training',
+  trained: 'Trained',
+  failed: 'Failed',
+  missing: 'Missing WAV'
+}
+// Tailwind-safe literal classes (no dynamic class-name concatenation) matching the design's status
+// color mapping: untrained gray, queued indigo, training amber, trained emerald, failed red,
+// missing WAV orange.
+const CAPTURE_STATUS_DOT: Record<CaptureStatus, string> = {
+  untrained: 'bg-nm-text-3',
+  queued: 'bg-indigo-500',
+  training: 'bg-amber-500',
+  trained: 'bg-emerald-500',
+  failed: 'bg-red-500',
+  missing: 'bg-orange-500'
+}
+const CAPTURE_STATUS_TEXT: Record<CaptureStatus, string> = {
+  untrained: 'text-nm-text-3',
+  queued: 'text-indigo-500',
+  training: 'text-amber-500',
+  trained: 'text-emerald-500',
+  failed: 'text-red-500',
+  missing: 'text-orange-500'
+}
 
 // --- formatting helpers ------------------------------------------------------
 
@@ -297,8 +349,13 @@ const numOr = (n: number | null | undefined, fallback: number): number =>
 
 /** Column definitions for the capture list's DataGrid. `getValue` is the text used for the
  * per-column filter / value checklist / autosize / default cell; `sortValue` / `render` refine
- * sorting and display. The card view sorts through the same defs (sortRows below). */
-export const CAPTURE_COLUMNS: DataGridColumn<NamCaptureRow>[] = [
+ * sorting and display. The card view sorts through the same defs (sortRows below).
+ *
+ * A function of `queueJobs` (not a static array) so the `trained`/status column's render can
+ * derive each row's live status — `deriveCaptureStatus` needs the current queue snapshot, which
+ * only exists inside the component, not at module scope. */
+export function buildCaptureColumns(queueJobs: TrainerQueueJob[]): DataGridColumn<NamCaptureRow>[] {
+  return [
   { key: 'name', label: 'Name', minWidth: 160, defaultWidth: 260, defaultVisible: true, filter: 'text', getValue: (c) => c.captureName },
   { key: 'scope', label: 'Scope', minWidth: 90, defaultVisible: true, getValue: (c) => c.captureScope ?? '' },
   { key: 'rate', label: 'Rate', minWidth: 70, defaultVisible: true, getValue: (c) => srLabel(c.sampleRate) ?? '', sortValue: (c) => c.sampleRate ?? 0 },
@@ -316,7 +373,15 @@ export const CAPTURE_COLUMNS: DataGridColumn<NamCaptureRow>[] = [
   { key: 'modeledBy', label: 'Modeled by', minWidth: 130, defaultVisible: false, getValue: (c) => c.effective.modeledBy ?? '' },
   { key: 'esr', label: 'ESR', minWidth: 74, defaultVisible: true, align: 'right', getValue: (c) => (c.result?.validationEsr != null ? c.result.validationEsr.toFixed(4) : ''), sortValue: (c) => c.result?.validationEsr ?? Number.POSITIVE_INFINITY },
   { key: 'architecture', label: 'Arch', minWidth: 70, defaultVisible: false, getValue: (c) => c.result?.architecture ?? '' },
-  { key: 'trained', label: 'State', minWidth: 92, defaultVisible: true, getValue: (c) => (c.trained ? 'Trained' : 'Untrained'), sortValue: (c) => (c.trained ? 1 : 0), render: (c) => <TrainedBadge trained={c.trained} /> },
+  {
+    key: 'trained',
+    label: 'Status',
+    minWidth: 92,
+    defaultVisible: true,
+    getValue: (c) => CAPTURE_STATUS_LABEL[deriveCaptureStatus(c, queueJobs)],
+    sortValue: (c) => ['missing', 'untrained', 'queued', 'training', 'failed', 'trained'].indexOf(deriveCaptureStatus(c, queueJobs)),
+    render: (c) => <CaptureStatusBadge status={deriveCaptureStatus(c, queueJobs)} />
+  },
   { key: 'edited', label: 'Edited', minWidth: 70, defaultVisible: false, getValue: (c) => (c.metadataEdited ? 'Yes' : '') },
   { key: 'synthetic', label: 'Synthetic', minWidth: 84, defaultVisible: false, getValue: (c) => (c.synthetic ? 'Yes' : '') },
   {
@@ -328,7 +393,8 @@ export const CAPTURE_COLUMNS: DataGridColumn<NamCaptureRow>[] = [
     sortValue: (c) => (c.createdAt ? Date.parse(c.createdAt) || 0 : 0),
     render: (c) => <span title={fmtDateTime(c.createdAt) ?? ''}>{relTime(c.createdAt) ?? '—'}</span>
   }
-]
+  ]
+}
 
 /** Sort a row array through a DataGrid column's `sortValue` (or its text value) — used for the
  * card view, which shares the column model but isn't rendered by DataGrid. */
@@ -372,16 +438,14 @@ function FacetChip({
   )
 }
 
-function TrainedBadge({ trained }: { trained: boolean }): React.ReactElement {
+function CaptureStatusBadge({ status }: { status: CaptureStatus }): React.ReactElement {
   return (
     <span
-      className={`inline-flex items-center gap-1 text-[11px] flex-shrink-0 ${
-        trained ? 'text-emerald-600 dark:text-emerald-400' : 'text-nm-text-3'
-      }`}
-      title={trained ? 'A model has been trained from this capture' : 'No model trained yet'}
+      className={`inline-flex items-center gap-1 text-[11px] font-semibold flex-shrink-0 ${CAPTURE_STATUS_TEXT[status]}`}
+      title={CAPTURE_STATUS_LABEL[status]}
     >
-      <span className={`w-1.5 h-1.5 rounded-full ${trained ? 'bg-emerald-500' : 'bg-nm-text-3/50'}`} />
-      {trained ? 'Trained' : 'Untrained'}
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${CAPTURE_STATUS_DOT[status]}`} />
+      {CAPTURE_STATUS_LABEL[status]}
     </span>
   )
 }
@@ -647,8 +711,53 @@ function ProjectHeader({
   )
 }
 
+/** Live-run strip (design_handoff_nam_projects) — only rendered while a capture from THIS
+ * project is actually training. Real data throughout, not simulated: epoch/ESR/ETA come straight
+ * off the matching `TrainerQueueJob`, the same object TrainingPanel.tsx's own live-run view reads. */
+function LiveRunStrip({ capture, job, queuedNext }: { capture: NamCaptureRow; job: TrainerQueueJob; queuedNext: NamCaptureRow[] }): React.ReactElement {
+  const epochCurrent = job.progressEpochCurrent
+  const epochTotal = job.progressEpochTotal ?? job.epochs
+  const pct = epochTotal ? Math.min(100, Math.round(((epochCurrent ?? 0) / epochTotal) * 100)) : 0
+  const eta =
+    job.progressRate && epochCurrent != null && epochTotal
+      ? (() => {
+          const remaining = epochTotal - epochCurrent
+          const secs = remaining / job.progressRate!
+          const mins = Math.round(secs / 60)
+          return mins > 0 ? `${mins}m left` : '<1m left'
+        })()
+      : null
+  return (
+    <div className="px-4 py-3 border-b border-nm-border-s flex-shrink-0">
+      <div className="rounded-xl border border-amber-500/35 bg-amber-500/[0.07] px-3.5 py-3">
+        <div className="flex items-center gap-2.5">
+          <span className="nm-live-dot w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
+          <span className="text-[13px] font-semibold text-nm-text truncate">{capture.captureName}</span>
+          <span className="text-[11px] font-medium text-amber-500 tabular-nums flex-shrink-0">
+            {epochCurrent != null && epochTotal ? `epoch ${epochCurrent} / ${epochTotal}` : 'starting…'}
+            {job.validationEsr != null ? ` · ESR ${job.validationEsr.toFixed(4)}` : ''}
+            {eta ? ` · ${eta}` : ''}
+          </span>
+        </div>
+        <div className="mt-2.5 h-1.5 rounded-full bg-field-bg overflow-hidden">
+          <div
+            className="h-full rounded-full transition-all duration-500"
+            style={{ width: `${pct}%`, background: 'linear-gradient(90deg,#b1700a,#f59e0b)' }}
+          />
+        </div>
+        {queuedNext.length > 0 && (
+          <div className="mt-2 text-[10.5px] font-medium text-nm-text-2 tabular-nums truncate">
+            queued next: {queuedNext.map((c) => c.captureName).join(' · ')}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function CaptureCard({
   capture,
+  queueJobs,
   checked,
   active,
   onToggleCheck,
@@ -661,6 +770,7 @@ function CaptureCard({
   isFacetActive
 }: {
   capture: NamCaptureRow
+  queueJobs: TrainerQueueJob[]
   checked: boolean
   active: boolean
   onToggleCheck: () => void
@@ -672,6 +782,7 @@ function CaptureCard({
   onFacet: (key: FacetKey, value: string) => void
   isFacetActive: (key: FacetKey, value: string | null) => boolean
 }): React.ReactElement {
+  const status = deriveCaptureStatus(capture, queueJobs)
   const eff = capture.effective
   const gear = [eff.gearMake, eff.gearModel].filter(Boolean).join(' · ')
   const srl = srLabel(capture.sampleRate)
@@ -731,7 +842,7 @@ function CaptureCard({
           >
             {capture.captureName}
           </div>
-          <TrainedBadge trained={capture.trained} />
+          <CaptureStatusBadge status={status} />
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5 gap-y-1 text-xs text-nm-text-3">
@@ -1845,6 +1956,9 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [trainFailure, setTrainFailure] = useState<string | null>(null)
+  // Live trainer-queue snapshot (design_handoff_nam_projects) — this shell previously only learned
+  // about a capture's training state after the fact, via onTrainerHistory on job completion.
+  const [queueJobs, setQueueJobs] = useState<TrainerQueueJob[]>([])
   const [captureMenu, setCaptureMenu] = useState<{ capture: NamCaptureRow; x: number; y: number } | null>(null)
   const [projectMenu, setProjectMenu] = useState<{ project: NamProjectSummary; x: number; y: number } | null>(null)
 
@@ -1861,7 +1975,9 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   const captureCardPx = captureCardSize === 'small' ? 180 : captureCardSize === 'large' ? 336 : 264
   const [sortKey, setSortKey] = useState<string>(() => {
     const k = readStored(SORT_LS_KEY).split(':')[0]
-    return CAPTURE_COLUMNS.some((c) => c.key === k) ? k : 'name'
+    // Column keys are fixed regardless of queue state — an empty array is fine just to validate
+    // the persisted key against the known set, before captureColumns (below) is memoized.
+    return buildCaptureColumns([]).some((c) => c.key === k) ? k : 'name'
   })
   const [sortDir, setSortDir] = useState<SortDir>(() =>
     readStored(SORT_LS_KEY).split(':')[1] === 'desc' ? 'desc' : 'asc'
@@ -1883,6 +1999,10 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   })
   const [captureFilter, setCaptureFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  // Orthogonal to statusFilter, per the design's own framing — a capture can be synthetic AND
+  // any lifecycle status, so it's a separate toggle rather than one of the mutually-exclusive
+  // status pills (which is what it used to be, folded in alongside 'trained'/'untrained').
+  const [syntheticOnly, setSyntheticOnly] = useState(false)
   const [facets, setFacets] = useState<FacetState>(EMPTY_FACETS)
   const [selectedCaptureIds, setSelectedCaptureIds] = useState<Set<string>>(new Set())
   const [selectedCaptureId, setSelectedCaptureId] = useState<string | null>(null)
@@ -2046,6 +2166,23 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
     return off
   }, [selectedId, refreshProjects, refreshDetail])
 
+  // Live queue state (design_handoff_nam_projects) — seeded once via getTrainerState(), then kept
+  // current via onTrainerUpdate, same events TrainingPanel.tsx already subscribes to for its own
+  // live-run view. deriveCaptureStatus (above) is the only consumer of this.
+  useEffect(() => {
+    let disposed = false
+    void window.api.getTrainerState().then((state) => {
+      if (!disposed) setQueueJobs(state.queue)
+    })
+    const off = window.api.onTrainerUpdate((state) => {
+      if (!disposed) setQueueJobs(state.queue)
+    })
+    return () => {
+      disposed = true
+      off()
+    }
+  }, [])
+
   useEffect(() => {
     const move = (e: MouseEvent): void => {
       if (!dragging.current) return
@@ -2128,19 +2265,40 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
           .toLowerCase()
         if (!hay.includes(q)) return false
       }
-      if (statusFilter === 'trained' && !c.trained) return false
-      if (statusFilter === 'untrained' && c.trained) return false
-      if (statusFilter === 'synthetic' && !c.synthetic) return false
+      if (statusFilter !== 'all' && deriveCaptureStatus(c, queueJobs) !== statusFilter) return false
+      if (syntheticOnly && !c.synthetic) return false
       if (!matchesFacets(c, facets)) return false
       return true
     })
-  }, [detail, captureFilter, statusFilter, facets])
+  }, [detail, captureFilter, statusFilter, syntheticOnly, queueJobs, facets])
+
+  const captureColumns = useMemo(() => buildCaptureColumns(queueJobs), [queueJobs])
+
+  // Live-run strip data — the first capture of THIS project currently training, plus whichever of
+  // its own other captures are queued/staged behind it (queueJobs' own array order is the queue
+  // order, same assumption TrainingPanel.tsx's live-run view already makes).
+  const liveRun = useMemo(() => {
+    if (!detail) return null
+    for (const c of detail.captures) {
+      const key = c.captureId ?? c.itemId
+      const job = queueJobs.find((j) => j.namCaptureId === key && (j.status === 'running' || j.status === 'starting'))
+      if (job) {
+        const queuedNext = detail.captures.filter((other) => {
+          const otherKey = other.captureId ?? other.itemId
+          const otherJob = queueJobs.find((j) => j.namCaptureId === otherKey)
+          return otherJob && (otherJob.status === 'queued' || otherJob.status === 'staged')
+        })
+        return { capture: c, job, queuedNext }
+      }
+    }
+    return null
+  }, [detail, queueJobs])
 
   // Only the card view sorts through this — the list view is a DataGrid, which sorts itself
   // (controlled by the same sortKey/sortDir so both views agree).
   const sortedCaptures = useMemo(
-    () => sortRows(visibleCaptures, CAPTURE_COLUMNS, sortKey, sortDir),
-    [visibleCaptures, sortKey, sortDir]
+    () => sortRows(visibleCaptures, captureColumns, sortKey, sortDir),
+    [visibleCaptures, captureColumns, sortKey, sortDir]
   )
 
   useEffect(() => {
@@ -2163,6 +2321,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   const filtersActive =
     captureFilter.trim() !== '' ||
     statusFilter !== 'all' ||
+    syntheticOnly ||
     Object.values(facets).some((a) => a.length > 0)
 
   const toggleFacet = useCallback((key: FacetKey, value: string) => {
@@ -2179,6 +2338,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
     setFacets(EMPTY_FACETS)
     setCaptureFilter('')
     setStatusFilter('all')
+    setSyntheticOnly(false)
   }, [])
 
   const toggleCapture = useCallback((itemId: string) => {
@@ -2749,6 +2909,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                   onOpenProjectDefaults={() => setShowProjectDefaults(true)}
                   onOpenBuildPack={() => setShowBuildPack(true)}
                 />
+                {liveRun && <LiveRunStrip capture={liveRun.capture} job={liveRun.job} queuedNext={liveRun.queuedNext} />}
                 <div className="flex items-center gap-2 px-4 py-1.5 border-b border-nm-border-s flex-shrink-0">
                   <input
                     value={captureFilter}
@@ -2812,7 +2973,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                       title="Sort captures (list-view column headers sort too)"
                       className="text-[11px] px-1.5 py-1 rounded-l border border-field-bd bg-field-bg text-nm-text-2 max-w-[130px]"
                     >
-                      {CAPTURE_COLUMNS.map((c) => (
+                      {captureColumns.map((c) => (
                         <option key={c.key} value={c.key}>
                           Sort: {c.label}
                         </option>
@@ -2826,24 +2987,25 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                       {sortDir === 'asc' ? '↑' : '↓'}
                     </button>
                   </div>
-                  {(['all', 'untrained', 'trained', 'synthetic'] as const).map((s) => {
+                  {(['all', 'untrained', 'queued', 'training', 'trained', 'failed', 'missing'] as const).map((s) => {
                     const n =
                       s === 'all'
                         ? detail.captures.length
-                        : s === 'trained'
-                          ? detail.captures.filter((c) => c.trained).length
-                          : s === 'untrained'
-                            ? detail.captures.filter((c) => !c.trained).length
-                            : detail.captures.filter((c) => c.synthetic).length
+                        : detail.captures.filter((c) => deriveCaptureStatus(c, queueJobs) === s).length
                     return (
                       <StatusChip
                         key={s}
-                        label={`${s[0].toUpperCase() + s.slice(1)} ${n}`}
+                        label={`${s === 'all' ? 'All' : CAPTURE_STATUS_LABEL[s]} ${n}`}
                         active={statusFilter === s}
                         onClick={() => setStatusFilter(s)}
                       />
                     )
                   })}
+                  <StatusChip
+                    label={`Synthetic ${detail.captures.filter((c) => c.synthetic).length}`}
+                    active={syntheticOnly}
+                    onClick={() => setSyntheticOnly((v) => !v)}
+                  />
                 </div>
                 <FacetPills available={facetOptions} active={facets} onToggle={toggleFacet} />
                 <div className="flex items-center gap-3 px-4 py-1 border-b border-nm-border-s flex-shrink-0 text-[11px] text-nm-text-3">
@@ -2878,6 +3040,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                     <CaptureCard
                       key={c.itemId}
                       capture={c}
+                      queueJobs={queueJobs}
                       checked={selectedCaptureIds.has(c.itemId)}
                       active={c.itemId === selectedCaptureId}
                       onToggleCheck={() => toggleCapture(c.itemId)}
@@ -2903,7 +3066,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
               <DataGrid<NamCaptureRow>
                 rows={visibleCaptures}
                 getRowId={(c) => c.itemId}
-                columns={CAPTURE_COLUMNS}
+                columns={captureColumns}
                 storageKey="nam-projects-captures"
                 selectedIds={selectedCaptureIds}
                 onSelectionChange={(ids) => setSelectedCaptureIds(new Set(ids))}

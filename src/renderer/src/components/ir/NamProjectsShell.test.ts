@@ -5,9 +5,11 @@ import {
   matchesFacets,
   sortProjects,
   toBatchItem,
+  deriveCaptureStatus,
   type FacetState
 } from './NamProjectsShell'
 import type { NamCaptureRow } from '../../types/namProjects'
+import type { TrainerQueueJob } from '../../types/trainer'
 
 /** Top-10 NAM Projects to-do item: "pure helpers already extractable and untested" (TODO.md ->
  * UI test harness, tier 1). Not extracted into src/renderer/src/lib/ as the doc's own
@@ -63,6 +65,106 @@ function makeCapture(overrides: Partial<NamCaptureRow> = {}): NamCaptureRow {
     ...overrides
   }
 }
+
+function makeQueueJob(overrides: Partial<TrainerQueueJob> = {}): TrainerQueueJob {
+  return {
+    jobId: 'job-1',
+    status: 'queued',
+    pythonPath: '/usr/bin/python3',
+    inputPath: '/proj/NAM Captures/FMAN100 Crunch 1.wav',
+    outputPath: '/out',
+    trainPath: '/train',
+    namMode: 'a1',
+    architecture: 'standard',
+    waveNetConfig: null,
+    lr: 0.01,
+    lrDecay: 0.0001,
+    batchSize: 16,
+    ny: 8192,
+    fitMrstft: false,
+    normalizeWav: false,
+    normalizeWavTargetDb: -18,
+    captureProfileId: null,
+    epochs: 1000,
+    latency: null,
+    thresholdEsr: null,
+    savePlot: true,
+    silent: false,
+    ignoreChecks: false,
+    modelName: 'FMAN100 Crunch 1',
+    outputModelPath: '/out/FMAN100 Crunch 1.nam',
+    checkpointModelPath: '/train/checkpoint.ckpt',
+    attempts: 0,
+    startedAt: null,
+    finishedAt: null,
+    error: '',
+    validationEsr: null,
+    progressPercent: null,
+    progressEpochCurrent: null,
+    progressEpochTotal: null,
+    progressBatchCurrent: null,
+    progressBatchTotal: null,
+    progressRate: null,
+    progressLatestLine: '',
+    profileId: null,
+    profileName: null,
+    modeledBy: null,
+    inputLevelDbu: null,
+    outputLevelDbu: null,
+    sourceMode: 'nam-capture-import',
+    finalModelRoot: '/out',
+    processedWavRoot: '/processed',
+    graphRoot: '/graph',
+    graphRootResolved: true,
+    sourcePostProcess: 'keep',
+    workspacePath: '/workspace',
+    graphPath: '/graph/plot.png',
+    sourceSizeBytes: null,
+    sourceMtimeMs: null,
+    submissionId: null,
+    submissionLabel: null,
+    submissionCreatedAt: null,
+    namCaptureId: 'cap0001',
+    ...overrides
+  }
+}
+
+describe('deriveCaptureStatus', () => {
+  it('trained wins regardless of queue state', () => {
+    expect(deriveCaptureStatus(makeCapture({ trained: true }), [makeQueueJob({ status: 'error' })])).toBe('trained')
+  })
+
+  it('missing when either WAV path is absent, even with a matching queue job', () => {
+    expect(deriveCaptureStatus(makeCapture({ excitationPath: null }), [])).toBe('missing')
+    expect(deriveCaptureStatus(makeCapture({ recordingPath: null }), [makeQueueJob()])).toBe('missing')
+  })
+
+  it('queued / training / failed derive from the matching queue job by namCaptureId', () => {
+    const c = makeCapture({ captureId: 'cap0001' })
+    expect(deriveCaptureStatus(c, [makeQueueJob({ status: 'staged' })])).toBe('queued')
+    expect(deriveCaptureStatus(c, [makeQueueJob({ status: 'queued' })])).toBe('queued')
+    expect(deriveCaptureStatus(c, [makeQueueJob({ status: 'running' })])).toBe('training')
+    expect(deriveCaptureStatus(c, [makeQueueJob({ status: 'starting' })])).toBe('training')
+    expect(deriveCaptureStatus(c, [makeQueueJob({ status: 'error' })])).toBe('failed')
+  })
+
+  it('falls back to untrained when no job matches this capture', () => {
+    const c = makeCapture({ captureId: 'cap0001' })
+    expect(deriveCaptureStatus(c, [makeQueueJob({ namCaptureId: 'some-other-capture' })])).toBe('untrained')
+    expect(deriveCaptureStatus(c, [])).toBe('untrained')
+  })
+
+  it('a canceled or succeeded job does not itself flip status — falls back to untrained/trained', () => {
+    const c = makeCapture({ captureId: 'cap0001' })
+    expect(deriveCaptureStatus(c, [makeQueueJob({ status: 'canceled' })])).toBe('untrained')
+    expect(deriveCaptureStatus(c, [makeQueueJob({ status: 'success' })])).toBe('untrained')
+  })
+
+  it('matches by itemId fallback when captureId is null, same as toBatchItem', () => {
+    const c = makeCapture({ captureId: null, itemId: 'item-xyz' })
+    expect(deriveCaptureStatus(c, [makeQueueJob({ namCaptureId: 'item-xyz', status: 'running' })])).toBe('training')
+  })
+})
 
 describe('sortProjects', () => {
   const a = { name: 'Bravo', createdAt: '2026-09-01T00:00:00.000Z', captureCount: 4, trainedCount: 2 }
