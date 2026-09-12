@@ -92,11 +92,16 @@ export interface NamProjectSummary {
   captureCount: number
   trainedCount: number
   syntheticCount: number
+  /** Project Details fields, cheap to include in the list query (already a plain column read) —
+   * the Projects index card needs them for its gear/tone-style chip row. */
+  cabinet: string | null
+  speaker: string | null
+  /** First image found in the project's own folder or its NAM Captures/ dir, or null — same
+   * search `NamProjectDetail.imagePaths` does, just stopping at one for a lightweight cover. */
+  coverImagePath: string | null
 }
 
 export interface NamProjectDetail extends NamProjectSummary {
-  cabinet: string | null
-  speaker: string | null
   room: string | null
   signalChain: string | null
   description: string | null

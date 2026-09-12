@@ -67,6 +67,10 @@ const CAPTURE_CARD_SIZE_KEY = 'nam-lab-nam-projects-capture-card-size'
 // marked optional in the original design and never built until now.
 const PROJECT_SORT_KEY = 'nam-lab-nam-projects-project-sort'
 const SORT_LS_KEY = 'nam-lab-nam-projects-sort'
+// Projects index (design_handoff_nam_projects) — the list/cards toggle for the picker screen
+// shown when selectedId is null, independent of captureView (which is the per-project capture
+// grid's own list/cards toggle).
+const INDEX_VIEW_KEY = 'nam-lab-nam-projects-index-view'
 
 function readStored(key: string): string {
   try {
@@ -887,6 +891,253 @@ function ProjectRailRow({
   )
 }
 
+type ProjectStateFilter = 'all' | 'inProgress' | 'complete'
+
+/** Projects index (design_handoff_nam_projects Screen 1) — shown when no project is selected,
+ * replacing the old silent auto-select-first-project behavior. List/Cards toggle, independent of
+ * the per-project capture grid's own `captureView` toggle.
+ *
+ * Per-project "training/failed/missing" breakdowns aren't wired yet — the summary this reads
+ * (`NamProjectSummary`) only carries `captureCount`/`trainedCount`/`syntheticCount` today. Once
+ * the live trainer-queue status vocabulary lands, this component's rollup line is the natural
+ * place to show it; until then it only distinguishes trained vs. untrained. */
+function ProjectsIndex({
+  projects,
+  filter,
+  onFilterChange,
+  stateFilter,
+  onStateFilterChange,
+  sort,
+  onSortChange,
+  view,
+  onViewChange,
+  onOpenProject,
+  onStageAllUntrained,
+  onTrainAllUntrained,
+  busy
+}: {
+  projects: NamProjectSummary[]
+  filter: string
+  onFilterChange: (v: string) => void
+  stateFilter: ProjectStateFilter
+  onStateFilterChange: (v: ProjectStateFilter) => void
+  sort: 'name' | 'newest' | 'leastTrained'
+  onSortChange: (v: 'name' | 'newest' | 'leastTrained') => void
+  view: 'list' | 'cards'
+  onViewChange: (v: 'list' | 'cards') => void
+  onOpenProject: (collectionId: string) => void
+  onStageAllUntrained: () => void
+  onTrainAllUntrained: () => void
+  busy: boolean
+}): React.ReactElement {
+  const projectState = (p: NamProjectSummary): 'complete' | 'inProgress' =>
+    p.captureCount > 0 && p.trainedCount === p.captureCount ? 'complete' : 'inProgress'
+
+  const filtered = projects.filter((p) => {
+    if (filter && !p.name.toLowerCase().includes(filter.toLowerCase())) return false
+    if (stateFilter !== 'all' && projectState(p) !== stateFilter) return false
+    return true
+  })
+  const visible = sortProjects(filtered, sort)
+
+  const totalCaptures = projects.reduce((n, p) => n + p.captureCount, 0)
+  const totalTrained = projects.reduce((n, p) => n + p.trainedCount, 0)
+  const totalUntrained = totalCaptures - totalTrained
+
+  const stateCounts = {
+    all: projects.length,
+    inProgress: projects.filter((p) => projectState(p) === 'inProgress').length,
+    complete: projects.filter((p) => projectState(p) === 'complete').length
+  }
+
+  return (
+    <div className="flex-1 flex flex-col min-h-0">
+      {/* Hero band */}
+      <div className="flex items-start justify-between gap-4 px-5 pt-[18px] pb-4 border-b border-nm-border-s flex-shrink-0">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight text-nm-text">NAM Projects</h1>
+          <p className="text-xs text-nm-text-2 mt-1.5">
+            Wave projects handed over from IR Lab, waiting to be trained by the NAM trainer.
+          </p>
+        </div>
+        <div className="flex items-start gap-6 flex-shrink-0">
+          <StatTile label="Projects" value={projects.length} />
+          <StatTile label="Captures" value={totalCaptures} />
+          <StatTile label="Trained" value={totalTrained} tone="accent" />
+          <StatTile label="Untrained" value={totalUntrained} tone="muted" />
+        </div>
+      </div>
+
+      {/* Filter row */}
+      <div className="flex items-center gap-2 px-5 py-2.5 border-b border-nm-border-s flex-shrink-0">
+        <input
+          value={filter}
+          onChange={(e) => onFilterChange(e.target.value)}
+          placeholder="Filter projects…"
+          className="flex-1 min-w-[120px] h-[27px] text-xs px-2 rounded border border-field-bd bg-field-bg"
+        />
+        {(
+          [
+            ['all', `All ${stateCounts.all}`],
+            ['inProgress', `In progress ${stateCounts.inProgress}`],
+            ['complete', `Complete ${stateCounts.complete}`]
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => onStateFilterChange(key)}
+            className={`flex-shrink-0 h-6 px-2.5 rounded-full text-[11px] font-semibold whitespace-nowrap ${
+              stateFilter === key ? 'bg-nm-accent text-accent-fg' : 'border border-field-bd text-nm-text-2 hover:bg-hov'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+        <select
+          value={sort}
+          onChange={(e) => onSortChange(e.target.value as typeof sort)}
+          className="flex-shrink-0 h-[27px] text-xs px-1.5 rounded border border-field-bd bg-field-bg text-nm-text-2"
+        >
+          <option value="name">Sort: Name</option>
+          <option value="newest">Sort: Newest</option>
+          <option value="leastTrained">Sort: Least trained</option>
+        </select>
+        <div className="flex-shrink-0 flex rounded-lg overflow-hidden border border-field-bd bg-field-bg p-0.5">
+          {(['list', 'cards'] as const).map((v) => (
+            <button
+              key={v}
+              onClick={() => onViewChange(v)}
+              className={`h-[22px] px-2.5 rounded-md text-[11px] font-semibold ${
+                view === v ? 'bg-active-bg text-nm-accent' : 'text-nm-text-2 hover:bg-hov'
+              }`}
+            >
+              {v === 'list' ? 'List' : 'Cards'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Project grid/list */}
+      <div className="flex-1 overflow-y-auto">
+        {visible.length === 0 ? (
+          <div className="p-8 text-center text-xs text-nm-text-3">No projects match.</div>
+        ) : view === 'list' ? (
+          <div className="flex flex-col px-5 py-3 gap-1">
+            {visible.map((p) => (
+              <ProjectIndexListRow key={p.collectionId} project={p} onOpen={() => onOpenProject(p.collectionId)} />
+            ))}
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-4 px-5 py-4">
+            {visible.map((p) => (
+              <ProjectIndexCard key={p.collectionId} project={p} onOpen={() => onOpenProject(p.collectionId)} />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Footer action bar */}
+      <div className="flex items-center gap-3 px-5 h-[46px] border-t border-nm-border flex-shrink-0">
+        <span className="text-[11.5px] text-nm-text-2">
+          {projects.length} project{projects.length === 1 ? '' : 's'} · {totalCaptures} capture{totalCaptures === 1 ? '' : 's'} ·{' '}
+          {totalUntrained} untrained across all projects
+        </span>
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={onStageAllUntrained}
+            disabled={busy || totalUntrained === 0}
+            className="h-7 px-3 rounded text-[11.5px] font-semibold border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-40"
+          >
+            Stage all untrained
+          </button>
+          <button
+            onClick={onTrainAllUntrained}
+            disabled={busy || totalUntrained === 0}
+            className="h-7 px-3 rounded text-[11.5px] font-medium bg-nm-accent text-accent-fg hover:opacity-90 disabled:opacity-40"
+          >
+            Train all untrained →
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ProjectIndexListRow({ project, onOpen }: { project: NamProjectSummary; onOpen: () => void }): React.ReactElement {
+  const pct = project.captureCount ? Math.round((project.trainedCount / project.captureCount) * 100) : 0
+  return (
+    <button
+      onClick={onOpen}
+      className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-hov border border-transparent hover:border-nm-border-s"
+    >
+      <div className="flex-1 min-w-0">
+        <div className="text-[12.5px] font-semibold text-nm-text truncate">{project.name}</div>
+        {(project.cabinet || project.speaker) && (
+          <div className="text-[10.5px] text-nm-text-3 truncate mt-0.5">
+            {[project.cabinet, project.speaker].filter(Boolean).join(' · ')}
+          </div>
+        )}
+      </div>
+      <div className="w-32 flex-shrink-0 flex items-center gap-2">
+        <span className="flex-1 h-[5px] rounded-full bg-field-bg overflow-hidden">
+          <span className="block h-full bg-emerald-500/80" style={{ width: `${pct}%` }} />
+        </span>
+        <span className="text-[10px] font-medium text-nm-text-2 tabular-nums flex-shrink-0">
+          {project.trainedCount}/{project.captureCount}
+        </span>
+      </div>
+      <span className="w-20 flex-shrink-0 text-right text-[10px] text-nm-text-3">{relTime(project.createdAt) ?? '—'}</span>
+      <span className="w-10 flex-shrink-0 text-right text-[11px] font-semibold text-nm-accent">Open →</span>
+    </button>
+  )
+}
+
+function ProjectIndexCard({ project, onOpen }: { project: NamProjectSummary; onOpen: () => void }): React.ReactElement {
+  const pct = project.captureCount ? Math.round((project.trainedCount / project.captureCount) * 100) : 0
+  const created = fmtDate(project.createdAt)
+  return (
+    <button
+      onClick={onOpen}
+      className="w-[326px] flex-shrink-0 text-left rounded-xl border border-nm-border bg-panel hover:border-nm-accent/50 overflow-hidden"
+    >
+      <div className="h-[104px] border-b border-nm-border bg-field-bg flex items-center justify-center overflow-hidden">
+        {project.coverImagePath ? (
+          <ScaledImage src={fileSrc(project.coverImagePath)} width={326} height={104} fit="cover" className="w-full h-full" />
+        ) : (
+          <span
+            className="w-full h-full flex items-center justify-center text-[10px] font-mono text-nm-text-3"
+            style={{ background: 'repeating-linear-gradient(135deg, var(--panel) 0 8px, var(--panel-2) 8px 16px)' }}
+          >
+            no cover
+          </span>
+        )}
+      </div>
+      <div className="px-3.5 py-3">
+        <div className="text-[13.5px] font-semibold text-nm-text truncate">{project.name}</div>
+        {(project.cabinet || project.speaker) && (
+          <div className="text-[10px] text-nm-text-3 truncate mt-1">
+            {[project.cabinet, project.speaker].filter(Boolean).join(' · ')}
+          </div>
+        )}
+        <div className="flex items-center gap-2.5 mt-[11px]">
+          <span className="flex-1 h-[5px] rounded-full bg-field-bg overflow-hidden">
+            <span className="block h-full bg-emerald-500/80" style={{ width: `${pct}%` }} />
+          </span>
+          <span className="text-[11.5px] font-semibold text-nm-text flex-shrink-0">
+            {project.trainedCount} / {project.captureCount} trained
+          </span>
+        </div>
+        <div className="flex items-center justify-between mt-3 pt-[11px] border-t border-nm-border-s">
+          <span className="text-[10px] font-mono text-nm-text-3">
+            {created ? `created ${created}` : ''}
+          </span>
+          <span className="text-[11px] font-semibold text-nm-accent">Open →</span>
+        </div>
+      </div>
+    </button>
+  )
+}
+
 function StatTile({
   label,
   value,
@@ -1618,6 +1869,11 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   const [overview, setOverview] = useState<NamLibraryOverview | null>(null)
   const [reportCopied, setReportCopied] = useState(false)
   const [projectFilter, setProjectFilter] = useState('')
+  // Projects index (design_handoff_nam_projects Screen 1) — shown when selectedId is null.
+  const [indexView, setIndexView] = useState<'list' | 'cards'>(() =>
+    readStored(INDEX_VIEW_KEY) === 'cards' ? 'cards' : 'list'
+  )
+  const [projectStateFilter, setProjectStateFilter] = useState<'all' | 'inProgress' | 'complete' | 'needsFixing'>('all')
   // Rail sort (design doc S9a, marked optional and never built): Name / Newest / Least trained.
   // "Least trained" = fewest of a project's captures already trained -- surfaces "what still
   // needs work" first, which is the point of the option per the design doc's own framing.
@@ -1688,9 +1944,10 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
     try {
       const list = await window.api.irLibraryListNamProjects()
       setProjects(list)
-      setSelectedId((prev) =>
-        prev && list.some((p) => p.collectionId === prev) ? prev : list[0]?.collectionId ?? null
-      )
+      // Projects index (design_handoff_nam_projects) — a stored selection restores if it's still
+      // there, but a missing one now lands on the index rather than silently picking the first
+      // project. `selectedId === null` IS a real, intentional state, not "not loaded yet."
+      setSelectedId((prev) => (prev && list.some((p) => p.collectionId === prev) ? prev : null))
     } catch (err) {
       setError(String(err))
     } finally {
@@ -1727,6 +1984,9 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   useEffect(() => {
     writeStored(PROJECT_SORT_KEY, projectSort)
   }, [projectSort])
+  useEffect(() => {
+    writeStored(INDEX_VIEW_KEY, indexView)
+  }, [indexView])
 
   const refreshDetail = useCallback(async (collectionId: string) => {
     try {
@@ -2012,6 +2272,64 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
     [submitBatch]
   )
 
+  // Projects index footer ("Stage all untrained" / "Train all untrained") — cross-project, unlike
+  // submitBatch above (which is scoped to the single currently-loaded `detail`). Fetches every
+  // project with at least one untrained capture, pools the eligible ones, and submits them as one
+  // batch under a generic label rather than per-project labels.
+  const stageOrTrainAllUntrained = useCallback(
+    async (mode: 'stage' | 'runNext') => {
+      if (!outputRoot) {
+        setError('Choose a model output folder first (right panel).')
+        return
+      }
+      const candidates = projects.filter((p) => p.trainedCount < p.captureCount)
+      if (candidates.length === 0) return
+      setQueueing(true)
+      setError(null)
+      setMessage(null)
+      try {
+        const details = await Promise.all(candidates.map((p) => window.api.irLibraryGetNamProjectDetail(p.collectionId)))
+        const items = details.flatMap((d) =>
+          d ? d.captures.filter((c) => isQueueEligible(c, true)).map((c) => toBatchItem(c, d.name)) : []
+        )
+        if (items.length === 0) {
+          setError('Those captures are all trained already, or missing their WAV files.')
+          return
+        }
+        const res = await window.api.enqueueNamCaptureImport({
+          captures: items,
+          finalModelRoot: outputRoot,
+          architecture,
+          epochs,
+          includeSynthetic: true,
+          staged: mode === 'stage',
+          priority: mode === 'runNext' ? 'next' : 'normal',
+          submissionLabel: `All untrained — ${mode === 'stage' ? 'Stage' : 'Run next'}`
+        })
+        if (res.success) {
+          if (mode === 'stage') {
+            setMessage(`Staged ${res.built ?? items.length} job${(res.built ?? 1) === 1 ? '' : 's'} — opening the Batches page…`)
+            goToTrainingBatches()
+          } else {
+            setMessage(
+              `Queued ${res.built ?? items.length} job${(res.built ?? 1) === 1 ? '' : 's'} to run next` +
+                (res.ranNext ? ' (jumped ahead of the current queue)' : '') +
+                ' — opening the Queue…'
+            )
+            goToTrainingQueue()
+          }
+        } else {
+          setError(res.error ?? 'Could not queue the batch.')
+        }
+      } catch (err) {
+        setError(String(err))
+      } finally {
+        setQueueing(false)
+      }
+    },
+    [projects, outputRoot, architecture, epochs]
+  )
+
   const projectEligible = useMemo(
     () => (detail ? detail.captures.filter((c) => isQueueEligible(c, includeSynthetic)) : []),
     [detail, includeSynthetic]
@@ -2129,6 +2447,15 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
       >
       <div className="flex items-center gap-3 flex-1 min-w-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
         <NamLabCrumb mode="nam-projects" />
+        {selectedId != null && (
+          <span className="flex items-center gap-1.5 text-xs min-w-0 flex-shrink">
+            <button onClick={() => setSelectedId(null)} className="text-nm-text-2 hover:text-nm-text flex-shrink-0">
+              Projects
+            </button>
+            <span className="text-nm-text-3 flex-shrink-0">/</span>
+            <span className="font-semibold text-nm-text truncate">{detail?.name ?? '…'}</span>
+          </span>
+        )}
         <div className="w-px h-5 bg-nm-border-s flex-shrink-0" />
         <button
           onClick={handleAddFolder}
@@ -2351,6 +2678,22 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
             </div>
           )}
         </div>
+      ) : selectedId === null ? (
+        <ProjectsIndex
+          projects={projects}
+          filter={projectFilter}
+          onFilterChange={setProjectFilter}
+          stateFilter={projectStateFilter}
+          onStateFilterChange={setProjectStateFilter}
+          sort={projectSort}
+          onSortChange={setProjectSort}
+          view={indexView}
+          onViewChange={setIndexView}
+          onOpenProject={setSelectedId}
+          onStageAllUntrained={() => void stageOrTrainAllUntrained('stage')}
+          onTrainAllUntrained={() => void stageOrTrainAllUntrained('runNext')}
+          busy={queueing}
+        />
       ) : (
         <div className="flex-1 flex min-h-0">
           <div

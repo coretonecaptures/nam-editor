@@ -552,11 +552,39 @@ const CAPTURE_SELECT = `
 `
 
 /** Backend for the "NAM Projects" left rail — every nam_project collection across every root. */
+/** The project's own folder is the parent of the "NAM Captures" dir (where every capture
+ * recording lives); `_excitations` is its sibling. Shared by `listNamProjects` (Projects index
+ * cards need a cover) and `getNamProjectDetail` (which additionally confirms `_excitations`
+ * actually exists on disk) so the two don't drift on how a project's directories are found. */
+function resolveProjectDirs(captures: NamCaptureRow[]): { namCapturesDir: string | null; projectDir: string | null } {
+  const namCapturesDir = captures.map((x) => x.captureFolderPath).find((p): p is string => !!p) ?? null
+  const projectDir = namCapturesDir ? dirname(namCapturesDir) : null
+  return { namCapturesDir, projectDir }
+}
+
+/** First image found in the project's own folder or its `NAM Captures/` dir — same two
+ * directories `getNamProjectDetail`'s fuller `imagePaths` scan checks, just stopping at one. */
+function findFirstProjectImage(namCapturesDir: string | null, projectDir: string | null): string | null {
+  for (const dir of [projectDir, namCapturesDir]) {
+    if (!dir) continue
+    try {
+      const names = fs.readdirSync(dir).sort()
+      for (const name of names) {
+        const ext = name.slice(name.lastIndexOf('.')).toLowerCase()
+        if (IMAGE_EXTS.has(ext)) return join(dir, name)
+      }
+    } catch {
+      /* dir gone — skip */
+    }
+  }
+  return null
+}
+
 export function listNamProjects(db: DatabaseSync): NamProjectSummary[] {
   const collections = db
     .prepare(
       `SELECT id, naming_template as projectId, name, created_at as createdAt,
-              library_root_id as libraryRootId, folder_id as folderId
+              library_root_id as libraryRootId, folder_id as folderId, cabinet, speaker
        FROM collection WHERE kind = 'nam_project' ORDER BY name`
     )
     .all() as Array<{
@@ -566,11 +594,14 @@ export function listNamProjects(db: DatabaseSync): NamProjectSummary[] {
     createdAt: string | null
     libraryRootId: number
     folderId: number | null
+    cabinet: string | null
+    speaker: string | null
   }>
 
   const captureStmt = db.prepare(CAPTURE_SELECT)
   return collections.map((c) => {
     const captures = (captureStmt.all(c.id) as unknown as CaptureQueryRow[]).map(mapCaptureRow)
+    const { namCapturesDir, projectDir } = resolveProjectDirs(captures)
     return {
       collectionId: c.id,
       projectId: c.projectId,
@@ -580,7 +611,10 @@ export function listNamProjects(db: DatabaseSync): NamProjectSummary[] {
       folderId: c.folderId,
       captureCount: captures.length,
       trainedCount: captures.filter((x) => x.trained).length,
-      syntheticCount: captures.filter((x) => x.synthetic).length
+      syntheticCount: captures.filter((x) => x.synthetic).length,
+      cabinet: c.cabinet,
+      speaker: c.speaker,
+      coverImagePath: findFirstProjectImage(namCapturesDir, projectDir)
     }
   })
 }
@@ -615,10 +649,7 @@ export function getNamProjectDetail(db: DatabaseSync, collectionId: string): Nam
 
   const captures = (db.prepare(CAPTURE_SELECT).all(c.id) as unknown as CaptureQueryRow[]).map(mapCaptureRow)
 
-  // The project's own folder is the parent of the "NAM Captures" dir (which is where every
-  // capture recording lives). `_excitations` is its sibling.
-  const namCapturesDir = captures.map((x) => x.captureFolderPath).find((p): p is string => !!p) ?? null
-  const projectDir = namCapturesDir ? dirname(namCapturesDir) : null
+  const { namCapturesDir, projectDir } = resolveProjectDirs(captures)
   const excitationsDir = projectDir ? join(projectDir, '_excitations') : null
 
   const imagePaths: string[] = []
