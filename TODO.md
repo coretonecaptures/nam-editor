@@ -1323,6 +1323,26 @@ IR Lab's `bb2ece4` commit set up:
   compiled in; clickable but warns "hasn't reported running yet" when there's no status file;
   names the license/trial state when installed-but-unlicensed; names the version when licensed.
 
+**Coverage planner — 2026-09-13, done (audit idea 1 / backlog step 10, the last open item).**
+"Your other four cabs all have an R121 as well, this one doesn't":
+`irCatalog/coveragePlanner.ts`'s `getCoverageMatrix()` groups the library into rigs (resolved
+cabinet+speaker, reusing `queryItems()`'s own 3-way COALESCE rather than a second resolution that
+could disagree with the browse view), finds every `(microphone, mic_a/b_target_zone)` combo in the
+library, and flags a rig as missing one only when 2+ *other* rigs already have it. "Capture this in
+IR Lab →" reuses the existing `sendProjectToIrLab(id, 'Cab IR')` — real, already-shipped IR Lab
+route, confirmed against `ExternalHandoffRouter.cpp`.
+- **Prerequisite bug found and fixed in the same pass:** `labProjectEnrichment.ts` was minting its
+  own local `randomUUID()` for every IR-mode "project" instead of reading `project.json`'s own
+  `id` field (present in the JSON, just never read) — IR Lab's `ProjectStore` only resolves ids it
+  originally generated, so a deep link built from NAM Lab's invented id would have silently failed
+  to open anything. Fixed by capturing the real id into `collection.naming_template` (reusing the
+  same column `namCaptureEnrichment.ts` already repurposes this way for `nam_project` rows, not a
+  new column). Nothing shipped before this was affected — NAM *Projects* mode's own "Open in IR
+  Lab" button already went through the correct `naming_template` path for its own collection kind.
+- **Known limitation, by design:** no fixed vocabulary exists for cabinet/speaker/mic/position on
+  either app's side — matching is exact, case-insensitive string equality after trim, so "SM-57"
+  and "SM57" won't match. Surfaced as UI copy in the modal, not solved with fuzzy matching.
+
 ## UI test harness
 
 **Status: not started. Priority: Medium — the IR Lab Manager branch (`feature/ir-lab-manager`)

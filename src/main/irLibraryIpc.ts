@@ -35,6 +35,7 @@ import { readIrLabStatus } from './irLabStatus'
 import { getLibraryOverview } from './irCatalog/libraryOverview'
 import { enrichLabProjects, getProjectDetailForFolder } from './irCatalog/labProjectEnrichment'
 import { findDuplicates } from './irCatalog/duplicates'
+import { getCoverageMatrix } from './irCatalog/coveragePlanner'
 import { renameItem, moveItems, trashItems, copyItems, ensureDestinationFolder, createFolder, renameFolder, deleteFolder } from './irCatalog/fileOps'
 import { syncRootWatchers, stopAllRootWatchers } from './irCatalog/irRootWatcher'
 import { previewLibraryCleanup, runLibraryCleanup, type CleanupPreviewRow } from './irCatalog/libraryCleanup'
@@ -583,6 +584,12 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
   // a project's real IR Lab projectId — namCaptureEnrichment.ts's `naming_template` column).
   ipcMain.handle('irLibrary:findDuplicates', (_event, options: { libraryRootId?: number | null; folderId?: number | null }) =>
     findDuplicates(getDb(), options)
+  )
+  // The coverage planner (audit idea 1 / backlog step 10) — see coveragePlanner.ts's own header
+  // for the gap-detection rule and why it reuses queryItems() rather than a second resolution of
+  // cabinet/speaker.
+  ipcMain.handle('irLibrary:getCoverageMatrix', (_event, libraryRootId?: number | null) =>
+    getCoverageMatrix(getDb(), { libraryRootId: libraryRootId ?? null })
   )
   // Catalog-transactional file operations (parity backlog item 1/2) — see fileOps.ts's own header
   // for why these can't just be the plain disk-only file:rename/file:move/file:trash/file:copy

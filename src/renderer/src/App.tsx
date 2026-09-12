@@ -726,6 +726,16 @@ declare global {
         totalReclaimableBytes: number
         unhashedCount: number
       }>
+      irLibraryGetCoverageMatrix: (libraryRootId?: number | null) => Promise<
+        Array<{
+          cabinet: string
+          speaker: string
+          combosPresent: Array<{ microphone: string; position: string }>
+          gaps: Array<{ microphone: string; position: string; presentInOtherRigCount: number }>
+          targetProjectId: string | null
+          targetProjectName: string | null
+        }>
+      >
       irLibraryRenameItem: (itemId: string, newBaseName: string, force?: boolean) => Promise<{ itemId: string; success: boolean; error?: string; newAbsPath?: string }>
       irLibraryMoveItems: (itemIds: string[], destFolderId: number | null, force?: boolean) => Promise<Array<{ itemId: string; success: boolean; error?: string; newAbsPath?: string }>>
       irLibraryTrashItems: (itemIds: string[]) => Promise<Array<{ itemId: string; success: boolean; error?: string }>>

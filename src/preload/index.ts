@@ -667,6 +667,18 @@ const api = {
     totalReclaimableBytes: number
     unhashedCount: number
   }> => ipcRenderer.invoke('irLibrary:findDuplicates', options),
+  irLibraryGetCoverageMatrix: (
+    libraryRootId?: number | null
+  ): Promise<
+    Array<{
+      cabinet: string
+      speaker: string
+      combosPresent: Array<{ microphone: string; position: string }>
+      gaps: Array<{ microphone: string; position: string; presentInOtherRigCount: number }>
+      targetProjectId: string | null
+      targetProjectName: string | null
+    }>
+  > => ipcRenderer.invoke('irLibrary:getCoverageMatrix', libraryRootId),
   irLibraryRenameItem: (
     itemId: string,
     newBaseName: string,

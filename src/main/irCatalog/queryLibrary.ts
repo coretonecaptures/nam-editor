@@ -67,6 +67,13 @@ export interface ItemRow {
   speaker_position: string | null
   modeled_microphone: string | null
   preset_kind: string | null
+  // The mic-placement axis ("Cap Center"/"Cap Edge"/"Cone Middle"/etc, IR Lab's own suggested UI
+  // vocabulary, not a DB-enforced enum) — distinct from speaker_position above, which is which
+  // physical driver in a multi-speaker cab, not where on it the mic sits. The coverage planner
+  // (coveragePlanner.ts) is the first reader; added here rather than a separate query so it sees
+  // exactly the same resolved cabinet/speaker/microphone every other browse read does.
+  mic_a_target_zone: string | null
+  mic_b_target_zone: string | null
 }
 
 export interface QueryOptions {
@@ -366,7 +373,9 @@ export function queryItems(db: DatabaseSync, options: QueryOptions): ItemRow[] {
               ir_item.audio_format as audio_format,
               ir_item.speaker_position as speaker_position,
               ir_item.modeled_microphone as modeled_microphone,
-              ir_item.preset_kind as preset_kind
+              ir_item.preset_kind as preset_kind,
+              ir_item.mic_a_target_zone as mic_a_target_zone,
+              ir_item.mic_b_target_zone as mic_b_target_zone
        FROM item
        JOIN library_root ON library_root.id = item.library_root_id
        LEFT JOIN ir_item ON ir_item.item_id = item.id

@@ -17,6 +17,7 @@ import { SettingsPanel } from '../SettingsPanel'
 import { IR_ITEM_DRAG_MIME } from './dragMime'
 import { exportIrCatalogCSV, exportIrCatalogXLSX } from './irExport'
 import { IrDuplicatesModal } from './IrDuplicatesModal'
+import { CoveragePlannerModal } from './CoveragePlannerModal'
 import { IrMoveToFolderModal } from './IrMoveToFolderModal'
 import { IrBatchRenameModal } from './IrBatchRenameModal'
 import { IrEditMetadataModal } from './IrEditMetadataModal'
@@ -256,6 +257,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
   const [selectedRootId, setSelectedRootId] = useState<number | null>(null)
   const [addToGroupRow, setAddToGroupRow] = useState<IrItemRow | null>(null)
   const [showDuplicates, setShowDuplicates] = useState(false)
+  const [showCoveragePlanner, setShowCoveragePlanner] = useState(false)
   // Inline rename (parity backlog item 3) — F2 on the focused row or the context menu's Rename.
   // itemId rather than index: the row can scroll/shift under a long rename, and the id is what
   // both commit and cancel actually need.
@@ -1287,6 +1289,15 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
         )}
         {hasAnyRoot && (
           <button
+            onClick={() => setShowCoveragePlanner(true)}
+            className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov"
+            title="Find mic/position combos other cabinets have that this one doesn't"
+          >
+            Coverage Planner…
+          </button>
+        )}
+        {hasAnyRoot && (
+          <button
             onClick={() => setShowBatchRename(true)}
             disabled={selectedFolderId == null}
             className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-40"
@@ -1509,6 +1520,13 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           folderId={selectedFolderId}
           scopeLabel={selectedFolderId != null ? `${selectedFolderName} and its subfolders` : selectedRootId != null ? roots.find((r) => r.id === selectedRootId)?.label || 'This library folder' : 'Whole library'}
           onClose={() => setShowDuplicates(false)}
+        />
+      )}
+      {showCoveragePlanner && (
+        <CoveragePlannerModal
+          libraryRootId={selectedRootId}
+          scopeLabel={selectedRootId != null ? roots.find((r) => r.id === selectedRootId)?.label || 'This library root' : 'Whole library'}
+          onClose={() => setShowCoveragePlanner(false)}
         />
       )}
       {moveModal && (
