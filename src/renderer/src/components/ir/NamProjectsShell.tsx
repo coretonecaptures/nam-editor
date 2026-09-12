@@ -632,26 +632,33 @@ function CoverageBar({
 }
 
 function MakeupChips({ captures }: { captures: NamCaptureRow[] }): React.ReactElement | null {
-  const chips: Array<{ label: string; colorClass: string }> = []
+  // scope is the one chip that stays a solid tinted badge everywhere in the app (it comes from
+  // the capture type, same rule as the Projects index / CaptureCard). Rate/bit-depth/calibration
+  // are also derived, reliable data (not free-text like gear/tone) but read as the same "old solid
+  // pill" look this whole redesign moved away from -- given dot+label treatment here too so the
+  // project detail header matches the Projects index visually, not just gear/tone chips.
+  const dotChips: Array<{ label: string; colorClass: string }> = []
   for (const { value, count } of tally(captures.map((c) => srLabel(c.sampleRate))))
-    chips.push({ label: `${value} ×${count}`, colorClass: 'chip-nam-rate' })
+    dotChips.push({ label: `${value} ×${count}`, colorClass: 'chip-nam-rate' })
   for (const { value, count } of tally(captures.map((c) => (c.recordingBitDepth ? `${c.recordingBitDepth}-bit` : null))))
-    chips.push({ label: count === captures.length ? value : `${value} ×${count}`, colorClass: 'chip-ir-depth' })
-  const scope = tally(captures.map((c) => c.captureScope))
-  if (scope.length) chips.push({ label: scope.map((s) => `${s.value} ×${s.count}`).join(' · '), colorClass: 'chip-nam-scope' })
+    dotChips.push({ label: count === captures.length ? value : `${value} ×${count}`, colorClass: 'chip-ir-depth' })
   const calibrated = captures.filter(captureIsCalibrated)
   if (calibrated.length > 0) {
     const conf = tally(calibrated.map((c) => c.calibration?.confidence))
-    chips.push({
+    dotChips.push({
       label: `${calibrated.length}/${captures.length} calibrated${conf[0] ? ` · mostly ${conf[0].value}` : ''}`,
       colorClass: 'chip-nam-cal'
     })
   }
-  if (chips.length === 0) return null
+  const scope = tally(captures.map((c) => c.captureScope))
+  const scopeLabel = scope.length ? scope.map((s) => `${s.value} ×${s.count}`).join(' · ') : null
+  if (dotChips.length === 0 && !scopeLabel) return null
   return (
     <div className="flex flex-wrap gap-1.5">
-      {chips.map((c, i) => (
-        <span key={i} className={`nam-chip ${c.colorClass} text-[10px]`}>
+      {scopeLabel && <span className="nam-chip chip-nam-scope text-[10px]">{scopeLabel}</span>}
+      {dotChips.map((c, i) => (
+        <span key={i} className={`nam-chip chip-force-minimal ${c.colorClass} text-[10px]`}>
+          <span className="nam-dot" />
           {c.label}
         </span>
       ))}
@@ -1187,6 +1194,13 @@ function ProjectsIndex({
 
   const [previewId, setPreviewId] = useState<string | null>(null)
   const [previewDetail, setPreviewDetail] = useState<NamProjectDetail | null>(null)
+  // The right rail is never empty by default (matches the design mock, and FolderCardView's own
+  // convention of always having something selected) -- falls back to the first visible project
+  // whenever nothing is selected yet, or the previous selection scrolled out of the current filter.
+  useEffect(() => {
+    if (previewId && visible.some((p) => p.collectionId === previewId)) return
+    setPreviewId(visible[0]?.collectionId ?? null)
+  }, [visible, previewId])
   useEffect(() => {
     if (!previewId) {
       setPreviewDetail(null)
@@ -1277,12 +1291,14 @@ function ProjectsIndex({
         {visible.length === 0 ? (
           <div className="p-8 text-center text-xs text-nm-text-3">No projects match.</div>
         ) : view === 'list' ? (
-          <div className="flex flex-col px-5 py-3 gap-1">
+          <div className="flex flex-col px-5 py-3 gap-1 max-w-[1400px]">
             <div className="flex items-center gap-3 px-3 pb-1.5 text-[10px] uppercase tracking-wide text-nm-text-3">
+              <span className="w-11 flex-shrink-0" />
               <span className="flex-1 min-w-0">Project</span>
               <span className="w-[168px] flex-shrink-0">Gear / Tone</span>
               <span className="w-32 flex-shrink-0">Progress</span>
               <span className="w-[196px] flex-shrink-0">Breakdown</span>
+              <span className="w-14 flex-shrink-0 text-right">Synth</span>
               <span className="w-16 flex-shrink-0 text-right">Scanned</span>
               <span className="w-10 flex-shrink-0" />
             </div>
@@ -1493,10 +1509,17 @@ function ProjectIndexListRow({
       onDoubleClick={onOpen}
       role="button"
       tabIndex={0}
-      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-left cursor-pointer border ${
+      className={`flex items-center gap-3 px-3 py-2 rounded-lg text-left cursor-pointer border ${
         selected ? 'bg-active-bg border-nm-accent/40' : 'border-transparent hover:bg-hov hover:border-nm-border-s'
       }`}
     >
+      <div className="w-11 h-11 flex-shrink-0 rounded-md overflow-hidden bg-field-bg flex items-center justify-center">
+        {project.coverImagePath ? (
+          <ScaledImage src={fileSrc(project.coverImagePath)} width={44} height={44} fit="cover" className="w-full h-full" />
+        ) : (
+          <span className="w-full h-full bg-panel-2" />
+        )}
+      </div>
       <div className="flex-1 min-w-0">
         <div className="text-[12.5px] font-semibold text-nm-text truncate">{project.name}</div>
         {(project.cabinet || project.speaker) && (
@@ -1519,6 +1542,9 @@ function ProjectIndexListRow({
       <div className="w-[196px] flex-shrink-0">
         <ProjectBreakdown counts={breakdown} />
       </div>
+      <span className="w-14 flex-shrink-0 text-right text-[10px] text-nm-text-3 tabular-nums">
+        {project.syntheticCount > 0 ? project.syntheticCount : '—'}
+      </span>
       <span className="w-16 flex-shrink-0 text-right text-[10px] text-nm-text-3">{relTime(project.createdAt) ?? '—'}</span>
       <button
         onClick={(e) => {

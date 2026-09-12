@@ -3,6 +3,7 @@ import { FolderNode } from '../types/librarian'
 import { NamFile } from '../types/nam'
 import { getCaptureBestEsr, getEsrTone } from '../utils/esr'
 import { detectPreset } from '../utils/detectPreset'
+import { ScaledImage } from './ScaledImage'
 
 const COVER_RE = /^ampcover\.(png|jpe?g|webp|gif|avif)$/i
 
@@ -373,7 +374,7 @@ export function FolderCardView({ rootNode, rootFolder, files, packInfoFolders, o
                   >
                     <div className={`w-full aspect-video overflow-hidden flex items-center justify-center ${isDark ? 'bg-gray-800' : 'bg-gray-100'}`}>
                       {c !== undefined && c !== null ? (
-                        <img src={toFileUrl(c)} alt={node.name} className="w-full h-full object-cover" draggable={false} />
+                        <ScaledImage src={toFileUrl(c)} width={480} height={270} fit="cover" fillParent alt={node.name} className="w-full h-full" />
                       ) : c === undefined ? (
                         <div className={`w-full h-full flex items-center justify-center ${isDark ? 'bg-gray-800' : 'bg-gray-100'}`}>
                           <svg className="w-5 h-5 animate-spin text-gray-600" fill="none" viewBox="0 0 24 24">
@@ -685,7 +686,7 @@ function FolderPreviewPanel({
       {/* Cover image */}
       <div className={`w-full aspect-video shrink-0 overflow-hidden ${isDark ? 'bg-gray-800' : 'bg-gray-100'}`}>
         {cover
-          ? <img src={toFileUrl(cover)} alt={node.name} className="w-full h-full object-cover" draggable={false} />
+          ? <ScaledImage src={toFileUrl(cover)} width={480} height={270} fit="cover" fillParent alt={node.name} className="w-full h-full" />
           : <div className={`w-full h-full ${isDark ? 'bg-gray-800' : 'bg-gray-100'}`} />
         }
       </div>

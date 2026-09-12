@@ -38,10 +38,13 @@ export function ScaledImage({
   className,
   alt = '',
   title,
-  onClick
+  onClick,
+  fillParent = false
 }: {
   src: string
-  /** CSS pixels. The canvas backing store is this times devicePixelRatio. */
+  /** CSS pixels. The canvas backing store is this times devicePixelRatio. Also the target raster
+   * resolution when `fillParent` is set (see below) -- pick something comfortably bigger than the
+   * largest this is likely to render at. */
   width: number
   height: number
   fit?: 'cover' | 'contain'
@@ -49,6 +52,13 @@ export function ScaledImage({
   alt?: string
   title?: string
   onClick?: () => void
+  /** For a responsive grid cell whose actual on-screen size isn't known up front (e.g. a card
+   * grid that reflows its column count): render the canvas at `width`x`height` px and let
+   * `className` (w-full h-full etc.) size it in CSS instead of the usual fixed inline style. The
+   * browser's own downscale from there is a small, safe ratio as long as `width`/`height` are
+   * already close to the largest real on-screen size, so this still avoids the moiré a raw <img>
+   * would show straight off the full-resolution source. */
+  fillParent?: boolean
 }): React.ReactElement {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [failed, setFailed] = useState(false)
@@ -91,21 +101,42 @@ export function ScaledImage({
             else drawW = Math.max(1, Math.round(targetH * srcAspect))
           }
 
-          const bitmap = await createImageBitmap(img, sx, sy, sw, sh, {
+          // A single createImageBitmap resize still leaves visible moiré on fine repeating source
+          // detail (grille cloth weave, wicker) once the reduction ratio gets large (a 4000px
+          // photo into a 300px box is a >13x reduction) -- 'high' quality area-averages each pixel
+          // against its immediate neighbourhood, but that one neighbourhood is too small relative
+          // to the true downsample ratio to fully suppress a fine repeating pattern. Halving
+          // repeatedly (classic mipmap chain) fixes this: each 2x step is a true, alias-free
+          // area-average, and chaining enough of them gets the *effective* per-step ratio down to
+          // where a single 'high'-quality pass has no aliasing left to leave behind.
+          let bitmap = await createImageBitmap(img, sx, sy, sw, sh)
+          while (bitmap.width > drawW * 2 && bitmap.height > drawH * 2) {
+            const stepW = Math.max(drawW, Math.round(bitmap.width / 2))
+            const stepH = Math.max(drawH, Math.round(bitmap.height / 2))
+            const next = await createImageBitmap(bitmap, {
+              resizeWidth: stepW,
+              resizeHeight: stepH,
+              resizeQuality: 'high'
+            })
+            bitmap.close()
+            bitmap = next
+          }
+          const final = await createImageBitmap(bitmap, {
             resizeWidth: drawW,
             resizeHeight: drawH,
             resizeQuality: 'high'
           })
+          bitmap.close()
           if (cancelled) {
-            bitmap.close()
+            final.close()
             return
           }
           canvas.width = targetW
           canvas.height = targetH
           canvas
             .getContext('2d')
-            ?.drawImage(bitmap, Math.round((targetW - drawW) / 2), Math.round((targetH - drawH) / 2))
-          bitmap.close()
+            ?.drawImage(final, Math.round((targetW - drawW) / 2), Math.round((targetH - drawH) / 2))
+          final.close()
         } catch {
           if (!cancelled) setFailed(true)
         }
@@ -129,7 +160,7 @@ export function ScaledImage({
         title={title}
         onClick={onClick}
         className={className}
-        style={{ width, height, objectFit: fit }}
+        style={fillParent ? { objectFit: fit } : { width, height, objectFit: fit }}
         loading="lazy"
       />
     )
@@ -143,7 +174,7 @@ export function ScaledImage({
       role="img"
       aria-label={alt || undefined}
       className={className}
-      style={{ width, height }}
+      style={fillParent ? undefined : { width, height }}
     />
   )
 }
